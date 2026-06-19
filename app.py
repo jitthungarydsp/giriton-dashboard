@@ -1,4 +1,35 @@
 import streamlit as st
+
+PASSWORD = "JIT2026"
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+
+    st.title("🔐 DSP Bejelentkezés")
+
+    password = st.text_input(
+        "Jelszó",
+        type="password"
+    )
+
+    if st.button("Belépés"):
+
+        if password == PASSWORD:
+
+            st.session_state.logged_in = True
+            st.rerun()
+
+        else:
+
+            st.error(
+                "Hibás jelszó!"
+            )
+
+    st.stop()
+
+import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
