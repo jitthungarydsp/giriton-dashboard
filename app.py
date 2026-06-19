@@ -1,14 +1,19 @@
 import streamlit as st
 
-PASSWORD = "JIT2026"
+USERS = {
+    "balazs": "1234",
+    "fonok": "JIT2026",
+    "diszpecser": "admin123"
+}
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
 
-    st.title("🔐 DSP Bejelentkezés")
+    st.title("🔐 Bejelentkezés")
 
+    username = st.text_input("Felhasználónév")
     password = st.text_input(
         "Jelszó",
         type="password"
@@ -16,19 +21,23 @@ if not st.session_state.logged_in:
 
     if st.button("Belépés"):
 
-        if password == PASSWORD:
+        if (
+            username in USERS
+            and USERS[username] == password
+        ):
 
             st.session_state.logged_in = True
+            st.session_state.user = username
             st.rerun()
 
         else:
 
             st.error(
-                "Hibás jelszó!"
+                "Hibás felhasználónév vagy jelszó"
             )
 
     st.stop()
-
+    
 import streamlit as st
 import pandas as pd
 import gspread
