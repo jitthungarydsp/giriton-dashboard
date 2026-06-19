@@ -37,11 +37,14 @@ if not st.session_state.logged_in:
             )
 
     st.stop()
-    
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+
+# ---------------------------------
+# Google Sheet kapcsolat
+# ---------------------------------
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -59,9 +62,54 @@ spreadsheet = client.open_by_key(
     "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 )
 
-# -------------------------
+# ---------------------------------
+# Belépés
+# ---------------------------------
+
+USERS = {
+    "balazs": "1234",
+    "fonok": "JIT2026"
+}
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+
+    st.title("🔐 DSP Bejelentkezés")
+
+    username = st.text_input(
+        "Felhasználónév"
+    )
+
+    password = st.text_input(
+        "Jelszó",
+        type="password"
+    )
+
+    if st.button("Belépés"):
+
+        if (
+            username in USERS
+            and USERS[username] == password
+        ):
+
+            st.session_state.logged_in = True
+            st.session_state.user = username
+
+            st.rerun()
+
+        else:
+
+            st.error(
+                "Hibás felhasználónév vagy jelszó"
+            )
+
+    st.stop()
+
+# ---------------------------------
 # Segéd
-# -------------------------
+# ---------------------------------
 
 @st.cache_data(ttl=60)
 def load_sheet(sheet_name):
@@ -72,61 +120,123 @@ def load_sheet(sheet_name):
 
     return pd.DataFrame(data)
 
-# -------------------------
-# UI
-# -------------------------
+# ---------------------------------
+# Oldal beállítás
+# ---------------------------------
 
 st.set_page_config(
-    page_title="DSP Search",
+    page_title="DSP Dashboard",
     layout="wide"
 )
 
-st.title("🚚 DSP Kereső")
+st.sidebar.success(
+    f"Belépve: {st.session_state.user}"
+)
 
-sheet_name = st.selectbox(
-    "Tábla",
+if st.sidebar.button("Kijelentkezés"):
+
+    st.session_state.logged_in = False
+
+    st.rerun()
+
+page = st.sidebar.radio(
+    "Menü",
     [
-        "DSP_Drivers",
-        "DSP_Driver_Summary",
-        "DSP_Orders",
-        "DSP_Order_Customers"
+        "🔍 Kereső",
+        "🚚 Futár Dashboard",
+        "📊 Admin Dashboard"
     ]
 )
 
-search_text = st.text_input(
-    "Keresés (ID vagy név)"
-)
+# ---------------------------------
+# KERESŐ
+# ---------------------------------
 
-df = load_sheet(sheet_name)
+if page == "🔍 Kereső":
 
-# -------------------------
-# Keresés
-# -------------------------
+    st.title("🚚 DSP Kereső")
 
-if search_text:
+    sheet_name = st.selectbox(
+        "Tábla",
+        [
+            "DSP_Drivers",
+            "DSP_Driver_Summary",
+            "DSP_Orders",
+            "DSP_Order_Customers"
+        ]
+    )
 
-    mask = df.astype(str).apply(
-        lambda col: col.str.contains(
-            search_text,
-            case=False,
-            na=False
+    search_text = st.text_input(
+        "Keresés (ID vagy név)"
+    )
+
+    df = load_sheet(sheet_name)
+
+    if search_text:
+
+        mask = df.astype(str).apply(
+            lambda col: col.str.contains(
+                search_text,
+                case=False,
+                na=False
+            )
+        ).any(axis=1)
+
+        result = df[mask]
+
+        st.success(
+            f"{len(result)} találat"
         )
-    ).any(axis=1)
 
-    result = df[mask]
+        st.dataframe(
+            result,
+            use_container_width=True
+        )
 
-    st.success(
-        f"{len(result)} találat"
+    else:
+
+        st.dataframe(
+            df.head(100),
+            use_container_width=True
+        )
+
+# ---------------------------------
+# FUTÁR DASHBOARD
+# ---------------------------------
+
+elif page == "🚚 Futár Dashboard":
+
+    st.title("🚚 Futár Dashboard")
+
+    st.info(
+        "Első verzió"
     )
 
-    st.dataframe(
-        result,
-        use_container_width=True
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "📦 Heti rendelések",
+        0
     )
 
-else:
+    col2.metric(
+        "🚚 Heti körök",
+        0
+    )
 
-    st.dataframe(
-        df.head(100),
-        use_container_width=True
+    col3.metric(
+        "💰 Heti bevétel",
+        "0 Ft"
+    )
+
+# ---------------------------------
+# ADMIN DASHBOARD
+# ---------------------------------
+
+elif page == "📊 Admin Dashboard":
+
+    st.title("📊 Admin Dashboard")
+
+    st.info(
+        "Hamarosan..."
     )
