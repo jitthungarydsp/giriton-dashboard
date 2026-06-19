@@ -657,7 +657,7 @@ def create_driver_summary():
             data["sunday"],
             data["sunday_routes"],
 
-            weekly_income
+                
 
         ])
 
