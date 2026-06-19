@@ -208,27 +208,158 @@ elif page == "🚚 Futár Dashboard":
 
     st.title("🚚 Futár Dashboard")
 
-    st.info(
-        "Első verzió"
+    df = load_sheet(
+        "DSP_Driver_Summary"
     )
 
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric(
-        "📦 Heti rendelések",
-        0
+    driver_name = st.text_input(
+        "Futár neve",
+        value="Gurzó Balázs"
     )
 
-    col2.metric(
-        "🚚 Heti körök",
-        0
-    )
+    result = df[
+        df["name"].astype(str).str.contains(
+            driver_name,
+            case=False,
+            na=False
+        )
+    ]
 
-    col3.metric(
-        "💰 Heti bevétel",
-        "0 Ft"
-    )
+    if result.empty:
 
+        st.warning(
+            "Nincs találat."
+        )
+
+    else:
+
+        row = result.iloc[0]
+
+        total_orders = (
+            row["monday_delivered"] +
+            row["tuesday_delivered"] +
+            row["wednesday_delivered"] +
+            row["thursday_delivered"] +
+            row["friday_delivered"] +
+            row["saturday_delivered"] +
+            row["sunday_delivered"]
+        )
+
+        total_routes = (
+            row["monday_routes"] +
+            row["tuesday_routes"] +
+            row["wednesday_routes"] +
+            row["thursday_routes"] +
+            row["friday_routes"] +
+            row["saturday_routes"] +
+            row["sunday_routes"]
+        )
+
+        income = (
+            row["monday_routes"] * 13000 +
+            row["tuesday_routes"] * 11000 +
+            row["wednesday_routes"] * 11000 +
+            row["thursday_routes"] * 13000 +
+            row["friday_routes"] * 13000 +
+            row["saturday_routes"] * 13000 +
+            row["sunday_routes"] * 11000
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "📦 Heti rendelések",
+            int(total_orders)
+        )
+
+        col2.metric(
+            "🚚 Heti körök",
+            int(total_routes)
+        )
+
+        col3.metric(
+            "💰 Heti bevétel",
+            f"{income:,.0f} Ft"
+        )
+
+        st.divider()
+
+        chart_df = pd.DataFrame({
+
+            "Nap": [
+                "Hétfő",
+                "Kedd",
+                "Szerda",
+                "Csütörtök",
+                "Péntek",
+                "Szombat",
+                "Vasárnap"
+            ],
+
+            "Rendelések": [
+                row["monday_delivered"],
+                row["tuesday_delivered"],
+                row["wednesday_delivered"],
+                row["thursday_delivered"],
+                row["friday_delivered"],
+                row["saturday_delivered"],
+                row["sunday_delivered"]
+            ]
+
+        })
+
+        st.subheader(
+            "📦 Rendelések naponta"
+        )
+
+        st.bar_chart(
+            chart_df.set_index(
+                "Nap"
+            )
+        )
+
+        routes_df = pd.DataFrame({
+
+            "Nap": [
+                "Hétfő",
+                "Kedd",
+                "Szerda",
+                "Csütörtök",
+                "Péntek",
+                "Szombat",
+                "Vasárnap"
+            ],
+
+            "Körök": [
+                row["monday_routes"],
+                row["tuesday_routes"],
+                row["wednesday_routes"],
+                row["thursday_routes"],
+                row["friday_routes"],
+                row["saturday_routes"],
+                row["sunday_routes"]
+            ]
+
+        })
+
+        st.subheader(
+            "🚚 Körök naponta"
+        )
+
+        st.bar_chart(
+            routes_df.set_index(
+                "Nap"
+            )
+        )
+
+        st.subheader(
+            "📋 Heti összesítés"
+        )
+
+        st.dataframe(
+            result,
+            use_container_width=True
+        )
 # ---------------------------------
 # ADMIN DASHBOARD
 # ---------------------------------
