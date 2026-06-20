@@ -1,5 +1,6 @@
 import streamlit as st
 
+
 USERS = {
     "balazs": {
         "password": "1234",
@@ -12,6 +13,16 @@ USERS = {
     }
 }
 
+from streamlit import st_autorefresh
+
+# ---------------------------------
+# AUTO REFRESH
+# ---------------------------------
+
+st_autorefresh(
+    interval=60 * 1000,
+    key="driver_map_refresh"
+)
 # ---------------------------------
 # LOGIN
 # ---------------------------------
@@ -73,6 +84,8 @@ if st.sidebar.button(
     st.session_state.logged_in = False
 
     st.rerun()
+    
+import requests
 import streamlit as st
 import pandas as pd
 import gspread
@@ -185,6 +198,7 @@ page = st.sidebar.radio(
         "🚚 Futár Dashboard",
         "🗺️ Aktuális útvonal",
         "📊 Admin Dashboard"
+        "🗺️ Élő futártérkép"
     ]
 )
 
@@ -239,6 +253,68 @@ if page == "🔍 Kereső":
             df.head(100),
             use_container_width=True
         )
+###ELŐKÉP
+
+elif page == "🗺️ Élő futártérkép":
+
+    st.title("🗺️ Élő futártérkép")
+
+    url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/"
+        "functions/v1/fetch-drivers"
+        "?id=JIT"
+        "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+        "&departureDelayThreshold=10"
+    )
+
+    response = requests.get(url)
+
+    data = response.json()
+
+    rows = []
+
+    for driver in data["drivers"]:
+
+        try:
+
+            rows.append({
+
+                "name":
+                driver["personal_info"]["name"],
+
+                "lat":
+                driver["route"]["current_position"]["latitude"],
+
+                "lon":
+                driver["route"]["current_position"]["longitude"],
+
+                "state":
+                driver["status"]["current_state"],
+
+                "delay":
+                driver["status"]["delay_minutes"]
+
+            })
+
+        except:
+            pass
+
+    df = pd.DataFrame(rows)
+
+    st.success(
+        f"{len(df)} aktív futár"
+    )
+
+    st.map(
+        df,
+        latitude="lat",
+        longitude="lon"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True
+    )
 
 # ---------------------------------
 # FUTÁR DASHBOARD
