@@ -1001,8 +1001,6 @@ elif page == "📦 Rakodási infók":
     try:
 
         data = load_loading_data()
-        st.stop()
-        
         routes = data.get(
             "routes",
             []
