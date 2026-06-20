@@ -275,7 +275,7 @@ elif page == "🗺️ Élő futártérkép":
             "functions/v1/fetch-drivers"
             "?id=JIT"
             "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
-            "&departureDelayThreshold=10"
+            "&departureDelayThreshold=50"
         )
 
         response = requests.get(
