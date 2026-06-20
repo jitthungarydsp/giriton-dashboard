@@ -65,6 +65,21 @@ if not st.session_state.logged_in:
 
     st.stop()
 
+@st.cache_data(ttl=30)
+def load_loading_data():
+
+    url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/departure-dashboard"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30
+    )
+
+    return response.json()
+
+
 # ---------------------------------
 # BELÉPVE
 # ---------------------------------
@@ -1079,6 +1094,10 @@ elif page == "📦 Rakodási infók":
                     "🔴 RED"
                 )
 
+            # ---------------------
+            # SZÁRAZ KOCSIK
+            # ---------------------
+
             dry = selected.get(
                 "dry_carriage_and_parking",
                 []
@@ -1108,9 +1127,13 @@ elif page == "📦 Rakodási infók":
 
                     st.write(
                         f"{color_icon} "
-                        f"{item['trolley_ean']} → "
+                        f"**{item['trolley_ean']}** → "
                         f"{item['parking_spot_ean']}"
                     )
+
+            # ---------------------
+            # HŰTÖTT KOCSIK
+            # ---------------------
 
             cooled = selected.get(
                 "cooled_carriage_and_parking",
@@ -1141,9 +1164,15 @@ elif page == "📦 Rakodási infók":
 
                     st.write(
                         f"{color_icon} "
-                        f"{item['trolley_ean']} → "
+                        f"**{item['trolley_ean']}** → "
                         f"{item['parking_spot_ean']}"
                     )
+
+            st.divider()
+
+            st.caption(
+                "🔄 Adatok frissítése: 30 mp"
+            )
 
     except Exception as e:
 
