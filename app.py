@@ -1011,7 +1011,10 @@ if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
     
-    
+  # ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
+
 elif page == "📦 Rakodási infók":
 
     st.title("📦 Rakodási infók")
@@ -1025,11 +1028,202 @@ elif page == "📦 Rakodási infók":
             []
         )
 
-        st.success(
-            f"{len(routes)} route betöltve"
+        # -------------------------
+        # RAKODÓ FUTÁROK
+        # -------------------------
+
+        st.subheader(
+            "🚚 Rakodó futárok"
         )
 
-        st.json(routes[:3])
+        loading_rows = []
+
+        for r in routes:
+
+            dry = ", ".join([
+                x.get(
+                    "trolley_ean",
+                    ""
+                )
+                for x in r.get(
+                    "dry_carriage_and_parking",
+                    []
+                )
+            ])
+
+            cooled = ", ".join([
+                x.get(
+                    "trolley_ean",
+                    ""
+                )
+                for x in r.get(
+                    "cooled_carriage_and_parking",
+                    []
+                )
+            ])
+
+            loading_rows.append({
+
+                "Platform":
+                r.get(
+                    "platform_section_mark",
+                    "-"
+                ),
+
+                "Route ID":
+                r.get(
+                    "id",
+                    ""
+                ),
+
+                "Futár":
+                r.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️":
+                r.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "📦":
+                r.get(
+                    "orders_in_route",
+                    0
+                ),
+
+                "Nem szkennelt zsák":
+                r.get(
+                    "not_scanned_bag_eans",
+                    0
+                ),
+
+                "Nem szkennelt rendelés":
+                r.get(
+                    "not_scanned_orders",
+                    0
+                ),
+
+                "Száraz kocsik":
+                dry,
+
+                "Hűtött kocsik":
+                cooled,
+
+                "Indulásig":
+                r.get(
+                    "minutes_to_departure",
+                    "-"
+                ),
+
+                "Rakodásig":
+                r.get(
+                    "minutes_to_loading",
+                    "-"
+                ),
+
+                "Alert":
+                r.get(
+                    "alert_level",
+                    ""
+                )
+
+            })
+
+        if loading_rows:
+
+            df = pd.DataFrame(
+                loading_rows
+            )
+
+            if "Platform" in df.columns:
+
+                try:
+
+                    df = df.sort_values(
+                        by="Platform"
+                    )
+
+                except:
+                    pass
+
+            st.dataframe(
+                df,
+                use_container_width=True,
+                height=500
+            )
+
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
+            )
+
+        # -------------------------
+        # VÁRAKOZÓ FUTÁROK
+        # -------------------------
+
+        st.divider()
+
+        st.subheader(
+            "⏳ Várakozó futárok"
+        )
+
+        waiting_rows = []
+
+        for courier in data.get(
+            "couriers_without_route",
+            []
+        ):
+
+            waiting_rows.append({
+
+                "Futár":
+                courier.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️":
+                courier.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "Tiltva":
+                courier.get(
+                    "temperature_block",
+                    "-"
+                )
+
+            })
+
+        if waiting_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True
+            )
+
+        else:
+
+            st.success(
+                "Nincs várakozó futár."
+            )
+
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
+        )
 
     except Exception as e:
 
