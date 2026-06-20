@@ -204,7 +204,8 @@ page = st.sidebar.radio(
         "🗺️ Aktuális útvonal",
         "📊 Admin Dashboard",
         "🗺️ Élő futártérkép",
-        "🔄 Sheet újratöltése"
+        "🔄 Sheet újratöltése",
+        "📦 Rakodási infók"
     ]
 )
 
@@ -312,7 +313,19 @@ elif page == "🗺️ Élő futártérkép":
                     driver["status"]["current_state"],
 
                     "delay":
-                    driver["status"]["delay_minutes"]
+                    driver["status"]["delay_minutes"],
+
+                    "license_plate":
+                    driver.get("vehicle", {}).get(
+                        "license_plate",
+                        ""
+                    ),
+
+                    "temperature":
+                    driver.get("vehicle", {}).get(
+                        "temperature",
+                        None
+                    )
 
                 })
 
@@ -423,10 +436,14 @@ elif page == "🗺️ Élő futártérkép":
             df[
                 [
                     "name",
+                    "license_plate",
+                    "temperature",
                     "state",
                     "delay"
                 ]
             ],
+            use_container_width=True
+        )
             use_container_width=True
         )
 
@@ -599,7 +616,134 @@ elif page == "🚚 Futár Dashboard":
 # AKTUÁLIS ÚTVONAL
 # ---------------------------------
 
-elif page == "🗺️ Aktuális útvonal":
+# ---------------------------------
+# AKTUÁLIS ÚTVONAL
+# ---------------------------------
+
+elif page == "🚚 Aktuális útvonal":
+
+    st.title("🚚 Aktuális útvonal")
+
+    try:
+
+        data = load_live_drivers()
+
+        driver_names = []
+
+        for driver in data["drivers"]:
+
+            try:
+
+                driver_names.append(
+                    driver["personal_info"]["name"]
+                )
+
+            except:
+                pass
+
+        selected_driver = st.selectbox(
+            "🔍 Futár keresése",
+            sorted(driver_names)
+        )
+
+        selected = None
+
+        for driver in data["drivers"]:
+
+            try:
+
+                if (
+                    driver["personal_info"]["name"]
+                    == selected_driver
+                ):
+
+                    selected = driver
+                    break
+
+            except:
+                pass
+
+        if selected:
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "🚚 Futár",
+                    selected["personal_info"]["name"]
+                )
+
+                st.metric(
+                    "🚗 Rendszám",
+                    selected["vehicle"].get(
+                        "license_plate",
+                        "-"
+                    )
+                )
+
+                st.metric(
+                    "🌡️ Hőmérséklet",
+                    str(
+                        selected["vehicle"].get(
+                            "temperature",
+                            "-"
+                        )
+                    )
+                    + " °C"
+                )
+
+            with col2:
+
+                st.metric(
+                    "📍 Állapot",
+                    selected["status"].get(
+                        "current_state",
+                        "-"
+                    )
+                )
+
+                st.metric(
+                    "⏱️ Késés",
+                    str(
+                        selected["status"].get(
+                            "delay_minutes",
+                            0
+                        )
+                    )
+                    + " perc"
+                )
+
+                st.metric(
+                    "🏢 Depó",
+                    selected["personal_info"].get(
+                        "warehouse_name",
+                        "-"
+                    )
+                )
+
+            st.subheader(
+                "📦 Következő stop"
+            )
+
+            st.write(
+                selected["status"].get(
+                    "next_stop",
+                    "Nincs aktív stop"
+                )
+            )
+
+            st.subheader(
+                "🔎 Teljes JSON"
+            )
+
+            st.json(selected)
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
 
     st.title("🗺️ Aktuális útvonal")
 
@@ -827,3 +971,184 @@ elif page == "🗺️ Aktuális útvonal":
 if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
+# ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
+
+elif page == "📦 Rakodási infók":
+
+    st.title("📦 Rakodási infók")
+
+    try:
+
+        data = load_loading_data()
+
+        courier_names = [
+            route["courier_name"]
+            for route in data["routes"]
+        ]
+
+        selected_name = st.selectbox(
+            "🔍 Futár keresése",
+            sorted(courier_names)
+        )
+
+        selected = None
+
+        for route in data["routes"]:
+
+            if route["courier_name"] == selected_name:
+
+                selected = route
+                break
+
+        if selected:
+
+            st.subheader(
+                f"🚚 {selected['courier_name']}"
+            )
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+
+                st.metric(
+                    "📦 Rendelések",
+                    selected.get(
+                        "orders_in_route",
+                        0
+                    )
+                )
+
+            with col2:
+
+                st.metric(
+                    "⏳ Rakodásig",
+                    f"{selected.get('minutes_to_loading', 0)} perc"
+                )
+
+            with col3:
+
+                st.metric(
+                    "🚪 Indulásig",
+                    f"{selected.get('minutes_to_departure', 0)} perc"
+                )
+
+            with col4:
+
+                st.metric(
+                    "🌡️ Hőmérséklet",
+                    str(
+                        selected.get(
+                            "temperature",
+                            {}
+                        ).get(
+                            "temperature",
+                            "-"
+                        )
+                    )
+                    + " °C"
+                )
+
+            st.metric(
+                "🏷️ Platform",
+                selected.get(
+                    "platform_section_mark",
+                    "-"
+                )
+            )
+
+            alert = selected.get(
+                "alert_level",
+                ""
+            )
+
+            if alert == "GREEN":
+
+                st.success(
+                    "🟢 GREEN"
+                )
+
+            elif alert == "YELLOW":
+
+                st.warning(
+                    "🟡 YELLOW"
+                )
+
+            elif alert == "RED":
+
+                st.error(
+                    "🔴 RED"
+                )
+
+            dry = selected.get(
+                "dry_carriage_and_parking",
+                []
+            )
+
+            if dry:
+
+                st.subheader(
+                    "📦 Száraz kocsik"
+                )
+
+                for item in dry:
+
+                    color = item.get(
+                        "parking_spot_color",
+                        ""
+                    )
+
+                    if color == "red":
+                        color_icon = "🔴"
+
+                    elif color == "blue":
+                        color_icon = "🔵"
+
+                    else:
+                        color_icon = "⚪"
+
+                    st.write(
+                        f"{color_icon} "
+                        f"{item['trolley_ean']} → "
+                        f"{item['parking_spot_ean']}"
+                    )
+
+            cooled = selected.get(
+                "cooled_carriage_and_parking",
+                []
+            )
+
+            if cooled:
+
+                st.subheader(
+                    "❄️ Hűtött kocsik"
+                )
+
+                for item in cooled:
+
+                    color = item.get(
+                        "parking_spot_color",
+                        ""
+                    )
+
+                    if color == "red":
+                        color_icon = "🔴"
+
+                    elif color == "blue":
+                        color_icon = "🔵"
+
+                    else:
+                        color_icon = "⚪"
+
+                    st.write(
+                        f"{color_icon} "
+                        f"{item['trolley_ean']} → "
+                        f"{item['parking_spot_ean']}"
+                    )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
