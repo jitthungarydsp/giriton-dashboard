@@ -1421,7 +1421,7 @@ selected_route = st.selectbox(
 
 if selected_route:
 
-    courier_id, route_id = route_options[
+    courier_id, selected_route_id = route_options[
         selected_route
     ]
 
@@ -1431,194 +1431,37 @@ if selected_route:
             courier_id
         )
 
-        if (
-            "routes" in detail
-            and len(detail["routes"]) > 0
+        route = None
+
+        for r in detail.get(
+            "routes",
+            []
         ):
 
-            route = detail["routes"][-1]
+            if r.get(
+                "id"
+            ) == selected_route_id:
 
-            st.success(
-                f"""
-🚚 Route ID: {route['id']}
+                route = r
+                break
 
-📦 Összes rendelés: {route['numTotalOrders']}
+        if not route:
 
-✅ Kiszállítva: {route['numDeliveredOrders']}
-
-⏰ Tervezett indulás:
-{route['plannedDeparture']}
-
-🚚 Tényleges indulás:
-{route['realDeparture']}
-
-🏢 Tervezett visszaérkezés:
-{route['plannedReturn']}
-
-🚚 Tényleges visszaérkezés:
-{route['realReturn']}
-"""
+            st.warning(
+                "Route nem található."
             )
-
-            checkpoints = route.get(
-                "checkpoints",
-                []
-            )
-
-            st.subheader(
-                f"📍 Címek ({len(checkpoints)})"
-            )
-
-            for stop in checkpoints:
-
-                status_icon = "🚚"
-
-                if stop.get("realArrivalTime"):
-                    status_icon = "✅"
-
-                deliver_since = stop.get("deliverSince") or "-"
-                deliver_till = stop.get("deliverTill") or "-"
-                planned_arrival = stop.get("plannedArrivalTime") or "-"
-                estimated_arrival = stop.get("estimatedArrivalTime") or "-"
-                real_arrival = stop.get("realArrivalTime") or "-"
-                real_departure = stop.get("realDepartureTime") or "-"
-
-                if deliver_since != "-":
-                    deliver_since = deliver_since[11:16]
-
-                if deliver_till != "-":
-                    deliver_till = deliver_till[11:16]
-
-                if planned_arrival != "-":
-                    planned_arrival = planned_arrival[11:16]
-
-                if estimated_arrival != "-":
-                    estimated_arrival = estimated_arrival[11:16]
-
-                if real_arrival != "-":
-                    real_arrival = real_arrival[11:16]
-
-                if real_departure != "-":
-                    real_departure = real_departure[11:16]
-
-                st.markdown(
-                    f"""
-            ### {status_icon} {stop.get('position', '?')}. cím
-
-            🏠 **{stop.get('address', '-')}**
-
-            📦 Order ID:
-            {stop.get('orderId', '-')}
-
-            🕐 Időablak:
-            {deliver_since} → {deliver_till}
-
-            ⏰ Tervezett érkezés:
-            {planned_arrival}
-
-            🚚 Várható érkezés:
-            {estimated_arrival}
-
-            ✅ Tényleges érkezés:
-            {real_arrival}
-
-            🚪 Tényleges távozás:
-            {real_departure}
-            """
-                )
-
-                st.divider()
-
-                st.markdown(
-                    f"""
-### {status_icon} {stop['position']}. cím
-
-🏠 **{stop['address']}**
-
-📦 Order ID:
-{stop['orderId']}
-
-🕐 Időablak:
-{stop['deliverSince'][11:16]} → {stop['deliverTill'][11:16]}
-
-⏰ Tervezett érkezés:
-{stop['plannedArrivalTime'][11:16]}
-
-🚚 Várható érkezés:
-{stop['estimatedArrivalTime'][11:16]}
-
-✅ Tényleges érkezés:
-{real_arrival[:16] if real_arrival != '-' else '-'}
-
-🚪 Tényleges távozás:
-{real_departure[:16] if real_departure != '-' else '-'}
-"""
-                )
-
-                st.divider()
 
         else:
 
-            st.warning(
-                "Nincs route adat."
-            )
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
-data = load_loading_data()
-
-routes = data.get(
-    "routes",
-    []
-)
-st.divider()
-
-st.subheader(
-    "🚚 Route részletek API-ból"
-)
-
-route_options = {
-    f"{r['route_id']} - {r['courier_name']}": (
-        r["courier_id"],
-        r["route_id"]
-    )
-    for r in routes
-}
-
-selected_route = st.selectbox(
-    "Route kiválasztása",
-    list(route_options.keys())
-)
-
-if selected_route:
-
-    courier_id, route_id = route_options[
-        selected_route
-    ]
-
-    try:
-
-        detail = load_driver_details(
-            courier_id
-        )
-
-        if (
-            "routes" in detail
-            and len(detail["routes"]) > 0
-        ):
-
-            route = detail["routes"][-1]
-
             st.success(
                 f"""
-🚚 Route ID: {route.get('id', '-')}
+🚚 Route ID: {route.get('id')}
 
-📦 Összes rendelés: {route.get('numTotalOrders', 0)}
+📦 Összes rendelés:
+{route.get('numTotalOrders', 0)}
 
-✅ Kiszállítva: {route.get('numDeliveredOrders', 0)}
+✅ Kiszállított rendelés:
+{route.get('numDeliveredOrders', 0)}
 
 ⏰ Tervezett indulás:
 {route.get('plannedDeparture', '-')}
@@ -1634,87 +1477,18 @@ if selected_route:
 """
             )
 
-            checkpoints = route.get(
+            st.subheader(
+                f"📍 Címek ({len(route.get('checkpoints', []))})"
+            )
+
+            for stop in route.get(
                 "checkpoints",
                 []
-            )
-
-            st.subheader(
-                f"📍 Címek ({len(checkpoints)})"
-            )
-
-            for stop in checkpoints:
-
-                status_icon = "🚚"
-
-                if stop.get(
-                    "realArrivalTime"
-                ):
-                    status_icon = "✅"
-
-                deliver_since = (
-                    stop.get(
-                        "deliverSince"
-                    )
-                    or "-"
-                )
-
-                deliver_till = (
-                    stop.get(
-                        "deliverTill"
-                    )
-                    or "-"
-                )
-
-                planned_arrival = (
-                    stop.get(
-                        "plannedArrivalTime"
-                    )
-                    or "-"
-                )
-
-                estimated_arrival = (
-                    stop.get(
-                        "estimatedArrivalTime"
-                    )
-                    or "-"
-                )
-
-                real_arrival = (
-                    stop.get(
-                        "realArrivalTime"
-                    )
-                    or "-"
-                )
-
-                real_departure = (
-                    stop.get(
-                        "realDepartureTime"
-                    )
-                    or "-"
-                )
-
-                if deliver_since != "-":
-                    deliver_since = deliver_since[11:16]
-
-                if deliver_till != "-":
-                    deliver_till = deliver_till[11:16]
-
-                if planned_arrival != "-":
-                    planned_arrival = planned_arrival[11:16]
-
-                if estimated_arrival != "-":
-                    estimated_arrival = estimated_arrival[11:16]
-
-                if real_arrival != "-":
-                    real_arrival = real_arrival[11:16]
-
-                if real_departure != "-":
-                    real_departure = real_departure[11:16]
+            ):
 
                 st.markdown(
                     f"""
-### {status_icon} {stop.get('position', '?')}. cím
+### {stop.get('position', '?')}. cím
 
 🏠 **{stop.get('address', '-')}**
 
@@ -1722,29 +1496,27 @@ if selected_route:
 {stop.get('orderId', '-')}
 
 🕐 Időablak:
-{deliver_since} → {deliver_till}
+{stop.get('deliverSince', '-')}
+
+➡️
+
+{stop.get('deliverTill', '-')}
 
 ⏰ Tervezett érkezés:
-{planned_arrival}
+{stop.get('plannedArrivalTime', '-')}
 
 🚚 Várható érkezés:
-{estimated_arrival}
+{stop.get('estimatedArrivalTime', '-')}
 
 ✅ Tényleges érkezés:
-{real_arrival}
+{stop.get('realArrivalTime', '-')}
 
 🚪 Tényleges távozás:
-{real_departure}
+{stop.get('realDepartureTime', '-')}
 """
                 )
 
                 st.divider()
-
-        else:
-
-            st.warning(
-                "Nincs route adat."
-            )
 
     except Exception as e:
 
