@@ -444,8 +444,6 @@ elif page == "🗺️ Élő futártérkép":
             ],
             use_container_width=True
         )
-            use_container_width=True
-        )
 
     except Exception as e:
 
