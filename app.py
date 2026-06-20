@@ -203,7 +203,8 @@ page = st.sidebar.radio(
         "🚚 Futár Dashboard",
         "🗺️ Aktuális útvonal",
         "📊 Admin Dashboard",
-        "🗺️ Élő futártérkép"
+        "🗺️ Élő futártérkép",
+        "🔄 Sheet újratöltése"
     ]
 )
 
@@ -820,13 +821,9 @@ elif page == "🗺️ Aktuális útvonal":
     )
              
 # ---------------------------------
-# ADMIN DASHBOARD
+# ADMIN Futtaás mai nap
 # ---------------------------------
 
-elif page == "📊 Admin Dashboard":
-
-    st.title("📊 Admin Dashboard")
-
-    st.info(
-        "Hamarosan..."
-    )
+if st.button("🔄 Sheet újratöltése"):
+    st.cache_data.clear()
+    st.rerun()
