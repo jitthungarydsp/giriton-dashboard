@@ -3,7 +3,7 @@ import streamlit as st
 USERS = {
     "balazs": {
         "password": "1234",
-        "driver_name": "Gurzó Balázs"
+        "driver_name": "Varecza Roland"
     },
 
     "fonok": {
@@ -12,14 +12,22 @@ USERS = {
     }
 }
 
+# ---------------------------------
+# LOGIN
+# ---------------------------------
+
 if "logged_in" not in st.session_state:
+
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
 
-    st.title("🔐 Bejelentkezés")
+    st.title("🔐 DSP Bejelentkezés")
 
-    username = st.text_input("Felhasználónév")
+    username = st.text_input(
+        "Felhasználónév"
+    )
+
     password = st.text_input(
         "Jelszó",
         type="password"
@@ -39,6 +47,30 @@ if not st.session_state.logged_in:
             st.session_state.driver_name = (
                 USERS[username]["driver_name"]
             )
+
+            st.rerun()
+
+        else:
+
+            st.error(
+                "Hibás felhasználónév vagy jelszó"
+            )
+
+    st.stop()
+
+# ---------------------------------
+# BELÉPVE
+# ---------------------------------
+
+st.sidebar.success(
+    f"Belépve: {st.session_state.user}"
+)
+
+if st.sidebar.button(
+    "Kijelentkezés"
+):
+
+    st.session_state.logged_in = False
 
     st.rerun()
 import streamlit as st
