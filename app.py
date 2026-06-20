@@ -1013,389 +1013,6 @@ if st.button("🔄 Sheet újratöltése"):
 # ---------------------------------
 # RAKODÁSI INFÓK
 # ---------------------------------
-
-elif page == "📦 Rakodási infók":
-
-    st.title("📦 Rakodási infók")
-
-    try:
-
-        data = load_loading_data()
-        routes = data.get(
-            "routes",
-            []
-        )
-
-        # -------------------------
-        # RAKODÓ FUTÁROK
-        # -------------------------
-
-        st.subheader(
-            "🚚 Rakodó futárok"
-        )
-
-        loading_rows = []
-
-        for r in routes:
-
-            dry = "\n".join([
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-                for x in r.get(
-                    "dry_carriage_and_parking",
-                    []
-                )
-            ])
-
-            cooled = "\n".join([
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-                for x in r.get(
-                    "cooled_carriage_and_parking",
-                    []
-                )
-            ])
-
-            loading_rows.append({
-
-                "Futár":
-                r.get(
-                    "courier_name",
-                    ""
-                ),
-                "Route ID":
-                r.get(
-                    "route_id",
-                    ""
-                ),
-
-                "🌡️":
-                r.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
-                ),
-
-                "📦":
-                r.get(
-                    "orders_in_route",
-                    0
-                ),
-
-                "Nem szkennelt zsák":
-                r.get(
-                    "not_scanned_bag_eans",
-                    0
-                ),
-
-                "Nem szkennelt rendelés":
-                r.get(
-                    "not_scanned_orders",
-                    0
-                ),
-
-                "Platform":
-                r.get(
-                    "platform_section_mark",
-                    "-"
-                ),
-
-                "Száraz kocsik":
-                dry,
-
-                "Hűtött kocsik":
-                cooled,
-
-                "Indulásig":
-                f"{r.get('minutes_to_departure',0)} perc",
-
-                "Rakodásig":
-                f"{r.get('minutes_to_loading',0)} perc",
-
-                "Alert":
-                r.get(
-                    "alert_level",
-                    ""
-                )
-
-            })
-        loading_rows.sort(
-            key=lambda x: int(x["Platform"])
-            if str(x["Platform"]).isdigit()
-            else 999
-        )
-        if loading_rows:
-
-            st.dataframe(
-                pd.DataFrame(
-                    loading_rows
-                ),
-                use_container_width=True,
-                height=450
-            )
-
-        else:
-
-            st.info(
-                "Nincs rakodó futár."
-            )
-
-        # -------------------------
-        # VÁRAKOZÓ FUTÁROK
-        # -------------------------
-
-        st.divider()
-
-        st.subheader(
-            "⏳ Várakozó futárok"
-        )
-
-        waiting_rows = []
-
-        for courier in data.get(
-            "couriers_without_route",
-            []
-        ):
-
-            waiting_rows.append({
-
-                "Futár":
-                courier.get(
-                    "courier_name",
-                    ""
-                ),
-
-                "Hőmérséklet":
-                courier.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
-                ),
-
-                "Tiltva":
-                courier.get(
-                    "temperature_block",
-                    "-"
-                )
-
-            })
-
-        if waiting_rows:
-
-            st.dataframe(
-                pd.DataFrame(
-                    waiting_rows
-                ),
-                use_container_width=True
-            )
-
-        else:
-
-            st.success(
-                "Nincs várakozó futár."
-            )
-
-        st.caption(
-            "🔄 Automatikus frissítés: 30 mp"
-        )
-    
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
-    # ---------------------------------
-# RAKODÁSI INFÓK
-# ---------------------------------
-
-elif page == "📦 Rakodási infók":
-
-    st.title("📦 Rakodási infók")
-
-    try:
-
-        data = load_loading_data()
-
-        routes = data.get(
-            "routes",
-            []
-        )
-
-        # -------------------------
-        # RAKODÓ FUTÁROK
-        # -------------------------
-
-        st.subheader(
-            "🚚 Rakodó futárok"
-        )
-
-        loading_rows = []
-
-        for r in routes:
-
-            dry = "\n".join([
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-                for x in r.get(
-                    "dry_carriage_and_parking",
-                    []
-                )
-            ])
-
-            cooled = "\n".join([
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-                for x in r.get(
-                    "cooled_carriage_and_parking",
-                    []
-                )
-            ])
-
-            loading_rows.append({
-
-                "Futár":
-                r.get(
-                    "courier_name",
-                    ""
-                ),
-
-                "🌡️":
-                r.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
-                ),
-
-                "📦":
-                r.get(
-                    "orders_in_route",
-                    0
-                ),
-
-                "Nem szkennelt zsák":
-                r.get(
-                    "not_scanned_bag_eans",
-                    0
-                ),
-
-                "Nem szkennelt rendelés":
-                r.get(
-                    "not_scanned_orders",
-                    0
-                ),
-
-                "Platform":
-                r.get(
-                    "platform_section_mark",
-                    "-"
-                ),
-
-                "Száraz kocsik":
-                dry,
-
-                "Hűtött kocsik":
-                cooled,
-
-                "Indulásig":
-                f"{r.get('minutes_to_departure',0)} perc",
-
-                "Rakodásig":
-                f"{r.get('minutes_to_loading',0)} perc",
-
-                "Alert":
-                r.get(
-                    "alert_level",
-                    ""
-                )
-
-            })
-
-        if loading_rows:
-
-            st.dataframe(
-                pd.DataFrame(
-                    loading_rows
-                ),
-                use_container_width=True,
-                height=450
-            )
-
-        else:
-
-            st.info(
-                "Nincs rakodó futár."
-            )
-
-        # -------------------------
-        # VÁRAKOZÓ FUTÁROK
-        # -------------------------
-
-        st.divider()
-
-        st.subheader(
-            "⏳ Várakozó futárok"
-        )
-
-        waiting_rows = []
-
-        for courier in data.get(
-            "couriers_without_route",
-            []
-        ):
-
-            waiting_rows.append({
-
-                "Futár":
-                courier.get(
-                    "courier_name",
-                    ""
-                ),
-
-                "Hőmérséklet":
-                courier.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
-                ),
-
-                "Tiltva":
-                courier.get(
-                    "temperature_block",
-                    "-"
-                )
-
-            })
-
-        if waiting_rows:
-
-            st.dataframe(
-                pd.DataFrame(
-                    waiting_rows
-                ),
-                use_container_width=True
-            )
-
-        else:
-
-            st.success(
-                "Nincs várakozó futár."
-            )
-
-        st.caption(
-            "🔄 Automatikus frissítés: 30 mp"
-        )
-        
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
 # -------------------------
 # ROUTE RÉSZLETEK API-BÓL
 # -------------------------
@@ -1440,23 +1057,23 @@ if selected_route:
 
             st.success(
                 f"""
-🚚 Route ID: {route['id']}
+🚚 Route ID: {route.get('id', '-')}
 
-📦 Összes rendelés: {route['numTotalOrders']}
+📦 Összes rendelés: {route.get('numTotalOrders', 0)}
 
-✅ Kiszállítva: {route['numDeliveredOrders']}
+✅ Kiszállítva: {route.get('numDeliveredOrders', 0)}
 
 ⏰ Tervezett indulás:
-{route['plannedDeparture']}
+{route.get('plannedDeparture', '-')}
 
 🚚 Tényleges indulás:
-{route['realDeparture']}
+{route.get('realDeparture', '-')}
 
 🏢 Tervezett visszaérkezés:
-{route['plannedReturn']}
+{route.get('plannedReturn', '-')}
 
 🚚 Tényleges visszaérkezés:
-{route['realReturn']}
+{route.get('realReturn', '-')}
 """
             )
 
@@ -1473,15 +1090,52 @@ if selected_route:
 
                 status_icon = "🚚"
 
-                if stop.get("realArrivalTime"):
+                if stop.get(
+                    "realArrivalTime"
+                ):
                     status_icon = "✅"
 
-                deliver_since = stop.get("deliverSince") or "-"
-                deliver_till = stop.get("deliverTill") or "-"
-                planned_arrival = stop.get("plannedArrivalTime") or "-"
-                estimated_arrival = stop.get("estimatedArrivalTime") or "-"
-                real_arrival = stop.get("realArrivalTime") or "-"
-                real_departure = stop.get("realDepartureTime") or "-"
+                deliver_since = (
+                    stop.get(
+                        "deliverSince"
+                    )
+                    or "-"
+                )
+
+                deliver_till = (
+                    stop.get(
+                        "deliverTill"
+                    )
+                    or "-"
+                )
+
+                planned_arrival = (
+                    stop.get(
+                        "plannedArrivalTime"
+                    )
+                    or "-"
+                )
+
+                estimated_arrival = (
+                    stop.get(
+                        "estimatedArrivalTime"
+                    )
+                    or "-"
+                )
+
+                real_arrival = (
+                    stop.get(
+                        "realArrivalTime"
+                    )
+                    or "-"
+                )
+
+                real_departure = (
+                    stop.get(
+                        "realDepartureTime"
+                    )
+                    or "-"
+                )
 
                 if deliver_since != "-":
                     deliver_since = deliver_since[11:16]
@@ -1503,55 +1157,27 @@ if selected_route:
 
                 st.markdown(
                     f"""
-            ### {status_icon} {stop.get('position', '?')}. cím
+### {status_icon} {stop.get('position', '?')}. cím
 
-            🏠 **{stop.get('address', '-')}**
-
-            📦 Order ID:
-            {stop.get('orderId', '-')}
-
-            🕐 Időablak:
-            {deliver_since} → {deliver_till}
-
-            ⏰ Tervezett érkezés:
-            {planned_arrival}
-
-            🚚 Várható érkezés:
-            {estimated_arrival}
-
-            ✅ Tényleges érkezés:
-            {real_arrival}
-
-            🚪 Tényleges távozás:
-            {real_departure}
-            """
-                )
-
-                st.divider()
-
-                st.markdown(
-                    f"""
-### {status_icon} {stop['position']}. cím
-
-🏠 **{stop['address']}**
+🏠 **{stop.get('address', '-')}**
 
 📦 Order ID:
-{stop['orderId']}
+{stop.get('orderId', '-')}
 
 🕐 Időablak:
-{stop['deliverSince'][11:16]} → {stop['deliverTill'][11:16]}
+{deliver_since} → {deliver_till}
 
 ⏰ Tervezett érkezés:
-{stop['plannedArrivalTime'][11:16]}
+{planned_arrival}
 
 🚚 Várható érkezés:
-{stop['estimatedArrivalTime'][11:16]}
+{estimated_arrival}
 
 ✅ Tényleges érkezés:
-{real_arrival[:16] if real_arrival != '-' else '-'}
+{real_arrival}
 
 🚪 Tényleges távozás:
-{real_departure[:16] if real_departure != '-' else '-'}
+{real_departure}
 """
                 )
 
