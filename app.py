@@ -1010,61 +1010,166 @@ elif page == "🚚 Aktuális útvonal":
 if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
-    
- # -------------------------
-# WAITING - NOT YET ASSIGNED
-# -------------------------
+ # ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
 
-st.divider()
+elif page == "📦 Rakodási infók":
 
-st.subheader(
-    "⏳ Waiting – not yet assigned"
-)
+    st.title("📦 Rakodási infók")
 
-waiting_rows = []
+    try:
 
-for courier in data.get(
-    "couriers_without_route",
-    []
-):
+        data = load_loading_data()
 
-    waiting_rows.append({
-
-        "Futár":
-        courier.get(
-            "courier_name",
-            ""
-        ),
-
-        "🌡️ Hőmérséklet":
-        courier.get(
-            "temperature",
-            {}
-        ).get(
-            "temperature",
-            "-"
+        routes = data.get(
+            "routes",
+            []
         )
 
-    })
+        # -------------------------
+        # RAKODÓ FUTÁROK
+        # -------------------------
 
-if waiting_rows:
+        st.subheader(
+            "🚚 Rakodó futárok"
+        )
 
-    waiting_df = pd.DataFrame(
-        waiting_rows
-    )
+        loading_rows = []
 
-    waiting_df = waiting_df.sort_values(
-        by="Futár"
-    )
+        for r in routes:
 
-    st.dataframe(
-        waiting_df,
-        use_container_width=True,
-        height=400
-    )
+            loading_rows.append({
 
-else:
+                "Platform":
+                r.get(
+                    "platform_section_mark",
+                    "-"
+                ),
 
-    st.success(
-        "Nincs várakozó futár."
-    )
+                "Route ID":
+                r.get(
+                    "id",
+                    ""
+                ),
+
+                "Futár":
+                r.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️":
+                r.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "📦":
+                r.get(
+                    "orders_in_route",
+                    0
+                ),
+
+                "Indulásig":
+                r.get(
+                    "minutes_to_departure",
+                    "-"
+                ),
+
+                "Rakodásig":
+                r.get(
+                    "minutes_to_loading",
+                    "-"
+                ),
+
+                "Alert":
+                r.get(
+                    "alert_level",
+                    ""
+                )
+
+            })
+
+        if loading_rows:
+
+            df = pd.DataFrame(
+                loading_rows
+            )
+
+            st.dataframe(
+                df,
+                use_container_width=True,
+                height=450
+            )
+
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
+            )
+
+        # -------------------------
+        # WAITING - NOT YET ASSIGNED
+        # -------------------------
+
+        st.divider()
+
+        st.subheader(
+            "⏳ Waiting – not yet assigned"
+        )
+
+        waiting_rows = []
+
+        for courier in data.get(
+            "couriers_without_route",
+            []
+        ):
+
+            waiting_rows.append({
+
+                "Futár":
+                courier.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️ Hőmérséklet":
+                courier.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                )
+
+            })
+
+        if waiting_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True,
+                height=300
+            )
+
+        else:
+
+            st.success(
+                "Nincs várakozó futár."
+            )
+
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
