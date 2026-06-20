@@ -1010,149 +1010,257 @@ elif page == "🚚 Aktuális útvonal":
 if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
+# ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
 
-    # -------------------------
-# RAKODÓ FUTÁROK
-# -------------------------
+elif page == "📦 Rakodási infók":
 
-st.subheader(
-    "🚚 Rakodó futárok"
-)
+    st.title("📦 Rakodási infók")
 
-loading_rows = []
+    try:
 
-for r in routes:
-
-    # Már elindult route ne jelenjen meg
-    if r.get(
-        "minutes_to_departure",
-        -999
-    ) < 0:
-        continue
-
-    # Nincs rakodási adat
-    if (
-        len(
-            r.get(
-                "dry_carriage_and_parking",
-                []
-            )
-        ) == 0
-        and
-        len(
-            r.get(
-                "cooled_carriage_and_parking",
-                []
-            )
-        ) == 0
-    ):
-        continue
-
-    dry = "\n".join([
-        f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-        for x in r.get(
-            "dry_carriage_and_parking",
+        data = load_loading_data()
+        routes = data.get(
+            "routes",
             []
         )
-    ])
 
-    cooled = "\n".join([
-        f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-        for x in r.get(
-            "cooled_carriage_and_parking",
+        # -------------------------
+        # RAKODÓ FUTÁROK
+        # -------------------------
+
+        st.subheader(
+            "🚚 Rakodó futárok"
+        )
+        loading_rows = []
+
+        for r in routes:
+
+            # ---------------------------------
+            # Csak a még indulás előtt álló
+            # rakodás alatt lévő futárok
+            # ---------------------------------
+
+            if r.get(
+                "minutes_to_departure",
+                -999
+            ) < 0:
+                continue
+
+            if (
+                len(
+                    r.get(
+                        "dry_carriage_and_parking",
+                        []
+                    )
+                ) == 0
+                and
+                len(
+                    r.get(
+                        "cooled_carriage_and_parking",
+                        []
+                    )
+                ) == 0
+            ):
+                continue
+
+            dry = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "dry_carriage_and_parking",
+                    []
+                )
+            ])
+
+            cooled = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "cooled_carriage_and_parking",
+                    []
+                )
+            ])
+
+            loading_rows.append({
+
+                "Platform":
+                r.get(
+                    "platform_section_mark",
+                    "-"
+                ),
+
+                "Route ID":
+                r.get(
+                    "route_id",
+                    ""
+                ),
+
+                "Futár":
+                r.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️":
+                r.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "📦":
+                r.get(
+                    "orders_in_route",
+                    0
+                ),
+
+                "Nem szkennelt zsák":
+                r.get(
+                    "not_scanned_bag_eans",
+                    0
+                ),
+
+                "Nem szkennelt rendelés":
+                r.get(
+                    "not_scanned_orders",
+                    0
+                ),
+
+                "Száraz kocsik":
+                dry,
+
+                "Hűtött kocsik":
+                cooled,
+
+                "Indulásig":
+                f"{r.get('minutes_to_departure', 0)} perc",
+
+                "Rakodásig":
+                f"{r.get('minutes_to_loading', 0)} perc",
+
+                "Alert":
+                r.get(
+                    "alert_level",
+                    ""
+                )
+
+            })
+
+        loading_rows.sort(
+            key=lambda x: (
+                int(x["Platform"])
+                if str(
+                    x["Platform"]
+                ).isdigit()
+                else 999
+            )
+        )
+
+        if loading_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    loading_rows
+                ),
+                use_container_width=True,
+                height=450
+            )
+
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
+            )
+
+            })
+        loading_rows.sort(
+            key=lambda x: int(x["Platform"])
+            if str(x["Platform"]).isdigit()
+            else 999
+        )
+        if loading_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    loading_rows
+                ),
+                use_container_width=True,
+                height=450
+            )
+
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
+            )
+
+        # -------------------------
+        # VÁRAKOZÓ FUTÁROK
+        # -------------------------
+
+        st.divider()
+
+        st.subheader(
+            "⏳ Várakozó futárok"
+        )
+
+        waiting_rows = []
+
+        for courier in data.get(
+            "couriers_without_route",
             []
+        ):
+
+            waiting_rows.append({
+
+                "Futár":
+                courier.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "Hőmérséklet":
+                courier.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "Tiltva":
+                courier.get(
+                    "temperature_block",
+                    "-"
+                )
+
+            })
+
+        if waiting_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True
+            )
+
+        else:
+
+            st.success(
+                "Nincs várakozó futár."
+            )
+
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
         )
-    ])
+    
 
-    loading_rows.append({
+    except Exception as e:
 
-        "Platform":
-        r.get(
-            "platform_section_mark",
-            "-"
-        ),
-
-        "Route ID":
-        r.get(
-            "id",
-            ""
-        ),
-
-        "Futár":
-        r.get(
-            "courier_name",
-            ""
-        ),
-
-        "🌡️":
-        r.get(
-            "temperature",
-            {}
-        ).get(
-            "temperature",
-            "-"
-        ),
-
-        "📦":
-        r.get(
-            "orders_in_route",
-            0
-        ),
-
-        "Nem szkennelt zsák":
-        r.get(
-            "not_scanned_bag_eans",
-            0
-        ),
-
-        "Nem szkennelt rendelés":
-        r.get(
-            "not_scanned_orders",
-            0
-        ),
-
-        "Száraz kocsik":
-        dry,
-
-        "Hűtött kocsik":
-        cooled,
-
-        "Indulásig":
-        f"{r.get('minutes_to_departure', 0)} perc",
-
-        "Rakodásig":
-        f"{r.get('minutes_to_loading', 0)} perc",
-
-        "Alert":
-        r.get(
-            "alert_level",
-            ""
+        st.error(
+            f"Hiba történt: {e}"
         )
-
-    })
-
-loading_rows.sort(
-    key=lambda x: (
-        int(x["Platform"])
-        if str(
-            x["Platform"]
-        ).isdigit()
-        else 999
-    )
-)
-
-if loading_rows:
-
-    st.dataframe(
-        pd.DataFrame(
-            loading_rows
-        ),
-        use_container_width=True,
-        height=450
-    )
-
-else:
-
-    st.info(
-        "Nincs rakodó futár."
-    )
+ 
