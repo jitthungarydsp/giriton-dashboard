@@ -996,183 +996,183 @@ elif page == "📦 Rakodási infók":
 
         data = load_loading_data()
 
-        courier_names = [
-            route["courier_name"]
-            for route in data["routes"]
-        ]
-
-        selected_name = st.selectbox(
-            "🔍 Futár keresése",
-            sorted(courier_names)
+        routes = data.get(
+            "routes",
+            []
         )
 
-        selected = None
+        # -------------------------
+        # RAKODÓ FUTÁROK
+        # -------------------------
 
-        for route in data["routes"]:
+        st.subheader(
+            "🚚 Rakodó futárok"
+        )
 
-            if route["courier_name"] == selected_name:
+        loading_rows = []
 
-                selected = route
-                break
+        for r in routes:
 
-        if selected:
+            if r.get(
+                "minutes_to_departure",
+                -999
+            ) <= 0:
 
-            st.subheader(
-                f"🚚 {selected['courier_name']}"
-            )
+                continue
 
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-
-                st.metric(
-                    "📦 Rendelések",
-                    selected.get(
-                        "orders_in_route",
-                        0
-                    )
+            dry = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "dry_carriage_and_parking",
+                    []
                 )
+            ])
 
-            with col2:
-
-                st.metric(
-                    "⏳ Rakodásig",
-                    f"{selected.get('minutes_to_loading', 0)} perc"
+            cooled = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "cooled_carriage_and_parking",
+                    []
                 )
+            ])
 
-            with col3:
+            loading_rows.append({
 
-                st.metric(
-                    "🚪 Indulásig",
-                    f"{selected.get('minutes_to_departure', 0)} perc"
-                )
+                "Futár":
+                r.get(
+                    "courier_name",
+                    ""
+                ),
 
-            with col4:
+                "🌡️":
+                r.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
 
-                st.metric(
-                    "🌡️ Hőmérséklet",
-                    str(
-                        selected.get(
-                            "temperature",
-                            {}
-                        ).get(
-                            "temperature",
-                            "-"
-                        )
-                    )
-                    + " °C"
-                )
+                "📦":
+                r.get(
+                    "orders_in_route",
+                    0
+                ),
 
-            st.metric(
-                "🏷️ Platform",
-                selected.get(
+                "Nem szkennelt zsák":
+                r.get(
+                    "not_scanned_bag_eans",
+                    0
+                ),
+
+                "Nem szkennelt rendelés":
+                r.get(
+                    "not_scanned_orders",
+                    0
+                ),
+
+                "Platform":
+                r.get(
                     "platform_section_mark",
                     "-"
+                ),
+
+                "Száraz kocsik":
+                dry,
+
+                "Hűtött kocsik":
+                cooled,
+
+                "Indulásig":
+                f"{r.get('minutes_to_departure',0)} perc",
+
+                "Rakodásig":
+                f"{r.get('minutes_to_loading',0)} perc",
+
+                "Alert":
+                r.get(
+                    "alert_level",
+                    ""
                 )
+
+            })
+
+        if loading_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    loading_rows
+                ),
+                use_container_width=True,
+                height=450
             )
 
-            alert = selected.get(
-                "alert_level",
-                ""
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
             )
 
-            if alert == "GREEN":
+        # -------------------------
+        # VÁRAKOZÓ FUTÁROK
+        # -------------------------
 
-                st.success(
-                    "🟢 GREEN"
+        st.divider()
+
+        st.subheader(
+            "⏳ Várakozó futárok"
+        )
+
+        waiting_rows = []
+
+        for courier in data.get(
+            "couriers_without_route",
+            []
+        ):
+
+            waiting_rows.append({
+
+                "Futár":
+                courier.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "Hőmérséklet":
+                courier.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "Tiltva":
+                courier.get(
+                    "temperature_block",
+                    "-"
                 )
 
-            elif alert == "YELLOW":
+            })
 
-                st.warning(
-                    "🟡 YELLOW"
-                )
+        if waiting_rows:
 
-            elif alert == "RED":
-
-                st.error(
-                    "🔴 RED"
-                )
-
-            # ---------------------
-            # SZÁRAZ KOCSIK
-            # ---------------------
-
-            dry = selected.get(
-                "dry_carriage_and_parking",
-                []
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True
             )
 
-            if dry:
+        else:
 
-                st.subheader(
-                    "📦 Száraz kocsik"
-                )
-
-                for item in dry:
-
-                    color = item.get(
-                        "parking_spot_color",
-                        ""
-                    )
-
-                    if color == "red":
-                        color_icon = "🔴"
-
-                    elif color == "blue":
-                        color_icon = "🔵"
-
-                    else:
-                        color_icon = "⚪"
-
-                    st.write(
-                        f"{color_icon} "
-                        f"**{item['trolley_ean']}** → "
-                        f"{item['parking_spot_ean']}"
-                    )
-
-            # ---------------------
-            # HŰTÖTT KOCSIK
-            # ---------------------
-
-            cooled = selected.get(
-                "cooled_carriage_and_parking",
-                []
+            st.success(
+                "Nincs várakozó futár."
             )
 
-            if cooled:
-
-                st.subheader(
-                    "❄️ Hűtött kocsik"
-                )
-
-                for item in cooled:
-
-                    color = item.get(
-                        "parking_spot_color",
-                        ""
-                    )
-
-                    if color == "red":
-                        color_icon = "🔴"
-
-                    elif color == "blue":
-                        color_icon = "🔵"
-
-                    else:
-                        color_icon = "⚪"
-
-                    st.write(
-                        f"{color_icon} "
-                        f"**{item['trolley_ean']}** → "
-                        f"{item['parking_spot_ean']}"
-                    )
-
-            st.divider()
-
-            st.caption(
-                "🔄 Adatok frissítése: 30 mp"
-            )
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
+        )
 
     except Exception as e:
 
