@@ -235,12 +235,18 @@ if page == "🔍 Kereső":
             df.head(100),
             use_container_width=True
         )
-###ELŐKÉP
-    from datetime import datetime
+# ---------------------------------
+# ÉLŐ FUTÁRTÉRKÉP
+# ---------------------------------
+
+elif page == "🗺️ Élő futártérkép":
+
+    st.title("🗺️ Élő futártérkép")
 
     st.caption(
         f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}"
     )
+
     st.markdown(
         """
         <meta http-equiv="refresh" content="60">
@@ -248,72 +254,115 @@ if page == "🔍 Kereső":
         unsafe_allow_html=True
     )
 
-elif page == "🗺️ Élő futártérkép":
-    st.markdown(
-    """
-    <meta http-equiv="refresh" content="60">
-    """,
-    unsafe_allow_html=True
-    )
+    try:
 
-    st.title("🗺️ Élő futártérkép")
+        url = (
+            "https://uftplslamjbbhlozsygo.supabase.co/"
+            "functions/v1/fetch-drivers"
+            "?id=JIT"
+            "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+            "&departureDelayThreshold=10"
+        )
 
-    url = (
-        "https://uftplslamjbbhlozsygo.supabase.co/"
-        "functions/v1/fetch-drivers"
-        "?id=JIT"
-        "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
-        "&departureDelayThreshold=10"
-    )
+        response = requests.get(
+            url,
+            timeout=30
+        )
 
-    response = requests.get(url)
+        data = response.json()
 
-    data = response.json()
+        rows = []
 
-    rows = []
+        for driver in data["drivers"]:
 
-    for driver in data["drivers"]:
+            try:
 
-        try:
+                rows.append({
 
-            rows.append({
+                    "name":
+                    driver["personal_info"]["name"],
 
-                "name":
-                driver["personal_info"]["name"],
+                    "lat":
+                    driver["route"]["current_position"]["latitude"],
 
-                "lat":
-                driver["route"]["current_position"]["latitude"],
+                    "lon":
+                    driver["route"]["current_position"]["longitude"],
 
-                "lon":
-                driver["route"]["current_position"]["longitude"],
+                    "state":
+                    driver["status"]["current_state"],
 
-                "state":
-                driver["status"]["current_state"],
+                    "delay":
+                    driver["status"]["delay_minutes"]
 
-                "delay":
-                driver["status"]["delay_minutes"]
+                })
 
-            })
+            except:
+                pass
 
-        except:
-            pass
+        if len(rows) == 0:
 
-    df = pd.DataFrame(rows)
+            st.warning(
+                "Nincs aktív futár."
+            )
 
-    st.success(
-        f"{len(df)} aktív futár"
-    )
+            st.stop()
 
-    st.map(
-        df,
-        latitude="lat",
-        longitude="lon"
-    )
+        df = pd.DataFrame(rows)
 
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
+        st.success(
+            f"{len(df)} aktív futár"
+        )
+
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=df,
+            get_position="[lon, lat]",
+            get_radius=80,
+            pickable=True
+        )
+
+        view_state = pdk.ViewState(
+            latitude=df["lat"].mean(),
+            longitude=df["lon"].mean(),
+            zoom=10,
+            pitch=0
+        )
+
+        tooltip = {
+            "html": """
+            <b>{name}</b><br/>
+            Állapot: {state}<br/>
+            Késés: {delay} perc
+            """,
+            "style": {
+                "backgroundColor": "steelblue",
+                "color": "white"
+            }
+        }
+
+        st.pydeck_chart(
+            pdk.Deck(
+                map_style="mapbox://styles/mapbox/light-v9",
+                initial_view_state=view_state,
+                layers=[layer],
+                tooltip=tooltip
+            )
+        )
+
+        st.subheader(
+            "🚚 Aktív futárok"
+        )
+
+        st.dataframe(
+            df,
+            use_container_width=True
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
 
 # ---------------------------------
 # FUTÁR DASHBOARD
