@@ -1016,7 +1016,12 @@ if st.button("🔄 Sheet újratöltése"):
 # -------------------------
 # ROUTE RÉSZLETEK API-BÓL
 # -------------------------
+data = load_loading_data()
 
+routes = data.get(
+    "routes",
+    []
+)
 st.divider()
 
 st.subheader(
