@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import pydeck as pdk
+from datetime import datetime
 
 from datetime import datetime
 
@@ -66,6 +67,25 @@ if not st.session_state.logged_in:
     st.stop()
 
 @st.cache_data(ttl=30)
+@st.cache_data(ttl=30)
+def load_driver_details(driver_id):
+
+    today = datetime.now().strftime(
+        "%Y-%m-%d"
+    )
+
+    url = (
+        f"https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        f"fetch-drivers-detail/{driver_id}/{today}"
+        f"?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30
+    )
+
+    return response.json()
 @st.cache_data(ttl=30)
 def load_loading_data():
 
@@ -1180,6 +1200,7 @@ elif page == "📦 Rakodási infók":
         st.caption(
             "🔄 Automatikus frissítés: 30 mp"
         )
+    
 
     except Exception as e:
 
@@ -1368,9 +1389,71 @@ elif page == "📦 Rakodási infók":
         st.caption(
             "🔄 Automatikus frissítés: 30 mp"
         )
+        
 
     except Exception as e:
 
         st.error(
             f"Hiba történt: {e}"
         )
+    # -------------------------
+# ROUTE RÉSZLETEK API-BÓL
+# -------------------------
+
+st.divider()
+
+st.subheader(
+    "🚚 Route részletek API-ból"
+)
+
+route_options = {
+    f"{r['route_id']} - {r['courier_name']}": (
+        r["courier_id"],
+        r["route_id"]
+    )
+    for r in routes
+}
+
+selected_route = st.selectbox(
+    "Route kiválasztása",
+    list(route_options.keys())
+)
+
+if selected_route:
+
+    courier_id, route_id = route_options[
+        selected_route
+    ]
+
+    st.success(
+        f"""
+🚚 Futár: {selected_route}
+
+🆔 Driver ID: {courier_id}
+
+🗺️ Route ID: {route_id}
+"""
+    )
+
+    if st.button(
+        "📍 Route részletek lekérése",
+        key=f"route_{route_id}"
+    ):
+
+        try:
+
+            detail = load_driver_details(
+                courier_id
+            )
+
+            st.subheader(
+                "📋 Route részletek"
+            )
+
+            st.json(detail)
+
+        except Exception as e:
+
+            st.error(
+                f"Hiba történt: {e}"
+            )
