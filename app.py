@@ -66,6 +66,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 @st.cache_data(ttl=30)
+@st.cache_data(ttl=30)
 def load_loading_data():
 
     url = (
@@ -77,8 +78,10 @@ def load_loading_data():
         timeout=30
     )
 
-    return response.json()
-
+    return {
+        "status_code": response.status_code,
+        "text": response.text[:1000]
+    }
 
 # ---------------------------------
 # BELÉPVE
