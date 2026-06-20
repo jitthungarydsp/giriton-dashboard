@@ -1473,30 +1473,61 @@ if selected_route:
 
                 status_icon = "🚚"
 
-                if str(
-                    stop.get(
-                        "realArrivalTime",
-                        ""
-                    )
-                ).strip():
-
+                if stop.get("realArrivalTime"):
                     status_icon = "✅"
 
-                real_arrival = (
-                    stop.get(
-                        "realArrivalTime",
-                        ""
-                    )
-                    or "-"
+                deliver_since = stop.get("deliverSince") or "-"
+                deliver_till = stop.get("deliverTill") or "-"
+                planned_arrival = stop.get("plannedArrivalTime") or "-"
+                estimated_arrival = stop.get("estimatedArrivalTime") or "-"
+                real_arrival = stop.get("realArrivalTime") or "-"
+                real_departure = stop.get("realDepartureTime") or "-"
+
+                if deliver_since != "-":
+                    deliver_since = deliver_since[11:16]
+
+                if deliver_till != "-":
+                    deliver_till = deliver_till[11:16]
+
+                if planned_arrival != "-":
+                    planned_arrival = planned_arrival[11:16]
+
+                if estimated_arrival != "-":
+                    estimated_arrival = estimated_arrival[11:16]
+
+                if real_arrival != "-":
+                    real_arrival = real_arrival[11:16]
+
+                if real_departure != "-":
+                    real_departure = real_departure[11:16]
+
+                st.markdown(
+                    f"""
+            ### {status_icon} {stop.get('position', '?')}. cím
+
+            🏠 **{stop.get('address', '-')}**
+
+            📦 Order ID:
+            {stop.get('orderId', '-')}
+
+            🕐 Időablak:
+            {deliver_since} → {deliver_till}
+
+            ⏰ Tervezett érkezés:
+            {planned_arrival}
+
+            🚚 Várható érkezés:
+            {estimated_arrival}
+
+            ✅ Tényleges érkezés:
+            {real_arrival}
+
+            🚪 Tényleges távozás:
+            {real_departure}
+            """
                 )
 
-                real_departure = (
-                    stop.get(
-                        "realDepartureTime",
-                        ""
-                    )
-                    or "-"
-                )
+                st.divider()
 
                 st.markdown(
                     f"""
