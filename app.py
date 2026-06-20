@@ -13,11 +13,7 @@ USERS = {
     }
 }
 
-from streamlit_autorefresh  import st_autorefresh
-
-# ---------------------------------
-# AUTO REFRESH
-# ---------------------------------
+from streamlit_autorefresh import st_autorefresh
 
 st_autorefresh(
     interval=60 * 1000,
@@ -256,6 +252,12 @@ if page == "🔍 Kereső":
 ###ELŐKÉP
 
 elif page == "🗺️ Élő futártérkép":
+    st.markdown(
+    """
+    <meta http-equiv="refresh" content="60">
+    """,
+    unsafe_allow_html=True
+    )
 
     st.title("🗺️ Élő futártérkép")
 
