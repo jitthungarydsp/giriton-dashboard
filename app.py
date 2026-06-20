@@ -366,7 +366,7 @@ elif page == "🗺️ Élő futártérkép":
             data=df,
             get_position="[lon, lat]",
             get_fill_color="color",
-            get_radius=120,
+            get_radius=300,
             pickable=True
         )
 
@@ -374,17 +374,6 @@ elif page == "🗺️ Élő futártérkép":
         # Futár nevek
         # -------------------------
 
-        text_layer = pdk.Layer(
-            "TextLayer",
-            data=df,
-            get_position="[lon, lat]",
-            get_text="name",
-            get_size=14,
-            get_color=[0, 0, 0],
-            get_angle=0,
-            get_text_anchor="'start'",
-            get_alignment_baseline="'center'"
-        )
 
         # -------------------------
         # Kamera
@@ -414,8 +403,7 @@ elif page == "🗺️ Élő futártérkép":
                 map_style="mapbox://styles/mapbox/light-v9",
                 initial_view_state=view_state,
                 layers=[
-                    point_layer,
-                    text_layer
+                    point_layer
                 ],
                 tooltip=tooltip
             )
