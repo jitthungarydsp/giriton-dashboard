@@ -156,6 +156,23 @@ def load_sheet(sheet_name):
     data = ws.get_all_records()
 
     return pd.DataFrame(data)
+@st.cache_data(ttl=30)
+def load_live_drivers():
+
+    url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/"
+        "functions/v1/fetch-drivers"
+        "?id=JIT"
+        "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+        "&departureDelayThreshold=10"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30
+    )
+
+    return response.json()
 
 # ---------------------------------
 # Oldal beállítás
@@ -253,13 +270,6 @@ elif page == "🗺️ Élő futártérkép":
         f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}"
     )
 
-    st.markdown(
-        """
-        <meta http-equiv="refresh" content="60">
-        """,
-        unsafe_allow_html=True
-    )
-
     st.markdown("""
     🟢 Időben
 
@@ -278,12 +288,7 @@ elif page == "🗺️ Élő futártérkép":
             "&departureDelayThreshold=50"
         )
 
-        response = requests.get(
-            url,
-            timeout=30
-        )
-
-        data = response.json()
+        data = load_live_drivers()
 
         rows = []
 
