@@ -1216,13 +1216,6 @@ elif page == "📦 Rakodási infók":
 
         for r in routes:
 
-            if r.get(
-                "minutes_to_departure",
-                -999
-            ) <= 0:
-
-                continue
-
             dry = "\n".join([
                 f"{x['trolley_ean']} → {x['parking_spot_ean']}"
                 for x in r.get(
