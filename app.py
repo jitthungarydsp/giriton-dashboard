@@ -144,6 +144,7 @@ page = st.sidebar.radio(
     [
         "🔍 Kereső",
         "🚚 Futár Dashboard",
+        "🗺️ Aktuális útvonal",
         "📊 Admin Dashboard"
     ]
 )
@@ -360,6 +361,122 @@ elif page == "🚚 Futár Dashboard":
             result,
             use_container_width=True
         )
+# ---------------------------------
+# AKTUÁLIS ÚTVONAL
+# ---------------------------------
+
+elif page == "🗺️ Aktuális útvonal":
+
+    st.title("🗺️ Aktuális útvonal")
+
+    orders_df = load_sheet(
+        "DSP_Orders"
+    )
+
+    customers_df = load_sheet(
+        "DSP_Order_Customers"
+    )
+
+    route_id = st.text_input(
+        "Route ID"
+    )
+
+    if route_id:
+
+        route_df = customers_df[
+            customers_df["routeId"].astype(str)
+            == str(route_id)
+        ]
+
+        if route_df.empty:
+
+            st.warning(
+                "Nincs ilyen Route."
+            )
+
+        else:
+
+            route_df = route_df.sort_values(
+                "position"
+            )
+
+            order_row = orders_df[
+                orders_df["routeId"].astype(str)
+                == str(route_id)
+            ]
+
+            planned_return = ""
+
+            if not order_row.empty:
+
+                planned_return = (
+                    order_row.iloc[0]
+                    .get(
+                        "plannedReturn",
+                        ""
+                    )
+                )
+
+            st.success(
+                "🏢 DEPÓ"
+            )
+
+            for _, stop in route_df.iterrows():
+
+                position = stop.get(
+                    "position",
+                    ""
+                )
+
+                order_id = stop.get(
+                    "orderId",
+                    ""
+                )
+
+                address = stop.get(
+                    "address",
+                    ""
+                )
+
+                eta = stop.get(
+                    "estimatedArrivalTime",
+                    ""
+                )
+
+                real_arrival = stop.get(
+                    "realArrivalTime",
+                    ""
+                )
+
+                status_icon = "⚪"
+
+                if str(real_arrival).strip():
+
+                    status_icon = "✅"
+
+                st.markdown(
+                    f"""
+### {status_icon} {position}. állomás
+
+📦 Order: {order_id}
+
+🏠 {address}
+
+⏰ ETA: {eta}
+"""
+                )
+
+                st.divider()
+
+            st.success(
+                f"""
+🏢 Vissza a depóba
+
+⏰ Várható visszaérkezés:
+{planned_return}
+"""
+            )
+             
 # ---------------------------------
 # ADMIN DASHBOARD
 # ---------------------------------
