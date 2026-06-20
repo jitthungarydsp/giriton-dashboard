@@ -13,12 +13,6 @@ USERS = {
     }
 }
 
-from streamlit_autorefresh import st_autorefresh
-
-st_autorefresh(
-    interval=60 * 1000,
-    key="driver_map_refresh"
-)
 # ---------------------------------
 # LOGIN
 # ---------------------------------
