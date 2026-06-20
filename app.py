@@ -1179,3 +1179,198 @@ elif page == "📦 Rakodási infók":
         st.error(
             f"Hiba történt: {e}"
         )
+    # ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
+
+elif page == "📦 Rakodási infók":
+
+    st.title("📦 Rakodási infók")
+
+    try:
+
+        data = load_loading_data()
+
+        routes = data.get(
+            "routes",
+            []
+        )
+
+        # -------------------------
+        # RAKODÓ FUTÁROK
+        # -------------------------
+
+        st.subheader(
+            "🚚 Rakodó futárok"
+        )
+
+        loading_rows = []
+
+        for r in routes:
+
+            if r.get(
+                "minutes_to_departure",
+                -999
+            ) <= 0:
+
+                continue
+
+            dry = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "dry_carriage_and_parking",
+                    []
+                )
+            ])
+
+            cooled = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "cooled_carriage_and_parking",
+                    []
+                )
+            ])
+
+            loading_rows.append({
+
+                "Futár":
+                r.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "🌡️":
+                r.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "📦":
+                r.get(
+                    "orders_in_route",
+                    0
+                ),
+
+                "Nem szkennelt zsák":
+                r.get(
+                    "not_scanned_bag_eans",
+                    0
+                ),
+
+                "Nem szkennelt rendelés":
+                r.get(
+                    "not_scanned_orders",
+                    0
+                ),
+
+                "Platform":
+                r.get(
+                    "platform_section_mark",
+                    "-"
+                ),
+
+                "Száraz kocsik":
+                dry,
+
+                "Hűtött kocsik":
+                cooled,
+
+                "Indulásig":
+                f"{r.get('minutes_to_departure',0)} perc",
+
+                "Rakodásig":
+                f"{r.get('minutes_to_loading',0)} perc",
+
+                "Alert":
+                r.get(
+                    "alert_level",
+                    ""
+                )
+
+            })
+
+        if loading_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    loading_rows
+                ),
+                use_container_width=True,
+                height=450
+            )
+
+        else:
+
+            st.info(
+                "Nincs rakodó futár."
+            )
+
+        # -------------------------
+        # VÁRAKOZÓ FUTÁROK
+        # -------------------------
+
+        st.divider()
+
+        st.subheader(
+            "⏳ Várakozó futárok"
+        )
+
+        waiting_rows = []
+
+        for courier in data.get(
+            "couriers_without_route",
+            []
+        ):
+
+            waiting_rows.append({
+
+                "Futár":
+                courier.get(
+                    "courier_name",
+                    ""
+                ),
+
+                "Hőmérséklet":
+                courier.get(
+                    "temperature",
+                    {}
+                ).get(
+                    "temperature",
+                    "-"
+                ),
+
+                "Tiltva":
+                courier.get(
+                    "temperature_block",
+                    "-"
+                )
+
+            })
+
+        if waiting_rows:
+
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True
+            )
+
+        else:
+
+            st.success(
+                "Nincs várakozó futár."
+            )
+
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
