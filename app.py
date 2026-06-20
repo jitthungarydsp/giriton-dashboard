@@ -1,4 +1,10 @@
 import streamlit as st
+import streamlit as st
+import pandas as pd
+import requests
+import pydeck as pdk
+
+from datetime import datetime
 
 
 USERS = {
@@ -241,7 +247,7 @@ if page == "🔍 Kereső":
 
 elif page == "🗺️ Élő futártérkép":
 
-    st.title("🗺️ Élő futártérkép")
+    st.title("🗺️ Élő Futártérkép")
 
     st.caption(
         f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}"
@@ -253,6 +259,14 @@ elif page == "🗺️ Élő futártérkép":
         """,
         unsafe_allow_html=True
     )
+
+    st.markdown("""
+    🟢 Időben
+
+    🟡 1-10 perc késés
+
+    🔴 10+ perc késés
+    """)
 
     try:
 
@@ -309,17 +323,72 @@ elif page == "🗺️ Élő futártérkép":
 
         df = pd.DataFrame(rows)
 
+        # -------------------------
+        # Színezés
+        # -------------------------
+
+        def get_color(delay):
+
+            try:
+
+                delay = float(delay)
+
+                if delay <= 0:
+
+                    return [0, 200, 0]
+
+                elif delay <= 10:
+
+                    return [255, 165, 0]
+
+                else:
+
+                    return [255, 0, 0]
+
+            except:
+
+                return [0, 0, 255]
+
+        df["color"] = df["delay"].apply(
+            get_color
+        )
+
         st.success(
             f"{len(df)} aktív futár"
         )
 
-        layer = pdk.Layer(
+        # -------------------------
+        # Futár pontok
+        # -------------------------
+
+        point_layer = pdk.Layer(
             "ScatterplotLayer",
             data=df,
             get_position="[lon, lat]",
-            get_radius=80,
+            get_fill_color="color",
+            get_radius=120,
             pickable=True
         )
+
+        # -------------------------
+        # Futár nevek
+        # -------------------------
+
+        text_layer = pdk.Layer(
+            "TextLayer",
+            data=df,
+            get_position="[lon, lat]",
+            get_text="name",
+            get_size=14,
+            get_color=[0, 0, 0],
+            get_angle=0,
+            get_text_anchor="'start'",
+            get_alignment_baseline="'center'"
+        )
+
+        # -------------------------
+        # Kamera
+        # -------------------------
 
         view_state = pdk.ViewState(
             latitude=df["lat"].mean(),
@@ -344,7 +413,10 @@ elif page == "🗺️ Élő futártérkép":
             pdk.Deck(
                 map_style="mapbox://styles/mapbox/light-v9",
                 initial_view_state=view_state,
-                layers=[layer],
+                layers=[
+                    point_layer,
+                    text_layer
+                ],
                 tooltip=tooltip
             )
         )
@@ -354,7 +426,13 @@ elif page == "🗺️ Élő futártérkép":
         )
 
         st.dataframe(
-            df,
+            df[
+                [
+                    "name",
+                    "state",
+                    "delay"
+                ]
+            ],
             use_container_width=True
         )
 
@@ -363,7 +441,6 @@ elif page == "🗺️ Élő futártérkép":
         st.error(
             f"Hiba történt: {e}"
         )
-
 # ---------------------------------
 # FUTÁR DASHBOARD
 # ---------------------------------
