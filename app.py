@@ -73,16 +73,19 @@ def load_loading_data():
         "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/departure-dashboard"
     )
 
-    response = requests.get(
+    payload = {
+        "id": "JIT",
+        "organizationId":
+        "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    }
+
+    response = requests.post(
         url,
+        json=payload,
         timeout=30
     )
 
-    return {
-        "status_code": response.status_code,
-        "text": response.text[:1000]
-    }
-
+    return response.json()
 # ---------------------------------
 # BELÉPVE
 # ---------------------------------
