@@ -169,7 +169,10 @@ st.sidebar.success(
     f"Belépve: {st.session_state.user}"
 )
 
-if st.sidebar.button("Kijelentkezés"):
+if st.sidebar.button(
+    "Kijelentkezés",
+    key="logout_button"
+):
 
     st.session_state.logged_in = False
 
