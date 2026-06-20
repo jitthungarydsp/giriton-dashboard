@@ -13,7 +13,7 @@ USERS = {
     }
 }
 
-from streamlit import st_autorefresh
+from streamlit_autorefresh  import st_autorefresh
 
 # ---------------------------------
 # AUTO REFRESH
