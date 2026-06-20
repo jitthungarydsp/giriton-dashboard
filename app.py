@@ -1001,14 +1001,6 @@ elif page == "📦 Rakodási infók":
     try:
 
         data = load_loading_data()
-        data = load_loading_data()
-
-        st.write(type(data))
-        st.write(data.keys() if isinstance(data, dict) else "nem dict")
-
-        st.json(data)
-
-        st.stop()
         st.stop()
         
         routes = data.get(
