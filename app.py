@@ -187,7 +187,7 @@ page = st.sidebar.radio(
         "🔍 Kereső",
         "🚚 Futár Dashboard",
         "🗺️ Aktuális útvonal",
-        "📊 Admin Dashboard"
+        "📊 Admin Dashboard",
         "🗺️ Élő futártérkép"
     ]
 )
