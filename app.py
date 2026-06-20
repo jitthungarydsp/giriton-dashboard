@@ -1,9 +1,15 @@
 import streamlit as st
 
 USERS = {
-    "balazs": "1234",
-    "fonok": "JIT2026",
-    "diszpecser": "admin123"
+    "balazs": {
+        "password": "1234",
+        "driver_name": "Gurzó Balázs"
+    },
+
+    "fonok": {
+        "password": "JIT2026",
+        "driver_name": None
+    }
 }
 
 if "logged_in" not in st.session_state:
@@ -23,20 +29,18 @@ if not st.session_state.logged_in:
 
         if (
             username in USERS
-            and USERS[username] == password
+            and USERS[username]["password"] == password
         ):
 
             st.session_state.logged_in = True
+
             st.session_state.user = username
-            st.rerun()
 
-        else:
-
-            st.error(
-                "Hibás felhasználónév vagy jelszó"
+            st.session_state.driver_name = (
+                USERS[username]["driver_name"]
             )
 
-    st.stop()
+    st.rerun()
 import streamlit as st
 import pandas as pd
 import gspread
@@ -369,6 +373,22 @@ elif page == "🗺️ Aktuális útvonal":
 
     st.title("🗺️ Aktuális útvonal")
 
+    driver_name = st.session_state.get(
+        "driver_name"
+    )
+
+    if not driver_name:
+
+        st.error(
+            "Nincs futár hozzárendelve."
+        )
+
+        st.stop()
+
+    drivers_df = load_sheet(
+        "DSP_Drivers"
+    )
+
     orders_df = load_sheet(
         "DSP_Orders"
     )
@@ -377,105 +397,198 @@ elif page == "🗺️ Aktuális útvonal":
         "DSP_Order_Customers"
     )
 
-    route_id = st.text_input(
-        "Route ID"
+    driver_row = drivers_df[
+        drivers_df["name"]
+        .astype(str)
+        .str.contains(
+            driver_name,
+            case=False,
+            na=False
+        )
+    ]
+
+    if driver_row.empty:
+
+        st.error(
+            "Futár nem található."
+        )
+
+        st.stop()
+
+    driver_id = str(
+        driver_row.iloc[0]["driver_id"]
     )
 
-    if route_id:
+    driver_orders = orders_df[
+        orders_df["courierId"]
+        .astype(str)
+        == driver_id
+    ]
 
-        route_df = customers_df[
-            customers_df["routeId"].astype(str)
-            == str(route_id)
-        ]
+    if driver_orders.empty:
 
-        if route_df.empty:
+        st.warning(
+            "Nincs útvonal."
+        )
 
-            st.warning(
-                "Nincs ilyen Route."
-            )
+        st.stop()
 
-        else:
+    route_id = str(
+        driver_orders.iloc[-1]["routeId"]
+    )
 
-            route_df = route_df.sort_values(
-                "position"
-            )
+    st.success(
+        f"""
+🚚 Futár: {driver_name}
 
-            order_row = orders_df[
-                orders_df["routeId"].astype(str)
-                == str(route_id)
-            ]
+🆔 Driver ID: {driver_id}
 
-            planned_return = ""
+🗺️ Route ID: {route_id}
+"""
+    )
 
-            if not order_row.empty:
+    route_df = customers_df[
+        customers_df["routeId"]
+        .astype(str)
+        == route_id
+    ]
 
-                planned_return = (
-                    order_row.iloc[0]
-                    .get(
-                        "plannedReturn",
-                        ""
-                    )
-                )
+    if route_df.empty:
 
-            st.success(
-                "🏢 DEPÓ"
-            )
+        st.warning(
+            "Ehhez a route-hoz nincs állomás."
+        )
 
-            for _, stop in route_df.iterrows():
+        st.stop()
 
-                position = stop.get(
-                    "position",
-                    ""
-                )
+    route_df = route_df.sort_values(
+        "position"
+    )
 
-                order_id = stop.get(
-                    "orderId",
-                    ""
-                )
+    order_row = driver_orders[
+        driver_orders["routeId"]
+        .astype(str)
+        == route_id
+    ]
 
-                address = stop.get(
-                    "address",
-                    ""
-                )
+    planned_return = ""
+    real_return = ""
 
-                eta = stop.get(
-                    "estimatedArrivalTime",
-                    ""
-                )
+    if not order_row.empty:
 
-                real_arrival = stop.get(
-                    "realArrivalTime",
-                    ""
-                )
+        planned_return = order_row.iloc[0].get(
+            "plannedReturn",
+            ""
+        )
 
-                status_icon = "⚪"
+        real_return = order_row.iloc[0].get(
+            "realReturn",
+            ""
+        )
 
-                if str(real_arrival).strip():
+    st.success(
+        "🏢 DEPÓ"
+    )
 
-                    status_icon = "✅"
+    for _, stop in route_df.iterrows():
 
-                st.markdown(
-                    f"""
+        position = stop.get(
+            "position",
+            ""
+        )
+
+        order_id = stop.get(
+            "orderId",
+            ""
+        )
+
+        address = stop.get(
+            "address",
+            ""
+        )
+
+        deliver_since = stop.get(
+            "deliverSince",
+            ""
+        )
+
+        deliver_till = stop.get(
+            "deliverTill",
+            ""
+        )
+
+        planned_arrival = stop.get(
+            "plannedArrivalTime",
+            ""
+        )
+
+        estimated_arrival = stop.get(
+            "estimatedArrivalTime",
+            ""
+        )
+
+        real_arrival = stop.get(
+            "realArrivalTime",
+            ""
+        )
+
+        real_departure = stop.get(
+            "realDepartureTime",
+            ""
+        )
+
+        arrival_status = stop.get(
+            "arrival_status",
+            ""
+        )
+
+        status_icon = "⚪"
+
+        if str(real_arrival).strip():
+
+            status_icon = "✅"
+
+        st.markdown(
+            f"""
 ### {status_icon} {position}. állomás
 
 📦 Order: {order_id}
 
 🏠 {address}
 
-⏰ ETA: {eta}
+🕐 Időablak:
+{deliver_since} → {deliver_till}
+
+⏰ Tervezett érkezés:
+{planned_arrival}
+
+🚚 Várható érkezés:
+{estimated_arrival}
+
+✅ Tényleges érkezés:
+{real_arrival}
+
+🚪 Tényleges indulás:
+{real_departure}
+
+📊 Érkezés minősítése:
+{arrival_status}
 """
-                )
+        )
 
-                st.divider()
+        st.divider()
 
-            st.success(
-                f"""
-🏢 Vissza a depóba
+    st.success(
+        f"""
+🏢 VISSZA A DEPÓBA
 
-⏰ Várható visszaérkezés:
+⏰ Tervezett visszaérkezés:
 {planned_return}
+
+🚚 Tényleges visszaérkezés:
+{real_return}
 """
-            )
+    )
              
 # ---------------------------------
 # ADMIN DASHBOARD
