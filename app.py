@@ -68,11 +68,10 @@ st.sidebar.success(
 )
 
 if st.sidebar.button(
-    "Kijelentkezés"
+    "🚪 Kijelentkezés",
+    key="logout_btn"
 ):
-
-    st.session_state.logged_in = False
-
+    st.session_state.clear()
     st.rerun()
     
 import requests
@@ -244,6 +243,17 @@ if page == "🔍 Kereső":
             use_container_width=True
         )
 ###ELŐKÉP
+    from datetime import datetime
+
+    st.caption(
+        f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}"
+    )
+    st.markdown(
+        """
+        <meta http-equiv="refresh" content="60">
+        """,
+        unsafe_allow_html=True
+    )
 
 elif page == "🗺️ Élő futártérkép":
     st.markdown(
