@@ -66,13 +66,6 @@ if not st.session_state.logged_in:
 st.sidebar.success(
     f"Belépve: {st.session_state.user}"
 )
-
-if st.sidebar.button(
-    "🚪 Kijelentkezés",
-    key="logout_btn"
-):
-    st.session_state.clear()
-    st.rerun()
     
 import requests
 import streamlit as st
