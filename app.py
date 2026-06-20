@@ -1041,6 +1041,11 @@ elif page == "📦 Rakodási infók":
                     "courier_name",
                     ""
                 ),
+                "Route ID":
+                r.get(
+                    "route_id",
+                    ""
+                ),
 
                 "🌡️":
                 r.get(
@@ -1094,7 +1099,11 @@ elif page == "📦 Rakodási infók":
                 )
 
             })
-
+        loading_rows.sort(
+            key=lambda x: int(x["Platform"])
+            if str(x["Platform"]).isdigit()
+            else 999
+        )
         if loading_rows:
 
             st.dataframe(
