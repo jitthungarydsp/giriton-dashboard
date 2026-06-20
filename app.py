@@ -1010,3 +1010,29 @@ elif page == "🚚 Aktuális útvonal":
 if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
+    
+    
+elif page == "📦 Rakodási infók":
+
+    st.title("📦 Rakodási infók")
+
+    try:
+
+        data = load_loading_data()
+
+        routes = data.get(
+            "routes",
+            []
+        )
+
+        st.success(
+            f"{len(routes)} route betöltve"
+        )
+
+        st.json(routes[:3])
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
