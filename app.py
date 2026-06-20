@@ -1011,68 +1011,60 @@ if st.button("🔄 Sheet újratöltése"):
     st.cache_data.clear()
     st.rerun()
     
-  # ---------------------------------
-# RAKODÁSI INFÓK
-# ---------------------------------
+ # -------------------------
+# WAITING - NOT YET ASSIGNED
+# -------------------------
 
-elif page == "📦 Rakodási infók":
+st.divider()
 
-    st.title("📦 Rakodási infók")
+st.subheader(
+    "⏳ Waiting – not yet assigned"
+)
 
-    try:
+waiting_rows = []
 
-        data = load_loading_data()
+for courier in data.get(
+    "couriers_without_route",
+    []
+):
 
-        routes = data.get(
-            "routes",
-            []
+    waiting_rows.append({
+
+        "Futár":
+        courier.get(
+            "courier_name",
+            ""
+        ),
+
+        "🌡️ Hőmérséklet":
+        courier.get(
+            "temperature",
+            {}
+        ).get(
+            "temperature",
+            "-"
         )
 
-        st.subheader(
-            "🚚 Rakodó futárok"
-        )
+    })
 
-        rows = []
+if waiting_rows:
 
-        for r in routes:
+    waiting_df = pd.DataFrame(
+        waiting_rows
+    )
 
-            rows.append({
+    waiting_df = waiting_df.sort_values(
+        by="Futár"
+    )
 
-                "Route ID":
-                r.get("id"),
+    st.dataframe(
+        waiting_df,
+        use_container_width=True,
+        height=400
+    )
 
-                "Futár":
-                r.get("courier_name"),
+else:
 
-                "Platform":
-                r.get(
-                    "platform_section_mark"
-                ),
-
-                "Rendelések":
-                r.get(
-                    "orders_in_route"
-                ),
-
-                "Indulásig":
-                r.get(
-                    "minutes_to_departure"
-                ),
-
-                "Rakodásig":
-                r.get(
-                    "minutes_to_loading"
-                )
-
-            })
-
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
+    st.success(
+        "Nincs várakozó futár."
+    )
