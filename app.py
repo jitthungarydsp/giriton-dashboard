@@ -1396,7 +1396,7 @@ elif page == "📦 Rakodási infók":
         st.error(
             f"Hiba történt: {e}"
         )
-    # -------------------------
+# -------------------------
 # ROUTE RÉSZLETEK API-BÓL
 # -------------------------
 
@@ -1425,35 +1425,115 @@ if selected_route:
         selected_route
     ]
 
-    st.success(
-        f"""
-🚚 Futár: {selected_route}
+    try:
 
-🆔 Driver ID: {courier_id}
+        detail = load_driver_details(
+            courier_id
+        )
 
-🗺️ Route ID: {route_id}
+        if (
+            "routes" in detail
+            and len(detail["routes"]) > 0
+        ):
+
+            route = detail["routes"][-1]
+
+            st.success(
+                f"""
+🚚 Route ID: {route['id']}
+
+📦 Összes rendelés: {route['numTotalOrders']}
+
+✅ Kiszállítva: {route['numDeliveredOrders']}
+
+⏰ Tervezett indulás:
+{route['plannedDeparture']}
+
+🚚 Tényleges indulás:
+{route['realDeparture']}
+
+🏢 Tervezett visszaérkezés:
+{route['plannedReturn']}
+
+🚚 Tényleges visszaérkezés:
+{route['realReturn']}
 """
-    )
+            )
 
-    if st.button(
-        "📍 Route részletek lekérése",
-        key=f"route_{route_id}"
-    ):
-
-        try:
-
-            detail = load_driver_details(
-                courier_id
+            checkpoints = route.get(
+                "checkpoints",
+                []
             )
 
             st.subheader(
-                "📋 Route részletek"
+                f"📍 Címek ({len(checkpoints)})"
             )
 
-            st.json(detail)
+            for stop in checkpoints:
 
-        except Exception as e:
+                status_icon = "🚚"
 
-            st.error(
-                f"Hiba történt: {e}"
+                if str(
+                    stop.get(
+                        "realArrivalTime",
+                        ""
+                    )
+                ).strip():
+
+                    status_icon = "✅"
+
+                real_arrival = (
+                    stop.get(
+                        "realArrivalTime",
+                        ""
+                    )
+                    or "-"
+                )
+
+                real_departure = (
+                    stop.get(
+                        "realDepartureTime",
+                        ""
+                    )
+                    or "-"
+                )
+
+                st.markdown(
+                    f"""
+### {status_icon} {stop['position']}. cím
+
+🏠 **{stop['address']}**
+
+📦 Order ID:
+{stop['orderId']}
+
+🕐 Időablak:
+{stop['deliverSince'][11:16]} → {stop['deliverTill'][11:16]}
+
+⏰ Tervezett érkezés:
+{stop['plannedArrivalTime'][11:16]}
+
+🚚 Várható érkezés:
+{stop['estimatedArrivalTime'][11:16]}
+
+✅ Tényleges érkezés:
+{real_arrival[:16] if real_arrival != '-' else '-'}
+
+🚪 Tényleges távozás:
+{real_departure[:16] if real_departure != '-' else '-'}
+"""
+                )
+
+                st.divider()
+
+        else:
+
+            st.warning(
+                "Nincs route adat."
             )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
