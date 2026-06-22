@@ -201,11 +201,9 @@ def load_sheet(sheet_name):
 def load_live_drivers():
 
     url = (
-        "https://uftplslamjbbhlozsygo.supabase.co/"
-        "functions/v1/fetch-drivers"
-        "?id=JIT"
-        "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
-        "&departureDelayThreshold=10"
+        f"https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        f"fetch-drivers-detail/{driver_id}/{today}"
+        f"?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
     )
 
     response = requests.get(
@@ -243,9 +241,7 @@ page = st.sidebar.radio(
         "🔍 Kereső",
         "🚚 Futár Dashboard",
         "🗺️ Aktuális útvonal",
-        "📊 Admin Dashboard",
         "🗺️ Élő futártérkép",
-        "🔄 Sheet újratöltése",
         "📦 Rakodási infók"
     ]
 )
