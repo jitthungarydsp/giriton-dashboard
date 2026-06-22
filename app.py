@@ -1030,7 +1030,7 @@ elif page == "📦 Rakodási infók":
         routes = data.get(
             "routes",
             []
-        )
+            )
 
         # -------------------------
         # RAKODÓ FUTÁROK
@@ -1044,20 +1044,58 @@ elif page == "📦 Rakodási infók":
 
         for r in routes:
 
+            # ---------------------------------
+            # Csak ténylegesen rakodó futárok
+            # ---------------------------------
+
+            if not r.get(
+                "platform_section_mark"
+            ):
+                continue
+
+            if (
+                len(
+                    r.get(
+                        "dry_carriage_and_parking",
+                        []
+                    )
+                ) == 0
+                and
+                len(
+                    r.get(
+                        "cooled_carriage_and_parking",
+                        []
+                    )
+                ) == 0
+            ):
+                continue
+
+            if r.get(
+                "minutes_to_departure",
+                0
+            ) <= 0:
+                continue
+
             dry = "\n".join([
+
                 f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+
                 for x in r.get(
                     "dry_carriage_and_parking",
                     []
                 )
+
             ])
 
             cooled = "\n".join([
+
                 f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+
                 for x in r.get(
                     "cooled_carriage_and_parking",
                     []
                 )
+
             ])
 
             loading_rows.append({
@@ -1067,6 +1105,17 @@ elif page == "📦 Rakodási infók":
                     "platform_section_mark",
                     "-"
                 ),
+
+                "🌡️":
+                str(
+                    r.get(
+                        "temperature",
+                        {}
+                    ).get(
+                        "temperature",
+                        "-"
+                    )
+                ) + "°C",
 
                 "Route ID":
                 r.get(
@@ -1078,15 +1127,6 @@ elif page == "📦 Rakodási infók":
                 r.get(
                     "courier_name",
                     ""
-                ),
-
-                "🌡️":
-                r.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
                 ),
 
                 "📦":
@@ -1114,16 +1154,10 @@ elif page == "📦 Rakodási infók":
                 cooled,
 
                 "Indulásig":
-                r.get(
-                    "minutes_to_departure",
-                    0
-                ),
+                f"{r.get('minutes_to_departure', 0)} min",
 
                 "Rakodásig":
-                r.get(
-                    "minutes_to_loading",
-                    0
-                ),
+                f"{r.get('minutes_to_loading', 0)} min",
 
                 "Alert":
                 r.get(
@@ -1132,7 +1166,6 @@ elif page == "📦 Rakodási infók":
                 )
 
             })
-
         if loading_rows:
 
             df = pd.DataFrame(
