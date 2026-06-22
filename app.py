@@ -361,7 +361,77 @@ elif page == "👥 Mai futárok":
                 )
 
                 route_status = "Nem dolgozik"
+                # -------------------------
+                # Riasztás számítás
+                # -------------------------
 
+                alert = "⚫"
+
+                shift_start_raw = shift.get(
+                    "shiftStart"
+                )
+
+                if shift_start_raw:
+
+                    try:
+
+                        shift_dt = datetime.fromisoformat(
+                            shift_start_raw.replace(
+                                "Z",
+                                "+00:00"
+                            )
+                        )
+
+                        now_dt = datetime.now(
+                            shift_dt.tzinfo
+                        )
+
+                        if available_raw:
+
+                            available_dt = datetime.fromisoformat(
+                                available_raw.replace(
+                                    "Z",
+                                    "+00:00"
+                                )
+                            )
+
+                            minutes_before = (
+                                shift_dt -
+                                available_dt
+                            ).total_seconds() / 60
+
+                            if minutes_before >= 40:
+
+                                alert = "🟢"
+
+                            elif minutes_before >= 25:
+
+                                alert = "🟡"
+
+                            else:
+
+                                alert = "🔴"
+
+                        else:
+
+                            diff = (
+                                now_dt -
+                                shift_dt
+                            ).total_seconds() / 60
+
+                            if diff > 0:
+
+                                alert = (
+                                    f"⚫ +{int(diff)} perc"
+                                )
+
+                            else:
+
+                                alert = "⚫"
+
+                    except:
+
+                        pass
                 route_id = ""
                 courier_registered = ""
                 assigned_at = ""
@@ -515,6 +585,8 @@ elif page == "👥 Mai futárok":
                         pass
 
                 rows.append({
+                    "Riasztás":
+                    alert,
 
                     "Név":
                     courier.get(
