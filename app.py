@@ -355,6 +355,14 @@ elif page == "👥 Mai futárok":
                 []
             ):
 
+                available_raw = shift.get(
+                    "availableForShiftSince"
+                )
+
+                available_since = hu_time(
+                    available_raw
+                )
+
                 route_status = "Nem dolgozik"
 
                 route_id = ""
@@ -365,63 +373,78 @@ elif page == "👥 Mai futárok":
                 planned_return = ""
                 real_return = ""
 
-                available_raw = shift.get(
-                    "availableForShiftSince"
-                )
-
-                available_since = hu_time(
-                    available_raw
-                )
+                matched_route = None
 
                 # -------------------------
-                # Route csak aktív műszakhoz
+                # Route párosítás
                 # -------------------------
 
-                if routes and available_raw:
+                if available_raw:
 
-                    route = routes[0]
+                    for route in routes:
+
+                        if (
+                            route.get(
+                                "courierRegisteredAt"
+                            )
+                            ==
+                            available_raw
+                        ):
+
+                            matched_route = route
+                            break
+
+                # -------------------------
+                # Talált route
+                # -------------------------
+
+                if matched_route:
 
                     route_status = "Kapott túrát"
 
-                    route_id = route.get(
+                    route_id = matched_route.get(
                         "routeId"
                     )
 
                     courier_registered = hu_time(
-                        route.get(
+                        matched_route.get(
                             "courierRegisteredAt"
                         )
                     )
 
                     assigned_at = hu_time(
-                        route.get(
+                        matched_route.get(
                             "assignedAt"
                         )
                     )
 
                     planned_departure = hu_time(
-                        route.get(
+                        matched_route.get(
                             "plannedDeparture"
                         )
                     )
 
                     real_departure = hu_time(
-                        route.get(
+                        matched_route.get(
                             "realDeparture"
                         )
                     )
 
                     planned_return = hu_time(
-                        route.get(
+                        matched_route.get(
                             "plannedReturn"
                         )
                     )
 
                     real_return = hu_time(
-                        route.get(
+                        matched_route.get(
                             "realReturn"
                         )
                     )
+
+                # -------------------------
+                # Vár túrára
+                # -------------------------
 
                 elif available_raw:
 
