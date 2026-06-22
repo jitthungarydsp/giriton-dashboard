@@ -607,14 +607,14 @@ elif page == "👥 Mai futárok":
                 })
 
         df = df.sort_values(
-        by=[
-            "Riasztás",
-            "Név",
-            "Műszak kezdete"
-        ]
-    ).reset_index(
-        drop=True
-    )
+            by=[
+                "Riasztás",
+                "Név",
+                "Műszak kezdete"
+            ]
+        ).reset_index(
+            drop=True
+        )
 
         st.dataframe(
             df,
