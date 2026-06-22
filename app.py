@@ -342,6 +342,11 @@ elif page == "👥 Mai futárok":
         for courier in data.get(
             "couriers",
             []
+            
+        ):
+        for shift in courier.get(
+            "shifts",
+            []
         ):
 
             courier_id = courier.get(
