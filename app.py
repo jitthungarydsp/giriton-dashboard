@@ -377,10 +377,6 @@ elif page == "👥 Mai futárok":
 
                 matched_route = None
 
-                # -------------------------
-                # Route párosítás
-                # -------------------------
-
                 if available_raw and routes:
 
                     try:
@@ -404,6 +400,12 @@ elif page == "👥 Mai futárok":
                             reg = route.get(
                                 "courierRegisteredAt"
                             )
+
+                            if not reg:
+
+                                reg = route.get(
+                                    "assignedAt"
+                                )
 
                             if not reg:
                                 continue
