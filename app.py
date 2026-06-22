@@ -535,6 +535,10 @@ elif page == "👥 Mai futárok":
                         matched_route.get(
                             "courierRegisteredAt"
                         )
+                        or
+                        matched_route.get(
+                            "assignedAt"
+                        )
                     )
 
                     assigned_at = hu_time(
