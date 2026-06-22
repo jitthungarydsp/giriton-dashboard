@@ -843,20 +843,20 @@ elif page == "🗺️ Aktuális útvonal":
 
                 st.markdown(
                     f"""
-**Sorba állt:** {hu_time(route.get('courierRegisteredAt'))}
+                    **Sorba állt:** {hu_time(route.get('courierRegisteredAt'))}
 
-**Kiosztva:** {hu_time(route.get('assignedAt'))}
+                    **Kiosztva:** {hu_time(route.get('assignedAt'))}
 
-**Rakodás:** {hu_time(route.get('loadingTime'))}
+                    **Rakodás:** {hu_time(route.get('loadingTime'))}
 
-**Tervezett indulás:** {hu_time(route.get('plannedDeparture'))}
+                    **Tervezett indulás:** {hu_time(route.get('plannedDeparture'))}
 
-**Valós indulás:** {hu_time(route.get('realDeparture'))}
+                    **Valós indulás:** {hu_time(route.get('realDeparture'))}
 
-**Tervezett vissza:** {hu_time(route.get('plannedReturn'))}
+                    **Tervezett vissza:** {hu_time(route.get('plannedReturn'))}
 
-**Valós vissza:** {hu_time(route.get('realReturn'))}
-"""
+                    **Valós vissza:** {hu_time(route.get('realReturn'))}
+                    """
                 )
 
                 st.divider()
@@ -922,3 +922,186 @@ elif page == "🗺️ Aktuális útvonal":
                         height=500
 
                     )
+    # ---------------------------------
+# RAKODÁSI INFÓK
+# ---------------------------------
+
+elif page == "📦 Rakodási infók":
+
+    from streamlit_autorefresh import st_autorefresh
+
+    st_autorefresh(
+        interval=30000,
+        key="loading_refresh"
+    )
+
+    st.title("📦 Rakodási infók")
+
+    try:
+
+        data = load_loading_info()
+
+        routes = data.get(
+            "routes",
+            []
+        )
+
+        rows = []
+
+        for route in routes:
+
+            # Csak azok látszanak akik még nem indultak el
+            if route.get(
+                "minutes_to_departure",
+                -999
+            ) < 0:
+                continue
+
+            dry = []
+
+            for item in route.get(
+                "dry_carriage_and_parking",
+                []
+            ):
+
+                dry.append(
+                    f"{item.get('trolley_ean')} → "
+                    f"{item.get('parking_spot_ean')}"
+                )
+
+            cooled = []
+
+            for item in route.get(
+                "cooled_carriage_and_parking",
+                []
+            ):
+
+                cooled.append(
+                    f"{item.get('trolley_ean')} → "
+                    f"{item.get('parking_spot_ean')}"
+                )
+
+            rows.append({
+
+                "Zóna":
+                route.get(
+                    "platform_section_mark"
+                ),
+
+                "Hőfok":
+                (
+                    route.get(
+                        "temperature",
+                        {}
+                    ).get(
+                        "temperature"
+                    )
+                ),
+
+                "Route ID":
+                route.get(
+                    "route_id"
+                ),
+
+                "Név":
+                route.get(
+                    "courier_name"
+                ),
+
+                "Rendelés":
+                route.get(
+                    "orders_in_route"
+                ),
+
+                "Nem szkennelt zsák":
+                route.get(
+                    "not_scanned_bag_eans"
+                ),
+
+                "Nem szkennelt rendelés":
+                route.get(
+                    "not_scanned_orders"
+                ),
+
+                "Száraz":
+                "\n".join(
+                    dry
+                ),
+
+                "Hűtős":
+                "\n".join(
+                    cooled
+                ),
+
+                "Indulás":
+                f"{route.get('minutes_to_departure')} perc",
+
+                "Rakodás":
+                f"{route.get('minutes_to_loading')} perc"
+
+            })
+
+        df = pd.DataFrame(
+            rows
+        )
+
+        df = df.sort_values(
+            by=[
+                "Indulás"
+            ]
+        )
+
+        st.dataframe(
+            df,
+            use_container_width=True,
+            height=800
+        )
+
+        st.caption(
+            "🔄 Automatikus frissítés: 30 mp"
+        )
+
+        waiting = data.get(
+            "couriers_without_route",
+            []
+        )
+
+        if waiting:
+
+            st.subheader(
+                "⏳ Túrára várók"
+            )
+
+            waiting_rows = []
+
+            for courier in waiting:
+
+                waiting_rows.append({
+
+                    "Név":
+                    courier.get(
+                        "courier_name"
+                    ),
+
+                    "Hőfok":
+                    courier.get(
+                        "temperature",
+                        {}
+                    ).get(
+                        "temperature"
+                    )
+
+                })
+
+            st.dataframe(
+                pd.DataFrame(
+                    waiting_rows
+                ),
+                use_container_width=True
+            )
+
+    except Exception as e:
+
+        st.error(
+            f"Hiba történt: {e}"
+        )
