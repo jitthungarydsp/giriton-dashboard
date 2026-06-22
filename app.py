@@ -654,12 +654,19 @@ elif page == "🚚 Futár Dashboard":
 # ---------------------------------
 # AKTUÁLIS ÚTVONAL
 # ---------------------------------
-
 # ---------------------------------
 # AKTUÁLIS ÚTVONAL
 # ---------------------------------
 
 elif page == "🚚 Aktuális útvonal":
+
+    from streamlit_autorefresh import st_autorefresh
+    from datetime import datetime
+
+    st_autorefresh(
+        interval=30000,
+        key="live_route_refresh"
+    )
 
     st.title("🚚 Aktuális útvonal")
 
@@ -667,32 +674,66 @@ elif page == "🚚 Aktuális útvonal":
 
         data = load_live_drivers()
 
-        driver_names = []
+        active_drivers = []
 
-        for driver in data["drivers"]:
-
-            try:
-
-                driver_names.append(
-                    driver["personal_info"]["name"]
-                )
-
-            except:
-                pass
-
-        selected_driver = st.selectbox(
-            "🔍 Futár keresése",
-            sorted(driver_names)
-        )
-
-        selected = None
-
-        for driver in data["drivers"]:
+        for driver in data.get(
+            "drivers",
+            []
+        ):
 
             try:
 
                 if (
-                    driver["personal_info"]["name"]
+                    driver.get(
+                        "status",
+                        {}
+                    ).get(
+                        "current_state"
+                    )
+                    == "Delivering"
+                ):
+
+                    active_drivers.append(
+                        driver[
+                            "personal_info"
+                        ][
+                            "name"
+                        ]
+                    )
+
+            except:
+                pass
+
+        if not active_drivers:
+
+            st.warning(
+                "Nincs aktív futár."
+            )
+
+            st.stop()
+
+        selected_driver = st.selectbox(
+            "🚚 Aktív futár",
+            sorted(
+                active_drivers
+            )
+        )
+
+        selected = None
+
+        for driver in data.get(
+            "drivers",
+            []
+        ):
+
+            try:
+
+                if (
+                    driver[
+                        "personal_info"
+                    ][
+                        "name"
+                    ]
                     == selected_driver
                 ):
 
@@ -702,81 +743,243 @@ elif page == "🚚 Aktuális útvonal":
             except:
                 pass
 
-        if selected:
+        if not selected:
 
-            col1, col2 = st.columns(2)
+            st.stop()
 
-            with col1:
+        # -------------------------
+        # KPI KÁRTYÁK
+        # -------------------------
 
-                st.metric(
-                    "🚚 Futár",
-                    selected["personal_info"]["name"]
-                )
+        col1, col2, col3, col4 = st.columns(4)
 
-                st.metric(
-                    "🚗 Rendszám",
-                    selected["vehicle"].get(
-                        "license_plate",
+        with col1:
+
+            st.metric(
+                "🚚 Futár",
+                selected[
+                    "personal_info"
+                ][
+                    "name"
+                ]
+            )
+
+        with col2:
+
+            st.metric(
+                "🌡️ Hőmérséklet",
+                str(
+                    selected[
+                        "vehicle"
+                    ].get(
+                        "temperature",
                         "-"
                     )
                 )
+                + " °C"
+            )
 
-                st.metric(
-                    "🌡️ Hőmérséklet",
-                    str(
-                        selected["vehicle"].get(
-                            "temperature",
-                            "-"
-                        )
-                    )
-                    + " °C"
+        with col3:
+
+            st.metric(
+                "📍 Állapot",
+                selected[
+                    "status"
+                ].get(
+                    "current_state",
+                    "-"
                 )
+            )
 
-            with col2:
+        with col4:
 
-                st.metric(
-                    "📍 Állapot",
-                    selected["status"].get(
-                        "current_state",
-                        "-"
-                    )
-                )
-
-                st.metric(
-                    "⏱️ Késés",
-                    str(
-                        selected["status"].get(
-                            "delay_minutes",
-                            0
-                        )
-                    )
-                    + " perc"
-                )
-
-                st.metric(
-                    "🏢 Depó",
-                    selected["personal_info"].get(
-                        "warehouse_name",
-                        "-"
+            st.metric(
+                "⏱️ Késés",
+                str(
+                    selected[
+                        "status"
+                    ].get(
+                        "delay_minutes",
+                        0
                     )
                 )
+                + " perc"
+            )
+
+        # -------------------------
+        # KM STATISZTIKA
+        # -------------------------
+
+        stats = (
+            selected
+            .get(
+                "route",
+                {}
+            )
+            .get(
+                "statistics",
+                {}
+            )
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "🚚 Megtett km",
+                round(
+                    stats.get(
+                        "distance_covered_km",
+                        0
+                    ),
+                    1
+                )
+            )
+
+        with col2:
+
+            st.metric(
+                "🗺️ Teljes km",
+                round(
+                    stats.get(
+                        "total_distance_km",
+                        0
+                    ),
+                    1
+                )
+            )
+
+        with col3:
+
+            st.metric(
+                "📍 Hátralévő km",
+                round(
+                    stats.get(
+                        "total_distance_km",
+                        0
+                    )
+                    -
+                    stats.get(
+                        "distance_covered_km",
+                        0
+                    ),
+                    1
+                )
+            )
+
+        st.divider()
+
+        st.subheader(
+            "📦 Következő stop"
+        )
+
+        st.info(
+            selected[
+                "status"
+            ].get(
+                "next_stop",
+                "Nincs aktív stop"
+            )
+        )
+
+        # -------------------------
+        # ROUTE RÉSZLETEK
+        # -------------------------
+
+        driver_id = selected.get(
+            "driver_id"
+        )
+
+        today = datetime.now().strftime(
+            "%Y-%m-%d"
+        )
+
+        detail = load_driver_details(
+            driver_id,
+            today
+        )
+
+        routes = detail.get(
+            "routes",
+            []
+        )
+
+        if routes:
+
+            current_route = routes[-1]
+
+            st.divider()
 
             st.subheader(
-                "📦 Következő stop"
+                f"🗺️ Route #{current_route.get('id')}"
             )
 
-            st.write(
-                selected["status"].get(
-                    "next_stop",
-                    "Nincs aktív stop"
+            st.success(
+                f"""
+📦 Rendelések:
+{current_route.get('numDeliveredOrders',0)}
+/
+{current_route.get('numTotalOrders',0)}
+
+⚠️ Becsült késések:
+{current_route.get('numDelayedOrdersEstimate',0)}
+"""
+            )
+
+            checkpoints = current_route.get(
+                "checkpoints",
+                []
+            )
+
+            checkpoints = sorted(
+                checkpoints,
+                key=lambda x:
+                x.get(
+                    "position",
+                    0
                 )
             )
 
-            st.subheader(
-                "🔎 Teljes JSON"
-            )
+            for stop in checkpoints:
 
-            st.json(selected)
+                if stop.get(
+                    "realArrivalTime"
+                ):
+
+                    icon = "✅"
+
+                elif stop.get(
+                    "estimatedArrivalTime"
+                ):
+
+                    icon = "🟡"
+
+                else:
+
+                    icon = "⚪"
+
+                st.markdown(
+                    f"""
+### {icon} {stop.get('position')}. stop
+
+🏠 {stop.get('address','')}
+
+📦 Order:
+{stop.get('orderId','')}
+
+⏰ Tervezett:
+{stop.get('plannedArrivalTime','')}
+
+🚚 Becsült:
+{stop.get('estimatedArrivalTime','')}
+
+✅ Tényleges:
+{stop.get('realArrivalTime','')}
+"""
+                )
+
+                st.divider()
 
     except Exception as e:
 
@@ -784,232 +987,6 @@ elif page == "🚚 Aktuális útvonal":
             f"Hiba történt: {e}"
         )
 
-    st.title("🗺️ Aktuális útvonal")
-
-    driver_name = st.session_state.get(
-        "driver_name"
-    )
-
-    if not driver_name:
-
-        st.error(
-            "Nincs futár hozzárendelve."
-        )
-
-        st.stop()
-
-    drivers_df = load_sheet(
-        "DSP_Drivers"
-    )
-
-    orders_df = load_sheet(
-        "DSP_Orders"
-    )
-
-    customers_df = load_sheet(
-        "DSP_Order_Customers"
-    )
-
-    driver_row = drivers_df[
-        drivers_df["name"]
-        .astype(str)
-        .str.contains(
-            driver_name,
-            case=False,
-            na=False
-        )
-    ]
-
-    if driver_row.empty:
-
-        st.error(
-            "Futár nem található."
-        )
-
-        st.stop()
-
-    driver_id = str(
-        driver_row.iloc[0]["driver_id"]
-    )
-
-    driver_orders = orders_df[
-        orders_df["courierId"]
-        .astype(str)
-        == driver_id
-    ]
-
-    if driver_orders.empty:
-
-        st.warning(
-            "Nincs útvonal."
-        )
-
-        st.stop()
-
-    route_id = str(
-        driver_orders.iloc[-1]["routeId"]
-    )
-
-    st.success(
-        f"""
-🚚 Futár: {driver_name}
-
-🆔 Driver ID: {driver_id}
-
-🗺️ Route ID: {route_id}
-"""
-    )
-
-    route_df = customers_df[
-        customers_df["routeId"]
-        .astype(str)
-        == route_id
-    ]
-
-    if route_df.empty:
-
-        st.warning(
-            "Ehhez a route-hoz nincs állomás."
-        )
-
-        st.stop()
-
-    route_df = route_df.sort_values(
-        "position"
-    )
-
-    order_row = driver_orders[
-        driver_orders["routeId"]
-        .astype(str)
-        == route_id
-    ]
-
-    planned_return = ""
-    real_return = ""
-
-    if not order_row.empty:
-
-        planned_return = order_row.iloc[0].get(
-            "plannedReturn",
-            ""
-        )
-
-        real_return = order_row.iloc[0].get(
-            "realReturn",
-            ""
-        )
-
-    st.success(
-        "🏢 DEPÓ"
-    )
-
-    for _, stop in route_df.iterrows():
-
-        position = stop.get(
-            "position",
-            ""
-        )
-
-        order_id = stop.get(
-            "orderId",
-            ""
-        )
-
-        address = stop.get(
-            "address",
-            ""
-        )
-
-        deliver_since = stop.get(
-            "deliverSince",
-            ""
-        )
-
-        deliver_till = stop.get(
-            "deliverTill",
-            ""
-        )
-
-        planned_arrival = stop.get(
-            "plannedArrivalTime",
-            ""
-        )
-
-        estimated_arrival = stop.get(
-            "estimatedArrivalTime",
-            ""
-        )
-
-        real_arrival = stop.get(
-            "realArrivalTime",
-            ""
-        )
-
-        real_departure = stop.get(
-            "realDepartureTime",
-            ""
-        )
-
-        arrival_status = stop.get(
-            "arrival_status",
-            ""
-        )
-
-        status_icon = "⚪"
-
-        if str(real_arrival).strip():
-
-            status_icon = "✅"
-
-        st.markdown(
-            f"""
-### {status_icon} {position}. állomás
-
-📦 Order: {order_id}
-
-🏠 {address}
-
-🕐 Időablak:
-{deliver_since} → {deliver_till}
-
-⏰ Tervezett érkezés:
-{planned_arrival}
-
-🚚 Várható érkezés:
-{estimated_arrival}
-
-✅ Tényleges érkezés:
-{real_arrival}
-
-🚪 Tényleges indulás:
-{real_departure}
-
-📊 Érkezés minősítése:
-{arrival_status}
-"""
-        )
-
-        st.divider()
-
-    st.success(
-        f"""
-🏢 VISSZA A DEPÓBA
-
-⏰ Tervezett visszaérkezés:
-{planned_return}
-
-🚚 Tényleges visszaérkezés:
-{real_return}
-"""
-    )
-             
-# ---------------------------------
-# ADMIN Futtaás mai nap
-# ---------------------------------
-
-if st.button("🔄 Sheet újratöltése"):
-    st.cache_data.clear()
-    st.rerun()
  # ---------------------------------
 # RAKODÁSI INFÓK
 # ---------------------------------
