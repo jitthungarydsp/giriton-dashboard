@@ -453,20 +453,77 @@ elif page == "👥 Mai futárok":
                                     alert = "⚪"
 
                     except:
-
                         pass
 
-                # -------------------------
-                # Talált route
-                # -------------------------
+                    # -------------------------
+                    # Route párosítás
+                    # -------------------------
 
-                if matched_route:
+                    route_id = ""
+                    courier_registered = ""
+                    assigned_at = ""
+                    planned_departure = ""
+                    real_departure = ""
+                    planned_return = ""
+                    real_return = ""
 
-                    used_routes.add(
-                        matched_route.get(
-                            "routeId"
+                    matched_route = None
+
+                    if available_raw and routes:
+
+                        try:
+
+                            available_dt = datetime.fromisoformat(
+                                available_raw.replace(
+                                    "Z",
+                                    "+00:00"
+                                )
+                            )
+
+                            closest_diff = None
+
+                            for route in routes:
+
+                                if route.get("routeId") in used_routes:
+                                    continue
+
+                                reg = route.get("courierRegisteredAt")
+
+                                if not reg:
+                                    reg = route.get("assignedAt")
+
+                                if not reg:
+                                    continue
+
+                                reg_dt = datetime.fromisoformat(
+                                    reg.replace("Z", "+00:00")
+                                )
+
+                                diff = abs(
+                                    (reg_dt - available_dt).total_seconds()
+                                )
+
+                                if (
+                                    closest_diff is None
+                                    or diff < closest_diff
+                                ):
+                                    closest_diff = diff
+                                    matched_route = route
+
+                        except:
+                            pass
+
+                    # -------------------------
+                    # Talált route
+                    # -------------------------
+
+                    if matched_route:
+
+                        used_routes.add(
+                            matched_route.get(
+                                "routeId"
+                            )
                         )
-                    )
 
                     route_status = "Kapott túrát"
 
@@ -605,6 +662,10 @@ elif page == "👥 Mai futárok":
                     real_return
 
                 })
+
+        df = pd.DataFrame(
+            rows
+        )
 
         df = df.sort_values(
             by=[
