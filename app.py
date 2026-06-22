@@ -67,6 +67,25 @@ if not st.session_state.logged_in:
     st.stop()
 
 @st.cache_data(ttl=30)
+def load_attendance():
+
+    today = datetime.now().strftime(
+        "%Y-%m-%d"
+    )
+
+    url = (
+        f"https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        f"fetch-attendance/JIT/{today}"
+        f"?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30
+    )
+
+    return response.json()
+################################################################################################################
 @st.cache_data(ttl=30)
 def load_driver_details(driver_id):
 
@@ -242,7 +261,8 @@ page = st.sidebar.radio(
         "🚚 Futár Dashboard",
         "🗺️ Aktuális útvonal",
         "🗺️ Élő futártérkép",
-        "📦 Rakodási infók"
+        "📦 Rakodási infók",
+        "👥 Mai futárok"
     ]
 )
 
@@ -297,6 +317,224 @@ if page == "🔍 Kereső":
             df.head(100),
             use_container_width=True
         )
+###########################MAi futárok###################################x
+elif page == "👥 Mai futárok":
+
+    st_autorefresh(
+        interval=30000,
+        key="attendance_refresh"
+    )
+
+    st.title(
+        "👥 Mai futárok"
+    )
+
+    data = load_attendance()
+
+    rows = []
+
+    now = datetime.now()
+
+    for courier in data:
+
+        courier_id = courier.get(
+            "courierId"
+        )
+
+        courier_name = courier.get(
+            "courierName"
+        )
+
+        shifts = courier.get(
+            "shifts",
+            []
+        )
+
+        routes = courier.get(
+            "routes",
+            []
+        )
+
+        shift_name = ""
+        shift_start = ""
+        shift_end = ""
+        available_since = ""
+
+        if shifts:
+
+            current_shift = shifts[0]
+
+            shift_name = current_shift.get(
+                "shiftName",
+                ""
+            )
+
+            shift_start = hu_time(
+                current_shift.get(
+                    "shiftStart"
+                )
+            )
+
+            shift_end = hu_time(
+                current_shift.get(
+                    "shiftEnd"
+                )
+            )
+
+            available_since = hu_time(
+                current_shift.get(
+                    "availableForShiftSince"
+                )
+            )
+
+        route_status = "Nem dolgozik"
+
+        wait_minutes = ""
+
+        route_id = ""
+        courier_registered = ""
+        assigned_at = ""
+        planned_departure = ""
+        real_departure = ""
+        planned_return = ""
+        real_return = ""
+
+        if routes:
+
+            route = routes[0]
+
+            route_status = "Kapott túrát"
+
+            route_id = route.get(
+                "routeId"
+            )
+
+            courier_registered = hu_time(
+                route.get(
+                    "courierRegisteredAt"
+                )
+            )
+
+            assigned_at = hu_time(
+                route.get(
+                    "assignedAt"
+                )
+            )
+
+            planned_departure = hu_time(
+                route.get(
+                    "plannedDeparture"
+                )
+            )
+
+            real_departure = hu_time(
+                route.get(
+                    "realDeparture"
+                )
+            )
+
+            planned_return = hu_time(
+                route.get(
+                    "plannedReturn"
+                )
+            )
+
+            real_return = hu_time(
+                route.get(
+                    "realReturn"
+                )
+            )
+
+        else:
+
+            available_raw = None
+
+            if shifts:
+
+                available_raw = shifts[0].get(
+                    "availableForShiftSince"
+                )
+
+            if available_raw:
+
+                try:
+
+                    available_dt = datetime.fromisoformat(
+                        available_raw.replace(
+                            "Z",
+                            "+00:00"
+                        )
+                    )
+
+                    wait_minutes = round(
+                        (
+                            datetime.now(
+                                available_dt.tzinfo
+                            )
+                            -
+                            available_dt
+                        ).total_seconds()
+                        / 60
+                    )
+
+                    route_status = (
+                        f"Vár túrára ({wait_minutes} perc)"
+                    )
+
+                except:
+                    pass
+
+        rows.append({
+
+            "Név":
+            courier_name,
+
+            "Courier ID":
+            courier_id,
+
+            "Műszak":
+            shift_name,
+
+            "Műszak kezdete":
+            shift_start,
+
+            "Műszak vége":
+            shift_end,
+
+            "Elérhető":
+            available_since,
+
+            "Státusz":
+            route_status,
+
+            "Route ID":
+            route_id,
+
+            "Sorba állt":
+            courier_registered,
+
+            "Túrát kapott":
+            assigned_at,
+
+            "Tervezett indulás":
+            planned_departure,
+
+            "Tényleges indulás":
+            real_departure,
+
+            "Tervezett vissza":
+            planned_return,
+
+            "Tényleges vissza":
+            real_return
+
+        })
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        height=700
+    )
 # ---------------------------------
 # ÉLŐ FUTÁRTÉRKÉP
 # ---------------------------------
