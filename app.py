@@ -67,7 +67,22 @@ if not st.session_state.logged_in:
             )
 
     st.stop()
+@st.cache_data(ttl=30)
+def load_loading_info():
 
+    url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        "fetch-loading-info"
+        "?id=JIT"
+        "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    )
+
+    response = requests.get(
+        url,
+        timeout=30
+    )
+
+    return response.json()
 @st.cache_data(ttl=30)
 def load_attendance():
 
@@ -922,7 +937,7 @@ elif page == "🗺️ Aktuális útvonal":
                         height=500
 
                     )
-    # ---------------------------------
+# ---------------------------------
 # RAKODÁSI INFÓK
 # ---------------------------------
 
