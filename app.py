@@ -317,1132 +317,241 @@ if page == "🔍 Kereső":
             df.head(100),
             use_container_width=True
         )
-###########################MAi futárok###################################x
+# ---------------------------------
+# MAI FUTÁROK
+# ---------------------------------
+
 elif page == "👥 Mai futárok":
+
+    from streamlit_autorefresh import st_autorefresh
 
     st_autorefresh(
         interval=30000,
         key="attendance_refresh"
     )
 
-    st.title(
-        "👥 Mai futárok"
-    )
-
-    data = load_attendance()
-
-    rows = []
-
-    now = datetime.now()
-
-    for courier in data:
-
-        courier_id = courier.get(
-            "courierId"
-        )
-
-        courier_name = courier.get(
-            "courierName"
-        )
-
-        shifts = courier.get(
-            "shifts",
-            []
-        )
-
-        routes = courier.get(
-            "routes",
-            []
-        )
-
-        shift_name = ""
-        shift_start = ""
-        shift_end = ""
-        available_since = ""
-
-        if shifts:
-
-            current_shift = shifts[0]
-
-            shift_name = current_shift.get(
-                "shiftName",
-                ""
-            )
-
-            shift_start = hu_time(
-                current_shift.get(
-                    "shiftStart"
-                )
-            )
-
-            shift_end = hu_time(
-                current_shift.get(
-                    "shiftEnd"
-                )
-            )
-
-            available_since = hu_time(
-                current_shift.get(
-                    "availableForShiftSince"
-                )
-            )
-
-        route_status = "Nem dolgozik"
-
-        wait_minutes = ""
-
-        route_id = ""
-        courier_registered = ""
-        assigned_at = ""
-        planned_departure = ""
-        real_departure = ""
-        planned_return = ""
-        real_return = ""
-
-        if routes:
-
-            route = routes[0]
-
-            route_status = "Kapott túrát"
-
-            route_id = route.get(
-                "routeId"
-            )
-
-            courier_registered = hu_time(
-                route.get(
-                    "courierRegisteredAt"
-                )
-            )
-
-            assigned_at = hu_time(
-                route.get(
-                    "assignedAt"
-                )
-            )
-
-            planned_departure = hu_time(
-                route.get(
-                    "plannedDeparture"
-                )
-            )
-
-            real_departure = hu_time(
-                route.get(
-                    "realDeparture"
-                )
-            )
-
-            planned_return = hu_time(
-                route.get(
-                    "plannedReturn"
-                )
-            )
-
-            real_return = hu_time(
-                route.get(
-                    "realReturn"
-                )
-            )
-
-        else:
-
-            available_raw = None
-
-            if shifts:
-
-                available_raw = shifts[0].get(
-                    "availableForShiftSince"
-                )
-
-            if available_raw:
-
-                try:
-
-                    available_dt = datetime.fromisoformat(
-                        available_raw.replace(
-                            "Z",
-                            "+00:00"
-                        )
-                    )
-
-                    wait_minutes = round(
-                        (
-                            datetime.now(
-                                available_dt.tzinfo
-                            )
-                            -
-                            available_dt
-                        ).total_seconds()
-                        / 60
-                    )
-
-                    route_status = (
-                        f"Vár túrára ({wait_minutes} perc)"
-                    )
-
-                except:
-                    pass
-
-        rows.append({
-
-            "Név":
-            courier_name,
-
-            "Courier ID":
-            courier_id,
-
-            "Műszak":
-            shift_name,
-
-            "Műszak kezdete":
-            shift_start,
-
-            "Műszak vége":
-            shift_end,
-
-            "Elérhető":
-            available_since,
-
-            "Státusz":
-            route_status,
-
-            "Route ID":
-            route_id,
-
-            "Sorba állt":
-            courier_registered,
-
-            "Túrát kapott":
-            assigned_at,
-
-            "Tervezett indulás":
-            planned_departure,
-
-            "Tényleges indulás":
-            real_departure,
-
-            "Tervezett vissza":
-            planned_return,
-
-            "Tényleges vissza":
-            real_return
-
-        })
-
-    st.dataframe(
-        pd.DataFrame(rows),
-        use_container_width=True,
-        height=700
-    )
-# ---------------------------------
-# ÉLŐ FUTÁRTÉRKÉP
-# ---------------------------------
-
-elif page == "🗺️ Élő futártérkép":
-
-    st.title("🗺️ Élő Futártérkép")
-
-    st.caption(
-        f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}"
-    )
-
-    st.markdown("""
-    🟢 Időben
-
-    🟡 1-10 perc késés
-
-    🔴 10+ perc késés
-    """)
+    st.title("👥 Mai futárok")
 
     try:
 
-        url = (
-            "https://uftplslamjbbhlozsygo.supabase.co/"
-            "functions/v1/fetch-drivers"
-            "?id=JIT"
-            "&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
-            "&departureDelayThreshold=50"
-        )
-
-        data = load_live_drivers()
+        data = load_attendance()
 
         rows = []
 
-        for driver in data["drivers"]:
-
-            try:
-
-                rows.append({
-
-                    "name":
-                    driver["personal_info"]["name"],
-
-                    "lat":
-                    driver["route"]["current_position"]["latitude"],
-
-                    "lon":
-                    driver["route"]["current_position"]["longitude"],
-
-                    "state":
-                    driver["status"]["current_state"],
-
-                    "delay":
-                    driver["status"]["delay_minutes"],
-
-                    "license_plate":
-                    driver.get("vehicle", {}).get(
-                        "license_plate",
-                        ""
-                    ),
-
-                    "temperature":
-                    driver.get("vehicle", {}).get(
-                        "temperature",
-                        None
-                    )
-
-                })
-
-            except:
-                pass
-
-        if len(rows) == 0:
-
-            st.warning(
-                "Nincs aktív futár."
-            )
-
-            st.stop()
-
-        df = pd.DataFrame(rows)
-
-        # -------------------------
-        # Színezés
-        # -------------------------
-
-        def get_color(delay):
-
-            try:
-
-                delay = float(delay)
-
-                if delay <= 0:
-
-                    return [0, 200, 0]
-
-                elif delay <= 10:
-
-                    return [255, 165, 0]
-
-                else:
-
-                    return [255, 0, 0]
-
-            except:
-
-                return [0, 0, 255]
-
-        df["color"] = df["delay"].apply(
-            get_color
-        )
-
-        st.success(
-            f"{len(df)} aktív futár"
-        )
-
-        # -------------------------
-        # Futár pontok
-        # -------------------------
-
-        point_layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=df,
-            get_position="[lon, lat]",
-            get_fill_color="color",
-            get_radius=300,
-            pickable=True
-        )
-
-        # -------------------------
-        # Futár nevek
-        # -------------------------
-
-
-        # -------------------------
-        # Kamera
-        # -------------------------
-
-        view_state = pdk.ViewState(
-            latitude=df["lat"].mean(),
-            longitude=df["lon"].mean(),
-            zoom=10,
-            pitch=0
-        )
-
-        tooltip = {
-            "html": """
-            <b>{name}</b><br/>
-            Állapot: {state}<br/>
-            Késés: {delay} perc
-            """,
-            "style": {
-                "backgroundColor": "steelblue",
-                "color": "white"
-            }
-        }
-
-        st.pydeck_chart(
-            pdk.Deck(
-                map_style=None,
-                initial_view_state=view_state,
-                layers=[
-                    point_layer
-                ],
-                tooltip=tooltip
-            )
-        )
-
-        st.subheader(
-            "🚚 Aktív futárok"
-        )
-
-        st.dataframe(
-            df[
-                [
-                    "name",
-                    "license_plate",
-                    "temperature",
-                    "state",
-                    "delay"
-                ]
-            ],
-            use_container_width=True
-        )
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
-# ---------------------------------
-# FUTÁR DASHBOARD
-# ---------------------------------
-
-elif page == "🚚 Futár Dashboard":
-
-    st.title("🚚 Futár Dashboard")
-
-    df = load_sheet(
-        "DSP_Driver_Summary"
-    )
-
-    driver_name = st.text_input(
-        "Futár neve",
-        value="Gurzó Balázs"
-    )
-
-    result = df[
-        df["name"].astype(str).str.contains(
-            driver_name,
-            case=False,
-            na=False
-        )
-    ]
-
-    if result.empty:
-
-        st.warning(
-            "Nincs találat."
-        )
-
-    else:
-
-        row = result.iloc[0]
-
-        total_orders = (
-            row["monday_delivered"] +
-            row["tuesday_delivered"] +
-            row["wednesday_delivered"] +
-            row["thursday_delivered"] +
-            row["friday_delivered"] +
-            row["saturday_delivered"] +
-            row["sunday_delivered"]
-        )
-
-        total_routes = (
-            row["monday_routes"] +
-            row["tuesday_routes"] +
-            row["wednesday_routes"] +
-            row["thursday_routes"] +
-            row["friday_routes"] +
-            row["saturday_routes"] +
-            row["sunday_routes"]
-        )
-
-        income = (
-            row["monday_routes"] * 13000 +
-            row["tuesday_routes"] * 11000 +
-            row["wednesday_routes"] * 11000 +
-            row["thursday_routes"] * 13000 +
-            row["friday_routes"] * 13000 +
-            row["saturday_routes"] * 13000 +
-            row["sunday_routes"] * 11000
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "📦 Heti rendelések",
-            int(total_orders)
-        )
-
-        col2.metric(
-            "🚚 Heti körök",
-            int(total_routes)
-        )
-
-        col3.metric(
-            "💰 Heti bevétel",
-            f"{income:,.0f} Ft"
-        )
-
-        st.divider()
-
-        chart_df = pd.DataFrame({
-
-            "Nap": [
-                "Hétfő",
-                "Kedd",
-                "Szerda",
-                "Csütörtök",
-                "Péntek",
-                "Szombat",
-                "Vasárnap"
-            ],
-
-            "Rendelések": [
-                row["monday_delivered"],
-                row["tuesday_delivered"],
-                row["wednesday_delivered"],
-                row["thursday_delivered"],
-                row["friday_delivered"],
-                row["saturday_delivered"],
-                row["sunday_delivered"]
-            ]
-
-        })
-
-        st.subheader(
-            "📦 Rendelések naponta"
-        )
-
-        st.bar_chart(
-            chart_df.set_index(
-                "Nap"
-            )
-        )
-
-        routes_df = pd.DataFrame({
-
-            "Nap": [
-                "Hétfő",
-                "Kedd",
-                "Szerda",
-                "Csütörtök",
-                "Péntek",
-                "Szombat",
-                "Vasárnap"
-            ],
-
-            "Körök": [
-                row["monday_routes"],
-                row["tuesday_routes"],
-                row["wednesday_routes"],
-                row["thursday_routes"],
-                row["friday_routes"],
-                row["saturday_routes"],
-                row["sunday_routes"]
-            ]
-
-        })
-
-        st.subheader(
-            "🚚 Körök naponta"
-        )
-
-        st.bar_chart(
-            routes_df.set_index(
-                "Nap"
-            )
-        )
-
-        st.subheader(
-            "📋 Heti összesítés"
-        )
-
-        st.dataframe(
-            result,
-            use_container_width=True
-        )
-# ---------------------------------
-# AKTUÁLIS ÚTVONAL
-# ---------------------------------
-
-elif page == "🚚 Aktuális útvonal":
-
-    from streamlit_autorefresh import st_autorefresh
-    from datetime import datetime
-
-    st_autorefresh(
-        interval=30000,
-        key="live_route_refresh"
-    )
-
-    st.title("🚚 Aktuális útvonal")
-
-    try:
-
-        data = load_live_drivers()
-
-        active_drivers = []
-
-        for driver in data.get(
-            "drivers",
+        for courier in data.get(
+            "couriers",
             []
         ):
 
-            try:
-
-                if (
-                    driver.get(
-                        "status",
-                        {}
-                    ).get(
-                        "current_state"
-                    )
-                    == "Delivering"
-                ):
-
-                    active_drivers.append(
-                        driver[
-                            "personal_info"
-                        ][
-                            "name"
-                        ]
-                    )
-
-            except:
-                pass
-
-        if not active_drivers:
-
-            st.warning(
-                "Nincs aktív futár."
+            courier_id = courier.get(
+                "courierId"
             )
 
-            st.stop()
-
-        selected_driver = st.selectbox(
-            "🚚 Aktív futár",
-            sorted(
-                active_drivers
-            )
-        )
-
-        selected = None
-
-        for driver in data.get(
-            "drivers",
-            []
-        ):
-
-            try:
-
-                if (
-                    driver[
-                        "personal_info"
-                    ][
-                        "name"
-                    ]
-                    == selected_driver
-                ):
-
-                    selected = driver
-                    break
-
-            except:
-                pass
-
-        if not selected:
-
-            st.stop()
-
-        # -------------------------
-        # KPI KÁRTYÁK
-        # -------------------------
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-
-            st.metric(
-                "🚚 Futár",
-                selected[
-                    "personal_info"
-                ][
-                    "name"
-                ]
+            courier_name = courier.get(
+                "courierName"
             )
 
-        with col2:
-
-            st.metric(
-                "🌡️ Hőmérséklet",
-                str(
-                    selected[
-                        "vehicle"
-                    ].get(
-                        "temperature",
-                        "-"
-                    )
-                )
-                + " °C"
+            warehouse = courier.get(
+                "warehouseName"
             )
 
-        with col3:
-
-            st.metric(
-                "📍 Állapot",
-                selected[
-                    "status"
-                ].get(
-                    "current_state",
-                    "-"
-                )
-            )
-
-        with col4:
-
-            st.metric(
-                "⏱️ Késés",
-                str(
-                    selected[
-                        "status"
-                    ].get(
-                        "delay_minutes",
-                        0
-                    )
-                )
-                + " perc"
-            )
-
-        # -------------------------
-        # KM STATISZTIKA
-        # -------------------------
-
-        stats = (
-            selected
-            .get(
-                "route",
-                {}
-            )
-            .get(
-                "statistics",
-                {}
-            )
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.metric(
-                "🚚 Megtett km",
-                round(
-                    stats.get(
-                        "distance_covered_km",
-                        0
-                    ),
-                    1
-                )
-            )
-
-        with col2:
-
-            st.metric(
-                "🗺️ Teljes km",
-                round(
-                    stats.get(
-                        "total_distance_km",
-                        0
-                    ),
-                    1
-                )
-            )
-
-        with col3:
-
-            st.metric(
-                "📍 Hátralévő km",
-                round(
-                    stats.get(
-                        "total_distance_km",
-                        0
-                    )
-                    -
-                    stats.get(
-                        "distance_covered_km",
-                        0
-                    ),
-                    1
-                )
-            )
-
-        st.divider()
-
-        st.subheader(
-            "📦 Következő stop"
-        )
-
-        st.info(
-            selected[
-                "status"
-            ].get(
-                "next_stop",
-                "Nincs aktív stop"
-            )
-        )
-
-        # -------------------------
-        # ROUTE RÉSZLETEK
-        # -------------------------
-
-        driver_id = selected.get(
-            "driver_id"
-        )
-
-        today = datetime.now().strftime(
-            "%Y-%m-%d"
-        )
-
-        detail = load_driver_details(
-            driver_id,
-            today
-        )
-
-        routes = detail.get(
-            "routes",
-            []
-        )
-
-        if routes:
-
-            current_route = routes[-1]
-
-            st.divider()
-
-            st.subheader(
-                f"🗺️ Route #{current_route.get('id')}"
-            )
-
-            st.success(
-                f"""
-📦 Rendelések:
-{current_route.get('numDeliveredOrders',0)}
-/
-{current_route.get('numTotalOrders',0)}
-
-⚠️ Becsült késések:
-{current_route.get('numDelayedOrdersEstimate',0)}
-"""
-            )
-
-            checkpoints = current_route.get(
-                "checkpoints",
+            shifts = courier.get(
+                "shifts",
                 []
             )
 
-            checkpoints = sorted(
-                checkpoints,
-                key=lambda x:
-                x.get(
-                    "position",
-                    0
-                )
+            routes = courier.get(
+                "routes",
+                []
             )
 
-            for stop in checkpoints:
+            shift_name = ""
+            shift_start = ""
+            shift_end = ""
+            available_since = ""
 
-                if stop.get(
-                    "realArrivalTime"
-                ):
+            if shifts:
 
-                    icon = "✅"
+                shift = shifts[0]
 
-                elif stop.get(
-                    "estimatedArrivalTime"
-                ):
-
-                    icon = "🟡"
-
-                else:
-
-                    icon = "⚪"
-
-                st.markdown(
-                    f"""
-### {icon} {stop.get('position')}. stop
-
-🏠 {stop.get('address','')}
-
-📦 Order:
-{stop.get('orderId','')}
-
-⏰ Tervezett:
-{stop.get('plannedArrivalTime','')}
-
-🚚 Becsült:
-{stop.get('estimatedArrivalTime','')}
-
-✅ Tényleges:
-{stop.get('realArrivalTime','')}
-"""
+                shift_name = shift.get(
+                    "shiftName",
+                    ""
                 )
 
-                st.divider()
-
-    except Exception as e:
-
-        st.error(
-            f"Hiba történt: {e}"
-        )
-
- # ---------------------------------
-# RAKODÁSI INFÓK
-# ---------------------------------
-
-elif page == "📦 Rakodási infók":
-
-    st_autorefresh(
-        interval=30000,
-        key="loading_dashboard_refresh"
-    )
-
-    st.title("📦 Rakodási infók")
-
-    try:
-
-        data = load_loading_data()
-
-        routes = data.get(
-            "routes",
-            []
-            )
-
-        # -------------------------
-        # RAKODÓ FUTÁROK
-        # -------------------------
-
-        st.subheader(
-            "🚚 Rakodó futárok"
-        )
-
-        loading_rows = []
-
-        for r in routes:
-
-            # ---------------------------------
-            # Csak ténylegesen rakodó futárok
-            # ---------------------------------
-
-            if not r.get(
-                "platform_section_mark"
-            ):
-                continue
-
-            if (
-                len(
-                    r.get(
-                        "dry_carriage_and_parking",
-                        []
+                shift_start = hu_time(
+                    shift.get(
+                        "shiftStart"
                     )
-                ) == 0
-                and
-                len(
-                    r.get(
-                        "cooled_carriage_and_parking",
-                        []
-                    )
-                ) == 0
-            ):
-                continue
-
-            if r.get(
-                "minutes_to_departure",
-                0
-            ) <= 0:
-                continue
-
-            dry = "\n".join([
-
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-
-                for x in r.get(
-                    "dry_carriage_and_parking",
-                    []
                 )
 
-            ])
-
-            cooled = "\n".join([
-
-                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
-
-                for x in r.get(
-                    "cooled_carriage_and_parking",
-                    []
+                shift_end = hu_time(
+                    shift.get(
+                        "shiftEnd"
+                    )
                 )
 
-            ])
-
-            loading_rows.append({
-
-                "Platform":
-                r.get(
-                    "platform_section_mark",
-                    "-"
-                ),
-
-                "🌡️":
-                str(
-                    r.get(
-                        "temperature",
-                        {}
-                    ).get(
-                        "temperature",
-                        "-"
+                available_since = hu_time(
+                    shift.get(
+                        "availableForShiftSince"
                     )
-                ) + "°C",
+                )
+
+            route_status = "Nem dolgozik"
+
+            wait_minutes = ""
+
+            route_id = ""
+            courier_registered = ""
+            assigned_at = ""
+            planned_departure = ""
+            real_departure = ""
+            planned_return = ""
+            real_return = ""
+
+            if routes:
+
+                route = routes[0]
+
+                route_status = "Kapott túrát"
+
+                route_id = route.get(
+                    "routeId"
+                )
+
+                courier_registered = hu_time(
+                    route.get(
+                        "courierRegisteredAt"
+                    )
+                )
+
+                assigned_at = hu_time(
+                    route.get(
+                        "assignedAt"
+                    )
+                )
+
+                planned_departure = hu_time(
+                    route.get(
+                        "plannedDeparture"
+                    )
+                )
+
+                real_departure = hu_time(
+                    route.get(
+                        "realDeparture"
+                    )
+                )
+
+                planned_return = hu_time(
+                    route.get(
+                        "plannedReturn"
+                    )
+                )
+
+                real_return = hu_time(
+                    route.get(
+                        "realReturn"
+                    )
+                )
+
+            else:
+
+                available_raw = None
+
+                if shifts:
+
+                    available_raw = shifts[0].get(
+                        "availableForShiftSince"
+                    )
+
+                if available_raw:
+
+                    try:
+
+                        available_dt = datetime.fromisoformat(
+                            available_raw.replace(
+                                "Z",
+                                "+00:00"
+                            )
+                        )
+
+                        wait_minutes = round(
+                            (
+                                datetime.now(
+                                    available_dt.tzinfo
+                                )
+                                -
+                                available_dt
+                            ).total_seconds()
+                            / 60
+                        )
+
+                        route_status = (
+                            f"Vár túrára ({wait_minutes} perc)"
+                        )
+
+                    except:
+                        pass
+
+            rows.append({
+
+                "Név":
+                courier_name,
+
+                "Courier ID":
+                courier_id,
+
+                "Depó":
+                warehouse,
+
+                "Műszak":
+                shift_name,
+
+                "Műszak kezdete":
+                shift_start,
+
+                "Műszak vége":
+                shift_end,
+
+                "Elérhető":
+                available_since,
+
+                "Státusz":
+                route_status,
 
                 "Route ID":
-                r.get(
-                    "route_id",
-                    ""
-                ),
+                route_id,
 
-                "Futár":
-                r.get(
-                    "courier_name",
-                    ""
-                ),
+                "Sorba állt":
+                courier_registered,
 
-                "📦":
-                r.get(
-                    "orders_in_route",
-                    0
-                ),
+                "Túrát kapott":
+                assigned_at,
 
-                "Nem szkennelt zsák":
-                r.get(
-                    "not_scanned_bag_eans",
-                    0
-                ),
+                "Tervezett indulás":
+                planned_departure,
 
-                "Nem szkennelt rendelés":
-                r.get(
-                    "not_scanned_orders",
-                    0
-                ),
+                "Tényleges indulás":
+                real_departure,
 
-                "Száraz kocsik":
-                dry,
+                "Tervezett vissza":
+                planned_return,
 
-                "Hűtött kocsik":
-                cooled,
-
-                "Indulásig":
-                f"{r.get('minutes_to_departure', 0)} min",
-
-                "Rakodásig":
-                f"{r.get('minutes_to_loading', 0)} min",
-
-                "Alert":
-                r.get(
-                    "alert_level",
-                    ""
-                )
+                "Tényleges vissza":
+                real_return
 
             })
-        if loading_rows:
 
-            df = pd.DataFrame(
-                loading_rows
-            )
-
-            st.dataframe(
-                df,
-                use_container_width=True,
-                height=450
-            )
-
-        else:
-
-            st.info(
-                "Nincs rakodó futár."
-            )
-
-        # -------------------------
-        # WAITING - NOT YET ASSIGNED
-        # -------------------------
-
-        st.divider()
-
-        st.subheader(
-            "⏳ Waiting – not yet assigned"
+        df = pd.DataFrame(
+            rows
         )
 
-        waiting_rows = []
-
-        for courier in data.get(
-            "couriers_without_route",
-            []
-        ):
-
-            waiting_rows.append({
-
-                "Futár":
-                courier.get(
-                    "courier_name",
-                    ""
-                ),
-
-                "🌡️ Hőmérséklet":
-                courier.get(
-                    "temperature",
-                    {}
-                ).get(
-                    "temperature",
-                    "-"
-                )
-
-            })
-
-        if waiting_rows:
-
-            st.dataframe(
-                pd.DataFrame(
-                    waiting_rows
-                ),
-                use_container_width=True,
-                height=300
-            )
-
-        else:
-
-            st.success(
-                "Nincs várakozó futár."
-            )
+        st.dataframe(
+            df,
+            use_container_width=True,
+            height=700
+        )
 
         st.caption(
             "🔄 Automatikus frissítés: 30 mp"
