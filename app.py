@@ -1039,6 +1039,22 @@ elif page == "📦 Rakodási infók":
 
         for r in routes:
 
+            dry = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "dry_carriage_and_parking",
+                    []
+                )
+            ])
+
+            cooled = "\n".join([
+                f"{x['trolley_ean']} → {x['parking_spot_ean']}"
+                for x in r.get(
+                    "cooled_carriage_and_parking",
+                    []
+                )
+            ])
+
             loading_rows.append({
 
                 "Platform":
@@ -1049,7 +1065,7 @@ elif page == "📦 Rakodási infók":
 
                 "Route ID":
                 r.get(
-                    "id",
+                    "route_id",
                     ""
                 ),
 
@@ -1074,16 +1090,34 @@ elif page == "📦 Rakodási infók":
                     0
                 ),
 
+                "Nem szkennelt zsák":
+                r.get(
+                    "not_scanned_bag_eans",
+                    0
+                ),
+
+                "Nem szkennelt rendelés":
+                r.get(
+                    "not_scanned_orders",
+                    0
+                ),
+
+                "Száraz kocsik":
+                dry,
+
+                "Hűtött kocsik":
+                cooled,
+
                 "Indulásig":
                 r.get(
                     "minutes_to_departure",
-                    "-"
+                    0
                 ),
 
                 "Rakodásig":
                 r.get(
                     "minutes_to_loading",
-                    "-"
+                    0
                 ),
 
                 "Alert":
