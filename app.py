@@ -7,6 +7,7 @@ from datetime import datetime
 from dsp_common_kw import hu_time
 
 from streamlit_autorefresh import st_autorefresh
+import traceback
 
 
 USERS = {
@@ -535,7 +536,9 @@ elif page == "👥 Mai futárok":
                         matched_route.get(
                             "courierRegisteredAt"
                         )
-                        or
+                    )
+
+                    assigned_at = hu_time(
                         matched_route.get(
                             "assignedAt"
                         )
@@ -685,11 +688,15 @@ elif page == "👥 Mai futárok":
             "🔄 Automatikus frissítés: 30 mp"
         )
 
-    except Exception as e:
+        except Exception as e:
 
-        st.error(
-            f"Hiba történt: {e}"
-        )
+            st.error(
+                f"Hiba történt: {e}"
+            )
+
+            st.code(
+                traceback.format_exc()
+            )
 
 elif page == "🗺️ Aktuális útvonal":
 
