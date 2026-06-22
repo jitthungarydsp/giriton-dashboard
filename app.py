@@ -5,7 +5,7 @@ import requests
 import pydeck as pdk
 from datetime import datetime
 
-from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 
 USERS = {
@@ -1015,6 +1015,11 @@ if st.button("🔄 Sheet újratöltése"):
 # ---------------------------------
 
 elif page == "📦 Rakodási infók":
+
+    st_autorefresh(
+        interval=30000,
+        key="loading_dashboard_refresh"
+    )
 
     st.title("📦 Rakodási infók")
 
