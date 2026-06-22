@@ -541,12 +541,6 @@ elif page == "👥 Mai futárok":
                         )
                     )
 
-                    assigned_at = hu_time(
-                        matched_route.get(
-                            "assignedAt"
-                        )
-                    )
-
                     planned_departure = hu_time(
                         matched_route.get(
                             "plannedDeparture"
