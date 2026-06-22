@@ -325,6 +325,7 @@ if page == "🔍 Kereső":
 elif page == "👥 Mai futárok":
 
     from streamlit_autorefresh import st_autorefresh
+    from datetime import datetime
 
     st_autorefresh(
         interval=30000,
@@ -338,15 +339,122 @@ elif page == "👥 Mai futárok":
         data = load_attendance()
 
         rows = []
+
         for courier in data.get(
             "couriers",
             []
         ):
 
+            routes = courier.get(
+                "routes",
+                []
+            )
+
             for shift in courier.get(
                 "shifts",
                 []
             ):
+
+                route_status = "Nem dolgozik"
+
+                route_id = ""
+                courier_registered = ""
+                assigned_at = ""
+                planned_departure = ""
+                real_departure = ""
+                planned_return = ""
+                real_return = ""
+
+                available_since = hu_time(
+                    shift.get(
+                        "availableForShiftSince"
+                    )
+                )
+
+                # -------------------------
+                # Route adatok
+                # -------------------------
+
+                if routes:
+
+                    route = routes[0]
+
+                    route_status = "Kapott túrát"
+
+                    route_id = route.get(
+                        "routeId"
+                    )
+
+                    courier_registered = hu_time(
+                        route.get(
+                            "courierRegisteredAt"
+                        )
+                    )
+
+                    assigned_at = hu_time(
+                        route.get(
+                            "assignedAt"
+                        )
+                    )
+
+                    planned_departure = hu_time(
+                        route.get(
+                            "plannedDeparture"
+                        )
+                    )
+
+                    real_departure = hu_time(
+                        route.get(
+                            "realDeparture"
+                        )
+                    )
+
+                    planned_return = hu_time(
+                        route.get(
+                            "plannedReturn"
+                        )
+                    )
+
+                    real_return = hu_time(
+                        route.get(
+                            "realReturn"
+                        )
+                    )
+
+                else:
+
+                    available_raw = shift.get(
+                        "availableForShiftSince"
+                    )
+
+                    if available_raw:
+
+                        try:
+
+                            available_dt = datetime.fromisoformat(
+                                available_raw.replace(
+                                    "Z",
+                                    "+00:00"
+                                )
+                            )
+
+                            wait_minutes = round(
+                                (
+                                    datetime.now(
+                                        available_dt.tzinfo
+                                    )
+                                    -
+                                    available_dt
+                                ).total_seconds()
+                                / 60
+                            )
+
+                            route_status = (
+                                f"Vár túrára ({wait_minutes} perc)"
+                            )
+
+                        except:
+                            pass
 
                 rows.append({
 
@@ -385,172 +493,51 @@ elif page == "👥 Mai futárok":
                     ),
 
                     "Elérhető":
-                    hu_time(
-                        shift.get(
-                            "availableForShiftSince"
-                        )
-                    )
+                    available_since,
+
+                    "Státusz":
+                    route_status,
+
+                    "Route ID":
+                    route_id,
+
+                    "Sorba állt":
+                    courier_registered,
+
+                    "Túrát kapott":
+                    assigned_at,
+
+                    "Tervezett indulás":
+                    planned_departure,
+
+                    "Tényleges indulás":
+                    real_departure,
+
+                    "Tervezett vissza":
+                    planned_return,
+
+                    "Tényleges vissza":
+                    real_return
 
                 })
-
-            route_status = "Nem dolgozik"
-
-            wait_minutes = ""
-
-            route_id = ""
-            courier_registered = ""
-            assigned_at = ""
-            planned_departure = ""
-            real_departure = ""
-            planned_return = ""
-            real_return = ""
-
-            if routes:
-
-                route = routes[0]
-
-                route_status = "Kapott túrát"
-
-                route_id = route.get(
-                    "routeId"
-                )
-
-                courier_registered = hu_time(
-                    route.get(
-                        "courierRegisteredAt"
-                    )
-                )
-
-                assigned_at = hu_time(
-                    route.get(
-                        "assignedAt"
-                    )
-                )
-
-                planned_departure = hu_time(
-                    route.get(
-                        "plannedDeparture"
-                    )
-                )
-
-                real_departure = hu_time(
-                    route.get(
-                        "realDeparture"
-                    )
-                )
-
-                planned_return = hu_time(
-                    route.get(
-                        "plannedReturn"
-                    )
-                )
-
-                real_return = hu_time(
-                    route.get(
-                        "realReturn"
-                    )
-                )
-
-            else:
-
-                available_raw = None
-
-                if shifts:
-
-                    available_raw = shifts[0].get(
-                        "availableForShiftSince"
-                    )
-
-                if available_raw:
-
-                    try:
-
-                        available_dt = datetime.fromisoformat(
-                            available_raw.replace(
-                                "Z",
-                                "+00:00"
-                            )
-                        )
-
-                        wait_minutes = round(
-                            (
-                                datetime.now(
-                                    available_dt.tzinfo
-                                )
-                                -
-                                available_dt
-                            ).total_seconds()
-                            / 60
-                        )
-
-                        route_status = (
-                            f"Vár túrára ({wait_minutes} perc)"
-                        )
-
-                    except:
-                        pass
-
-            rows.append({
-
-                "Név":
-                courier_name,
-
-                "Courier ID":
-                courier_id,
-
-                "Depó":
-                warehouse,
-
-                "Műszak":
-                shift_name,
-
-                "Műszak kezdete":
-                shift_start,
-
-                "Műszak vége":
-                shift_end,
-
-                "Elérhető":
-                available_since,
-
-                "Státusz":
-                route_status,
-
-                "Route ID":
-                route_id,
-
-                "Sorba állt":
-                courier_registered,
-
-                "Túrát kapott":
-                assigned_at,
-
-                "Tervezett indulás":
-                planned_departure,
-
-                "Tényleges indulás":
-                real_departure,
-
-                "Tervezett vissza":
-                planned_return,
-
-                "Tényleges vissza":
-                real_return
-
-            })
 
         df = pd.DataFrame(
             rows
         )
 
         df = df.sort_values(
-            by="Név"
+            by=[
+                "Név",
+                "Műszak kezdete"
+            ]
+        ).reset_index(
+            drop=True
         )
 
         st.dataframe(
             df,
             use_container_width=True,
-            height=700
+            height=750
         )
 
         st.caption(
