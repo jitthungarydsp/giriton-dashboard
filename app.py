@@ -363,9 +363,10 @@ elif page == "👥 Mai futárok":
                 route_status = "Nem dolgozik"
                 # -------------------------
                 # Riasztás számítás
+                # Csak az első releváns műszaknál
                 # -------------------------
 
-                alert = "⚫"
+                alert = ""
 
                 shift_start_raw = shift.get(
                     "shiftStart"
@@ -386,119 +387,73 @@ elif page == "👥 Mai futárok":
                             shift_dt.tzinfo
                         )
 
-                        if available_raw:
+                        # Mennyi idő van még a műszak kezdetéig
+                        minutes_until_shift = (
+                            shift_dt -
+                            now_dt
+                        ).total_seconds() / 60
 
-                            available_dt = datetime.fromisoformat(
-                                available_raw.replace(
-                                    "Z",
-                                    "+00:00"
-                                )
-                            )
-
-                            minutes_before = (
-                                shift_dt -
-                                available_dt
-                            ).total_seconds() / 60
-
-                            if minutes_before >= 40:
-
-                                alert = "🟢"
-
-                            elif minutes_before >= 25:
-
-                                alert = "🟡"
-
-                            else:
-
-                                alert = "🔴"
-
-                        else:
-
-                            diff = (
-                                now_dt -
-                                shift_dt
-                            ).total_seconds() / 60
-
-                            if diff > 0:
-
-                                alert = (
-                                    f"⚫ +{int(diff)} perc"
-                                )
-
-                            else:
-
-                                alert = "⚫"
-
-                    except:
-
-                        pass
-                route_id = ""
-                courier_registered = ""
-                assigned_at = ""
-                planned_departure = ""
-                real_departure = ""
-                planned_return = ""
-                real_return = ""
-
-                matched_route = None
-
-                if available_raw and routes:
-
-                    try:
-
-                        available_dt = datetime.fromisoformat(
-                            available_raw.replace(
-                                "Z",
-                                "+00:00"
-                            )
+                        # Csak az első műszak kapjon riasztást
+                        first_shift = (
+                            shift ==
+                            courier.get(
+                                "shifts",
+                                []
+                            )[0]
                         )
 
-                        closest_diff = None
+                        if first_shift:
 
-                        for route in routes:
+                            if available_raw:
 
-                            if route.get(
-                                "routeId"
-                            ) in used_routes:
-                                continue
-
-                            reg = route.get(
-                                "courierRegisteredAt"
-                            )
-
-                            if not reg:
-
-                                reg = route.get(
-                                    "assignedAt"
+                                available_dt = datetime.fromisoformat(
+                                    available_raw.replace(
+                                        "Z",
+                                        "+00:00"
+                                    )
                                 )
 
-                            if not reg:
-                                continue
-
-                            reg_dt = datetime.fromisoformat(
-                                reg.replace(
-                                    "Z",
-                                    "+00:00"
-                                )
-                            )
-
-                            diff = abs(
-                                (
-                                    reg_dt -
+                                minutes_before = (
+                                    shift_dt -
                                     available_dt
-                                ).total_seconds()
-                            )
+                                ).total_seconds() / 60
 
-                            if (
-                                closest_diff is None
-                                or
-                                diff < closest_diff
-                            ):
+                                if minutes_before > 50:
 
-                                closest_diff = diff
-                                matched_route = route
+                                    alert = "⚪"
+
+                                elif minutes_before >= 40:
+
+                                    alert = "🟢"
+
+                                elif minutes_before >= 25:
+
+                                    alert = "🟡"
+
+                                else:
+
+                                    alert = "🔴"
+
+                            else:
+
+                                if minutes_until_shift < 0:
+
+                                    alert = (
+                                        f"⚫ +{abs(int(minutes_until_shift))} perc"
+                                    )
+
+                                elif minutes_until_shift <= 50:
+
+                                    alert = (
+                                        f"⚫ {int(minutes_until_shift)} perc"
+                                    )
+
+                                else:
+
+                                    alert = "⚪"
 
                     except:
+
                         pass
 
                 # -------------------------
@@ -651,18 +606,15 @@ elif page == "👥 Mai futárok":
 
                 })
 
-        df = pd.DataFrame(
-            rows
-        )
-
         df = df.sort_values(
-            by=[
-                "Név",
-                "Műszak kezdete"
-            ]
-        ).reset_index(
-            drop=True
-        )
+        by=[
+            "Riasztás",
+            "Név",
+            "Műszak kezdete"
+        ]
+    ).reset_index(
+        drop=True
+    )
 
         st.dataframe(
             df,
