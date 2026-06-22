@@ -688,15 +688,15 @@ elif page == "👥 Mai futárok":
             "🔄 Automatikus frissítés: 30 mp"
         )
 
-        except Exception as e:
+    except Exception as e:
 
-            st.error(
-                f"Hiba történt: {e}"
-            )
+        st.error(
+            f"Hiba történt: {e}"
+        )
 
-            st.code(
-                traceback.format_exc()
-            )
+        st.code(
+            traceback.format_exc()
+        )
 
 elif page == "🗺️ Aktuális útvonal":
 
