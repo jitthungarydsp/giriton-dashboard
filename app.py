@@ -350,6 +350,8 @@ elif page == "👥 Mai futárok":
                 []
             )
 
+            used_routes = set()
+
             for shift in courier.get(
                 "shifts",
                 []
@@ -379,26 +381,70 @@ elif page == "👥 Mai futárok":
                 # Route párosítás
                 # -------------------------
 
-                if available_raw:
+                if available_raw and routes:
 
-                    for route in routes:
+                    try:
 
-                        if (
-                            route.get(
+                        available_dt = datetime.fromisoformat(
+                            available_raw.replace(
+                                "Z",
+                                "+00:00"
+                            )
+                        )
+
+                        closest_diff = None
+
+                        for route in routes:
+
+                            if route.get(
+                                "routeId"
+                            ) in used_routes:
+                                continue
+
+                            reg = route.get(
                                 "courierRegisteredAt"
                             )
-                            ==
-                            available_raw
-                        ):
 
-                            matched_route = route
-                            break
+                            if not reg:
+                                continue
+
+                            reg_dt = datetime.fromisoformat(
+                                reg.replace(
+                                    "Z",
+                                    "+00:00"
+                                )
+                            )
+
+                            diff = abs(
+                                (
+                                    reg_dt -
+                                    available_dt
+                                ).total_seconds()
+                            )
+
+                            if (
+                                closest_diff is None
+                                or
+                                diff < closest_diff
+                            ):
+
+                                closest_diff = diff
+                                matched_route = route
+
+                    except:
+                        pass
 
                 # -------------------------
                 # Talált route
                 # -------------------------
 
                 if matched_route:
+
+                    used_routes.add(
+                        matched_route.get(
+                            "routeId"
+                        )
+                    )
 
                     route_status = "Kapott túrát"
 
@@ -441,10 +487,6 @@ elif page == "👥 Mai futárok":
                             "realReturn"
                         )
                     )
-
-                # -------------------------
-                # Vár túrára
-                # -------------------------
 
                 elif available_raw:
 
