@@ -365,17 +365,19 @@ elif page == "👥 Mai futárok":
                 planned_return = ""
                 real_return = ""
 
+                available_raw = shift.get(
+                    "availableForShiftSince"
+                )
+
                 available_since = hu_time(
-                    shift.get(
-                        "availableForShiftSince"
-                    )
+                    available_raw
                 )
 
                 # -------------------------
-                # Route adatok
+                # Route csak aktív műszakhoz
                 # -------------------------
 
-                if routes:
+                if routes and available_raw:
 
                     route = routes[0]
 
@@ -421,40 +423,34 @@ elif page == "👥 Mai futárok":
                         )
                     )
 
-                else:
+                elif available_raw:
 
-                    available_raw = shift.get(
-                        "availableForShiftSince"
-                    )
+                    try:
 
-                    if available_raw:
+                        available_dt = datetime.fromisoformat(
+                            available_raw.replace(
+                                "Z",
+                                "+00:00"
+                            )
+                        )
 
-                        try:
-
-                            available_dt = datetime.fromisoformat(
-                                available_raw.replace(
-                                    "Z",
-                                    "+00:00"
+                        wait_minutes = round(
+                            (
+                                datetime.now(
+                                    available_dt.tzinfo
                                 )
-                            )
+                                -
+                                available_dt
+                            ).total_seconds()
+                            / 60
+                        )
 
-                            wait_minutes = round(
-                                (
-                                    datetime.now(
-                                        available_dt.tzinfo
-                                    )
-                                    -
-                                    available_dt
-                                ).total_seconds()
-                                / 60
-                            )
+                        route_status = (
+                            f"Vár túrára ({wait_minutes} perc)"
+                        )
 
-                            route_status = (
-                                f"Vár túrára ({wait_minutes} perc)"
-                            )
-
-                        except:
-                            pass
+                    except:
+                        pass
 
                 rows.append({
 
