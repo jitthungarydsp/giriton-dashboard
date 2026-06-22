@@ -548,6 +548,10 @@ elif page == "👥 Mai futárok":
             rows
         )
 
+        df = df.sort_values(
+            by="Név"
+        )
+
         st.dataframe(
             df,
             use_container_width=True,
