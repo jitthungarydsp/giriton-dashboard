@@ -526,47 +526,47 @@ elif page == "👥 Mai futárok":
                             )
                         )
 
-                    route_status = "Kapott túrát"
+                        route_status = "Kapott túrát"
 
-                    route_id = matched_route.get(
-                        "routeId"
-                    )
-
-                    courier_registered = hu_time(
-                        matched_route.get(
-                            "courierRegisteredAt"
+                        route_id = matched_route.get(
+                            "routeId"
                         )
-                    )
 
-                    assigned_at = hu_time(
-                        matched_route.get(
-                            "assignedAt"
+                        courier_registered = hu_time(
+                            matched_route.get(
+                                "courierRegisteredAt"
+                            )
                         )
-                    )
 
-                    planned_departure = hu_time(
-                        matched_route.get(
-                            "plannedDeparture"
+                        assigned_at = hu_time(
+                            matched_route.get(
+                                "assignedAt"
+                            )
                         )
-                    )
 
-                    real_departure = hu_time(
-                        matched_route.get(
-                            "realDeparture"
+                        planned_departure = hu_time(
+                            matched_route.get(
+                                "plannedDeparture"
+                            )
                         )
-                    )
 
-                    planned_return = hu_time(
-                        matched_route.get(
-                            "plannedReturn"
+                        real_departure = hu_time(
+                            matched_route.get(
+                                "realDeparture"
+                            )
                         )
-                    )
 
-                    real_return = hu_time(
-                        matched_route.get(
-                            "realReturn"
+                        planned_return = hu_time(
+                            matched_route.get(
+                                "plannedReturn"
+                            )
                         )
-                    )
+
+                        real_return = hu_time(
+                            matched_route.get(
+                                "realReturn"
+                            )
+                        )
 
                 elif available_raw:
 
