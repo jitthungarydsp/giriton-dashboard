@@ -338,70 +338,60 @@ elif page == "👥 Mai futárok":
         data = load_attendance()
 
         rows = []
-
         for courier in data.get(
             "couriers",
             []
-            
-        ):
-        for shift in courier.get(
-            "shifts",
-            []
         ):
 
-            courier_id = courier.get(
-                "courierId"
-            )
-
-            courier_name = courier.get(
-                "courierName"
-            )
-
-            warehouse = courier.get(
-                "warehouseName"
-            )
-
-            shifts = courier.get(
+            for shift in courier.get(
                 "shifts",
                 []
-            )
+            ):
 
-            routes = courier.get(
-                "routes",
-                []
-            )
+                rows.append({
 
-            shift_name = ""
-            shift_start = ""
-            shift_end = ""
-            available_since = ""
+                    "Név":
+                    courier.get(
+                        "courierName"
+                    ),
 
-            if shifts:
+                    "Courier ID":
+                    courier.get(
+                        "courierId"
+                    ),
 
-                shift = shifts[0]
+                    "Depó":
+                    courier.get(
+                        "warehouseName"
+                    ),
 
-                shift_name = shift.get(
-                    "shiftName",
-                    ""
-                )
-
-                shift_start = hu_time(
+                    "Műszak":
                     shift.get(
-                        "shiftStart"
-                    )
-                )
+                        "shiftName"
+                    ),
 
-                shift_end = hu_time(
-                    shift.get(
-                        "shiftEnd"
-                    )
-                )
+                    "Műszak kezdete":
+                    hu_time(
+                        shift.get(
+                            "shiftStart"
+                        )
+                    ),
 
-                available_since = hu_time(
-                    shift.get(
-                        "availableForShiftSince"
+                    "Műszak vége":
+                    hu_time(
+                        shift.get(
+                            "shiftEnd"
+                        )
+                    ),
+
+                    "Elérhető":
+                    hu_time(
+                        shift.get(
+                            "availableForShiftSince"
+                        )
                     )
-                )
+
+                })
 
             route_status = "Nem dolgozik"
 
