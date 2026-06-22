@@ -70,9 +70,7 @@ if not st.session_state.logged_in:
 @st.cache_data(ttl=30)
 def load_attendance():
 
-    today = datetime.now().strftime(
-        "%Y-%m-%d"
-    )
+    today = datetime.now().strftime("%Y-%m-%d")
 
     url = (
         f"https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
@@ -80,13 +78,12 @@ def load_attendance():
         f"?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
     )
 
-    response = requests.get(
+    return requests.get(
         url,
         timeout=30
-    )
+    ).json()
 
-    return response.json()
-################################################################################################################
+
 @st.cache_data(ttl=30)
 def load_driver_details(driver_id):
 
@@ -100,12 +97,10 @@ def load_driver_details(driver_id):
         f"?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
     )
 
-    response = requests.get(
+    return requests.get(
         url,
         timeout=30
-    )
-
-    return response.json()
+    ).json()
 @st.cache_data(ttl=30)
 def load_loading_data():
 
@@ -612,3 +607,228 @@ elif page == "👥 Mai futárok":
         st.error(
             f"Hiba történt: {e}"
         )
+
+elif page == "🗺️ Aktuális útvonal":
+
+    from streamlit_autorefresh import st_autorefresh
+
+    st_autorefresh(
+        interval=30000,
+        key="route_refresh"
+    )
+
+    st.title(
+        "🗺️ Aktuális útvonal"
+    )
+
+    attendance = load_attendance()
+
+    active_couriers = []
+
+    for courier in attendance.get(
+        "couriers",
+        []
+    ):
+
+        if len(
+            courier.get(
+                "routes",
+                []
+            )
+        ) > 0:
+
+            active_couriers.append({
+
+                "id":
+                courier.get(
+                    "courierId"
+                ),
+
+                "name":
+                courier.get(
+                    "courierName"
+                )
+
+            })
+
+    if not active_couriers:
+
+        st.warning(
+            "Nincs aktív futár."
+        )
+
+    else:
+
+        selected = st.selectbox(
+
+            "🚚 Futár",
+
+            options=active_couriers,
+
+            format_func=lambda x:
+            f"{x['name']} ({x['id']})"
+
+        )
+
+        driver_data = load_driver_details(
+            selected["id"]
+        )
+
+        routes = driver_data.get(
+            "routes",
+            []
+        )
+
+        routes = sorted(
+
+            routes,
+
+            key=lambda r:
+            r.get(
+                "assignedAt"
+            ) or "",
+
+            reverse=True
+
+        )
+
+        for route in routes:
+
+            delayed = route.get(
+                "numDelayedOrdersEstimate",
+                0
+            )
+
+            if delayed <= 0:
+
+                status = "🟢"
+
+            elif delayed <= 5:
+
+                status = "🟡"
+
+            else:
+
+                status = "🔴"
+
+            with st.expander(
+
+                f"{status} Route {route.get('id')}"
+
+            ):
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                c1.metric(
+                    "Összes rendelés",
+                    route.get(
+                        "numTotalOrders",
+                        0
+                    )
+                )
+
+                c2.metric(
+                    "Kiszállított",
+                    route.get(
+                        "numDeliveredOrders",
+                        0
+                    )
+                )
+
+                c3.metric(
+                    "Késő",
+                    route.get(
+                        "numDelayedOrdersEstimate",
+                        0
+                    )
+                )
+
+                c4.metric(
+                    "Route ID",
+                    route.get(
+                        "id",
+                        ""
+                    )
+                )
+
+                st.markdown(
+                    f"""
+**Sorba állt:** {hu_time(route.get('courierRegisteredAt'))}
+
+**Kiosztva:** {hu_time(route.get('assignedAt'))}
+
+**Rakodás:** {hu_time(route.get('loadingTime'))}
+
+**Tervezett indulás:** {hu_time(route.get('plannedDeparture'))}
+
+**Valós indulás:** {hu_time(route.get('realDeparture'))}
+
+**Tervezett vissza:** {hu_time(route.get('plannedReturn'))}
+
+**Valós vissza:** {hu_time(route.get('realReturn'))}
+"""
+                )
+
+                st.divider()
+
+                checkpoint_rows = []
+
+                for cp in route.get(
+                    "checkpoints",
+                    []
+                ):
+
+                    checkpoint_rows.append({
+
+                        "Poz":
+                        cp.get(
+                            "position"
+                        ),
+
+                        "Cím":
+                        cp.get(
+                            "address"
+                        ),
+
+                        "Időablak":
+                        (
+                            f"{hu_time(cp.get('deliverSince'))}"
+                            " - "
+                            f"{hu_time(cp.get('deliverTill'))}"
+                        ),
+
+                        "Tervezett":
+                        hu_time(
+                            cp.get(
+                                "plannedArrivalTime"
+                            )
+                        ),
+
+                        "Becsült":
+                        hu_time(
+                            cp.get(
+                                "estimatedArrivalTime"
+                            )
+                        ),
+
+                        "Valós":
+                        hu_time(
+                            cp.get(
+                                "realArrivalTime"
+                            )
+                        )
+
+                    })
+
+                if checkpoint_rows:
+
+                    st.dataframe(
+
+                        pd.DataFrame(
+                            checkpoint_rows
+                        ),
+
+                        use_container_width=True,
+                        height=500
+
+                    )
