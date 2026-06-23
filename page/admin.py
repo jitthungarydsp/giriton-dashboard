@@ -1,7 +1,7 @@
-from resource.users import (
-    load_users,
-    create_user,
-    reset_password,
-    update_role,
-    toggle_active
-)
+from resource.users import load_users
+
+def show_admin_page():
+
+    st.write("Teszt")
+
+    st.write(load_users())
