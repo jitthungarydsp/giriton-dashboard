@@ -8,7 +8,7 @@ SCOPES = [
 ]
 
 creds = Credentials.from_service_account_file(
-    r"C:\Giriton\girition-a89bab5e91bc.json",
+    r"C:\Giriton\giriton-dashboard\girition-a89bab5e91bc.json",
     scopes=SCOPES
 )
 
