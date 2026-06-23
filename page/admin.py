@@ -1,6 +1,7 @@
-import pandas as pd
-import streamlit as st
-
-def show_admin_page():
-
-    st.title("👑 Admin működik")
+from resource.users import (
+    load_users,
+    create_user,
+    reset_password,
+    update_role,
+    toggle_active
+)
