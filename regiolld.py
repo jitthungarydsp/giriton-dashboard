@@ -68,6 +68,7 @@ if not st.session_state.logged_in:
 
     st.stop()
 @st.cache_data(ttl=30)
+def load_attendance():_data(ttl=30)
 def load_loading_info():
 
     url = (
@@ -84,6 +85,7 @@ def load_loading_info():
 
     return response.json()
 @st.cache_data(ttl=30)
+def load_attendance():_data(ttl=30)
 def load_attendance():
 
     today = datetime.now().strftime("%Y-%m-%d")
@@ -101,6 +103,7 @@ def load_attendance():
 
 
 @st.cache_data(ttl=30)
+def load_attendance():_data(ttl=30)
 def load_driver_details(driver_id):
 
     today = datetime.now().strftime(
@@ -118,6 +121,7 @@ def load_driver_details(driver_id):
         timeout=30
     ).json()
 @st.cache_data(ttl=30)
+def load_attendance():_data(ttl=30)
 def load_loading_data():
 
     url = (
@@ -220,7 +224,8 @@ if not st.session_state.logged_in:
 # Segéd
 # ---------------------------------
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
+def load_attendance():_data(ttl=60)
 def load_sheet(sheet_name):
 
     ws = spreadsheet.worksheet(sheet_name)
@@ -229,6 +234,7 @@ def load_sheet(sheet_name):
 
     return pd.DataFrame(data)
 @st.cache_data(ttl=30)
+def load_attendance():_data(ttl=30)
 def load_live_drivers():
 
     url = (

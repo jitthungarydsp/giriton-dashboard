@@ -153,3 +153,39 @@ def toggle_active(
     save_users(
         data
     )
+    
+def update_trainer(
+    username,
+    trainer
+):
+
+    data = load_users()
+
+    for user in data["users"]:
+
+        if user["username"] == username:
+
+            user["trainer"] = trainer
+
+            break
+
+    save_users(data)
+
+
+def delete_user(
+    username
+):
+
+    data = load_users()
+
+    data["users"] = [
+
+        u
+
+        for u in data["users"]
+
+        if u["username"] != username
+
+    ]
+
+    save_users(data)
