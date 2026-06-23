@@ -12,13 +12,16 @@ from resource.users import (
 
 def show_admin_page():
 
-    user = st.session_state.user
+    if "user" not in st.session_state:
 
-    if (
-        user["role"]
-        !=
-        "admin"
-    ):
+        st.session_state["user"] = {
+            "username": "admin",
+            "role": "admin"
+        }
+
+    user = st.session_state["user"]
+
+    if user["role"] != "admin":
 
         st.error(
             "Nincs jogosultságod!"
