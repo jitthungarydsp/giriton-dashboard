@@ -1,6 +1,6 @@
 from openpyxl import Workbook, load_workbook
 from os.path import exists
-
+from dsp_common_kw import hu_time
 def write_shift(file_name, datum, kezdes, vege, raktar, foglaltsag, nev):
 
     if not exists(file_name):

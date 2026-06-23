@@ -1,7 +1,9 @@
 import requests
 import gspread
-
+from dsp_common_kw import hu_time
 from google.oauth2.service_account import Credentials
+from datetime import datetime
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -36,25 +38,29 @@ def load_orders():
     drivers = ws_drivers.get_all_values()
 
     rows = [[
-        "courierId",
-        "date",
-        "warehouseName",
-        "routeId",
-        "id",
-        "courierRegisteredAt",
-        "createdAt",
-        "assignedAt",
-        "loadingTime",
-        "plannedDeparture",
-        "realDeparture",
-        "plannedReturn",
-        "realReturn",
-        "status",
-        "numTotalOrders",
-        "numDeliveredOrders",
-        "numDelayedOrdersSlot",
-        "numDelayedOrdersPlan",
-        "numDelayedOrdersEstimate"
+    "courierId",
+    "date",
+    "warehouseName",
+    "routeId",
+    "id",
+    "courierRegisteredAt",
+    "createdAt",
+    "assignedAt",
+    "loadingTime",
+    "plannedDeparture",
+    "realDeparture",
+    "plannedReturn",
+    "realReturn",
+    "status",
+    "numTotalOrders",
+    "numDeliveredOrders",
+    "numDelayedOrdersSlot",
+    "numDelayedOrdersPlan",
+    "numDelayedOrdersEstimate",
+
+    "waitForRouteMinutes",
+    "waitForLoadingMinutes",
+    "totalWaitMinutes"
     ]]
 
     for row in drivers[1:]:
@@ -79,6 +85,42 @@ def load_orders():
             warehouse = data.get("warehouseName")
 
             for route in data.get("routes", []):
+                wait_route = ""
+                wait_loading = ""
+                wait_total = ""
+
+                try:
+
+                    registered = datetime.fromisoformat(
+                        route.get("courierRegisteredAt").replace("Z", "+00:00")
+                    )
+
+                    assigned = datetime.fromisoformat(
+                        route.get("assignedAt").replace("Z", "+00:00")
+                    )
+
+                    loading = datetime.fromisoformat(
+                        route.get("loadingTime").replace("Z", "+00:00")
+                    )
+
+                    departure = datetime.fromisoformat(
+                        route.get("realDeparture").replace("Z", "+00:00")
+                    )
+
+                    wait_route = round(
+                        (assigned - registered).total_seconds() / 60
+                    )
+
+                    wait_loading = round(
+                        (loading - assigned).total_seconds() / 60
+                    )
+
+                    wait_total = round(
+                        (departure - registered).total_seconds() / 60
+                    )
+
+                except:
+                    pass
 
                 rows.append([
                     courier_id,
@@ -86,20 +128,23 @@ def load_orders():
                     warehouse,
                     route.get("id"),
                     route.get("id"),
-                    route.get("courierRegisteredAt"),
-                    route.get("createdAt"),
-                    route.get("assignedAt"),
-                    route.get("loadingTime"),
-                    route.get("plannedDeparture"),
-                    route.get("realDeparture"),
-                    route.get("plannedReturn"),
-                    route.get("realReturn"),
+                    hu_time(route.get("courierRegisteredAt")),
+                    hu_time(route.get("createdAt")),
+                    hu_time(route.get("assignedAt")),
+                    hu_time(route.get("loadingTime")),
+                    hu_time(route.get("plannedDeparture")),
+                    hu_time(route.get("realDeparture")),
+                    hu_time(route.get("plannedReturn")),
+                    hu_time(route.get("realReturn")),
                     route.get("status"),
                     route.get("numTotalOrders"),
                     route.get("numDeliveredOrders"),
                     route.get("numDelayedOrdersSlot"),
                     route.get("numDelayedOrdersPlan"),
-                    route.get("numDelayedOrdersEstimate")
+                    route.get("numDelayedOrdersEstimate"),
+                    wait_route,
+                    wait_loading,
+                    wait_total
                 ])
 
         except Exception as e:

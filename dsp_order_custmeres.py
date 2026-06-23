@@ -1,7 +1,8 @@
 import requests
 import gspread
-
+from dsp_common_kw import hu_time
 from google.oauth2.service_account import Credentials
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -106,14 +107,14 @@ def load_order_customers():
                         checkpoint.get("latitude"),
                         checkpoint.get("longitude"),
                         checkpoint.get("address"),
-                        checkpoint.get("deliverSince"),
-                        checkpoint.get("deliverTill"),
-                        checkpoint.get("plannedArrivalTime"),
-                        checkpoint.get("estimatedArrivalTime"),
-                        checkpoint.get("realArrivalTime"),
-                        checkpoint.get("plannedDepartureTime"),
-                        checkpoint.get("estimatedDepartureTime"),
-                        checkpoint.get("realDepartureTime")
+                        hu_time(checkpoint.get("deliverSince")),
+                        hu_time(checkpoint.get("deliverTill")),
+                        hu_time(checkpoint.get("plannedArrivalTime")),
+                        hu_time(checkpoint.get("estimatedArrivalTime")),
+                        hu_time(checkpoint.get("realArrivalTime")),
+                        hu_time(checkpoint.get("plannedDepartureTime")),
+                        hu_time(checkpoint.get("estimatedDepartureTime")),
+                        hu_time(checkpoint.get("realDepartureTime"))
                     ])
 
         except Exception as e:

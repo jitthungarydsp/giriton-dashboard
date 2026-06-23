@@ -1,5 +1,6 @@
 import requests
 import gspread
+from dsp_common_kw import hu_time
 
 from datetime import date, timedelta
 from google.oauth2.service_account import Credentials
@@ -43,6 +44,10 @@ def load_drivers():
 
     today = date.today()
     current = today.replace(day=1)
+    
+    #today = date.today()
+
+    #current = today
 
     while current <= today:
 
