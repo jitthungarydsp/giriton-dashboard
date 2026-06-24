@@ -189,147 +189,147 @@ def show_profile_page():
         f"**Depó:** {my_courier.get('warehouseName')}"
     )
 #############################
-driver_data = load_driver_details(
-    user["courierId"]
-)
-
-routes = driver_data.get(
-    "routes",
-    []
-)
-
-st.write(
-    f"Aktív route-ok: {len(routes)}"
-)
-
-for route in routes:
-
-    delayed = route.get(
-        "numDelayedOrdersEstimate",
-        0
+    driver_data = load_driver_details(
+        user["courierId"]
     )
 
-    if delayed <= 0:
+    routes = driver_data.get(
+        "routes",
+        []
+    )
 
-        status = "🟢"
+    st.write(
+        f"Aktív route-ok: {len(routes)}"
+    )
 
-    elif delayed <= 5:
+    for route in routes:
 
-        status = "🟡"
-
-    else:
-
-        status = "🔴"
-
-    with st.expander(
-        f"{status} Route {route.get('id')}"
-    ):
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric(
-            "Összes rendelés",
-            route.get(
-                "numTotalOrders",
-                0
-            )
+        delayed = route.get(
+            "numDelayedOrdersEstimate",
+            0
         )
 
-        c2.metric(
-            "Kiszállított",
-            route.get(
-                "numDeliveredOrders",
-                0
-            )
-        )
+        if delayed <= 0:
 
-        c3.metric(
-            "Késő",
-            delayed
-        )
+            status = "🟢"
 
-        c4.metric(
-            "Route ID",
-            route.get(
-                "id",
-                ""
-            )
-        )
+        elif delayed <= 5:
 
-        st.markdown(
-            f"""
-**Állapot:** {status}
+            status = "🟡"
 
-**Sorba állt:** {route.get('courierRegisteredAt', '-')}
+        else:
 
-**Kiosztva:** {route.get('assignedAt', '-')}
+            status = "🔴"
 
-**Rakodás:** {route.get('loadingTime', '-')}
-
-**Tervezett indulás:** {route.get('plannedDeparture', '-')}
-
-**Valós indulás:** {route.get('realDeparture', '-')}
-
-**Tervezett vissza:** {route.get('plannedReturn', '-')}
-
-**Valós vissza:** {route.get('realReturn', '-')}
-"""
-        )
-
-        st.divider()
-
-        checkpoint_rows = []
-
-        for cp in route.get(
-            "checkpoints",
-            []
+        with st.expander(
+            f"{status} Route {route.get('id')}"
         ):
 
-            checkpoint_rows.append({
+            c1, c2, c3, c4 = st.columns(4)
 
-                "Poz":
-                cp.get(
-                    "position"
-                ),
-
-                "Cím":
-                cp.get(
-                    "address"
-                ),
-
-                "Időablak":
-                (
-                    f"{cp.get('deliverSince', '')}"
-                    " - "
-                    f"{cp.get('deliverTill', '')}"
-                ),
-
-                "Tervezett":
-                cp.get(
-                    "plannedArrivalTime"
-                ),
-
-                "Becsült":
-                cp.get(
-                    "estimatedArrivalTime"
-                ),
-
-                "Valós":
-                cp.get(
-                    "realArrivalTime"
+            c1.metric(
+                "Összes rendelés",
+                route.get(
+                    "numTotalOrders",
+                    0
                 )
-
-            })
-
-        if checkpoint_rows:
-
-            st.dataframe(
-
-                pd.DataFrame(
-                    checkpoint_rows
-                ),
-
-                use_container_width=True,
-                height=500
-
             )
+
+            c2.metric(
+                "Kiszállított",
+                route.get(
+                    "numDeliveredOrders",
+                    0
+                )
+            )
+
+            c3.metric(
+                "Késő",
+                delayed
+            )
+
+            c4.metric(
+                "Route ID",
+                route.get(
+                    "id",
+                    ""
+                )
+            )
+
+            st.markdown(
+                f"""
+    **Állapot:** {status}
+
+    **Sorba állt:** {route.get('courierRegisteredAt', '-')}
+
+    **Kiosztva:** {route.get('assignedAt', '-')}
+
+    **Rakodás:** {route.get('loadingTime', '-')}
+
+    **Tervezett indulás:** {route.get('plannedDeparture', '-')}
+
+    **Valós indulás:** {route.get('realDeparture', '-')}
+
+    **Tervezett vissza:** {route.get('plannedReturn', '-')}
+
+    **Valós vissza:** {route.get('realReturn', '-')}
+    """
+            )
+
+            st.divider()
+
+            checkpoint_rows = []
+
+            for cp in route.get(
+                "checkpoints",
+                []
+            ):
+
+                checkpoint_rows.append({
+
+                    "Poz":
+                    cp.get(
+                        "position"
+                    ),
+
+                    "Cím":
+                    cp.get(
+                        "address"
+                    ),
+
+                    "Időablak":
+                    (
+                        f"{cp.get('deliverSince', '')}"
+                        " - "
+                        f"{cp.get('deliverTill', '')}"
+                    ),
+
+                    "Tervezett":
+                    cp.get(
+                        "plannedArrivalTime"
+                    ),
+
+                    "Becsült":
+                    cp.get(
+                        "estimatedArrivalTime"
+                    ),
+
+                    "Valós":
+                    cp.get(
+                        "realArrivalTime"
+                    )
+
+                })
+
+            if checkpoint_rows:
+
+                st.dataframe(
+
+                    pd.DataFrame(
+                        checkpoint_rows
+                    ),
+
+                    use_container_width=True,
+                    height=500
+
+                )
