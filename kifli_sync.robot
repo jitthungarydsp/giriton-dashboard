@@ -1,26 +1,22 @@
 *** Settings ***
-Resource    ../giriton-dashboard/resources/keywords.robot
-Resource    ../giriton-dashboard/resources/variables.robot
-Library    googlesheet.py
 Library    SeleniumLibrary
 Library    DateTime
 Library    Collections
 Library    String
-Library    googlesheet.py
+Library    kifli_sync_sheet.py
+Resource    resources/variables.robot
 
 
 *** Variables ***
-${START_DATE}    05/06/2026
-${END_DATE}      12/06/2026
-
+${DAYS_TO_SYNC}    2
 
 
 *** Test Cases ***
-Muszakok Figyelese
+Kifli Szinkron Tabla Frissitese
 
-    keywords.Bejelentkezes
+    Bejelentkezes
 
-    keywords.Click Shift Subs
+    Click Shift Subs
 
     Sleep    10
 
@@ -29,7 +25,7 @@ Muszakok Figyelese
 
     @{rows}=    Create List
 
-    FOR    ${nap}    IN RANGE    0    3
+    FOR    ${nap}    IN RANGE    0    ${DAYS_TO_SYNC}
 
         ${datum_giriton}=    Add Time To Date
         ...    ${today}
@@ -42,7 +38,7 @@ Muszakok Figyelese
         ...    result_format=%Y-%m-%d
 
         Log To Console
-        ...    DATUM=${datum_giriton}
+        ...    KIFLI_DATUM=${datum_giriton}
 
         Click Element
         ...    xpath=//input[contains(@class,'v-datefield-textfield')]
@@ -60,7 +56,6 @@ Muszakok Figyelese
         ...    ENTER
 
         Sleep    3
-
 
         FOR    ${i}    IN RANGE    15
 
@@ -81,9 +76,6 @@ Muszakok Figyelese
 
         ${raktarak}=    Get WebElements
         ...    xpath=//div[contains(@class,'elementDirectionRtl ')]
-
-        ${users}=    Get WebElements
-        ...    xpath=//div[contains(@class,'subscribed-persons-label')]
 
         ${foglaltsagok}=    Get WebElements
         ...    xpath=//div[@class='v-label v-widget v-label-undef-w']
@@ -113,7 +105,6 @@ Muszakok Figyelese
 
             ${muszak}=        Get Text    ${muszakok}[${i}]
             ${raktar_txt}=    Get Text    ${raktarak}[${i}]
-            ${user_txt}=      Get Text    ${users}[${i}]
             ${foglaltsag}=    Get Text    ${foglaltsagok}[${i}]
 
             ${parts}=       Split String    ${muszak}    körös:
@@ -123,29 +114,16 @@ Muszakok Figyelese
             ${times}=       Split String    ${idoszak}    -
 
             ${kezdes}=      Strip String    ${times}[0]
-            ${ora}=      Fetch From Left    ${kezdes}    :
-            ${perc}=     Fetch From Right   ${kezdes}    :
+            ${ora}=         Fetch From Left    ${kezdes}    :
+            ${perc}=        Fetch From Right   ${kezdes}    :
+            ${ora}=         Convert To Integer    ${ora}
+            ${kezdes}=      Set Variable    ${ora}:${perc}
 
-            ${ora}=      Convert To Integer    ${ora}
-
-            ${kezdes}=   Set Variable    ${ora}:${perc}
             ${vege}=        Strip String    ${times}[1]
-            ${ora}=      Fetch From Left    ${vege}    :
-            ${perc}=     Fetch From Right   ${vege}    :
-
-            ${ora}=      Convert To Integer    ${ora}
-
-            ${vege}=     Set Variable    ${ora}:${perc}
-
-            ${nev_parts}=    Split String    ${user_txt}    :
-            ${nev}=          Set Variable    ${nev_parts}[1]
-            ${nev}=          Strip String    ${nev}
-
-            IF    '${nev}' == '(none)'
-                @{nevek}=    Create List    ÜRES
-            ELSE
-                @{nevek}=    Split String    ${nev}    ,
-            END
+            ${ora}=         Fetch From Left    ${vege}    :
+            ${perc}=        Fetch From Right   ${vege}    :
+            ${ora}=         Convert To Integer    ${ora}
+            ${vege}=        Set Variable    ${ora}:${perc}
 
             ${raktar}=    Set Variable    ÜRES
 
@@ -155,9 +133,7 @@ Muszakok Figyelese
                 ${raktar}=    Set Variable    BUD2
             END
 
-            FOR    ${egy_nev}    IN    @{nevek}
-
-                ${egy_nev}=    Strip String    ${egy_nev}
+            IF    '${raktar}' != 'ÜRES'
 
                 ${row}=    Create List
                 ...    ${datum_sheet}
@@ -165,7 +141,6 @@ Muszakok Figyelese
                 ...    ${vege}
                 ...    ${raktar}
                 ...    ${foglaltsag}
-                ...    ${egy_nev}
 
                 Append To List
                 ...    ${rows}
@@ -180,10 +155,44 @@ Muszakok Figyelese
     ${dbrows}=    Get Length    ${rows}
 
     Log To Console
-    ...    SOROK_SZAMA=${dbrows}
+    ...    KIFLI_SOROK_SZAMA=${dbrows}
 
-    ${result}=    Write All Shifts
+    ${result}=    Write Kifli Sync
     ...    ${rows}
 
     Log To Console
-    ...    GOOGLE=${result}
+    ...    KIFLI_SYNC=${result}
+
+
+*** Keywords ***
+Bejelentkezes
+
+    Open Browser
+    ...    https://kiflihu.giriton.com/
+    ...    chrome
+    ...    executable_path=C:/Giriton/giriton-dashboard/Drivers/chromedriver
+
+    Maximize Browser Window
+
+    Wait Until Element Is Visible
+    ...    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]
+
+    SeleniumLibrary.Input Text
+    ...    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]
+    ...    text=jitthungary@gmail.com
+
+    SeleniumLibrary.Input Text
+    ...    locator=//*[@id="CompanyLoginPanel-pfUserPassword"]
+    ...    text=ujjelszo15
+
+    Click Element
+    ...    locator=//*[@id="ROOT-2521314"]/div/div[2]/div/div/div/div[3]/div/div[3]/div/div[1]/div
+
+
+Click Shift Subs
+
+    SeleniumLibrary.Wait Until Element Is Visible
+    ...    locator=//*[@id="layMenuItems"]/div[5]/div/span
+
+    SeleniumLibrary.Click Element
+    ...    locator=//*[@id="layMenuItems"]/div[5]/div/span

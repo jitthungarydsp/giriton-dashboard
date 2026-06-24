@@ -1,5 +1,5 @@
 @echo off
-echo Robot Framework kornyezet telepitese...
+echo Giriton dashboard kornyezet telepitese...
 
 REM Virtual environment letrehozasa
 python -m venv venv
@@ -10,24 +10,18 @@ call venv\Scripts\activate.bat
 REM Pip frissites
 python -m pip install --upgrade pip
 
-REM Robot Framework
-pip install robotframework
+REM Streamlit app fuggosegek
+pip install -r requirements.txt
 
-REM Selenium
+REM Robot Framework / Selenium teszt fuggosegek
+pip install robotframework
 pip install robotframework-seleniumlibrary
 pip install selenium
-
-REM Requests
 pip install robotframework-requests
-
-REM Excel kezeles
 pip install openpyxl
-pip install pandas
-
-REM WebDriver manager
+pip install gspread
+pip install google-auth
 pip install webdriver-manager
-
-REM Hasznos Robot libraryk
 pip install robotframework-jsonlibrary
 pip install robotframework-datadriver
 

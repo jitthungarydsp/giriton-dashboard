@@ -2,6 +2,8 @@ import json
 import secrets
 from datetime import datetime
 
+from resources.security import hash_password
+
 
 USERS_FILE = "data/users.json"
 
@@ -52,7 +54,9 @@ def create_user(
 
         "username": username,
 
-        "password": password,
+        "passwordHash": hash_password(
+            password
+        ),
 
         "role": role,
 
@@ -96,7 +100,13 @@ def reset_password(
             username
         ):
 
-            user["password"] = password
+            user["passwordHash"] = hash_password(
+                password
+            )
+            user.pop(
+                "password",
+                None
+            )
 
             break
 

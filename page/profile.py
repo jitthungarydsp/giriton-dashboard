@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
+from dsp_common_kw  import  hu_time
 
 from resources.api import (
     load_attendance,
-    load_driver_details
+    load_driver_details,
+    load_departure_dashboard
 )
 
 
@@ -188,9 +190,143 @@ def show_profile_page():
     st.write(
         f"**Depó:** {my_courier.get('warehouseName')}"
     )
-#############################
+    # ----------------------------------
+    # Departure Dashboard
+    # ----------------------------------
+
+    departure_data = load_departure_dashboard()
+
+    departure_route = next(
+
+        (
+            route
+
+            for route in departure_data.get(
+                "routes",
+                []
+            )
+
+            if str(
+                route.get(
+                    "courier_id"
+                )
+            )
+            ==
+            str(
+                user.get(
+                    "courierId"
+                )
+            )
+        ),
+
+        None
+    )
+
+    if departure_route:
+
+        st.divider()
+
+        st.subheader(
+            "🚚 Jármű és indulási adatok"
+        )
+
+        temperature = departure_route.get(
+            "temperature",
+            {}
+        )
+
+        c1, c2, c3 = st.columns(
+            3
+        )
+
+        c1.metric(
+            "Rendszám",
+            departure_route.get(
+                "licence_plate",
+                "-"
+            )
+        )
+
+        c2.metric(
+            "Hőmérséklet",
+            f"{temperature.get('temperature', '-')} °C"
+        )
+
+        c3.metric(
+            "Rendelések",
+            departure_route.get(
+                "orders_in_route",
+                0
+            )
+        )
+
+        if departure_route.get(
+            "platform_section_mark"
+        ):
+
+            with st.expander(
+                "📦 Rakodási információk",
+                expanded=True
+            ):
+
+                st.write(
+                    f"**Platform:** "
+                    f"{departure_route.get('platform_section_mark')}"
+                )
+
+                st.write(
+                    f"**Rakodásig:** "
+                    f"{departure_route.get('minutes_to_loading')} perc"
+                )
+
+                st.write(
+                    f"**Indulásig:** "
+                    f"{departure_route.get('minutes_to_departure')} perc"
+                )
+
+                st.write(
+                    f"**Riasztás:** "
+                    f"{departure_route.get('alert_level')}"
+                )
+
+                st.subheader(
+                    "📦 Száraz áru"
+                )
+
+                for item in departure_route.get(
+                    "dry_carriage_and_parking",
+                    []
+                ):
+
+                    st.write(
+                        f"{item.get('trolley_ean')} → "
+                        f"{item.get('parking_spot_ean')}"
+                    )
+
+                st.subheader(
+                    "❄️ Hűtött áru"
+                )
+
+                for item in departure_route.get(
+                    "cooled_carriage_and_parking",
+                    []
+                ):
+
+                    st.write(
+                        f"{item.get('trolley_ean')} → "
+                        f"{item.get('parking_spot_ean')}"
+                    )
+
+    else:
+
+        st.info(
+            "Ehhez a futárhoz most nincs departure-dashboard adat."
+        )
+
     driver_data = load_driver_details(
-        user["courierId"]
+        user.get(
+            "courierId"
+        )
     )
 
     routes = driver_data.get(
@@ -258,22 +394,22 @@ def show_profile_page():
 
             st.markdown(
                 f"""
-    **Állapot:** {status}
+**Állapot:** {status}
 
-    **Sorba állt:** {route.get('courierRegisteredAt', '-')}
+**Sorba állt:** {route.get('courierRegisteredAt', '-')}
 
-    **Kiosztva:** {route.get('assignedAt', '-')}
+**Kiosztva:** {route.get('assignedAt', '-')}
 
-    **Rakodás:** {route.get('loadingTime', '-')}
+**Rakodás:** {route.get('loadingTime', '-')}
 
-    **Tervezett indulás:** {route.get('plannedDeparture', '-')}
+**Tervezett indulás:** {route.get('plannedDeparture', '-')}
 
-    **Valós indulás:** {route.get('realDeparture', '-')}
+**Valós indulás:** {route.get('realDeparture', '-')}
 
-    **Tervezett vissza:** {route.get('plannedReturn', '-')}
+**Tervezett vissza:** {route.get('plannedReturn', '-')}
 
-    **Valós vissza:** {route.get('realReturn', '-')}
-    """
+**Valós vissza:** {route.get('realReturn', '-')}
+"""
             )
 
             st.divider()

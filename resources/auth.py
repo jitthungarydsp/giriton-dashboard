@@ -2,6 +2,8 @@ import json
 import secrets
 import streamlit as st
 
+from resources.security import hash_password, verify_password
+
 #from streamlit_cookies_manager import EncryptedCookieManager
 
 COOKIE_NAME = "dsp_token"
@@ -42,17 +44,43 @@ def authenticate(
     data = load_users()
 
     for user in data["users"]:
-
         if (
-            user["username"] == username
-            and
-            user["password"] == password
-            and
-            user.get(
+            user["username"] != username
+            or
+            not user.get(
                 "active",
                 True
             )
         ):
+            continue
+
+        password_hash = user.get(
+            "passwordHash"
+        )
+
+        if password_hash and verify_password(
+            password,
+            password_hash
+        ):
+
+            return user
+
+        if user.get(
+            "password"
+        ) == password:
+
+            user["passwordHash"] = hash_password(
+                password
+            )
+
+            user.pop(
+                "password",
+                None
+            )
+
+            save_users(
+                data
+            )
 
             return user
 

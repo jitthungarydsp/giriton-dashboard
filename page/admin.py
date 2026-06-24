@@ -25,8 +25,33 @@ def show_admin_page():
         "👥 Felhasználók"
     )
 
+    display_users = []
+
+    for user in users:
+
+        display_user = user.copy()
+
+        if display_user.get(
+            "password"
+        ):
+            display_user["password"] = "legacy plaintext"
+
+        if display_user.get(
+            "passwordHash"
+        ):
+            display_user["passwordHash"] = "set"
+
+        if display_user.get(
+            "token"
+        ):
+            display_user["token"] = "active"
+
+        display_users.append(
+            display_user
+        )
+
     df = pd.DataFrame(
-        users
+        display_users
     )
 
     st.dataframe(

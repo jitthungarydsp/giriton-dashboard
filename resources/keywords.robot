@@ -3,13 +3,12 @@ Library    SeleniumLibrary
 Library    googlesheet.py
 Library    SeleniumLibrary
 Library    DateTime
-Library    Collections
 Library    String
 
 
 *** Keywords ***
 Bejelentkezes
-    Open Browser    https://kiflihu.giriton.com/    chrome    executable_path=C:/Giriton/robots/Drivers/chromedriver
+    Open Browser    https://kiflihu.giriton.com/    chrome    executable_path=C:/Giriton/giriton-dashboard/Drivers/chromedriver
     Maximize Browser Window
     Wait Until Element Is Visible    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]
     SeleniumLibrary.Input Text    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]    text=jitthungary@gmail.com

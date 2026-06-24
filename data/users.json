@@ -6,7 +6,7 @@
             "role": "admin",
             "courierId": null,
             "active": true,
-            "token": "86470a8f78502e25394b6d3b27fba10b9eeddc776047ddcdb22bca2274b723aa"
+            "token": ""
         },
         {
             "username": "Ádám Erik",
@@ -137,11 +137,11 @@
         {
             "username": "Farkas Zsolt",
             "trainer": "trainer_name",
-            "password": "4cVoGFXz",
             "role": "user",
             "courierId": 7814,
             "active": true,
-            "token": ""
+            "token": "0e593a2d5839cbfad3212581570d6a4758eda74535337ff18a1ae681272e6930",
+            "passwordHash": "pbkdf2_sha256$260000$QYzXULM9OFH4aia14DJjWg==$m+yqT5JcwPKH+P2HNHY+l9pvgfwm076o4n9un3hgbcg="
         },
         {
             "username": "Király Dániel Dávid",
@@ -222,7 +222,7 @@
             "role": "user",
             "courierId": 7767,
             "active": true,
-            "token": ""
+            "token": "0ca0744d5f60b96e11f9a10ce06b44d90ee0d96d3d305413ebab4b12e97cd813"
         },
         {
             "username": "Persőtzi Bence",
@@ -519,7 +519,7 @@
             "role": "user",
             "courierId": 6959,
             "active": true,
-            "token": ""
+            "token": "1db56308aebb38400a81beea430fe9be4b248e9c7db5b2d8b9f276ca2899ed67"
         },
         {
             "username": "Kurucz 7926 Márton ",
