@@ -139,10 +139,6 @@ def show_profile_page():
                     )
                 )
 
-                st.json(
-                    route
-                )
-
         return
     # -------------------------
     # User
