@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from resource.users import (
+from resources.users import (
     load_users,
     create_user,
     reset_password,
