@@ -189,41 +189,41 @@ def show_profile_page():
         f"**Depó:** {my_courier.get('warehouseName')}"
     )
 #############################
-    driver_data = load_driver_details(
+driver_data = load_driver_details(
     user["courierId"]
+)
+
+routes = driver_data.get(
+    "routes",
+    []
+)
+
+st.write(
+    f"Aktív route-ok: {len(routes)}"
+)
+
+for route in routes:
+
+    delayed = route.get(
+        "numDelayedOrdersEstimate",
+        0
     )
 
-    routes = driver_data.get(
-        "routes",
-        []
-    )
+    if delayed <= 0:
 
-    st.write(
-        f"Aktív route-ok: {len(routes)}"
-    )
+        status = "🟢"
 
-    for route in routes:
+    elif delayed <= 5:
 
-        with st.expander(
-            f"🚚 Route {route.get('id')}"
-        ):########################
+        status = "🟡"
 
-           delayed = route.get(
-            "numDelayedOrdersEstimate",
-            0
-        )
+    else:
 
-        if delayed <= 0:
+        status = "🔴"
 
-            status = "🟢"
-
-        elif delayed <= 5:
-
-            status = "🟡"
-
-        else:
-
-            status = "🔴"
+    with st.expander(
+        f"{status} Route {route.get('id')}"
+    ):
 
         c1, c2, c3, c4 = st.columns(4)
 
@@ -258,70 +258,78 @@ def show_profile_page():
 
         st.markdown(
             f"""
-        **Állapot:** {status}
+**Állapot:** {status}
 
-        **Sorba állt:** {route.get('courierRegisteredAt', '-')}
+**Sorba állt:** {route.get('courierRegisteredAt', '-')}
 
-        **Kiosztva:** {route.get('assignedAt', '-')}
+**Kiosztva:** {route.get('assignedAt', '-')}
 
-        **Rakodás:** {route.get('loadingTime', '-')}
+**Rakodás:** {route.get('loadingTime', '-')}
 
-        **Tervezett indulás:** {route.get('plannedDeparture', '-')}
+**Tervezett indulás:** {route.get('plannedDeparture', '-')}
 
-        **Valós indulás:** {route.get('realDeparture', '-')}
+**Valós indulás:** {route.get('realDeparture', '-')}
 
-        **Tervezett vissza:** {route.get('plannedReturn', '-')}
+**Tervezett vissza:** {route.get('plannedReturn', '-')}
 
-        **Valós vissza:** {route.get('realReturn', '-')}
-        """
+**Valós vissza:** {route.get('realReturn', '-')}
+"""
         )
 
         st.divider()
+
         checkpoint_rows = []
 
-    for cp in route.get(
-        "checkpoints",
-        []
-    ):
+        for cp in route.get(
+            "checkpoints",
+            []
+        ):
 
-        checkpoint_rows.append({
+            checkpoint_rows.append({
 
-            "Poz":
-            cp.get(
-                "position"
-            ),
+                "Poz":
+                cp.get(
+                    "position"
+                ),
 
-            "Cím":
-            cp.get(
-                "address"
-            ),
+                "Cím":
+                cp.get(
+                    "address"
+                ),
 
-            "Tervezett":
-            cp.get(
-                "plannedArrivalTime"
-            ),
+                "Időablak":
+                (
+                    f"{cp.get('deliverSince', '')}"
+                    " - "
+                    f"{cp.get('deliverTill', '')}"
+                ),
 
-            "Becsült":
-            cp.get(
-                "estimatedArrivalTime"
-            ),
+                "Tervezett":
+                cp.get(
+                    "plannedArrivalTime"
+                ),
 
-            "Valós":
-            cp.get(
-                "realArrivalTime"
+                "Becsült":
+                cp.get(
+                    "estimatedArrivalTime"
+                ),
+
+                "Valós":
+                cp.get(
+                    "realArrivalTime"
+                )
+
+            })
+
+        if checkpoint_rows:
+
+            st.dataframe(
+
+                pd.DataFrame(
+                    checkpoint_rows
+                ),
+
+                use_container_width=True,
+                height=500
+
             )
-
-        })
-
-    if checkpoint_rows:
-
-        st.dataframe(
-
-            pd.DataFrame(
-                checkpoint_rows
-            ),
-
-            use_container_width=True,
-            height=500
-
-        )
