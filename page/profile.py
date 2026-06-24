@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from resource.api import (
+from resources.api import (
     load_attendance,
     load_driver_details
 )
