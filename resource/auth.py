@@ -2,7 +2,7 @@ import json
 import secrets
 import streamlit as st
 
-from streamlit_cookies_manager import EncryptedCookieManager
+#from streamlit_cookies_manager import EncryptedCookieManager
 
 COOKIE_NAME = "dsp_token"
 
