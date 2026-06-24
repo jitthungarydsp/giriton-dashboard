@@ -4,7 +4,7 @@ from page.profile import (
     show_profile_page
 )
 
-from resource.auth import (
+from resources.auth import (
     login_screen,
     logout_button
 )
