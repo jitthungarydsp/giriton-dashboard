@@ -1,0 +1,552 @@
+{
+    "users": [
+        {
+            "username": "admin",
+            "password": "Admin123!",
+            "role": "admin",
+            "courierId": null,
+            "active": true,
+            "token": "86470a8f78502e25394b6d3b27fba10b9eeddc776047ddcdb22bca2274b723aa"
+        },
+        {
+            "username": "Ádám Erik",
+            "trainer": "trainer_name",
+            "password": "3juAFaHC",
+            "role": "user",
+            "courierId": 6642,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Baranyai István",
+            "trainer": "trainer_name",
+            "password": "f0GfvLSy",
+            "role": "user",
+            "courierId": 7185,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Meleg Dominika",
+            "trainer": "trainer_name",
+            "password": "841PMZrT",
+            "role": "user",
+            "courierId": 6476,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Árva Tamás",
+            "trainer": "trainer_name",
+            "password": "rVY48iSm",
+            "role": "user",
+            "courierId": 6956,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kancsár Zoltán",
+            "trainer": "trainer_name",
+            "password": "6rXQUnOn",
+            "role": "user",
+            "courierId": 7688,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Siklósi Máté",
+            "trainer": "trainer_name",
+            "password": "RBMZZRCS",
+            "role": "user",
+            "courierId": 7843,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Tuza Ádám",
+            "trainer": "trainer_name",
+            "password": "GHL1BqWS",
+            "role": "user",
+            "courierId": 7753,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Horváth István ",
+            "trainer": "trainer_name",
+            "password": "3mYEimBF",
+            "role": "user",
+            "courierId": 7147,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Vándor Balázs ",
+            "trainer": "trainer_name",
+            "password": "LdKUshSl",
+            "role": "user",
+            "courierId": 6855,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Szolnoki Tibor",
+            "trainer": "trainer_name",
+            "password": "f5d4nPxb",
+            "role": "user",
+            "courierId": 6825,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Abonyi György",
+            "trainer": "trainer_name",
+            "password": "NSv498cC",
+            "role": "user",
+            "courierId": 6498,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Bognár András",
+            "trainer": "trainer_name",
+            "password": "mrT4tNZ2",
+            "role": "user",
+            "courierId": 6528,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Baranyi Szabolcs",
+            "trainer": "trainer_name",
+            "password": "lSHra5Ty",
+            "role": "user",
+            "courierId": 7056,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Nagy 7244 Attila",
+            "trainer": "trainer_name",
+            "password": "vnUKrryT",
+            "role": "user",
+            "courierId": 7244,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Farkas Zsolt",
+            "trainer": "trainer_name",
+            "password": "4cVoGFXz",
+            "role": "user",
+            "courierId": 7814,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Király Dániel Dávid",
+            "trainer": "trainer_name",
+            "password": "eYCvX5jk",
+            "role": "user",
+            "courierId": 6856,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Jamal Wasil",
+            "trainer": "trainer_name",
+            "password": "P0dISJOc",
+            "role": "user",
+            "courierId": 7440,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Jamal Nasir ",
+            "trainer": "trainer_name",
+            "password": "8kkEgECO",
+            "role": "user",
+            "courierId": 6730,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Nagy Kristóf",
+            "trainer": "trainer_name",
+            "password": "Jli5NGaN",
+            "role": "user",
+            "courierId": 6596,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Cserna Levente Zoltán",
+            "trainer": "trainer_name",
+            "password": "d0SlWAc1",
+            "role": "user",
+            "courierId": 7538,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Nádasi Martin Nicolas",
+            "trainer": "trainer_name",
+            "password": "LVj6Hl3E",
+            "role": "user",
+            "courierId": 5709,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Papp 7486 Nikolett",
+            "trainer": "trainer_name",
+            "password": "sr2TZCZd",
+            "role": "user",
+            "courierId": 7486,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Hervai Olivér",
+            "trainer": "trainer_name",
+            "password": "bPOffGE3",
+            "role": "user",
+            "courierId": 6206,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kanyó Krisztián ",
+            "trainer": "trainer_name",
+            "password": "tv6zNoLr",
+            "role": "user",
+            "courierId": 7767,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Persőtzi Bence",
+            "trainer": "trainer_name",
+            "password": "b97CgRxq",
+            "role": "user",
+            "courierId": 7295,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Koncsik Zoltán",
+            "trainer": "trainer_name",
+            "password": "DT21EpYP",
+            "role": "user",
+            "courierId": 7665,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Tinger József",
+            "trainer": "trainer_name",
+            "password": "H38W8OxY",
+            "role": "user",
+            "courierId": 7632,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Magyar Csilla",
+            "trainer": "trainer_name",
+            "password": "7t8u55Lx",
+            "role": "user",
+            "courierId": 6686,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kiss Koppány Zalán",
+            "trainer": "trainer_name",
+            "password": "gvsl6D0w",
+            "role": "user",
+            "courierId": 6544,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Bubán Szimonetta",
+            "trainer": "trainer_name",
+            "password": "DHy4VGTh",
+            "role": "user",
+            "courierId": 7226,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Rezsnyák Bence László",
+            "trainer": "trainer_name",
+            "password": "pUPcyJxA",
+            "role": "user",
+            "courierId": 7150,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kiss 7245 Csaba",
+            "trainer": "trainer_name",
+            "password": "gck7N3K9",
+            "role": "user",
+            "courierId": 7245,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Tóth 7722 Gábor",
+            "trainer": "trainer_name",
+            "password": "gwYv75ln",
+            "role": "user",
+            "courierId": 7722,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Molnár Ákos",
+            "trainer": "trainer_name",
+            "password": "Qed2zlB4",
+            "role": "user",
+            "courierId": 7724,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Prantner Péter Ákos",
+            "trainer": "trainer_name",
+            "password": "xtn93Q2j",
+            "role": "user",
+            "courierId": 5774,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Varecza Roland",
+            "trainer": "trainer_name",
+            "password": "d43vJpAR",
+            "role": "user",
+            "courierId": 7817,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Rábl Norbert",
+            "trainer": "trainer_name",
+            "password": "QROV79yb",
+            "role": "user",
+            "courierId": 7072,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Gurzó Balázs",
+            "trainer": "trainer_name",
+            "password": "8gE9SmPj",
+            "role": "user",
+            "courierId": 7644,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Stumpf András István",
+            "trainer": "trainer_name",
+            "password": "e6mHsK8I",
+            "role": "user",
+            "courierId": 7103,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Bodonyi Gellért",
+            "trainer": "trainer_name",
+            "password": "D64rTizv",
+            "role": "user",
+            "courierId": 7267,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Petrik Róbert ",
+            "trainer": "trainer_name",
+            "password": "QJUKted8",
+            "role": "user",
+            "courierId": 7296,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Fabó Marcell",
+            "trainer": "trainer_name",
+            "password": "BqeflcYQ",
+            "role": "user",
+            "courierId": 7842,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Német Bence",
+            "trainer": "trainer_name",
+            "password": "3R75ruSm",
+            "role": "user",
+            "courierId": 7743,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kristóf Attila",
+            "trainer": "trainer_name",
+            "password": "UiF9LcC7",
+            "role": "user",
+            "courierId": 7221,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Homonnai Imre",
+            "trainer": "trainer_name",
+            "password": "Q4xQjbgg",
+            "role": "user",
+            "courierId": 7815,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Zorányi Tamás Bence",
+            "trainer": "trainer_name",
+            "password": "4LzuRgL1",
+            "role": "user",
+            "courierId": 6729,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Fábián Alexandra",
+            "trainer": "trainer_name",
+            "password": "4USBC2DA",
+            "role": "user",
+            "courierId": 7687,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Bajorhegyi Ádám",
+            "trainer": "trainer_name",
+            "password": "Gxli6dwD",
+            "role": "user",
+            "courierId": 6909,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Nagy 7725 István",
+            "trainer": "trainer_name",
+            "password": "vRdhcttD",
+            "role": "user",
+            "courierId": 7725,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Mocsáry Attila",
+            "trainer": "trainer_name",
+            "password": "YTAGqsqp",
+            "role": "user",
+            "courierId": 7018,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Hohmann András Ármin",
+            "trainer": "trainer_name",
+            "password": "Rr5o6EH4",
+            "role": "user",
+            "courierId": 7829,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Vajda Erik",
+            "trainer": "trainer_name",
+            "password": "QlZEbH7t",
+            "role": "user",
+            "courierId": 6801,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Gémes Zoltán",
+            "trainer": "trainer_name",
+            "password": "m4gvFHp8",
+            "role": "user",
+            "courierId": 7239,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Varga 7939 Patrik Ádám",
+            "trainer": "trainer_name",
+            "password": "ipBM8dKq",
+            "role": "user",
+            "courierId": 7939,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Pálinkás Balázs",
+            "trainer": "trainer_name",
+            "password": "o3XfsSku",
+            "role": "user",
+            "courierId": 7901,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Deme 6572 Tamás",
+            "trainer": "trainer_name",
+            "password": "61kOjGty",
+            "role": "user",
+            "courierId": 6572,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Bárándi Bendegúz ",
+            "trainer": "trainer_name",
+            "password": "qGpsFAUf",
+            "role": "user",
+            "courierId": 6959,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Kurucz 7926 Márton ",
+            "trainer": "trainer_name",
+            "password": "fM11f9pe",
+            "role": "user",
+            "courierId": 7926,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Gál 7927 Dominik ",
+            "trainer": "trainer_name",
+            "password": "8w3INWH4",
+            "role": "user",
+            "courierId": 7927,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Varga Románó",
+            "trainer": "trainer_name",
+            "password": "opLC9Jsa",
+            "role": "user",
+            "courierId": 6403,
+            "active": true,
+            "token": ""
+        }
+    ]
+}
