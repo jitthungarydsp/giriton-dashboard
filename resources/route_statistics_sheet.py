@@ -1,18 +1,10 @@
-import json
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-DEFAULT_SERVICE_ACCOUNT_FILE = r"C:\Giriton\giriton-dashboard\girition-a89bab5e91bc.json"
-LOCAL_SERVICE_ACCOUNT_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "girition-a89bab5e91bc.json",
+from resources.google_auth import (
+    get_client,
+    get_service_account_email,
 )
 DEFAULT_SPREADSHEET_ID = "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 WORKSHEET_NAME = "Route_Statistics"
@@ -33,49 +25,11 @@ HEADER = [
 ]
 
 
-def resolve_service_account_file():
-    configured_path = os.getenv("GIRITON_GOOGLE_CREDENTIALS")
-
-    if configured_path:
-        return configured_path
-
-    if os.path.exists(DEFAULT_SERVICE_ACCOUNT_FILE):
-        return DEFAULT_SERVICE_ACCOUNT_FILE
-
-    return LOCAL_SERVICE_ACCOUNT_FILE
-
-
 def get_spreadsheet_id():
     return os.getenv(
         "ROUTE_STATS_SPREADSHEET_ID",
         DEFAULT_SPREADSHEET_ID,
     )
-
-
-def get_service_account_email():
-    try:
-        with open(
-            resolve_service_account_file(),
-            "r",
-            encoding="utf-8",
-        ) as f:
-            data = json.load(f)
-
-        return data.get("client_email", "")
-    except OSError:
-        return ""
-
-
-def get_client():
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    creds = Credentials.from_service_account_file(
-        resolve_service_account_file(),
-        scopes=SCOPES,
-    )
-
-    return gspread.authorize(creds)
 
 
 def get_or_create_worksheet(spreadsheet):
