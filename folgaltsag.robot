@@ -1,7 +1,7 @@
 *** Settings ***
 Resource    ../giriton-dashboard/resources/keywords.robot
 Resource    ../giriton-dashboard/resources/variables.robot
-Library    googlesheet.py
+Library    ../giriton-dashboard/resources/googlesheet_modified_template.py
 Library    SeleniumLibrary
 Library    DateTime
 Library    Collections
@@ -23,13 +23,50 @@ Muszakok Figyelese
     keywords.Click Shift Subs
 
     Sleep    10
-
     ${today}=    Get Current Date
     ...    result_format=%Y-%m-%d
 
+    ${ev}=    Evaluate
+    ...    int("${today}"[:4])
+
+    ${honap}=    Evaluate
+    ...    int("${today}"[5:7])
+
+    ${nap}=    Evaluate
+    ...    int("${today}"[8:10])
+
+    ${utolso_nap}=    Evaluate
+    ...    calendar.monthrange(${ev}, ${honap})[1]
+    ...    calendar
+
+    ${hatralevo}=    Evaluate
+    ...    ${utolso_nap}-${nap}+1
+
+    Log To Console
+    ...    Hónap utolsó napja: ${utolso_nap}
+
+    Log To Console
+    ...    Hátralévő napok: ${hatralevo}
+
+    FOR    ${eltelt}    IN RANGE    ${hatralevo}
+
+        ${datum_giriton}=    Add Time To Date
+        ...    ${today}
+        ...    ${eltelt} days
+        ...    result_format=%d/%m/%Y
+
+        ${datum_sheet}=    Add Time To Date
+        ...    ${today}
+        ...    ${eltelt} days
+        ...    result_format=%Y-%m-%d
+
+        Log To Console
+        ...    DATUM=${datum_giriton}
+    END
+
     @{rows}=    Create List
 
-    FOR    ${nap}    IN RANGE    0    3
+    FOR    ${nap}    IN RANGE    0    5
 
         ${datum_giriton}=    Add Time To Date
         ...    ${today}
@@ -62,7 +99,14 @@ Muszakok Figyelese
         Sleep    3
 
 
-        FOR    ${i}    IN RANGE    15
+        ${today}=    Get Current Date
+        ...    result_format=%Y-%m-%d
+
+        ${utolso}=    Evaluate
+        ...    calendar.monthrange(int("${today}"[:4]), int("${today}"[5:7]))[1]
+        ...    calendar
+
+        FOR    ${nap}    IN RANGE    0    ${utolso}
 
             Execute Javascript
             ...    let els=[...document.querySelectorAll('*')];
@@ -205,8 +249,8 @@ Muszakok Figyelese
     Log To Console
     ...    SOROK_SZAMA=${dbrows}
 
-    ${result}=    Write All Shifts
+    ${result}=    googlesheet_modified_template.Write Open Shifts
     ...    ${rows}
 
-    Log To Console
-    ...    GOOGLE=${result}
+   Log To Console
+    ...    OPEN_SHIFT=${result}

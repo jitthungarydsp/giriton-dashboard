@@ -323,3 +323,82 @@ def write_all_shifts_matrix(rows):
     )
 
     return "OK"
+
+# -----------------------------------------------------------------
+# ÚJ FÜGGVÉNY - BUD1_PROD2.0 és BUD2_PROD2.0 mátrix export
+# FIGYELEM: Ez egy kész alap, a write_all_shifts() meghagyása mellett.
+# A Robotból hívd meg: Write Open Shifts
+# -----------------------------------------------------------------
+
+def write_open_shifts(rows):
+
+    warehouses = [
+        ("BUD1","BUD1_PROD2.0"),
+        ("BUD2","BUD2_PROD2.0")
+    ]
+
+    for warehouse, sheet_name in warehouses:
+
+        try:
+            ws = spreadsheet.worksheet(sheet_name)
+        except:
+            ws = spreadsheet.add_worksheet(
+                title=sheet_name,
+                rows=300,
+                cols=40
+            )
+
+        matrix = {}
+        dates = sorted(set(r[0] for r in rows if r[3] == warehouse))
+
+        for row in rows:
+
+            if row[3] != warehouse:
+                continue
+
+            datum = row[0]
+            kezdes = row[1]
+            maximum = row[6]
+
+            key = f"{warehouse}_{kezdes}"
+
+            matrix.setdefault(key,{})
+            matrix[key][datum] = maximum
+
+        output = []
+
+        # 1. sor
+        output.append([""])
+
+        # 2. sor
+        header = ["műszak neve", ""]
+        
+
+        for d in dates:
+            header.append(f"{d[5:7]}.{d[8:10]}.")
+
+        output.append(header)
+
+        for d in dates:
+            header.append(f"{d[5:7]}.{d[8:10]}.")
+
+        output.append(header)
+
+        def sort_key(x):
+            return tuple(map(int, x.split("_")[1].split(":")))
+
+        for shift in sorted(matrix.keys(), key=sort_key):
+
+            row = [shift,""]
+
+            for d in dates:
+                row.append(matrix[shift].get(d,0))
+
+            output.append(row)
+
+        output.append(["Befoglalt műszakok"])
+
+        ws.clear()
+        ws.update("A2", output)
+
+    return "OK"

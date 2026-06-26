@@ -52,6 +52,22 @@ def load_attendance():
         "GET",
         url
     )
+
+
+def load_drivers():
+
+    url = (
+        f"{BASE_URL}/"
+        f"fetch-drivers"
+        f"?id={DEPOT_ID}"
+        f"&organizationId={ORGANIZATION_ID}"
+        f"&departureDelayThreshold=10"
+    )
+
+    return request_json(
+        "GET",
+        url
+    )
     
 def load_driver_details(driver_id):
 

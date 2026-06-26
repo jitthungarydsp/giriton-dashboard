@@ -2,11 +2,11 @@
     "users": [
         {
             "username": "admin",
-            "password": "Admin123!",
             "role": "admin",
             "courierId": 1234,
             "active": true,
-            "token": ""
+            "token": "3e79d336fe7d6712f36216caccb8945092950839e97b381912cfc6daeb64dd2d",
+            "passwordHash": "pbkdf2_sha256$260000$Ytf4JrR5A4agju9rdAC1AA==$1EcjZXnh2gBmBZymlamUyneXqVAwI7i2c2fV7f/EKJA="
         },
         {
             "username": "Ádám Erik",
@@ -20,11 +20,11 @@
         {
             "username": "Baranyai István",
             "trainer": "trainer_name",
-            "password": "f0GfvLSy",
             "role": "user",
             "courierId": 7185,
             "active": true,
-            "token": ""
+            "token": "",
+            "passwordHash": "pbkdf2_sha256$260000$xHY71eitS3iCSPRW+8ycNw==$cEqOh5yfpiK/dmlsgeNYIfcB00urGo9zBykuCWuzt9o="
         },
         {
             "username": "Meleg Dominika",
@@ -488,11 +488,11 @@
         {
             "username": "Varga 7939 Patrik Ádám",
             "trainer": "trainer_name",
-            "password": "ipBM8dKq",
             "role": "user",
             "courierId": 7939,
             "active": true,
-            "token": ""
+            "token": "afd288cb8dd6ea1cd73c23fef64eea30d29c329b524d089a3c9cf55e8530cefc",
+            "passwordHash": "pbkdf2_sha256$260000$E+Y46pikyA70Ct2XbMlLYg==$Hy5wD7eo4Zf4XHx+MHNRu6rk5win4GQBQ7nSqyVKJzY="
         },
         {
             "username": "Pálinkás Balázs",

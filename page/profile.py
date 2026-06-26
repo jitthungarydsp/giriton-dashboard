@@ -1,11 +1,20 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from dsp_common_kw  import  hu_time
 
+from resources.dsp_order_stats import (
+    build_courier_summary,
+    filter_courier_data,
+    get_route_customers,
+    get_route_order_row,
+    load_order_data,
+)
 from resources.api import (
     load_attendance,
     load_driver_details,
-    load_departure_dashboard
+    load_departure_dashboard,
+    load_drivers
 )
 
 
@@ -116,10 +125,19 @@ def show_profile_page():
     # -------------------------
 
     selected_courier = None
+    departure_data = load_departure_dashboard()
 
     if user["role"] == "user":
 
         selected_courier = visible_couriers[0] if visible_couriers else None
+
+        if not selected_courier:
+
+            st.warning(
+                "Nincs aktív műszak vagy futár adat."
+            )
+
+            return
 
     else:
 
@@ -153,8 +171,6 @@ def show_profile_page():
 
             return
         
-        departure_data = load_departure_dashboard()
-
     departure_routes = departure_data.get("routes", [])
 
     courier_status = {}
@@ -191,18 +207,23 @@ def show_profile_page():
         else:
             status = "🚨 " + " | ".join(icons)
 
-    courier_status[courier_id] = status
-    selected_courier = st.selectbox(
-        "🚚 Futár",
+        courier_status[courier_id] = status
 
-        filtered,
+    if user["role"] != "user":
 
-        format_func=lambda x:
-            f"{x.get('courierName')} "
-            f"({x.get('courierId')})  "
-            f"{courier_status.get(x.get('courierId'), '🟢')}"
+        selected_courier = st.selectbox(
+            "🚚 Futár",
 
-    )
+            filtered,
+
+            key="profile_selected_courier",
+
+            format_func=lambda x:
+                f"{x.get('courierName')} "
+                f"({x.get('courierId')})  "
+                f"{courier_status.get(x.get('courierId'), '🟢')}"
+
+        )
     
     selected_courier_id = selected_courier.get("courierId")
     # ----------------------------------
@@ -336,10 +357,80 @@ def show_profile_page():
         selected_courier_id
         )
 
+    try:
+        orders_df, customers_df = load_order_data()
+        courier_orders_df, courier_customers_df = filter_courier_data(
+            orders_df,
+            customers_df,
+            selected_courier_id,
+        )
+    except Exception as exc:
+        courier_orders_df = pd.DataFrame()
+        courier_customers_df = pd.DataFrame()
+        st.warning(
+            f"DSP order statisztika nem tölthető be: {exc}"
+        )
+
+    drivers_data = load_drivers()
+    current_driver = next(
+        (
+            driver
+            for driver in drivers_data.get(
+                "drivers",
+                []
+            )
+            if str(
+                driver.get(
+                    "driver_id"
+                )
+            )
+            ==
+            str(
+                selected_courier_id
+            )
+        ),
+        {}
+    )
+
     routes = driver_data.get(
         "routes",
         []
     )
+
+    courier_summary = build_courier_summary(
+        courier_orders_df,
+        courier_customers_df,
+    )
+
+    if courier_summary["routes"]:
+
+        st.divider()
+
+        st.subheader(
+            "DSP order statisztika"
+        )
+
+        d1, d2, d3, d4 = st.columns(4)
+
+        d1.metric(
+            "Körök",
+            courier_summary["routes"]
+        )
+
+        d2.metric(
+            "Címek",
+            courier_summary["customer_addresses"]
+        )
+
+        d3.metric(
+            "Kiszállított rendelések",
+            courier_summary["delivered_orders"]
+        )
+
+        d4.metric(
+            "Átlag rendelés/kör",
+            f"{courier_summary['avg_delivered_per_route']:.1f}"
+        )
 
     st.write(
         f"Aktív route-ok: {len(routes)}"
@@ -367,6 +458,17 @@ def show_profile_page():
         with st.expander(
             f"{status} Route {route.get('id')}"
         ):
+            route_id = route.get(
+                "id"
+            )
+            dsp_route = get_route_order_row(
+                courier_orders_df,
+                route_id,
+            )
+            route_customers = get_route_customers(
+                courier_customers_df,
+                route_id,
+            )
 
             c1, c2, c3, c4 = st.columns(4)
 
@@ -420,6 +522,185 @@ def show_profile_page():
             )
 
             st.divider()
+
+            if dsp_route or not route_customers.empty:
+
+                st.subheader(
+                    "DSP kör statisztika"
+                )
+
+                delivered_orders = dsp_route.get(
+                    "numDeliveredOrders",
+                    0
+                )
+                total_orders = dsp_route.get(
+                    "numTotalOrders",
+                    0
+                )
+                customer_count = (
+                    route_customers["id"].nunique()
+                    if not route_customers.empty
+                    and "id" in route_customers.columns
+                    else 0
+                )
+                remaining_orders = max(
+                    total_orders - delivered_orders,
+                    0
+                )
+
+                k1, k2, k3, k4 = st.columns(4)
+
+                k1.metric(
+                    "Route ID",
+                    route_id
+                )
+
+                k2.metric(
+                    "Címek",
+                    customer_count
+                )
+
+                k3.metric(
+                    "Kiszállított",
+                    int(delivered_orders)
+                )
+
+                k4.metric(
+                    "Összes rendelés",
+                    int(total_orders)
+                )
+
+                chart_df = pd.DataFrame([
+                    {
+                        "Típus": "Kiszállított",
+                        "Darab": delivered_orders,
+                    },
+                    {
+                        "Típus": "Hátralévő",
+                        "Darab": remaining_orders,
+                    },
+                ])
+
+                if chart_df["Darab"].sum() > 0:
+                    chart = (
+                        alt.Chart(chart_df)
+                        .mark_arc(innerRadius=45)
+                        .encode(
+                            theta="Darab:Q",
+                            color="Típus:N",
+                            tooltip=["Típus:N", "Darab:Q"],
+                        )
+                    )
+
+                    st.altair_chart(
+                        chart,
+                        use_container_width=True,
+                    )
+
+                timing_rows = []
+
+                timing_labels = {
+                    "waitForRouteMinutes": "Várakozás túrára",
+                    "waitForLoadingMinutes": "Várakozás rakodásra",
+                    "totalWaitMinutes": "Összes várakozás",
+                    "routeCreationMinutes": "Túrakészítés",
+                    "loadingAfterCreationMinutes": "Túra után rakodás",
+                    "assignmentToLoadingMinutes": "Kiosztás-rakodás",
+                    "departureDelayMinutes": "Indulási késés",
+                    "plannedTourMinutes": "Tervezett túraidő",
+                    "realTourMinutes": "Valós túraidő",
+                    "returnDelayMinutes": "Visszaérkezési eltérés",
+                }
+
+                for key, label in timing_labels.items():
+                    value = dsp_route.get(
+                        key,
+                        ""
+                    )
+
+                    if value != "":
+                        timing_rows.append({
+                            "Mutató": label,
+                            "Perc": value,
+                        })
+
+                if timing_rows:
+                    st.dataframe(
+                        pd.DataFrame(timing_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                comment = dsp_route.get(
+                    "comment",
+                    ""
+                )
+
+                if comment:
+                    st.info(
+                        comment
+                    )
+
+                st.divider()
+
+            statistics = route.get(
+                "statistics",
+                {}
+            )
+
+            if not statistics:
+                statistics = (
+                    current_driver.get(
+                        "route",
+                        {}
+                    )
+                    .get(
+                        "statistics",
+                        {}
+                    )
+                )
+
+            if statistics:
+
+                st.subheader(
+                    "Route statisztika"
+                )
+
+                s1, s2, s3, s4 = st.columns(4)
+
+                s1.metric(
+                    "Össz. km",
+                    statistics.get(
+                        "total_distance_km",
+                        "-"
+                    )
+                )
+
+                s2.metric(
+                    "Megtett km",
+                    statistics.get(
+                        "distance_covered_km",
+                        "-"
+                    )
+                )
+
+                s3.metric(
+                    "Kiszállított csomag",
+                    statistics.get(
+                        "parcels_delivered",
+                        "-"
+                    )
+                )
+
+                s4.metric(
+                    "Összes csomag",
+                    statistics.get(
+                        "parcels_total",
+                        "-"
+                    )
+                )
+
+                st.divider()
 
             checkpoint_rows = []
 

@@ -1,4 +1,7 @@
 streamlit
 streamlit-autorefresh
 pandas
+altair
 requests
+gspread
+google-auth
