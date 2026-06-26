@@ -47,13 +47,13 @@ if user["role"] == "admin":
 
     menu = [
         "Admin",
-        "Profil"
+        "Összes futár"
     ]
 
 else:
 
     menu = [
-        "Profil"
+        "Aktuális útvonalak"
     ]
 
 page = st.sidebar.radio(
