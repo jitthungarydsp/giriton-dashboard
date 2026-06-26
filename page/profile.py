@@ -152,7 +152,51 @@ def show_profile_page():
             )
 
             return
+        
+        departure_data = load_departure_dashboard()
 
+    departure_routes = departure_data.get("routes", [])
+
+    courier_status = {}
+
+    for route in departure_routes:
+
+        courier_id = route.get("courier_id")
+
+        delayed = route.get(
+            "numDelayedOrdersEstimate",
+            0
+        )
+
+        temperature = (
+            route.get(
+                "temperature",
+                {}
+            ).get(
+                "temperature"
+            )
+        )
+
+        icons = []
+
+        if delayed > 0:
+            icons.append(f"⏰ {delayed}")
+
+        if temperature is not None:
+
+            if temperature < 0 or temperature > 5:
+                icons.append(f"❄️ {temperature}°C")
+
+        if len(icons) == 0:
+            status = "🟢"
+
+        elif len(icons) == 1:
+            status = icons[0]
+
+        else:
+            status = "🚨 " + " | ".join(icons)
+
+        courier_status[courier_id] = status
         selected_courier = st.selectbox(
 
             "🚚 Futár",
@@ -160,22 +204,11 @@ def show_profile_page():
             filtered,
 
             format_func=lambda x:
-            f"{x.get('courierName')} ({x.get('courierId')})"
+                f"{x.get('courierName')} "
+                f"({x.get('courierId')})  "
+                f"{courier_status.get(x.get('courierId'), '🟢')}"
 
         )
-
-    if not selected_courier:
-
-        st.warning(
-            "Nincs aktív futár."
-        )
-
-        return
-
-    selected_courier_id = selected_courier.get(
-        "courierId"
-    )
-
     # ----------------------------------
     # Departure Dashboard
     # ----------------------------------
