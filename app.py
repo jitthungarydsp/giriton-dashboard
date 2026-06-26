@@ -24,6 +24,8 @@ if "user" not in st.session_state:
     st.stop()
 
 user = st.session_state["user"]
+selected_courier_id
+selected_name = user.get("username")
 
 # -------------------
 # Sidebar
@@ -45,50 +47,31 @@ logout_button()
 
 if user["role"] == "admin":
 
-    menu = [
-        "Admin",
-        "Összes futár"
-    ]
+    st.divider()
 
-else:
+    st.subheader("Aktív futárok")
 
-    menu = [
-        "Aktuális útvonalak"
-    ]
+    active_couriers = []
 
-page = st.sidebar.radio(
-    "Menü",
-    menu
-)
+    for courier in couriers:
 
-# -------------------
-# Oldalak
-# -------------------
+        active_couriers.append({
 
-if page == "Admin":
+            "id": courier.get("courierId"),
+            "name": courier.get("courierName")
 
-    show_admin_page()
+        })
 
-elif page == "Trainer":
+    selected = st.selectbox(
 
-    st.title(
-        "👨‍🏫 Trainer felület"
+        "🚚 Futár",
+
+        options=active_couriers,
+
+        format_func=lambda x:
+        f"{x['name']} ({x['id']})"
+
     )
 
-    st.info(
-        "Fejlesztés alatt"
-    )
-
-elif page == "Saját adatok":
-
-    st.title(
-        "👤 Saját adatok"
-    )
-
-    st.info(
-        "Fejlesztés alatt"
-    )
-
-elif page == "Profil":
-
-    show_profile_page()
+    selected_courier_id = selected["id"]
+    selected_name = selected["name"]
