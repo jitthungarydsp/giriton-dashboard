@@ -4,7 +4,7 @@
             "username": "admin",
             "password": "Admin123!",
             "role": "admin",
-            "courierId": null,
+            "courierId": 1234,
             "active": true,
             "token": ""
         },
