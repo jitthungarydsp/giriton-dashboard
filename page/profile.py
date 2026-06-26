@@ -16,6 +16,21 @@ def show_profile_page():
     )
 
     user = st.session_state["user"]
+    # -------------------------
+    # Jogosultság
+    # -------------------------
+
+    user = st.session_state["user"]
+
+    selected_courier_id = user.get("courierId")
+    selected_name = user.get("username")
+
+    attendance = load_attendance()
+
+    couriers = attendance.get(
+        "couriers",
+        []
+    )
 
     st.subheader(
         "Felhasználó adatai"
@@ -39,157 +54,128 @@ def show_profile_page():
         "couriers",
         []
     )
+    # -------------------------
+    # Látható futárok
+    # -------------------------
 
-    # -------------------------
-    # Admin
-    # -------------------------
+    from resources.users import load_users
+
+    users_data = load_users()
+
+    portal_users = users_data["users"]
+
+    visible_couriers = []
 
     if user["role"] == "admin":
 
-        st.divider()
+        visible_couriers = couriers
 
-        st.subheader(
-            "Aktív futárok"
-        )
+    elif user["role"] == "trainer":
 
-        active_couriers = []
+        trainer_name = user["username"]
 
-        for courier in couriers:
+        trainer_courier_ids = []
 
-            active_couriers.append({
+        for u in portal_users:
 
-                "id":
-                courier.get(
-                    "courierId"
-                ),
+            if u.get("trainer") == trainer_name:
 
-                "name":
-                courier.get(
-                    "courierName"
+                trainer_courier_ids.append(
+                    u.get("courierId")
                 )
 
-            })
+        visible_couriers = [
 
-        if not active_couriers:
-
-            st.warning(
-                "Nincs futár."
-            )
-
-            return
-
-        selected = st.selectbox(
-
-            "🚚 Futár",
-
-            options=active_couriers,
-
-            format_func=lambda x:
-            f"{x['name']} ({x['id']})"
-
-        )
-        driver_data = load_driver_details(
-            selected["id"]
-        )
-
-        routes = driver_data.get(
-            "routes",
-            []
-        )
-
-        st.write(
-            f"Aktív route-ok: {len(routes)}"
-        )
-
-        for route in routes:
-
-            with st.expander(
-                f"🚚 Route {route.get('id')}"
-            ):
-
-                c1, c2, c3, c4 = st.columns(4)
-
-                c1.metric(
-                    "Összes",
-                    route.get(
-                        "numTotalOrders",
-                        0
-                    )
-                )
-
-                c2.metric(
-                    "Kiszállított",
-                    route.get(
-                        "numDeliveredOrders",
-                        0
-                    )
-                )
-
-                c3.metric(
-                    "Késő",
-                    route.get(
-                        "numDelayedOrdersEstimate",
-                        0
-                    )
-                )
-
-                c4.metric(
-                    "Route ID",
-                    route.get(
-                        "id",
-                        ""
-                    )
-                )
-
-        return
-    # -------------------------
-    # User
-    # -------------------------
-
-    my_courier = next(
-
-        (
             c
 
             for c in couriers
 
-            if c.get(
-                "courierId"
-            )
+            if c.get("courierId")
+            in trainer_courier_ids
+
+        ]
+
+    else:
+
+        visible_couriers = [
+
+            c
+
+            for c in couriers
+
+            if c.get("courierId")
             ==
-            user.get(
-                "courierId"
+            selected_courier_id
+
+        ]
+    # -------------------------
+    # User
+    # -------------------------
+    # -------------------------
+    # Futár kiválasztása
+    # -------------------------
+
+    selected_courier = None
+
+    if user["role"] == "user":
+
+        selected_courier = visible_couriers[0] if visible_couriers else None
+
+    else:
+
+        search = st.text_input(
+            "🔍 Futár keresése"
+        )
+
+        filtered = visible_couriers
+
+        if search:
+
+            filtered = [
+
+                c
+
+                for c in visible_couriers
+
+                if search.lower()
+                in c.get(
+                    "courierName",
+                    ""
+                ).lower()
+
+            ]
+
+        if not filtered:
+
+            st.warning(
+                "Nincs találat."
             )
-        ),
 
-        None
-    )
+            return
 
-    if not my_courier:
+        selected_courier = st.selectbox(
+
+            "🚚 Futár",
+
+            filtered,
+
+            format_func=lambda x:
+            f"{x.get('courierName')} ({x.get('courierId')})"
+
+        )
+
+    if not selected_courier:
 
         st.warning(
-            "Nincs aktív műszak vagy futár adat."
+            "Nincs aktív futár."
         )
 
         return
 
-    st.divider()
-
-    st.subheader(
-        "Mai adatok"
+    selected_courier_id = selected_courier.get(
+        "courierId"
     )
 
-    st.write(
-        f"**Név:** {my_courier.get('courierName')}"
-    )
-
-    st.write(
-        f"**Courier ID:** {my_courier.get('courierId')}"
-    )
-
-    st.write(
-        f"**Depó:** {my_courier.get('warehouseName')}"
-    )
     # ----------------------------------
     # Departure Dashboard
     # ----------------------------------
@@ -199,6 +185,7 @@ def show_profile_page():
     departure_route = next(
 
         (
+
             route
 
             for route in departure_data.get(
@@ -206,17 +193,10 @@ def show_profile_page():
                 []
             )
 
-            if str(
-                route.get(
-                    "courier_id"
-                )
-            )
+            if str(route.get("courier_id"))
             ==
-            str(
-                user.get(
-                    "courierId"
-                )
-            )
+            str(selected_courier_id)
+
         ),
 
         None
@@ -324,10 +304,8 @@ def show_profile_page():
         )
 
     driver_data = load_driver_details(
-        user.get(
-            "courierId"
+        selected_courier_id
         )
-    )
 
     routes = driver_data.get(
         "routes",
