@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from page.profile import (
     show_profile_page
@@ -28,6 +29,15 @@ selected_courier_id = user.get("courierId")
 selected_name = user.get("username")
 
 # -------------------
+# Automatikus frissites
+# -------------------
+
+st_autorefresh(
+    interval=30 * 1000,
+    key="dashboard_auto_refresh"
+)
+
+# -------------------
 # Sidebar
 # -------------------
 
@@ -37,6 +47,10 @@ st.sidebar.success(
 
 st.sidebar.info(
     f"Jogosultság: {user['role']}"
+)
+
+st.sidebar.caption(
+    "Automatikus frissítés: 30 mp"
 )
 
 logout_button()

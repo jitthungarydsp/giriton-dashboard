@@ -22,7 +22,7 @@ def show_profile_page():
 
     user = st.session_state["user"]
 
-    selected_courier_id = selected_courier.get("courierId")
+    selected_courier_id = user.get("courierId")
     selected_name = user.get("username")
 
     attendance = load_attendance()
@@ -203,6 +203,8 @@ def show_profile_page():
             f"{courier_status.get(x.get('courierId'), '🟢')}"
 
     )
+    
+    selected_courier_id = selected_courier.get("courierId")
     # ----------------------------------
     # Departure Dashboard
     # ----------------------------------
