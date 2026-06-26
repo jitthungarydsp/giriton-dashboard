@@ -367,17 +367,9 @@ def write_open_shifts(rows):
 
         output = []
 
-        # 1. sor
-        output.append([""])
-
-        # 2. sor
-        header = ["műszak neve", ""]
-        
-
-        for d in dates:
-            header.append(f"{d[5:7]}.{d[8:10]}.")
-
-        output.append(header)
+        # A-C oszlop kitöltetlen marad a dátumok előtt.
+        # A sheetre A4-től írunk, így az első 3 sor üres lesz.
+        header = ["műszak neve", "", ""]
 
         for d in dates:
             header.append(f"{d[5:7]}.{d[8:10]}.")
@@ -389,7 +381,7 @@ def write_open_shifts(rows):
 
         for shift in sorted(matrix.keys(), key=sort_key):
 
-            row = [shift,""]
+            row = [shift, "", ""]
 
             for d in dates:
                 row.append(matrix[shift].get(d,0))
@@ -399,6 +391,6 @@ def write_open_shifts(rows):
         output.append(["Befoglalt műszakok"])
 
         ws.clear()
-        ws.update("A2", output)
+        ws.update("A4", output)
 
     return "OK"
