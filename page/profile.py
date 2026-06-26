@@ -172,8 +172,6 @@ def show_profile_page():
             route.get(
                 "temperature",
                 {}
-            ).get(
-                "temperature"
             )
         )
 
