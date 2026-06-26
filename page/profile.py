@@ -196,19 +196,18 @@ def show_profile_page():
         else:
             status = "🚨 " + " | ".join(icons)
 
-        courier_status[courier_id] = status
-        selected_courier = st.selectbox(
+    courier_status[courier_id] = status
+    selected_courier = st.selectbox(
+        "🚚 Futár",
 
-            "🚚 Futár",
+        filtered,
 
-            filtered,
+        format_func=lambda x:
+            f"{x.get('courierName')} "
+            f"({x.get('courierId')})  "
+            f"{courier_status.get(x.get('courierId'), '🟢')}"
 
-            format_func=lambda x:
-                f"{x.get('courierName')} "
-                f"({x.get('courierId')})  "
-                f"{courier_status.get(x.get('courierId'), '🟢')}"
-
-        )
+    )
     # ----------------------------------
     # Departure Dashboard
     # ----------------------------------
