@@ -168,13 +168,10 @@ def show_profile_page():
             0
         )
 
-        temperature = (
-            route.get(
-                "temperature",
-                {}
-            )
-        )
+        temperature = None
 
+        if isinstance(route.get("temperature"), dict):
+            temperature = route["temperature"].get("temperature")
         icons = []
 
         if delayed > 0:
