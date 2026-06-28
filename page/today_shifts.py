@@ -736,6 +736,7 @@ def render_styles():
 .shift-cell {
     color: #0f172a;
     font-size: 13px;
+    overflow-wrap: anywhere;
 }
 .shift-cell-danger {
     color: #b91c1c;

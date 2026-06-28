@@ -2,6 +2,7 @@ import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import streamlit as st
 
 from resources.alert_log_sheet import write_alert_logs
@@ -866,171 +867,154 @@ def render_sort_controls():
         )
 
 
+def build_courier_dataframe(rows):
+    return pd.DataFrame(
+        [
+            {
+                "Courier ID": f"#{row.get('Courier ID', '')}",
+                "Név": row.get("Name", ""),
+                "Raktár": row.get("Warehouse", ""),
+                "Státusz": row.get("Status", ""),
+                "Késés": row.get("Delay", ""),
+                "Route ID": row.get("Route ID", ""),
+                "Rákerült": row.get("Rákerült", ""),
+                "Címek": row.get("Deliveries", ""),
+                "Jármű": row.get("Vehicle Type", ""),
+                "Rendszám": row.get("License Plate", ""),
+                "Tervezett": row.get("Tervezett indulás", ""),
+                "Indulás": row.get("Departure Time", ""),
+                "Shift start": row.get("Current Shift Start", ""),
+                "Shift": row.get("Current Shift Status", ""),
+                "Temp": row.get("Temperature", ""),
+                "Last temp": row.get("Last measurement timestamp", ""),
+                "False dep.": row.get("False departure report", ""),
+                "_status_kind": row.get("_status_kind", "muted"),
+                "_shift_kind": row.get("_shift_kind", "muted"),
+                "_delay_minutes": row.get("_delay_minutes", 0),
+                "_temperature_alert": row.get("_temperature_alert", False),
+            }
+            for row in rows
+        ]
+    )
+
+
+def style_courier_dataframe(dataframe):
+    visible_columns = [
+        column
+        for column in dataframe.columns
+        if not column.startswith("_")
+    ]
+
+    def style_row(row):
+        styles = [
+            ""
+            for _ in visible_columns
+        ]
+
+        def set_style(column, value):
+            if column in visible_columns:
+                styles[visible_columns.index(column)] = value
+
+        status_styles = {
+            "ok": "background-color: #dcfce7; color: #166534; font-weight: 800;",
+            "warn": "background-color: #fef3c7; color: #92400e; font-weight: 800;",
+            "danger": "background-color: #fee2e2; color: #b91c1c; font-weight: 800;",
+            "muted": "background-color: #f1f5f9; color: #0f172a; font-weight: 700;",
+        }
+
+        set_style(
+            "Courier ID",
+            "color: #1d4ed8; font-weight: 800;",
+        )
+        set_style(
+            "Státusz",
+            status_styles.get(
+                row.get("_status_kind", "muted"),
+                status_styles["muted"],
+            ),
+        )
+        set_style(
+            "Shift",
+            status_styles.get(
+                row.get("_shift_kind", "muted"),
+                status_styles["muted"],
+            ),
+        )
+
+        if row.get("_delay_minutes", 0) > 0:
+            set_style(
+                "Késés",
+                "background-color: #fee2e2; color: #b91c1c; font-weight: 800;",
+            )
+
+        if row.get("_temperature_alert"):
+            set_style(
+                "Temp",
+                "background-color: #fee2e2; color: #b91c1c; font-weight: 800;",
+            )
+
+        return styles
+
+    return dataframe[visible_columns].style.apply(
+        style_row,
+        axis=1,
+    )
+
+
+def render_route_selector(rows):
+    route_options = {
+        (
+            f"#{row.get('Courier ID', '')} | "
+            f"{row.get('Name', '')} | "
+            f"{row.get('Route ID') or 'Útvonal'}"
+        ): row.get("_driver_id")
+        for row in rows
+        if row.get("_driver_id")
+    }
+
+    if not route_options:
+        return
+
+    selector_col, button_col = st.columns([4, 1])
+
+    with selector_col:
+        selected_label = st.selectbox(
+            "Útvonal megnyitása",
+            [""] + list(route_options.keys()),
+            key="today_courier_route_selector",
+        )
+
+    with button_col:
+        st.write("")
+        st.write("")
+
+        if st.button(
+            "Megnyitás",
+            use_container_width=True,
+            disabled=not selected_label,
+        ):
+            st.session_state["today_selected_route_driver_id"] = route_options[
+                selected_label
+            ]
+
+
 def render_table(rows):
-    render_table_styles()
+    render_route_selector(
+        rows
+    )
 
-    headers = [
-        "Courier ID",
-        "Name",
-        "Warehouse",
-        "Status",
-        "Delay",
-        "Route ID",
-        "Rákerült",
-        "Deliveries",
-        "Vehicle",
-        "License",
-        "Tervezett",
-        "Indulás",
-        "Shift start",
-        "Shift",
-        "Temp",
-        "Last temp",
-        "False dep.",
-    ]
-    column_widths = [
-        0.8,
-        1.7,
-        0.8,
-        1.0,
-        0.7,
-        1.0,
-        0.9,
-        0.8,
-        0.8,
-        1.0,
-        0.9,
-        0.8,
-        0.9,
-        1.0,
-        0.8,
-        0.9,
-        0.9,
-    ]
+    dataframe = build_courier_dataframe(
+        rows
+    )
 
-    st.markdown('<div class="courier-table-scroll">', unsafe_allow_html=True)
-
-    header_columns = st.columns(column_widths)
-
-    for column, header in zip(header_columns, headers):
-        with column:
-            render_cell(
-                html.escape(header),
-                "courier-head-cell",
-            )
-
-    for index, row in enumerate(rows):
-        st.markdown('<div class="courier-row-wrap">', unsafe_allow_html=True)
-        columns = st.columns(column_widths)
-
-        with columns[0]:
-            render_cell(
-                f'<span class="id-link">#{html.escape(str(row.get("Courier ID", "")))}</span>'
-            )
-        with columns[1]:
-            render_cell(
-                html.escape(str(row.get("Name", "")))
-            )
-        with columns[2]:
-            render_cell(
-                html.escape(str(row.get("Warehouse", "")))
-            )
-        with columns[3]:
-            render_cell(
-                pill(
-                    row.get("Status", ""),
-                    row.get("_status_kind", "muted"),
-                )
-            )
-        with columns[4]:
-            if row.get("_delay_minutes", 0) > 0:
-                render_cell(
-                    pill(
-                        f'+{row.get("_delay_minutes")}',
-                        "danger",
-                    )
-                )
-            else:
-                render_cell("—")
-        with columns[5]:
-            route_id = row.get(
-                "Route ID",
-                "",
-            )
-            driver_id = row.get(
-                "_driver_id"
-            )
-            button_label = str(route_id or "Útvonal")
-
-            if st.button(
-                button_label,
-                key=f"today_orders_{driver_id}_{index}",
-                help="Route útvonal megnyitása. A route ID a felugró ablakban töltődik be.",
-                use_container_width=True,
-                disabled=not bool(driver_id),
-            ):
-                st.session_state["today_selected_route_driver_id"] = row.get(
-                    "_driver_id"
-                )
-        with columns[6]:
-            render_cell(
-                html.escape(str(row.get("Rákerült", "")))
-            )
-        with columns[7]:
-            render_cell(
-                html.escape(str(row.get("Deliveries", "")))
-            )
-        with columns[8]:
-            render_cell(
-                html.escape(str(row.get("Vehicle Type", "")))
-            )
-        with columns[9]:
-            render_cell(
-                html.escape(str(row.get("License Plate", "")))
-            )
-        with columns[10]:
-            render_cell(
-                html.escape(str(row.get("Tervezett indulás", "")))
-            )
-        with columns[11]:
-            render_cell(
-                html.escape(str(row.get("Departure Time", "")))
-            )
-        with columns[12]:
-            render_cell(
-                html.escape(str(row.get("Current Shift Start", "")))
-            )
-        with columns[13]:
-            render_cell(
-                pill(
-                    row.get("Current Shift Status", ""),
-                    row.get("_shift_kind", "muted"),
-                )
-            )
-        with columns[14]:
-            if row.get("_temperature_alert"):
-                render_cell(
-                    pill(
-                        row.get("Temperature", ""),
-                        "danger",
-                    )
-                )
-            else:
-                render_cell(
-                    html.escape(str(row.get("Temperature", "")))
-                )
-        with columns[15]:
-            render_cell(
-                html.escape(str(row.get("Last measurement timestamp", "")))
-            )
-        with columns[16]:
-            render_cell(
-                html.escape(str(row.get("False departure report", "")))
-            )
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.dataframe(
+        style_courier_dataframe(
+            dataframe
+        ),
+        use_container_width=True,
+        hide_index=True,
+        height=620,
+    )
 
 
 def build_checkpoint_rows(route):
