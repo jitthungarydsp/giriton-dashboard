@@ -110,7 +110,16 @@ else:
         "Frissítés",
         use_container_width=True,
     ):
+        st.cache_data.clear()
+        st.cache_resource.clear()
         st.session_state["manual_refresh_requested"] = True
+        st.session_state["manual_refresh_counter"] = (
+            st.session_state.get(
+                "manual_refresh_counter",
+                0,
+            )
+            + 1
+        )
         st.rerun()
 
     st_autorefresh(

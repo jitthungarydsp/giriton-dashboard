@@ -122,11 +122,35 @@ def read_giriton_records(work_date):
     return records
 
 
+def read_giriton_email_name_lookup():
+    spreadsheet = open_sheet()
+    worksheet = spreadsheet.worksheet(
+        get_giriton_worksheet_name()
+    )
+    rows = worksheet.get_all_values()
+    lookup = {}
+
+    for row in rows:
+        record = row_to_record(row)
+        email = str(
+            record.get("email", "")
+        ).strip().casefold()
+        name = str(
+            record.get("name", "")
+        ).strip()
+
+        if email and name and name != "ĂśRES":
+            lookup[email] = name
+
+    return lookup
+
+
 def read_foglalasok_records(work_date):
     spreadsheet = open_sheet()
     worksheet = spreadsheet.worksheet(
         get_foglalasok_worksheet_name()
     )
+    # This sheet is shared with other scripts, so it must stay read-only here.
     rows = worksheet.get_all_values()
     records = []
 
