@@ -1,7 +1,8 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -23,14 +24,23 @@ DEPOT_ID = "JIT"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 
+@st.cache_data(
+    show_spinner=False,
+)
+def fetch_json(url):
+    response = requests.get(
+        url,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def request_json(url):
     try:
-        response = requests.get(
-            url,
-            timeout=30,
+        return fetch_json(
+            url
         )
-        response.raise_for_status()
-        return response.json()
     except requests.RequestException as exc:
         st.error(
             f"API hiba: {exc}"
@@ -65,6 +75,45 @@ def load_vehicle_assignments():
 
     return request_json(
         url
+    )
+
+
+def load_drivers():
+    url = (
+        f"{BASE_URL}/"
+        f"fetch-drivers"
+        f"?id={DEPOT_ID}"
+        f"&organizationId={ORGANIZATION_ID}"
+        f"&departureDelayThreshold=10"
+    )
+
+    return request_json(
+        url
+    )
+
+
+@st.cache_data(
+    show_spinner=False,
+)
+def load_shift_sheet_data(work_date_text):
+    giriton_records = read_giriton_records(
+        work_date_text
+    )
+    foglalas_records = read_foglalasok_records(
+        work_date_text
+    )
+    email_name_lookup = read_giriton_email_name_lookup()
+
+    return (
+        giriton_records,
+        foglalas_records,
+        email_name_lookup,
+        build_giriton_lookup(
+            giriton_records
+        ),
+        build_foglalas_lookup(
+            foglalas_records
+        ),
     )
 
 
@@ -114,6 +163,19 @@ def parse_assignment_datetime(work_date, value):
         )
     except (TypeError, ValueError):
         return None
+
+
+def normalize_start_from_datetime(value):
+    parsed = parse_datetime(
+        value
+    )
+
+    if not parsed:
+        return ""
+
+    return parsed.strftime(
+        "%H:%M"
+    )
 
 
 def format_time(value):
@@ -180,6 +242,28 @@ def find_matching_shift(courier, start_at):
             - start_at
         ),
     )
+
+
+def is_first_shift(courier, start_at):
+    if not courier or not start_at:
+        return False
+
+    shift_starts = [
+        parse_datetime(
+            shift.get("shiftStart")
+        )
+        for shift in courier.get("shifts", [])
+    ]
+    shift_starts = [
+        value
+        for value in shift_starts
+        if value
+    ]
+
+    if not shift_starts:
+        return False
+
+    return min(shift_starts) == start_at
 
 
 def get_checkin_state(start_at, available_since):
@@ -253,6 +337,14 @@ def ok_pill(label="✓"):
         'border-radius:999px;padding:5px 9px;font-weight:800;'
         'display:inline-block;">'
         f'{label}</span>'
+    )
+
+
+def exp_pill():
+    return (
+        '<span style="background:#ede9fe;color:#5b21b6;'
+        'border-radius:999px;padding:5px 9px;font-weight:800;'
+        'display:inline-block;">EXP</span>'
     )
 
 
@@ -343,6 +435,7 @@ def merge_source(sources, key, updates):
 
 def build_shift_sources(
     assignments,
+    attendance_data,
     giriton_records,
     foglalas_records,
     email_name_lookup=None,
@@ -377,6 +470,37 @@ def build_shift_sources(
                 "assignment_index": index,
             },
         )
+
+    for courier in attendance_data.get("couriers", []):
+        name = str(
+            courier.get("courierName", "")
+        ).strip()
+
+        for shift in courier.get("shifts", []):
+            start = normalize_start_from_datetime(
+                shift.get("shiftStart")
+            )
+            key = record_key(
+                name,
+                start,
+            )
+            merge_source(
+                sources,
+                key,
+                {
+                    "name": name,
+                    "start": start,
+                    "end": normalize_start_from_datetime(
+                        shift.get("shiftEnd")
+                    ),
+                    "warehouse": courier.get("warehouseName"),
+                    "attendance_courier": courier,
+                    "attendance_shift": shift,
+                    "is_exp": "EXP" in str(
+                        shift.get("shiftName", "")
+                    ).upper(),
+                },
+            )
 
     for record in giriton_records:
         name = record.get(
@@ -452,6 +576,7 @@ def build_rows(
     )
     shift_sources = build_shift_sources(
         assignments,
+        attendance_data,
         giriton_records,
         foglalas_records,
         email_name_lookup,
@@ -472,6 +597,16 @@ def build_rows(
         shift = find_matching_shift(
             courier,
             start_at,
+        )
+        attendance_shift = source.get(
+            "attendance_shift",
+            {},
+        ) or shift
+        is_exp = bool(
+            source.get("is_exp")
+            or "EXP" in str(
+                attendance_shift.get("shiftName", "")
+            ).upper()
         )
         giriton_record = giriton_lookup.get(
             record_key(
@@ -497,15 +632,24 @@ def build_rows(
 
         state = get_checkin_state(
             start_at,
-            shift.get("availableForShiftSince"),
+            attendance_shift.get("availableForShiftSince"),
         )
         has_muszakpro = bool(
             foglalas_record
-        )
+        ) or is_exp
         has_giriton = bool(
             giriton_record
         )
         is_checked_in = state["label"] == "Bejelentkezett"
+        first_shift_missing = (
+            is_first_shift(
+                courier,
+                start_at,
+            )
+            and not is_checked_in
+            and start_at
+            and local_now() >= start_at
+        )
         email_key = (
             f"today_shift_email_{work_date.isoformat()}_"
             f"{name}_{source.get('start')}"
@@ -532,23 +676,29 @@ def build_rows(
             ),
             "start": format_time(start_at),
             "end": format_time(source.get("end")),
-            "muszakpro": ok_pill() if has_muszakpro else "-",
+            "muszakpro": exp_pill() if is_exp else ok_pill() if has_muszakpro else "-",
+            "muszakpro_text": "EXP" if is_exp else "OK" if has_muszakpro else "-",
             "giriton": ok_pill() if has_giriton else "-",
+            "giriton_text": "OK" if has_giriton else "-",
             "checkin": status_pill(state),
+            "checkin_text": state["label"],
             "checkin_time": state["time"],
             "current_plate": assignment.get("License Plate", ""),
             "car_code": assignment.get("Car", ""),
             "suggested_plate": vehicle_suggestions.get(
                 assignment_index,
                 assignment.get("License Plate", ""),
-            ),
+            ) if not is_exp else "",
             "email": source.get("email", ""),
             "email_sent": ok_pill() if email_sent else "-",
             "_email_key": email_key,
+            "_row_key": f"{normalize_name(name)}_{format_time(start_at)}",
             "_start_at": start_at or datetime.max,
             "_has_muszakpro": has_muszakpro,
             "_has_giriton": has_giriton,
             "_is_checked_in": is_checked_in,
+            "_first_shift_missing": first_shift_missing,
+            "_is_exp": is_exp,
             "_email_sent": email_sent,
         })
 
@@ -567,8 +717,8 @@ def render_styles():
 <style>
 .shift-table-header {
     position: sticky;
-    top: 0;
-    z-index: 20;
+    top: 3.75rem;
+    z-index: 999;
     display: grid;
     align-items: center;
     gap: 16px;
@@ -591,6 +741,11 @@ def render_styles():
     color: #b91c1c;
     font-size: 13px;
     font-weight: 800;
+}
+.shift-cell-black {
+    color: #020617;
+    font-size: 13px;
+    font-weight: 900;
 }
 .shift-alert-list {
     display: flex;
@@ -641,6 +796,131 @@ def render_cell(value, css_class="shift-cell"):
     )
 
 
+def selection_key(row, index):
+    return f"shift_selected_{row['_row_key']}_{index}"
+
+
+def get_selected_rows(rows):
+    return [
+        row
+        for index, row in enumerate(rows)
+        if st.session_state.get(
+            selection_key(
+                row,
+                index,
+            )
+        )
+    ]
+
+
+def build_editor_dataframe(rows):
+    return pd.DataFrame(
+        [
+            {
+                "Kiv.": False,
+                "Név": (
+                    f"!!! {row['name']}"
+                    if row.get("_first_shift_missing")
+                    else f"! {row['name']}"
+                    if not row.get("_is_checked_in")
+                    else row["name"]
+                ),
+                "Raktár": row.get("warehouse", ""),
+                "Kezdés": row.get("start", ""),
+                "Vége": row.get("end", ""),
+                "MűszakPro": row.get("muszakpro_text", "-"),
+                "Giriton": row.get("giriton_text", "-"),
+                "Bejelentkezés": row.get("checkin_text", ""),
+                "Bej. idő": row.get("checkin_time", ""),
+                "Aktuális auto": row.get("current_plate", ""),
+                "Auto kód": row.get("car_code", ""),
+                "Javasolt auto": row.get("suggested_plate", ""),
+                "E-mail jelzés": "OK" if row.get("_email_sent") else "-",
+                "_row_key": row.get("_row_key", ""),
+            }
+            for row in rows
+        ]
+    )
+
+
+def style_shift_dataframe(dataframe):
+    def style_row(row):
+        styles = [
+            ""
+            for _ in row
+        ]
+
+        if row["MűszakPro"] == "EXP":
+            styles[dataframe.columns.get_loc("MűszakPro")] = (
+                "background-color: #ede9fe; color: #5b21b6; font-weight: 800;"
+            )
+        elif row["MűszakPro"] == "OK":
+            styles[dataframe.columns.get_loc("MűszakPro")] = (
+                "background-color: #dcfce7; color: #166534; font-weight: 800;"
+            )
+        elif row["MűszakPro"] == "-":
+            styles[dataframe.columns.get_loc("MűszakPro")] = (
+                "background-color: #fee2e2; color: #991b1b; font-weight: 800;"
+            )
+
+        if row["Giriton"] == "OK":
+            styles[dataframe.columns.get_loc("Giriton")] = (
+                "background-color: #dcfce7; color: #166534; font-weight: 800;"
+            )
+        elif row["Giriton"] == "-":
+            styles[dataframe.columns.get_loc("Giriton")] = (
+                "background-color: #fee2e2; color: #991b1b; font-weight: 800;"
+            )
+
+        checkin = row["Bejelentkezés"]
+        checkin_index = dataframe.columns.get_loc("Bejelentkezés")
+
+        if checkin == "Bejelentkezett":
+            styles[checkin_index] = "background-color: #dcfce7; color: #166534; font-weight: 800;"
+        elif checkin == "30+ perc":
+            styles[checkin_index] = "background-color: #fef3c7; color: #92400e; font-weight: 800;"
+        elif checkin == "15-30 perc":
+            styles[checkin_index] = "background-color: #fee2e2; color: #b91c1c; font-weight: 800;"
+        elif checkin == "15 perc alatt":
+            styles[checkin_index] = "background-color: #111827; color: #ffffff; font-weight: 800;"
+
+        name = str(row["Név"])
+        name_index = dataframe.columns.get_loc("Név")
+
+        if name.startswith("!!!"):
+            styles[name_index] = "color: #020617; font-weight: 900;"
+        elif name.startswith("!"):
+            styles[name_index] = "color: #b91c1c; font-weight: 800;"
+
+        return styles
+
+    return dataframe.style.apply(
+        style_row,
+        axis=1,
+    )
+
+
+def render_shift_table(rows):
+    dataframe = build_editor_dataframe(
+        rows
+    ).drop(
+        columns=["Kiv."]
+    )
+
+    dataframe = dataframe.drop(
+        columns=["_row_key"]
+    )
+
+    st.dataframe(
+        style_shift_dataframe(
+            dataframe
+        ),
+        use_container_width=True,
+        hide_index=True,
+        height=620,
+    )
+
+
 def build_missing_source_alerts(rows):
     alerts = []
 
@@ -688,6 +968,7 @@ def render_table(rows):
     render_styles()
 
     headers = [
+        "Kiv.",
         "Név",
         "Raktár",
         "Műszak kezdése",
@@ -703,6 +984,7 @@ def render_table(rows):
         "E-mail jelzés",
     ]
     widths = [
+        0.45,
         1.8,
         0.8,
         0.9,
@@ -727,6 +1009,16 @@ def render_table(rows):
         cols = st.columns(
             widths
         )
+        with cols[0]:
+            st.checkbox(
+                "",
+                key=selection_key(
+                    row,
+                    index,
+                ),
+                label_visibility="collapsed",
+            )
+
         values = [
             (
                 f"❗ {escape(row['name'])}"
@@ -745,18 +1037,21 @@ def render_table(rows):
             row["suggested_plate"],
         ]
 
-        for value_index, (col, value) in enumerate(zip(cols[:11], values)):
+        for value_index, (col, value) in enumerate(zip(cols[1:12], values)):
             with col:
+                name_class = "shift-cell"
+
+                if value_index == 0 and row.get("_first_shift_missing"):
+                    name_class = "shift-cell-black"
+                elif value_index == 0 and not row.get("_is_checked_in"):
+                    name_class = "shift-cell-danger"
+
                 render_cell(
                     value,
-                    (
-                        "shift-cell-danger"
-                        if value_index == 0 and not row.get("_is_checked_in")
-                        else "shift-cell"
-                    ),
+                    name_class,
                 )
 
-        with cols[11]:
+        with cols[12]:
             if st.button(
                 "E-mail",
                 key=f"send_email_notice_{index}",
@@ -768,7 +1063,7 @@ def render_table(rows):
                 )
                 st.rerun()
 
-        with cols[12]:
+        with cols[13]:
             render_cell(
                 row["email_sent"]
             )
@@ -814,6 +1109,256 @@ def calculate_shift_statistics(rows):
     }
 
 
+def build_driver_contact_lookup(drivers_data):
+    lookup = {}
+
+    for driver in drivers_data.get("drivers", []):
+        personal_info = driver.get(
+            "personal_info",
+            {},
+        )
+        name = personal_info.get(
+            "name",
+            "",
+        )
+
+        if not name:
+            continue
+
+        lookup[normalize_name(name)] = {
+            "phone": personal_info.get("contact_number", ""),
+            "warehouse": personal_info.get("warehouse_name", ""),
+            "driver_id": driver.get("driver_id", ""),
+        }
+
+    return lookup
+
+
+def shifts_overlap(first_start, first_end, second_start, second_end):
+    if not all([first_start, first_end, second_start, second_end]):
+        return False
+
+    return first_start < second_end and second_start < first_end
+
+
+def has_shift_capacity(courier, target_start, target_end):
+    for shift in courier.get("shifts", []):
+        shift_start = parse_datetime(
+            shift.get("shiftStart")
+        )
+        shift_end = parse_datetime(
+            shift.get("shiftEnd")
+        )
+
+        if shifts_overlap(
+            target_start,
+            target_end,
+            shift_start,
+            shift_end,
+        ):
+            return False
+
+    return True
+
+
+def find_replacement_candidates(selected_rows, attendance_data, drivers_data):
+    if not selected_rows:
+        return []
+
+    contact_lookup = build_driver_contact_lookup(
+        drivers_data
+    )
+    candidates_by_name = {}
+
+    attendance_names = {
+        normalize_name(
+            courier.get("courierName")
+        )
+        for courier in attendance_data.get("couriers", [])
+    }
+
+    for selected in selected_rows:
+        target_warehouse = selected.get("warehouse", "")
+        target_start = selected.get("_start_at")
+
+        if not isinstance(target_start, datetime) or target_start == datetime.max:
+            continue
+
+        target_end = parse_assignment_datetime(
+            target_start.date(),
+            selected.get("end"),
+        ) if isinstance(target_start, datetime) and selected.get("end") else None
+
+        if target_end and target_end <= target_start:
+            target_end = target_end + timedelta(
+                days=1
+            )
+
+        if not target_end and isinstance(target_start, datetime):
+            target_end = target_start + timedelta(
+                hours=4
+            )
+
+        for courier in attendance_data.get("couriers", []):
+            name = str(
+                courier.get("courierName", "")
+            ).strip()
+
+            if not name or normalize_name(name) == normalize_name(selected.get("name")):
+                continue
+
+            warehouse = courier.get(
+                "warehouseName",
+                "",
+            )
+            contact = contact_lookup.get(
+                normalize_name(name),
+                {},
+            )
+            usual_warehouse = warehouse or contact.get(
+                "warehouse",
+                "",
+            )
+
+            if (
+                target_warehouse
+                and usual_warehouse
+                and target_warehouse != usual_warehouse
+            ):
+                continue
+
+            if not has_shift_capacity(
+                courier,
+                target_start,
+                target_end,
+            ):
+                continue
+
+            reason = (
+                "szabadnapos"
+                if not courier.get("shifts")
+                else "nincs ütköző műszak"
+            )
+
+            candidates_by_name[normalize_name(name)] = {
+                "Név": name,
+                "Telefon": contact.get("phone", ""),
+                "Raktár": usual_warehouse,
+                "Ok": reason,
+            }
+
+        for driver in drivers_data.get("drivers", []):
+            personal_info = driver.get(
+                "personal_info",
+                {},
+            )
+            name = str(
+                personal_info.get("name", "")
+            ).strip()
+            normalized = normalize_name(
+                name
+            )
+
+            if (
+                not name
+                or normalized in attendance_names
+                or normalized == normalize_name(selected.get("name"))
+                or normalized in candidates_by_name
+            ):
+                continue
+
+            usual_warehouse = personal_info.get(
+                "warehouse_name",
+                "",
+            )
+
+            if (
+                target_warehouse
+                and usual_warehouse
+                and target_warehouse != usual_warehouse
+            ):
+                continue
+
+            candidates_by_name[normalized] = {
+                "Név": name,
+                "Telefon": personal_info.get("contact_number", ""),
+                "Raktár": usual_warehouse,
+                "Ok": "szabadnapos",
+            }
+
+    return sorted(
+        candidates_by_name.values(),
+        key=lambda row: normalize_name(row["Név"]),
+    )
+
+
+def render_replacement_search(rows, attendance_data):
+    st.subheader(
+        "Műszak pótlás keresése"
+    )
+
+    option_by_label = {
+        (
+            f"{row.get('name', '')} | "
+            f"{row.get('warehouse', '')} | "
+            f"{row.get('start', '')}-{row.get('end', '')}"
+        ): row
+        for row in rows
+    }
+
+    selected_labels = st.multiselect(
+        "Melyik műszakra keressünk pótlást?",
+        options=list(option_by_label.keys()),
+        key="replacement_shift_selector",
+    )
+    selected_rows = [
+        option_by_label[label]
+        for label in selected_labels
+    ]
+
+    if not selected_rows:
+        st.info(
+            "Válassz ki egy vagy több műszakot a kereséshez."
+        )
+        return
+
+    st.caption(
+        f"Kijelölt műszakok: {len(selected_rows)}"
+    )
+
+    if st.button(
+        "Keresés",
+        use_container_width=True,
+    ):
+        with st.spinner(
+            "Pótlás keresése..."
+        ):
+            drivers_data = load_drivers()
+            candidates = find_replacement_candidates(
+                selected_rows,
+                attendance_data,
+                drivers_data,
+            )
+        st.session_state["replacement_candidates"] = candidates
+        st.session_state["replacement_search_done"] = True
+
+    candidates = st.session_state.get(
+        "replacement_candidates",
+        [],
+    )
+
+    if candidates:
+        st.dataframe(
+            candidates,
+            use_container_width=True,
+            hide_index=True,
+        )
+    elif st.session_state.get("replacement_search_done"):
+        st.warning(
+            "Nem találtam olyan futárt, aki raktár és műszakütközés alapján alkalmas lenne."
+        )
+
+
 def show_today_shifts_page():
     st.title("Mai műszakok")
 
@@ -832,18 +1377,14 @@ def show_today_shifts_page():
     )
 
     try:
-        giriton_records = read_giriton_records(
+        (
+            giriton_records,
+            foglalas_records,
+            email_name_lookup,
+            giriton_lookup,
+            foglalas_lookup,
+        ) = load_shift_sheet_data(
             work_date_text
-        )
-        foglalas_records = read_foglalasok_records(
-            work_date_text
-        )
-        email_name_lookup = read_giriton_email_name_lookup()
-        giriton_lookup = build_giriton_lookup(
-            giriton_records
-        )
-        foglalas_lookup = build_foglalas_lookup(
-            foglalas_records
         )
     except Exception as exc:
         giriton_records = []
@@ -938,6 +1479,11 @@ def show_today_shifts_page():
                 f"Nap végi log mentése sikertelen: {exc}"
             )
 
-    render_table(
+    render_replacement_search(
+        rows,
+        attendance_data,
+    )
+
+    render_shift_table(
         rows
     )
