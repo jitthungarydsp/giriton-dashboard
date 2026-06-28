@@ -227,9 +227,6 @@ def write_all_shifts(rows):
     "A2:K",
     new_rows
     )
-    stats_result = create_statistics()
-
-    print(stats_result)
 
     return "OK"
 

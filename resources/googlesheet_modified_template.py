@@ -64,7 +64,10 @@ def create_statistics():
             cols=20
         )
 
-    ws_dsp = spreadsheet.worksheet("DSP_Attendance")
+    try:
+        ws_dsp = spreadsheet.worksheet("DSP_Attendance")
+    except Exception:
+        return "STAT_SKIPPED_DSP_ATTENDANCE_MISSING"
 
     dsp_rows = ws_dsp.get_all_values()
 
@@ -227,9 +230,6 @@ def write_all_shifts(rows):
     "A2:K",
     new_rows
     )
-    stats_result = create_statistics()
-
-    print(stats_result)
 
     return "OK"
 
