@@ -6,7 +6,6 @@ Library    SeleniumLibrary
 Library    DateTime
 Library    Collections
 Library    String
-Library    googlesheet.py
 
 
 *** Variables ***
