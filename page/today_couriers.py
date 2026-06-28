@@ -487,11 +487,6 @@ def build_alert_records(drivers):
         )
         route_id = get_route_id(driver)
 
-        if not route_id:
-            route_id = get_route_id_for_driver(
-                driver,
-                get_route_detail_for_driver(driver),
-            )
         warehouse = nested_get(
             driver,
             ["personal_info", "warehouse_name"],
@@ -515,9 +510,6 @@ def build_alert_records(drivers):
             driver,
             ["vehicle", "temperature"],
             "",
-        )
-        driver_detail = get_route_detail_for_driver(
-            driver
         )
         is_departure_delayed = nested_get(
             driver,
@@ -1109,10 +1101,6 @@ def show_today_couriers_page():
             temperature_alert = False
             temperature_label = "Unknown"
 
-        driver_detail = get_route_detail_for_driver(
-            driver
-        )
-
         rows.append({
             "_driver_id": driver.get("driver_id", ""),
             "Courier ID": driver.get("driver_id", ""),
@@ -1126,10 +1114,7 @@ def show_today_couriers_page():
             ),
             "Status": status_label,
             "Delay": "—" if delay_minutes <= 0 else f"+{delay_minutes}",
-            "Route ID": get_route_id_for_driver(
-                driver,
-                driver_detail,
-            ),
+            "Route ID": get_route_id(driver),
             "Rákerült": get_route_assigned_at(
                 driver
             ),
