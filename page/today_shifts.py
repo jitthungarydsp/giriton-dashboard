@@ -7,6 +7,14 @@ from resources.api import (
     load_attendance_for_date,
     load_vehicle_assignments,
 )
+from resources.muszakpro_sheet import (
+    build_foglalas_lookup,
+    build_giriton_lookup,
+    foglalas_key,
+    read_foglalasok_records,
+    read_giriton_records,
+    record_key,
+)
 
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
@@ -200,7 +208,69 @@ def ok_pill(label="✓"):
     )
 
 
-def build_rows(assignments, attendance_data, work_date):
+def build_vehicle_suggestions(assignments, work_date):
+    available_at_by_plate = {}
+    suggestions = {}
+    parsed_assignments = []
+
+    for index, assignment in enumerate(assignments):
+        start_at = parse_assignment_datetime(
+            work_date,
+            assignment.get("Start"),
+        )
+        end_at = parse_assignment_datetime(
+            work_date,
+            assignment.get("End"),
+        )
+        parsed_assignments.append(
+            (
+                start_at or datetime.max,
+                index,
+                assignment,
+                end_at,
+            )
+        )
+
+    for start_at, index, assignment, end_at in sorted(parsed_assignments):
+        current_plate = assignment.get(
+            "License Plate",
+            "",
+        )
+        candidates = [
+            (
+                available_at,
+                plate,
+            )
+            for plate, available_at in available_at_by_plate.items()
+            if available_at <= start_at
+        ]
+
+        if candidates:
+            _, suggested_plate = max(
+                candidates,
+                key=lambda item: item[0],
+            )
+        else:
+            suggested_plate = current_plate
+
+        suggestions[index] = suggested_plate
+
+        if suggested_plate:
+            available_at_by_plate[suggested_plate] = end_at or start_at
+
+        if current_plate and current_plate not in available_at_by_plate:
+            available_at_by_plate[current_plate] = end_at or start_at
+
+    return suggestions
+
+
+def build_rows(
+    assignments,
+    attendance_data,
+    work_date,
+    giriton_lookup,
+    foglalas_lookup,
+):
     attendance_lookup = build_attendance_lookup(
         attendance_data.get(
             "couriers",
@@ -208,8 +278,12 @@ def build_rows(assignments, attendance_data, work_date):
         )
     )
     rows = []
+    vehicle_suggestions = build_vehicle_suggestions(
+        assignments,
+        work_date,
+    )
 
-    for assignment in assignments:
+    for index, assignment in enumerate(assignments):
         name = assignment.get(
             "Driver",
             "",
@@ -225,6 +299,25 @@ def build_rows(assignments, attendance_data, work_date):
             courier,
             start_at,
         )
+        giriton_record = giriton_lookup.get(
+            record_key(
+                name,
+                assignment.get("Start"),
+            ),
+            {},
+        )
+        foglalas_record = {}
+
+        if giriton_record:
+            foglalas_record = foglalas_lookup.get(
+                foglalas_key(
+                    giriton_record.get("email"),
+                    giriton_record.get("warehouse"),
+                    giriton_record.get("start"),
+                ),
+                {},
+            )
+
         state = get_checkin_state(
             start_at,
             shift.get("availableForShiftSince"),
@@ -238,13 +331,17 @@ def build_rows(assignments, attendance_data, work_date):
             "name": name,
             "start": format_time(start_at),
             "end": str(assignment.get("End", ""))[:5],
-            "muszakpro": "OK",
-            "giriton": "OK" if shift else "-",
+            "muszakpro": ok_pill() if foglalas_record else "-",
+            "giriton": ok_pill() if giriton_record else "-",
             "checkin": status_pill(state),
             "checkin_time": state["time"],
             "current_plate": assignment.get("License Plate", ""),
             "car_code": assignment.get("Car", ""),
-            "suggested_plate": assignment.get("License Plate", ""),
+            "suggested_plate": vehicle_suggestions.get(
+                index,
+                assignment.get("License Plate", ""),
+            ),
+            "email": giriton_record.get("email", ""),
             "email_sent": ok_pill() if st.session_state.get(email_key) else "-",
             "_email_key": email_key,
             "_start_at": start_at or datetime.max,
@@ -253,8 +350,8 @@ def build_rows(assignments, attendance_data, work_date):
     return sorted(
         rows,
         key=lambda row: (
+            normalize_name(row["name"]),
             row["_start_at"],
-            row["name"],
         ),
     )
 
@@ -389,6 +486,27 @@ def show_today_shifts_page():
     attendance_data = load_attendance_for_date(
         work_date_text
     )
+
+    try:
+        giriton_records = read_giriton_records(
+            work_date_text
+        )
+        foglalas_records = read_foglalasok_records(
+            work_date_text
+        )
+        giriton_lookup = build_giriton_lookup(
+            giriton_records
+        )
+        foglalas_lookup = build_foglalas_lookup(
+            foglalas_records
+        )
+    except Exception as exc:
+        giriton_lookup = {}
+        foglalas_lookup = {}
+        st.warning(
+            f"MűszakPro/Giriton Google Sheet olvasás sikertelen: {exc}"
+        )
+
     assignments = get_assignments_for_date(
         vehicle_data,
         work_date_text,
@@ -404,6 +522,8 @@ def show_today_shifts_page():
         assignments,
         attendance_data,
         selected_date,
+        giriton_lookup,
+        foglalas_lookup,
     )
 
     top1, top2, top3 = st.columns(3)
