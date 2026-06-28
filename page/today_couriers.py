@@ -110,6 +110,31 @@ def format_time(value):
     return value or ""
 
 
+def format_datetime_display(value):
+    parsed = parse_datetime(
+        value
+    )
+
+    if parsed:
+        return parsed.strftime("%Y-%m-%d %H:%M")
+
+    return value or "-"
+
+
+def format_time_window(start, end):
+    start_text = format_time(
+        start
+    )
+    end_text = format_time(
+        end
+    )
+
+    if start_text and end_text:
+        return f"{start_text} - {end_text}"
+
+    return start_text or end_text or "-"
+
+
 def minutes_until(value):
     parsed = parse_datetime(
         value
@@ -308,6 +333,35 @@ def get_matching_route_from_detail(driver, driver_detail):
             route.get("assignedAt")
         ),
     )[-1]
+
+
+def get_route_sort_datetime(route):
+    candidates = [
+        route.get("realDeparture"),
+        route.get("plannedDeparture"),
+        route.get("assignedAt"),
+        route.get("plannedReturn"),
+        route.get("realReturn"),
+    ]
+
+    parsed_candidates = [
+        parse_sortable_datetime(value)
+        for value in candidates
+        if value
+    ]
+
+    if not parsed_candidates:
+        return datetime.min
+
+    return max(parsed_candidates)
+
+
+def sort_routes_latest_first(routes):
+    return sorted(
+        routes,
+        key=get_route_sort_datetime,
+        reverse=True,
+    )
 
 
 def get_route_id_for_driver(driver, driver_detail=None):
@@ -865,14 +919,19 @@ def build_checkpoint_rows(route):
         checkpoint_rows.append({
             "Poz": checkpoint.get("position"),
             "Cím": checkpoint.get("address"),
-            "Időablak": (
-                f"{checkpoint.get('deliverSince', '')}"
-                " - "
-                f"{checkpoint.get('deliverTill', '')}"
+            "Időablak": format_time_window(
+                checkpoint.get("deliverSince"),
+                checkpoint.get("deliverTill"),
             ),
-            "Tervezett": checkpoint.get("plannedArrivalTime"),
-            "Becsült": checkpoint.get("estimatedArrivalTime"),
-            "Valós": checkpoint.get("realArrivalTime"),
+            "Tervezett": format_datetime_display(
+                checkpoint.get("plannedArrivalTime")
+            ),
+            "Becsült": format_datetime_display(
+                checkpoint.get("estimatedArrivalTime")
+            ),
+            "Valós": format_datetime_display(
+                checkpoint.get("realArrivalTime")
+            ),
         })
 
     return checkpoint_rows
@@ -900,6 +959,10 @@ def render_selected_route_details(selected_driver_id):
         )
         return
 
+    routes = sort_routes_latest_first(
+        routes
+    )
+
     if st.button(
         "Útvonal bezárása",
         key="today_close_selected_route",
@@ -910,7 +973,7 @@ def render_selected_route_details(selected_driver_id):
         )
         st.rerun()
 
-    for route in routes:
+    for index, route in enumerate(routes):
         statistics = route.get(
             "statistics",
             {},
@@ -918,7 +981,7 @@ def render_selected_route_details(selected_driver_id):
 
         with st.expander(
             f"Route {route.get('id', '')}",
-            expanded=True,
+            expanded=index == 0,
         ):
             c1, c2, c3, c4 = st.columns(4)
 
@@ -953,13 +1016,13 @@ def render_selected_route_details(selected_driver_id):
 
             st.markdown(
                 f"""
-**Tervezett indulás:** {route.get('plannedDeparture', '-')}
+**Tervezett indulás:** {format_datetime_display(route.get('plannedDeparture'))}
 
-**Valós indulás:** {route.get('realDeparture', '-')}
+**Valós indulás:** {format_datetime_display(route.get('realDeparture'))}
 
-**Tervezett vissza:** {route.get('plannedReturn', '-')}
+**Tervezett vissza:** {format_datetime_display(route.get('plannedReturn'))}
 
-**Valós vissza:** {route.get('realReturn', '-')}
+**Valós vissza:** {format_datetime_display(route.get('realReturn'))}
 """
             )
 
