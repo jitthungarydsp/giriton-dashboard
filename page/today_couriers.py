@@ -1109,6 +1109,10 @@ def show_today_couriers_page():
             temperature_alert = False
             temperature_label = "Unknown"
 
+        driver_detail = get_route_detail_for_driver(
+            driver
+        )
+
         rows.append({
             "_driver_id": driver.get("driver_id", ""),
             "Courier ID": driver.get("driver_id", ""),
