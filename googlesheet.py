@@ -56,7 +56,10 @@ def create_statistics():
             cols=20
         )
 
-    ws_dsp = spreadsheet.worksheet("DSP_Attendance")
+    try:
+        ws_dsp = spreadsheet.worksheet("DSP_Attendance")
+    except Exception:
+        return "STAT_SKIPPED_DSP_ATTENDANCE_MISSING"
 
     dsp_rows = ws_dsp.get_all_values()
 
@@ -174,7 +177,7 @@ def write_all_shifts(rows):
     worksheet = spreadsheet.worksheet("Giriton")
 
     # Régi adatok törlése (fejléc marad)
-    worksheet.batch_clear(["A2:I10000"])
+    worksheet.batch_clear(["A2:K10000"])
 
     emails = get_emails()
     foglalasok_kulcsok = get_foglalasok_kulcsok()
@@ -188,7 +191,14 @@ def write_all_shifts(rows):
         vege = row[2]
         raktar = row[3]
         foglaltsag = row[4]
-        nev = row[5]
+        if len(row) >= 8:
+            foglalt = row[5]
+            maximum = row[6]
+            nev = row[7]
+        else:
+            foglalt = ""
+            maximum = ""
+            nev = row[5]
 
         email = emails.get(nev, "")
 
@@ -205,6 +215,8 @@ def write_all_shifts(rows):
             vege,
             raktar,
             foglaltsag,
+            foglalt,
+            maximum,
             nev,
             email,
             kulcs,
@@ -212,7 +224,7 @@ def write_all_shifts(rows):
         ])
 
     worksheet.update(
-    "A2:I",
+    "A2:K",
     new_rows
     )
     stats_result = create_statistics()
