@@ -335,6 +335,20 @@ def get_matching_route_from_detail(driver, driver_detail):
     )[-1]
 
 
+def get_latest_route_from_detail(driver_detail):
+    routes = driver_detail.get(
+        "routes",
+        [],
+    )
+
+    if not routes:
+        return {}
+
+    return sort_routes_latest_first(
+        routes
+    )[0]
+
+
 def get_route_sort_datetime(route):
     candidates = [
         route.get("realDeparture"),
@@ -417,7 +431,20 @@ def get_order_count(driver):
     )
 
 
-def get_route_assigned_at(driver):
+def get_route_assigned_at(driver, driver_detail=None):
+    if driver_detail:
+        latest_route = get_latest_route_from_detail(
+            driver_detail
+        )
+        assigned_at = latest_route.get(
+            "assignedAt"
+        )
+
+        if assigned_at:
+            return format_time(
+                assigned_at
+            )
+
     return format_time(
         get_route_assigned_raw(driver)
     )
@@ -1231,6 +1258,13 @@ def show_today_couriers_page():
         status_label, status_kind = get_driver_status(
             driver
         )
+        driver_detail = {}
+
+        if status_label == "Waiting":
+            driver_detail = get_route_detail_for_driver(
+                driver
+            )
+
         shift_status, shift_kind = get_shift_status(
             driver,
             attendance_shift,
@@ -1269,9 +1303,13 @@ def show_today_couriers_page():
             ),
             "Status": status_label,
             "Delay": "—" if delay_minutes <= 0 else f"+{delay_minutes}",
-            "Route ID": get_route_id(driver),
+            "Route ID": get_route_id_for_driver(
+                driver,
+                driver_detail,
+            ),
             "Rákerült": get_route_assigned_at(
-                driver
+                driver,
+                driver_detail,
             ),
             "Deliveries": get_delivery_count(
                 driver
