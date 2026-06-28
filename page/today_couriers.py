@@ -659,6 +659,22 @@ div[data-testid="stButton"] > button {
     padding: 0.25rem 0.55rem;
     min-height: 2rem;
 }
+div[data-testid="stDialog"] div[role="dialog"],
+div[data-testid="stModal"] div[role="dialog"] {
+    max-height: 92vh;
+    max-width: 96vw;
+    overflow-y: auto;
+    width: min(96vw, 1600px);
+}
+div[data-testid="stDialog"] div[role="dialog"] > div,
+div[data-testid="stModal"] div[role="dialog"] > div {
+    max-height: calc(92vh - 24px);
+    overflow-y: auto;
+}
+div[data-testid="stDialog"] .stDataFrame,
+div[data-testid="stModal"] .stDataFrame {
+    max-height: 58vh;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -956,7 +972,7 @@ def render_selected_route_details(selected_driver_id):
                     checkpoint_rows,
                     use_container_width=True,
                     hide_index=True,
-                    height=420,
+                    height=560,
                 )
             else:
                 st.info(
