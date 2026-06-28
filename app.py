@@ -139,6 +139,7 @@ else:
         "Frissítés",
         use_container_width=True
     ):
+        st.session_state["manual_refresh_requested"] = True
         st.rerun()
 
     st_autorefresh(

@@ -763,14 +763,17 @@ def render_table(rows):
                 "Route ID",
                 "",
             )
-            button_label = str(route_id or "—")
+            driver_id = row.get(
+                "_driver_id"
+            )
+            button_label = str(route_id or "Útvonal")
 
             if st.button(
                 button_label,
-                key=f"today_orders_{row.get('_driver_id')}_{index}",
-                help="Route útvonal megnyitása",
+                key=f"today_orders_{driver_id}_{index}",
+                help="Route útvonal megnyitása. A route ID a felugró ablakban töltődik be.",
                 use_container_width=True,
-                disabled=not bool(route_id),
+                disabled=not bool(driver_id),
             ):
                 st.session_state["today_selected_route_driver_id"] = row.get(
                     "_driver_id"
@@ -1009,6 +1012,10 @@ def show_today_couriers_page():
     st.title("Mai futárok")
 
     user = st.session_state["user"]
+    should_sync_sheets = st.session_state.pop(
+        "manual_refresh_requested",
+        False,
+    )
 
     drivers_data = load_drivers()
     drivers = drivers_data.get(
@@ -1040,28 +1047,6 @@ def show_today_couriers_page():
             "Nincs megjeleníthető futár."
         )
         return
-
-    try:
-        write_route_statistics(
-            drivers
-        )
-    except Exception as exc:
-        st.warning(
-            f"Route statisztika Google Sheet frissítés sikertelen: {exc}"
-        )
-
-    alert_records = build_alert_records(
-        drivers
-    )
-
-    try:
-        write_alert_logs(
-            alert_records
-        )
-    except Exception as exc:
-        st.warning(
-            f"Riasztás log Google Sheet frissítés sikertelen: {exc}"
-        )
 
     rows = []
 
@@ -1167,6 +1152,29 @@ def show_today_couriers_page():
 
     show_selected_route_details()
 
+    if should_sync_sheets:
+        try:
+            write_route_statistics(
+                drivers
+            )
+        except Exception as exc:
+            st.warning(
+                f"Route statisztika Google Sheet frissítés sikertelen: {exc}"
+            )
+
+        alert_records = build_alert_records(
+            drivers
+        )
+
+        try:
+            write_alert_logs(
+                alert_records
+            )
+        except Exception as exc:
+            st.warning(
+                f"Riasztás log Google Sheet frissítés sikertelen: {exc}"
+            )
+
     st.caption(
-        "Adatforrás: fetch-drivers + fetch-attendance. A riasztások az Alert_Log Google Sheet fülre kerülnek."
+        "Adatforrás: fetch-drivers + fetch-attendance. A Google Sheet frissítés a Frissítés gombbal fut."
     )
