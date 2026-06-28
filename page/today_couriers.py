@@ -451,13 +451,11 @@ def build_alert_records(drivers):
         except (TypeError, ValueError):
             temperature_value = None
 
-        if temperature_value is not None and (
-            temperature_value < 0 or temperature_value > 5
-        ):
+        if temperature_value is not None and temperature_value > 10:
             records.append({
                 **base,
                 "issue_type": "temperature",
-                "issue": "Hőmérséklet riasztás",
+                "issue": "Huto 10 fok felett",
                 "value": f"{temperature_value:g} °C",
             })
 
@@ -591,11 +589,11 @@ def render_table(rows):
         "Warehouse",
         "Status",
         "Delay",
-        "Megrendelések",
+        "Route ID",
+        "Rákerült",
         "Deliveries",
         "Vehicle",
         "License",
-        "Route at",
         "Tervezett",
         "Indulás",
         "Shift start",
@@ -611,10 +609,10 @@ def render_table(rows):
         1.0,
         0.7,
         1.0,
+        0.9,
         0.8,
         0.8,
         1.0,
-        0.9,
         0.9,
         0.8,
         0.9,
@@ -669,36 +667,37 @@ def render_table(rows):
             else:
                 render_cell("—")
         with columns[5]:
-            order_count = row.get(
-                "Megrendelések",
+            route_id = row.get(
+                "Route ID",
                 "",
             )
-            button_label = str(order_count or "0")
+            button_label = str(route_id or "—")
 
             if st.button(
                 button_label,
                 key=f"today_orders_{row.get('_driver_id')}_{index}",
-                help="Útvonal megnyitása",
+                help="Route útvonal megnyitása",
                 use_container_width=True,
+                disabled=not bool(route_id),
             ):
                 st.session_state["today_selected_route_driver_id"] = row.get(
                     "_driver_id"
                 )
         with columns[6]:
             render_cell(
-                html.escape(str(row.get("Deliveries", "")))
+                html.escape(str(row.get("Rákerült", "")))
             )
         with columns[7]:
             render_cell(
-                html.escape(str(row.get("Vehicle Type", "")))
+                html.escape(str(row.get("Deliveries", "")))
             )
         with columns[8]:
             render_cell(
-                html.escape(str(row.get("License Plate", "")))
+                html.escape(str(row.get("Vehicle Type", "")))
             )
         with columns[9]:
             render_cell(
-                html.escape(str(row.get("Route Assigned at", "")))
+                html.escape(str(row.get("License Plate", "")))
             )
         with columns[10]:
             render_cell(
@@ -768,19 +767,7 @@ def build_checkpoint_rows(route):
     return checkpoint_rows
 
 
-def show_selected_route_details():
-    selected_driver_id = st.session_state.get(
-        "today_selected_route_driver_id"
-    )
-
-    if not selected_driver_id:
-        return
-
-    st.divider()
-    st.subheader(
-        f"Megrendelés útvonal - futár #{selected_driver_id}"
-    )
-
+def render_selected_route_details(selected_driver_id):
     try:
         driver_data = load_driver_details(
             selected_driver_id
@@ -882,6 +869,50 @@ def show_selected_route_details():
                 )
 
 
+def show_selected_route_details():
+    selected_driver_id = st.session_state.get(
+        "today_selected_route_driver_id"
+    )
+
+    if not selected_driver_id:
+        return
+
+    if hasattr(st, "dialog"):
+        @st.dialog(
+            f"Route útvonal - futár #{selected_driver_id}",
+            width="large",
+        )
+        def route_details_dialog():
+            _, close_column = st.columns([8, 1])
+
+            with close_column:
+                if st.button(
+                    "X",
+                    key="today_close_selected_route_x",
+                    use_container_width=True,
+                ):
+                    st.session_state.pop(
+                        "today_selected_route_driver_id",
+                        None,
+                    )
+                    st.rerun()
+
+            render_selected_route_details(
+                selected_driver_id
+            )
+
+        route_details_dialog()
+        return
+
+    st.divider()
+    st.subheader(
+        f"Route útvonal - futár #{selected_driver_id}"
+    )
+    render_selected_route_details(
+        selected_driver_id
+    )
+
+
 def show_today_couriers_page():
     st.title("Mai futárok")
 
@@ -928,7 +959,7 @@ def show_today_couriers_page():
         )
 
     alert_records = build_alert_records(
-        visible_drivers
+        drivers
     )
 
     try:
@@ -972,7 +1003,7 @@ def show_today_couriers_page():
 
         try:
             temperature_value = float(temperature)
-            temperature_alert = temperature_value < 0 or temperature_value > 5
+            temperature_alert = temperature_value > 10
             temperature_label = f"{temperature_value:g}°C"
         except (TypeError, ValueError):
             temperature_alert = False
@@ -991,7 +1022,10 @@ def show_today_couriers_page():
             ),
             "Status": status_label,
             "Delay": "—" if delay_minutes <= 0 else f"+{delay_minutes}",
-            "Megrendelések": get_order_count(
+            "Route ID": get_route_id(
+                driver
+            ),
+            "Rákerült": get_route_assigned_at(
                 driver
             ),
             "Deliveries": get_delivery_count(
@@ -1004,9 +1038,6 @@ def show_today_couriers_page():
             "License Plate": nested_get(
                 driver,
                 ["vehicle", "license_plate"],
-            ),
-            "Route Assigned at": get_route_assigned_at(
-                driver
             ),
             "Tervezett indulás": get_planned_departure_time(
                 driver
