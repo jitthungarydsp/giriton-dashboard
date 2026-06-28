@@ -44,10 +44,32 @@ def load_attendance():
         "%Y-%m-%d"
     )
 
+    return load_attendance_for_date(
+        today
+    )
+
+
+def load_attendance_for_date(work_date):
+
     url = (
         f"{BASE_URL}/"
-        f"fetch-attendance/{DEPOT_ID}/{today}"
+        f"fetch-attendance/{DEPOT_ID}/{work_date}"
         f"?organizationId={ORGANIZATION_ID}"
+    )
+
+    return request_json(
+        "GET",
+        url
+    )
+
+
+def load_vehicle_assignments():
+
+    url = (
+        f"{BASE_URL}/"
+        f"fetch-vehicle-assignments"
+        f"?id={DEPOT_ID}"
+        f"&organizationId={ORGANIZATION_ID}"
     )
 
     return request_json(

@@ -23,182 +23,131 @@ st.markdown(
 )
 
 from page.profile import (
-    show_profile_page
+    show_profile_page,
 )
-
 from resources.auth import (
     login_screen,
-    logout_button
+    logout_button,
 )
-
 from page.admin import (
-    show_admin_page
+    show_admin_page,
 )
-
 from page.robots import (
-    show_robots_page
+    show_robots_page,
 )
-
 from page.today_couriers import (
-    show_today_couriers_page
+    show_today_couriers_page,
 )
-
+from page.today_shifts import (
+    show_today_shifts_page,
+)
 from page.live_map import (
-    show_live_map_page
+    show_live_map_page,
 )
-
 from page.waiting_couriers import (
-    show_waiting_couriers_page
+    show_waiting_couriers_page,
 )
-
 from page.statistics import (
-    show_statistics_page
+    show_statistics_page,
 )
 
-# -------------------
-# Bejelentkezés
-# -------------------
 
 login_screen()
 
 if "user" not in st.session_state:
-
     st.stop()
 
 user = st.session_state["user"]
-selected_courier_id = user.get("courierId")
-selected_name = user.get("username")
-
-# -------------------
-# Sidebar
-# -------------------
 
 st.sidebar.success(
     f"👤 {user['username']}"
 )
-
 st.sidebar.info(
     f"Jogosultság: {user['role']}"
 )
-
 logout_button()
 
-# -------------------
-# Menü
-# -------------------
-
 if user["role"] == "admin":
-
     menu = [
         "Admin",
         "Robotok",
         "Mai futárok",
+        "Mai műszakok",
         "Várakozó futárok",
         "Live Map",
-        "Profil"
+        "Profil",
     ]
-
 else:
-
     menu = [
         "Mai futárok",
+        "Mai műszakok",
         "Várakozó futárok",
         "Live Map",
-        "Profil"
+        "Profil",
     ]
 
 if "Statisztika" not in menu:
     menu.insert(
         max(len(menu) - 1, 0),
-        "Statisztika"
+        "Statisztika",
     )
 
 page = st.sidebar.radio(
     "Menü",
-    menu
+    menu,
 )
 
-# -------------------
-# Frissítés
-# -------------------
-
 if page == "Live Map":
-
     st_autorefresh(
         interval=30 * 1000,
-        key="live_map_auto_refresh"
+        key="live_map_auto_refresh",
     )
-
     st.sidebar.caption(
         "Live Map automatikus frissítés: 30 mp"
     )
-
 else:
-
     if st.sidebar.button(
         "Frissítés",
-        use_container_width=True
+        use_container_width=True,
     ):
         st.session_state["manual_refresh_requested"] = True
         st.rerun()
 
     st_autorefresh(
         interval=5 * 60 * 1000,
-        key=f"{page}_auto_refresh"
+        key=f"{page}_auto_refresh",
     )
-
     st.sidebar.caption(
         "Automatikus frissítés: 5 perc"
     )
 
-# -------------------
-# Oldalak
-# -------------------
-
 if page == "Admin":
-
     show_admin_page()
-
 elif page == "Robotok":
-
     show_robots_page()
-
 elif page == "Mai futárok":
-
     show_today_couriers_page()
-
+elif page == "Mai műszakok":
+    show_today_shifts_page()
 elif page == "Live Map":
-
     show_live_map_page()
-
 elif page == "Várakozó futárok":
-
     show_waiting_couriers_page()
-
 elif page == "Statisztika":
-
     show_statistics_page()
-
 elif page == "Trainer":
-
     st.title(
-        "👨‍🏫 Trainer felület"
+        "Trainer felület"
     )
-
     st.info(
         "Fejlesztés alatt"
     )
-
 elif page == "Saját adatok":
-
     st.title(
-        "👤 Saját adatok"
+        "Saját adatok"
     )
-
     st.info(
         "Fejlesztés alatt"
     )
-
 elif page == "Profil":
-
     show_profile_page()

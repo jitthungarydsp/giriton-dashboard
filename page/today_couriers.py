@@ -350,10 +350,16 @@ def get_latest_route_from_detail(driver_detail):
 
 
 def get_route_sort_datetime(route):
+    assigned_at = parse_datetime(
+        route.get("assignedAt")
+    )
+
+    if assigned_at:
+        return assigned_at
+
     candidates = [
         route.get("realDeparture"),
         route.get("plannedDeparture"),
-        route.get("assignedAt"),
         route.get("plannedReturn"),
         route.get("realReturn"),
     ]
