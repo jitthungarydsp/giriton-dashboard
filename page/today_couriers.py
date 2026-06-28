@@ -226,9 +226,109 @@ def get_route_id(driver):
         [
             ["route", "id"],
             ["route", "route_id"],
+            ["route", "routeId"],
             ["route_id"],
+            ["routeId"],
             ["status", "route_id"],
+            ["status", "routeId"],
         ],
+    )
+
+
+def get_route_assigned_raw(driver):
+    return first_nested_value(
+        driver,
+        [
+            ["status", "assignedAt"],
+            ["status", "assigned_at"],
+            ["route", "assignedAt"],
+            ["route", "assigned_at"],
+            ["route", "route_assigned_at"],
+            ["route_assigned_at"],
+            ["status", "loading_finished_at"],
+        ],
+    )
+
+
+def get_route_detail_for_driver(driver):
+    try:
+        return load_driver_details(
+            driver.get("driver_id")
+        )
+    except Exception:
+        return {}
+
+
+def parse_sortable_datetime(value):
+    parsed = parse_datetime(
+        value
+    )
+
+    if parsed:
+        return parsed
+
+    return datetime.min
+
+
+def get_matching_route_from_detail(driver, driver_detail):
+    routes = driver_detail.get(
+        "routes",
+        [],
+    )
+
+    if not routes:
+        return {}
+
+    assigned_at = get_route_assigned_raw(
+        driver
+    )
+
+    if assigned_at:
+        for route in routes:
+            if route.get("assignedAt") == assigned_at:
+                return route
+
+    open_routes = [
+        route
+        for route in routes
+        if not route.get("realReturn")
+    ]
+
+    if open_routes:
+        return sorted(
+            open_routes,
+            key=lambda route: parse_sortable_datetime(
+                route.get("assignedAt")
+            ),
+        )[-1]
+
+    return sorted(
+        routes,
+        key=lambda route: parse_sortable_datetime(
+            route.get("assignedAt")
+        ),
+    )[-1]
+
+
+def get_route_id_for_driver(driver, driver_detail=None):
+    route_id = get_route_id(
+        driver
+    )
+
+    if route_id:
+        return route_id
+
+    if not driver_detail:
+        return ""
+
+    route = get_matching_route_from_detail(
+        driver,
+        driver_detail,
+    )
+
+    return route.get(
+        "id",
+        "",
     )
 
 
@@ -265,16 +365,7 @@ def get_order_count(driver):
 
 def get_route_assigned_at(driver):
     return format_time(
-        first_nested_value(
-            driver,
-            [
-                ["status", "assignedAt"],
-                ["status", "assigned_at"],
-                ["route", "assignedAt"],
-                ["route", "assigned_at"],
-                ["status", "loading_finished_at"],
-            ],
-        )
+        get_route_assigned_raw(driver)
     )
 
 
@@ -395,6 +486,12 @@ def build_alert_records(drivers):
             ["personal_info", "name"],
         )
         route_id = get_route_id(driver)
+
+        if not route_id:
+            route_id = get_route_id_for_driver(
+                driver,
+                get_route_detail_for_driver(driver),
+            )
         warehouse = nested_get(
             driver,
             ["personal_info", "warehouse_name"],
@@ -418,6 +515,9 @@ def build_alert_records(drivers):
             driver,
             ["vehicle", "temperature"],
             "",
+        )
+        driver_detail = get_route_detail_for_driver(
+            driver
         )
         is_departure_delayed = nested_get(
             driver,
@@ -1022,8 +1122,9 @@ def show_today_couriers_page():
             ),
             "Status": status_label,
             "Delay": "—" if delay_minutes <= 0 else f"+{delay_minutes}",
-            "Route ID": get_route_id(
-                driver
+            "Route ID": get_route_id_for_driver(
+                driver,
+                driver_detail,
             ),
             "Rákerült": get_route_assigned_at(
                 driver
