@@ -10,7 +10,7 @@ if PROJECT_ROOT not in sys.path:
 from google_client import open_spreadsheet
 
 spreadsheet = open_spreadsheet(
-    "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
+    "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 )
 
 def get_foglalasok_kulcsok():
