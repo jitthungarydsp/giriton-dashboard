@@ -1,22 +1,9 @@
 import requests
-import gspread
 from dsp_common_kw import hu_time
 from datetime import datetime, date, timedelta
-from google.oauth2.service_account import Credentials
+from google_client import open_spreadsheet
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = Credentials.from_service_account_file(
-    r"C:\Giriton\giriton-dashboard\girition-a89bab5e91bc.json",
-    scopes=SCOPES
-)
-
-client = gspread.authorize(creds)
-
-spreadsheet = client.open_by_key(
+spreadsheet = open_spreadsheet(
     "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 )
 

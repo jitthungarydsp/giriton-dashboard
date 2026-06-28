@@ -1,21 +1,16 @@
-from google.oauth2.service_account import Credentials
 from datetime import datetime
-import gspread
+import os
+import sys
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
+PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
-creds = Credentials.from_service_account_file(
-    r"C:\Giriton\giriton-dashboard\girition-a89bab5e91bc.json",
-    scopes=SCOPES
-)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-client = gspread.authorize(creds)
+from google_client import open_spreadsheet
 
-spreadsheet = client.open_by_key(
-    "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
+spreadsheet = open_spreadsheet(
+    "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 )
 
 def get_foglalasok_kulcsok():
@@ -330,12 +325,113 @@ def write_all_shifts_matrix(rows):
 # A Robotból hívd meg: Write Open Shifts
 # -----------------------------------------------------------------
 
+OPEN_SHIFT_CHANGE_SHEET = "Open_Shift_Changes"
+OPEN_SHIFT_CHANGE_HEADER = [
+    "logged_at",
+    "warehouse",
+    "work_date",
+    "shift",
+    "previous_free",
+    "current_free",
+    "opened_free_slots",
+]
+
+
+def _safe_int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _format_sheet_date(date_value):
+    return f"{date_value[5:7]}.{date_value[8:10]}."
+
+
+def _read_previous_open_shift_matrix(ws):
+    values = ws.get_all_values()
+    header_index = None
+
+    for index, row in enumerate(values):
+        if row and str(row[0]).strip().lower() in [
+            "muszak neve",
+            "műszak neve",
+            "mĹ±szak neve",
+        ]:
+            header_index = index
+            break
+
+    if header_index is None:
+        return {}
+
+    header = values[header_index]
+    date_by_column = {}
+
+    for column_index, value in enumerate(header):
+        if column_index < 3:
+            continue
+
+        value = str(value).strip()
+
+        if value:
+            date_by_column[column_index] = value
+
+    previous = {}
+
+    for row in values[header_index + 1:]:
+        if not row:
+            continue
+
+        shift = str(row[0]).strip()
+
+        if not shift or shift in [
+            "Befoglalt műszakok",
+            "Befoglalt mĹ±szakok",
+        ]:
+            break
+
+        for column_index, sheet_date in date_by_column.items():
+            value = row[column_index] if column_index < len(row) else ""
+            previous[(shift, sheet_date)] = _safe_int(value)
+
+    return previous
+
+
+def _get_or_create_change_worksheet():
+    try:
+        ws = spreadsheet.worksheet(OPEN_SHIFT_CHANGE_SHEET)
+    except:
+        ws = spreadsheet.add_worksheet(
+            title=OPEN_SHIFT_CHANGE_SHEET,
+            rows=1000,
+            cols=len(OPEN_SHIFT_CHANGE_HEADER),
+        )
+
+    if not ws.get_all_values():
+        ws.update("A1", [OPEN_SHIFT_CHANGE_HEADER])
+
+    return ws
+
+
+def _append_open_shift_changes(change_rows):
+    if not change_rows:
+        return
+
+    ws = _get_or_create_change_worksheet()
+    ws.append_rows(
+        change_rows,
+        value_input_option="USER_ENTERED",
+    )
+
+
 def write_open_shifts(rows):
 
     warehouses = [
         ("BUD1","BUD1_PROD2.0"),
         ("BUD2","BUD2_PROD2.0")
     ]
+    change_rows = []
+    logged_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for warehouse, sheet_name in warehouses:
 
@@ -348,6 +444,7 @@ def write_open_shifts(rows):
                 cols=40
             )
 
+        previous_matrix = _read_previous_open_shift_matrix(ws)
         matrix = {}
         dates = sorted(set(r[0] for r in rows if r[3] == warehouse))
 
@@ -358,12 +455,37 @@ def write_open_shifts(rows):
 
             datum = row[0]
             kezdes = row[1]
-            maximum = row[6]
+            try:
+                foglalt = int(row[5])
+                maximum = int(row[6])
+                szabad = max(maximum - foglalt, 0)
+            except (TypeError, ValueError):
+                szabad = 0
 
             key = f"{warehouse}_{kezdes}"
 
             matrix.setdefault(key,{})
-            matrix[key][datum] = maximum
+            matrix[key][datum] = szabad
+
+        if previous_matrix:
+            for shift, shift_values in matrix.items():
+                for datum, current_free in shift_values.items():
+                    sheet_date = _format_sheet_date(datum)
+                    previous_free = previous_matrix.get(
+                        (shift, sheet_date),
+                        0,
+                    )
+
+                    if current_free > previous_free:
+                        change_rows.append([
+                            logged_at,
+                            warehouse,
+                            datum,
+                            shift,
+                            previous_free,
+                            current_free,
+                            current_free - previous_free,
+                        ])
 
         output = []
 
@@ -392,5 +514,7 @@ def write_open_shifts(rows):
 
         ws.clear()
         ws.update("A4", output)
+
+    _append_open_shift_changes(change_rows)
 
     return "OK"

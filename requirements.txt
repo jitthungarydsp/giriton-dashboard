@@ -5,3 +5,6 @@ altair
 requests
 gspread
 google-auth
+robotframework
+robotframework-seleniumlibrary
+selenium

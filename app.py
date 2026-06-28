@@ -35,6 +35,10 @@ from page.admin import (
     show_admin_page
 )
 
+from page.robots import (
+    show_robots_page
+)
+
 from page.today_couriers import (
     show_today_couriers_page
 )
@@ -66,15 +70,6 @@ selected_courier_id = user.get("courierId")
 selected_name = user.get("username")
 
 # -------------------
-# Automatikus frissites
-# -------------------
-
-st_autorefresh(
-    interval=30 * 1000,
-    key="dashboard_auto_refresh"
-)
-
-# -------------------
 # Sidebar
 # -------------------
 
@@ -84,10 +79,6 @@ st.sidebar.success(
 
 st.sidebar.info(
     f"Jogosultság: {user['role']}"
-)
-
-st.sidebar.caption(
-    "Automatikus frissítés: 30 mp"
 )
 
 logout_button()
@@ -100,6 +91,7 @@ if user["role"] == "admin":
 
     menu = [
         "Admin",
+        "Robotok",
         "Mai futárok",
         "Várakozó futárok",
         "Live Map",
@@ -127,12 +119,48 @@ page = st.sidebar.radio(
 )
 
 # -------------------
+# Frissítés
+# -------------------
+
+if page == "Live Map":
+
+    st_autorefresh(
+        interval=30 * 1000,
+        key="live_map_auto_refresh"
+    )
+
+    st.sidebar.caption(
+        "Live Map automatikus frissítés: 30 mp"
+    )
+
+else:
+
+    if st.sidebar.button(
+        "Frissítés",
+        use_container_width=True
+    ):
+        st.rerun()
+
+    st_autorefresh(
+        interval=5 * 60 * 1000,
+        key=f"{page}_auto_refresh"
+    )
+
+    st.sidebar.caption(
+        "Automatikus frissítés: 5 perc"
+    )
+
+# -------------------
 # Oldalak
 # -------------------
 
 if page == "Admin":
 
     show_admin_page()
+
+elif page == "Robotok":
+
+    show_robots_page()
 
 elif page == "Mai futárok":
 

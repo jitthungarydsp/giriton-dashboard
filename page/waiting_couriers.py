@@ -9,6 +9,7 @@ from resources.api import (
     load_departure_dashboard,
 )
 from resources.users import load_users
+from resources.waiting_courier_log_sheet import sync_waiting_courier_log
 
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
@@ -107,27 +108,51 @@ def get_attendance_by_courier_id(couriers):
     }
 
 
-def get_waiting_since(attendance_courier):
+def get_waiting_shift(attendance_courier):
     if not attendance_courier:
-        return ""
+        return {}
 
     shifts = attendance_courier.get(
         "shifts",
         [],
     )
-    available_shifts = [
-        shift
-        for shift in shifts
-        if shift.get("availableForShiftSince")
-    ]
+    available_shifts = []
 
-    if available_shifts:
-        return available_shifts[-1].get(
-            "availableForShiftSince",
-            "",
+    for shift in shifts:
+        available_since = shift.get(
+            "availableForShiftSince"
+        )
+        parsed_available_since = parse_datetime(
+            available_since
         )
 
-    return ""
+        if parsed_available_since:
+            available_shifts.append(
+                (
+                    parsed_available_since,
+                    shift,
+                )
+            )
+
+    if not available_shifts:
+        return {}
+
+    available_shifts.sort(
+        key=lambda item: item[0]
+    )
+
+    return available_shifts[-1][1]
+
+
+def get_waiting_since(attendance_courier):
+    waiting_shift = get_waiting_shift(
+        attendance_courier
+    )
+
+    return waiting_shift.get(
+        "availableForShiftSince",
+        "",
+    )
 
 
 def get_temperature(courier):
@@ -156,6 +181,45 @@ def temperature_kind(value):
     return "ok"
 
 
+def build_waiting_record(courier, attendance_courier):
+    temperature, measurement_time = get_temperature(
+        courier
+    )
+    waiting_shift = get_waiting_shift(
+        attendance_courier
+    )
+    waiting_since = get_waiting_since(
+        attendance_courier
+    )
+    temperature_block = courier.get(
+        "temperature_block"
+    )
+    warehouse_id = courier.get(
+        "warehouse_id",
+        "",
+    )
+    warehouse = WAREHOUSE_NAMES.get(
+        warehouse_id,
+        f"Raktar {warehouse_id}" if warehouse_id else "",
+    )
+
+    return {
+        "work_date": local_now().strftime("%Y-%m-%d"),
+        "driver_id": courier.get("courier_id", ""),
+        "driver_name": courier.get("courier_name", ""),
+        "warehouse": warehouse,
+        "shift_id": waiting_shift.get("shiftId", ""),
+        "shift_name": waiting_shift.get("shiftName", ""),
+        "waiting_since": waiting_since,
+        "waiting_since_local": format_time(waiting_since),
+        "waiting_minutes": minutes_since(waiting_since),
+        "temperature": temperature,
+        "last_measurement": format_time(measurement_time),
+        "temperature_block": temperature_block or "",
+        "status": "active",
+    }
+
+
 def pill(value, kind="muted"):
     classes = {
         "ok": "pill-ok",
@@ -179,6 +243,8 @@ def render_table(rows):
         "Temperature in the queue",
         "Last measurement",
         "Courier blocked to join the queue due to temperature",
+        "Shift ID",
+        "Shift",
         "Várakozás kezdete",
         "Mióta vár",
     ]
@@ -305,6 +371,28 @@ def show_waiting_couriers_page():
         "couriers_without_route",
         [],
     )
+    waiting_records = []
+
+    for courier in couriers:
+        attendance_courier = attendance_by_courier_id.get(
+            str(courier.get("courier_id"))
+        )
+        waiting_records.append(
+            build_waiting_record(
+                courier,
+                attendance_courier,
+            )
+        )
+
+    try:
+        sync_waiting_courier_log(
+            waiting_records
+        )
+    except Exception as exc:
+        st.warning(
+            f"VĂˇrakozĂˇsi log Google Sheet frissĂ­tĂ©s sikertelen: {exc}"
+        )
+
     visible_couriers = get_visible_couriers(
         user,
         couriers,
@@ -324,6 +412,9 @@ def show_waiting_couriers_page():
         )
         attendance_courier = attendance_by_courier_id.get(
             str(courier.get("courier_id"))
+        )
+        waiting_shift = get_waiting_shift(
+            attendance_courier
         )
         waiting_since = get_waiting_since(
             attendance_courier
@@ -357,6 +448,14 @@ def show_waiting_couriers_page():
             ),
             "Courier blocked to join the queue due to temperature": (
                 temperature_block or "—"
+            ),
+            "Shift ID": waiting_shift.get(
+                "shiftId",
+                "—",
+            ),
+            "Shift": waiting_shift.get(
+                "shiftName",
+                "—",
             ),
             "Várakozás kezdete": format_time(
                 waiting_since

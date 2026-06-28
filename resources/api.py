@@ -2,6 +2,7 @@ import requests
 import streamlit as st
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
@@ -12,6 +13,7 @@ SUPABASE_ANON_KEY = (
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVmdHBsc2xhbWpiYmhsb3pzeWdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4MjY5NzcsImV4cCI6MjA2ODQwMjk3N30."
     "3h6l5oeMYIRuvOuNRtOKP-9v4RaHzcUImHGTdr5w2VM"
 )
+LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 
 def request_json(method, url, **kwargs):
@@ -38,7 +40,7 @@ def request_json(method, url, **kwargs):
 
 def load_attendance():
 
-    today = datetime.now().strftime(
+    today = datetime.now(LOCAL_TIMEZONE).strftime(
         "%Y-%m-%d"
     )
 
@@ -71,7 +73,7 @@ def load_drivers():
     
 def load_driver_details(driver_id):
 
-    today = datetime.now().strftime(
+    today = datetime.now(LOCAL_TIMEZONE).strftime(
         "%Y-%m-%d"
     )
 

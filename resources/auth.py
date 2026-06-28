@@ -170,6 +170,18 @@ def login_screen():
     if "user" in st.session_state:
         return
 
+    token = st.query_params.get(
+        COOKIE_NAME,
+        ""
+    )
+    token_user = login_by_token(
+        token
+    )
+
+    if token_user:
+        st.session_state["user"] = token_user
+        st.rerun()
+
     st.title("🔐 Bejelentkezés")
 
     username = st.text_input(
@@ -196,6 +208,8 @@ def login_screen():
                 username
             )
 
+            st.query_params[COOKIE_NAME] = token
+
             st.success(
                 "Sikeres belépés"
             )
@@ -220,5 +234,8 @@ def logout_button():
         )
 
         del st.session_state["user"]
+
+        if COOKIE_NAME in st.query_params:
+            del st.query_params[COOKIE_NAME]
 
         st.rerun()

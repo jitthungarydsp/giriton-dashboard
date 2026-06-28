@@ -1,20 +1,7 @@
-from google.oauth2.service_account import Credentials
 from datetime import datetime
-import gspread
+from google_client import open_spreadsheet
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = Credentials.from_service_account_file(
-    r"C:\Giriton\giriton-dashboard\girition-a89bab5e91bc.json",
-    scopes=SCOPES
-)
-
-client = gspread.authorize(creds)
-
-spreadsheet = client.open_by_key(
+spreadsheet = open_spreadsheet(
     "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 )
 
@@ -201,9 +188,7 @@ def write_all_shifts(rows):
         vege = row[2]
         raktar = row[3]
         foglaltsag = row[4]
-        foglalt =row[5]
-        maximum =row[6]
-        nev = row[7]
+        nev = row[5]
 
         email = emails.get(nev, "")
 
@@ -220,8 +205,6 @@ def write_all_shifts(rows):
             vege,
             raktar,
             foglaltsag,
-            foglalt,
-            maximum,
             nev,
             email,
             kulcs,
@@ -229,7 +212,7 @@ def write_all_shifts(rows):
         ])
 
     worksheet.update(
-    "A2:K",
+    "A2:I",
     new_rows
     )
     stats_result = create_statistics()
@@ -238,88 +221,3 @@ def write_all_shifts(rows):
 
     return "OK"
 
-
-def write_all_shifts_matrix(rows):
-    worksheet = spreadsheet.worksheet("Töltöség")
-
-    # Összes dátum
-    dates = sorted(
-        list(
-            set(
-                row[0]
-                for row in rows
-            )
-        )
-    )
-
-    # műszak -> dátum -> maximum
-    matrix = {}
-
-    for row in rows:
-
-        datum = row[0]
-        kezdes = row[1]
-        raktar = row[3]
-        maximum = row[6]
-
-        muszak = f"{raktar}_{kezdes}"
-
-        if muszak not in matrix:
-            matrix[muszak] = {}
-
-        matrix[muszak][datum] = maximum
-
-    output = []
-
-    # fejléc
-    header = ["muszak neve"]
-
-    for datum in dates:
-
-        datum_formazott = (
-            datum[5:7]
-            + "."
-            + datum[8:10]
-        )
-
-        header.append(
-            datum_formazott
-        )
-
-    output.append(
-        header
-    )
-
-    # műszak sorok
-    for muszak in sorted(
-        matrix.keys()
-    ):
-
-        sor = [muszak]
-
-        for datum in dates:
-
-            sor.append(
-                matrix[muszak].get(
-                    datum,
-                    0
-                )
-            )
-
-        output.append(
-            sor
-        )
-
-    # lezáró sor
-    output.append(
-        ["Befoglalt műszakok"]
-    )
-
-    worksheet.clear()
-
-    worksheet.update(
-        "A1",
-        output
-    )
-
-    return "OK"

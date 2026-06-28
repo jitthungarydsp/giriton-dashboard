@@ -1,6 +1,6 @@
 *** Settings ***
 Library    SeleniumLibrary
-Library    googlesheet.py
+Library    ../googlesheet.py
 Library    SeleniumLibrary
 Library    DateTime
 Library    String
