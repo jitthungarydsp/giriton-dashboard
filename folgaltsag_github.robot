@@ -248,6 +248,12 @@ Muszakok Figyelese
     Log To Console
     ...    SOROK_SZAMA=${dbrows}
 
+    IF    ${dbrows} > 0
+        ${sample_row}=    Get From List    ${rows}    0
+        Log To Console
+        ...    ELSO_SOR=${sample_row}
+    END
+
     ${result}=    googlesheet_modified_template.Write Open Shifts
     ...    ${rows}
 

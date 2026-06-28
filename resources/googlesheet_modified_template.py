@@ -425,6 +425,10 @@ def _append_open_shift_changes(change_rows):
 
 
 def write_open_shifts(rows):
+    if not rows:
+        raise ValueError(
+            "Nincs feldolgozhato muszaksor. A robot nem olvasott ki adatot a Giriton feluletrol."
+        )
 
     warehouses = [
         ("BUD1","BUD1_PROD2.0"),
@@ -432,6 +436,7 @@ def write_open_shifts(rows):
     ]
     change_rows = []
     logged_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summaries = []
 
     for warehouse, sheet_name in warehouses:
 
@@ -514,7 +519,17 @@ def write_open_shifts(rows):
 
         ws.clear()
         ws.update("A4", output)
+        summaries.append(
+            f"{sheet_name}: shifts={len(matrix)}, dates={len(dates)}, rows_written={len(output)}"
+        )
 
     _append_open_shift_changes(change_rows)
 
-    return "OK"
+    result = (
+        "OK | "
+        + " | ".join(summaries)
+        + f" | changes_logged={len(change_rows)}"
+    )
+    print(result)
+
+    return result
