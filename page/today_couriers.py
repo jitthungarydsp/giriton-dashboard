@@ -742,6 +742,97 @@ def render_cell(value, css_class="courier-cell"):
     )
 
 
+SORT_OPTIONS = {
+    "Courier ID": "Courier ID",
+    "Name": "Name",
+    "Warehouse": "Warehouse",
+    "Status": "Status",
+    "Delay": "_delay_minutes",
+    "Route ID": "Route ID",
+    "Rákerült": "Rákerült",
+    "Deliveries": "Deliveries",
+    "Vehicle": "Vehicle Type",
+    "License": "License Plate",
+    "Tervezett": "Tervezett indulás",
+    "Indulás": "Departure Time",
+    "Shift start": "Current Shift Start",
+    "Shift": "Current Shift Status",
+    "Temp": "Temperature",
+    "Last temp": "Last measurement timestamp",
+    "False dep.": "False departure report",
+}
+
+
+def normalize_sort_value(value):
+    if value in [None, "", "—", "-"]:
+        return (1, "")
+
+    parsed_time = parse_datetime(
+        value
+    )
+
+    if parsed_time:
+        return (0, parsed_time)
+
+    text = str(value).replace(
+        "°C",
+        "",
+    ).replace(
+        "+",
+        "",
+    ).strip()
+
+    try:
+        return (0, float(text))
+    except ValueError:
+        return (0, text.casefold())
+
+
+def sort_rows(rows):
+    sort_label = st.session_state.get(
+        "today_sort_field",
+        "Rákerült",
+    )
+    sort_key_name = SORT_OPTIONS.get(
+        sort_label,
+        "Rákerült",
+    )
+    descending = st.session_state.get(
+        "today_sort_direction",
+        "Csökkenő",
+    ) == "Csökkenő"
+
+    return sorted(
+        rows,
+        key=lambda row: normalize_sort_value(
+            row.get(sort_key_name)
+        ),
+        reverse=descending,
+    )
+
+
+def render_sort_controls():
+    sort_col, direction_col, _ = st.columns(
+        [1.6, 1.1, 4]
+    )
+
+    with sort_col:
+        st.selectbox(
+            "Rendezés",
+            list(SORT_OPTIONS.keys()),
+            index=list(SORT_OPTIONS.keys()).index("Rákerült"),
+            key="today_sort_field",
+        )
+
+    with direction_col:
+        st.radio(
+            "Irány",
+            ["Csökkenő", "Növekvő"],
+            horizontal=True,
+            key="today_sort_direction",
+        )
+
+
 def render_table(rows):
     render_table_styles()
 
@@ -1225,8 +1316,10 @@ def show_today_couriers_page():
             "_temperature_alert": temperature_alert,
         })
 
+    render_sort_controls()
+
     render_table(
-        rows
+        sort_rows(rows)
     )
 
     show_selected_route_details()
