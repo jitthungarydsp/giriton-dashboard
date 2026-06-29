@@ -99,14 +99,7 @@ Muszakok Figyelese
         Sleep    3
 
 
-        ${today}=    Get Current Date
-        ...    result_format=%Y-%m-%d
-
-        ${utolso}=    Evaluate
-        ...    calendar.monthrange(int("${today}"[:4]), int("${today}"[5:7]))[1]
-        ...    calendar
-
-        FOR    ${nap}    IN RANGE    0    ${utolso}
+        FOR    ${i}    IN RANGE    15
 
             Execute Javascript
             ...    let els=[...document.querySelectorAll('*')];
