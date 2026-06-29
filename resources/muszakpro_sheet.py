@@ -130,7 +130,6 @@ def read_giriton_records(work_date):
         if (
             record["work_date"] == work_date
             and not is_empty_giriton_name(record["name"])
-            and is_valid_giriton_record(record)
         ):
             records.append(record)
 
@@ -139,11 +138,38 @@ def read_giriton_records(work_date):
 
 def read_giriton_email_name_lookup():
     spreadsheet = open_sheet()
+    lookup = {}
+
+    try:
+        users_worksheet = spreadsheet.worksheet(
+            "Felhasznalok"
+        )
+        users_rows = users_worksheet.get_all_values()
+
+        for row in users_rows:
+            for name_index, email_index in [(0, 3), (6, 7)]:
+                name = str(
+                    row_value(row, name_index)
+                ).strip()
+                email = str(
+                    row_value(row, email_index)
+                ).strip().casefold()
+
+                if (
+                    email
+                    and "@" in email
+                    and name
+                    and normalize_name(name) != "nev"
+                    and not is_empty_giriton_name(name)
+                ):
+                    lookup[email] = name
+    except Exception:
+        pass
+
     worksheet = spreadsheet.worksheet(
         get_giriton_worksheet_name()
     )
     rows = worksheet.get_all_values()
-    lookup = {}
 
     for row in rows:
         record = row_to_record(row)
@@ -157,7 +183,6 @@ def read_giriton_email_name_lookup():
         if (
             email
             and not is_empty_giriton_name(name)
-            and is_valid_giriton_record(record)
         ):
             lookup[email] = name
 
