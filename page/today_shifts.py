@@ -180,6 +180,19 @@ def parse_assignment_datetime(work_date, value):
         return None
 
 
+def parse_work_date(value, fallback):
+    if not value:
+        return fallback
+
+    try:
+        return datetime.strptime(
+            str(value),
+            "%Y-%m-%d",
+        ).date()
+    except ValueError:
+        return fallback
+
+
 def normalize_start_from_datetime(value):
     parsed = parse_datetime(
         value
@@ -535,6 +548,7 @@ def build_shift_sources(
             key,
             {
                 "name": name,
+                "work_date": assignment.get("Date"),
                 "start": start,
                 "end": assignment.get("End", ""),
                 "assignment": assignment,
@@ -560,6 +574,11 @@ def build_shift_sources(
                 key,
                 {
                     "name": name,
+                    "work_date": (
+                        parse_datetime(shift.get("shiftStart")).date().isoformat()
+                        if parse_datetime(shift.get("shiftStart"))
+                        else ""
+                    ),
                     "start": start,
                     "end": normalize_start_from_datetime(
                         shift.get("shiftEnd")
@@ -587,6 +606,7 @@ def build_shift_sources(
             key,
             {
                 "name": name,
+                "work_date": record.get("work_date"),
                 "start": record.get("start"),
                 "end": record.get("end"),
                 "warehouse": record.get("warehouse"),
@@ -612,6 +632,7 @@ def build_shift_sources(
             key,
             {
                 "name": name,
+                "work_date": record.get("work_date"),
                 "start": record.get("start"),
                 "warehouse": record.get("warehouse"),
                 "email": record.get("email"),
@@ -662,12 +683,16 @@ def build_rows(
             "name",
             "",
         ).strip()
-        start_at = parse_assignment_datetime(
+        row_work_date = parse_work_date(
+            source.get("work_date"),
             work_date,
+        )
+        start_at = parse_assignment_datetime(
+            row_work_date,
             source.get("start"),
         )
         end_at = parse_assignment_datetime(
-            work_date,
+            row_work_date,
             source.get("end"),
         ) if source.get("end") else None
 
@@ -723,7 +748,7 @@ def build_rows(
         if not checkin_source and should_check_route_registration:
             checkin_source = get_route_registered_at(
                 driver_id_lookup.get(normalize_name(name)),
-                work_date.isoformat(),
+                row_work_date.isoformat(),
                 start_at,
                 end_at,
             )
@@ -749,7 +774,7 @@ def build_rows(
             and local_now() >= start_at
         )
         email_key = (
-            f"today_shift_email_{work_date.isoformat()}_"
+            f"today_shift_email_{row_work_date.isoformat()}_"
             f"{name}_{source.get('start')}"
         )
         email_sent = bool(
@@ -791,6 +816,7 @@ def build_rows(
             "email_sent": ok_pill() if email_sent else "-",
             "_email_key": email_key,
             "_row_key": f"{normalize_name(name)}_{format_time(start_at)}",
+            "_work_date": row_work_date.isoformat(),
             "_start_at": start_at or datetime.max,
             "_has_muszakpro": has_muszakpro,
             "_has_giriton": has_giriton,
