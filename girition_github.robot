@@ -40,6 +40,11 @@ Muszakok Figyelese
         ...    ${nap} days
         ...    result_format=%Y-%m-%d
 
+        ${datum_oldal}=    Add Time To Date
+        ...    ${today}
+        ...    ${nap} days
+        ...    result_format=%d.%m.%Y
+
         Log To Console
         ...    DATUM=${datum_giriton}
 
@@ -58,7 +63,14 @@ Muszakok Figyelese
         ...    xpath=//input[contains(@class,'v-datefield-textfield')]
         ...    ENTER
 
-        Sleep    3
+        Wait Until Page Contains
+        ...    ${datum_oldal}
+        ...    timeout=30s
+
+        Execute Javascript
+        ...    let els=[...document.querySelectorAll('*')]; let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight); let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0]; if(biggest){biggest.scrollTop=0;}
+
+        Sleep    2
 
 
         FOR    ${i}    IN RANGE    15
