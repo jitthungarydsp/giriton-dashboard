@@ -190,7 +190,7 @@ def _run_local_girition(start_date, days):
 
 def _trigger_local_weekly_girition(start_date):
     if st.button(
-        "Heti lekerdezes",
+        "Heti lekerdezes (helyi futas)",
         type="primary",
         use_container_width=True,
     ):
@@ -250,6 +250,7 @@ def show_robots_page():
         )
         girition_start_date = girition_date.strftime("%Y-%m-%d")
         st.caption("Az 1 napos lekerdezes GitHub Actionsben fut, a heti helyben fut.")
+        st.info("Uj mukodes: az Aktualis nap gomb GitHub Actions, a Heti gomb helyi futas.")
         _trigger_button(
             "Girition robot inditasa",
             run_girition=True,
