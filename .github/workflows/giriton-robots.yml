@@ -79,7 +79,8 @@ jobs:
 
   girition:
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_girition == 'true') }}
+    needs: folgaltsag
+    if: ${{ always() && ((github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_girition == 'true')) }}
     timeout-minutes: 45
 
     env:
