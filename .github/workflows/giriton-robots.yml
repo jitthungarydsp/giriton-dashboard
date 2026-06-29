@@ -114,6 +114,10 @@ jobs:
         run: |
           python -m robot --loglevel DEBUG --outputdir results/girition girition_github.robot
 
+      - name: Update shift reconciliation
+        run: |
+          python update_shift_reconciliation.py
+
       - name: Upload robot artifacts
         if: always()
         uses: actions/upload-artifact@v4

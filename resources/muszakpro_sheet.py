@@ -78,6 +78,20 @@ def row_to_record(row):
     }
 
 
+def parse_giriton_key(value):
+    parts = str(value or "").strip().split("_", 3)
+
+    if len(parts) < 4:
+        return {}
+
+    return {
+        "work_date": parts[0],
+        "warehouse": parts[1],
+        "start": normalize_time(parts[2]),
+        "email": parts[3].strip().casefold(),
+    }
+
+
 def is_empty_giriton_name(value):
     normalized = str(value or "").strip().upper()
     return (
@@ -122,10 +136,24 @@ def read_giriton_records(work_date):
         get_giriton_worksheet_name()
     )
     rows = worksheet.get_all_values()
+    email_name_lookup = read_giriton_email_name_lookup()
     records = []
 
     for row in rows:
         record = row_to_record(row)
+
+        if not record["work_date"]:
+            key_record = parse_giriton_key(
+                row_value(row, 9)
+            )
+
+            if key_record:
+                record.update(key_record)
+                record["name"] = email_name_lookup.get(
+                    record.get("email", ""),
+                    record.get("email", ""),
+                )
+                record["check"] = row_value(row, 10)
 
         if (
             record["work_date"] == work_date

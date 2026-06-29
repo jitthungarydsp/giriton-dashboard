@@ -11,9 +11,11 @@ from resources.muszakpro_sheet import (
     build_giriton_lookup,
     foglalas_key,
     read_giriton_email_name_lookup,
-    read_foglalasok_records,
-    read_giriton_records,
     record_key,
+)
+from resources.shift_reconciliation_sheet import (
+    read_shift_reconciliation_records,
+    rebuild_shift_reconciliation,
 )
 from resources.today_shift_log_sheet import write_today_shift_log
 
@@ -111,11 +113,14 @@ def load_driver_details_for_date(driver_id, work_date_text):
     show_spinner=False,
 )
 def load_shift_sheet_data(work_date_text):
-    giriton_records = read_giriton_records(
+    reconciliation_records = read_shift_reconciliation_records(
         work_date_text
     )
-    foglalas_records = read_foglalasok_records(
-        work_date_text
+    giriton_records = reconciliation_to_giriton_records(
+        reconciliation_records
+    )
+    foglalas_records = reconciliation_to_foglalas_records(
+        reconciliation_records
     )
     email_name_lookup = read_giriton_email_name_lookup()
 
@@ -130,6 +135,41 @@ def load_shift_sheet_data(work_date_text):
             foglalas_records
         ),
     )
+
+
+def reconciliation_to_giriton_records(records):
+    return [
+        {
+            "work_date": record.get("work_date", ""),
+            "start": record.get("start", ""),
+            "end": record.get("end", ""),
+            "warehouse": record.get("warehouse", ""),
+            "name": record.get("name", ""),
+            "email": record.get("email", ""),
+            "check": record.get("giriton_check", ""),
+        }
+        for record in records
+        if record.get("giriton") == "OK"
+    ]
+
+
+def reconciliation_to_foglalas_records(records):
+    return [
+        {
+            "created_at": record.get("updated_at", ""),
+            "work_date": record.get("work_date", ""),
+            "email": record.get("email", ""),
+            "shift": (
+                f"{record.get('warehouse', '')}_"
+                f"{record.get('start', '')}"
+            ),
+            "warehouse": record.get("warehouse", ""),
+            "start": record.get("start", ""),
+            "code": record.get("muszakpro_code", ""),
+        }
+        for record in records
+        if record.get("muszakpro") == "OK"
+    ]
 
 
 def local_now():
@@ -504,7 +544,10 @@ def build_email_name_lookup(giriton_records, base_lookup=None):
     return lookup
 
 
-def merge_source(sources, key, updates):
+def merge_source(sources, key, updates, create=True):
+    if key not in sources and not create:
+        return
+
     if key not in sources:
         sources[key] = {}
 
@@ -529,68 +572,6 @@ def build_shift_sources(
         giriton_records,
         email_name_lookup,
     )
-
-    for index, assignment in enumerate(assignments):
-        name = assignment.get(
-            "Driver",
-            "",
-        ).strip()
-        start = assignment.get(
-            "Start",
-            "",
-        )
-        key = record_key(
-            name,
-            start,
-        )
-        merge_source(
-            sources,
-            key,
-            {
-                "name": name,
-                "work_date": assignment.get("Date"),
-                "start": start,
-                "end": assignment.get("End", ""),
-                "assignment": assignment,
-                "assignment_index": index,
-            },
-        )
-
-    for courier in attendance_data.get("couriers", []):
-        name = str(
-            courier.get("courierName", "")
-        ).strip()
-
-        for shift in courier.get("shifts", []):
-            start = normalize_start_from_datetime(
-                shift.get("shiftStart")
-            )
-            key = record_key(
-                name,
-                start,
-            )
-            merge_source(
-                sources,
-                key,
-                {
-                    "name": name,
-                    "work_date": (
-                        parse_datetime(shift.get("shiftStart")).date().isoformat()
-                        if parse_datetime(shift.get("shiftStart"))
-                        else ""
-                    ),
-                    "start": start,
-                    "end": normalize_start_from_datetime(
-                        shift.get("shiftEnd")
-                    ),
-                    "warehouse": courier.get("warehouseName"),
-                    "attendance_courier": courier,
-                    "attendance_shift": shift,
-                    "is_exp": "EXP" in str(
-                        shift.get("shiftName", "")
-                    ).upper(),
-                },
-            )
 
     for record in giriton_records:
         name = record.get(
@@ -639,6 +620,70 @@ def build_shift_sources(
                 "foglalas_record": record,
             },
         )
+
+    for index, assignment in enumerate(assignments):
+        name = assignment.get(
+            "Driver",
+            "",
+        ).strip()
+        start = assignment.get(
+            "Start",
+            "",
+        )
+        key = record_key(
+            name,
+            start,
+        )
+        merge_source(
+            sources,
+            key,
+            {
+                "name": name,
+                "work_date": assignment.get("Date"),
+                "start": start,
+                "end": assignment.get("End", ""),
+                "assignment": assignment,
+                "assignment_index": index,
+            },
+            create=False,
+        )
+
+    for courier in attendance_data.get("couriers", []):
+        name = str(
+            courier.get("courierName", "")
+        ).strip()
+
+        for shift in courier.get("shifts", []):
+            start = normalize_start_from_datetime(
+                shift.get("shiftStart")
+            )
+            key = record_key(
+                name,
+                start,
+            )
+            merge_source(
+                sources,
+                key,
+                {
+                    "name": name,
+                    "work_date": (
+                        parse_datetime(shift.get("shiftStart")).date().isoformat()
+                        if parse_datetime(shift.get("shiftStart"))
+                        else ""
+                    ),
+                    "start": start,
+                    "end": normalize_start_from_datetime(
+                        shift.get("shiftEnd")
+                    ),
+                    "warehouse": courier.get("warehouseName"),
+                    "attendance_courier": courier,
+                    "attendance_shift": shift,
+                    "is_exp": "EXP" in str(
+                        shift.get("shiftName", "")
+                    ).upper(),
+                },
+                create=False,
+            )
 
     return list(
         sources.values()
@@ -1495,6 +1540,22 @@ def show_today_shifts_page():
     work_date_text = selected_date.strftime(
         "%Y-%m-%d"
     )
+
+    if st.button(
+        "Műszak ellenőrzés újraépítése",
+        use_container_width=True,
+    ):
+        with st.spinner(
+            "Giriton és MűszakPro ellenőrzés frissítése..."
+        ):
+            rebuild_shift_reconciliation(
+                start_date=selected_date,
+                days=10,
+            )
+            load_shift_sheet_data.clear()
+        st.success(
+            "Műszak ellenőrzés frissítve."
+        )
 
     vehicle_data = load_vehicle_assignments()
     attendance_data = load_attendance_for_date(
