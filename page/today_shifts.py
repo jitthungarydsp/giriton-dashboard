@@ -95,6 +95,21 @@ def load_drivers():
 @st.cache_data(
     show_spinner=False,
 )
+def load_driver_details_for_date(driver_id, work_date_text):
+    url = (
+        f"{BASE_URL}/"
+        f"fetch-drivers-detail/{driver_id}/{work_date_text}"
+        f"?organizationId={ORGANIZATION_ID}"
+    )
+
+    return request_json(
+        url
+    )
+
+
+@st.cache_data(
+    show_spinner=False,
+)
 def load_shift_sheet_data(work_date_text):
     giriton_records = read_giriton_records(
         work_date_text
@@ -213,6 +228,62 @@ def build_attendance_lookup(couriers):
     }
 
 
+def build_driver_id_lookup(drivers_data):
+    lookup = {}
+
+    for driver in drivers_data.get("drivers", []):
+        personal_info = driver.get("personal_info", {})
+        name = personal_info.get("name", "")
+        driver_id = driver.get("driver_id")
+
+        if name and driver_id:
+            lookup[normalize_name(name)] = driver_id
+
+    return lookup
+
+
+def get_route_registered_at(driver_id, work_date_text, start_at, end_at=None):
+    if not driver_id:
+        return None
+
+    details = load_driver_details_for_date(
+        driver_id,
+        work_date_text,
+    )
+    candidates = []
+
+    for route in details.get("routes", []):
+        registered_at = parse_datetime(
+            route.get("courierRegisteredAt")
+        )
+
+        if not registered_at:
+            continue
+
+        planned_departure = parse_datetime(
+            route.get("plannedDeparture")
+        )
+        assigned_at = parse_datetime(
+            route.get("assignedAt")
+        )
+        route_marker = planned_departure or assigned_at or registered_at
+
+        if start_at and end_at and route_marker:
+            if not (
+                start_at - timedelta(hours=1)
+                <= route_marker
+                <= end_at + timedelta(hours=1)
+            ):
+                continue
+
+        candidates.append(registered_at)
+
+    if not candidates:
+        return None
+
+    return min(candidates)
+
+
 def find_matching_shift(courier, start_at):
     if not courier or not start_at:
         return {}
@@ -271,7 +342,7 @@ def get_checkin_state(start_at, available_since):
         available_since
     )
 
-    if checkin_at and start_at and checkin_at <= start_at:
+    if checkin_at:
         return {
             "label": "Bejelentkezett",
             "color": "green",
@@ -556,6 +627,7 @@ def build_shift_sources(
 def build_rows(
     assignments,
     attendance_data,
+    drivers_data,
     work_date,
     giriton_records,
     foglalas_records,
@@ -568,6 +640,9 @@ def build_rows(
             "couriers",
             [],
         )
+    )
+    driver_id_lookup = build_driver_id_lookup(
+        drivers_data
     )
     rows = []
     vehicle_suggestions = build_vehicle_suggestions(
@@ -591,6 +666,14 @@ def build_rows(
             work_date,
             source.get("start"),
         )
+        end_at = parse_assignment_datetime(
+            work_date,
+            source.get("end"),
+        ) if source.get("end") else None
+
+        if end_at and start_at and end_at <= start_at:
+            end_at = end_at + timedelta(days=1)
+
         courier = attendance_lookup.get(
             normalize_name(name)
         )
@@ -630,9 +713,24 @@ def build_rows(
                 {},
             )
 
+        checkin_source = attendance_shift.get("availableForShiftSince")
+
+        should_check_route_registration = (
+            start_at
+            and local_now() >= start_at - timedelta(minutes=40)
+        )
+
+        if not checkin_source and should_check_route_registration:
+            checkin_source = get_route_registered_at(
+                driver_id_lookup.get(normalize_name(name)),
+                work_date.isoformat(),
+                start_at,
+                end_at,
+            )
+
         state = get_checkin_state(
             start_at,
-            attendance_shift.get("availableForShiftSince"),
+            checkin_source,
         )
         has_muszakpro = bool(
             foglalas_record
@@ -1376,6 +1474,7 @@ def show_today_shifts_page():
     attendance_data = load_attendance_for_date(
         work_date_text
     )
+    drivers_data = load_drivers()
 
     try:
         (
@@ -1410,6 +1509,7 @@ def show_today_shifts_page():
     rows = build_rows(
         assignments,
         attendance_data,
+        drivers_data,
         selected_date,
         giriton_records,
         foglalas_records,
