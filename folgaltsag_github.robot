@@ -65,7 +65,7 @@ Muszakok Figyelese
 
     @{rows}=    Create List
 
-    FOR    ${nap}    IN RANGE    0    3
+    FOR    ${nap}    IN RANGE    0    10
 
         ${datum_giriton}=    Add Time To Date
         ...    ${today}
