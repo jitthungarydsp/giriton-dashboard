@@ -69,7 +69,7 @@ Muszakok Figyelese
 
         Sleep    1s
 
-        FOR    ${scroll_round}    IN RANGE    0    25
+        FOR    ${scroll_round}    IN RANGE    0    12
 
             Collect Visible Giriton Shift Rows
             ...    ${rows}
@@ -85,8 +85,13 @@ Muszakok Figyelese
 
         END
 
+        ${collected_count}=    Get Length    ${rows}
+        Log To Console
+        ...    GYUJTES_KESZ=${datum_giriton} OSSZES_SOR=${collected_count}
 
-        FOR    ${i}    IN RANGE    15
+        IF    ${False}
+
+            FOR    ${i}    IN RANGE    15
 
             Execute Javascript
             ...    let els=[...document.querySelectorAll('*')];
@@ -219,6 +224,8 @@ Muszakok Figyelese
                     ...    ${row}
 
             END
+
+        END
 
         END
 
