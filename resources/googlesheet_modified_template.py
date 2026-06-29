@@ -13,9 +13,13 @@ spreadsheet = open_spreadsheet(
     "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 )
 
+FOGLALASOK_READ_ONLY_SHEET = "Foglalasok"
+
+
 def get_foglalasok_kulcsok():
 
-    ws = spreadsheet.worksheet("FoglalasokGiriton")
+    # FONTOS: a Foglalasok lap csak olvasasra hasznalhato. Ide soha nem irunk.
+    ws = spreadsheet.worksheet(FOGLALASOK_READ_ONLY_SHEET)
 
     values = ws.get_all_values()
 
@@ -51,6 +55,71 @@ def get_emails():
 
     return emails
 from datetime import datetime
+
+
+def _is_empty_subscriber(value):
+    normalized = str(value or "").strip().upper()
+    return (
+        normalized in {"", "(NONE)"}
+        or normalized.endswith("RES") and len(normalized) <= 8
+    )
+
+
+def _safe_int_value(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _dedupe_shift_rows(rows):
+    unique = {}
+
+    for row in rows:
+        if len(row) < 8:
+            continue
+
+        row = list(row)
+        slot_key = tuple(row[:4])
+        name = str(row[7]).strip()
+        full_key = slot_key + (name,)
+        score = (
+            0 if _is_empty_subscriber(name) else 10,
+            _safe_int_value(row[5]),
+            _safe_int_value(row[6]),
+        )
+
+        current = unique.get(full_key)
+        if not current or score > current[0]:
+            unique[full_key] = (score, row)
+
+    grouped = {}
+    for full_key, (_, row) in unique.items():
+        slot_key = full_key[:4]
+        grouped.setdefault(slot_key, []).append(row)
+
+    cleaned = []
+    for slot_rows in grouped.values():
+        has_named_subscriber = any(
+            not _is_empty_subscriber(row[7])
+            for row in slot_rows
+        )
+
+        for row in slot_rows:
+            if has_named_subscriber and _is_empty_subscriber(row[7]):
+                continue
+            cleaned.append(row)
+
+    return sorted(
+        cleaned,
+        key=lambda row: (
+            row[0],
+            row[3],
+            _safe_int_value(str(row[1]).split(":")[0]),
+            _safe_int_value(str(row[1]).split(":")[-1]),
+            row[7],
+        ),
+    )
 
 
 def create_statistics():
@@ -183,6 +252,7 @@ def create_statistics():
 def write_all_shifts(rows):
 
     worksheet = spreadsheet.worksheet("Giriton")
+    rows = _dedupe_shift_rows(rows)
 
     # Régi adatok törlése (fejléc marad)
     worksheet.batch_clear(["A2:I10000"])

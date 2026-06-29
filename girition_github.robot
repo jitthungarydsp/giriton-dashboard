@@ -1,6 +1,7 @@
 *** Settings ***
 Resource    resources/keywords_github.robot
 Resource    resources/variables.robot
+Resource    resources/giriton_shift_scraper.robot
 Library    resources/googlesheet_modified_template.py
 Library    SeleniumLibrary
 Library    DateTime
@@ -59,6 +60,30 @@ Muszakok Figyelese
         ...    ENTER
 
         Sleep    3
+
+        Execute Javascript
+        ...    let els=[...document.querySelectorAll('*')];
+        ...    let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight);
+        ...    let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
+        ...    if(biggest){biggest.scrollTop=0;}
+
+        Sleep    1s
+
+        FOR    ${scroll_round}    IN RANGE    0    25
+
+            Collect Visible Giriton Shift Rows
+            ...    ${rows}
+            ...    ${datum_sheet}
+
+            Execute Javascript
+            ...    let els=[...document.querySelectorAll('*')];
+            ...    let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight);
+            ...    let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
+            ...    if(biggest){biggest.scrollTop=Math.min(biggest.scrollTop + Math.max(biggest.clientHeight*0.75, 350), biggest.scrollHeight);}
+
+            Sleep    1s
+
+        END
 
 
         FOR    ${i}    IN RANGE    15
