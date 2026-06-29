@@ -252,6 +252,7 @@ def create_statistics():
 def write_all_shifts(rows):
 
     worksheet = spreadsheet.worksheet("Giriton")
+    original_row_count = len(rows)
     rows = _dedupe_shift_rows(rows)
 
     # Régi adatok törlése (fejléc marad)
@@ -301,7 +302,7 @@ def write_all_shifts(rows):
     new_rows
     )
 
-    return "OK"
+    return f"OK | input_rows={original_row_count} | written_rows={len(new_rows)}"
 
 
 def write_all_shifts_matrix(rows):
