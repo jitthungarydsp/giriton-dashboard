@@ -78,6 +78,21 @@ def row_to_record(row):
     }
 
 
+def is_empty_giriton_name(value):
+    normalized = str(value or "").strip().upper()
+    return (
+        not normalized
+        or normalized == "(NONE)"
+        or normalized.endswith("RES") and len(normalized) <= 8
+    )
+
+
+def is_valid_giriton_record(record):
+    return str(
+        record.get("check", "")
+    ).strip().upper() == "GIRITON_OK"
+
+
 def foglalas_row_to_record(row):
     shift = row_value(row, 3)
     warehouse = row_value(row, 4)
@@ -114,8 +129,8 @@ def read_giriton_records(work_date):
 
         if (
             record["work_date"] == work_date
-            and record["name"]
-            and record["name"] != "ÜRES"
+            and not is_empty_giriton_name(record["name"])
+            and is_valid_giriton_record(record)
         ):
             records.append(record)
 
@@ -139,7 +154,11 @@ def read_giriton_email_name_lookup():
             record.get("name", "")
         ).strip()
 
-        if email and name and name != "ĂśRES":
+        if (
+            email
+            and not is_empty_giriton_name(name)
+            and is_valid_giriton_record(record)
+        ):
             lookup[email] = name
 
     return lookup
