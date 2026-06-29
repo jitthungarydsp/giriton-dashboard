@@ -112,7 +112,7 @@ jobs:
 
       - name: Run girition robot
         run: |
-          python -m robot --loglevel DEBUG --outputdir results/girition girition_github.robot
+          python -m robot --loglevel DEBUG --outputdir results/girition girition.robot
 
       - name: Upload robot artifacts
         if: always()
