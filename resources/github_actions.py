@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -13,6 +14,7 @@ DEFAULT_OWNER = "jitthungarydsp"
 DEFAULT_REPO = "giriton-dashboard"
 DEFAULT_WORKFLOW = "giriton-robots.yml"
 DEFAULT_REF = "main"
+BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 
 
 class GitHubActionsError(Exception):
@@ -92,7 +94,7 @@ def dispatch_robot(run_folgaltsag=False, run_girition=False, run_dsp=False):
     return {
         "workflow": config["workflow"],
         "ref": config["ref"],
-        "triggered_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "triggered_at": datetime.now(BUDAPEST_TZ).strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 

@@ -1,4 +1,6 @@
 import streamlit as st
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from resources.github_actions import (
     GitHubActionsError,
@@ -7,6 +9,8 @@ from resources.github_actions import (
     get_config,
     get_latest_runs,
 )
+
+BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 
 
 def _status_label(run):
@@ -18,15 +22,33 @@ def _status_label(run):
             return "Sikeres"
         if conclusion == "failure":
             return "Hibás"
+        if conclusion == "cancelled":
+            return "Megszakítva"
+        if conclusion == "skipped":
+            return "Kihagyva"
         if conclusion:
             return conclusion
 
     if status == "in_progress":
-        return "Fut"
+        return "Fut (GitHub szerint)"
     if status == "queued":
         return "Sorban"
 
     return status
+
+
+def _format_github_time(value):
+    if not value:
+        return "-"
+
+    try:
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return value
+
+    return parsed.astimezone(BUDAPEST_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _show_run_table(runs):
@@ -40,7 +62,8 @@ def _show_run_table(runs):
             {
                 "ID": run.get("id"),
                 "Állapot": _status_label(run),
-                "Indítva": run.get("created_at", "-"),
+                "Indítva": _format_github_time(run.get("created_at")),
+                "Frissítve": _format_github_time(run.get("updated_at")),
                 "Branch": run.get("head_branch", "-"),
                 "Link": run.get("html_url", ""),
             }
@@ -128,6 +151,12 @@ def show_robots_page():
     st.divider()
 
     st.subheader("Legutóbbi GitHub futások")
+
+    if st.button(
+        "Állapot frissítése",
+        use_container_width=True,
+    ):
+        st.rerun()
 
     try:
         _show_run_table(
