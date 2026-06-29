@@ -76,7 +76,15 @@ def _show_run_table(runs):
     )
 
 
-def _trigger_button(label, *, run_folgaltsag=False, run_girition=False, run_dsp=False):
+def _trigger_button(
+    label,
+    *,
+    run_folgaltsag=False,
+    run_girition=False,
+    run_dsp=False,
+    girition_start_date="",
+    girition_days=10,
+):
     if st.button(
         label,
         type="primary",
@@ -87,6 +95,8 @@ def _trigger_button(label, *, run_folgaltsag=False, run_girition=False, run_dsp=
                 run_folgaltsag=run_folgaltsag,
                 run_girition=run_girition,
                 run_dsp=run_dsp,
+                girition_start_date=girition_start_date,
+                girition_days=girition_days,
             )
             st.success(
                 f"GitHub Actions indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
@@ -134,10 +144,28 @@ def show_robots_page():
 
     with col2:
         st.subheader("Girition")
+        girition_date = st.date_input(
+            "Lekérdezés kezdő napja",
+            value=datetime.now(BUDAPEST_TZ).date(),
+            key="girition_robot_start_date",
+        )
+        girition_start_date = girition_date.strftime("%Y-%m-%d")
         st.caption("A GitHub workflow-ban a `girition.robot` fut.")
         _trigger_button(
             "Girition robot indítása",
             run_girition=True,
+        )
+        _trigger_button(
+            "Aktuális nap lekérdezése",
+            run_girition=True,
+            girition_start_date=girition_start_date,
+            girition_days=1,
+        )
+        _trigger_button(
+            "Heti lekérdezés",
+            run_girition=True,
+            girition_start_date=girition_start_date,
+            girition_days=7,
         )
 
     with col3:

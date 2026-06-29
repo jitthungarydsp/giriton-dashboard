@@ -11,6 +11,8 @@ Library    String
 *** Variables ***
 ${START_DATE}    05/06/2026
 ${END_DATE}      12/06/2026
+${RUN_START_DATE}
+${DAYS_TO_SYNC}    10
 
 
 
@@ -26,22 +28,28 @@ Muszakok Figyelese
     ${today}=    Get Current Date
     ...    result_format=%Y-%m-%d
 
+    ${base_date}=    Set Variable    ${today}
+
+    IF    '${RUN_START_DATE}' != ''
+        ${base_date}=    Set Variable    ${RUN_START_DATE}
+    END
+
     @{rows}=    Create List
 
-    FOR    ${nap}    IN RANGE    0    10
+    FOR    ${nap}    IN RANGE    0    ${DAYS_TO_SYNC}
 
         ${datum_giriton}=    Add Time To Date
-        ...    ${today}
+        ...    ${base_date}
         ...    ${nap} days
         ...    result_format=%d/%m/%Y
 
         ${datum_sheet}=    Add Time To Date
-        ...    ${today}
+        ...    ${base_date}
         ...    ${nap} days
         ...    result_format=%Y-%m-%d
 
         ${datum_oldal}=    Add Time To Date
-        ...    ${today}
+        ...    ${base_date}
         ...    ${nap} days
         ...    result_format=%d.%m.%Y
 

@@ -27,6 +27,16 @@ on:
         options:
           - "true"
           - "false"
+      girition_start_date:
+        description: "Girition kezdo datum YYYY-MM-DD formatumban"
+        required: false
+        default: ""
+        type: string
+      girition_days:
+        description: "Girition lekerdezes napok szama"
+        required: false
+        default: "10"
+        type: string
   schedule:
     - cron: "0 * * * *"
     - cron: "0 4 * * *"
@@ -41,6 +51,8 @@ jobs:
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      GIRITION_START_DATE: ${{ github.event.inputs.girition_start_date || '' }}
+      GIRITION_DAYS: ${{ github.event.inputs.girition_days || '10' }}
 
     steps:
       - name: Checkout
@@ -112,7 +124,7 @@ jobs:
 
       - name: Run girition robot
         run: |
-          python -m robot --loglevel DEBUG --outputdir results/girition girition_github.robot
+          python -m robot --loglevel DEBUG --outputdir results/girition --variable RUN_START_DATE:"$GIRITION_START_DATE" --variable DAYS_TO_SYNC:"$GIRITION_DAYS" girition_github.robot
 
       - name: Update shift reconciliation
         run: |

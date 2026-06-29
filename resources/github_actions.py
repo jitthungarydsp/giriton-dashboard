@@ -64,7 +64,13 @@ def _headers(config):
     }
 
 
-def dispatch_robot(run_folgaltsag=False, run_girition=False, run_dsp=False):
+def dispatch_robot(
+    run_folgaltsag=False,
+    run_girition=False,
+    run_dsp=False,
+    girition_start_date="",
+    girition_days=10,
+):
     config = get_config()
     url = (
         f"https://api.github.com/repos/{config['owner']}/{config['repo']}"
@@ -76,6 +82,8 @@ def dispatch_robot(run_folgaltsag=False, run_girition=False, run_dsp=False):
             "run_folgaltsag": "true" if run_folgaltsag else "false",
             "run_girition": "true" if run_girition else "false",
             "run_dsp": "true" if run_dsp else "false",
+            "girition_start_date": str(girition_start_date or ""),
+            "girition_days": str(girition_days or 10),
         },
     }
 
