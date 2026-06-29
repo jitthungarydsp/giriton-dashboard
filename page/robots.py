@@ -1,130 +1,77 @@
-import os
-import subprocess
-import sys
-from datetime import datetime
-from pathlib import Path
-
 import streamlit as st
 
+from resources.github_actions import (
+    GitHubActionsError,
+    dispatch_robot,
+    get_actions_url,
+    get_config,
+    get_latest_runs,
+)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ROBOT_FILE = PROJECT_ROOT / "folgaltsag.robot"
-RUN_DIR = PROJECT_ROOT / "results" / "robot_runs"
-PID_FILE = RUN_DIR / "folgaltsag.pid"
-LOG_FILE = RUN_DIR / "folgaltsag.log"
+
+def _status_label(run):
+    status = run.get("status") or "-"
+    conclusion = run.get("conclusion")
+
+    if status == "completed":
+        if conclusion == "success":
+            return "Sikeres"
+        if conclusion == "failure":
+            return "Hibás"
+        if conclusion:
+            return conclusion
+
+    if status == "in_progress":
+        return "Fut"
+    if status == "queued":
+        return "Sorban"
+
+    return status
 
 
-def ensure_run_dir():
-    RUN_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
+def _show_run_table(runs):
+    if not runs:
+        st.info("Még nincs látható GitHub Actions futás.")
+        return
+
+    rows = []
+    for run in runs:
+        rows.append(
+            {
+                "ID": run.get("id"),
+                "Állapot": _status_label(run),
+                "Indítva": run.get("created_at", "-"),
+                "Branch": run.get("head_branch", "-"),
+                "Link": run.get("html_url", ""),
+            }
+        )
+
+    st.dataframe(
+        rows,
+        width="stretch",
+        hide_index=True,
     )
 
 
-def is_process_running(pid):
-    if not pid:
-        return False
-
-    try:
-        os.kill(
-            pid,
-            0,
-        )
-        return True
-    except OSError:
-        return False
-
-
-def get_running_pid():
-    if not PID_FILE.exists():
-        return None
-
-    try:
-        pid = int(
-            PID_FILE.read_text(
-                encoding="utf-8"
-            ).strip()
-        )
-    except ValueError:
-        PID_FILE.unlink(
-            missing_ok=True
-        )
-        return None
-
-    if is_process_running(pid):
-        return pid
-
-    PID_FILE.unlink(
-        missing_ok=True
-    )
-    return None
-
-
-def read_log_tail(max_lines=180):
-    if not LOG_FILE.exists():
-        return ""
-
-    lines = LOG_FILE.read_text(
-        encoding="utf-8",
-        errors="replace",
-    ).splitlines()
-
-    return "\n".join(
-        lines[-max_lines:]
-    )
-
-
-def start_robot():
-    ensure_run_dir()
-
-    if not ROBOT_FILE.exists():
-        raise FileNotFoundError(
-            f"Nem találom a robot fájlt: {ROBOT_FILE}"
-        )
-
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    with LOG_FILE.open(
-        "w",
-        encoding="utf-8",
-        errors="replace",
-    ) as log:
-        log.write(
-            f"Foglaltság robot indítva: {timestamp}\n"
-        )
-        log.write(
-            f"Robot fájl: {ROBOT_FILE}\n\n"
-        )
-        log.flush()
-
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "robot",
-                "--outputdir",
-                str(RUN_DIR),
-                str(ROBOT_FILE),
-            ],
-            cwd=str(PROJECT_ROOT),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=(
-                subprocess.CREATE_NEW_PROCESS_GROUP
-                if os.name == "nt"
-                else 0
-            ),
-        )
-
-    PID_FILE.write_text(
-        str(process.pid),
-        encoding="utf-8",
-    )
-
-    return process.pid
+def _trigger_button(label, *, run_folgaltsag=False, run_girition=False, run_dsp=False):
+    if st.button(
+        label,
+        type="primary",
+        use_container_width=True,
+    ):
+        try:
+            result = dispatch_robot(
+                run_folgaltsag=run_folgaltsag,
+                run_girition=run_girition,
+                run_dsp=run_dsp,
+            )
+            st.success(
+                f"GitHub Actions indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
+            )
+        except GitHubActionsError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"Váratlan hiba GitHub Actions indításnál: {exc}")
 
 
 def show_robots_page():
@@ -133,72 +80,64 @@ def show_robots_page():
     user = st.session_state["user"]
 
     if user.get("role") != "admin":
-        st.error(
-            "Ezt az oldalt csak admin indíthatja."
-        )
+        st.error("Ezt az oldalt csak admin indíthatja.")
         return
 
-    ensure_run_dir()
+    config = get_config()
+    actions_url = get_actions_url()
 
-    st.subheader("Foglaltság robot")
     st.caption(
-        "A gomb a helyi gépen futtatja a folgaltsag.robot fájlt, és a results/robot_runs mappába írja a logokat."
+        "A robotok most már nem a Streamlit gépén futnak, hanem GitHub Actions workflow_dispatch indítással."
     )
-
-    running_pid = get_running_pid()
 
     c1, c2, c3 = st.columns(3)
+    c1.metric("Repository", f"{config['owner']}/{config['repo']}")
+    c2.metric("Workflow", config["workflow"])
+    c3.metric("Branch", config["ref"])
 
-    c1.metric(
-        "Állapot",
-        "Fut" if running_pid else "Nem fut",
-    )
-    c2.metric(
-        "PID",
-        running_pid or "-",
-    )
-    c3.metric(
-        "Robot fájl",
-        ROBOT_FILE.name,
-    )
-
-    if running_pid:
-        st.warning(
-            "A robot jelenleg fut. Várd meg, amíg befejezi, utána lehet újraindítani."
-        )
-    else:
-        if st.button(
-            "Foglaltság robot indítása",
-            type="primary",
-            use_container_width=True,
-        ):
-            try:
-                pid = start_robot()
-                st.success(
-                    f"Robot elindítva. PID: {pid}"
-                )
-                st.rerun()
-            except Exception as exc:
-                st.error(
-                    f"Robot indítás sikertelen: {exc}"
-                )
+    st.markdown(f"[GitHub Actions megnyitása]({actions_url})")
 
     st.divider()
 
-    st.subheader("Utolsó futás log")
+    col1, col2, col3 = st.columns(3)
 
-    log_text = read_log_tail()
-
-    if log_text:
-        st.code(
-            log_text,
-            language="text",
-        )
-    else:
-        st.info(
-            "Még nincs robot log."
+    with col1:
+        st.subheader("Foglaltság")
+        st.caption("A `folgaltsag_github.robot` futását indítja.")
+        _trigger_button(
+            "Foglaltság robot indítása",
+            run_folgaltsag=True,
         )
 
-    st.caption(
-        f"Log mappa: {RUN_DIR}"
+    with col2:
+        st.subheader("Girition")
+        st.caption("A GitHub workflow-ban a `girition.robot` fut.")
+        _trigger_button(
+            "Girition robot indítása",
+            run_girition=True,
+        )
+
+    with col3:
+        st.subheader("DSP")
+        st.caption("A `dsp.py` statisztika futását indítja.")
+        _trigger_button(
+            "DSP futtatása",
+            run_dsp=True,
+        )
+
+    st.divider()
+
+    st.subheader("Legutóbbi GitHub futások")
+
+    try:
+        _show_run_table(
+            get_latest_runs()
+        )
+    except GitHubActionsError as exc:
+        st.warning(str(exc))
+    except Exception as exc:
+        st.warning(f"Nem sikerült lekérni a GitHub futásokat: {exc}")
+
+    st.info(
+        "Szükséges Streamlit secret: `GITHUB_ACTIONS_TOKEN`. Fine-grained tokennél legyen Actions: Read and write jogosultság erre a repositoryra."
     )
