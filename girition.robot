@@ -1,12 +1,11 @@
 *** Settings ***
-Resource    ../giriton-dashboard/resources/keywords.robot
-Resource    ../giriton-dashboard/resources/variables.robot
-Library    googlesheet.py
+Resource    resources/keywords_github.robot
+Resource    resources/variables.robot
+Library    resources/googlesheet_modified_template.py
 Library    SeleniumLibrary
 Library    DateTime
 Library    Collections
 Library    String
-Library    googlesheet.py
 
 
 *** Variables ***
@@ -18,9 +17,9 @@ ${END_DATE}      12/06/2026
 *** Test Cases ***
 Muszakok Figyelese
 
-    keywords.Bejelentkezes
+    keywords_github.Bejelentkezes
 
-    keywords.Click Shift Subs
+    keywords_github.Click Shift Subs
 
     Sleep    10
 
@@ -205,7 +204,7 @@ Muszakok Figyelese
     Log To Console
     ...    SOROK_SZAMA=${dbrows}
 
-    ${result}=    Write All Shifts
+    ${result}=    googlesheet_modified_template.Write All Shifts
     ...    ${rows}
 
     Log To Console

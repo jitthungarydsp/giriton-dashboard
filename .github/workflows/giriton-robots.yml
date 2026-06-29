@@ -107,6 +107,7 @@ jobs:
           test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
+          python -c "import resources.googlesheet_modified_template as g; print('Spreadsheet ID:', g.spreadsheet.id); print('Worksheets:', [w.title for w in g.spreadsheet.worksheets()])"
           google-chrome --version || chromium-browser --version || chromium --version
 
       - name: Run girition robot
