@@ -26,6 +26,7 @@ LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 @st.cache_data(
     show_spinner=False,
+    ttl=300,
 )
 def fetch_json(url):
     response = requests.get(
@@ -94,6 +95,7 @@ def load_drivers():
 
 @st.cache_data(
     show_spinner=False,
+    ttl=300,
 )
 def load_driver_details_for_date(driver_id, work_date_text):
     url = (
@@ -109,6 +111,7 @@ def load_driver_details_for_date(driver_id, work_date_text):
 
 @st.cache_data(
     show_spinner=False,
+    ttl=300,
 )
 def load_shift_sheet_data(work_date_text):
     giriton_records = read_giriton_records(
