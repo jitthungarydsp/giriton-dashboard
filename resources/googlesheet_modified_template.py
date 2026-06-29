@@ -15,7 +15,8 @@ spreadsheet = open_spreadsheet(
 
 def get_foglalasok_kulcsok():
 
-    ws = spreadsheet.worksheet("FoglalasokGiriton")
+    # A Foglalasok tabla kozos forras, ide nem irunk, csak olvasunk belole.
+    ws = spreadsheet.worksheet("Foglalasok")
 
     values = ws.get_all_values()
 
