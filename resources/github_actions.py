@@ -68,6 +68,7 @@ def dispatch_robot(
     run_folgaltsag=False,
     run_girition=False,
     run_dsp=False,
+    run_raw_export=False,
     girition_start_date="",
     girition_days=10,
 ):
@@ -82,6 +83,7 @@ def dispatch_robot(
             "run_folgaltsag": "true" if run_folgaltsag else "false",
             "run_girition": "true" if run_girition else "false",
             "run_dsp": "true" if run_dsp else "false",
+            "run_raw_export": "true" if run_raw_export else "false",
             "girition_start_date": str(girition_start_date or ""),
             "girition_days": str(girition_days or 10),
         },

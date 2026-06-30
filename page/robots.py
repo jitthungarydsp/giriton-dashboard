@@ -88,6 +88,7 @@ def _trigger_button(
     run_folgaltsag=False,
     run_girition=False,
     run_dsp=False,
+    run_raw_export=False,
     girition_start_date="",
     girition_days=10,
 ):
@@ -101,6 +102,7 @@ def _trigger_button(
                 run_folgaltsag=run_folgaltsag,
                 run_girition=run_girition,
                 run_dsp=run_dsp,
+                run_raw_export=run_raw_export,
                 girition_start_date=girition_start_date,
                 girition_days=girition_days,
             )
@@ -249,15 +251,17 @@ def show_robots_page():
             key="girition_robot_start_date",
         )
         girition_start_date = girition_date.strftime("%Y-%m-%d")
-        st.caption("Az 1 napos lekerdezes GitHub Actionsben fut, a heti helyben fut.")
-        st.info("Uj mukodes: az Aktualis nap gomb GitHub Actions, a Heti gomb helyi futas.")
+        st.caption("A GitHubos frissites a Shift Subs es az Attendance adatot is frissiti.")
+        st.info("Az Aktualis nap gomb GitHub Actionsben futtatja a nyers Giriton + Attendance exportot.")
         _trigger_button(
-            "Girition robot inditasa",
-            run_girition=True,
+            "Giriton + Attendance frissitese",
+            run_raw_export=True,
+            girition_start_date=girition_start_date,
+            girition_days=10,
         )
         _trigger_button(
             "Aktualis nap lekerdezese",
-            run_girition=True,
+            run_raw_export=True,
             girition_start_date=girition_start_date,
             girition_days=1,
         )
