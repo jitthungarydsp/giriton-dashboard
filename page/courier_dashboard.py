@@ -9,6 +9,9 @@ from resources.dsp_dashboard_statistics import (
     build_statistics,
     normalize_id,
 )
+from resources.shift_reconciliation_sheet import (
+    read_shift_reconciliation_records,
+)
 
 
 def format_number(value, decimals=1):
@@ -119,6 +122,42 @@ def render_styles():
     margin: 8px 0 18px;
     padding: 14px 16px;
 }
+.today-shift-card {
+    background: linear-gradient(135deg, #ecfccb 0%, #ffffff 65%);
+    border: 1px solid #bbf7d0;
+    border-radius: 16px;
+    margin: 8px 0 18px;
+    padding: 18px;
+}
+.today-shift-title {
+    color: #166534;
+    font-size: 18px;
+    font-weight: 900;
+    margin-bottom: 10px;
+}
+.today-shift-row {
+    align-items: center;
+    border-top: 1px solid rgba(34, 197, 94, 0.18);
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    padding: 10px 0;
+}
+.today-pill {
+    border-radius: 999px;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 900;
+    padding: 6px 10px;
+}
+.today-ok {
+    background: #dcfce7;
+    color: #166534;
+}
+.today-missing {
+    background: #fee2e2;
+    color: #991b1b;
+}
 @media (max-width: 900px) {
     .courier-hero {
         grid-template-columns: 1fr;
@@ -134,9 +173,9 @@ def render_styles():
 
 
 def render_hero(row, user):
-    name = escape(str(row.get("name") or user.get("username") or "Kifli futar"))
+    name = escape(str(row.get("name") or user.get("username") or "Kifli futár"))
     courier_id = escape(str(row.get("courier_id") or user.get("courierId") or "-"))
-    warehouse = escape(str(row.get("warehouse") or "Kifli palya"))
+    warehouse = escape(str(row.get("warehouse") or "Kifli pálya"))
 
     st.markdown(
         f"""
@@ -144,12 +183,12 @@ def render_hero(row, user):
   <div>
     <div class="courier-plate-label">Kifli futar cockpit</div>
     <h1>Szia, {name}!</h1>
-    <p>Itt van a sajat teljesitmeny-kartyad: cimek, korok, normal es expressz aranyok, varakozasok es azok az apro szamok, amikbol a nap vegen latszik, hogy ment a palya.</p>
+    <p>Itt van a saját teljesítmény-kártyád: címek, körök, normál és expressz arányok, várakozások és azok az apró számok, amikből a nap végén látszik, hogy ment a pálya.</p>
   </div>
   <div class="courier-plate">
-    <div class="courier-plate-label">Futar azonosito</div>
+    <div class="courier-plate-label">Futár azonosító</div>
     <div class="courier-plate-value">#{courier_id}</div>
-    <div class="stat-note">Raktar: {warehouse}</div>
+    <div class="stat-note">Raktár: {warehouse}</div>
   </div>
 </div>
 """,
@@ -167,6 +206,98 @@ def stat_card(label, value, note=""):
 """
 
 
+def normalize_name(value):
+    return " ".join(
+        str(value or "").strip().casefold().split()
+    )
+
+
+def status_pill(value):
+    value = str(value or "").strip()
+    css_class = "today-ok" if value == "OK" else "today-missing"
+    label = "OK" if value == "OK" else "Hiányzik"
+
+    return f'<span class="today-pill {css_class}">{label}</span>'
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_today_shift_records(work_date_text):
+    return read_shift_reconciliation_records(
+        work_date_text
+    )
+
+
+def get_today_shift_rows(row, user, today):
+    work_date_text = today.isoformat()
+    courier_name = normalize_name(row.get("name") or user.get("username"))
+    records = load_today_shift_records(
+        work_date_text
+    )
+
+    shifts = []
+
+    for record in records:
+        if normalize_name(record.get("name")) != courier_name:
+            continue
+
+        shifts.append(record)
+
+    return sorted(
+        shifts,
+        key=lambda item: str(item.get("start", "")),
+    )
+
+
+def render_today_shifts(row, user):
+    today = date.today()
+    shifts = get_today_shift_rows(
+        row,
+        user,
+        today,
+    )
+
+    if shifts:
+        rows_html = []
+
+        for shift in shifts:
+            rows_html.append(
+                f"""
+<div class="today-shift-row">
+  <div><strong>{escape(str(shift.get("start", "")))}</strong> - {escape(str(shift.get("end", "")))}</div>
+  <div>{escape(str(shift.get("warehouse", "")))}</div>
+  <div>Giriton: {status_pill(shift.get("giriton"))}</div>
+  <div>MűszakPro: {status_pill(shift.get("muszakpro"))}</div>
+</div>
+"""
+            )
+
+        body = "".join(rows_html)
+        title = "Ma dolgozol"
+        note = "A mai műszakod a feltöltött Giriton és MűszakPro adatok alapján."
+    else:
+        body = """
+<div class="today-shift-row">
+  <div><strong>Nincs mai műszak</strong></div>
+  <div>-</div>
+  <div>Giriton: <span class="today-pill today-missing">Nincs adat</span></div>
+  <div>MűszakPro: <span class="today-pill today-missing">Nincs adat</span></div>
+</div>
+"""
+        title = "Ma nem látok műszakot"
+        note = "Ha mégis dolgozol, akkor valószínűleg a robot frissítése vagy a feltöltés hiányzik."
+
+    st.markdown(
+        f"""
+<div class="today-shift-card">
+  <div class="today-shift-title">{title}</div>
+  <div class="stat-note">{note}</div>
+  {body}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_stat_cards(row):
     delivered = int(row.get("delivered_orders", 0))
     routes = int(row.get("routes", 0))
@@ -174,14 +305,14 @@ def render_stat_cards(row):
     total_addresses = int(row.get("total_address_count", 0))
 
     cards = [
-        stat_card("Kivitt cimek", delivered, "Ennyi csomag talalt gazdara."),
-        stat_card("Korok", routes, "Teljesitett route-ok."),
-        stat_card("Dolgozott napok", worked_days, "Aktiv napok a szuresben."),
-        stat_card("Atlag cim / kor", format_number(row.get("avg_orders_per_route")), "Minel stabilabb, annal szebb."),
-        stat_card("Normal cimek", int(row.get("normal_address_count", 0)), format_percent(row.get("normal_address_rate"))),
-        stat_card("Expressz cimek", int(row.get("express_address_count", 0)), format_percent(row.get("express_address_rate"))),
-        stat_card("Idoablak pontos", max(total_addresses - int(row.get("late_address_count", 0)) - int(row.get("early_address_count", 0)), 0), "Nem korai, nem keso."),
-        stat_card("Atlag varakozas", format_minutes(row.get("avg_wait_minutes")), "Sorban allas, de szamokban."),
+        stat_card("Kivitt címek", delivered, "Ennyi csomag talált gazdára."),
+        stat_card("Körök", routes, "Teljesített route-ok."),
+        stat_card("Dolgozott napok", worked_days, "Aktív napok a szűrésben."),
+        stat_card("Átlag cím / kör", format_number(row.get("avg_orders_per_route")), "Minél stabilabb, annál szebb."),
+        stat_card("Normál címek", int(row.get("normal_address_count", 0)), format_percent(row.get("normal_address_rate"))),
+        stat_card("Expressz címek", int(row.get("express_address_count", 0)), format_percent(row.get("express_address_rate"))),
+        stat_card("Időablak pontos", max(total_addresses - int(row.get("late_address_count", 0)) - int(row.get("early_address_count", 0)), 0), "Nem korai, nem késő."),
+        stat_card("Átlag várakozás", format_minutes(row.get("avg_wait_minutes")), "Sorban állás, de számokban."),
     ]
 
     st.markdown(
@@ -227,7 +358,7 @@ def render_charts(row):
     left, right = st.columns(2)
 
     with left:
-        st.subheader("Normal vs expressz")
+        st.subheader("Normál vs expressz")
         chart = (
             alt.Chart(type_df)
             .mark_arc(innerRadius=55)
@@ -244,7 +375,7 @@ def render_charts(row):
         st.altair_chart(chart, use_container_width=True)
 
     with right:
-        st.subheader("Idoablak fegyelem")
+        st.subheader("Időablak fegyelem")
         chart = (
             alt.Chart(timing_df)
             .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
@@ -264,18 +395,18 @@ def render_charts(row):
 
 
 def render_extra_metrics(row):
-    st.subheader("Hasznos aprosagok")
+    st.subheader("Hasznos apróságok")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Atlag tura hossz", format_minutes(row.get("avg_route_minutes")))
-    col2.metric("Valos bepakolas", format_minutes(row.get("avg_real_loading_minutes")))
-    col3.metric("Keso normal cim", f"{int(row.get('normal_late_address_count', 0))} ({format_percent(row.get('normal_late_address_rate'))})")
-    col4.metric("Keso expressz cim", f"{int(row.get('express_late_address_count', 0))} ({format_percent(row.get('express_late_address_rate'))})")
+    col1.metric("Átlag túra hossz", format_minutes(row.get("avg_route_minutes")))
+    col2.metric("Valós bepakolás", format_minutes(row.get("avg_real_loading_minutes")))
+    col3.metric("Késő normál cím", f"{int(row.get('normal_late_address_count', 0))} ({format_percent(row.get('normal_late_address_rate'))})")
+    col4.metric("Késő expressz cím", f"{int(row.get('express_late_address_count', 0))} ({format_percent(row.get('express_late_address_rate'))})")
 
     late_shift_count = int(row.get("late_shift_count", 0))
     if late_shift_count:
-        text = f"{late_shift_count} keseses muszak latszik a szuresben. Ez nem drama, csak egy sarga lampacska a muszerfalon."
+        text = f"{late_shift_count} késéses műszak látszik a szűrésben. Ez nem dráma, csak egy sárga lámpácska a műszerfalon."
     else:
-        text = "Keseses muszak nincs a szuresben. A Kifli-univerzum most elegedetten hummog."
+        text = "Késéses műszak nincs a szűrésben. A Kifli-univerzum most elégedetten hümmög."
 
     st.markdown(
         f"<div class=\"fun-note\">{text}</div>",
@@ -296,7 +427,7 @@ def select_visible_courier(summary_df, user):
 
     options = summary_df.sort_values("name")
     selected_id = st.selectbox(
-        "Futar kivalasztasa",
+        "Futár kiválasztása",
         options["courier_id"].tolist(),
         format_func=lambda courier_id: (
             options.loc[
@@ -318,15 +449,15 @@ def show_courier_dashboard_page():
 
     start_date, end_date = st.columns(2)
     selected_start = start_date.date_input(
-        "Idoszak kezdete",
+        "Időszak kezdete",
         value=default_start,
     )
     selected_end = end_date.date_input(
-        "Idoszak vege",
+        "Időszak vége",
         value=today,
     )
 
-    with st.spinner("Sajat Kifli-kartya osszerakasa..."):
+    with st.spinner("Saját Kifli-kártya összerakása..."):
         summary_df, _ = build_statistics(
             start_date=selected_start,
             end_date=selected_end,
@@ -334,16 +465,17 @@ def show_courier_dashboard_page():
         )
 
     if summary_df.empty:
-        st.warning("Meg nincs eleg adat ehhez a futar-kartyahoz.")
+        st.warning("Még nincs elég adat ehhez a futár-kártyához.")
         return
 
     row = select_visible_courier(summary_df, user)
 
     if row is None:
-        st.warning("Ehhez a belepeshez nem talaltam futar statisztikat.")
+        st.warning("Ehhez a belépéshez nem találtam futár statisztikát.")
         return
 
     render_hero(row, user)
+    render_today_shifts(row, user)
     render_stat_cards(row)
     render_charts(row)
     render_extra_metrics(row)
