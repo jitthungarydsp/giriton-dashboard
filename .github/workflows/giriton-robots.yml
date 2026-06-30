@@ -135,7 +135,8 @@ jobs:
 
       - name: Run girition robot
         run: |
-          python -m robot --loglevel DEBUG --outputdir results/girition girition_github.robot
+          GIRITION_DAYS="${GIRITION_DAYS:-10}"
+          python -m robot --loglevel DEBUG --outputdir results/girition --variable RUN_START_DATE:"$GIRITION_START_DATE" --variable DAYS_TO_SYNC:"$GIRITION_DAYS" girition_github.robot
 
       - name: Update shift reconciliation
         run: |
