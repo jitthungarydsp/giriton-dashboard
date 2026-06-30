@@ -257,7 +257,7 @@ def show_robots_page():
             "Giriton + Attendance frissitese",
             run_raw_export=True,
             girition_start_date=girition_start_date,
-            girition_days=10,
+            girition_days=1,
         )
         _trigger_button(
             "Aktualis nap lekerdezese",
