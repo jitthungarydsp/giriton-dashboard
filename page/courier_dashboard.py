@@ -491,9 +491,7 @@ def get_route_road_stops(row, details):
         if not today_rows.empty:
             customers = today_rows
         else:
-            latest_date = customers["date_dt"].dropna().max()
-            if pd.notna(latest_date):
-                customers = customers[customers["date_dt"] == latest_date]
+            return []
 
     if "routeId" in customers.columns:
         route_ids = customers["routeId"].dropna().astype(str)
@@ -536,16 +534,51 @@ def get_route_road_stops(row, details):
     return stops
 
 
+def render_no_route_road():
+    st.markdown(
+        """
+<div class="route-road-card">
+  <div class="route-road-head">
+    <div class="route-brand">
+      <div class="route-brand-logo">K</div>
+      <div>
+        <div class="route-road-title">Meg nincs kiosztott utvonalad</div>
+        <div class="route-road-subtitle">Amint megkapod a route-ot, nyomj egy frissitest, es indulhat a palya.</div>
+      </div>
+    </div>
+    <div class="route-road-subtitle">Depo keszen all</div>
+  </div>
+  <div class="route-road-track" style="--stop-count: 3;">
+    <div class="route-stop route-stop-waiting">
+      <div class="route-stop-dot">1</div>
+      <div class="route-stop-label">Route varakozik</div>
+    </div>
+    <div class="route-stop route-stop-waiting">
+      <div class="route-stop-dot">2</div>
+      <div class="route-stop-label">Cimek betoltese</div>
+    </div>
+    <div class="route-stop route-stop-waiting">
+      <div class="route-stop-dot">3</div>
+      <div class="route-stop-label">Indulasra kesz</div>
+    </div>
+    <div class="route-depot">
+      <div class="route-depot-icon">D</div>
+      <div class="route-stop-label">Depo</div>
+    </div>
+  </div>
+  <div class="fun-note">Ma meg nincs route a neveden. A kave lehet, hogy keszen van, de az utvonal meg pihen egyet.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_route_road(row, details):
     stops = get_route_road_stops(row, details)
 
     if not stops:
-        stops = [
-            {"position": "1", "address": "Elso cim", "current": False},
-            {"position": "2", "address": "Aktualis cim", "current": True},
-            {"position": "3", "address": "Kovetkezo cim", "current": False},
-            {"position": "4", "address": "Utolso cim", "current": False},
-        ]
+        render_no_route_road()
+        return
 
     current_stop = next(
         (stop for stop in stops if stop.get("current")),
