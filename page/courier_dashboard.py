@@ -570,6 +570,22 @@ def get_live_driver_state(driver):
 
 
 def get_current_shift(attendance_courier):
+    shifts = get_shift_items(attendance_courier)
+
+    if not shifts:
+        return {}
+
+    now = local_now()
+
+    for shift in shifts:
+        end_at = shift.get("end_at")
+        if end_at and end_at >= now - timedelta(minutes=15):
+            return shift
+
+    return {}
+
+
+def get_shift_items(attendance_courier):
     shifts = []
 
     for shift in attendance_courier.get("shifts", []):
@@ -587,18 +603,18 @@ def get_current_shift(attendance_courier):
             }
         )
 
-    if not shifts:
-        return {}
+    return sorted(shifts, key=lambda item: item["start_at"])
 
+
+def get_next_shift(attendance_courier):
     now = local_now()
-    shifts = sorted(shifts, key=lambda item: item["start_at"])
 
-    for shift in shifts:
+    for shift in get_shift_items(attendance_courier):
         end_at = shift.get("end_at")
         if end_at and end_at >= now - timedelta(minutes=15):
             return shift
 
-    return shifts[-1]
+    return {}
 
 
 def get_best_route(driver, driver_detail):
@@ -823,13 +839,36 @@ def render_before_shift_road(minutes_to_start):
     )
 
 
-def render_checked_in_waiting_road():
+def render_checked_in_waiting_road(next_shift=None):
+    subtitle = "Amint route kerül a nevedre, frissítés után megjelenik az útvonal."
+    note = "Bent vagy a rendszerben. Most már csak a route-nak kell megérkeznie."
+
+    if next_shift:
+        start_text = next_shift["start_at"].strftime("%H:%M")
+        end_text = (
+            next_shift["end_at"].strftime("%H:%M")
+            if next_shift.get("end_at")
+            else ""
+        )
+        subtitle = f"Következő műszak: {start_text} - {end_text}."
+        note = "Visszaértél, és van még műszakod. Várjuk a következő túrát."
+
     render_shift_state_road(
         "Bejelentkezve, túrára vársz",
-        "Amint route kerül a nevedre, frissítés után megjelenik az útvonal.",
+        subtitle,
         "OK",
         "Túrára vár",
-        "Bent vagy a rendszerben. Most már csak a route-nak kell megérkeznie.",
+        note,
+    )
+
+
+def render_day_done_road():
+    render_shift_state_road(
+        "Mára kész vagy",
+        "Nem látok több mai műszakot a neveden.",
+        "✓",
+        "Nap lezárva",
+        "Ha nincs új műszak, jöhet a pihenés. A futárcipő ma már letette a voksát a kanapé mellett.",
     )
 
 
@@ -905,7 +944,10 @@ def render_route_road(row, details):
     current_shift = get_current_shift(attendance_courier)
 
     if not current_shift:
-        render_no_shift_road()
+        if get_shift_items(attendance_courier):
+            render_day_done_road()
+        else:
+            render_no_shift_road()
         return
 
     shift = current_shift["raw"]
@@ -917,12 +959,13 @@ def render_route_road(row, details):
     driver_detail = load_live_driver_detail(courier_id)
     open_route = get_best_route(driver, driver_detail)
     live_state = get_live_driver_state(driver)
-    live_route_active = live_state in ["Delivering", "Idle"]
+    live_route_active = live_state == "Delivering"
+    route_without_return = bool(open_route and not open_route.get("realReturn"))
     route_is_open = bool(
         open_route
         and (
             live_route_active
-            or not open_route.get("realReturn")
+            or route_without_return
         )
     )
 
@@ -932,8 +975,12 @@ def render_route_road(row, details):
     else:
         stops = []
 
-    if not live_route_active and not route_is_open and open_route and open_route.get("realReturn"):
-        render_returned_to_depot_road()
+    if not route_is_open and open_route and open_route.get("realReturn"):
+        next_shift = get_next_shift(attendance_courier)
+        if next_shift:
+            render_checked_in_waiting_road(next_shift)
+        else:
+            render_day_done_road()
         return
 
     if not stops and route_is_open:
