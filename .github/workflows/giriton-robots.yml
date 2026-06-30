@@ -28,7 +28,15 @@ on:
           - "true"
           - "false"
       run_raw_export:
-        description: "Uj nyers Giriton/Foglalasok/Attendance export futtatasa"
+        description: "Uj nyers Giriton muszak export futtatasa"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      run_attendance:
+        description: "Giriton Attendance export futtatasa"
         required: true
         default: "false"
         type: choice
@@ -252,6 +260,52 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: raw-export-results
+          path: |
+            results/**
+          if-no-files-found: ignore
+
+  attendance:
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_attendance == 'true') }}
+    timeout-minutes: 45
+
+    env:
+      GIRITON_USER: ${{ secrets.GIRITON_USER }}
+      GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      GIRITION_START_DATE: ${{ github.event.inputs.girition_start_date || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate attendance environment
+        run: |
+          test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
+          test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
+          google-chrome --version || chromium-browser --version || chromium --version
+
+      - name: Run Giriton attendance robot
+        run: |
+          python -m robot --loglevel DEBUG --outputdir results/attendance --variable RUN_START_DATE:"$GIRITION_START_DATE" giriton_attendance_github.robot
+
+      - name: Upload attendance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attendance-results
           path: |
             results/**
           if-no-files-found: ignore

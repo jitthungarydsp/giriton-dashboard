@@ -57,6 +57,72 @@ return rows;
     return _driver().execute_script(script) or []
 
 
+def _scroll_main_grid_to_top():
+    script = r"""
+const grids = [...document.querySelectorAll('.v-grid')];
+const grid = grids[0];
+if (!grid) {
+  return false;
+}
+
+const candidates = [grid, ...grid.querySelectorAll('*')];
+let parent = grid.parentElement;
+while (parent) {
+  candidates.push(parent);
+  parent = parent.parentElement;
+}
+
+const scrollable = candidates
+  .filter(el => el.scrollHeight > el.clientHeight + 20)
+  .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0];
+
+if (!scrollable) {
+  return false;
+}
+
+scrollable.scrollTop = 0;
+return true;
+"""
+    return bool(_driver().execute_script(script))
+
+
+def _scroll_main_grid_down():
+    script = r"""
+const grids = [...document.querySelectorAll('.v-grid')];
+const grid = grids[0];
+if (!grid) {
+  return {moved: false, top: 0, maxTop: 0};
+}
+
+const candidates = [grid, ...grid.querySelectorAll('*')];
+let parent = grid.parentElement;
+while (parent) {
+  candidates.push(parent);
+  parent = parent.parentElement;
+}
+
+const scrollable = candidates
+  .filter(el => el.scrollHeight > el.clientHeight + 20)
+  .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0];
+
+if (!scrollable) {
+  window.scrollBy(0, Math.floor(window.innerHeight * 0.8));
+  return {moved: false, top: window.scrollY || 0, maxTop: 0};
+}
+
+const before = scrollable.scrollTop;
+const step = Math.max(120, Math.floor(scrollable.clientHeight * 0.75));
+scrollable.scrollTop = Math.min(scrollable.scrollTop + step, scrollable.scrollHeight);
+const after = scrollable.scrollTop;
+return {
+  moved: after > before,
+  top: after,
+  maxTop: Math.max(0, scrollable.scrollHeight - scrollable.clientHeight)
+};
+"""
+    return _driver().execute_script(script) or {"moved": False}
+
+
 def _click_main_row_by_name(name):
     script = r"""
 const wanted = arguments[0];
@@ -103,30 +169,51 @@ return '';
 def scrape_attendance_rows(work_date):
     rows = []
     seen = set()
+    stable_pages = 0
 
-    for base_row in _main_grid_rows():
-        name = _clean(base_row.get("name"))
-        if not name or name in seen:
-            continue
+    _scroll_main_grid_to_top()
+    time.sleep(1.0)
 
-        seen.add(name)
-        shift = _clean(base_row.get("shift"))
-        activity = _clean(base_row.get("activity"))
+    for _ in range(80):
+        before_count = len(seen)
 
-        if _click_main_row_by_name(name):
-            time.sleep(0.4)
+        for base_row in _main_grid_rows():
+            name = _clean(base_row.get("name"))
+            if not name or name in seen:
+                continue
 
-        detail = _detail_text()
-        start_time, end_time, detail_raw = _parse_detail_entries(detail)
+            seen.add(name)
+            shift = _clean(base_row.get("shift"))
+            activity = _clean(base_row.get("activity"))
 
-        rows.append([
-            work_date,
-            name,
-            shift,
-            activity,
-            start_time,
-            end_time,
-            detail_raw,
-        ])
+            if _click_main_row_by_name(name):
+                time.sleep(0.35)
+
+            detail = _detail_text()
+            start_time, end_time, detail_raw = _parse_detail_entries(detail)
+
+            rows.append([
+                work_date,
+                name,
+                shift,
+                activity,
+                start_time,
+                end_time,
+                detail_raw,
+            ])
+
+        scroll_state = _scroll_main_grid_down()
+        time.sleep(0.6)
+
+        if len(seen) == before_count:
+            stable_pages += 1
+        else:
+            stable_pages = 0
+
+        if (
+            not scroll_state.get("moved")
+            or scroll_state.get("top", 0) >= scroll_state.get("maxTop", 0) - 3
+        ) and stable_pages >= 2:
+            break
 
     return rows

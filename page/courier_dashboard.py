@@ -424,7 +424,11 @@ def load_today_shift_records(work_date_text):
 
 
 def get_today_shift_rows(row, user, today):
-    work_date_text = today.isoformat()
+    return get_shift_rows_for_date(row, user, today)
+
+
+def get_shift_rows_for_date(row, user, work_date):
+    work_date_text = work_date.isoformat()
     courier_name = normalize_name(row.get("name") or user.get("username"))
     records = load_today_shift_records(
         work_date_text
@@ -442,6 +446,17 @@ def get_today_shift_rows(row, user, today):
         shifts,
         key=lambda item: str(item.get("start", "")),
     )
+
+
+def get_next_sheet_shift_rows(row, user, start_date, days=14):
+    for offset in range(1, days + 1):
+        work_date = start_date + timedelta(days=offset)
+        shifts = get_shift_rows_for_date(row, user, work_date)
+
+        if shifts:
+            return work_date, shifts
+
+    return None, []
 
 
 def local_now():
@@ -662,11 +677,19 @@ def get_best_route(driver, driver_detail):
 
 def render_today_shifts(row, user):
     today = date.today()
+    _next_shift_date = None
     shifts = get_today_shift_rows(
         row,
         user,
         today,
     )
+
+    if not shifts:
+        _next_shift_date, shifts = get_next_sheet_shift_rows(
+            row,
+            user,
+            today,
+        )
 
     if shifts:
         rows_html = []
@@ -685,6 +708,8 @@ def render_today_shifts(row, user):
 
         body = "".join(rows_html)
         title = "Ma dolgozol"
+        if _next_shift_date:
+            title = "Kovetkezo muszakod"
         note = "A mai műszakod a feltöltött Giriton és MűszakPro adatok alapján."
     else:
         body = """

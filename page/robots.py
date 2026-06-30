@@ -89,6 +89,7 @@ def _trigger_button(
     run_girition=False,
     run_dsp=False,
     run_raw_export=False,
+    run_attendance=False,
     girition_start_date="",
     girition_days=10,
 ):
@@ -103,6 +104,7 @@ def _trigger_button(
                 run_girition=run_girition,
                 run_dsp=run_dsp,
                 run_raw_export=run_raw_export,
+                run_attendance=run_attendance,
                 girition_start_date=girition_start_date,
                 girition_days=girition_days,
             )
@@ -221,7 +223,7 @@ def show_robots_page():
     actions_url = get_actions_url()
 
     st.caption(
-        "Az 1 napos Girition, a Foglaltsag es a DSP GitHub Actionsben fut. A heti Girition lekerdezes helyben, a Streamlit szerveren fut."
+        "A Foglaltsag, a Giriton muszak export, az Attendance es a DSP GitHub Actionsben fut."
     )
 
     c1, c2, c3 = st.columns(3)
@@ -246,26 +248,33 @@ def show_robots_page():
     with col2:
         st.subheader("Girition")
         girition_date = st.date_input(
-            "Lekerdezes kezdo napja",
+            "Kezdo nap",
             value=datetime.now(BUDAPEST_TZ).date(),
             key="girition_robot_start_date",
         )
         girition_start_date = girition_date.strftime("%Y-%m-%d")
-        st.caption("A GitHubos frissites a Shift Subs es az Attendance adatot is frissiti.")
-        st.info("Az Aktualis nap gomb GitHub Actionsben futtatja a nyers Giriton + Attendance exportot.")
+        girition_days = st.number_input(
+            "Hany napot kerdezzunk le?",
+            min_value=1,
+            max_value=14,
+            value=10,
+            step=1,
+            key="girition_robot_days",
+        )
+        st.caption("A muszak export a Shift Subs adatokat tolti, akar tobb napra elore.")
         _trigger_button(
-            "Giriton + Attendance frissitese",
+            "Giriton muszakok lekerdezese",
             run_raw_export=True,
+            girition_start_date=girition_start_date,
+            girition_days=int(girition_days),
+        )
+        st.caption("Az Attendance csak a kivalasztott nap bejelentkezesi adatait frissiti.")
+        _trigger_button(
+            "Giriton Attendance frissitese",
+            run_attendance=True,
             girition_start_date=girition_start_date,
             girition_days=1,
         )
-        _trigger_button(
-            "Aktualis nap lekerdezese",
-            run_raw_export=True,
-            girition_start_date=girition_start_date,
-            girition_days=1,
-        )
-        _trigger_local_weekly_girition(girition_start_date)
 
     with col3:
         st.subheader("DSP")

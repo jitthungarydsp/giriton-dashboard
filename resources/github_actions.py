@@ -69,6 +69,7 @@ def dispatch_robot(
     run_girition=False,
     run_dsp=False,
     run_raw_export=False,
+    run_attendance=False,
     girition_start_date="",
     girition_days=10,
 ):
@@ -84,6 +85,7 @@ def dispatch_robot(
             "run_girition": "true" if run_girition else "false",
             "run_dsp": "true" if run_dsp else "false",
             "run_raw_export": "true" if run_raw_export else "false",
+            "run_attendance": "true" if run_attendance else "false",
             "girition_start_date": str(girition_start_date or ""),
             "girition_days": str(girition_days or 10),
         },
