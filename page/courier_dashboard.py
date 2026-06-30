@@ -1,5 +1,6 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -9,6 +10,11 @@ from resources.dsp_dashboard_statistics import (
     normalize_id,
     read_sheet_dataframe,
 )
+from resources.api import (
+    load_attendance,
+    load_driver_details,
+    load_drivers,
+)
 from resources.shift_reconciliation_sheet import (
     read_shift_reconciliation_records,
 )
@@ -16,6 +22,8 @@ from resources.shift_reconciliation_sheet import (
 EXPRESS_MAX_FEE = 6516
 NORMAL_CITY_MAX_FEE = 13000
 DAILY_CACHE_SECONDS = 24 * 60 * 60
+LIVE_CACHE_SECONDS = 60
+LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 
 def format_number(value, decimals=1):
@@ -326,6 +334,23 @@ def render_styles():
 .route-empty-note {
     text-align: center;
 }
+.route-help-button {
+    background: #16a34a;
+    border-radius: 12px;
+    color: #ffffff;
+    display: inline-block;
+    font-weight: 900;
+    margin-top: 10px;
+    padding: 12px 18px;
+}
+.route-stop-home .route-stop-dot {
+    background: #ffffff;
+    color: #166534;
+}
+.route-stop-alert .route-stop-dot {
+    background: #f97316;
+    color: #ffffff;
+}
 @media (max-width: 900px) {
     .courier-hero {
         grid-template-columns: 1fr;
@@ -417,6 +442,118 @@ def get_today_shift_rows(row, user, today):
         shifts,
         key=lambda item: str(item.get("start", "")),
     )
+
+
+def local_now():
+    return datetime.now(LOCAL_TIMEZONE)
+
+
+def parse_datetime(value):
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return None
+
+    return parsed.astimezone(LOCAL_TIMEZONE)
+
+
+def format_time(value):
+    parsed = parse_datetime(value) if isinstance(value, str) else value
+
+    if not parsed:
+        return ""
+
+    return parsed.strftime("%H:%M")
+
+
+@st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
+def load_live_courier_sources():
+    return load_attendance(), load_drivers()
+
+
+@st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
+def load_live_driver_detail(driver_id):
+    if not driver_id:
+        return {}
+
+    return load_driver_details(driver_id)
+
+
+def find_attendance_courier(attendance_data, courier_id):
+    courier_id = normalize_id(courier_id)
+
+    for courier in attendance_data.get("couriers", []):
+        if normalize_id(courier.get("courierId")) == courier_id:
+            return courier
+
+    return {}
+
+
+def find_driver(drivers_data, courier_id):
+    courier_id = normalize_id(courier_id)
+
+    for driver in drivers_data.get("drivers", []):
+        if normalize_id(driver.get("driver_id")) == courier_id:
+            return driver
+
+    return {}
+
+
+def get_current_shift(attendance_courier):
+    shifts = []
+
+    for shift in attendance_courier.get("shifts", []):
+        start_at = parse_datetime(shift.get("shiftStart"))
+        end_at = parse_datetime(shift.get("shiftEnd"))
+
+        if not start_at:
+            continue
+
+        shifts.append(
+            {
+                "raw": shift,
+                "start_at": start_at,
+                "end_at": end_at,
+            }
+        )
+
+    if not shifts:
+        return {}
+
+    now = local_now()
+    shifts = sorted(shifts, key=lambda item: item["start_at"])
+
+    for shift in shifts:
+        end_at = shift.get("end_at")
+        if end_at and end_at >= now - timedelta(minutes=15):
+            return shift
+
+    return shifts[-1]
+
+
+def get_open_route(driver_detail):
+    routes = driver_detail.get("routes", [])
+
+    if not routes:
+        return {}
+
+    open_routes = [
+        route
+        for route in routes
+        if not route.get("realReturn")
+    ]
+
+    candidates = open_routes or routes
+
+    return sorted(
+        candidates,
+        key=lambda route: parse_datetime(route.get("assignedAt")) or datetime.min.replace(tzinfo=LOCAL_TIMEZONE),
+    )[-1]
 
 
 def render_today_shifts(row, user):
@@ -537,42 +674,178 @@ def get_route_road_stops(row, details):
     return stops
 
 
-def render_no_route_road():
+def render_shift_state_road(title, subtitle, dot_label, dot_text, note, show_help=False):
+    help_html = (
+        '<div class="route-help-button">Elakadtam, segítség kell</div>'
+        if show_help
+        else ""
+    )
+
     st.markdown(
-        """
+        f"""
 <div class="route-road-card">
   <div class="route-road-head">
     <div class="route-brand">
       <div class="route-brand-logo">K</div>
       <div>
-        <div class="route-road-title">Még nincs kiosztott útvonalad</div>
-        <div class="route-road-subtitle">Amint megkapod a route-ot, nyomj egy frissítést, és indulhat a pálya.</div>
+        <div class="route-road-title">{escape(title)}</div>
+        <div class="route-road-subtitle">{escape(subtitle)}</div>
       </div>
     </div>
     <div class="route-road-subtitle">A depó készen áll</div>
   </div>
-  <div class="route-road-track" style="--stop-count: 1;">
+  <div class="route-road-track" style="--stop-count: 2;">
+    <div class="route-stop route-stop-home">
+      <div class="route-stop-dot">H</div>
+      <div class="route-stop-label">Otthon</div>
+    </div>
     <div class="route-stop route-stop-waiting">
-      <div class="route-stop-dot">?</div>
-      <div class="route-stop-label">Útvonalra várunk</div>
+      <div class="route-stop-dot">{escape(dot_label)}</div>
+      <div class="route-stop-label">{escape(dot_text)}</div>
     </div>
     <div class="route-depot">
       <div class="route-depot-icon">D</div>
       <div class="route-stop-label">Depó</div>
     </div>
   </div>
-  <div class="fun-note route-empty-note">Ma még nincs route a neveden. A kávé lehet, hogy készen van, de az útvonal még pihen egyet.</div>
+  <div class="fun-note route-empty-note">{escape(note)}{help_html}</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
 
+def render_no_shift_road():
+    render_shift_state_road(
+        "Műszakra várunk",
+        "Ma még nem látok műszakot a neveden.",
+        "?",
+        "Pihenő mód",
+        "Ma még nincs műszakod. A futárcipő pihen, a kávé pedig jogosan lassú.",
+    )
+
+
+def render_before_shift_road(minutes_to_start):
+    if minutes_to_start > 40:
+        render_shift_state_road(
+            "Lassan kezdődik a műszakod",
+            f"Még körülbelül {minutes_to_start} perc van a kezdésig.",
+            "40+",
+            "Készülődés",
+            "Még van idő összerakni magad, de a műszak már integet a távolból.",
+        )
+        return
+
+    render_shift_state_road(
+        "Ideje Giritonba bejelentkezni",
+        f"Még körülbelül {minutes_to_start} perc van a kezdésig.",
+        "!",
+        "Depó felé",
+        "Jelentkezz be Giritonba. Ha valami nem áll össze, kérj segítséget.",
+        show_help=True,
+    )
+
+
+def render_checked_in_waiting_road():
+    render_shift_state_road(
+        "Bejelentkezve, túrára vársz",
+        "Amint route kerül a nevedre, frissítés után megjelenik az útvonal.",
+        "OK",
+        "Túrára vár",
+        "Bent vagy a rendszerben. Most már csak a route-nak kell megérkeznie.",
+    )
+
+
+def render_returned_to_depot_road():
+    render_shift_state_road(
+        "Visszaértél a depóba",
+        "A route lezárult, jöhet a következő kör vagy egy kis levegő.",
+        "✓",
+        "Kör kész",
+        "Szép munka. Ha új route kerül rád, frissítés után itt jelenik meg.",
+    )
+
+
+def get_route_checkpoint_stops(route):
+    checkpoints = route.get("checkpoints", [])
+
+    if not checkpoints:
+        return []
+
+    stops = []
+    current_index = None
+
+    for index, checkpoint in enumerate(checkpoints[:8]):
+        left_stop = (
+            checkpoint.get("realDepartureTime")
+            or checkpoint.get("realArrivalTime")
+        )
+
+        if current_index is None and not left_stop:
+            current_index = index
+
+        position = str(checkpoint.get("position", index + 1) or index + 1)
+        address = str(checkpoint.get("address", "") or "").strip()
+        stops.append(
+            {
+                "position": position,
+                "address": address or f"Cím {position}",
+            }
+        )
+
+    if stops and current_index is None:
+        current_index = len(stops) - 1
+
+    for index, stop in enumerate(stops):
+        stop["current"] = index == current_index
+
+    return stops
+
+
 def render_route_road(row, details):
-    stops = get_route_road_stops(row, details)
+    courier_id = normalize_id(row.get("courier_id"))
+    attendance_data, drivers_data = load_live_courier_sources()
+    attendance_courier = find_attendance_courier(
+        attendance_data,
+        courier_id,
+    )
+    driver = find_driver(
+        drivers_data,
+        courier_id,
+    )
+    current_shift = get_current_shift(attendance_courier)
+
+    if not current_shift:
+        render_no_shift_road()
+        return
+
+    shift = current_shift["raw"]
+    start_at = current_shift["start_at"]
+    minutes_to_start = int(
+        (start_at - local_now()).total_seconds() // 60
+    )
+    checked_in = bool(shift.get("availableForShiftSince"))
+    driver_detail = load_live_driver_detail(courier_id)
+    open_route = get_open_route(driver_detail)
+    route_is_open = bool(open_route and not open_route.get("realReturn"))
+
+    if route_is_open:
+        stops = get_route_checkpoint_stops(open_route)
+    else:
+        stops = []
+
+    if not route_is_open and open_route and open_route.get("realReturn"):
+        render_returned_to_depot_road()
+        return
+
+    if not stops and route_is_open:
+        stops = get_route_road_stops(row, details)
 
     if not stops:
-        render_no_route_road()
+        if checked_in:
+            render_checked_in_waiting_road()
+        else:
+            render_before_shift_road(minutes_to_start)
         return
 
     current_stop = next(
