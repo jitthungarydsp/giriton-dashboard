@@ -1,211 +1,343 @@
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
-from resources.route_statistics_sheet import read_route_statistics
-from resources.users import load_users
+from resources.dsp_dashboard_statistics import (
+    build_company_kpis,
+    build_statistics,
+    normalize_id,
+)
 
 
-def to_number(series):
-    return pd.to_numeric(series, errors="coerce").fillna(0)
-
-
-def prepare_dataframe(records):
-    df = pd.DataFrame(records)
-
-    if df.empty:
-        return df
-
-    for column in ["driver_id", "route_id", "driver_name", "status", "license_plate"]:
-        if column not in df.columns:
-            df[column] = ""
-
-    if "work_date" not in df.columns:
-        df["work_date"] = df.get("updated_at", "").astype(str).str[:10]
-
-    df["work_date"] = pd.to_datetime(df["work_date"], errors="coerce")
-    df = df.dropna(subset=["work_date"])
-
-    for column in [
-        "total_distance_km",
-        "distance_covered_km",
-        "parcels_delivered",
-        "parcels_total",
-    ]:
-        if column not in df.columns:
-            df[column] = 0
-
-        df[column] = to_number(df[column])
-
-    df["driver_id"] = df["driver_id"].astype(str)
-    df["route_id"] = df["route_id"].astype(str)
-
-    return df
-
-
-def filter_dataframe_by_user(df, user):
-    if df.empty or user["role"] == "admin":
-        return df
-
-    if user["role"] == "trainer":
-        users_data = load_users()
-        trainer_courier_ids = {
-            str(portal_user.get("courierId"))
-            for portal_user in users_data["users"]
-            if portal_user.get("trainer") == user["username"]
-        }
-
-        return df[df["driver_id"].isin(trainer_courier_ids)]
-
-    return df[df["driver_id"] == str(user.get("courierId"))]
-
-
-def add_common_metrics(df, title):
-    if df.empty:
-        st.warning("Nincs megjeleníthető statisztika.")
-        return
-
-    route_count = len(df[["work_date", "driver_id", "route_id"]].drop_duplicates())
-    courier_count = df["driver_id"].nunique()
-    parcels_delivered = int(df["parcels_delivered"].sum())
-    parcels_total = int(df["parcels_total"].sum())
-    total_distance = df["total_distance_km"].sum()
-    covered_distance = df["distance_covered_km"].sum()
-    completion_rate = parcels_delivered / parcels_total * 100 if parcels_total else 0
-    average_parcels = parcels_delivered / route_count if route_count else 0
-    average_distance = covered_distance / route_count if route_count else 0
-
-    st.subheader(title)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Futárok", courier_count)
-    c2.metric("Körök", route_count)
-    c3.metric("Kivitt címek", parcels_delivered)
-    c4.metric("Teljesítés", f"{completion_rate:.1f}%")
-
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Össz. cím", parcels_total)
-    c6.metric("Megtett km", f"{covered_distance:.1f}")
-    c7.metric("Átlag cím/kör", f"{average_parcels:.1f}")
-    c8.metric("Átlag km/kör", f"{average_distance:.1f}")
-
-    st.caption(f"Tervezett össz. km: {total_distance:.1f}")
-
-
-def aggregate_by_period(df, period):
-    if df.empty:
-        return df
-
-    working_df = df.copy()
-
-    if period == "day":
-        working_df["Időszak"] = working_df["work_date"].dt.strftime("%Y-%m-%d")
-    elif period == "week":
-        iso = working_df["work_date"].dt.isocalendar()
-        working_df["Időszak"] = (
-            iso["year"].astype(str)
-            + "-W"
-            + iso["week"].astype(str).str.zfill(2)
-        )
-    else:
-        working_df["Időszak"] = working_df["work_date"].dt.strftime("%Y-%m")
-
-    grouped = working_df.groupby(
-        ["Időszak", "driver_id", "driver_name"],
-        dropna=False,
-    ).agg(
-        Körök=("route_id", "nunique"),
-        Kivitt_címek=("parcels_delivered", "sum"),
-        Össz_cím=("parcels_total", "sum"),
-        Megtett_km=("distance_covered_km", "sum"),
-        Tervezett_km=("total_distance_km", "sum"),
-    ).reset_index()
-
-    grouped["Teljesítés %"] = grouped.apply(
-        lambda row: row["Kivitt_címek"] / row["Össz_cím"] * 100 if row["Össz_cím"] else 0,
-        axis=1,
-    )
-    grouped["Cím/kör"] = grouped.apply(
-        lambda row: row["Kivitt_címek"] / row["Körök"] if row["Körök"] else 0,
-        axis=1,
-    )
-    grouped["Km/kör"] = grouped.apply(
-        lambda row: row["Megtett_km"] / row["Körök"] if row["Körök"] else 0,
-        axis=1,
-    )
-
-    grouped = grouped.rename(
-        columns={
-            "driver_id": "Courier ID",
-            "driver_name": "Futár",
-            "Kivitt_címek": "Kivitt címek",
-            "Össz_cím": "Össz. cím",
-            "Megtett_km": "Megtett km",
-            "Tervezett_km": "Tervezett km",
-        }
-    )
-
-    return grouped.sort_values(["Időszak", "Futár"], ascending=[False, True])
-
-
-def show_period_table(df, period, title):
-    st.subheader(title)
-
-    period_df = aggregate_by_period(df, period)
-
-    if period_df.empty:
-        st.warning("Nincs adat ehhez a bontáshoz.")
-        return
-
-    st.dataframe(period_df, use_container_width=True, hide_index=True)
-
-
-def show_statistics_page():
-    st.title("Statisztika")
-
-    user = st.session_state["user"]
-
+def format_number(value, decimals=1):
     try:
-        records = read_route_statistics()
-    except Exception as exc:
-        st.error(f"Nem sikerült beolvasni a Google Sheet statisztikát: {exc}")
-        return
+        return f"{float(value):.{decimals}f}"
+    except (TypeError, ValueError):
+        return "0"
 
-    df = prepare_dataframe(records)
-    df = filter_dataframe_by_user(df, user)
 
-    if df.empty:
-        st.warning(
-            "Még nincs statisztikai adat. Nyisd meg a Mai futárok oldalt, hogy a rendszer elkezdje tölteni a Route_Statistics fület."
-        )
-        return
+def format_minutes(value):
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return "0 perc"
 
-    if user["role"] == "admin":
-        metric_title = "Céges KPI"
-    elif user["role"] == "trainer":
-        metric_title = "Csapat KPI"
-    else:
-        metric_title = "Saját KPI"
+    return f"{minutes:.1f} perc"
 
-    add_common_metrics(df, metric_title)
 
-    st.divider()
+def display_company_kpis(summary_df, title):
+    kpis = build_company_kpis(summary_df)
 
-    tab_day, tab_week, tab_month, tab_raw = st.tabs(
-        ["Napi", "Heti", "Havi", "Nyers adatok"]
+    st.subheader(title)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Futárok", kpis["couriers"])
+    c2.metric("Kivitt címek", kpis["delivered_orders"])
+    c3.metric("Kivitt körök", kpis["routes"])
+    c4.metric("Dolgozott napok", kpis["worked_days"])
+    c5.metric("Késéses műszak", kpis["late_shift_count"])
+
+    c6, c7, c8, c9, c10 = st.columns(5)
+    c6.metric("Átlag cím/kör", format_number(kpis["avg_orders_per_route"]))
+    c7.metric("Átlag kör/nap", format_number(kpis["avg_routes_per_workday"]))
+    c8.metric("Átlag várakozás", format_minutes(kpis["avg_wait_minutes"]))
+    c9.metric("Átlag túra hossz", format_minutes(kpis["avg_route_minutes"]))
+    c10.metric("Átlag bepakolás", format_minutes(kpis["avg_loading_minutes"]))
+
+
+def build_summary_table(summary_df):
+    table = summary_df.copy()
+
+    table = table.rename(
+        columns={
+            "courier_id": "Futár ID",
+            "name": "Futár",
+            "warehouse": "Raktár",
+            "delivered_orders": "Kivitt címek",
+            "routes": "Kivitt körök",
+            "worked_days": "Dolgozott napok",
+            "avg_orders_per_route": "Átlag cím/kör",
+            "avg_routes_per_workday": "Átlag kör/nap",
+            "avg_wait_minutes": "Átlag várakozás (perc)",
+            "late_shift_count": "Késéses műszak",
+            "avg_route_minutes": "Átlag túra hossz (perc)",
+            "avg_loading_minutes": "Átlag bepakolás (perc)",
+        }
     )
 
-    with tab_day:
-        show_period_table(df, "day", "Napi bontás")
+    columns = [
+        "Futár ID",
+        "Futár",
+        "Raktár",
+        "Kivitt címek",
+        "Kivitt körök",
+        "Dolgozott napok",
+        "Átlag cím/kör",
+        "Átlag kör/nap",
+        "Átlag várakozás (perc)",
+        "Késéses műszak",
+        "Átlag túra hossz (perc)",
+        "Átlag bepakolás (perc)",
+    ]
 
-    with tab_week:
-        show_period_table(df, "week", "Heti bontás")
+    for column in columns:
+        if column not in table.columns:
+            table[column] = ""
 
-    with tab_month:
-        show_period_table(df, "month", "Havi bontás")
+    numeric_columns = [
+        "Átlag cím/kör",
+        "Átlag kör/nap",
+        "Átlag várakozás (perc)",
+        "Átlag túra hossz (perc)",
+        "Átlag bepakolás (perc)",
+    ]
 
-    with tab_raw:
+    for column in numeric_columns:
+        table[column] = pd.to_numeric(
+            table[column],
+            errors="coerce",
+        ).fillna(0).round(1)
+
+    return table[columns]
+
+
+def show_driver_metrics(row):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Kivitt címek", int(row["delivered_orders"]))
+    c2.metric("Kivitt körök", int(row["routes"]))
+    c3.metric("Dolgozott napok", int(row["worked_days"]))
+    c4.metric("Átlag cím/kör", format_number(row["avg_orders_per_route"]))
+    c5.metric("Késéses műszak", int(row["late_shift_count"]))
+
+    c6, c7, c8, c9 = st.columns(4)
+    c6.metric("Átlag kör/nap", format_number(row["avg_routes_per_workday"]))
+    c7.metric("Átlag várakozás", format_minutes(row["avg_wait_minutes"]))
+    c8.metric("Átlag túra hossz", format_minutes(row["avg_route_minutes"]))
+    c9.metric("Átlag bepakolás", format_minutes(row["avg_loading_minutes"]))
+
+
+def filter_driver_rows(details, row):
+    courier_id = normalize_id(row.get("courier_id", ""))
+    name = str(row.get("name", "")).strip()
+    result = {}
+
+    orders = details.get("orders", pd.DataFrame())
+    if not orders.empty and "courierId" in orders.columns:
+        result["orders"] = orders[
+            orders["courierId"].apply(normalize_id) == courier_id
+        ].copy()
+    else:
+        result["orders"] = pd.DataFrame()
+
+    attendance_routes = details.get("attendance_routes", pd.DataFrame())
+    if not attendance_routes.empty and "courierId" in attendance_routes.columns:
+        result["attendance_routes"] = attendance_routes[
+            attendance_routes["courierId"].apply(normalize_id) == courier_id
+        ].copy()
+    else:
+        result["attendance_routes"] = pd.DataFrame()
+
+    giriton_login = details.get("giriton_login", pd.DataFrame())
+    if not giriton_login.empty and "futar_nev" in giriton_login.columns:
+        result["giriton_login"] = giriton_login[
+            giriton_login["futar_nev"].astype(str).str.strip() == name
+        ].copy()
+    else:
+        result["giriton_login"] = pd.DataFrame()
+
+    return result
+
+
+def show_driver_details(row, details):
+    driver_details = filter_driver_rows(details, row)
+
+    orders = driver_details["orders"]
+    attendance_routes = driver_details["attendance_routes"]
+    giriton_login = driver_details["giriton_login"]
+
+    if not orders.empty:
+        route_columns = [
+            "date",
+            "routeId",
+            "warehouseName",
+            "numDeliveredOrders",
+            "numTotalOrders",
+            "loadingTime",
+            "realDeparture",
+            "realReturn",
+            "loading_minutes_calc",
+            "real_tour_minutes_calc",
+        ]
+        visible = [
+            column
+            for column in route_columns
+            if column in orders.columns
+        ]
+
+        route_table = orders[visible].rename(
+            columns={
+                "date": "Dátum",
+                "routeId": "Route ID",
+                "warehouseName": "Raktár",
+                "numDeliveredOrders": "Kivitt cím",
+                "numTotalOrders": "Össz. cím",
+                "loadingTime": "Pakolás kezdete",
+                "realDeparture": "Indulás",
+                "realReturn": "Visszaérkezés",
+                "loading_minutes_calc": "Bepakolás perc",
+                "real_tour_minutes_calc": "Túra perc",
+            }
+        )
         st.dataframe(
-            df.sort_values(["work_date", "driver_name"], ascending=[False, True]),
+            route_table,
             use_container_width=True,
             hide_index=True,
         )
+
+    if not attendance_routes.empty:
+        attendance_columns = [
+            "date",
+            "routeId",
+            "shiftName",
+            "availableForShiftSince",
+            "courierRegisteredAt",
+            "assignedAt",
+            "wait_minutes",
+            "departure_diff_minutes",
+            "return_diff_minutes",
+            "match_source",
+        ]
+        visible = [
+            column
+            for column in attendance_columns
+            if column in attendance_routes.columns
+        ]
+        attendance_table = attendance_routes[visible].rename(
+            columns={
+                "date": "Dátum",
+                "routeId": "Route ID",
+                "shiftName": "Műszak",
+                "availableForShiftSince": "Sorba állt",
+                "courierRegisteredAt": "Regisztrált",
+                "assignedAt": "Túrát kapott",
+                "wait_minutes": "Várakozás perc",
+                "departure_diff_minutes": "Indulás eltérés",
+                "return_diff_minutes": "Vissza eltérés",
+                "match_source": "Párosítás",
+            }
+        )
+        st.caption("Várakozás és eltérések")
+        st.dataframe(
+            attendance_table,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if not giriton_login.empty:
+        login_columns = [
+            "datum",
+            "futar_nev",
+            "planned_shift_count",
+            "bejelentkezes_kezdete",
+            "bejelentkezes_vege",
+            "worked_hours",
+            "attendance_statusz",
+            "attendance_muszak",
+            "shift_late_minutes",
+        ]
+        visible = [
+            column
+            for column in login_columns
+            if column in giriton_login.columns
+        ]
+        login_table = giriton_login[visible].rename(
+            columns={
+                "datum": "Dátum",
+                "futar_nev": "Futár",
+                "planned_shift_count": "Tervezett műszak",
+                "bejelentkezes_kezdete": "Bejelentkezés",
+                "bejelentkezes_vege": "Kijelentkezés",
+                "worked_hours": "Ledolgozott óra",
+                "attendance_statusz": "Giriton státusz",
+                "attendance_muszak": "Giriton műszak",
+                "shift_late_minutes": "Műszak késés perc",
+            }
+        )
+        st.caption("Giriton bejelentkezés")
+        st.dataframe(
+            login_table,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+def show_statistics_page():
+    st.title("DSP statisztika")
+
+    user = st.session_state["user"]
+
+    today = date.today()
+    default_start = today.replace(day=1)
+
+    left, right = st.columns(2)
+    start_date = left.date_input(
+        "Kezdő dátum",
+        value=default_start,
+    )
+    end_date = right.date_input(
+        "Záró dátum",
+        value=today,
+    )
+
+    if start_date > end_date:
+        st.error("A kezdő dátum nem lehet későbbi, mint a záró dátum.")
+        return
+
+    try:
+        summary_df, details = build_statistics(
+            start_date=start_date,
+            end_date=end_date,
+            user=user,
+        )
+    except Exception as exc:
+        st.error(f"Nem sikerült beolvasni a DSP statisztikát: {exc}")
+        return
+
+    if summary_df.empty:
+        st.warning("Még nincs megjeleníthető DSP statisztikai adat.")
+        return
+
+    if user["role"] == "admin":
+        title = "Céges KPI"
+    elif user["role"] == "trainer":
+        title = "Csapat KPI"
+    else:
+        title = "Saját KPI"
+
+    display_company_kpis(summary_df, title)
+
+    st.divider()
+
+    st.subheader("Futárok összesítve")
+    st.dataframe(
+        build_summary_table(summary_df),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    st.subheader("Futár részletek")
+
+    for _, row in summary_df.iterrows():
+        label = (
+            f"{row['name']} "
+            f"#{row['courier_id']} | "
+            f"{int(row['delivered_orders'])} cím | "
+            f"{int(row['routes'])} kör"
+        )
+
+        with st.expander(label):
+            show_driver_metrics(row)
+            show_driver_details(row, details)
