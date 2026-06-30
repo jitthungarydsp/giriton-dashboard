@@ -13,6 +13,10 @@ from resources.shift_reconciliation_sheet import (
     read_shift_reconciliation_records,
 )
 
+EXPRESS_MAX_FEE = 6516
+NORMAL_CITY_MAX_FEE = 13000
+DAILY_CACHE_SECONDS = 24 * 60 * 60
+
 
 def format_number(value, decimals=1):
     try:
@@ -33,6 +37,24 @@ def format_minutes(value):
         return f"{float(value):.1f} perc"
     except (TypeError, ValueError):
         return "0.0 perc"
+
+
+def format_currency(value):
+    try:
+        amount = int(round(float(value)))
+    except (TypeError, ValueError):
+        amount = 0
+
+    return f"{amount:,} Ft".replace(",", " ")
+
+
+@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
+def load_courier_statistics(start_date, end_date, user):
+    return build_statistics(
+        start_date=start_date,
+        end_date=end_date,
+        user=user,
+    )
 
 
 def render_styles():
@@ -220,7 +242,7 @@ def status_pill(value):
     return f'<span class="today-pill {css_class}">{label}</span>'
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_today_shift_records(work_date_text):
     return read_shift_reconciliation_records(
         work_date_text
@@ -298,19 +320,71 @@ def render_today_shifts(row, user):
     )
 
 
-def render_stat_cards(row):
+def calculate_route_mix(details, row):
+    customers = details.get("customers", pd.DataFrame())
+    courier_id = normalize_id(row.get("courier_id"))
+
+    if customers.empty or "routeId" not in customers.columns:
+        express_routes = int(row.get("express_address_count", 0) > 0)
+        total_routes = int(row.get("routes", 0))
+        normal_routes = max(total_routes - express_routes, 0)
+    else:
+        if "courierId" in customers.columns and courier_id:
+            customers = customers[
+                customers["courierId"].apply(normalize_id) == courier_id
+            ]
+
+        route_groups = customers.groupby("routeId").agg(
+            express_addresses=("express_address_count", "sum"),
+        )
+        express_routes = int(
+            (route_groups["express_addresses"] > 0).sum()
+        )
+        total_routes = int(
+            route_groups.shape[0]
+        )
+        normal_routes = max(
+            total_routes - express_routes,
+            0,
+        )
+
+    max_revenue = (
+        express_routes * EXPRESS_MAX_FEE
+        + normal_routes * NORMAL_CITY_MAX_FEE
+    )
+    avg_revenue_per_route = (
+        max_revenue / (express_routes + normal_routes)
+        if express_routes + normal_routes
+        else 0
+    )
+
+    return {
+        "express_routes": express_routes,
+        "normal_routes": normal_routes,
+        "max_revenue": max_revenue,
+        "avg_revenue_per_route": avg_revenue_per_route,
+    }
+
+
+def render_stat_cards(row, details):
     delivered = int(row.get("delivered_orders", 0))
     routes = int(row.get("routes", 0))
     worked_days = int(row.get("worked_days", 0))
     total_addresses = int(row.get("total_address_count", 0))
+    route_mix = calculate_route_mix(
+        details,
+        row,
+    )
 
     cards = [
+        stat_card("Max bevétel lehetőség", format_currency(route_mix["max_revenue"]), "Képed alapján: expressz + city sáv / kör."),
+        stat_card("Átlag / kör", format_currency(route_mix["avg_revenue_per_route"]), "Becsült kereseti lehetőség körönként."),
+        stat_card("Normál körök", route_mix["normal_routes"], "City sávval becsülve."),
+        stat_card("Expressz körök", route_mix["express_routes"], "Expressz sávval becsülve."),
         stat_card("Kivitt címek", delivered, "Ennyi csomag talált gazdára."),
         stat_card("Körök", routes, "Teljesített route-ok."),
         stat_card("Dolgozott napok", worked_days, "Aktív napok a szűrésben."),
         stat_card("Átlag cím / kör", format_number(row.get("avg_orders_per_route")), "Minél stabilabb, annál szebb."),
-        stat_card("Normál címek", int(row.get("normal_address_count", 0)), format_percent(row.get("normal_address_rate"))),
-        stat_card("Expressz címek", int(row.get("express_address_count", 0)), format_percent(row.get("express_address_rate"))),
         stat_card("Időablak pontos", max(total_addresses - int(row.get("late_address_count", 0)) - int(row.get("early_address_count", 0)), 0), "Nem korai, nem késő."),
         stat_card("Átlag várakozás", format_minutes(row.get("avg_wait_minutes")), "Sorban állás, de számokban."),
     ]
@@ -402,11 +476,10 @@ def render_extra_metrics(row):
     col3.metric("Késő normál cím", f"{int(row.get('normal_late_address_count', 0))} ({format_percent(row.get('normal_late_address_rate'))})")
     col4.metric("Késő expressz cím", f"{int(row.get('express_late_address_count', 0))} ({format_percent(row.get('express_late_address_rate'))})")
 
-    late_shift_count = int(row.get("late_shift_count", 0))
-    if late_shift_count:
-        text = f"{late_shift_count} késéses műszak látszik a szűrésben. Ez nem dráma, csak egy sárga lámpácska a műszerfalon."
-    else:
-        text = "Késéses műszak nincs a szűrésben. A Kifli-univerzum most elégedetten hümmög."
+    text = (
+        "A bevételbecslés tájékoztató jellegű: a képen szereplő kiemelt expressz és city sávokkal számol, "
+        "a tényleges elszámolást nem helyettesíti."
+    )
 
     st.markdown(
         f"<div class=\"fun-note\">{text}</div>",
@@ -458,7 +531,7 @@ def show_courier_dashboard_page():
     )
 
     with st.spinner("Saját Kifli-kártya összerakása..."):
-        summary_df, _ = build_statistics(
+        summary_df, details = load_courier_statistics(
             start_date=selected_start,
             end_date=selected_end,
             user=user,
@@ -476,6 +549,6 @@ def show_courier_dashboard_page():
 
     render_hero(row, user)
     render_today_shifts(row, user)
-    render_stat_cards(row)
+    render_stat_cards(row, details)
     render_charts(row)
     render_extra_metrics(row)
