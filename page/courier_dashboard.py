@@ -551,18 +551,10 @@ def render_no_route_road():
     </div>
     <div class="route-road-subtitle">A depó készen áll</div>
   </div>
-  <div class="route-road-track" style="--stop-count: 3;">
+  <div class="route-road-track" style="--stop-count: 1;">
     <div class="route-stop route-stop-waiting">
-      <div class="route-stop-dot">1</div>
-      <div class="route-stop-label">Route várakozik</div>
-    </div>
-    <div class="route-stop route-stop-waiting">
-      <div class="route-stop-dot">2</div>
-      <div class="route-stop-label">Címek betöltése</div>
-    </div>
-    <div class="route-stop route-stop-waiting">
-      <div class="route-stop-dot">3</div>
-      <div class="route-stop-label">Indulásra kész</div>
+      <div class="route-stop-dot">?</div>
+      <div class="route-stop-label">Útvonalra várunk</div>
     </div>
     <div class="route-depot">
       <div class="route-depot-icon">D</div>
