@@ -16,6 +16,11 @@ ATTENDANCE_BASE_URL = (
 
 ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 MAX_AVAILABLE_TO_REGISTERED_WAIT_MINUTES = 180
+EXPRESS_HIGHLIGHT_FEE = 6516
+EXPRESS_NORMAL_FEE = 5816
+CITY_HIGHLIGHT_FEE = 13000
+CITY_NORMAL_FEE = 11000
+HIGHLIGHT_WEEKDAYS = {4, 5, 6}
 
 
 def minutes_between(start_value, end_value):
@@ -345,6 +350,198 @@ def create_attendance_route_statistics(start_date=None, end_date=None):
     )
 
     return "ATTENDANCE_ROUTE_STATS_OK"
+
+
+def normalize_text(value):
+    return str(value or "").strip()
+
+
+def normalize_route_id(value):
+    text = normalize_text(value)
+
+    if text.endswith(".0"):
+        return text[:-2]
+
+    return text
+
+
+def parse_sheet_date(value):
+    parsed = parse_datetime(value)
+
+    if parsed:
+        return parsed.date()
+
+    try:
+        return datetime.strptime(
+            normalize_text(value),
+            "%Y-%m-%d",
+        ).date()
+    except ValueError:
+        return None
+
+
+def is_express_customer_row(row, header_index):
+    since = parse_datetime(
+        row[header_index["deliverSince"]]
+    ) if "deliverSince" in header_index and len(row) > header_index["deliverSince"] else None
+    till = parse_datetime(
+        row[header_index["deliverTill"]]
+    ) if "deliverTill" in header_index and len(row) > header_index["deliverTill"] else None
+
+    if not since or not till:
+        return False
+
+    minutes = round(
+        (till - since).total_seconds() / 60
+    )
+
+    return minutes not in [15, 60]
+
+
+def get_cell(row, header_index, name):
+    index = header_index.get(name)
+
+    if index is None or index >= len(row):
+        return ""
+
+    return row[index]
+
+
+def create_earning_estimate():
+    ws_orders = spreadsheet.worksheet("DSP_Orders")
+    ws_customers = spreadsheet.worksheet("DSP_Order_Customers")
+
+    try:
+        ws_stats = spreadsheet.worksheet("DSP_Earning_Estimate")
+    except:
+        ws_stats = spreadsheet.add_worksheet(
+            title="DSP_Earning_Estimate",
+            rows=50000,
+            cols=20,
+        )
+
+    orders_values = ws_orders.get_all_values()
+    customers_values = ws_customers.get_all_values()
+
+    if len(orders_values) < 2:
+        return "EARNING_ESTIMATE_NO_ORDERS"
+
+    orders_header = {
+        name: index
+        for index, name in enumerate(orders_values[0])
+    }
+    customers_header = {
+        name: index
+        for index, name in enumerate(customers_values[0])
+    } if customers_values else {}
+
+    express_routes = set()
+
+    for row in customers_values[1:]:
+        route_id = normalize_route_id(
+            get_cell(row, customers_header, "routeId")
+        )
+
+        if route_id and is_express_customer_row(row, customers_header):
+            express_routes.add(route_id)
+
+    stats = {}
+
+    for row in orders_values[1:]:
+        work_date = parse_sheet_date(
+            get_cell(row, orders_header, "date")
+        )
+        courier_id = normalize_text(
+            get_cell(row, orders_header, "courierId")
+        )
+        route_id = normalize_route_id(
+            get_cell(row, orders_header, "routeId")
+            or get_cell(row, orders_header, "id")
+        )
+
+        if not work_date or not courier_id or not route_id:
+            continue
+
+        key = (
+            work_date.isoformat(),
+            courier_id,
+        )
+
+        if key not in stats:
+            stats[key] = {
+                "date": work_date.isoformat(),
+                "courierId": courier_id,
+                "warehouseName": get_cell(row, orders_header, "warehouseName"),
+                "normal_routes": set(),
+                "express_routes": set(),
+            }
+
+        if route_id in express_routes:
+            stats[key]["express_routes"].add(route_id)
+        else:
+            stats[key]["normal_routes"].add(route_id)
+
+    rows = [[
+        "date",
+        "courierId",
+        "warehouseName",
+        "is_highlight_day",
+        "normal_routes",
+        "express_routes",
+        "total_routes",
+        "normal_fee_per_route",
+        "express_fee_per_route",
+        "estimated_max_revenue",
+        "avg_revenue_per_route",
+    ]]
+
+    for key in sorted(stats.keys()):
+        item = stats[key]
+        work_date = datetime.strptime(
+            item["date"],
+            "%Y-%m-%d",
+        ).date()
+        is_highlight = work_date.weekday() in HIGHLIGHT_WEEKDAYS
+        normal_routes = len(item["normal_routes"])
+        express_routes_count = len(item["express_routes"])
+        total_routes = normal_routes + express_routes_count
+        normal_fee = CITY_HIGHLIGHT_FEE if is_highlight else CITY_NORMAL_FEE
+        express_fee = EXPRESS_HIGHLIGHT_FEE if is_highlight else EXPRESS_NORMAL_FEE
+        estimated_revenue = (
+            normal_routes * normal_fee
+            + express_routes_count * express_fee
+        )
+        avg_revenue = (
+            round(estimated_revenue / total_routes, 1)
+            if total_routes
+            else 0
+        )
+
+        rows.append([
+            item["date"],
+            item["courierId"],
+            item["warehouseName"],
+            "IGEN" if is_highlight else "NEM",
+            normal_routes,
+            express_routes_count,
+            total_routes,
+            normal_fee,
+            express_fee,
+            estimated_revenue,
+            avg_revenue,
+        ])
+
+    ws_stats.clear()
+    ws_stats.update(
+        "A1",
+        rows,
+    )
+
+    print(
+        f"{len(rows)-1} bevetel becsles sor feltoltve."
+    )
+
+    return "EARNING_ESTIMATE_OK"
 
 def create_daily_statistics():
 

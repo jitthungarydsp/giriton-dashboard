@@ -8,6 +8,7 @@ import streamlit as st
 from resources.dsp_dashboard_statistics import (
     build_statistics,
     normalize_id,
+    read_sheet_dataframe,
 )
 from resources.shift_reconciliation_sheet import (
     read_shift_reconciliation_records,
@@ -320,9 +321,56 @@ def render_today_shifts(row, user):
     )
 
 
-def calculate_route_mix(details, row):
-    customers = details.get("customers", pd.DataFrame())
+def calculate_route_mix(details, row, start_date=None, end_date=None):
+    earnings = read_sheet_dataframe("DSP_Earning_Estimate")
     courier_id = normalize_id(row.get("courier_id"))
+
+    if not earnings.empty and courier_id and "courierId" in earnings.columns:
+        earnings = earnings.copy()
+        earnings = earnings[
+            earnings["courierId"].apply(normalize_id) == courier_id
+        ]
+
+        if "date" in earnings.columns:
+            earnings["date_dt"] = pd.to_datetime(
+                earnings["date"],
+                errors="coerce",
+            ).dt.date
+
+            if start_date:
+                earnings = earnings[
+                    earnings["date_dt"] >= start_date
+                ]
+            if end_date:
+                earnings = earnings[
+                    earnings["date_dt"] <= end_date
+                ]
+
+        for column in [
+            "normal_routes",
+            "express_routes",
+            "estimated_max_revenue",
+            "total_routes",
+        ]:
+            if column not in earnings.columns:
+                earnings[column] = 0
+            earnings[column] = pd.to_numeric(
+                earnings[column],
+                errors="coerce",
+            ).fillna(0)
+
+        total_routes = int(earnings["total_routes"].sum())
+        max_revenue = float(earnings["estimated_max_revenue"].sum())
+
+        if total_routes:
+            return {
+                "express_routes": int(earnings["express_routes"].sum()),
+                "normal_routes": int(earnings["normal_routes"].sum()),
+                "max_revenue": max_revenue,
+                "avg_revenue_per_route": max_revenue / total_routes,
+            }
+
+    customers = details.get("customers", pd.DataFrame())
 
     if customers.empty or "routeId" not in customers.columns:
         express_routes = int(row.get("express_address_count", 0) > 0)
@@ -366,7 +414,7 @@ def calculate_route_mix(details, row):
     }
 
 
-def render_stat_cards(row, details):
+def render_stat_cards(row, details, start_date=None, end_date=None):
     delivered = int(row.get("delivered_orders", 0))
     routes = int(row.get("routes", 0))
     worked_days = int(row.get("worked_days", 0))
@@ -374,6 +422,8 @@ def render_stat_cards(row, details):
     route_mix = calculate_route_mix(
         details,
         row,
+        start_date,
+        end_date,
     )
 
     cards = [
@@ -549,6 +599,11 @@ def show_courier_dashboard_page():
 
     render_hero(row, user)
     render_today_shifts(row, user)
-    render_stat_cards(row, details)
+    render_stat_cards(
+        row,
+        details,
+        selected_start,
+        selected_end,
+    )
     render_charts(row)
     render_extra_metrics(row)
