@@ -45,6 +45,10 @@ def display_company_kpis(summary_df, title):
     c9.metric("Átlag túra hossz", format_minutes(kpis["avg_route_minutes"]))
     c10.metric("Átlag bepakolás", format_minutes(kpis["avg_loading_minutes"]))
 
+    c11, c12 = st.columns(2)
+    c11.metric("Korai cím időablakon kívül", kpis["early_address_count"])
+    c12.metric("Késő cím időablakon kívül", kpis["late_address_count"])
+
 
 def build_summary_table(summary_df):
     table = summary_df.copy()
@@ -61,6 +65,8 @@ def build_summary_table(summary_df):
             "avg_routes_per_workday": "Átlag kör/nap",
             "avg_wait_minutes": "Átlag várakozás (perc)",
             "late_shift_count": "Késéses műszak",
+            "early_address_count": "Korai cím",
+            "late_address_count": "Késő cím",
             "avg_route_minutes": "Átlag túra hossz (perc)",
             "avg_loading_minutes": "Átlag bepakolás (perc)",
         }
@@ -77,6 +83,8 @@ def build_summary_table(summary_df):
         "Átlag kör/nap",
         "Átlag várakozás (perc)",
         "Késéses műszak",
+        "Korai cím",
+        "Késő cím",
         "Átlag túra hossz (perc)",
         "Átlag bepakolás (perc)",
     ]
@@ -110,11 +118,15 @@ def show_driver_metrics(row):
     c4.metric("Átlag cím/kör", format_number(row["avg_orders_per_route"]))
     c5.metric("Késéses műszak", int(row["late_shift_count"]))
 
-    c6, c7, c8, c9 = st.columns(4)
+    c6, c7, c8, c9, c10 = st.columns(5)
     c6.metric("Átlag kör/nap", format_number(row["avg_routes_per_workday"]))
     c7.metric("Átlag várakozás", format_minutes(row["avg_wait_minutes"]))
     c8.metric("Átlag túra hossz", format_minutes(row["avg_route_minutes"]))
     c9.metric("Átlag bepakolás", format_minutes(row["avg_loading_minutes"]))
+    c10.metric(
+        "Korai / késő cím",
+        f"{int(row['early_address_count'])} / {int(row['late_address_count'])}",
+    )
 
 
 def filter_driver_rows(details, row):
@@ -146,6 +158,14 @@ def filter_driver_rows(details, row):
     else:
         result["giriton_login"] = pd.DataFrame()
 
+    customers = details.get("customers", pd.DataFrame())
+    if not customers.empty and "courierId" in customers.columns:
+        result["customers"] = customers[
+            customers["courierId"].apply(normalize_id) == courier_id
+        ].copy()
+    else:
+        result["customers"] = pd.DataFrame()
+
     return result
 
 
@@ -155,6 +175,7 @@ def show_driver_details(row, details):
     orders = driver_details["orders"]
     attendance_routes = driver_details["attendance_routes"]
     giriton_login = driver_details["giriton_login"]
+    customers = driver_details["customers"]
 
     if not orders.empty:
         route_columns = [
@@ -230,6 +251,48 @@ def show_driver_details(row, details):
         st.caption("Várakozás és eltérések")
         st.dataframe(
             attendance_table,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if not customers.empty:
+        address_columns = [
+            "date",
+            "routeId",
+            "orderId",
+            "position",
+            "address",
+            "deliverSince",
+            "deliverTill",
+            "realArrivalTime",
+            "arrival_status",
+            "arrival_diff_minutes",
+        ]
+        visible = [
+            column
+            for column in address_columns
+            if column in customers.columns
+        ]
+        address_table = customers[
+            customers["arrival_status_normalized"].isin(["EARLY", "LATE"])
+        ][visible].rename(
+            columns={
+                "date": "Dátum",
+                "routeId": "Route ID",
+                "orderId": "Rendelés",
+                "position": "Poz",
+                "address": "Cím",
+                "deliverSince": "Időablak kezdete",
+                "deliverTill": "Időablak vége",
+                "realArrivalTime": "Valós érkezés",
+                "arrival_status": "Státusz",
+                "arrival_diff_minutes": "Eltérés perc",
+            }
+        )
+
+        st.caption("Időablakon kívüli címek")
+        st.dataframe(
+            address_table,
             use_container_width=True,
             hide_index=True,
         )

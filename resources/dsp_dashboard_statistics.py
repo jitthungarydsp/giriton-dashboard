@@ -104,6 +104,7 @@ def read_sheet_dataframe(sheet_name):
 def load_source_data():
     return {
         "orders": read_sheet_dataframe("DSP_Orders"),
+        "customers": read_sheet_dataframe("DSP_Order_Customers"),
         "drivers": read_sheet_dataframe("DSP_Drivers"),
         "attendance_routes": read_sheet_dataframe("DSP_Attendance_Route_Stats"),
         "giriton_login": read_sheet_dataframe("Futar_Bejelentkezes_Statisztika"),
@@ -205,6 +206,46 @@ def normalize_attendance_routes(df):
             df[column] = 0
 
         df[column] = to_number(df[column])
+
+    return df
+
+
+def normalize_customers(df):
+    if df.empty:
+        return df
+
+    df = df.copy()
+
+    for column in ["courierId", "routeId", "id", "orderId"]:
+        if column in df.columns:
+            df[column] = df[column].apply(normalize_id)
+        else:
+            df[column] = ""
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    else:
+        df["date"] = pd.NaT
+
+    if "arrival_status" not in df.columns:
+        df["arrival_status"] = ""
+
+    df["arrival_status_normalized"] = (
+        df["arrival_status"].astype(str).str.strip().str.upper()
+    )
+    df["early_address_count"] = (
+        df["arrival_status_normalized"] == "EARLY"
+    ).astype(int)
+    df["late_address_count"] = (
+        df["arrival_status_normalized"] == "LATE"
+    ).astype(int)
+
+    if "arrival_diff_minutes" in df.columns:
+        df["arrival_diff_minutes"] = to_number(
+            df["arrival_diff_minutes"]
+        )
+    else:
+        df["arrival_diff_minutes"] = 0
 
     return df
 
@@ -367,6 +408,7 @@ def filter_detail_by_user(dataframes, allowed_ids):
 def build_statistics(start_date=None, end_date=None, user=None):
     source = load_source_data()
     orders = normalize_orders(source["orders"])
+    customers = normalize_customers(source["customers"])
     attendance_routes = normalize_attendance_routes(
         source["attendance_routes"]
     )
@@ -379,6 +421,8 @@ def build_statistics(start_date=None, end_date=None, user=None):
 
         if not orders.empty:
             orders = orders[orders["date"] >= start]
+        if not customers.empty:
+            customers = customers[customers["date"] >= start]
         if not attendance_routes.empty:
             attendance_routes = attendance_routes[
                 attendance_routes["date"] >= start
@@ -393,6 +437,8 @@ def build_statistics(start_date=None, end_date=None, user=None):
 
         if not orders.empty:
             orders = orders[orders["date"] <= end]
+        if not customers.empty:
+            customers = customers[customers["date"] <= end]
         if not attendance_routes.empty:
             attendance_routes = attendance_routes[
                 attendance_routes["date"] <= end
@@ -444,6 +490,8 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 "_wait_values": [],
                 "_route_minutes": [],
                 "_loading_minutes": [],
+                "early_address_count": 0,
+                "late_address_count": 0,
             }
 
         return summary[key]
@@ -480,6 +528,24 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 item["_loading_minutes"].append(
                     float(row.get("loading_minutes_calc", 0))
                 )
+
+    if not customers.empty:
+        for _, row in customers.iterrows():
+            item = ensure_driver(
+                row.get("courierId", ""),
+            )
+
+            if not pd.isna(row.get("date")):
+                item["_work_dates"].add(
+                    row.get("date").strftime("%Y-%m-%d")
+                )
+
+            item["early_address_count"] += int(
+                row.get("early_address_count", 0)
+            )
+            item["late_address_count"] += int(
+                row.get("late_address_count", 0)
+            )
 
     if not attendance_routes.empty:
         for _, row in attendance_routes.iterrows():
@@ -563,6 +629,8 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 else 0
             ),
             "late_shift_count": int(item["late_shift_count"]),
+            "early_address_count": int(item["early_address_count"]),
+            "late_address_count": int(item["late_address_count"]),
             "planned_shift_count": int(item["planned_shift_count"]),
             "avg_route_minutes": (
                 sum(item["_route_minutes"]) / len(item["_route_minutes"])
@@ -581,6 +649,7 @@ def build_statistics(start_date=None, end_date=None, user=None):
     if summary_df.empty:
         return summary_df, {
             "orders": orders,
+            "customers": customers,
             "attendance_routes": attendance_routes,
             "giriton_login": giriton_login,
         }
@@ -596,6 +665,7 @@ def build_statistics(start_date=None, end_date=None, user=None):
         details = filter_detail_by_user(
             {
                 "orders": orders,
+                "customers": customers,
                 "attendance_routes": attendance_routes,
                 "giriton_login": giriton_login,
             },
@@ -604,6 +674,7 @@ def build_statistics(start_date=None, end_date=None, user=None):
     else:
         details = {
             "orders": orders,
+            "customers": customers,
             "attendance_routes": attendance_routes,
             "giriton_login": giriton_login,
         }
@@ -622,6 +693,8 @@ def build_company_kpis(summary_df):
             "avg_routes_per_workday": 0,
             "avg_wait_minutes": 0,
             "late_shift_count": 0,
+            "early_address_count": 0,
+            "late_address_count": 0,
             "avg_route_minutes": 0,
             "avg_loading_minutes": 0,
         }
@@ -639,6 +712,8 @@ def build_company_kpis(summary_df):
         "avg_routes_per_workday": routes / worked_days if worked_days else 0,
         "avg_wait_minutes": summary_df["avg_wait_minutes"].mean(),
         "late_shift_count": int(summary_df["late_shift_count"].sum()),
+        "early_address_count": int(summary_df["early_address_count"].sum()),
+        "late_address_count": int(summary_df["late_address_count"].sum()),
         "avg_route_minutes": summary_df["avg_route_minutes"].mean(),
         "avg_loading_minutes": summary_df["avg_loading_minutes"].mean(),
     }
