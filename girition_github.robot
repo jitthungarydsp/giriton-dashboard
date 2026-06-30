@@ -19,6 +19,8 @@ ${DAYS_TO_SYNC}    10
 *** Test Cases ***
 Muszakok Figyelese
 
+    Log To Console    GIRITION_GITHUB_VERSION=hardcoded_10_days
+
     keywords_github.Bejelentkezes
 
     keywords_github.Click Shift Subs
