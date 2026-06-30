@@ -946,32 +946,14 @@ def render_route_road(row, details):
             render_before_shift_road(minutes_to_start)
         return
 
-    current_stop = next(
-        (stop for stop in stops if stop.get("current")),
-        stops[0],
-    )
-    stop_count = max(len(stops), 1)
-    stop_html = []
-
-    for stop in stops:
-        css_class = (
-            "route-stop-current"
-            if stop.get("current")
-            else "route-stop-waiting"
-        )
-        address = escape(str(stop.get("address", "")))
-        position = escape(str(stop.get("position", "")))
-        short_address = address[:34] + "..." if len(address) > 34 else address
-        stop_html.append(
-            f"""
-<div class="route-stop {css_class}">
-  <div class="route-stop-dot">{position}</div>
-  <div class="route-stop-label">{short_address}</div>
-</div>
-"""
-        )
-
+    current_stop = stops[0]
     current_address = escape(str(current_stop.get("address", "")))
+    current_position = escape(str(current_stop.get("position", "")))
+    short_address = (
+        current_address[:42] + "..."
+        if len(current_address) > 42
+        else current_address
+    )
 
     st.markdown(
         f"""
@@ -980,25 +962,28 @@ def render_route_road(row, details):
     <div class="route-brand">
       <div class="route-brand-logo">K</div>
       <div>
-        <div class="route-road-title">Mai utvonal</div>
-        <div class="route-road-subtitle">Zold jel = aktualis cim, sarga jel = meg hatralevo/allapotban levo cim</div>
+        <div class="route-road-title">Mai útvonal</div>
+        <div class="route-road-subtitle">Zöld jel = aktuális cím</div>
       </div>
     </div>
-    <div class="route-road-subtitle">Depo a celban</div>
+    <div class="route-road-subtitle">Depó a célban</div>
   </div>
-  <div class="route-road-track" style="--stop-count: {stop_count};">
-    {''.join(stop_html)}
+  <div class="route-road-track" style="--stop-count: 1;">
+    <div class="route-stop route-stop-current">
+      <div class="route-stop-dot">{current_position}</div>
+      <div class="route-stop-label">{short_address}</div>
+    </div>
     <div class="route-depot">
       <div class="route-depot-icon">D</div>
-      <div class="route-stop-label">Depo</div>
+      <div class="route-stop-label">Depó</div>
     </div>
   </div>
   <div class="bag-alert-preview">
     <div>
-      <div class="bag-alert-title">Taska hiany bejelentes - design elonezet</div>
-      <div class="bag-alert-copy">Aktualis cim: <strong>{current_address}</strong><br>Kesobb innen indulhat majd a sablon e-mail es a kep csatolasa az elore megadott cimre.</div>
+      <div class="bag-alert-title">Táska hiány bejelentés - design előnézet</div>
+      <div class="bag-alert-copy">Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
     </div>
-    <div class="bag-alert-button">Taska hiany jelzese</div>
+    <div class="bag-alert-button">Táska hiány jelzése</div>
   </div>
 </div>
 """,
