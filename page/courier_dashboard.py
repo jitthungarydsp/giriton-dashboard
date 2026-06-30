@@ -504,6 +504,71 @@ def find_driver(drivers_data, courier_id):
     return {}
 
 
+def nested_get(data, path, default=""):
+    current = data
+
+    for key in path:
+        if not isinstance(current, dict):
+            return default
+
+        current = current.get(key)
+
+        if current is None:
+            return default
+
+    return current
+
+
+def first_nested_value(data, paths, default=""):
+    for path in paths:
+        value = nested_get(data, path, "")
+
+        if value not in ["", None]:
+            return value
+
+    return default
+
+
+def get_driver_route_id(driver):
+    return first_nested_value(
+        driver,
+        [
+            ["route", "id"],
+            ["route", "route_id"],
+            ["route", "routeId"],
+            ["route_id"],
+            ["routeId"],
+            ["status", "route_id"],
+            ["status", "routeId"],
+        ],
+    )
+
+
+def get_driver_assigned_at(driver):
+    return first_nested_value(
+        driver,
+        [
+            ["status", "assignedAt"],
+            ["status", "assigned_at"],
+            ["route", "assignedAt"],
+            ["route", "assigned_at"],
+            ["route", "route_assigned_at"],
+            ["route_assigned_at"],
+            ["status", "loading_finished_at"],
+        ],
+    )
+
+
+def get_live_driver_state(driver):
+    return str(
+        nested_get(
+            driver,
+            ["status", "current_state"],
+            "",
+        )
+    )
+
+
 def get_current_shift(attendance_courier):
     shifts = []
 
@@ -536,11 +601,23 @@ def get_current_shift(attendance_courier):
     return shifts[-1]
 
 
-def get_open_route(driver_detail):
+def get_best_route(driver, driver_detail):
     routes = driver_detail.get("routes", [])
 
     if not routes:
         return {}
+
+    driver_route_id = normalize_id(get_driver_route_id(driver))
+    if driver_route_id:
+        for route in routes:
+            if normalize_id(route.get("id") or route.get("routeId")) == driver_route_id:
+                return route
+
+    assigned_at = get_driver_assigned_at(driver)
+    if assigned_at:
+        for route in routes:
+            if route.get("assignedAt") == assigned_at:
+                return route
 
     open_routes = [
         route
@@ -826,15 +903,23 @@ def render_route_road(row, details):
     )
     checked_in = bool(shift.get("availableForShiftSince"))
     driver_detail = load_live_driver_detail(courier_id)
-    open_route = get_open_route(driver_detail)
-    route_is_open = bool(open_route and not open_route.get("realReturn"))
+    open_route = get_best_route(driver, driver_detail)
+    live_state = get_live_driver_state(driver)
+    live_route_active = live_state in ["Delivering", "Idle"]
+    route_is_open = bool(
+        open_route
+        and (
+            live_route_active
+            or not open_route.get("realReturn")
+        )
+    )
 
     if route_is_open:
         stops = get_route_checkpoint_stops(open_route)
     else:
         stops = []
 
-    if not route_is_open and open_route and open_route.get("realReturn"):
+    if not live_route_active and not route_is_open and open_route and open_route.get("realReturn"):
         render_returned_to_depot_road()
         return
 
