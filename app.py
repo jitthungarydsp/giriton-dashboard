@@ -47,6 +47,9 @@ from page.waiting_couriers import (
 from page.statistics import (
     show_statistics_page,
 )
+from page.order_statistics import (
+    show_order_statistics_page,
+)
 
 
 login_screen()
@@ -86,6 +89,12 @@ if "Statisztika" not in menu:
     menu.insert(
         max(len(menu) - 1, 0),
         "Statisztika",
+    )
+
+if "Megrendeles statisztika" not in menu:
+    menu.insert(
+        max(len(menu) - 1, 0),
+        "Megrendeles statisztika",
     )
 
 page = st.sidebar.radio(
@@ -138,6 +147,8 @@ elif page == "Várakozó futárok":
     show_waiting_couriers_page()
 elif page == "Statisztika":
     show_statistics_page()
+elif page == "Megrendeles statisztika":
+    show_order_statistics_page()
 elif page == "Trainer":
     st.title(
         "Trainer felület"
