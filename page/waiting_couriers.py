@@ -57,6 +57,17 @@ def format_time(value):
     return ""
 
 
+def format_datetime(value):
+    parsed = parse_datetime(
+        value
+    )
+
+    if parsed:
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+    return ""
+
+
 def minutes_since(value):
     parsed = parse_datetime(
         value
@@ -108,6 +119,48 @@ def get_attendance_by_courier_id(couriers):
     }
 
 
+def same_minute(left, right):
+    left_parsed = parse_datetime(
+        left
+    )
+    right_parsed = parse_datetime(
+        right
+    )
+
+    if not left_parsed or not right_parsed:
+        return False
+
+    return left_parsed.replace(second=0, microsecond=0) == right_parsed.replace(
+        second=0,
+        microsecond=0,
+    )
+
+
+def get_registered_route_times(attendance_courier):
+    if not attendance_courier:
+        return []
+
+    return [
+        route.get("courierRegisteredAt")
+        for route in attendance_courier.get("routes", [])
+        if route.get("courierRegisteredAt")
+    ]
+
+
+def shift_has_registered_route(shift, registered_route_times):
+    available_since = shift.get(
+        "availableForShiftSince"
+    )
+
+    return any(
+        same_minute(
+            available_since,
+            registered_at,
+        )
+        for registered_at in registered_route_times
+    )
+
+
 def get_waiting_shift(attendance_courier):
     if not attendance_courier:
         return {}
@@ -117,6 +170,9 @@ def get_waiting_shift(attendance_courier):
         [],
     )
     available_shifts = []
+    registered_route_times = get_registered_route_times(
+        attendance_courier
+    )
 
     for shift in shifts:
         available_since = shift.get(
@@ -126,7 +182,10 @@ def get_waiting_shift(attendance_courier):
             available_since
         )
 
-        if parsed_available_since:
+        if parsed_available_since and not shift_has_registered_route(
+            shift,
+            registered_route_times,
+        ):
             available_shifts.append(
                 (
                     parsed_available_since,
@@ -210,7 +269,7 @@ def build_waiting_record(courier, attendance_courier):
         "warehouse": warehouse,
         "shift_id": waiting_shift.get("shiftId", ""),
         "shift_name": waiting_shift.get("shiftName", ""),
-        "waiting_since": waiting_since,
+        "waiting_since": format_datetime(waiting_since),
         "waiting_since_local": format_time(waiting_since),
         "waiting_minutes": minutes_since(waiting_since),
         "temperature": temperature,
