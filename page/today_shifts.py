@@ -354,18 +354,22 @@ def find_matching_shift(courier, start_at):
         if shift_start and shift_start == start_at:
             return shift
 
-    if not shifts:
-        return {}
-
-    return min(
-        shifts,
-        key=lambda shift: abs(
+    close_matches = [
+        shift
+        for shift in shifts
+        if parse_datetime(shift.get("shiftStart"))
+        and abs(
             (
-                parse_datetime(shift.get("shiftStart")) or start_at
-            )
-            - start_at
-        ),
-    )
+                parse_datetime(shift.get("shiftStart")) - start_at
+            ).total_seconds()
+        )
+        <= 120
+    ]
+
+    if close_matches:
+        return close_matches[0]
+
+    return {}
 
 
 def is_first_shift(courier, start_at):
@@ -390,10 +394,28 @@ def is_first_shift(courier, start_at):
     return min(shift_starts) == start_at
 
 
-def get_checkin_state(start_at, available_since):
+def get_checkin_state(start_at, available_since, end_at=None):
     checkin_at = parse_datetime(
         available_since
     )
+
+    if checkin_at:
+        if start_at:
+            earliest_valid_checkin = start_at - timedelta(
+                minutes=40
+            )
+            latest_valid_checkin = (
+                end_at + timedelta(minutes=30)
+                if end_at
+                else start_at + timedelta(hours=5)
+            )
+
+            if not (
+                earliest_valid_checkin
+                <= checkin_at
+                <= latest_valid_checkin
+            ):
+                checkin_at = None
 
     if checkin_at:
         return {
@@ -801,6 +823,7 @@ def build_rows(
         state = get_checkin_state(
             start_at,
             checkin_source,
+            end_at,
         )
         has_muszakpro = bool(
             foglalas_record
@@ -809,6 +832,16 @@ def build_rows(
             giriton_record
         )
         is_checked_in = state["label"] == "Bejelentkezett"
+        current_plate = (
+            assignment.get("License Plate", "")
+            if is_checked_in
+            else ""
+        )
+        current_car_code = (
+            assignment.get("Car", "")
+            if is_checked_in
+            else ""
+        )
         first_shift_missing = (
             is_first_shift(
                 courier,
@@ -851,8 +884,8 @@ def build_rows(
             "checkin": status_pill(state),
             "checkin_text": state["label"],
             "checkin_time": state["time"],
-            "current_plate": assignment.get("License Plate", ""),
-            "car_code": assignment.get("Car", ""),
+            "current_plate": current_plate,
+            "car_code": current_car_code,
             "suggested_plate": vehicle_suggestions.get(
                 assignment_index,
                 assignment.get("License Plate", ""),
