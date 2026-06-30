@@ -50,6 +50,9 @@ from page.statistics import (
 from page.order_statistics import (
     show_order_statistics_page,
 )
+from page.courier_dashboard import (
+    show_courier_dashboard_page,
+)
 
 
 login_screen()
@@ -71,6 +74,7 @@ if user["role"] == "admin":
     menu = [
         "Admin",
         "Mai futárok",
+        "Kifli kártya",
         "Mai műszakok",
         "Várakozó futárok",
         "Live Map",
@@ -79,6 +83,7 @@ if user["role"] == "admin":
 else:
     menu = [
         "Mai futárok",
+        "Kifli kártya",
         "Mai műszakok",
         "Várakozó futárok",
         "Live Map",
@@ -139,6 +144,8 @@ if page == "Admin":
     show_admin_page()
 elif page == "Mai futárok":
     show_today_couriers_page()
+elif page == "Kifli kártya":
+    show_courier_dashboard_page()
 elif page == "Mai műszakok":
     show_today_shifts_page()
 elif page == "Live Map":
