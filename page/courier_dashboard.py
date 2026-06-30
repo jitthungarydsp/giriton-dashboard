@@ -617,6 +617,17 @@ def get_next_shift(attendance_courier):
     return {}
 
 
+def get_future_shift(attendance_courier):
+    now = local_now()
+
+    for shift in get_shift_items(attendance_courier):
+        start_at = shift.get("start_at")
+        if start_at and start_at > now:
+            return shift
+
+    return {}
+
+
 def get_best_route(driver, driver_detail):
     routes = driver_detail.get("routes", [])
 
@@ -819,6 +830,8 @@ def render_no_shift_road():
 
 
 def render_before_shift_road(minutes_to_start):
+    minutes_to_start = max(minutes_to_start, 0)
+
     if minutes_to_start > 40:
         render_shift_state_road(
             "Lassan kezdődik a műszakod",
@@ -941,6 +954,21 @@ def render_route_road(row, details):
         drivers_data,
         courier_id,
     )
+    is_active = driver.get("active")
+
+    if is_active is False:
+        future_shift = get_future_shift(attendance_courier)
+
+        if future_shift:
+            minutes_to_start = int(
+                (future_shift["start_at"] - local_now()).total_seconds() // 60
+            )
+            render_before_shift_road(minutes_to_start)
+        else:
+            render_day_done_road()
+
+        return
+
     current_shift = get_current_shift(attendance_courier)
 
     if not current_shift:
