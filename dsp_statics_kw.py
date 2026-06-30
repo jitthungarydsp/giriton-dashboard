@@ -15,6 +15,7 @@ ATTENDANCE_BASE_URL = (
 )
 
 ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+MAX_AVAILABLE_TO_REGISTERED_WAIT_MINUTES = 180
 
 
 def minutes_between(start_value, end_value):
@@ -41,10 +42,27 @@ def choose_wait_minutes(available_to_registered, registered_to_assigned):
     if (
         available_to_registered != ""
         and available_to_registered >= 0
+        and available_to_registered <= MAX_AVAILABLE_TO_REGISTERED_WAIT_MINUTES
     ):
         return available_to_registered
 
-    return registered_to_assigned
+    if (
+        registered_to_assigned != ""
+        and registered_to_assigned >= 0
+    ):
+        return registered_to_assigned
+
+    return ""
+
+
+def clean_available_to_registered_wait(value):
+    if value == "":
+        return ""
+
+    if value > MAX_AVAILABLE_TO_REGISTERED_WAIT_MINUTES:
+        return ""
+
+    return value
 
 
 def find_matching_shift(route, shifts):
@@ -205,7 +223,9 @@ def build_attendance_route_stat_rows_for_date(work_date):
                     )
                 ),
                 format_minutes(
-                    wait_available_to_registered
+                    clean_available_to_registered_wait(
+                        wait_available_to_registered
+                    )
                 ),
                 format_minutes(
                     wait_registered_to_assigned
