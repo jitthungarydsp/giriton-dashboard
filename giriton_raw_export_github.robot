@@ -11,7 +11,7 @@ Library    String
 
 *** Variables ***
 ${RUN_START_DATE}
-${DAYS_TO_SYNC}    3
+${DAYS_TO_SYNC}    10
 
 
 *** Test Cases ***
@@ -32,8 +32,10 @@ Giriton Raw Export Github
     END
 
     @{rows}=    Create List
+    ${days_to_sync}=    Set Variable If    '${DAYS_TO_SYNC}' == ''    10    ${DAYS_TO_SYNC}
+    ${days_to_sync}=    Convert To Integer    ${days_to_sync}
 
-    FOR    ${nap}    IN RANGE    0    ${DAYS_TO_SYNC}
+    FOR    ${nap}    IN RANGE    0    ${days_to_sync}
         ${datum_giriton}=    Add Time To Date
         ...    ${base_date}
         ...    ${nap} days
