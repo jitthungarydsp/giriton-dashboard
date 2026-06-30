@@ -1,7 +1,6 @@
 from datetime import date
 from html import escape
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -518,6 +517,42 @@ def render_charts(row):
         st.altair_chart(chart, use_container_width=True)
 
 
+def render_stat_cards(row, details, start_date=None, end_date=None):
+    delivered = int(row.get("delivered_orders", 0))
+    routes = int(row.get("routes", 0))
+    worked_days = int(row.get("worked_days", 0))
+    total_addresses = int(row.get("total_address_count", 0))
+    route_mix = calculate_route_mix(
+        details,
+        row,
+        start_date,
+        end_date,
+    )
+    on_time_addresses = max(
+        total_addresses
+        - int(row.get("late_address_count", 0))
+        - int(row.get("early_address_count", 0)),
+        0,
+    )
+
+    cards = [
+        stat_card("Max bevetel lehetoseg", format_currency(route_mix["max_revenue"]), "Expressz + city sav / kor alapjan."),
+        stat_card("Atlag / kor", format_number(row.get("avg_orders_per_route")), "Osszes kivitt cim / teljesitett kor."),
+        stat_card("Normal korok", route_mix["normal_routes"], "City savval becsulve."),
+        stat_card("Expressz korok", route_mix["express_routes"], "Expressz savval becsulve."),
+        stat_card("Kivitt cimek", delivered, "Ennyi csomag talalt gazdara."),
+        stat_card("Korok", routes, "Teljesitett route-ok."),
+        stat_card("Dolgozott napok", worked_days, "Aktiv napok a szuresben."),
+        stat_card("Idoablak pontos", on_time_addresses, "Nem korai, nem keso."),
+        stat_card("Atlag varakozas", format_minutes(row.get("avg_wait_minutes")), "Sorban allas, de szamokban."),
+    ]
+
+    st.markdown(
+        f"<div class=\"stat-grid\">{''.join(cards)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_extra_metrics(row):
     st.subheader("Hasznos apróságok")
     col1, col2, col3, col4 = st.columns(4)
@@ -605,5 +640,4 @@ def show_courier_dashboard_page():
         selected_start,
         selected_end,
     )
-    render_charts(row)
     render_extra_metrics(row)
