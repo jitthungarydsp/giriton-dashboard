@@ -323,6 +323,9 @@ def render_styles():
     padding: 12px 14px;
     text-align: center;
 }
+.route-empty-note {
+    text-align: center;
+}
 @media (max-width: 900px) {
     .courier-hero {
         grid-template-columns: 1fr;
@@ -542,31 +545,31 @@ def render_no_route_road():
     <div class="route-brand">
       <div class="route-brand-logo">K</div>
       <div>
-        <div class="route-road-title">Meg nincs kiosztott utvonalad</div>
-        <div class="route-road-subtitle">Amint megkapod a route-ot, nyomj egy frissitest, es indulhat a palya.</div>
+        <div class="route-road-title">Még nincs kiosztott útvonalad</div>
+        <div class="route-road-subtitle">Amint megkapod a route-ot, nyomj egy frissítést, és indulhat a pálya.</div>
       </div>
     </div>
-    <div class="route-road-subtitle">Depo keszen all</div>
+    <div class="route-road-subtitle">A depó készen áll</div>
   </div>
   <div class="route-road-track" style="--stop-count: 3;">
     <div class="route-stop route-stop-waiting">
       <div class="route-stop-dot">1</div>
-      <div class="route-stop-label">Route varakozik</div>
+      <div class="route-stop-label">Route várakozik</div>
     </div>
     <div class="route-stop route-stop-waiting">
       <div class="route-stop-dot">2</div>
-      <div class="route-stop-label">Cimek betoltese</div>
+      <div class="route-stop-label">Címek betöltése</div>
     </div>
     <div class="route-stop route-stop-waiting">
       <div class="route-stop-dot">3</div>
-      <div class="route-stop-label">Indulasra kesz</div>
+      <div class="route-stop-label">Indulásra kész</div>
     </div>
     <div class="route-depot">
       <div class="route-depot-icon">D</div>
-      <div class="route-stop-label">Depo</div>
+      <div class="route-stop-label">Depó</div>
     </div>
   </div>
-  <div class="fun-note">Ma meg nincs route a neveden. A kave lehet, hogy keszen van, de az utvonal meg pihen egyet.</div>
+  <div class="fun-note route-empty-note">Ma még nincs route a neveden. A kávé lehet, hogy készen van, de az útvonal még pihen egyet.</div>
 </div>
 """,
         unsafe_allow_html=True,
