@@ -263,6 +263,43 @@ def normalize_customers(df):
     else:
         df["arrival_diff_minutes"] = 0
 
+    for column in ["deliverSince", "deliverTill"]:
+        if column not in df.columns:
+            df[column] = ""
+
+        df[f"{column}_dt"] = parse_datetime_series(df[column])
+
+    df["time_window_minutes"] = (
+        df["deliverTill_dt"] - df["deliverSince_dt"]
+    ).dt.total_seconds() / 60
+    df["delivery_type"] = "Expressz"
+    df.loc[
+        df["time_window_minutes"].round().isin([15, 60]),
+        "delivery_type",
+    ] = "Normál"
+    df["normal_address_count"] = (
+        df["delivery_type"] == "Normál"
+    ).astype(int)
+    df["express_address_count"] = (
+        df["delivery_type"] == "Expressz"
+    ).astype(int)
+    df["normal_early_address_count"] = (
+        (df["delivery_type"] == "Normál")
+        & (df["arrival_status_normalized"] == "EARLY")
+    ).astype(int)
+    df["normal_late_address_count"] = (
+        (df["delivery_type"] == "Normál")
+        & (df["arrival_status_normalized"] == "LATE")
+    ).astype(int)
+    df["express_early_address_count"] = (
+        (df["delivery_type"] == "Expressz")
+        & (df["arrival_status_normalized"] == "EARLY")
+    ).astype(int)
+    df["express_late_address_count"] = (
+        (df["delivery_type"] == "Expressz")
+        & (df["arrival_status_normalized"] == "LATE")
+    ).astype(int)
+
     return df
 
 
@@ -512,6 +549,13 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 "_real_loading_minutes": [],
                 "early_address_count": 0,
                 "late_address_count": 0,
+                "total_address_count": 0,
+                "normal_address_count": 0,
+                "express_address_count": 0,
+                "normal_early_address_count": 0,
+                "normal_late_address_count": 0,
+                "express_early_address_count": 0,
+                "express_late_address_count": 0,
             }
 
         return summary[key]
@@ -574,6 +618,25 @@ def build_statistics(start_date=None, end_date=None, user=None):
             item["late_address_count"] += int(
                 row.get("late_address_count", 0)
             )
+            item["total_address_count"] += 1
+            item["normal_address_count"] += int(
+                row.get("normal_address_count", 0)
+            )
+            item["express_address_count"] += int(
+                row.get("express_address_count", 0)
+            )
+            item["normal_early_address_count"] += int(
+                row.get("normal_early_address_count", 0)
+            )
+            item["normal_late_address_count"] += int(
+                row.get("normal_late_address_count", 0)
+            )
+            item["express_early_address_count"] += int(
+                row.get("express_early_address_count", 0)
+            )
+            item["express_late_address_count"] += int(
+                row.get("express_late_address_count", 0)
+            )
 
     if not attendance_routes.empty:
         for _, row in attendance_routes.iterrows():
@@ -632,6 +695,7 @@ def build_statistics(start_date=None, end_date=None, user=None):
         worked_days = len(item["_work_dates"])
         delivered_orders = int(round(item["delivered_orders"]))
         total_orders = int(round(item["total_orders"]))
+        total_addresses = int(item["total_address_count"])
 
         rows.append({
             "courier_id": item["courier_id"],
@@ -657,8 +721,49 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 else 0
             ),
             "late_shift_count": int(item["late_shift_count"]),
+            "total_address_count": total_addresses,
             "early_address_count": int(item["early_address_count"]),
             "late_address_count": int(item["late_address_count"]),
+            "early_address_rate": (
+                item["early_address_count"] / total_addresses * 100
+                if total_addresses
+                else 0
+            ),
+            "late_address_rate": (
+                item["late_address_count"] / total_addresses * 100
+                if total_addresses
+                else 0
+            ),
+            "normal_address_count": int(item["normal_address_count"]),
+            "express_address_count": int(item["express_address_count"]),
+            "normal_address_rate": (
+                item["normal_address_count"] / total_addresses * 100
+                if total_addresses
+                else 0
+            ),
+            "express_address_rate": (
+                item["express_address_count"] / total_addresses * 100
+                if total_addresses
+                else 0
+            ),
+            "normal_early_address_count": int(item["normal_early_address_count"]),
+            "normal_late_address_count": int(item["normal_late_address_count"]),
+            "express_early_address_count": int(item["express_early_address_count"]),
+            "express_late_address_count": int(item["express_late_address_count"]),
+            "normal_late_address_rate": (
+                item["normal_late_address_count"]
+                / item["normal_address_count"]
+                * 100
+                if item["normal_address_count"]
+                else 0
+            ),
+            "express_late_address_rate": (
+                item["express_late_address_count"]
+                / item["express_address_count"]
+                * 100
+                if item["express_address_count"]
+                else 0
+            ),
             "planned_shift_count": int(item["planned_shift_count"]),
             "avg_route_minutes": (
                 sum(item["_route_minutes"]) / len(item["_route_minutes"])
@@ -735,6 +840,17 @@ def build_company_kpis(summary_df):
             "late_shift_count": 0,
             "early_address_count": 0,
             "late_address_count": 0,
+            "total_address_count": 0,
+            "early_address_rate": 0,
+            "late_address_rate": 0,
+            "normal_address_count": 0,
+            "express_address_count": 0,
+            "normal_address_rate": 0,
+            "express_address_rate": 0,
+            "normal_late_address_count": 0,
+            "express_late_address_count": 0,
+            "normal_late_address_rate": 0,
+            "express_late_address_rate": 0,
             "avg_route_minutes": 0,
             "avg_loading_minutes": 0,
             "avg_planned_loading_minutes": 0,
@@ -744,6 +860,13 @@ def build_company_kpis(summary_df):
     routes = summary_df["routes"].sum()
     delivered = summary_df["delivered_orders"].sum()
     worked_days = summary_df["worked_days"].sum()
+    normal_addresses = summary_df["normal_address_count"].sum()
+    express_addresses = summary_df["express_address_count"].sum()
+    total_addresses = summary_df["total_address_count"].sum()
+    early_addresses = summary_df["early_address_count"].sum()
+    late_addresses = summary_df["late_address_count"].sum()
+    normal_late_addresses = summary_df["normal_late_address_count"].sum()
+    express_late_addresses = summary_df["express_late_address_count"].sum()
 
     return {
         "couriers": int(summary_df["courier_id"].replace("", pd.NA).nunique()),
@@ -754,8 +877,43 @@ def build_company_kpis(summary_df):
         "avg_routes_per_workday": routes / worked_days if worked_days else 0,
         "avg_wait_minutes": summary_df["avg_wait_minutes"].mean(),
         "late_shift_count": int(summary_df["late_shift_count"].sum()),
-        "early_address_count": int(summary_df["early_address_count"].sum()),
-        "late_address_count": int(summary_df["late_address_count"].sum()),
+        "early_address_count": int(early_addresses),
+        "late_address_count": int(late_addresses),
+        "total_address_count": int(total_addresses),
+        "early_address_rate": (
+            early_addresses / total_addresses * 100
+            if total_addresses
+            else 0
+        ),
+        "late_address_rate": (
+            late_addresses / total_addresses * 100
+            if total_addresses
+            else 0
+        ),
+        "normal_address_count": int(normal_addresses),
+        "express_address_count": int(express_addresses),
+        "normal_address_rate": (
+            normal_addresses / total_addresses * 100
+            if total_addresses
+            else 0
+        ),
+        "express_address_rate": (
+            express_addresses / total_addresses * 100
+            if total_addresses
+            else 0
+        ),
+        "normal_late_address_count": int(normal_late_addresses),
+        "express_late_address_count": int(express_late_addresses),
+        "normal_late_address_rate": (
+            normal_late_addresses / normal_addresses * 100
+            if normal_addresses
+            else 0
+        ),
+        "express_late_address_rate": (
+            express_late_addresses / express_addresses * 100
+            if express_addresses
+            else 0
+        ),
         "avg_route_minutes": summary_df["avg_route_minutes"].mean(),
         "avg_loading_minutes": summary_df["avg_loading_minutes"].mean(),
         "avg_planned_loading_minutes": summary_df[

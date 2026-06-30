@@ -26,6 +26,13 @@ def format_minutes(value):
     return f"{minutes:.1f} perc"
 
 
+def format_percent(value):
+    try:
+        return f"{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return "0.0%"
+
+
 def display_company_kpis(summary_df, title):
     kpis = build_company_kpis(summary_df)
 
@@ -46,11 +53,35 @@ def display_company_kpis(summary_df, title):
     c10.metric("Valós bepakolás", format_minutes(kpis["avg_real_loading_minutes"]))
 
     c11, c12, c13 = st.columns(3)
-    c11.metric("Korai cím időablakon kívül", kpis["early_address_count"])
-    c12.metric("Késő cím időablakon kívül", kpis["late_address_count"])
+    c11.metric(
+        "Korai cím időablakon kívül",
+        f"{kpis['early_address_count']} ({format_percent(kpis['early_address_rate'])})",
+    )
+    c12.metric(
+        "Késő cím időablakon kívül",
+        f"{kpis['late_address_count']} ({format_percent(kpis['late_address_rate'])})",
+    )
     c13.metric(
         "Tervezett bepakolás",
         format_minutes(kpis["avg_planned_loading_minutes"]),
+    )
+
+    c14, c15, c16, c17 = st.columns(4)
+    c14.metric(
+        "Normál cím",
+        f"{kpis['normal_address_count']} ({format_percent(kpis['normal_address_rate'])})",
+    )
+    c15.metric(
+        "Expressz cím",
+        f"{kpis['express_address_count']} ({format_percent(kpis['express_address_rate'])})",
+    )
+    c16.metric(
+        "Normál késő cím",
+        f"{kpis['normal_late_address_count']} ({format_percent(kpis['normal_late_address_rate'])})",
+    )
+    c17.metric(
+        "Expressz késő cím",
+        f"{kpis['express_late_address_count']} ({format_percent(kpis['express_late_address_rate'])})",
     )
 
 
@@ -69,8 +100,15 @@ def build_summary_table(summary_df):
             "avg_routes_per_workday": "Átlag kör/nap",
             "avg_wait_minutes": "Átlag várakozás (perc)",
             "late_shift_count": "Késéses műszak",
+            "total_address_count": "Címsorok",
             "early_address_count": "Korai cím",
             "late_address_count": "Késő cím",
+            "early_address_rate": "Korai cím %",
+            "late_address_rate": "Késő cím %",
+            "normal_address_count": "Normál cím",
+            "express_address_count": "Expressz cím",
+            "normal_late_address_count": "Normál késő cím",
+            "express_late_address_count": "Expressz késő cím",
             "avg_route_minutes": "Átlag túra hossz (perc)",
             "avg_planned_loading_minutes": "Tervezett bepakolás (perc)",
             "avg_real_loading_minutes": "Valós bepakolás (perc)",
@@ -88,8 +126,15 @@ def build_summary_table(summary_df):
         "Átlag kör/nap",
         "Átlag várakozás (perc)",
         "Késéses műszak",
+        "Címsorok",
         "Korai cím",
         "Késő cím",
+        "Korai cím %",
+        "Késő cím %",
+        "Normál cím",
+        "Expressz cím",
+        "Normál késő cím",
+        "Expressz késő cím",
         "Átlag túra hossz (perc)",
         "Tervezett bepakolás (perc)",
         "Valós bepakolás (perc)",
@@ -103,6 +148,8 @@ def build_summary_table(summary_df):
         "Átlag cím/kör",
         "Átlag kör/nap",
         "Átlag várakozás (perc)",
+        "Korai cím %",
+        "Késő cím %",
         "Átlag túra hossz (perc)",
         "Tervezett bepakolás (perc)",
         "Valós bepakolás (perc)",
@@ -135,10 +182,18 @@ def show_driver_metrics(row):
         f"{int(row['early_address_count'])} / {int(row['late_address_count'])}",
     )
 
-    c11, _ = st.columns([1, 4])
+    c11, c12, c13 = st.columns(3)
     c11.metric(
         "Tervezett bepakolás",
         format_minutes(row["avg_planned_loading_minutes"]),
+    )
+    c12.metric(
+        "Korai / késő %",
+        f"{format_percent(row['early_address_rate'])} / {format_percent(row['late_address_rate'])}",
+    )
+    c13.metric(
+        "Normál / expressz",
+        f"{int(row['normal_address_count'])} / {int(row['express_address_count'])}",
     )
 
 
@@ -281,6 +336,8 @@ def show_driver_details(row, details):
             "address",
             "deliverSince",
             "deliverTill",
+            "time_window_minutes",
+            "delivery_type",
             "realArrivalTime",
             "arrival_status",
             "arrival_diff_minutes",
@@ -301,6 +358,8 @@ def show_driver_details(row, details):
                 "address": "Cím",
                 "deliverSince": "Időablak kezdete",
                 "deliverTill": "Időablak vége",
+                "time_window_minutes": "Időablak perc",
+                "delivery_type": "Típus",
                 "realArrivalTime": "Valós érkezés",
                 "arrival_status": "Státusz",
                 "arrival_diff_minutes": "Eltérés perc",
