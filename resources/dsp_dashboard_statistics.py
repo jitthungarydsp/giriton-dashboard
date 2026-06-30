@@ -149,6 +149,7 @@ def normalize_orders(df):
         df[column] = to_number(df[column])
 
     for column in [
+        "assignedAt",
         "loadingTime",
         "plannedDeparture",
         "realDeparture",
@@ -163,8 +164,11 @@ def normalize_orders(df):
     computed_tour = (
         df["realReturn_dt"] - df["realDeparture_dt"]
     ).dt.total_seconds() / 60
-    computed_loading = (
-        df["realDeparture_dt"] - df["loadingTime_dt"]
+    planned_loading = (
+        df["loadingTime_dt"] - df["assignedAt_dt"]
+    ).dt.total_seconds() / 60
+    real_loading = (
+        df["realDeparture_dt"] - df["assignedAt_dt"]
     ).dt.total_seconds() / 60
 
     df["real_tour_minutes_calc"] = df["realTourMinutes"]
@@ -173,7 +177,19 @@ def normalize_orders(df):
     )
     df["real_tour_minutes_calc"] = df["real_tour_minutes_calc"].fillna(0)
 
-    df["loading_minutes_calc"] = computed_loading.fillna(0)
+    df["planned_loading_minutes_calc"] = planned_loading.fillna(0)
+    df.loc[
+        df["planned_loading_minutes_calc"] < 0,
+        "planned_loading_minutes_calc",
+    ] = 0
+
+    df["real_loading_minutes_calc"] = real_loading.fillna(0)
+    df.loc[
+        df["real_loading_minutes_calc"] < 0,
+        "real_loading_minutes_calc",
+    ] = 0
+
+    df["loading_minutes_calc"] = df["real_loading_minutes_calc"]
     df.loc[df["loading_minutes_calc"] < 0, "loading_minutes_calc"] = 0
 
     return df
@@ -485,11 +501,15 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 "planned_shift_count": 0,
                 "avg_route_minutes": 0,
                 "avg_loading_minutes": 0,
+                "avg_planned_loading_minutes": 0,
+                "avg_real_loading_minutes": 0,
                 "_work_dates": set(),
                 "_route_ids": set(),
                 "_wait_values": [],
                 "_route_minutes": [],
                 "_loading_minutes": [],
+                "_planned_loading_minutes": [],
+                "_real_loading_minutes": [],
                 "early_address_count": 0,
                 "late_address_count": 0,
             }
@@ -527,6 +547,14 @@ def build_statistics(start_date=None, end_date=None, user=None):
             if row.get("loading_minutes_calc", 0) > 0:
                 item["_loading_minutes"].append(
                     float(row.get("loading_minutes_calc", 0))
+                )
+            if row.get("planned_loading_minutes_calc", 0) > 0:
+                item["_planned_loading_minutes"].append(
+                    float(row.get("planned_loading_minutes_calc", 0))
+                )
+            if row.get("real_loading_minutes_calc", 0) > 0:
+                item["_real_loading_minutes"].append(
+                    float(row.get("real_loading_minutes_calc", 0))
                 )
 
     if not customers.empty:
@@ -642,6 +670,18 @@ def build_statistics(start_date=None, end_date=None, user=None):
                 if item["_loading_minutes"]
                 else 0
             ),
+            "avg_planned_loading_minutes": (
+                sum(item["_planned_loading_minutes"])
+                / len(item["_planned_loading_minutes"])
+                if item["_planned_loading_minutes"]
+                else 0
+            ),
+            "avg_real_loading_minutes": (
+                sum(item["_real_loading_minutes"])
+                / len(item["_real_loading_minutes"])
+                if item["_real_loading_minutes"]
+                else 0
+            ),
         })
 
     summary_df = pd.DataFrame(rows)
@@ -697,6 +737,8 @@ def build_company_kpis(summary_df):
             "late_address_count": 0,
             "avg_route_minutes": 0,
             "avg_loading_minutes": 0,
+            "avg_planned_loading_minutes": 0,
+            "avg_real_loading_minutes": 0,
         }
 
     routes = summary_df["routes"].sum()
@@ -716,4 +758,10 @@ def build_company_kpis(summary_df):
         "late_address_count": int(summary_df["late_address_count"].sum()),
         "avg_route_minutes": summary_df["avg_route_minutes"].mean(),
         "avg_loading_minutes": summary_df["avg_loading_minutes"].mean(),
+        "avg_planned_loading_minutes": summary_df[
+            "avg_planned_loading_minutes"
+        ].mean(),
+        "avg_real_loading_minutes": summary_df[
+            "avg_real_loading_minutes"
+        ].mean(),
     }

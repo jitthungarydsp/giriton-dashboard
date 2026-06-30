@@ -43,11 +43,15 @@ def display_company_kpis(summary_df, title):
     c7.metric("Átlag kör/nap", format_number(kpis["avg_routes_per_workday"]))
     c8.metric("Átlag várakozás", format_minutes(kpis["avg_wait_minutes"]))
     c9.metric("Átlag túra hossz", format_minutes(kpis["avg_route_minutes"]))
-    c10.metric("Átlag bepakolás", format_minutes(kpis["avg_loading_minutes"]))
+    c10.metric("Valós bepakolás", format_minutes(kpis["avg_real_loading_minutes"]))
 
-    c11, c12 = st.columns(2)
+    c11, c12, c13 = st.columns(3)
     c11.metric("Korai cím időablakon kívül", kpis["early_address_count"])
     c12.metric("Késő cím időablakon kívül", kpis["late_address_count"])
+    c13.metric(
+        "Tervezett bepakolás",
+        format_minutes(kpis["avg_planned_loading_minutes"]),
+    )
 
 
 def build_summary_table(summary_df):
@@ -68,7 +72,8 @@ def build_summary_table(summary_df):
             "early_address_count": "Korai cím",
             "late_address_count": "Késő cím",
             "avg_route_minutes": "Átlag túra hossz (perc)",
-            "avg_loading_minutes": "Átlag bepakolás (perc)",
+            "avg_planned_loading_minutes": "Tervezett bepakolás (perc)",
+            "avg_real_loading_minutes": "Valós bepakolás (perc)",
         }
     )
 
@@ -86,7 +91,8 @@ def build_summary_table(summary_df):
         "Korai cím",
         "Késő cím",
         "Átlag túra hossz (perc)",
-        "Átlag bepakolás (perc)",
+        "Tervezett bepakolás (perc)",
+        "Valós bepakolás (perc)",
     ]
 
     for column in columns:
@@ -98,7 +104,8 @@ def build_summary_table(summary_df):
         "Átlag kör/nap",
         "Átlag várakozás (perc)",
         "Átlag túra hossz (perc)",
-        "Átlag bepakolás (perc)",
+        "Tervezett bepakolás (perc)",
+        "Valós bepakolás (perc)",
     ]
 
     for column in numeric_columns:
@@ -122,10 +129,16 @@ def show_driver_metrics(row):
     c6.metric("Átlag kör/nap", format_number(row["avg_routes_per_workday"]))
     c7.metric("Átlag várakozás", format_minutes(row["avg_wait_minutes"]))
     c8.metric("Átlag túra hossz", format_minutes(row["avg_route_minutes"]))
-    c9.metric("Átlag bepakolás", format_minutes(row["avg_loading_minutes"]))
+    c9.metric("Valós bepakolás", format_minutes(row["avg_real_loading_minutes"]))
     c10.metric(
         "Korai / késő cím",
         f"{int(row['early_address_count'])} / {int(row['late_address_count'])}",
+    )
+
+    c11, _ = st.columns([1, 4])
+    c11.metric(
+        "Tervezett bepakolás",
+        format_minutes(row["avg_planned_loading_minutes"]),
     )
 
 
@@ -184,10 +197,12 @@ def show_driver_details(row, details):
             "warehouseName",
             "numDeliveredOrders",
             "numTotalOrders",
+            "assignedAt",
             "loadingTime",
             "realDeparture",
             "realReturn",
-            "loading_minutes_calc",
+            "planned_loading_minutes_calc",
+            "real_loading_minutes_calc",
             "real_tour_minutes_calc",
         ]
         visible = [
@@ -203,10 +218,12 @@ def show_driver_details(row, details):
                 "warehouseName": "Raktár",
                 "numDeliveredOrders": "Kivitt cím",
                 "numTotalOrders": "Össz. cím",
+                "assignedAt": "Túrát kapott",
                 "loadingTime": "Pakolás kezdete",
                 "realDeparture": "Indulás",
                 "realReturn": "Visszaérkezés",
-                "loading_minutes_calc": "Bepakolás perc",
+                "planned_loading_minutes_calc": "Tervezett bepakolás perc",
+                "real_loading_minutes_calc": "Valós bepakolás perc",
                 "real_tour_minutes_calc": "Túra perc",
             }
         )
