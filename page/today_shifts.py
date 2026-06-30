@@ -805,6 +805,13 @@ def build_rows(
                 {},
             )
 
+        assignment = source.get(
+            "assignment",
+            {},
+        )
+        assignment_index = source.get(
+            "assignment_index"
+        )
         checkin_source = attendance_shift.get("availableForShiftSince")
 
         should_check_route_registration = (
@@ -857,13 +864,6 @@ def build_rows(
         )
         email_sent = bool(
             st.session_state.get(email_key)
-        )
-        assignment = source.get(
-            "assignment",
-            {},
-        )
-        assignment_index = source.get(
-            "assignment_index"
         )
 
         rows.append({
@@ -1590,11 +1590,13 @@ def show_today_shifts_page():
             "Műszak ellenőrzés frissítve."
         )
 
-    vehicle_data = load_vehicle_assignments()
-    attendance_data = load_attendance_for_date(
-        work_date_text
-    )
-    drivers_data = load_drivers()
+    vehicle_data = {}
+    attendance_data = {
+        "couriers": [],
+    }
+    drivers_data = {
+        "drivers": [],
+    }
 
     try:
         (

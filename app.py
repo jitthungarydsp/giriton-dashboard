@@ -32,9 +32,6 @@ from resources.auth import (
 from page.admin import (
     show_admin_page,
 )
-from page.robots import (
-    show_robots_page,
-)
 from page.today_couriers import (
     show_today_couriers_page,
 )
@@ -70,7 +67,6 @@ logout_button()
 if user["role"] == "admin":
     menu = [
         "Admin",
-        "Robotok",
         "Mai futárok",
         "Mai műszakok",
         "Várakozó futárok",
@@ -132,8 +128,6 @@ else:
 
 if page == "Admin":
     show_admin_page()
-elif page == "Robotok":
-    show_robots_page()
 elif page == "Mai futárok":
     show_today_couriers_page()
 elif page == "Mai műszakok":
