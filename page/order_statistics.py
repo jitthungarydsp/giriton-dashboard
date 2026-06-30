@@ -115,7 +115,7 @@ def build_bucket_table(customers, selected_date):
         .sort_values("time_bucket_label")
     )
 
-    return grouped.rename(
+    grouped = grouped.rename(
         columns={
             "time_bucket_label": "Idosav",
             "megrendelesek": "Megrendelesek",
