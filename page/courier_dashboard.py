@@ -879,6 +879,18 @@ def get_route_checkpoint_stops(route):
     return stops
 
 
+def get_current_route_stop(route):
+    stops = get_route_checkpoint_stops(route)
+
+    if not stops:
+        return {}
+
+    return next(
+        (stop for stop in stops if stop.get("current")),
+        stops[-1],
+    )
+
+
 def render_route_road(row, details):
     courier_id = normalize_id(row.get("courier_id"))
     attendance_data, drivers_data = load_live_courier_sources()
@@ -915,7 +927,8 @@ def render_route_road(row, details):
     )
 
     if route_is_open:
-        stops = get_route_checkpoint_stops(open_route)
+        current_route_stop = get_current_route_stop(open_route)
+        stops = [current_route_stop] if current_route_stop else []
     else:
         stops = []
 
