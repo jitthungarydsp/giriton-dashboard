@@ -180,12 +180,158 @@ def render_styles():
     background: #fee2e2;
     color: #991b1b;
 }
+.route-road-card {
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+    margin: 10px 0 18px;
+    padding: 18px;
+}
+.route-road-head {
+    align-items: center;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+.route-brand {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    font-weight: 900;
+}
+.route-brand-logo {
+    align-items: center;
+    background: #6cab2f;
+    border-radius: 14px;
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 22px;
+    height: 44px;
+    justify-content: center;
+    width: 44px;
+}
+.route-road-title {
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 900;
+}
+.route-road-subtitle {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+}
+.route-road-track {
+    align-items: center;
+    display: grid;
+    gap: 0;
+    grid-template-columns: repeat(var(--stop-count), minmax(64px, 1fr)) 82px;
+    min-height: 118px;
+    overflow-x: auto;
+    padding: 10px 0 4px;
+    position: relative;
+}
+.route-road-track:before {
+    background: linear-gradient(90deg, #cbd5e1 0%, #94a3b8 100%);
+    border-radius: 999px;
+    content: "";
+    height: 8px;
+    left: 32px;
+    position: absolute;
+    right: 44px;
+    top: 48px;
+}
+.route-stop {
+    min-width: 74px;
+    position: relative;
+    text-align: center;
+    z-index: 1;
+}
+.route-stop-dot {
+    align-items: center;
+    border: 4px solid #ffffff;
+    border-radius: 999px;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 900;
+    height: 40px;
+    justify-content: center;
+    width: 40px;
+}
+.route-stop-current .route-stop-dot {
+    background: #16a34a;
+}
+.route-stop-waiting .route-stop-dot {
+    background: #facc15;
+    color: #713f12;
+}
+.route-stop-label {
+    color: #334155;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1.25;
+    margin-top: 8px;
+}
+.route-depot {
+    position: relative;
+    text-align: center;
+    z-index: 1;
+}
+.route-depot-icon {
+    align-items: center;
+    background: #0f172a;
+    border: 4px solid #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.20);
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 20px;
+    height: 48px;
+    justify-content: center;
+    width: 48px;
+}
+.bag-alert-preview {
+    background: #ecfdf5;
+    border: 1px solid #bbf7d0;
+    border-radius: 14px;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1.2fr .8fr;
+    margin-top: 14px;
+    padding: 14px;
+}
+.bag-alert-title {
+    color: #166534;
+    font-size: 15px;
+    font-weight: 900;
+}
+.bag-alert-copy {
+    color: #334155;
+    font-size: 13px;
+    line-height: 1.45;
+    margin-top: 4px;
+}
+.bag-alert-button {
+    align-self: center;
+    background: #16a34a;
+    border-radius: 12px;
+    color: #ffffff;
+    font-weight: 900;
+    padding: 12px 14px;
+    text-align: center;
+}
 @media (max-width: 900px) {
     .courier-hero {
         grid-template-columns: 1fr;
     }
     .stat-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .bag-alert-preview {
+        grid-template-columns: 1fr;
     }
 }
 </style>
@@ -314,6 +460,147 @@ def render_today_shifts(row, user):
   <div class="today-shift-title">{title}</div>
   <div class="stat-note">{note}</div>
   {body}
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def get_route_road_stops(row, details):
+    customers = details.get("customers", pd.DataFrame())
+    courier_id = normalize_id(row.get("courier_id"))
+
+    if customers.empty or not courier_id or "courierId" not in customers.columns:
+        return []
+
+    customers = customers.copy()
+    customers = customers[
+        customers["courierId"].apply(normalize_id) == courier_id
+    ]
+
+    if customers.empty:
+        return []
+
+    if "date" in customers.columns:
+        customers["date_dt"] = pd.to_datetime(
+            customers["date"],
+            errors="coerce",
+        ).dt.date
+        today = date.today()
+        today_rows = customers[customers["date_dt"] == today]
+        if not today_rows.empty:
+            customers = today_rows
+        else:
+            latest_date = customers["date_dt"].dropna().max()
+            if pd.notna(latest_date):
+                customers = customers[customers["date_dt"] == latest_date]
+
+    if "routeId" in customers.columns:
+        route_ids = customers["routeId"].dropna().astype(str)
+        if not route_ids.empty:
+            latest_route_id = route_ids.iloc[-1]
+            customers = customers[
+                customers["routeId"].astype(str) == latest_route_id
+            ]
+
+    if "position" in customers.columns:
+        customers["position_sort"] = pd.to_numeric(
+            customers["position"],
+            errors="coerce",
+        ).fillna(9999)
+        customers = customers.sort_values("position_sort")
+
+    stops = []
+    current_index = None
+
+    for index, (_, customer) in enumerate(customers.head(8).iterrows()):
+        real_arrival = str(customer.get("realArrivalTime", "") or "").strip()
+        if current_index is None and not real_arrival:
+            current_index = index
+
+        address = str(customer.get("address", "") or "").strip()
+        position = str(customer.get("position", index + 1) or index + 1)
+        stops.append(
+            {
+                "position": position,
+                "address": address or f"Cim {position}",
+            }
+        )
+
+    if stops and current_index is None:
+        current_index = len(stops) - 1
+
+    for index, stop in enumerate(stops):
+        stop["current"] = index == current_index
+
+    return stops
+
+
+def render_route_road(row, details):
+    stops = get_route_road_stops(row, details)
+
+    if not stops:
+        stops = [
+            {"position": "1", "address": "Elso cim", "current": False},
+            {"position": "2", "address": "Aktualis cim", "current": True},
+            {"position": "3", "address": "Kovetkezo cim", "current": False},
+            {"position": "4", "address": "Utolso cim", "current": False},
+        ]
+
+    current_stop = next(
+        (stop for stop in stops if stop.get("current")),
+        stops[0],
+    )
+    stop_count = max(len(stops), 1)
+    stop_html = []
+
+    for stop in stops:
+        css_class = (
+            "route-stop-current"
+            if stop.get("current")
+            else "route-stop-waiting"
+        )
+        address = escape(str(stop.get("address", "")))
+        position = escape(str(stop.get("position", "")))
+        short_address = address[:34] + "..." if len(address) > 34 else address
+        stop_html.append(
+            f"""
+<div class="route-stop {css_class}">
+  <div class="route-stop-dot">{position}</div>
+  <div class="route-stop-label">{short_address}</div>
+</div>
+"""
+        )
+
+    current_address = escape(str(current_stop.get("address", "")))
+
+    st.markdown(
+        f"""
+<div class="route-road-card">
+  <div class="route-road-head">
+    <div class="route-brand">
+      <div class="route-brand-logo">K</div>
+      <div>
+        <div class="route-road-title">Mai utvonal</div>
+        <div class="route-road-subtitle">Zold jel = aktualis cim, sarga jel = meg hatralevo/allapotban levo cim</div>
+      </div>
+    </div>
+    <div class="route-road-subtitle">Depo a celban</div>
+  </div>
+  <div class="route-road-track" style="--stop-count: {stop_count};">
+    {''.join(stop_html)}
+    <div class="route-depot">
+      <div class="route-depot-icon">D</div>
+      <div class="route-stop-label">Depo</div>
+    </div>
+  </div>
+  <div class="bag-alert-preview">
+    <div>
+      <div class="bag-alert-title">Taska hiany bejelentes - design elonezet</div>
+      <div class="bag-alert-copy">Aktualis cim: <strong>{current_address}</strong><br>Kesobb innen indulhat majd a sablon e-mail es a kep csatolasa az elore megadott cimre.</div>
+    </div>
+    <div class="bag-alert-button">Taska hiany jelzese</div>
+  </div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -634,6 +921,7 @@ def show_courier_dashboard_page():
 
     render_hero(row, user)
     render_today_shifts(row, user)
+    render_route_road(row, details)
     render_stat_cards(
         row,
         details,
