@@ -1,7 +1,7 @@
 import requests
-from dsp_common_kw import hu_time
+from dsp_common_kw import local_today
 
-from datetime import date, timedelta
+from datetime import timedelta
 from google_client import open_spreadsheet
 
 spreadsheet = open_spreadsheet(
@@ -29,7 +29,7 @@ def load_drivers():
         "warehouse_name"
     ]]
 
-    today = date.today()
+    today = local_today()
     current = today.replace(day=1)
     
     #today = date.today()

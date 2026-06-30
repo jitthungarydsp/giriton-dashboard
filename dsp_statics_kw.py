@@ -1,5 +1,5 @@
 from datetime import datetime
-from dsp_common_kw import hu_time
+from dsp_common_kw import parse_datetime
 from google_client import open_spreadsheet
 
 spreadsheet = open_spreadsheet(
@@ -312,30 +312,24 @@ def calculate_arrival_status():
 
             if real_arrival:
 
-                deliver_since = datetime.fromisoformat(
+                deliver_since = parse_datetime(
                     row[
                         idx["deliverSince"]
-                    ].replace(
-                        "Z",
-                        "+00:00"
-                    )
+                    ]
                 )
 
-                deliver_till = datetime.fromisoformat(
+                deliver_till = parse_datetime(
                     row[
                         idx["deliverTill"]
-                    ].replace(
-                        "Z",
-                        "+00:00"
-                    )
+                    ]
                 )
 
-                real_arrival = datetime.fromisoformat(
-                    real_arrival.replace(
-                        "Z",
-                        "+00:00"
-                    )
+                real_arrival = parse_datetime(
+                    real_arrival
                 )
+
+                if not deliver_since or not deliver_till or not real_arrival:
+                    raise ValueError("Missing arrival time value")
 
                 if (
                     deliver_since
