@@ -53,6 +53,9 @@ from page.order_statistics import (
 from page.courier_dashboard import (
     show_courier_dashboard_page,
 )
+from page.robots import (
+    show_robots_page,
+)
 
 
 login_screen()
@@ -73,6 +76,7 @@ logout_button()
 if user["role"] == "admin":
     menu = [
         "Admin",
+        "Robotok",
         "Mai futárok",
         "Kifli kártya",
         "Mai műszakok",
@@ -142,6 +146,8 @@ else:
 
 if page == "Admin":
     show_admin_page()
+elif page == "Robotok":
+    show_robots_page()
 elif page == "Mai futárok":
     show_today_couriers_page()
 elif page == "Kifli kártya":
