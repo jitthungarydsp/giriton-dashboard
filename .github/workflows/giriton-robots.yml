@@ -27,6 +27,14 @@ on:
         options:
           - "true"
           - "false"
+      run_raw_export:
+        description: "Uj nyers Giriton/Foglalasok/Attendance export futtatasa"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
       girition_start_date:
         description: "Girition kezdo datum YYYY-MM-DD formatumban"
         required: false
@@ -169,3 +177,48 @@ jobs:
       - name: Run DSP statistics
         run: |
           python dsp.py
+
+  raw_export:
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_raw_export == 'true') }}
+    timeout-minutes: 45
+
+    env:
+      GIRITON_USER: ${{ secrets.GIRITON_USER }}
+      GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate raw export environment
+        run: |
+          test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
+          test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
+          google-chrome --version || chromium-browser --version || chromium --version
+
+      - name: Run raw Giriton export robot
+        run: |
+          python -m robot --loglevel DEBUG --outputdir results/raw-export giriton_raw_export_github.robot
+
+      - name: Upload raw export artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-export-results
+          path: |
+            results/**
+          if-no-files-found: ignore

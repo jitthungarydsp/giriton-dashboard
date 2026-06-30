@@ -1,0 +1,252 @@
+*** Settings ***
+Resource    resources/keywords.robot
+Resource    resources/variables.robot
+Library    resources/raw_giriton_export_sheet.py
+Library    resources/giriton_attendance_scraper.py
+Library    SeleniumLibrary
+Library    DateTime
+Library    Collections
+Library    String
+
+
+*** Variables ***
+${RUN_START_DATE}
+${DAYS_TO_SYNC}    3
+
+
+*** Test Cases ***
+Giriton Raw Export Local
+    keywords.Bejelentkezes
+    keywords.Click Shift Subs
+    keywords.Select All Departments
+
+    Sleep    10
+
+    ${today}=    Get Current Date
+    ...    result_format=%Y-%m-%d
+
+    ${base_date}=    Set Variable    ${today}
+
+    IF    '${RUN_START_DATE}' != ''
+        ${base_date}=    Set Variable    ${RUN_START_DATE}
+    END
+
+    @{rows}=    Create List
+
+    FOR    ${nap}    IN RANGE    0    ${DAYS_TO_SYNC}
+        ${datum_giriton}=    Add Time To Date
+        ...    ${base_date}
+        ...    ${nap} days
+        ...    result_format=%d/%m/%Y
+
+        ${datum_sheet}=    Add Time To Date
+        ...    ${base_date}
+        ...    ${nap} days
+        ...    result_format=%Y-%m-%d
+
+        ${datum_oldal}=    Add Time To Date
+        ...    ${base_date}
+        ...    ${nap} days
+        ...    result_format=%d.%m.%Y
+
+        Log To Console
+        ...    DATUM=${datum_giriton}
+
+        Click Element
+        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+
+        Press Keys
+        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+        ...    CTRL+A
+
+        Input Text
+        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+        ...    ${datum_giriton}
+
+        Press Keys
+        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+        ...    ENTER
+
+        Sleep    5s
+
+        Execute Javascript
+        ...    let els=[...document.querySelectorAll('*')]; let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight); let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0]; if(biggest){biggest.scrollTop=0;}
+
+        Sleep    2
+
+        FOR    ${i}    IN RANGE    15
+            Execute Javascript
+            ...    let els=[...document.querySelectorAll('*')];
+            ...    let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight);
+            ...    let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
+            ...    if(biggest){biggest.scrollTop=biggest.scrollHeight;}
+
+            Sleep    1s
+        END
+
+        Sleep    2s
+
+        ${muszakok}=    Get WebElements
+        ...    xpath=//div[contains(@class,'panel-title')]
+
+        ${raktarak}=    Get WebElements
+        ...    xpath=//div[contains(@class,'elementDirectionRtl ')]
+
+        ${users}=    Get WebElements
+        ...    xpath=//div[contains(@class,'subscribed-persons-label')]
+
+        ${foglaltsagok}=    Get WebElements
+        ...    xpath=//div[@class='v-label v-widget v-label-undef-w']
+
+        @{uj_foglaltsagok}=    Create List
+
+        ${dbfog}=    Get Length    ${foglaltsagok}
+
+        FOR    ${i}    IN RANGE    ${dbfog}
+            ${txt}=    Get Text    ${foglaltsagok}[${i}]
+            ${txt}=    Strip String    ${txt}
+
+            IF    '/' in '${txt}'
+                Append To List
+                ...    ${uj_foglaltsagok}
+                ...    ${foglaltsagok}[${i}]
+            END
+        END
+
+        ${foglaltsagok}=    Set Variable    ${uj_foglaltsagok}
+        ${db}=    Get Length    ${muszakok}
+
+        FOR    ${i}    IN RANGE    ${db}
+            ${muszak}=        Get Text    ${muszakok}[${i}]
+            ${raktar_txt}=    Get Text    ${raktarak}[${i}]
+            ${user_txt}=      Get Text    ${users}[${i}]
+            ${foglaltsag}=    Get Text    ${foglaltsagok}[${i}]
+            ${foglaltsag}=    Strip String    ${foglaltsag}
+
+            ${fog_parts}=    Split String
+            ...    ${foglaltsag}
+            ...    /
+
+            ${foglalt}=    Strip String
+            ...    ${fog_parts}[0]
+
+            ${maximum}=    Strip String
+            ...    ${fog_parts}[1]
+
+            ${foglalt_int}=    Convert To Integer    ${foglalt}
+            ${maximum_int}=    Convert To Integer    ${maximum}
+
+            ${parts}=       Split String    ${muszak}    körös:
+            ${idoszak}=     Set Variable    ${parts}[1]
+            ${idoszak}=     Strip String    ${idoszak}
+            ${times}=       Split String    ${idoszak}    -
+
+            ${kezdes}=      Strip String    ${times}[0]
+            ${ora}=         Fetch From Left    ${kezdes}    :
+            ${perc}=        Fetch From Right   ${kezdes}    :
+            ${ora}=         Convert To Integer    ${ora}
+            ${kezdes}=      Set Variable    ${ora}:${perc}
+
+            ${vege}=        Strip String    ${times}[1]
+            ${ora}=         Fetch From Left    ${vege}    :
+            ${perc}=        Fetch From Right   ${vege}    :
+            ${ora}=         Convert To Integer    ${ora}
+            ${vege}=        Set Variable    ${ora}:${perc}
+
+            ${nev_parts}=    Split String    ${user_txt}    :
+            ${nev}=          Set Variable    ${nev_parts}[1]
+            ${nev}=          Strip String    ${nev}
+
+            IF    '${nev}' == '(none)'
+                @{nevek}=    Create List    URES
+            ELSE
+                @{nevek}=    Split String    ${nev}    ,
+            END
+
+            ${raktar}=    Set Variable    URES
+
+            IF    'BUD1' in '''${raktar_txt}'''
+                ${raktar}=    Set Variable    BUD1
+            ELSE IF    'BUD2' in '''${raktar_txt}'''
+                ${raktar}=    Set Variable    BUD2
+            END
+
+            FOR    ${egy_nev}    IN    @{nevek}
+                ${egy_nev}=    Strip String    ${egy_nev}
+
+                ${row}=    Create List
+                ...    ${datum_sheet}
+                ...    ${kezdes}
+                ...    ${vege}
+                ...    ${raktar}
+                ...    ${foglaltsag}
+                ...    ${foglalt}
+                ...    ${maximum}
+                ...    ${egy_nev}
+
+                Append To List
+                ...    ${rows}
+                ...    ${row}
+            END
+        END
+    END
+
+    ${dbrows}=    Get Length    ${rows}
+
+    Log To Console
+    ...    SOROK_SZAMA=${dbrows}
+
+    ${result}=    raw_giriton_export_sheet.Write Raw Export
+    ...    ${rows}
+
+    Log To Console
+    ...    RAW_EXPORT=${result}
+
+    keywords.Click Attendance
+
+    @{attendance_rows}=    Create List
+
+    ${attendance_datum_giriton}=    Add Time To Date
+    ...    ${base_date}
+    ...    0 days
+    ...    result_format=%d/%m/%Y
+
+    ${attendance_datum_sheet}=    Add Time To Date
+    ...    ${base_date}
+    ...    0 days
+    ...    result_format=%Y-%m-%d
+
+    Log To Console
+    ...    ATTENDANCE_DATUM=${attendance_datum_giriton}
+
+    Execute Javascript
+    ...    const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el => el.offsetWidth > 0 && el.offsetHeight > 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
+    ...    ARGUMENTS
+    ...    ${attendance_datum_giriton}
+
+    Sleep    4s
+
+    ${daily_attendance}=    giriton_attendance_scraper.Scrape Attendance Rows
+    ...    ${attendance_datum_sheet}
+
+    FOR    ${attendance_row}    IN    @{daily_attendance}
+        Append To List
+        ...    ${attendance_rows}
+        ...    ${attendance_row}
+    END
+
+    ${attendance_count}=    Get Length    ${attendance_rows}
+
+    Log To Console
+    ...    ATTENDANCE_SOROK_SZAMA=${attendance_count}
+
+    ${attendance_result}=    raw_giriton_export_sheet.Write Attendance Export
+    ...    ${attendance_rows}
+
+    Log To Console
+    ...    ATTENDANCE_EXPORT=${attendance_result}
+
+    ${stats_result}=    raw_giriton_export_sheet.Build Courier Login Stats
+
+    Log To Console
+    ...    COURIER_LOGIN_STATS=${stats_result}
