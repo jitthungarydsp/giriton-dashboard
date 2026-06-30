@@ -1,10 +1,330 @@
-from datetime import datetime
-from dsp_common_kw import parse_datetime
+from datetime import datetime, timedelta
+
+import requests
+
+from dsp_common_kw import hu_time, local_today, parse_datetime
 from google_client import open_spreadsheet
 
 spreadsheet = open_spreadsheet(
     "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 )
+
+ATTENDANCE_BASE_URL = (
+    "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+    "fetch-attendance/JIT"
+)
+
+ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+
+
+def minutes_between(start_value, end_value):
+    start = parse_datetime(start_value)
+    end = parse_datetime(end_value)
+
+    if not start or not end:
+        return ""
+
+    return round(
+        (end - start).total_seconds() / 60,
+        1
+    )
+
+
+def format_minutes(value):
+    if value == "":
+        return ""
+
+    return value
+
+
+def choose_wait_minutes(available_to_registered, registered_to_assigned):
+    if (
+        available_to_registered != ""
+        and available_to_registered >= 0
+    ):
+        return available_to_registered
+
+    return registered_to_assigned
+
+
+def find_matching_shift(route, shifts):
+    route_registered = parse_datetime(
+        route.get("courierRegisteredAt")
+    )
+    route_assigned = parse_datetime(
+        route.get("assignedAt")
+    )
+    route_departure = (
+        parse_datetime(route.get("realDeparture"))
+        or parse_datetime(route.get("plannedDeparture"))
+    )
+
+    parsed_shifts = []
+
+    for shift in shifts:
+        parsed_shifts.append({
+            "raw": shift,
+            "start": parse_datetime(shift.get("shiftStart")),
+            "end": parse_datetime(shift.get("shiftEnd")),
+            "available": parse_datetime(
+                shift.get("availableForShiftSince")
+            ),
+        })
+
+    for item in parsed_shifts:
+        available = item["available"]
+
+        if not available:
+            continue
+
+        if route_registered and available == route_registered:
+            return item["raw"], "available=courierRegisteredAt"
+
+        if route_assigned and available == route_assigned:
+            return item["raw"], "available=assignedAt"
+
+    if route_departure:
+        for item in parsed_shifts:
+            start = item["start"]
+            end = item["end"]
+
+            if start and end and start <= route_departure <= end:
+                return item["raw"], "routeDepartureInShift"
+
+    candidates = []
+
+    for item in parsed_shifts:
+        available = item["available"]
+
+        if not available:
+            continue
+
+        distances = []
+
+        if route_registered:
+            distances.append(
+                abs(
+                    (
+                        route_registered - available
+                    ).total_seconds()
+                )
+            )
+
+        if route_assigned:
+            distances.append(
+                abs(
+                    (
+                        route_assigned - available
+                    ).total_seconds()
+                )
+            )
+
+        if distances:
+            candidates.append(
+                (
+                    min(distances),
+                    item["raw"]
+                )
+            )
+
+    if candidates:
+        return sorted(
+            candidates,
+            key=lambda item: item[0]
+        )[0][1], "closestAvailable"
+
+    if shifts:
+        return shifts[0], "firstShiftFallback"
+
+    return {}, ""
+
+
+def fetch_attendance_for_date(work_date):
+    url = (
+        f"{ATTENDANCE_BASE_URL}/{work_date}"
+        f"?organizationId={ORGANIZATION_ID}"
+    )
+
+    response = requests.get(
+        url,
+        timeout=60
+    )
+    response.raise_for_status()
+
+    return response.json()
+
+
+def build_attendance_route_stat_rows_for_date(work_date):
+    data = fetch_attendance_for_date(work_date)
+    rows = []
+
+    for courier in data.get("couriers", []):
+        shifts = courier.get("shifts", [])
+        routes = courier.get("routes", [])
+
+        for route in routes:
+            shift, match_source = find_matching_shift(
+                route,
+                shifts
+            )
+
+            available = shift.get(
+                "availableForShiftSince",
+                ""
+            )
+            wait_available_to_registered = minutes_between(
+                available,
+                route.get("courierRegisteredAt")
+            )
+            wait_registered_to_assigned = minutes_between(
+                route.get("courierRegisteredAt"),
+                route.get("assignedAt")
+            )
+
+            rows.append([
+                work_date,
+                courier.get("courierId", ""),
+                courier.get("courierName", ""),
+                courier.get("warehouseName", ""),
+                shift.get("shiftId", ""),
+                shift.get("shiftName", ""),
+                hu_time(shift.get("shiftStart", "")),
+                hu_time(shift.get("shiftEnd", "")),
+                hu_time(available),
+                route.get("routeId", ""),
+                hu_time(route.get("courierRegisteredAt", "")),
+                hu_time(route.get("assignedAt", "")),
+                hu_time(route.get("plannedDeparture", "")),
+                hu_time(route.get("realDeparture", "")),
+                hu_time(route.get("plannedReturn", "")),
+                hu_time(route.get("realReturn", "")),
+                format_minutes(
+                    choose_wait_minutes(
+                        wait_available_to_registered,
+                        wait_registered_to_assigned
+                    )
+                ),
+                format_minutes(
+                    wait_available_to_registered
+                ),
+                format_minutes(
+                    wait_registered_to_assigned
+                ),
+                format_minutes(
+                    minutes_between(
+                        route.get("plannedDeparture"),
+                        route.get("realDeparture")
+                    )
+                ),
+                format_minutes(
+                    minutes_between(
+                        route.get("plannedReturn"),
+                        route.get("realReturn")
+                    )
+                ),
+                format_minutes(
+                    minutes_between(
+                        route.get("realDeparture"),
+                        route.get("realReturn")
+                    )
+                ),
+                match_source,
+            ])
+
+    return rows
+
+
+def create_attendance_route_statistics(start_date=None, end_date=None):
+    try:
+        ws_stats = spreadsheet.worksheet(
+            "DSP_Attendance_Route_Stats"
+        )
+    except:
+        ws_stats = spreadsheet.add_worksheet(
+            title="DSP_Attendance_Route_Stats",
+            rows=50000,
+            cols=30
+        )
+
+    today = local_today()
+
+    if start_date:
+        current = datetime.strptime(
+            str(start_date),
+            "%Y-%m-%d"
+        ).date()
+    else:
+        current = today.replace(day=1)
+
+    if end_date:
+        last_day = datetime.strptime(
+            str(end_date),
+            "%Y-%m-%d"
+        ).date()
+    else:
+        last_day = today
+
+    rows = [[
+        "date",
+        "courierId",
+        "courierName",
+        "warehouseName",
+        "shiftId",
+        "shiftName",
+        "shiftStart",
+        "shiftEnd",
+        "availableForShiftSince",
+        "routeId",
+        "courierRegisteredAt",
+        "assignedAt",
+        "plannedDeparture",
+        "realDeparture",
+        "plannedReturn",
+        "realReturn",
+        "wait_minutes",
+        "wait_available_to_registered_minutes",
+        "wait_registered_to_assigned_minutes",
+        "departure_diff_minutes",
+        "return_diff_minutes",
+        "real_route_minutes",
+        "match_source",
+    ]]
+
+    while current <= last_day:
+        work_date = current.strftime("%Y-%m-%d")
+
+        print(
+            f"DSP_ATTENDANCE_ROUTE_DATE={work_date}"
+        )
+
+        try:
+            daily_rows = build_attendance_route_stat_rows_for_date(
+                work_date
+            )
+
+            rows.extend(daily_rows)
+
+            print(
+                f"  -> {len(daily_rows)} route sor"
+            )
+        except Exception as e:
+            print(
+                f"HIBA {work_date}: {e}"
+            )
+
+        current += timedelta(days=1)
+
+    ws_stats.clear()
+    ws_stats.update(
+        "A1",
+        rows
+    )
+
+    print(
+        f"{len(rows)-1} attendance route statisztika feltoltve."
+    )
+
+    return "ATTENDANCE_ROUTE_STATS_OK"
 
 def create_daily_statistics():
 
