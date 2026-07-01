@@ -53,6 +53,16 @@ on:
         required: false
         default: "10"
         type: string
+      dsp_start_date:
+        description: "DSP kezdo datum YYYY-MM-DD formatumban"
+        required: false
+        default: ""
+        type: string
+      dsp_end_date:
+        description: "DSP zaro datum YYYY-MM-DD formatumban"
+        required: false
+        default: ""
+        type: string
   schedule:
     - cron: "0 * * * *"
     - cron: "0 1 * * *"
@@ -166,6 +176,8 @@ jobs:
 
     env:
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      DSP_START_DATE: ${{ github.event.inputs.dsp_start_date || '' }}
+      DSP_END_DATE: ${{ github.event.inputs.dsp_end_date || '' }}
 
     steps:
       - name: Check Budapest 03:00 window

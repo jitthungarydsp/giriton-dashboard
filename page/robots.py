@@ -92,6 +92,8 @@ def _trigger_button(
     run_attendance=False,
     girition_start_date="",
     girition_days=10,
+    dsp_start_date="",
+    dsp_end_date="",
 ):
     if st.button(
         label,
@@ -107,6 +109,8 @@ def _trigger_button(
                 run_attendance=run_attendance,
                 girition_start_date=girition_start_date,
                 girition_days=girition_days,
+                dsp_start_date=dsp_start_date,
+                dsp_end_date=dsp_end_date,
             )
             st.success(
                 f"GitHub Actions inditva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
@@ -278,10 +282,23 @@ def show_robots_page():
 
     with col3:
         st.subheader("DSP")
-        st.caption("A `dsp.py` statisztika futasat inditja GitHub Actionsben.")
+        today = datetime.now(BUDAPEST_TZ).date()
+        dsp_start = st.date_input(
+            "DSP kezdo datum",
+            value=today.replace(day=1),
+            key="dsp_start_date",
+        )
+        dsp_end = st.date_input(
+            "DSP zaro datum",
+            value=today,
+            key="dsp_end_date",
+        )
+        st.caption("A `dsp.py` statisztika futasat inditja GitHub Actionsben a megadott idoszakra.")
         _trigger_button(
             "DSP futtatasa",
             run_dsp=True,
+            dsp_start_date=dsp_start.strftime("%Y-%m-%d"),
+            dsp_end_date=dsp_end.strftime("%Y-%m-%d"),
         )
 
     st.divider()

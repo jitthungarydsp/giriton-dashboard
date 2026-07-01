@@ -72,6 +72,8 @@ def dispatch_robot(
     run_attendance=False,
     girition_start_date="",
     girition_days=10,
+    dsp_start_date="",
+    dsp_end_date="",
 ):
     config = get_config()
     url = (
@@ -88,6 +90,8 @@ def dispatch_robot(
             "run_attendance": "true" if run_attendance else "false",
             "girition_start_date": str(girition_start_date or ""),
             "girition_days": str(girition_days or 10),
+            "dsp_start_date": str(dsp_start_date or ""),
+            "dsp_end_date": str(dsp_end_date or ""),
         },
     }
 

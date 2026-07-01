@@ -1,5 +1,5 @@
 import requests
-from dsp_common_kw import local_today
+from dsp_common_kw import dsp_date_range
 
 from datetime import timedelta
 from google_client import open_spreadsheet
@@ -29,14 +29,13 @@ def load_drivers():
         "warehouse_name"
     ]]
 
-    today = local_today()
-    current = today.replace(day=1)
+    current, end_date = dsp_date_range()
     
     #today = date.today()
 
     #current = today
 
-    while current <= today:
+    while current <= end_date:
 
         datum = current.strftime("%Y-%m-%d")
 
