@@ -1184,11 +1184,66 @@ def calculate_route_mix(details, row, start_date=None, end_date=None):
     }
 
 
+def calculate_month_revenue(row, start_date, end_date):
+    earnings = read_sheet_dataframe("DSP_Earning_Estimate")
+    courier_id = normalize_id(row.get("courier_id"))
+
+    if earnings.empty or not courier_id or "courierId" not in earnings.columns:
+        return 0
+
+    earnings = earnings.copy()
+    earnings = earnings[
+        earnings["courierId"].apply(normalize_id) == courier_id
+    ]
+
+    if earnings.empty or "date" not in earnings.columns:
+        return 0
+
+    earnings["date_dt"] = pd.to_datetime(
+        earnings["date"],
+        errors="coerce",
+    ).dt.date
+    earnings = earnings[
+        (earnings["date_dt"] >= start_date)
+        & (earnings["date_dt"] <= end_date)
+    ]
+
+    if earnings.empty or "estimated_max_revenue" not in earnings.columns:
+        return 0
+
+    return float(
+        pd.to_numeric(
+            earnings["estimated_max_revenue"],
+            errors="coerce",
+        ).fillna(0).sum()
+    )
+
+
+def month_bounds(reference_date):
+    current_start = reference_date.replace(day=1)
+    previous_end = current_start - timedelta(days=1)
+    previous_start = previous_end.replace(day=1)
+
+    return current_start, previous_start, previous_end
+
+
 def render_stat_cards(row, details, start_date=None, end_date=None):
     delivered = int(row.get("delivered_orders", 0))
     routes = int(row.get("routes", 0))
     worked_days = int(row.get("worked_days", 0))
     total_addresses = int(row.get("total_address_count", 0))
+    today = date.today()
+    current_month_start, previous_month_start, previous_month_end = month_bounds(today)
+    current_month_revenue = calculate_month_revenue(
+        row,
+        current_month_start,
+        today,
+    )
+    previous_month_revenue = calculate_month_revenue(
+        row,
+        previous_month_start,
+        previous_month_end,
+    )
     route_mix = calculate_route_mix(
         details,
         row,
@@ -1293,6 +1348,18 @@ def render_stat_cards(row, details, start_date=None, end_date=None):
     routes = int(row.get("routes", 0))
     worked_days = int(row.get("worked_days", 0))
     total_addresses = int(row.get("total_address_count", 0))
+    today = date.today()
+    current_month_start, previous_month_start, previous_month_end = month_bounds(today)
+    current_month_revenue = calculate_month_revenue(
+        row,
+        current_month_start,
+        today,
+    )
+    previous_month_revenue = calculate_month_revenue(
+        row,
+        previous_month_start,
+        previous_month_end,
+    )
     route_mix = calculate_route_mix(
         details,
         row,
@@ -1307,7 +1374,8 @@ def render_stat_cards(row, details, start_date=None, end_date=None):
     )
 
     cards = [
-        stat_card("Max bevetel lehetoseg", format_currency(route_mix["max_revenue"]), "Expressz + city sav / kor alapjan."),
+        stat_card("Aktualis havi max", format_currency(current_month_revenue), "Az uj honap mindig nullarol indul."),
+        stat_card("Elozo havi max", format_currency(previous_month_revenue), f"{previous_month_start:%Y-%m-%d} - {previous_month_end:%Y-%m-%d}"),
         stat_card("Atlag / kor", format_number(row.get("avg_orders_per_route")), "Osszes kivitt cim / teljesitett kor."),
         stat_card("Normal korok", route_mix["normal_routes"], "City savval becsulve."),
         stat_card("Expressz korok", route_mix["express_routes"], "Expressz savval becsulve."),
@@ -1374,7 +1442,7 @@ def show_courier_dashboard_page():
 
     user = st.session_state["user"]
     today = date.today()
-    default_start = today.replace(day=1)
+    default_start = today - timedelta(days=1)
 
     start_date, end_date = st.columns(2)
     selected_start = start_date.date_input(
