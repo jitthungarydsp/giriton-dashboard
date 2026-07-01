@@ -125,6 +125,7 @@ def load_shift_sheet_data(work_date_text):
     email_name_lookup = read_giriton_email_name_lookup()
 
     return (
+        reconciliation_records,
         giriton_records,
         foglalas_records,
         email_name_lookup,
@@ -585,6 +586,7 @@ def merge_source(sources, key, updates, create=True):
 def build_shift_sources(
     assignments,
     attendance_data,
+    reconciliation_records,
     giriton_records,
     foglalas_records,
     email_name_lookup=None,
@@ -594,6 +596,29 @@ def build_shift_sources(
         giriton_records,
         email_name_lookup,
     )
+
+    for record in reconciliation_records:
+        name = record.get(
+            "name",
+            "",
+        ).strip()
+        key = record_key(
+            name,
+            record.get("start"),
+        )
+        merge_source(
+            sources,
+            key,
+            {
+                "name": name,
+                "work_date": record.get("work_date"),
+                "start": record.get("start"),
+                "end": record.get("end"),
+                "warehouse": record.get("warehouse"),
+                "email": record.get("email"),
+                "reconciliation_record": record,
+            },
+        )
 
     for record in giriton_records:
         name = record.get(
@@ -717,6 +742,7 @@ def build_rows(
     attendance_data,
     drivers_data,
     work_date,
+    reconciliation_records,
     giriton_records,
     foglalas_records,
     email_name_lookup,
@@ -740,6 +766,7 @@ def build_rows(
     shift_sources = build_shift_sources(
         assignments,
         attendance_data,
+        reconciliation_records,
         giriton_records,
         foglalas_records,
         email_name_lookup,
@@ -805,6 +832,10 @@ def build_rows(
                 {},
             )
 
+        reconciliation_record = source.get(
+            "reconciliation_record",
+            {},
+        )
         assignment = source.get(
             "assignment",
             {},
@@ -832,12 +863,20 @@ def build_rows(
             checkin_source,
             end_at,
         )
-        has_muszakpro = bool(
-            foglalas_record
-        ) or is_exp
-        has_giriton = bool(
-            giriton_record
-        )
+        if reconciliation_record:
+            has_muszakpro = (
+                reconciliation_record.get("muszakpro") == "OK"
+            ) or is_exp
+            has_giriton = (
+                reconciliation_record.get("giriton") == "OK"
+            )
+        else:
+            has_muszakpro = bool(
+                foglalas_record
+            ) or is_exp
+            has_giriton = bool(
+                giriton_record
+            )
         is_checked_in = state["label"] == "Bejelentkezett"
         current_plate = (
             assignment.get("License Plate", "")
@@ -1600,6 +1639,7 @@ def show_today_shifts_page():
 
     try:
         (
+            reconciliation_records,
             giriton_records,
             foglalas_records,
             email_name_lookup,
@@ -1609,6 +1649,7 @@ def show_today_shifts_page():
             work_date_text
         )
     except Exception as exc:
+        reconciliation_records = []
         giriton_records = []
         foglalas_records = []
         email_name_lookup = {}
@@ -1633,6 +1674,7 @@ def show_today_shifts_page():
         attendance_data,
         drivers_data,
         selected_date,
+        reconciliation_records,
         giriton_records,
         foglalas_records,
         email_name_lookup,
