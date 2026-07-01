@@ -268,3 +268,24 @@ def read_shift_reconciliation_records(work_date):
         for row in rows[1:]
         if row_value(row, 0) == work_date
     ]
+
+
+def read_shift_reconciliation_records_for_dates(work_dates):
+    wanted_dates = {
+        str(work_date)
+        for work_date in work_dates
+        if str(work_date or "").strip()
+    }
+
+    if not wanted_dates:
+        return []
+
+    spreadsheet = open_sheet()
+    worksheet = get_or_create_worksheet(spreadsheet)
+    rows = worksheet.get_all_values()
+
+    return [
+        row_to_record(row)
+        for row in rows[1:]
+        if row_value(row, 0) in wanted_dates
+    ]

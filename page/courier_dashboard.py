@@ -19,6 +19,7 @@ from resources.api import (
     load_drivers,
 )
 from resources.shift_reconciliation_sheet import (
+    read_shift_reconciliation_records_for_dates,
     read_shift_reconciliation_records,
 )
 
@@ -445,22 +446,26 @@ def status_pill(value):
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_today_shift_records(work_date_text):
-    return read_shift_reconciliation_records(
-        work_date_text
-    )
+    try:
+        return read_shift_reconciliation_records(
+            work_date_text
+        )
+    except Exception:
+        return []
 
 
-def get_today_shift_rows(row, user, today):
-    return get_shift_rows_for_date(row, user, today)
+@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
+def load_shift_records_for_dates(work_date_texts):
+    try:
+        return read_shift_reconciliation_records_for_dates(
+            list(work_date_texts)
+        )
+    except Exception:
+        return []
 
 
-def get_shift_rows_for_date(row, user, work_date):
-    work_date_text = work_date.isoformat()
+def filter_shift_rows(records, row, user):
     courier_name = normalize_name(row.get("name") or user.get("username"))
-    records = load_today_shift_records(
-        work_date_text
-    )
-
     shifts = []
 
     for record in records:
@@ -475,10 +480,42 @@ def get_shift_rows_for_date(row, user, work_date):
     )
 
 
+def get_today_shift_rows(row, user, today):
+    return get_shift_rows_for_date(row, user, today)
+
+
+def get_shift_rows_for_date(row, user, work_date):
+    work_date_text = work_date.isoformat()
+    records = load_today_shift_records(
+        work_date_text
+    )
+
+    return filter_shift_rows(records, row, user)
+
+
 def get_next_sheet_shift_rows(row, user, start_date, days=14):
+    work_dates = [
+        start_date + timedelta(days=offset)
+        for offset in range(1, days + 1)
+    ]
+    records = load_shift_records_for_dates(
+        tuple(work_date.isoformat() for work_date in work_dates)
+    )
+    records_by_date = {}
+
+    for record in records:
+        records_by_date.setdefault(
+            record.get("work_date", ""),
+            [],
+        ).append(record)
+
     for offset in range(1, days + 1):
         work_date = start_date + timedelta(days=offset)
-        shifts = get_shift_rows_for_date(row, user, work_date)
+        shifts = filter_shift_rows(
+            records_by_date.get(work_date.isoformat(), []),
+            row,
+            user,
+        )
 
         if shifts:
             return work_date, shifts
