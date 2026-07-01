@@ -59,23 +59,14 @@ Muszakok Figyelese
         Log To Console
         ...    DATUM=${datum_giriton}
 
-        Click Element
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-
-        Press Keys
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-        ...    CTRL+A
-
-        Input Text
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+        Wait Until Keyword Succeeds
+        ...    3x
+        ...    8s
+        ...    Beallit Datum Es Ellenoriz
         ...    ${datum_giriton}
 
-        Press Keys
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-        ...    ENTER
-
-        Wait Until Page Contains
-        ...    ${datum_oldal}
+        Wait Until Page Contains Element
+        ...    xpath=//div[contains(@class,'panel-title')]
         ...    timeout=30s
 
         Execute Javascript
@@ -232,3 +223,36 @@ Muszakok Figyelese
 
     Log To Console
     ...    GOOGLE=${result}
+
+
+*** Keywords ***
+Beallit Datum Es Ellenoriz
+    [Arguments]    ${datum_giriton}
+
+    Click Element
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+
+    Press Keys
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    CTRL+A
+
+    Input Text
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    ${datum_giriton}
+
+    Press Keys
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    ENTER
+
+    Execute Javascript
+    ...    document.activeElement && document.activeElement.blur && document.activeElement.blur();
+
+    Sleep    4s
+
+    ${actual}=    Get Element Attribute
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    value
+
+    Should Be Equal As Strings
+    ...    ${actual}
+    ...    ${datum_giriton}
