@@ -157,6 +157,7 @@ def render_styles():
     background: linear-gradient(135deg, #ecfccb 0%, #ffffff 65%);
     border: 1px solid #bbf7d0;
     border-radius: 16px;
+    color: #0f172a;
     margin: 8px 0 18px;
     padding: 18px;
 }
@@ -169,10 +170,15 @@ def render_styles():
 .today-shift-row {
     align-items: center;
     border-top: 1px solid rgba(34, 197, 94, 0.18);
+    color: #0f172a;
     display: grid;
     gap: 10px;
     grid-template-columns: 1fr 1fr 1fr 1fr;
     padding: 10px 0;
+}
+.today-shift-row strong,
+.today-shift-row div {
+    color: #0f172a;
 }
 .today-pill {
     border-radius: 999px;
