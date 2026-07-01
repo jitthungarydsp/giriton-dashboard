@@ -65,6 +65,31 @@ if "user" not in st.session_state:
 
 user = st.session_state["user"]
 
+if user.get("role") == "user":
+    st.markdown(
+        """
+<style>
+[data-testid="stSidebar"] {
+    display: none;
+}
+[data-testid="collapsedControl"] {
+    display: none;
+}
+.block-container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+    st_autorefresh(
+        interval=5 * 60 * 1000,
+        key="courier_card_auto_refresh",
+    )
+    show_courier_dashboard_page()
+    st.stop()
+
 st.sidebar.success(
     f"👤 {user['username']}"
 )
