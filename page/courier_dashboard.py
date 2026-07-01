@@ -1,6 +1,8 @@
+import base64
 from calendar import monthrange
 from datetime import date, datetime, timedelta
 from html import escape
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -25,6 +27,7 @@ NORMAL_CITY_MAX_FEE = 13000
 DAILY_CACHE_SECONDS = 24 * 60 * 60
 LIVE_CACHE_SECONDS = 60
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def format_number(value, decimals=1):
@@ -297,16 +300,22 @@ def render_styles():
 }
 .route-depot-icon {
     align-items: center;
-    background: #0f172a;
+    background: #ffffff;
     border: 4px solid #ffffff;
     border-radius: 16px;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.20);
-    color: #ffffff;
+    box-shadow: 0 8px 18px rgba(245, 158, 11, 0.20);
+    color: #92400e;
     display: inline-flex;
-    font-size: 20px;
-    height: 48px;
+    height: 56px;
     justify-content: center;
-    width: 48px;
+    overflow: hidden;
+    width: 56px;
+}
+.route-depot-icon img {
+    display: block;
+    height: 46px;
+    object-fit: contain;
+    width: 46px;
 }
 .bag-alert-preview {
     background: #ecfdf5;
@@ -407,6 +416,17 @@ def stat_card(label, value, note=""):
   <div class="stat-note">{note}</div>
 </div>
 """
+
+
+@st.cache_data(show_spinner=False)
+def get_kifli_destination_logo():
+    path = PROJECT_ROOT / "assets" / "kifli-destination.png"
+
+    if not path.exists():
+        return "K"
+
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f'<img src="data:image/png;base64,{encoded}" alt="Kifli">'
 
 
 def normalize_name(value):
@@ -811,6 +831,7 @@ def get_route_road_stops(row, details):
 
 
 def render_shift_state_road(title, subtitle, dot_label, dot_text, note, show_help=False):
+    kifli_logo = get_kifli_destination_logo()
     help_html = (
         '<div class="route-help-button">Elakadtam, segítség kell</div>'
         if show_help
@@ -828,7 +849,7 @@ def render_shift_state_road(title, subtitle, dot_label, dot_text, note, show_hel
         <div class="route-road-subtitle">{escape(subtitle)}</div>
       </div>
     </div>
-    <div class="route-road-subtitle">A depó készen áll</div>
+    <div class="route-road-subtitle">A Kifli készen áll</div>
   </div>
   <div class="route-road-track" style="--stop-count: 2;">
     <div class="route-stop route-stop-home">
@@ -840,8 +861,8 @@ def render_shift_state_road(title, subtitle, dot_label, dot_text, note, show_hel
       <div class="route-stop-label">{escape(dot_text)}</div>
     </div>
     <div class="route-depot">
-      <div class="route-depot-icon">D</div>
-      <div class="route-stop-label">Depó</div>
+      <div class="route-depot-icon">{kifli_logo}</div>
+      <div class="route-stop-label">Kifli</div>
     </div>
   </div>
   <div class="fun-note route-empty-note">{escape(note)}{help_html}</div>
@@ -1061,6 +1082,7 @@ def render_route_road(row, details):
         if len(current_address) > 42
         else current_address
     )
+    kifli_logo = get_kifli_destination_logo()
 
     st.markdown(
         f"""
@@ -1073,7 +1095,7 @@ def render_route_road(row, details):
         <div class="route-road-subtitle">Zöld jel = aktuális cím</div>
       </div>
     </div>
-    <div class="route-road-subtitle">Depó a célban</div>
+    <div class="route-road-subtitle">A Kifli készen áll</div>
   </div>
   <div class="route-road-track" style="--stop-count: 1;">
     <div class="route-stop route-stop-current">
@@ -1081,8 +1103,8 @@ def render_route_road(row, details):
       <div class="route-stop-label">{short_address}</div>
     </div>
     <div class="route-depot">
-      <div class="route-depot-icon">D</div>
-      <div class="route-stop-label">Depó</div>
+      <div class="route-depot-icon">{kifli_logo}</div>
+      <div class="route-stop-label">Kifli</div>
     </div>
   </div>
   <div class="bag-alert-preview">
