@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date, datetime, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
@@ -1227,17 +1228,40 @@ def month_bounds(reference_date):
     return current_start, previous_start, previous_end
 
 
+def selected_month_bounds(month_text, today):
+    year_text, month_text = str(month_text).split("-")
+    year = int(year_text)
+    month = int(month_text)
+    month_start = date(year, month, 1)
+    month_end = date(
+        year,
+        month,
+        monthrange(year, month)[1],
+    )
+
+    if month_start.year == today.year and month_start.month == today.month:
+        month_end = today
+
+    previous_end = month_start - timedelta(days=1)
+    previous_start = previous_end.replace(day=1)
+
+    return month_start, month_end, previous_start, previous_end
+
+
 def render_stat_cards(row, details, start_date=None, end_date=None):
     delivered = int(row.get("delivered_orders", 0))
     routes = int(row.get("routes", 0))
     worked_days = int(row.get("worked_days", 0))
     total_addresses = int(row.get("total_address_count", 0))
     today = date.today()
-    current_month_start, previous_month_start, previous_month_end = month_bounds(today)
-    current_month_revenue = calculate_month_revenue(
+    selected_month_start = start_date or today.replace(day=1)
+    selected_month_end = end_date or today
+    previous_month_end = selected_month_start - timedelta(days=1)
+    previous_month_start = previous_month_end.replace(day=1)
+    selected_month_revenue = calculate_month_revenue(
         row,
-        current_month_start,
-        today,
+        selected_month_start,
+        selected_month_end,
     )
     previous_month_revenue = calculate_month_revenue(
         row,
@@ -1374,7 +1398,7 @@ def render_stat_cards(row, details, start_date=None, end_date=None):
     )
 
     cards = [
-        stat_card("Aktualis havi max", format_currency(current_month_revenue), "Az uj honap mindig nullarol indul."),
+        stat_card("Valasztott havi max", format_currency(selected_month_revenue), f"{selected_month_start:%Y-%m-%d} - {selected_month_end:%Y-%m-%d}"),
         stat_card("Elozo havi max", format_currency(previous_month_revenue), f"{previous_month_start:%Y-%m-%d} - {previous_month_end:%Y-%m-%d}"),
         stat_card("Atlag / kor", format_number(row.get("avg_orders_per_route")), "Osszes kivitt cim / teljesitett kor."),
         stat_card("Normal korok", route_mix["normal_routes"], "City savval becsulve."),
@@ -1437,12 +1461,12 @@ def select_visible_courier(summary_df, user):
     return match.iloc[0] if not match.empty else None
 
 
-def show_courier_dashboard_page():
+def _show_courier_dashboard_page_legacy_unused():
     render_styles()
 
     user = st.session_state["user"]
     today = date.today()
-    default_start = today - timedelta(days=1)
+    default_month = today.strftime("%Y-%m")
 
     start_date, end_date = st.columns(2)
     selected_start = start_date.date_input(
@@ -1469,6 +1493,57 @@ def show_courier_dashboard_page():
 
     if row is None:
         st.warning("Ehhez a belépéshez nem találtam futár statisztikát.")
+        return
+
+    render_hero(row, user)
+    render_today_shifts(row, user)
+    render_route_road(row, details)
+    render_stat_cards(
+        row,
+        details,
+        selected_start,
+        selected_end,
+    )
+    render_extra_metrics(row)
+
+
+def show_courier_dashboard_page():
+    render_styles()
+
+    user = st.session_state["user"]
+    today = date.today()
+    default_month = today.strftime("%Y-%m")
+
+    selected_month = st.text_input(
+        "Honap",
+        value=default_month,
+        help="Formatum: EEEE-HH, peldaul 2026-07.",
+    )
+
+    try:
+        selected_start, selected_end, _, _ = selected_month_bounds(
+            selected_month,
+            today,
+        )
+    except Exception:
+        st.error("A honapot EEEE-HH formatumban add meg, peldaul: 2026-07.")
+        return
+
+    with st.spinner("Sajat Kifli-kartya osszerakasa..."):
+        summary_df, details = load_courier_statistics(
+            start_date=selected_start,
+            end_date=selected_end,
+            user=user,
+        )
+
+    if summary_df.empty:
+        st.warning("Meg nincs eleg adat ehhez a futar-kartyahoz.")
+        return
+
+    row = select_visible_courier(summary_df, user)
+
+    if row is None:
+        st.warning("Ehhez a belepeshez nem talaltam futar statisztikat.")
         return
 
     render_hero(row, user)
