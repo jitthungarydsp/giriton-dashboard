@@ -1373,11 +1373,14 @@ def render_stat_cards(row, details, start_date=None, end_date=None):
     worked_days = int(row.get("worked_days", 0))
     total_addresses = int(row.get("total_address_count", 0))
     today = date.today()
-    current_month_start, previous_month_start, previous_month_end = month_bounds(today)
-    current_month_revenue = calculate_month_revenue(
+    selected_month_start = start_date or today.replace(day=1)
+    selected_month_end = end_date or today
+    previous_month_end = selected_month_start - timedelta(days=1)
+    previous_month_start = previous_month_end.replace(day=1)
+    selected_month_revenue = calculate_month_revenue(
         row,
-        current_month_start,
-        today,
+        selected_month_start,
+        selected_month_end,
     )
     previous_month_revenue = calculate_month_revenue(
         row,
@@ -1529,30 +1532,47 @@ def show_courier_dashboard_page():
         st.error("A honapot EEEE-HH formatumban add meg, peldaul: 2026-07.")
         return
 
-    with st.spinner("Sajat Kifli-kartya osszerakasa..."):
-        summary_df, details = load_courier_statistics(
+    with st.spinner("Aktualis Kifli-kartya osszerakasa..."):
+        current_summary_df, current_details = load_courier_statistics(
+            start_date=today - timedelta(days=1),
+            end_date=today,
+            user=user,
+        )
+        monthly_summary_df, monthly_details = load_courier_statistics(
             start_date=selected_start,
             end_date=selected_end,
             user=user,
         )
 
-    if summary_df.empty:
+    selector_df = current_summary_df if not current_summary_df.empty else monthly_summary_df
+
+    if selector_df.empty:
         st.warning("Meg nincs eleg adat ehhez a futar-kartyahoz.")
         return
 
-    row = select_visible_courier(summary_df, user)
+    current_row = select_visible_courier(selector_df, user)
 
-    if row is None:
+    if current_row is None:
         st.warning("Ehhez a belepeshez nem talaltam futar statisztikat.")
         return
 
-    render_hero(row, user)
-    render_today_shifts(row, user)
-    render_route_road(row, details)
+    monthly_row = current_row
+    if not monthly_summary_df.empty:
+        courier_id = normalize_id(current_row.get("courier_id"))
+        monthly_match = monthly_summary_df[
+            monthly_summary_df["courier_id"].apply(normalize_id) == courier_id
+        ]
+        if not monthly_match.empty:
+            monthly_row = monthly_match.iloc[0]
+
+    render_hero(current_row, user)
+    render_today_shifts(current_row, user)
+    render_route_road(current_row, current_details)
+    st.subheader(f"Havi statisztika: {selected_start:%Y-%m}")
     render_stat_cards(
-        row,
-        details,
+        monthly_row,
+        monthly_details,
         selected_start,
         selected_end,
     )
-    render_extra_metrics(row)
+    render_extra_metrics(monthly_row)
