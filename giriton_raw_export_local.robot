@@ -131,9 +131,17 @@ Giriton Raw Export Local
 
             ${foglalt}=    Strip String
             ...    ${fog_parts}[0]
+            IF    '(' in '''${foglalt}'''
+                ${foglalt}=    Fetch From Left    ${foglalt}    (
+                ${foglalt}=    Strip String    ${foglalt}
+            END
 
             ${maximum}=    Strip String
             ...    ${fog_parts}[1]
+            IF    '(' in '''${maximum}'''
+                ${maximum}=    Fetch From Left    ${maximum}    (
+                ${maximum}=    Strip String    ${maximum}
+            END
 
             ${foglalt_int}=    Convert To Integer    ${foglalt}
             ${maximum_int}=    Convert To Integer    ${maximum}

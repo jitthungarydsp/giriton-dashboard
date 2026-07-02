@@ -6,24 +6,16 @@ from zoneinfo import ZoneInfo
 import gspread
 
 from resources.muszakpro_sheet import (
-    build_foglalas_lookup,
-    foglalas_key,
     open_sheet,
-    read_foglalasok_records,
-    read_giriton_email_name_lookup,
-    read_giriton_records,
     normalize_name,
     normalize_time,
-)
-from resources.courier_db_sheet import (
-    build_courier_lookup,
-    normalize_email,
-    resolve_courier_id,
 )
 
 
 WORKSHEET_NAME = "Muszak_Ellenorzes"
 MISSING_API_WORKSHEET_NAME = "CourierDB_JITT_API_Hianyzo"
+GIRITON_LOG_WORKSHEET_NAME = "Giriton_Log"
+FOGLALASOK_LOG_WORKSHEET_NAME = "Foglalasok_Log"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 HEADER = [
@@ -95,58 +87,246 @@ def make_match_key(work_date, email, warehouse, start, name="", courier_id=""):
     )
 
 
-def fallback_shift_key(work_date, warehouse, start):
-    return "|".join(
-        [
-            str(work_date or "").strip(),
-            str(warehouse or "").strip().casefold(),
-            normalize_time(start),
-        ]
+def normalize_serial(value):
+    serial = str(value or "").strip()
+
+    if not serial or "NINCS_ID" in serial:
+        return ""
+
+    return serial
+
+
+def header_map(header):
+    return {
+        normalize_name(column): index
+        for index, column in enumerate(header)
+    }
+
+
+def column_index(header, *names):
+    indexes = header_map(header)
+
+    for name in names:
+        index = indexes.get(
+            normalize_name(name)
+        )
+
+        if index is not None:
+            return index
+
+    return None
+
+
+def row_column(row, index):
+    if index is None or index >= len(row):
+        return ""
+
+    return str(row[index] or "").strip()
+
+
+def read_worksheet_values(spreadsheet, sheet_name):
+    try:
+        return spreadsheet.worksheet(sheet_name).get_all_values()
+    except gspread.WorksheetNotFound:
+        return []
+
+
+def read_giriton_keyed_records(spreadsheet, work_date):
+    rows = read_worksheet_values(
+        spreadsheet,
+        GIRITON_LOG_WORKSHEET_NAME,
     )
 
+    if rows:
+        header = rows[0]
+        serial_index = column_index(header, "sorszam")
+        date_index = column_index(header, "datum")
+        id_index = column_index(header, "courier_id")
+        name_index = column_index(header, "nev", "name")
+        email_index = column_index(header, "email")
+        warehouse_index = column_index(header, "raktar", "raktár", "warehouse")
+        start_index = column_index(header, "kezdes", "kezdés", "start")
+        end_index = column_index(header, "vege", "vége", "end")
 
-def person_shift_key(work_date, warehouse, start, courier_id="", name="", email=""):
-    courier_id = str(courier_id or "").strip()
-    name = normalize_name(name)
-    email = normalize_email(email)
-    person = courier_id or name or email
+        records = []
 
-    return "|".join(
-        [
-            str(work_date or "").strip(),
-            person,
-            str(warehouse or "").strip().casefold(),
-            normalize_time(start),
-        ]
+        for row in rows[1:]:
+            serial = normalize_serial(
+                row_column(row, serial_index)
+            )
+
+            if not serial:
+                continue
+
+            record_date = row_column(row, date_index)
+
+            if record_date != work_date:
+                continue
+
+            records.append(
+                {
+                    "serial": serial,
+                    "work_date": record_date,
+                    "courier_id": row_column(row, id_index),
+                    "name": row_column(row, name_index),
+                    "email": row_column(row, email_index).casefold(),
+                    "warehouse": row_column(row, warehouse_index),
+                    "start": normalize_time(row_column(row, start_index)),
+                    "end": normalize_time(row_column(row, end_index)),
+                }
+            )
+
+        return records
+
+    rows = read_worksheet_values(
+        spreadsheet,
+        "Giriton",
     )
 
+    if not rows:
+        return []
 
-def enrich_foglalas_record(record, courier_lookup, email_name_lookup):
-    email = normalize_email(
-        record.get("email")
-    )
-    name_from_email = email_name_lookup.get(
-        email,
-        "",
-    )
-    courier_id = resolve_courier_id(
-        email=email,
-        name=name_from_email,
-        lookup=courier_lookup,
-    )
-    name = (
-        courier_lookup["by_id"]
-        .get(courier_id, {})
-        .get("name")
-        or name_from_email
-        or email
+    header = rows[0]
+    date_index = column_index(header, "datum", "work_date")
+    start_index = column_index(header, "kezdes", "kezdés", "start")
+    end_index = column_index(header, "vege", "vége", "end")
+    warehouse_index = column_index(header, "raktar", "raktár", "warehouse")
+    name_index = column_index(header, "nev", "név", "name")
+    email_index = column_index(header, "email")
+    serial_index = column_index(header, "sorszam")
+    id_index = column_index(header, "courier_id")
+    status_index = column_index(header, "statusz", "status")
+    records = []
+
+    for row in rows[1:]:
+        serial = normalize_serial(
+            row_column(row, serial_index)
+        )
+
+        if not serial:
+            continue
+
+        record_date = row_column(row, date_index)
+
+        if record_date != work_date:
+            continue
+
+        status = row_column(row, status_index).upper()
+
+        if status == "URES":
+            continue
+
+        records.append(
+            {
+                "serial": serial,
+                "work_date": record_date,
+                "courier_id": row_column(row, id_index),
+                "name": row_column(row, name_index),
+                "email": row_column(row, email_index).casefold(),
+                "warehouse": row_column(row, warehouse_index),
+                "start": normalize_time(row_column(row, start_index)),
+                "end": normalize_time(row_column(row, end_index)),
+            }
+        )
+
+    return records
+
+
+def read_foglalasok_keyed_records(spreadsheet, work_date):
+    rows = read_worksheet_values(
+        spreadsheet,
+        FOGLALASOK_LOG_WORKSHEET_NAME,
     )
 
-    record["email"] = email
-    record["name"] = name
-    record["courier_id"] = courier_id
+    if rows:
+        header = rows[0]
+        serial_index = column_index(header, "sorszam")
+        date_index = column_index(header, "datum")
+        id_index = column_index(header, "courier_id")
+        name_index = column_index(header, "nev", "name")
+        email_index = column_index(header, "email")
+        warehouse_index = column_index(header, "raktar", "raktár", "warehouse")
+        start_index = column_index(header, "kezdes", "kezdés", "start")
+        code_index = column_index(header, "foglalasi_kod", "foglalási kód", "code")
+        records = []
 
-    return record
+        for row in rows[1:]:
+            serial = normalize_serial(
+                row_column(row, serial_index)
+            )
+
+            if not serial:
+                continue
+
+            record_date = row_column(row, date_index)
+
+            if record_date != work_date:
+                continue
+
+            records.append(
+                {
+                    "serial": serial,
+                    "work_date": record_date,
+                    "courier_id": row_column(row, id_index),
+                    "name": row_column(row, name_index),
+                    "email": row_column(row, email_index).casefold(),
+                    "warehouse": row_column(row, warehouse_index),
+                    "start": normalize_time(row_column(row, start_index)),
+                    "code": row_column(row, code_index),
+                }
+            )
+
+        return records
+
+    rows = read_worksheet_values(
+        spreadsheet,
+        "Foglalasok",
+    )
+
+    if not rows:
+        return []
+
+    header = rows[0]
+    date_index = column_index(header, "Dátum", "datum")
+    email_index = column_index(header, "Email")
+    shift_index = column_index(header, "Műszak", "muszak")
+    warehouse_index = column_index(header, "Raktár", "raktar")
+    code_index = column_index(header, "Foglalási kód", "foglalasi kod")
+    id_index = column_index(header, "courier_id")
+    name_index = column_index(header, "nev", "name")
+    serial_index = column_index(header, "sorszam")
+    records = []
+
+    for row in rows[1:]:
+        serial = normalize_serial(
+            row_column(row, serial_index)
+        )
+
+        if not serial:
+            continue
+
+        record_date = row_column(row, date_index)
+
+        if record_date != work_date:
+            continue
+
+        shift = row_column(row, shift_index)
+        start = shift.split("_", 1)[1] if "_" in shift else ""
+
+        records.append(
+            {
+                "serial": serial,
+                "work_date": record_date,
+                "courier_id": row_column(row, id_index),
+                "name": row_column(row, name_index),
+                "email": row_column(row, email_index).casefold(),
+                "warehouse": row_column(row, warehouse_index),
+                "start": normalize_time(start),
+                "code": row_column(row, code_index),
+            }
+        )
+
+    return records
 
 
 def is_time_shift_start(value):
@@ -218,219 +398,68 @@ def build_records_for_date(work_date):
     updated_at = datetime.now(
         LOCAL_TIMEZONE
     ).strftime("%Y-%m-%d %H:%M:%S")
-    email_name_lookup = read_giriton_email_name_lookup()
-    courier_lookup = build_courier_lookup()
-    giriton_records = read_giriton_records(work_date)
-    foglalas_records = read_foglalasok_records(work_date)
-    foglalas_lookup = build_foglalas_lookup(foglalas_records)
-    person_foglalas_lookup = {}
-    fallback_foglalas_lookup = {}
-
-    for record in foglalas_records:
-        if not is_courier_shift(record):
-            continue
-
-        record = enrich_foglalas_record(
-            record,
-            courier_lookup,
-            email_name_lookup,
+    spreadsheet = open_sheet()
+    giriton_records = {
+        record["serial"]: record
+        for record in read_giriton_keyed_records(
+            spreadsheet,
+            work_date,
         )
-        person_foglalas_lookup[
-            person_shift_key(
-                record.get("work_date"),
-                record.get("warehouse"),
-                record.get("start"),
-                courier_id=record.get("courier_id"),
-                name=record.get("name"),
-                email=record.get("email"),
-            )
-        ] = record
-        fallback_foglalas_lookup.setdefault(
-            fallback_shift_key(
-                record.get("work_date"),
-                record.get("warehouse"),
-                record.get("start"),
-            ),
-            [],
-        ).append(record)
-    records_by_key = {}
-    matched_foglalas_keys = set()
-    matched_person_foglalas_keys = set()
-
-    for record in giriton_records:
-        if not is_courier_shift(record):
-            continue
-
-        email = str(record.get("email", "")).strip().casefold()
-        name = str(record.get("name", "")).strip()
-        courier_id = resolve_courier_id(
-            email=email,
-            name=name,
-            lookup=courier_lookup,
+        if record.get("serial")
+    }
+    foglalas_records = {
+        record["serial"]: record
+        for record in read_foglalasok_keyed_records(
+            spreadsheet,
+            work_date,
         )
-        key = make_match_key(
-            record.get("work_date"),
-            email,
-            record.get("warehouse"),
-            record.get("start"),
-            name,
-            courier_id,
-        )
-        foglalas_record = foglalas_lookup.get(
-            foglalas_key(
-                email,
-                record.get("warehouse"),
-                record.get("start"),
-            ),
+        if record.get("serial")
+    }
+    records = []
+
+    for serial in sorted(
+        set(giriton_records) | set(foglalas_records)
+    ):
+        giriton_record = giriton_records.get(
+            serial,
             {},
         )
-        person_key = person_shift_key(
-            record.get("work_date"),
-            record.get("warehouse"),
-            record.get("start"),
-            courier_id=courier_id,
-            name=name,
-            email=email,
+        foglalas_record = foglalas_records.get(
+            serial,
+            {},
         )
-        if not foglalas_record:
-            foglalas_record = person_foglalas_lookup.get(
-                person_key,
-                {},
-            )
-
-            if foglalas_record:
-                email = normalize_email(
-                    foglalas_record.get("email")
-                )
-        if not foglalas_record and not email:
-            fallback_records = fallback_foglalas_lookup.get(
-                fallback_shift_key(
-                    record.get("work_date"),
-                    record.get("warehouse"),
-                    record.get("start"),
-                ),
-                [],
-            )
-
-            if len(fallback_records) == 1:
-                foglalas_record = fallback_records[0]
-                email = str(
-                    foglalas_record.get("email", "")
-                ).strip().casefold()
-                courier_id = resolve_courier_id(
-                    email=email,
-                    name=name,
-                    lookup=courier_lookup,
-                )
-                key = make_match_key(
-                    record.get("work_date"),
-                    email,
-                    record.get("warehouse"),
-                    record.get("start"),
-                    name,
-                    courier_id,
-                )
-
+        source = giriton_record or foglalas_record
+        has_giriton = bool(giriton_record)
         has_muszakpro = bool(foglalas_record)
-        missing = [] if has_muszakpro else ["MuszakPro"]
+        missing = []
 
-        if foglalas_record:
-            matched_foglalas_keys.add(
-                foglalas_key(
-                    foglalas_record.get("email"),
-                    foglalas_record.get("warehouse"),
-                    foglalas_record.get("start"),
-                )
-            )
-            matched_person_foglalas_keys.add(
-                person_shift_key(
-                    foglalas_record.get("work_date"),
-                    foglalas_record.get("warehouse"),
-                    foglalas_record.get("start"),
-                    courier_id=foglalas_record.get("courier_id"),
-                    name=foglalas_record.get("name"),
-                    email=foglalas_record.get("email"),
-                )
-            )
+        if not has_giriton:
+            missing.append("Giriton")
 
-        records_by_key[key] = {
-            "work_date": record.get("work_date", ""),
-            "name": name,
-            "email": email,
-            "warehouse": record.get("warehouse", ""),
-            "start": normalize_time(record.get("start")),
-            "end": normalize_time(record.get("end")),
-            "giriton": "OK",
-            "muszakpro": "OK" if has_muszakpro else "-",
-            "missing": ", ".join(missing),
-            "giriton_check": record.get("check", ""),
-            "muszakpro_code": foglalas_record.get("code", ""),
-            "updated_at": updated_at,
-            "match_key": key,
-            "courier_id": courier_id,
-        }
+        if not has_muszakpro:
+            missing.append("MuszakPro")
 
-    for record in foglalas_records:
-        if not is_courier_shift(record):
-            continue
-
-        record = enrich_foglalas_record(
-            record,
-            courier_lookup,
-            email_name_lookup,
+        records.append(
+            {
+                "work_date": source.get("work_date", ""),
+                "name": source.get("name", ""),
+                "email": source.get("email", ""),
+                "warehouse": source.get("warehouse", ""),
+                "start": normalize_time(source.get("start")),
+                "end": normalize_time(giriton_record.get("end", "")),
+                "giriton": "OK" if has_giriton else "-",
+                "muszakpro": "OK" if has_muszakpro else "-",
+                "missing": ", ".join(missing),
+                "giriton_check": "GIRITON_OK" if has_giriton else "",
+                "muszakpro_code": foglalas_record.get("code", ""),
+                "updated_at": updated_at,
+                "match_key": serial,
+                "courier_id": source.get("courier_id", ""),
+            }
         )
-        email = normalize_email(record.get("email"))
-        name = record.get("name", "")
-        courier_id = record.get("courier_id", "")
-
-        if foglalas_key(
-            email,
-            record.get("warehouse"),
-            record.get("start"),
-        ) in matched_foglalas_keys:
-            continue
-
-        if person_shift_key(
-            record.get("work_date"),
-            record.get("warehouse"),
-            record.get("start"),
-            courier_id=courier_id,
-            name=name,
-            email=email,
-        ) in matched_person_foglalas_keys:
-            continue
-
-        key = make_match_key(
-            record.get("work_date"),
-            email,
-            record.get("warehouse"),
-            record.get("start"),
-            name,
-            courier_id,
-        )
-
-        if key in records_by_key:
-            continue
-
-        records_by_key[key] = {
-            "work_date": record.get("work_date", ""),
-            "name": name,
-            "email": email,
-            "warehouse": record.get("warehouse", ""),
-            "start": normalize_time(record.get("start")),
-            "end": "",
-            "giriton": "-",
-            "muszakpro": "OK",
-            "missing": "Giriton",
-            "giriton_check": "",
-            "muszakpro_code": record.get("code", ""),
-            "updated_at": updated_at,
-            "match_key": key,
-            "courier_id": courier_id,
-        }
 
     return sorted(
-        records_by_key.values(),
+        records,
         key=lambda record: (
             record.get("work_date", ""),
             normalize_name(record.get("name", "")),
