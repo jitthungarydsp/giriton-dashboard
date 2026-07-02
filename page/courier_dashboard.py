@@ -13,6 +13,7 @@ from resources.dsp_dashboard_statistics import (
     normalize_id,
     read_sheet_dataframe,
 )
+from resources.courier_card_snapshot import read_snapshot
 from resources.api import (
     load_attendance,
     load_driver_details,
@@ -64,6 +65,33 @@ def format_currency(value):
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_courier_statistics(start_date, end_date, user):
+    snapshot_month = None
+
+    if end_date:
+        snapshot_month = end_date.strftime("%Y-%m")
+    elif start_date:
+        snapshot_month = start_date.strftime("%Y-%m")
+
+    if snapshot_month:
+        snapshot_df = read_snapshot(snapshot_month)
+
+        if not snapshot_df.empty:
+            if user and user.get("role") == "user":
+                courier_id = normalize_id(user.get("courierId"))
+                snapshot_df = snapshot_df[
+                    snapshot_df["courier_id"].apply(normalize_id) == courier_id
+                ].copy()
+
+            details = {
+                "orders": pd.DataFrame(),
+                "customers": pd.DataFrame(),
+                "attendance_routes": pd.DataFrame(),
+                "giriton_login": pd.DataFrame(),
+                "snapshot": True,
+            }
+
+            return snapshot_df, details
+
     return build_statistics(
         start_date=start_date,
         end_date=end_date,
@@ -1277,6 +1305,19 @@ def render_route_road(row, details):
 
 
 def calculate_route_mix(details, row, start_date=None, end_date=None):
+    if row.get("estimated_max_revenue") not in [None, ""]:
+        normal_routes = int(float(row.get("normal_routes", 0) or 0))
+        express_routes = int(float(row.get("express_routes", 0) or 0))
+        max_revenue = float(row.get("estimated_max_revenue", 0) or 0)
+        avg_revenue = float(row.get("avg_revenue_per_route", 0) or 0)
+
+        return {
+            "express_routes": express_routes,
+            "normal_routes": normal_routes,
+            "max_revenue": max_revenue,
+            "avg_revenue_per_route": avg_revenue,
+        }
+
     earnings = read_sheet_dataframe("DSP_Earning_Estimate")
     courier_id = normalize_id(row.get("courier_id"))
 
@@ -1370,6 +1411,21 @@ def calculate_route_mix(details, row, start_date=None, end_date=None):
 
 
 def calculate_month_revenue(row, start_date, end_date):
+    snapshot_month = str(row.get("snapshot_month", "") or "")
+
+    if snapshot_month:
+        selected_month = start_date.strftime("%Y-%m")
+
+        if selected_month == snapshot_month:
+            return float(row.get("estimated_max_revenue", 0) or 0)
+
+        previous_month_end = date.fromisoformat(
+            f"{snapshot_month}-01"
+        ) - timedelta(days=1)
+
+        if selected_month == previous_month_end.strftime("%Y-%m"):
+            return float(row.get("previous_month_revenue", 0) or 0)
+
     earnings = read_sheet_dataframe("DSP_Earning_Estimate")
     courier_id = normalize_id(row.get("courier_id"))
 
