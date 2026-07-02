@@ -101,10 +101,13 @@ def _month_day(work_date):
 def _shift_serial(work_date, courier_id, warehouse, start):
     courier_id = str(courier_id or "").strip()
 
+    if not courier_id:
+        return ""
+
     return "_".join(
         [
             _month_day(work_date),
-            courier_id or "NINCS_ID",
+            courier_id,
             str(warehouse or "").strip(),
             _normalize_time(start),
         ]
