@@ -18,6 +18,8 @@ TARGET_SPREADSHEET_ID = "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 SOURCE_FOGLALASOK_SHEET = "Foglalasok"
 TARGET_FOGLALASOK_SHEET = "Foglalasok"
 GIRITON_RAW_SHEET = "Giriton"
+GIRITON_LOG_SHEET = "Giriton_Log"
+FOGLALASOK_LOG_SHEET = "Foglalasok_Log"
 GIRITON_ATTENDANCE_SHEET = "Giriton_Attendance"
 COURIER_LOGIN_STATS_SHEET = "Futar_Bejelentkezes_Statisztika"
 CHANGE_LOG_SHEET = "Valtozasok"
@@ -55,6 +57,166 @@ def _now_text():
 
 def _normalize_cell(value):
     return str(value or "").strip()
+
+
+def _normalize_name(value):
+    return " ".join(
+        str(value or "").strip().casefold().split()
+    )
+
+
+def _normalize_email(value):
+    return str(value or "").strip().casefold()
+
+
+def _normalize_time(value):
+    text = str(value or "").strip()
+
+    if not text:
+        return ""
+
+    parts = text.split(":")
+
+    if len(parts) >= 2:
+        try:
+            return f"{int(parts[0])}:{int(parts[1]):02d}"
+        except ValueError:
+            return text
+
+    return text
+
+
+def _month_day(work_date):
+    text = str(work_date or "").strip()
+
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%m/%d")
+    except ValueError:
+        if len(text) >= 10:
+            return f"{text[5:7]}/{text[8:10]}"
+
+    return text
+
+
+def _shift_serial(work_date, courier_id, warehouse, start):
+    courier_id = str(courier_id or "").strip()
+
+    return "_".join(
+        [
+            _month_day(work_date),
+            courier_id or "NINCS_ID",
+            str(warehouse or "").strip(),
+            _normalize_time(start),
+        ]
+    )
+
+
+def _header_index(header, names):
+    normalized = {
+        _normalize_name(name): index
+        for index, name in enumerate(header)
+    }
+
+    for name in names:
+        index = normalized.get(
+            _normalize_name(name)
+        )
+
+        if index is not None:
+            return index
+
+    return None
+
+
+def _cell(row, index):
+    if index is None or index >= len(row):
+        return ""
+
+    return str(row[index] or "").strip()
+
+
+def _read_driver_lookup():
+    try:
+        ws = target_spreadsheet.worksheet("DSP_Drivers")
+        rows = ws.get_all_values()
+    except Exception:
+        return {
+            "by_name": {},
+            "by_email": {},
+        }
+
+    if not rows:
+        return {
+            "by_name": {},
+            "by_email": {},
+        }
+
+    header = rows[0]
+    id_index = _header_index(
+        header,
+        ["driver_id", "courier_id", "Courier ID", "ID"],
+    )
+    name_index = _header_index(
+        header,
+        ["name", "nev", "név"],
+    )
+    email_index = _header_index(
+        header,
+        ["contact_email", "email", "e-mail"],
+    )
+    phone_index = _header_index(
+        header,
+        ["contact_number", "phone", "telefon", "telefonszam"],
+    )
+    warehouse_index = _header_index(
+        header,
+        ["warehouse_name", "warehouse", "raktar", "raktár"],
+    )
+    by_name = {}
+    by_email = {}
+
+    for row in rows[1:]:
+        courier_id = _cell(row, id_index)
+        name = _cell(row, name_index)
+        email = _normalize_email(
+            _cell(row, email_index)
+        )
+
+        if not courier_id:
+            continue
+
+        record = {
+            "courier_id": courier_id,
+            "name": name,
+            "email": email,
+            "phone": _cell(row, phone_index),
+            "warehouse": _cell(row, warehouse_index),
+        }
+
+        if name:
+            by_name[_normalize_name(name)] = record
+
+        if email:
+            by_email[email] = record
+
+    return {
+        "by_name": by_name,
+        "by_email": by_email,
+    }
+
+
+def _driver_by_name(driver_lookup, name):
+    return driver_lookup["by_name"].get(
+        _normalize_name(name),
+        {},
+    )
+
+
+def _driver_by_email(driver_lookup, email):
+    return driver_lookup["by_email"].get(
+        _normalize_email(email),
+        {},
+    )
 
 
 def _normalize_row(row):
@@ -295,9 +457,104 @@ def _log_sheet_changes(sheet_name, new_values, key_columns=None, matrix=False):
     return written
 
 
-def copy_foglalasok():
+def _write_log_sheet(sheet_name, values):
+    ws = _get_or_create_worksheet(
+        target_spreadsheet,
+        sheet_name,
+        rows=max(len(values) + 100, 1000),
+        cols=max((len(row) for row in values), default=12),
+    )
+
+    _update_from_a1(ws, values)
+
+
+def _enrich_foglalasok_values(values, driver_lookup):
+    if not values:
+        return values, [[
+            "sorszam",
+            "datum",
+            "courier_id",
+            "nev",
+            "email",
+            "raktar",
+            "kezdes",
+            "foglalasi_kod",
+        ]]
+
+    header = values[0]
+    enriched_header = [
+        *header,
+        "courier_id",
+        "nev",
+        "sorszam",
+    ]
+    output = [enriched_header]
+    log_rows = [[
+        "sorszam",
+        "datum",
+        "courier_id",
+        "nev",
+        "email",
+        "raktar",
+        "kezdes",
+        "foglalasi_kod",
+    ]]
+    date_index = 1
+    email_index = 2
+    shift_index = 3
+    warehouse_index = 4
+    booking_code_index = 5
+
+    for row in values[1:]:
+        work_date = _cell(row, date_index)
+        email = _normalize_email(
+            _cell(row, email_index)
+        )
+        shift = _cell(row, shift_index)
+        warehouse = _cell(row, warehouse_index)
+        start = shift.split("_", 1)[1] if "_" in shift else ""
+        driver = _driver_by_email(
+            driver_lookup,
+            email,
+        )
+        courier_id = driver.get("courier_id", "")
+        name = driver.get("name", "")
+        serial = _shift_serial(
+            work_date,
+            courier_id,
+            warehouse,
+            start,
+        )
+
+        enriched_row = [
+            *row,
+            courier_id,
+            name,
+            serial,
+        ]
+        output.append(enriched_row)
+        log_rows.append([
+            serial,
+            work_date,
+            courier_id,
+            name,
+            email,
+            warehouse,
+            _normalize_time(start),
+            _cell(row, booking_code_index),
+        ])
+
+    return output, log_rows
+
+
+def copy_foglalasok(driver_lookup=None):
+    driver_lookup = driver_lookup or _read_driver_lookup()
     source_ws = source_spreadsheet.worksheet(SOURCE_FOGLALASOK_SHEET)
     values = source_ws.get_all_values()
+    values, foglalasok_log = _enrich_foglalasok_values(
+        values,
+        driver_lookup,
+    )
 
     target_ws = _get_or_create_worksheet(
         target_spreadsheet,
@@ -307,6 +564,10 @@ def copy_foglalasok():
     )
 
     _update_from_a1(target_ws, values)
+    _write_log_sheet(
+        FOGLALASOK_LOG_SHEET,
+        foglalasok_log,
+    )
     changes = _log_sheet_changes(
         TARGET_FOGLALASOK_SHEET,
         values,
@@ -314,14 +575,7 @@ def copy_foglalasok():
     return len(values), changes
 
 
-def write_giriton_raw(rows):
-    ws = _get_or_create_worksheet(
-        target_spreadsheet,
-        GIRITON_RAW_SHEET,
-        rows=max(len(rows) + 100, 1000),
-        cols=12,
-    )
-
+def _enrich_giriton_rows(rows, driver_lookup):
     output = [[
         "datum",
         "kezdes",
@@ -331,14 +585,109 @@ def write_giriton_raw(rows):
         "foglalt",
         "maximum",
         "nev",
+        "email",
+        "sorszam",
+        "statusz",
+        "courier_id",
     ]]
-    output.extend(rows)
+    log_rows = [[
+        "sorszam",
+        "datum",
+        "courier_id",
+        "nev",
+        "email",
+        "raktar",
+        "kezdes",
+        "vege",
+    ]]
+
+    for row in rows:
+        work_date = _cell(row, 0)
+        start = _normalize_time(_cell(row, 1))
+        end = _normalize_time(_cell(row, 2))
+        warehouse = _cell(row, 3)
+        occupancy = _cell(row, 4)
+
+        if len(row) >= 8:
+            booked = _cell(row, 5)
+            maximum = _cell(row, 6)
+            name = _cell(row, 7)
+        else:
+            booked = ""
+            maximum = ""
+            name = _cell(row, 5)
+        driver = (
+            {}
+            if _normalize_name(name) == _normalize_name("ÜRES")
+            else _driver_by_name(driver_lookup, name)
+        )
+        courier_id = driver.get("courier_id", "")
+        email = driver.get("email", "")
+        serial = _shift_serial(
+            work_date,
+            courier_id,
+            warehouse,
+            start,
+        )
+        status = (
+            "URES"
+            if _normalize_name(name) == _normalize_name("ÜRES")
+            else "GIRITON_OK"
+        )
+
+        output.append([
+            work_date,
+            start,
+            end,
+            warehouse,
+            occupancy,
+            booked,
+            maximum,
+            name,
+            email,
+            serial,
+            status,
+            courier_id,
+        ])
+
+        if status == "GIRITON_OK":
+            log_rows.append([
+                serial,
+                work_date,
+                courier_id,
+                name,
+                email,
+                warehouse,
+                start,
+                end,
+            ])
+
+    return output, log_rows
+
+
+def write_giriton_raw(rows, driver_lookup=None):
+    driver_lookup = driver_lookup or _read_driver_lookup()
+    ws = _get_or_create_worksheet(
+        target_spreadsheet,
+        GIRITON_RAW_SHEET,
+        rows=max(len(rows) + 100, 1000),
+        cols=12,
+    )
+
+    output, giriton_log = _enrich_giriton_rows(
+        rows,
+        driver_lookup,
+    )
 
     _update_from_a1(ws, output)
+    _write_log_sheet(
+        GIRITON_LOG_SHEET,
+        giriton_log,
+    )
     changes = _log_sheet_changes(
         GIRITON_RAW_SHEET,
         output,
-        key_columns=[0, 1, 2, 3, 7],
+        key_columns=[9],
     )
     return len(rows), changes
 
@@ -453,8 +802,14 @@ def write_raw_export(rows):
     if not rows:
         raise ValueError("Nincs feldolgozhato Giriton sor.")
 
-    copied_foglalasok_rows, foglalasok_changes = copy_foglalasok()
-    giriton_rows, giriton_changes = write_giriton_raw(rows)
+    driver_lookup = _read_driver_lookup()
+    copied_foglalasok_rows, foglalasok_changes = copy_foglalasok(
+        driver_lookup
+    )
+    giriton_rows, giriton_changes = write_giriton_raw(
+        rows,
+        driver_lookup,
+    )
     matrix_summaries = write_open_shift_matrices(rows)
 
     result = (
