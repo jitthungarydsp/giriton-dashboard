@@ -166,6 +166,30 @@ def render_styles():
     margin: 8px 0 18px;
     padding: 18px;
 }
+.shift-day-selector {
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #d9f99d;
+    border-radius: 16px;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.05);
+    display: flex;
+    justify-content: space-between;
+    margin: 0 0 10px;
+    padding: 12px 16px;
+}
+.shift-day-label {
+    color: #166534;
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.shift-day-date {
+    color: #0f172a;
+    font-size: 20px;
+    font-weight: 900;
+    line-height: 1.25;
+}
 .today-shift-title {
     color: #166534;
     font-size: 18px;
@@ -390,12 +414,18 @@ def render_hero(row, user):
     name = escape(str(row.get("name") or user.get("username") or "Kifli futár"))
     courier_id = escape(str(row.get("courier_id") or user.get("courierId") or "-"))
     warehouse = escape(str(row.get("warehouse") or "Kifli pálya"))
+    vehicle_temperature = escape(str(row.get("vehicle_temperature") or "Nincs adat"))
+    vehicle_plate = escape(str(row.get("license_plate") or ""))
+    vehicle_note = f"Hűtő: {vehicle_temperature}°C" if vehicle_temperature != "Nincs adat" else "Hűtő: nincs adat"
+
+    if vehicle_plate:
+        vehicle_note = f"{vehicle_note} | Autó: {vehicle_plate}"
 
     st.markdown(
         f"""
 <div class="courier-hero">
   <div>
-    <div class="courier-plate-label">Kifli futar cockpit</div>
+    <div class="courier-plate-label">Kifli futár cockpit</div>
     <h1>Szia, {name}!</h1>
     <p>Itt van a saját teljesítmény-kártyád: címek, körök, normál és expressz arányok, várakozások és azok az apró számok, amikből a nap végén látszik, hogy ment a pálya.</p>
   </div>
@@ -403,6 +433,7 @@ def render_hero(row, user):
     <div class="courier-plate-label">Futár azonosító</div>
     <div class="courier-plate-value">#{courier_id}</div>
     <div class="stat-note">Raktár: {warehouse}</div>
+    <div class="stat-note">{vehicle_note}</div>
   </div>
 </div>
 """,
@@ -443,6 +474,31 @@ def status_pill(value):
     label = "OK" if value == "OK" else "Hiányzik"
 
     return f'<span class="today-pill {css_class}">{label}</span>'
+
+
+def get_driver_temperature(driver):
+    vehicle = driver.get("vehicle", {}) or {}
+    temperature = vehicle.get("temperature")
+
+    if temperature in [None, ""]:
+        return ""
+
+    try:
+        return str(int(float(temperature)))
+    except (TypeError, ValueError):
+        return str(temperature)
+
+
+def get_driver_license_plate(driver):
+    vehicle = driver.get("vehicle", {}) or {}
+    return str(vehicle.get("license_plate") or "").strip()
+
+
+def attach_live_vehicle_info(row, driver):
+    row = row.copy()
+    row["vehicle_temperature"] = get_driver_temperature(driver)
+    row["license_plate"] = get_driver_license_plate(driver)
+    return row
 
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
@@ -772,21 +828,53 @@ def get_best_route(driver, driver_detail):
     )[-1]
 
 
-def render_today_shifts(row, user):
-    today = date.today()
-    _next_shift_date = None
+def selected_shift_date(today):
+    key = "courier_dashboard_shift_day_offset"
+    st.session_state.setdefault(key, 0)
+
+    left, middle, right = st.columns([1, 5, 1])
+
+    with left:
+        if st.button("‹", key="shift_day_prev", use_container_width=True):
+            st.session_state[key] = max(0, st.session_state[key] - 1)
+
+    with right:
+        if st.button("›", key="shift_day_next", use_container_width=True):
+            st.session_state[key] = min(2, st.session_state[key] + 1)
+
+    offset = st.session_state[key]
+    selected_date = today + timedelta(days=offset)
+    labels = {
+        0: "Mai műszak",
+        1: "Holnapi műszak",
+        2: "Holnaputáni műszak",
+    }
+
+    with middle:
+        st.markdown(
+            f"""
+<div class="shift-day-selector">
+  <div>
+    <div class="shift-day-label">{labels.get(offset, "Műszak")}</div>
+    <div class="shift-day-date">{selected_date:%Y.%m.%d}</div>
+  </div>
+  <div class="stat-note">Lapozz a nyilakkal: ma, holnap, holnapután</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    return selected_date, labels.get(offset, "Műszak")
+
+
+def render_today_shifts(row, user, work_date=None, day_label="Mai műszak"):
+    today = local_now().date()
+    work_date = work_date or today
     shifts = get_today_shift_rows(
         row,
         user,
-        today,
+        work_date,
     )
-
-    if not shifts:
-        _next_shift_date, shifts = get_next_sheet_shift_rows(
-            row,
-            user,
-            today,
-        )
 
     if shifts:
         rows_html = []
@@ -804,20 +892,18 @@ def render_today_shifts(row, user):
             )
 
         body = "".join(rows_html)
-        title = "Ma dolgozol"
-        if _next_shift_date:
-            title = "Kovetkezo muszakod"
-        note = "A mai műszakod a feltöltött Giriton és MűszakPro adatok alapján."
+        title = "Ma dolgozol" if work_date == today else f"{day_label}: dolgozol"
+        note = "A műszakod a feltöltött Giriton és MűszakPro adatok alapján."
     else:
         body = """
 <div class="today-shift-row">
-  <div><strong>Nincs mai műszak</strong></div>
+  <div><strong>Nincs műszak ezen a napon</strong></div>
   <div>-</div>
   <div>Giriton: <span class="today-pill today-missing">Nincs adat</span></div>
   <div>MűszakPro: <span class="today-pill today-missing">Nincs adat</span></div>
 </div>
 """
-        title = "Ma nem látok műszakot"
+        title = "Ma nem látok műszakot" if work_date == today else f"{day_label}: nincs műszak"
         note = "Ha mégis dolgozol, akkor valószínűleg a robot frissítése vagy a feltöltés hiányzik."
 
     st.markdown(
@@ -1656,6 +1742,16 @@ def show_courier_dashboard_page():
         st.warning("Ehhez a belepeshez nem talaltam futar statisztikat.")
         return
 
+    _attendance_data, drivers_data = load_live_courier_sources()
+    current_driver = find_driver(
+        drivers_data,
+        normalize_id(current_row.get("courier_id")),
+    )
+    current_row = attach_live_vehicle_info(
+        current_row,
+        current_driver,
+    )
+
     monthly_row = current_row
     if not monthly_summary_df.empty:
         courier_id = normalize_id(current_row.get("courier_id"))
@@ -1666,7 +1762,13 @@ def show_courier_dashboard_page():
             monthly_row = monthly_match.iloc[0]
 
     render_hero(current_row, user)
-    render_today_shifts(current_row, user)
+    shift_date, shift_day_label = selected_shift_date(today)
+    render_today_shifts(
+        current_row,
+        user,
+        shift_date,
+        shift_day_label,
+    )
     render_route_road(current_row, current_details)
     st.subheader(f"Havi statisztika: {selected_start:%Y-%m}")
     render_stat_cards(
