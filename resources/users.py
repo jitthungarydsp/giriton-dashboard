@@ -43,10 +43,19 @@ def generate_password():
 def create_user(
     username,
     courier_id,
-    role
+    role,
+    trainer=""
 ):
 
     data = load_users()
+    username = str(username or "").strip()
+
+    if not username:
+        raise ValueError("A név megadása kötelező.")
+
+    for user in data["users"]:
+        if user["username"].strip().casefold() == username.casefold():
+            raise ValueError("Ilyen nevű felhasználó már létezik.")
 
     password = generate_password()
 
@@ -61,6 +70,8 @@ def create_user(
         "role": role,
 
         "courierId": courier_id,
+
+        "trainer": trainer,
 
         "active": True,
 

@@ -17,6 +17,16 @@ def show_admin_page():
         "👑 Admin"
     )
 
+    created_user = st.session_state.pop(
+        "admin_created_user",
+        None,
+    )
+
+    if created_user:
+        st.success(
+            f"Felhasználó létrehozva: {created_user['username']} | Jelszó: {created_user['password']}"
+        )
+
     data = load_users()
 
     users = data["users"]
@@ -100,22 +110,20 @@ def show_admin_page():
 
         if submitted:
 
-            password = create_user(
-                username,
-                courier_id,
-                role
-            )
-
-            update_trainer(
-                username,
-                trainer
-            )
-
-            st.success(
-                f"Jelszó: {password}"
-            )
-
-            st.rerun()
+            try:
+                password = create_user(
+                    username,
+                    int(courier_id),
+                    role,
+                    trainer,
+                )
+                st.session_state["admin_created_user"] = {
+                    "username": username,
+                    "password": password,
+                }
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
 
     st.divider()
 

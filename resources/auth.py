@@ -1,5 +1,9 @@
 import json
+import base64
+import hashlib
+import hmac
 import secrets
+import time
 import streamlit as st
 
 from resources.security import hash_password, verify_password
@@ -7,6 +11,7 @@ from resources.security import hash_password, verify_password
 #from streamlit_cookies_manager import EncryptedCookieManager
 
 COOKIE_NAME = "dsp_token"
+TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 def load_users():
@@ -94,31 +99,51 @@ def create_token():
     )
 
 
-def save_token(
-    username
-):
+def _token_secret(user):
+    password_hash = str(user.get("passwordHash") or user.get("password") or "")
 
+    try:
+        app_secret = st.secrets.get("AUTH_TOKEN_SECRET", "")
+    except Exception:
+        app_secret = ""
+
+    return f"{password_hash}|{app_secret}".encode("utf-8")
+
+
+def _sign_token_payload(payload, user):
+    return hmac.new(
+        _token_secret(user),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _encode_token(payload, signature):
+    raw = f"{payload}.{signature}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_token(token):
+    try:
+        raw = base64.urlsafe_b64decode(
+            str(token).encode("ascii")
+        ).decode("utf-8")
+        payload, signature = raw.rsplit(".", 1)
+        return payload, signature
+    except Exception:
+        return "", ""
+
+
+def save_token(username):
     data = load_users()
 
-    token = create_token()
-
     for user in data["users"]:
+        if user["username"] == username:
+            payload = f"{username}|{int(time.time())}"
+            signature = _sign_token_payload(payload, user)
+            return _encode_token(payload, signature)
 
-        if (
-            user["username"]
-            ==
-            username
-        ):
-
-            user["token"] = token
-
-            break
-
-    save_users(
-        data
-    )
-
-    return token
+    return ""
 
 
 def login_by_token(
@@ -128,18 +153,36 @@ def login_by_token(
     if not token:
         return None
 
+    payload, signature = _decode_token(token)
     data = load_users()
 
+    if payload and signature:
+        try:
+            username, issued_at = payload.rsplit("|", 1)
+            issued_at = int(issued_at)
+        except ValueError:
+            return None
+
+        if time.time() - issued_at > TOKEN_TTL_SECONDS:
+            return None
+
+        for user in data["users"]:
+            if (
+                user["username"] == username
+                and user.get("active", True)
+            ):
+                expected = _sign_token_payload(payload, user)
+
+                if hmac.compare_digest(expected, signature):
+                    return user
+
+        return None
+
     for user in data["users"]:
-
         if (
-            user.get(
-                "token"
-            )
-            ==
-            token
+            user.get("token") == token
+            and user.get("active", True)
         ):
-
             return user
 
     return None
@@ -148,22 +191,7 @@ def login_by_token(
 def logout(
     username
 ):
-
-    data = load_users()
-
-    for user in data["users"]:
-
-        if (
-            user["username"]
-            ==
-            username
-        ):
-
-            user["token"] = ""
-
-    save_users(
-        data
-    )
+    return None
 
 def login_screen():
 
