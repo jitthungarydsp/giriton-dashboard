@@ -1,3 +1,5 @@
+import time
+
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -20,6 +22,7 @@ from resources.courier_db_sheet import (
 
 
 WORKSHEET_NAME = "Muszak_Ellenorzes"
+MISSING_API_WORKSHEET_NAME = "CourierDB_JITT_API_Hianyzo"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 HEADER = [
@@ -39,12 +42,40 @@ HEADER = [
     "courier_id",
 ]
 
+MISSING_API_HEADER = [
+    "name",
+    "email",
+    "warehouse",
+    "dates",
+    "shifts",
+    "sources",
+    "reason",
+    "updated_at",
+]
+
 
 def row_value(row, index):
     if index >= len(row):
         return ""
 
     return row[index]
+
+
+def with_retries(callback, attempts=3, delay_seconds=2):
+    last_error = None
+
+    for attempt in range(attempts):
+        try:
+            return callback()
+        except Exception as exc:
+            last_error = exc
+
+            if attempt == attempts - 1:
+                break
+
+            time.sleep(delay_seconds * (attempt + 1))
+
+    raise last_error
 
 
 def make_match_key(work_date, email, warehouse, start, name="", courier_id=""):
@@ -121,6 +152,13 @@ def record_to_row(record):
     return [
         record.get(column, "")
         for column in HEADER
+    ]
+
+
+def missing_api_record_to_row(record):
+    return [
+        record.get(column, "")
+        for column in MISSING_API_HEADER
     ]
 
 
@@ -310,6 +348,135 @@ def records_to_rows(records):
     ]
 
 
+def get_or_create_missing_api_worksheet(spreadsheet):
+    try:
+        worksheet = spreadsheet.worksheet(
+            MISSING_API_WORKSHEET_NAME
+        )
+    except gspread.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(
+            title=MISSING_API_WORKSHEET_NAME,
+            rows=1000,
+            cols=len(MISSING_API_HEADER),
+        )
+
+    values = worksheet.get_all_values()
+
+    if not values:
+        with_retries(
+            lambda: worksheet.update("A1", [MISSING_API_HEADER])
+        )
+
+    return worksheet
+
+
+def build_missing_api_records(records):
+    updated_at = datetime.now(
+        LOCAL_TIMEZONE
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    grouped = {}
+
+    for record in records:
+        if str(record.get("courier_id", "")).strip():
+            continue
+
+        name = str(record.get("name", "")).strip()
+        email = str(record.get("email", "")).strip().casefold()
+
+        if not name and not email:
+            continue
+
+        key = (
+            email,
+            normalize_name(name),
+        )
+        item = grouped.setdefault(
+            key,
+            {
+                "name": name,
+                "email": email,
+                "warehouse": set(),
+                "dates": set(),
+                "shifts": set(),
+                "sources": set(),
+                "reason": "Nincs courier_id a CourierDB_JITT/API törzsben",
+                "updated_at": updated_at,
+            },
+        )
+
+        if record.get("warehouse"):
+            item["warehouse"].add(
+                str(record.get("warehouse"))
+            )
+
+        if record.get("work_date"):
+            item["dates"].add(
+                str(record.get("work_date"))
+            )
+
+        if record.get("start"):
+            item["shifts"].add(
+                f"{record.get('work_date', '')} {record.get('warehouse', '')} {record.get('start', '')}"
+            )
+
+        if record.get("giriton") == "OK":
+            item["sources"].add("Giriton")
+
+        if record.get("muszakpro") == "OK":
+            item["sources"].add("MuszakPro")
+
+    return [
+        {
+            "name": item["name"],
+            "email": item["email"],
+            "warehouse": ", ".join(
+                sorted(item["warehouse"])
+            ),
+            "dates": ", ".join(
+                sorted(item["dates"])
+            ),
+            "shifts": " | ".join(
+                sorted(item["shifts"])
+            ),
+            "sources": ", ".join(
+                sorted(item["sources"])
+            ),
+            "reason": item["reason"],
+            "updated_at": item["updated_at"],
+        }
+        for item in sorted(
+            grouped.values(),
+            key=lambda value: (
+                normalize_name(value["name"]),
+                value["email"],
+            ),
+        )
+    ]
+
+
+def write_missing_api_sheet(spreadsheet, records):
+    missing_records = build_missing_api_records(records)
+    worksheet = get_or_create_missing_api_worksheet(
+        spreadsheet
+    )
+    rows = [
+        MISSING_API_HEADER,
+        *[
+            missing_api_record_to_row(record)
+            for record in missing_records
+        ],
+    ]
+
+    with_retries(
+        worksheet.clear
+    )
+    with_retries(
+        lambda: worksheet.update("A1", rows)
+    )
+
+    return len(missing_records)
+
+
 def rebuild_shift_reconciliation(start_date=None, days=10):
     if start_date is None:
         start = datetime.now(LOCAL_TIMEZONE).date()
@@ -324,14 +491,25 @@ def rebuild_shift_reconciliation(start_date=None, days=10):
         work_date = (
             start + timedelta(days=offset)
         ).isoformat()
-        records.extend(
-            build_records_for_date(work_date)
+        daily_records = with_retries(
+            lambda work_date=work_date: build_records_for_date(work_date),
+            attempts=3,
+            delay_seconds=3,
         )
+        records.extend(daily_records)
 
     spreadsheet = open_sheet()
     worksheet = get_or_create_worksheet(spreadsheet)
-    worksheet.clear()
-    worksheet.update("A1", records_to_rows(records))
+    with_retries(
+        worksheet.clear
+    )
+    with_retries(
+        lambda: worksheet.update("A1", records_to_rows(records))
+    )
+    write_missing_api_sheet(
+        spreadsheet,
+        records,
+    )
 
     return records
 
