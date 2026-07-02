@@ -17,6 +17,7 @@ from resources.muszakpro_sheet import (
 )
 from resources.courier_db_sheet import (
     build_courier_lookup,
+    normalize_email,
     resolve_courier_id,
 )
 
@@ -104,6 +105,50 @@ def fallback_shift_key(work_date, warehouse, start):
     )
 
 
+def person_shift_key(work_date, warehouse, start, courier_id="", name="", email=""):
+    courier_id = str(courier_id or "").strip()
+    name = normalize_name(name)
+    email = normalize_email(email)
+    person = courier_id or name or email
+
+    return "|".join(
+        [
+            str(work_date or "").strip(),
+            person,
+            str(warehouse or "").strip().casefold(),
+            normalize_time(start),
+        ]
+    )
+
+
+def enrich_foglalas_record(record, courier_lookup, email_name_lookup):
+    email = normalize_email(
+        record.get("email")
+    )
+    name_from_email = email_name_lookup.get(
+        email,
+        "",
+    )
+    courier_id = resolve_courier_id(
+        email=email,
+        name=name_from_email,
+        lookup=courier_lookup,
+    )
+    name = (
+        courier_lookup["by_id"]
+        .get(courier_id, {})
+        .get("name")
+        or name_from_email
+        or email
+    )
+
+    record["email"] = email
+    record["name"] = name
+    record["courier_id"] = courier_id
+
+    return record
+
+
 def is_time_shift_start(value):
     parts = str(value or "").strip().split(":")
 
@@ -178,12 +223,28 @@ def build_records_for_date(work_date):
     giriton_records = read_giriton_records(work_date)
     foglalas_records = read_foglalasok_records(work_date)
     foglalas_lookup = build_foglalas_lookup(foglalas_records)
+    person_foglalas_lookup = {}
     fallback_foglalas_lookup = {}
 
     for record in foglalas_records:
         if not is_courier_shift(record):
             continue
 
+        record = enrich_foglalas_record(
+            record,
+            courier_lookup,
+            email_name_lookup,
+        )
+        person_foglalas_lookup[
+            person_shift_key(
+                record.get("work_date"),
+                record.get("warehouse"),
+                record.get("start"),
+                courier_id=record.get("courier_id"),
+                name=record.get("name"),
+                email=record.get("email"),
+            )
+        ] = record
         fallback_foglalas_lookup.setdefault(
             fallback_shift_key(
                 record.get("work_date"),
@@ -194,6 +255,7 @@ def build_records_for_date(work_date):
         ).append(record)
     records_by_key = {}
     matched_foglalas_keys = set()
+    matched_person_foglalas_keys = set()
 
     for record in giriton_records:
         if not is_courier_shift(record):
@@ -222,6 +284,24 @@ def build_records_for_date(work_date):
             ),
             {},
         )
+        person_key = person_shift_key(
+            record.get("work_date"),
+            record.get("warehouse"),
+            record.get("start"),
+            courier_id=courier_id,
+            name=name,
+            email=email,
+        )
+        if not foglalas_record:
+            foglalas_record = person_foglalas_lookup.get(
+                person_key,
+                {},
+            )
+
+            if foglalas_record:
+                email = normalize_email(
+                    foglalas_record.get("email")
+                )
         if not foglalas_record and not email:
             fallback_records = fallback_foglalas_lookup.get(
                 fallback_shift_key(
@@ -262,6 +342,16 @@ def build_records_for_date(work_date):
                     foglalas_record.get("start"),
                 )
             )
+            matched_person_foglalas_keys.add(
+                person_shift_key(
+                    foglalas_record.get("work_date"),
+                    foglalas_record.get("warehouse"),
+                    foglalas_record.get("start"),
+                    courier_id=foglalas_record.get("courier_id"),
+                    name=foglalas_record.get("name"),
+                    email=foglalas_record.get("email"),
+                )
+            )
 
         records_by_key[key] = {
             "work_date": record.get("work_date", ""),
@@ -284,19 +374,30 @@ def build_records_for_date(work_date):
         if not is_courier_shift(record):
             continue
 
-        email = str(record.get("email", "")).strip().casefold()
-        name = email_name_lookup.get(email, email)
-        courier_id = resolve_courier_id(
-            email=email,
-            name=name,
-            lookup=courier_lookup,
+        record = enrich_foglalas_record(
+            record,
+            courier_lookup,
+            email_name_lookup,
         )
+        email = normalize_email(record.get("email"))
+        name = record.get("name", "")
+        courier_id = record.get("courier_id", "")
 
         if foglalas_key(
             email,
             record.get("warehouse"),
             record.get("start"),
         ) in matched_foglalas_keys:
+            continue
+
+        if person_shift_key(
+            record.get("work_date"),
+            record.get("warehouse"),
+            record.get("start"),
+            courier_id=courier_id,
+            name=name,
+            email=email,
+        ) in matched_person_foglalas_keys:
             continue
 
         key = make_match_key(
