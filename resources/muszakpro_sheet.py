@@ -3,7 +3,7 @@ import os
 from resources.google_auth import get_client
 
 
-DEFAULT_SPREADSHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
+DEFAULT_SPREADSHEET_ID = "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 GIRITON_WORKSHEET_NAME = "Giriton"
 FOGLALASOK_WORKSHEET_NAME = "Foglalasok"
 
@@ -137,6 +137,11 @@ def read_giriton_records(work_date):
     )
     rows = worksheet.get_all_values()
     email_name_lookup = read_giriton_email_name_lookup()
+    name_email_lookup = {
+        normalize_name(name): email
+        for email, name in email_name_lookup.items()
+        if email and name
+    }
     records = []
 
     for row in rows:
@@ -154,6 +159,12 @@ def read_giriton_records(work_date):
                     record.get("email", ""),
                 )
                 record["check"] = row_value(row, 10)
+
+        if not record.get("email") and record.get("name"):
+            record["email"] = name_email_lookup.get(
+                normalize_name(record.get("name")),
+                "",
+            )
 
         if (
             record["work_date"] == work_date

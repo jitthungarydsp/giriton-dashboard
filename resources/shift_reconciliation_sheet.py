@@ -57,6 +57,16 @@ def make_match_key(work_date, email, warehouse, start, name=""):
     )
 
 
+def fallback_shift_key(work_date, warehouse, start):
+    return "|".join(
+        [
+            str(work_date or "").strip(),
+            str(warehouse or "").strip().casefold(),
+            normalize_time(start),
+        ]
+    )
+
+
 def is_time_shift_start(value):
     parts = str(value or "").strip().split(":")
 
@@ -123,7 +133,22 @@ def build_records_for_date(work_date):
     giriton_records = read_giriton_records(work_date)
     foglalas_records = read_foglalasok_records(work_date)
     foglalas_lookup = build_foglalas_lookup(foglalas_records)
+    fallback_foglalas_lookup = {}
+
+    for record in foglalas_records:
+        if not is_courier_shift(record):
+            continue
+
+        fallback_foglalas_lookup.setdefault(
+            fallback_shift_key(
+                record.get("work_date"),
+                record.get("warehouse"),
+                record.get("start"),
+            ),
+            [],
+        ).append(record)
     records_by_key = {}
+    matched_foglalas_keys = set()
 
     for record in giriton_records:
         if not is_courier_shift(record):
@@ -146,8 +171,40 @@ def build_records_for_date(work_date):
             ),
             {},
         )
+        if not foglalas_record and not email:
+            fallback_records = fallback_foglalas_lookup.get(
+                fallback_shift_key(
+                    record.get("work_date"),
+                    record.get("warehouse"),
+                    record.get("start"),
+                ),
+                [],
+            )
+
+            if len(fallback_records) == 1:
+                foglalas_record = fallback_records[0]
+                email = str(
+                    foglalas_record.get("email", "")
+                ).strip().casefold()
+                key = make_match_key(
+                    record.get("work_date"),
+                    email,
+                    record.get("warehouse"),
+                    record.get("start"),
+                    name,
+                )
+
         has_muszakpro = bool(foglalas_record)
         missing = [] if has_muszakpro else ["MuszakPro"]
+
+        if foglalas_record:
+            matched_foglalas_keys.add(
+                foglalas_key(
+                    foglalas_record.get("email"),
+                    foglalas_record.get("warehouse"),
+                    foglalas_record.get("start"),
+                )
+            )
 
         records_by_key[key] = {
             "work_date": record.get("work_date", ""),
@@ -171,6 +228,14 @@ def build_records_for_date(work_date):
 
         email = str(record.get("email", "")).strip().casefold()
         name = email_name_lookup.get(email, email)
+
+        if foglalas_key(
+            email,
+            record.get("warehouse"),
+            record.get("start"),
+        ) in matched_foglalas_keys:
+            continue
+
         key = make_match_key(
             record.get("work_date"),
             email,
