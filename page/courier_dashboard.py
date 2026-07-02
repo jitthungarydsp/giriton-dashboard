@@ -467,10 +467,18 @@ def load_shift_records_for_dates(work_date_texts):
 
 def filter_shift_rows(records, row, user):
     courier_name = normalize_name(row.get("name") or user.get("username"))
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
     shifts = []
 
     for record in records:
-        if normalize_name(record.get("name")) != courier_name:
+        record_courier_id = normalize_id(
+            record.get("courier_id")
+        )
+
+        if courier_id and record_courier_id:
+            if record_courier_id != courier_id:
+                continue
+        elif normalize_name(record.get("name")) != courier_name:
             continue
 
         shifts.append(record)

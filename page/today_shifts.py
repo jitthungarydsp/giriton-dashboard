@@ -148,6 +148,7 @@ def reconciliation_to_giriton_records(records):
             "name": record.get("name", ""),
             "email": record.get("email", ""),
             "check": record.get("giriton_check", ""),
+            "courier_id": record.get("courier_id", ""),
         }
         for record in records
         if record.get("giriton") == "OK"
@@ -167,6 +168,7 @@ def reconciliation_to_foglalas_records(records):
             "warehouse": record.get("warehouse", ""),
             "start": record.get("start", ""),
             "code": record.get("muszakpro_code", ""),
+            "courier_id": record.get("courier_id", ""),
         }
         for record in records
         if record.get("muszakpro") == "OK"
@@ -616,6 +618,7 @@ def build_shift_sources(
                 "end": record.get("end"),
                 "warehouse": record.get("warehouse"),
                 "email": record.get("email"),
+                "courier_id": record.get("courier_id"),
                 "reconciliation_record": record,
             },
         )
@@ -639,6 +642,7 @@ def build_shift_sources(
                 "end": record.get("end"),
                 "warehouse": record.get("warehouse"),
                 "email": record.get("email"),
+                "courier_id": record.get("courier_id"),
                 "giriton_record": record,
             },
         )
@@ -664,6 +668,7 @@ def build_shift_sources(
                 "start": record.get("start"),
                 "warehouse": record.get("warehouse"),
                 "email": record.get("email"),
+                "courier_id": record.get("courier_id"),
                 "foglalas_record": record,
             },
         )

@@ -1,6 +1,10 @@
 import pandas as pd
 import streamlit as st
 
+from resources.courier_db_sheet import (
+    sync_courier_db_from_drivers,
+    upsert_couriers,
+)
 from resources.users import (
     load_users,
     create_user,
@@ -73,6 +77,29 @@ def show_admin_page():
     st.divider()
 
     st.subheader(
+        "🚚 CourierDB_JITT törzsadat"
+    )
+
+    st.caption(
+        "ID, név, e-mail, telefonszám és raktár frissítése a DSP driver API-ból. A courier_id lesz a biztos azonosító."
+    )
+
+    if st.button(
+        "CourierDB_JITT frissítése"
+    ):
+        try:
+            result = sync_courier_db_from_drivers()
+            st.success(
+                f"CourierDB_JITT frissítve: {result['updated']} API rekord, összesen {result['total']} futár."
+            )
+        except Exception as exc:
+            st.error(
+                f"CourierDB_JITT frissítés sikertelen: {exc}"
+            )
+
+    st.divider()
+
+    st.subheader(
         "➕ Új felhasználó"
     )
 
@@ -87,6 +114,14 @@ def show_admin_page():
         courier_id = st.number_input(
             "Courier ID",
             step=1
+        )
+
+        email = st.text_input(
+            "E-mail cím"
+        )
+
+        phone = st.text_input(
+            "Telefonszám"
         )
 
         role = st.selectbox(
@@ -117,6 +152,23 @@ def show_admin_page():
                     role,
                     trainer,
                 )
+                try:
+                    upsert_couriers(
+                        [
+                            {
+                                "courier_id": int(courier_id),
+                                "name": username,
+                                "email": email,
+                                "phone": phone,
+                                "source": "admin",
+                                "active": "True",
+                            }
+                        ]
+                    )
+                except Exception as exc:
+                    st.warning(
+                        f"A felhasználó elkészült, de a CourierDB_JITT frissítés nem sikerült: {exc}"
+                    )
                 st.session_state["admin_created_user"] = {
                     "username": username,
                     "password": password,

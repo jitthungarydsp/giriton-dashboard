@@ -13,6 +13,10 @@ from resources.muszakpro_sheet import (
     normalize_name,
     normalize_time,
 )
+from resources.courier_db_sheet import (
+    build_courier_lookup,
+    resolve_courier_id,
+)
 
 
 WORKSHEET_NAME = "Muszak_Ellenorzes"
@@ -32,6 +36,7 @@ HEADER = [
     "muszakpro_code",
     "updated_at",
     "match_key",
+    "courier_id",
 ]
 
 
@@ -42,10 +47,11 @@ def row_value(row, index):
     return row[index]
 
 
-def make_match_key(work_date, email, warehouse, start, name=""):
+def make_match_key(work_date, email, warehouse, start, name="", courier_id=""):
+    courier_id = str(courier_id or "").strip()
     email = str(email or "").strip().casefold()
     name = normalize_name(name)
-    person = email or name
+    person = courier_id or email or name
 
     return "|".join(
         [
@@ -130,6 +136,7 @@ def build_records_for_date(work_date):
         LOCAL_TIMEZONE
     ).strftime("%Y-%m-%d %H:%M:%S")
     email_name_lookup = read_giriton_email_name_lookup()
+    courier_lookup = build_courier_lookup()
     giriton_records = read_giriton_records(work_date)
     foglalas_records = read_foglalasok_records(work_date)
     foglalas_lookup = build_foglalas_lookup(foglalas_records)
@@ -156,12 +163,18 @@ def build_records_for_date(work_date):
 
         email = str(record.get("email", "")).strip().casefold()
         name = str(record.get("name", "")).strip()
+        courier_id = resolve_courier_id(
+            email=email,
+            name=name,
+            lookup=courier_lookup,
+        )
         key = make_match_key(
             record.get("work_date"),
             email,
             record.get("warehouse"),
             record.get("start"),
             name,
+            courier_id,
         )
         foglalas_record = foglalas_lookup.get(
             foglalas_key(
@@ -186,12 +199,18 @@ def build_records_for_date(work_date):
                 email = str(
                     foglalas_record.get("email", "")
                 ).strip().casefold()
+                courier_id = resolve_courier_id(
+                    email=email,
+                    name=name,
+                    lookup=courier_lookup,
+                )
                 key = make_match_key(
                     record.get("work_date"),
                     email,
                     record.get("warehouse"),
                     record.get("start"),
                     name,
+                    courier_id,
                 )
 
         has_muszakpro = bool(foglalas_record)
@@ -220,6 +239,7 @@ def build_records_for_date(work_date):
             "muszakpro_code": foglalas_record.get("code", ""),
             "updated_at": updated_at,
             "match_key": key,
+            "courier_id": courier_id,
         }
 
     for record in foglalas_records:
@@ -228,6 +248,11 @@ def build_records_for_date(work_date):
 
         email = str(record.get("email", "")).strip().casefold()
         name = email_name_lookup.get(email, email)
+        courier_id = resolve_courier_id(
+            email=email,
+            name=name,
+            lookup=courier_lookup,
+        )
 
         if foglalas_key(
             email,
@@ -242,6 +267,7 @@ def build_records_for_date(work_date):
             record.get("warehouse"),
             record.get("start"),
             name,
+            courier_id,
         )
 
         if key in records_by_key:
@@ -261,6 +287,7 @@ def build_records_for_date(work_date):
             "muszakpro_code": record.get("code", ""),
             "updated_at": updated_at,
             "match_key": key,
+            "courier_id": courier_id,
         }
 
     return sorted(
