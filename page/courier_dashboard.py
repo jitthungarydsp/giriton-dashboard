@@ -19,6 +19,7 @@ from resources.api import (
     load_drivers,
 )
 from resources.shift_reconciliation_sheet import (
+    rebuild_shift_reconciliation,
     read_shift_reconciliation_records_for_dates,
     read_shift_reconciliation_records,
 )
@@ -521,6 +522,30 @@ def get_next_sheet_shift_rows(row, user, start_date, days=14):
             return work_date, shifts
 
     return None, []
+
+
+def refresh_shift_reconciliation_for_courier_card(today):
+    refresh_counter = st.session_state.get(
+        "manual_refresh_counter",
+        0,
+    )
+    last_refresh_counter = st.session_state.get(
+        "courier_card_shift_refresh_counter",
+        -1,
+    )
+
+    if refresh_counter <= 0 or refresh_counter == last_refresh_counter:
+        return
+
+    with st.spinner("Műszak ellenőrzés frissítése..."):
+        rebuild_shift_reconciliation(
+            start_date=today,
+            days=15,
+        )
+        load_today_shift_records.clear()
+        load_shift_records_for_dates.clear()
+
+    st.session_state["courier_card_shift_refresh_counter"] = refresh_counter
 
 
 def local_now():
@@ -1579,8 +1604,10 @@ def show_courier_dashboard_page():
     render_styles()
 
     user = st.session_state["user"]
-    today = date.today()
+    today = local_now().date()
     default_month = today.strftime("%Y-%m")
+
+    refresh_shift_reconciliation_for_courier_card(today)
 
     selected_month = st.text_input(
         "Honap",

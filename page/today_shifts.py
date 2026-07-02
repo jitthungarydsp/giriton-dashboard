@@ -1612,6 +1612,25 @@ def show_today_shifts_page():
     work_date_text = selected_date.strftime(
         "%Y-%m-%d"
     )
+    refresh_counter = st.session_state.get(
+        "manual_refresh_counter",
+        0,
+    )
+    last_refresh_counter = st.session_state.get(
+        "today_shifts_reconciliation_refresh_counter",
+        -1,
+    )
+
+    if refresh_counter > 0 and refresh_counter != last_refresh_counter:
+        with st.spinner(
+            "Giriton és MűszakPro ellenőrzés frissítése..."
+        ):
+            rebuild_shift_reconciliation(
+                start_date=selected_date,
+                days=10,
+            )
+            load_shift_sheet_data.clear()
+        st.session_state["today_shifts_reconciliation_refresh_counter"] = refresh_counter
 
     if st.button(
         "Műszak ellenőrzés újraépítése",
