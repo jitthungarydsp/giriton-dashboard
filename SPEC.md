@@ -251,17 +251,17 @@ driver_id
 Masodlagos / kapcsolo kulcs:
 
 ```text
-loading_finished_at
+route_assigned_at
 ```
 
 Indok:
 
 - ebben a live hivasban nincs kulon route ID
 - az elsodleges azonosito ezert a `driver_id`
-- a `loading_finished_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
+- a `route_assigned_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
 - egy futarnak egy napon tobb turaja is lehet, ezert a `driver_id` onmagaban nem eleg a konkret tura elvalasztasara
-- a tura szintu egyediseghez a `driver_id + loading_finished_at` paros hasznalhato
-- `loading_finished_at` mindig van, ezert nem kell potazonositoval szamolni
+- a tura szintu egyediseghez a `driver_id + route_assigned_at` paros hasznalhato
+- `loading_finished_at` elofordulhat, hogy ures, ezert nem alkalmas stabil masodlagos kulcsnak
 
 Tervezett mezok:
 
@@ -282,7 +282,7 @@ Tervezett mezok:
 Nullazodas:
 
 - A route `statistics` akkor nullazodik, amikor a futar uj turat kap.
-- Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel a `loading_finished_at`, `route_assigned_at`, `warehouse_departure_real` es a statistics valtozasa lesz fontos.
+- Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel a `route_assigned_at`, `warehouse_departure_real`, `loading_finished_at` es a statistics valtozasa lesz fontos.
 
 Leendo felhasznalas:
 
@@ -296,7 +296,7 @@ Leendo felhasznalas:
 Nyitott kerdes:
 
 - Biztosan eleg-e a `next_stop = null` a route lezart allapot felismeresehez?
-- Pontosan melyik idoertek a legstabilabb egy tura azonositashoz: `loading_finished_at`, `route_assigned_at` vagy `warehouse_departure_real`?
+- `route_assigned_at` minden turanal biztosan rendelkezésre all-e?
 
 ## Hosszu tavu irany
 
