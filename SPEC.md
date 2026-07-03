@@ -144,6 +144,10 @@ Ide kerulhet:
 - route_assigned_at
 - current_shift
 - route statistics aktualis ertekei
+  - teljes tav km
+  - megtett tav km
+  - kivitt csomagok
+  - osszes csomag
 - utolso frissites ideje
 
 2. Valtozasnaplo tabla
@@ -165,6 +169,8 @@ Pelda valtozasok:
 - `route_assigned_at` valtozik
 - `next_stop` valtozik
 - `parcels_delivered` valtozik
+- `distance_covered_km` valtozik
+- `total_distance_km` valtozik
 - `is_departure_delayed` valtozik
 - uj route / uj route statistics jelenik meg
 
@@ -214,6 +220,36 @@ Igy a rendszer gyors marad, es nem tarolunk felesleges duplikalt adatot.
 - Pontosan mely statusz valtozasok legyenek esemenykent mentve?
 - A `route.timing` mezok az aktualis cimre vagy a teljes route-ra vonatkoznak?
 - A `statistics` valtozasnal eleg-e csak a kulonbseget naplozni, vagy kell teljes allapot is?
+
+### Kilometer adatok
+
+A kilometer adatok fontosak, ezeket kulon figyelni kell.
+
+Forras:
+
+- `route.statistics.total_distance_km`
+- `route.statistics.distance_covered_km`
+
+Tarolasi elv:
+
+- az aktualis allapot tablaban mindig legyen benne a jelenlegi `total_distance_km` es `distance_covered_km`
+- valtozasnaploba keruljon be, ha a megtett kilometer no
+- route vegen kulon hasznos lesz a teljes route kilometer es a tenylegesen megtett kilometer
+
+Leendo felhasznalas:
+
+- napi futar kilometer
+- havi futar kilometer
+- auto hasznalat / terheles
+- route hatekonysag
+- becsult uzemanyag / futasi koltseg
+- statisztikai KPI
+
+Nyitott kerdes:
+
+- A `distance_covered_km` biztosan monoton no-e egy route alatt?
+- Uj route-nal a `statistics` mikor nullazodik pontosan?
+- Kell-e minden km valtozast naplozni, vagy eleg bizonyos lepeskozonkent / route zaraskor?
 
 ## Hosszu tavu irany
 
