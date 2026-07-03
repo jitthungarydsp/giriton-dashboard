@@ -246,10 +246,50 @@ Tarolasi elv:
 
 - az aktualis allapot tablaban mindig latszodhat a jelenlegi `total_distance_km` es `distance_covered_km`
 - kulon kilometer valtozasnaplo nem kell
-- ebbol a `fetch-drivers` hivasbol nem keszitunk vegleges route summary tablat
-- a vegleges route osszesito majd masik API hivasbol jon, amelyben biztosan benne van a stabil route adat
-- ebben a hivasban a km inkabb live allapot es ellenorzo jellegu adat
+- a vegleges route/km adat ebbol a `fetch-drivers` hivasbol jon
+- az adat addig elerheto marad, amig a futar nem kap uj turat
+- ezert ezt kulon route/km tablaba kell menteni
 - route vege jelzes itt tovabbra is hasznos lehet: `status.next_stop` vagy `next_stop` erteke `null`
+
+Planned table:
+
+```text
+dsp_route_distance_summary
+```
+
+Table language:
+
+- English table name
+- English column names
+
+Planned columns:
+
+- `driver_id`
+- `courier_name`
+- `license_plate`
+- `warehouse_name`
+- `route_assigned_at`
+- `loading_finished_at`
+- `warehouse_departure_real`
+- `total_distance_km`
+- `distance_covered_km`
+- `parcels_delivered`
+- `parcels_total`
+- `next_stop`
+- `current_state`
+- `captured_at`
+- `source_updated_at`
+
+Route identity:
+
+```text
+driver_id + route_assigned_at
+```
+
+Required business value:
+
+- route-onkent legyen tarolva, hogy a futar mennyi kilometert tett meg
+- rendszam is legyen benne, mert auto hasznalat es elszamolas miatt fontos
 
 Nullazodas:
 
@@ -277,7 +317,7 @@ Nyitott kerdes:
 
 - Biztosan eleg-e a `next_stop = null` a route lezart vagy varakozo allapot felismeresehez?
 - `route_assigned_at` minden turanal biztosan rendelkezésre all-e?
-- A km vegleges elszamolasi adata melyik masik API hivasbol jon majd?
+- Pontosan mikor mentsuk a `dsp_route_distance_summary` sort: `next_stop = null` es/vagy `parcels_delivered = parcels_total` eseten?
 
 ## Hosszu tavu irany
 
