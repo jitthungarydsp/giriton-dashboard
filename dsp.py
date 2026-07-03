@@ -18,6 +18,12 @@ if __name__ == "__main__":
     result = create_earning_estimate()
     result = calculate_arrival_status()
     result = create_driver_summary()
-    result = safe_write_snapshot()
+    try:
+        result = safe_write_snapshot()
+    except Exception as error:
+        result = {
+            "snapshot": "skipped",
+            "error": str(error),
+        }
 
     print(result)
