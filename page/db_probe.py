@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from resources.supabase_raw import read_driver_detail_raw
+from resources.supabase_raw import read_vehicle_assignments
 
 
 def parse_raw_rows(raw_rows):
@@ -187,3 +188,49 @@ def show_db_probe_page():
             use_container_width=True,
             hide_index=True,
         )
+
+    st.divider()
+    st.subheader("Autobeosztas")
+
+    try:
+        vehicle_rows = read_vehicle_assignments()
+    except Exception as exc:
+        st.warning(
+            f"Vehicle assignments DB olvasasi hiba: {exc}"
+        )
+        st.caption(
+            "Ha meg nincs tabla, futtasd a docs/supabase_phase1_vehicle_assignments.sql fajlt, majd a scripts/load_vehicle_assignments.py feltoltot."
+        )
+        return
+
+    if not vehicle_rows:
+        st.info(
+            "Meg nincs autobeosztas adat a dsp_vehicle_assignments tablaban."
+        )
+        return
+
+    vehicle_df = pd.DataFrame(
+        vehicle_rows
+    )
+    driver_names = sorted(
+        name
+        for name in vehicle_df["driver_name"].dropna().unique()
+        if str(name).strip()
+    )
+
+    selected_driver_name = st.selectbox(
+        "Melyik futar autobeosztasat nezzuk?",
+        options=driver_names,
+    )
+    selected_vehicle_df = vehicle_df[
+        vehicle_df["driver_name"] == selected_driver_name
+    ].copy()
+
+    st.dataframe(
+        selected_vehicle_df.sort_values(
+            ["work_date", "shift_start"],
+            ascending=True,
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
