@@ -1,5 +1,6 @@
 from calendar import monthrange
 from datetime import date, datetime, timedelta
+import time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -274,28 +275,39 @@ def records_to_rows(records):
     return rows
 
 
-def write_snapshot(month_text=None):
+def write_snapshot(month_text=None, preserve_existing=False):
     records = build_snapshot_records(month_text)
+
+    if not records:
+        return {
+            "rows": 0,
+            "worksheet": WORKSHEET_NAME,
+            "skipped": True,
+            "reason": "Nincs snapshot rekord, a meglevo adatot nem irtam felul.",
+        }
+
     worksheet = get_worksheet()
     snapshot_month = (
         records[0].get("snapshot_month")
-        if records
-        else month_bounds(month_text)[0].strftime("%Y-%m")
     )
-    existing_values = worksheet.get_all_values()
     preserved_records = []
 
-    if existing_values:
-        header = existing_values[0]
+    if preserve_existing:
+        existing_values = worksheet.get_all_values()
 
-        for row in existing_values[1:]:
-            record = {
-                column: row[index] if index < len(row) else ""
-                for index, column in enumerate(header)
-            }
+        if existing_values:
+            header = existing_values[0]
 
-            if record.get("snapshot_month") != snapshot_month:
-                preserved_records.append(record)
+            for row in existing_values[1:]:
+                record = {
+                    column: row[index] if index < len(row) else ""
+                    for index, column in enumerate(header)
+                }
+
+                if record.get("snapshot_month") != snapshot_month:
+                    preserved_records.append(record)
+    else:
+        worksheet.clear()
 
     worksheet.update(
         "A1",
@@ -305,6 +317,31 @@ def write_snapshot(month_text=None):
         "rows": len(records),
         "worksheet": WORKSHEET_NAME,
     }
+
+
+def safe_write_snapshot(month_text=None, preserve_existing=False, retries=2, wait_seconds=70):
+    last_error = None
+
+    for attempt in range(retries + 1):
+        try:
+            return write_snapshot(
+                month_text=month_text,
+                preserve_existing=preserve_existing,
+            )
+        except gspread.exceptions.APIError as error:
+            last_error = error
+            message = str(error)
+
+            if "429" not in message or attempt >= retries:
+                raise
+
+            print(
+                "Courier card snapshot quota limit, "
+                f"varakozas {wait_seconds} mp majd ujraproba..."
+            )
+            time.sleep(wait_seconds)
+
+    raise last_error
 
 
 def read_snapshot(month_text):

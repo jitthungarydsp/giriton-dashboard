@@ -5,7 +5,7 @@ from dsp_orders_kw import load_orders
 from dsp_order_custmeres import load_order_customers
 from dsp_statics_kw import create_daily_statistics,create_driver_statistics,calculate_arrival_status,create_driver_summary,create_attendance_route_statistics,create_earning_estimate
 from dsp_common_kw import hu_time
-from resources.courier_card_snapshot import write_snapshot
+from resources.courier_card_snapshot import safe_write_snapshot
 
 if __name__ == "__main__":
 
@@ -18,6 +18,6 @@ if __name__ == "__main__":
     result = create_earning_estimate()
     result = calculate_arrival_status()
     result = create_driver_summary()
-    result = write_snapshot()
+    result = safe_write_snapshot()
 
     print(result)
