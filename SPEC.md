@@ -245,7 +245,7 @@ dsp_route_summary
 Elsodleges kulcs:
 
 ```text
-id
+driver_id
 ```
 
 Masodlagos / kapcsolo kulcs:
@@ -256,12 +256,14 @@ loading_finished_at
 
 Indok:
 
-- az `id` azonositja a route-ot
+- ebben a live hivasban nincs kulon route ID
+- az elsodleges azonosito ezert a `driver_id`
 - a `loading_finished_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
+- egy futarnak egy napon tobb turaja is lehet, ezert a `driver_id` onmagaban nem eleg a konkret tura elvalasztasara
+- a tura szintu egyediseghez a `driver_id + loading_finished_at` paros hasznalhato
 
 Tervezett mezok:
 
-- `id`
 - `driver_id`
 - `courier_name`
 - `warehouse_name`
@@ -276,6 +278,11 @@ Tervezett mezok:
 - `finished_at`
 - `source_updated_at`
 
+Nullazodas:
+
+- A route `statistics` akkor nullazodik, amikor a futar uj turat kap.
+- Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel a `loading_finished_at`, `route_assigned_at`, `warehouse_departure_real` es a statistics valtozasa lesz fontos.
+
 Leendo felhasznalas:
 
 - napi futar kilometer
@@ -288,8 +295,8 @@ Leendo felhasznalas:
 Nyitott kerdes:
 
 - Biztosan eleg-e a `next_stop = null` a route lezart allapot felismeresehez?
-- A route `id` minden esetben elerheto-e ebben a hivasban?
-- Ha `id` hianyzik, lehet-e ideiglenesen `driver_id + loading_finished_at` parost hasznalni?
+- Pontosan melyik idoertek a legstabilabb egy tura azonositashoz: `loading_finished_at`, `route_assigned_at` vagy `warehouse_departure_real`?
+- Ha `loading_finished_at` ures, milyen potazonositot hasznaljunk?
 
 ## Hosszu tavu irany
 
