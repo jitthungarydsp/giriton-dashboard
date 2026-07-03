@@ -319,6 +319,56 @@ Nyitott kerdes:
 - `route_assigned_at` minden turanal biztosan rendelkezésre all-e?
 - Pontosan mikor mentsuk a `dsp_route_distance_summary` sort: `next_stop = null` es/vagy `parcels_delivered = parcels_total` eseten?
 
+### fetch-vehicle-assignments hivas
+
+URL:
+
+```text
+https://uftplslamjbbhlozsygo.supabase.co/functions/v1/fetch-vehicle-assignments?id=JIT&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc
+```
+
+Jelleg:
+
+- DSP jarmu / futar hozzarendeles adat
+- egy az egyben mehet kulon adatbazis tablaba
+- nem kell folyamatosan frissiteni
+- eleg orankent 1x meghivni
+
+Planned table:
+
+```text
+dsp_vehicle_assignments
+```
+
+Table language:
+
+- English table name
+- English column names
+
+Primary key / first matching key:
+
+```text
+driver_name
+```
+
+Fontos mezok:
+
+- `driver_name`
+- `license_plate`
+
+Megjegyzes:
+
+- Ebben a hivasban csak driver name van, ez lesz az elso azonosito.
+- A `license_plate` kesobb fontos lesz az auto hasznalat, route es km adatok osszekapcsolasahoz.
+- Kesobb ossze kell kapcsolni a futar torzzsel, ahol mar van `driver_id`.
+- Mivel a nev nem olyan stabil, mint az ID, kesobb kellhet nev-normalizalas vagy kulon driver-name mapping tabla.
+
+Frissitesi gyakorisag:
+
+```text
+1 ora
+```
+
 ## Hosszu tavu irany
 
 - A Google Sheetekbol fokozatosan atvezetjuk az adatokat adatbazisba.
