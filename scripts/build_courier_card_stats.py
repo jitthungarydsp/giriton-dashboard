@@ -90,21 +90,36 @@ def previous_month_bounds(month_start):
     return previous_end.replace(day=1), previous_end
 
 
-def build_previous_revenue_map(previous_start, previous_end):
-    previous_summary, _details = build_db_statistics(
-        start_date=previous_start,
-        end_date=previous_end,
-        user=None,
-    )
+def previous_month_text(previous_start):
+    return previous_start.strftime("%Y-%m")
 
-    if previous_summary.empty:
-        return {}
+
+def build_previous_revenue_map(previous_start):
+    supabase_url = get_required_env("SUPABASE_URL")
+    supabase_key = get_required_env("SUPABASE_SERVICE_ROLE_KEY")
+    endpoint = (
+        f"{supabase_url}/rest/v1/courier_card_stats"
+        "?select=courier_id,estimated_max_revenue"
+        f"&snapshot_month=eq.{previous_month_text(previous_start)}"
+    )
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+    }
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=30,
+    )
+    response.raise_for_status()
+    rows = response.json()
 
     return {
-        str(row.get("courier_id", "")).strip(): float(
-            row.get("estimated_max_revenue", 0) or 0
+        str(row.get("courier_id", "") or "").strip(): to_float(
+            row.get("estimated_max_revenue")
         )
-        for _, row in previous_summary.iterrows()
+        for row in rows
+        if str(row.get("courier_id", "") or "").strip()
     }
 
 
@@ -131,17 +146,36 @@ def build_rows(month_text):
     period_start, period_end = month_bounds(
         month_text
     )
-    previous_start, previous_end = previous_month_bounds(
+    previous_start, _previous_end = previous_month_bounds(
         period_start
+    )
+    print(
+        f"Honap: {month_text} ({period_start} - {period_end})",
+        flush=True,
+    )
+    print(
+        "Elozo havi courier_card_stats snapshot olvasasa...",
+        flush=True,
     )
     previous_revenue = build_previous_revenue_map(
         previous_start,
-        previous_end,
+    )
+    print(
+        f"Elozo havi snapshot futarok: {len(previous_revenue)}",
+        flush=True,
+    )
+    print(
+        "Aktualis havi raw DB statisztika szamolasa...",
+        flush=True,
     )
     summary_df, _details = build_db_statistics(
         start_date=period_start,
         end_date=period_end,
         user=None,
+    )
+    print(
+        f"Aktualis havi futarok: {len(summary_df)}",
+        flush=True,
     )
     generated_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
