@@ -18,6 +18,11 @@ A vegso cel egy gyors, stabil es megbizhato rendszer, ahol a DSP portal, MuszakP
 - Streamlit
 - Google Sheet
 
+## Hasznalt nyelvek
+
+- Python
+- JavaScript
+
 ## Jelenlegi fo adatforrasok
 
 - DSP portal / DSP API-k
