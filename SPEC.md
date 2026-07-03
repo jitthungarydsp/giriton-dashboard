@@ -91,6 +91,130 @@ Megjegyzes:
 - Emiatt historikus tarolashoz idobelyegzett snapshotokra lesz szukseg.
 - A `fetch-drivers` hivasbol erkezo adatokat kulon live snapshotkent erdemes tarolni, nem elsodleges historikus route forraskent.
 
+### fetch-drivers tervezett tarolasi logika
+
+Ezt a hivast percenkent szeretnenk futtatni.
+
+Fontos elv:
+
+- a hivas live allapotot ad
+- nem minden percben kell minden mezot tortenetileg elmenteni
+- az aktualis allapotot mindig frissiteni kell
+- historikus sort csak akkor erdemes irni, ha valami lenyeges valtozott
+
+Javasolt adatbazis logika:
+
+1. Aktualis allapot tabla
+
+Pelda tabla:
+
+```text
+dsp_driver_live_state
+```
+
+Ebben futaronkent csak egy aktualis sor van.
+
+Kulcs:
+
+```text
+driver_id
+```
+
+Minden percben frissulhet.
+
+Ide kerulhet:
+
+- `driver_id`
+- `active`
+- nev
+- e-mail
+- telefonszam
+- raktar
+- auto tipus
+- rendszam
+- homerseklet
+- utolso homerseklet meres ideje
+- aktualis statusz
+- keses percben
+- kovetkezo cim
+- indulas kesesben van-e
+- loading_finished_at
+- warehouse_departure_real
+- aktualis pozicio
+- route_assigned_at
+- current_shift
+- route statistics aktualis ertekei
+- utolso frissites ideje
+
+2. Valtozasnaplo tabla
+
+Pelda tabla:
+
+```text
+dsp_driver_live_events
+```
+
+Ide csak akkor irunk uj sort, ha valami lenyeges valtozik.
+
+Pelda valtozasok:
+
+- `active` valtozik
+- `status.current_state` valtozik
+- rendszam valtozik
+- homerseklet riasztasi szintet lep at
+- `route_assigned_at` valtozik
+- `next_stop` valtozik
+- `parcels_delivered` valtozik
+- `is_departure_delayed` valtozik
+- uj route / uj route statistics jelenik meg
+
+3. Percenkenti nyers snapshot csak rovid ideig
+
+Ha kell debug vagy live visszanezes, lehet kulon rovid eletu snapshot tabla.
+
+Pelda:
+
+```text
+dsp_driver_live_snapshot
+```
+
+Ebben percenkenti allapot lehet, de csak rovid ideig, peldaul 7-14 napig.
+
+Ez nem elszamolasi fo adat, inkabb diagnosztikai / live kovetesi adat.
+
+### Terheles becsles
+
+Ha percenkent hivjuk:
+
+```text
+60 hivas / ora
+1440 hivas / nap
+```
+
+Ha egy hivasban kb. 30-60 futar van, es minden futarrol minden percben irnank sort:
+
+```text
+kb. 43 000 - 86 000 sor / nap
+```
+
+Ez adatbazisnak meg kezelheto, de felesleges es gyorsan nagyra no.
+
+Jobb megoldas:
+
+- `dsp_driver_live_state`: mindig csak futaronkent 1 aktualis sor
+- `dsp_driver_live_events`: csak valtozas esemenyek
+- opcionlis `dsp_driver_live_snapshot`: rovid ideig megtartott percenkenti debug adat
+
+Igy a rendszer gyors marad, es nem tarolunk felesleges duplikalt adatot.
+
+### Nyitott kerdesek ehhez a hivashoz
+
+- Kell-e minden percrol nyers snapshot, vagy eleg az aktualis allapot + valtozasnaplo?
+- Mennyi ideig tartsuk meg a percenkenti debug snapshotot?
+- Pontosan mely statusz valtozasok legyenek esemenykent mentve?
+- A `route.timing` mezok az aktualis cimre vagy a teljes route-ra vonatkoznak?
+- A `statistics` valtozasnal eleg-e csak a kulonbseget naplozni, vagy kell teljes allapot is?
+
 ## Hosszu tavu irany
 
 - A Google Sheetekbol fokozatosan atvezetjuk az adatokat adatbazisba.
