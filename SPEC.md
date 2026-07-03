@@ -30,6 +30,67 @@ A vegso cel egy gyors, stabil es megbizhato rendszer, ahol a DSP portal, MuszakP
 - Giriton adatok
 - jelenlegi Google Sheetek mint atmeneti adatforrasok es ellenorzo feluletek
 
+## DSP felulet
+
+### fetch-drivers hivas
+
+URL:
+
+```text
+https://uftplslamjbbhlozsygo.supabase.co/functions/v1/fetch-drivers?id=JIT&organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc&departureDelayThreshold=10
+```
+
+Jelleg:
+
+- aktualis DSP feluleti adatokat jelenit meg
+- live/allapot jellegu adatforras
+- multbeli adatokat ebbol nem lehet lekerdezni
+- a historikus tarolast sajat adatbazisban kell megoldani, ha kesobb vissza akarjuk nezni
+
+Fontos mezok:
+
+- `driver_id`
+- `active`
+  - fontos mezo
+  - azt mutatja, hogy a futar be van-e jelentkezve / aktiv-e
+- `personal_info.name`
+- `personal_info.contact_email`
+- `personal_info.contact_number`
+- `personal_info.warehouse_name`
+- `vehicle.type`
+- `vehicle.license_plate`
+- `vehicle.temperature`
+- `vehicle.last_measurement_timestamp`
+- `status.current_state`
+  - ossze kell majd gyujteni, milyen statuszok fordulnak elo
+- `status.delay_minutes`
+- `status.next_stop`
+- `status.is_departure_delayed`
+  - `true` / `false`
+  - hasznos riasztasi es operacios adat
+- `status.loading_finished_at`
+- `status.warehouse_departure_real`
+- `route.current_position.latitude`
+- `route.current_position.longitude`
+- `route.path`
+- `route.route_assigned_at`
+- `route.timing`
+  - nyitott kerdes: ezek az aktualis cimre vonatkoznak-e vagy a teljes route-ra
+- `route.statistics.total_distance_km`
+- `route.statistics.distance_covered_km`
+- `route.statistics.parcels_delivered`
+- `route.statistics.parcels_total`
+- `current_shift.start`
+- `current_shift.end`
+- `current_shift.shift_type`
+- `current_shift.shift_name`
+
+Megjegyzes:
+
+- A `route.statistics` csak akkor nullazodik / valtozik, amikor a futar uj erteket vagy uj route-ot kap.
+- Emiatt historikus tarolashoz idobelyegzett snapshotokra lesz szukseg.
+- A `fetch-drivers` hivasbol erkezo adatokat kulon live snapshotkent erdemes tarolni, nem elsodleges historikus route forraskent.
+
 ## Hosszu tavu irany
 
 - A Google Sheetekbol fokozatosan atvezetjuk az adatokat adatbazisba.

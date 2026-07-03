@@ -1,0 +1,66 @@
+{
+  "agency_id": "JIT",
+  "agency_name": "Just in Time Kft.",
+  "drivers": [
+    {
+      "driver_id": 1234,
+      "active": true,
+      "personal_info": {
+        "name": "Minta Futár",
+        "contact_email": "futar@example.com",
+        "contact_number": "+36000000000",
+        "warehouse_name": "Budapest"
+      },
+      "vehicle": {
+        "type": "car",
+        "license_plate": "ABC123",
+        "temperature": 4,
+        "last_measurement_timestamp": "2026-07-03T07:54:10Z"
+      },
+      "status": {
+        "current_state": "Delivering",
+        "delay_minutes": 4,
+        "next_stop": "Minta utca 1, Budapest 1000",
+        "is_departure_delayed": false,
+        "loading_finished_at": "2026-07-03T03:44:24Z",
+        "warehouse_departure_real": "2026-07-03T04:14:33Z"
+      },
+      "route": {
+        "current_position": {
+          "latitude": 47.4571833,
+          "longitude": 19.1262067
+        },
+        "path": [
+          {
+            "latitude": 47.489923,
+            "longitude": 19.1372859
+          }
+        ],
+        "route_assigned_at": "2026-07-03T03:32:34Z",
+        "timing": {
+          "departure_time": "2026-07-03T04:14:33Z",
+          "planned_arrival_time": "2026-07-03T07:52:30Z",
+          "estimated_arrival_time": "2026-07-03T07:57:21Z",
+          "customer_slot_from": "2026-07-03T08:00:01Z",
+          "customer_slot_to": "2026-07-03T09:00:00Z",
+          "arrival_prediction": "2026-07-03T07:59:59Z",
+          "delay_minutes_planned": 7,
+          "delay_minutes_estimated": 2,
+          "delay_minutes_slot": -60
+        },
+        "statistics": {
+          "total_distance_km": 44.033,
+          "distance_covered_km": 28.313,
+          "parcels_delivered": 13,
+          "parcels_total": 15
+        }
+      },
+      "current_shift": {
+        "start": "2026-07-03T07:30:00Z",
+        "end": "2026-07-03T12:00:00Z",
+        "shift_type": "standard",
+        "shift_name": "9:30-1 körös"
+      }
+    }
+  ]
+}
