@@ -16,6 +16,7 @@ from resources.dsp_dashboard_statistics import (
 from resources.db_driver_statistics import (
     build_db_statistics,
 )
+from resources.courier_card_db import read_courier_card_stats
 from resources.courier_card_snapshot import read_snapshot
 from resources.api import (
     load_attendance,
@@ -67,6 +68,39 @@ def format_currency(value):
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_courier_statistics(start_date, end_date, user):
+    snapshot_month = None
+
+    if end_date:
+        snapshot_month = end_date.strftime("%Y-%m")
+    elif start_date:
+        snapshot_month = start_date.strftime("%Y-%m")
+
+    if snapshot_month:
+        try:
+            db_snapshot_df = read_courier_card_stats(
+                snapshot_month
+            )
+
+            if not db_snapshot_df.empty:
+                if user and user.get("role") == "user":
+                    courier_id = normalize_id(user.get("courierId"))
+                    db_snapshot_df = db_snapshot_df[
+                        db_snapshot_df["courier_id"].apply(normalize_id)
+                        == courier_id
+                    ].copy()
+
+                details = {
+                    "orders": pd.DataFrame(),
+                    "customers": pd.DataFrame(),
+                    "attendance_routes": pd.DataFrame(),
+                    "giriton_login": pd.DataFrame(),
+                    "db_snapshot": True,
+                }
+
+                return db_snapshot_df, details
+        except Exception:
+            pass
+
     try:
         db_summary_df, db_details = build_db_statistics(
             start_date=start_date,
@@ -78,13 +112,6 @@ def load_courier_statistics(start_date, end_date, user):
             return db_summary_df, db_details
     except Exception:
         pass
-
-    snapshot_month = None
-
-    if end_date:
-        snapshot_month = end_date.strftime("%Y-%m")
-    elif start_date:
-        snapshot_month = start_date.strftime("%Y-%m")
 
     if snapshot_month:
         snapshot_df = read_snapshot(snapshot_month)
