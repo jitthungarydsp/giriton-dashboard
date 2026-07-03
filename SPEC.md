@@ -261,6 +261,7 @@ Indok:
 - a `loading_finished_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
 - egy futarnak egy napon tobb turaja is lehet, ezert a `driver_id` onmagaban nem eleg a konkret tura elvalasztasara
 - a tura szintu egyediseghez a `driver_id + loading_finished_at` paros hasznalhato
+- `loading_finished_at` mindig van, ezert nem kell potazonositoval szamolni
 
 Tervezett mezok:
 
@@ -296,7 +297,6 @@ Nyitott kerdes:
 
 - Biztosan eleg-e a `next_stop = null` a route lezart allapot felismeresehez?
 - Pontosan melyik idoertek a legstabilabb egy tura azonositashoz: `loading_finished_at`, `route_assigned_at` vagy `warehouse_departure_real`?
-- Ha `loading_finished_at` ures, milyen potazonositot hasznaljunk?
 
 ## Hosszu tavu irany
 
