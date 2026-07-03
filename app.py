@@ -56,6 +56,9 @@ from page.courier_dashboard import (
 from page.robots import (
     show_robots_page,
 )
+from page.db_probe import (
+    show_db_probe_page,
+)
 
 
 login_screen()
@@ -102,6 +105,7 @@ if user["role"] == "admin":
     menu = [
         "Admin",
         "Robotok",
+        "DB proba",
         "Mai futárok",
         "Kifli kártya",
         "Mai műszakok",
@@ -173,6 +177,8 @@ if page == "Admin":
     show_admin_page()
 elif page == "Robotok":
     show_robots_page()
+elif page == "DB proba":
+    show_db_probe_page()
 elif page == "Mai futárok":
     show_today_couriers_page()
 elif page == "Kifli kártya":
