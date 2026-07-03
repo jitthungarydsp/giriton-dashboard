@@ -463,13 +463,7 @@ def show_statistics_page():
             user=user,
         )
 
-        db_is_incomplete_admin_view = (
-            user.get("role") in ["admin", "trainer"]
-            and not summary_df.empty
-            and summary_df["courier_id"].nunique() < 2
-        )
-
-        if summary_df.empty or db_is_incomplete_admin_view:
+        if summary_df.empty:
             summary_df, details = build_statistics(
                 start_date=start_date,
                 end_date=end_date,

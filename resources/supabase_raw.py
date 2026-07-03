@@ -54,7 +54,7 @@ def format_date_filter(value):
 
 
 @st.cache_data(show_spinner=False, ttl=300)
-def read_driver_detail_raw(start_date=None, end_date=None, limit=1000):
+def read_driver_detail_raw(start_date=None, end_date=None, limit=10000, page_size=250):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -65,7 +65,6 @@ def read_driver_detail_raw(start_date=None, end_date=None, limit=1000):
     filters = [
         "select=driver_id,work_date,response_json,fetched_at",
         "order=work_date.asc,driver_id.asc",
-        f"limit={int(limit)}",
     ]
     start_date_text = format_date_filter(start_date)
     end_date_text = format_date_filter(end_date)
@@ -84,19 +83,46 @@ def read_driver_detail_raw(start_date=None, end_date=None, limit=1000):
         f"{supabase_url}/rest/v1/dsp_driver_detail_raw"
         f"?{'&'.join(filters)}"
     )
-    headers = {
-        "apikey": service_role_key,
-        "Authorization": f"Bearer {service_role_key}",
-    }
-
-    response = requests.get(
-        endpoint,
-        headers=headers,
-        timeout=60,
+    rows = []
+    total_limit = int(limit)
+    chunk_size = max(
+        min(int(page_size), 1000),
+        1,
     )
-    raise_for_supabase_error(response)
 
-    return response.json()
+    while len(rows) < total_limit:
+        range_start = len(rows)
+        range_end = min(
+            range_start + chunk_size - 1,
+            total_limit - 1,
+        )
+        headers = {
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Range-Unit": "items",
+            "Range": f"{range_start}-{range_end}",
+        }
+
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=60,
+        )
+        raise_for_supabase_error(response)
+
+        chunk = response.json()
+
+        if not chunk:
+            break
+
+        rows.extend(
+            chunk
+        )
+
+        if len(chunk) < (range_end - range_start + 1):
+            break
+
+    return rows
 
 
 @st.cache_data(show_spinner=False, ttl=300)
