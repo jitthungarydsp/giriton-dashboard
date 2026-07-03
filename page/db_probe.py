@@ -75,7 +75,9 @@ def show_db_probe_page():
     )
 
     try:
-        raw_rows = read_driver_detail_raw()
+        raw_rows = read_driver_detail_raw(
+            limit=200,
+        )
     except Exception as exc:
         st.error(
             f"Supabase olvasasi hiba: {exc}"

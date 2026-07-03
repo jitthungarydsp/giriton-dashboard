@@ -343,7 +343,10 @@ def build_summary(route_df, checkpoint_df):
 
 
 def build_db_statistics(start_date=None, end_date=None, user=None):
-    raw_rows = read_driver_detail_raw()
+    raw_rows = read_driver_detail_raw(
+        start_date=start_date,
+        end_date=end_date,
+    )
     route_df, checkpoint_df = build_db_source_frames(
         raw_rows
     )

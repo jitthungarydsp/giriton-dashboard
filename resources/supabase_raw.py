@@ -4,9 +4,27 @@ import requests
 import streamlit as st
 
 
+def raise_for_supabase_error(response):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = response.text.strip()
+
+        if detail:
+            raise requests.HTTPError(
+                f"{exc}; Supabase valasz: {detail[:1000]}",
+                response=response,
+            ) from exc
+
+        raise
+
+
 def get_supabase_setting(name):
-    if name in st.secrets:
-        return st.secrets.get(name)
+    try:
+        if name in st.secrets:
+            return st.secrets.get(name)
+    except Exception:
+        pass
 
     return os.getenv(name, "")
 
@@ -25,8 +43,18 @@ def get_supabase_config():
     return supabase_url, service_role_key
 
 
+def format_date_filter(value):
+    if not value:
+        return ""
+
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+
+    return str(value)
+
+
 @st.cache_data(show_spinner=False, ttl=300)
-def read_driver_detail_raw(limit=5000):
+def read_driver_detail_raw(start_date=None, end_date=None, limit=1000):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -34,11 +62,27 @@ def read_driver_detail_raw(limit=5000):
             "Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beallitas."
         )
 
+    filters = [
+        "select=driver_id,work_date,response_json,fetched_at",
+        "order=work_date.asc,driver_id.asc",
+        f"limit={int(limit)}",
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+
+    if start_date_text:
+        filters.append(
+            f"work_date=gte.{start_date_text}"
+        )
+
+    if end_date_text:
+        filters.append(
+            f"work_date=lte.{end_date_text}"
+        )
+
     endpoint = (
         f"{supabase_url}/rest/v1/dsp_driver_detail_raw"
-        "?select=driver_id,work_date,response_json,fetched_at"
-        "&order=work_date.asc,driver_id.asc"
-        f"&limit={int(limit)}"
+        f"?{'&'.join(filters)}"
     )
     headers = {
         "apikey": service_role_key,
@@ -50,7 +94,7 @@ def read_driver_detail_raw(limit=5000):
         headers=headers,
         timeout=60,
     )
-    response.raise_for_status()
+    raise_for_supabase_error(response)
 
     return response.json()
 
@@ -80,6 +124,6 @@ def read_vehicle_assignments(limit=5000):
         headers=headers,
         timeout=60,
     )
-    response.raise_for_status()
+    raise_for_supabase_error(response)
 
     return response.json()
