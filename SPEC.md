@@ -4,9 +4,19 @@
 
 Ez a rendszer a JIT egyik modulja lesz, azon belul a Kifli modul.
 
+A cel az, hogy a MuszakPRO, valamint a Kifli sajat rendszereibol erkezo adatok - Giriton es DSP - egy helyen legyenek tarolva, osszekapcsolva es visszakereshetoen kezelve.
+
+Az adatok egy kozos adattarhazba kerulnek, majd ezekre epulnek modulárisan a Streamlit oldalak.
+
 Az elso fazis celja nem az oldalak tovabbepitese, hanem az adattarhaz megtervezese es felepitese.
 
-A vegso cel egy gyors, stabil es megbizhato rendszer, ahol a DSP portal, MuszakPro es kesobb mas operacios forrasok adatai egyseges adatbazisba kerulnek, es ezekre epulnek majd a Streamlit feluletek.
+A vegso cel egy gyors, stabil es megbizhato rendszer, ahol a DSP portal, MuszakPRO, Giriton es kesobb mas operacios forrasok adatai egyseges adatbazisba kerulnek, es ezekre epulnek majd a Streamlit feluletek.
+
+## Hasznalt eszkozok
+
+- Supabase
+- Streamlit
+- Google Sheet
 
 ## Jelenlegi fo adatforrasok
 
