@@ -369,6 +369,169 @@ Frissitesi gyakorisag:
 1 ora
 ```
 
+### fetch-attendance hivas
+
+URL minta:
+
+```text
+https://uftplslamjbbhlozsygo.supabase.co/functions/v1/fetch-attendance/JIT/2026-07-03?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc
+```
+
+Jelleg:
+
+- datum alapjan lekerdezheto
+- multbeli adatokra is hasznalhato
+- fontos torteneti adatforras
+- mindig az adott datumhoz tartozo bejelentkezett / erintett futarokat mutatja
+- nem live-only hivas, ezert visszamenoleges riportokhoz is hasznalhato
+- napi DSP route es muszak tortenet alapforrasa lehet
+
+Top level mezok:
+
+- `dspId`
+- `dspName`
+- `date`
+- `couriers`
+
+Courier mezok:
+
+- `courierId`
+- `courierName`
+- `warehouseName`
+- `shifts`
+- `routes`
+
+#### Shifts
+
+A `shifts` tombben vannak az adott napi aktualis muszakok.
+
+Fontos mezok:
+
+- `shiftId`
+- `shiftName`
+- `shiftStart`
+- `shiftEnd`
+- `availableForShiftSince`
+
+Megjegyzes:
+
+- Az `availableForShiftSince` most nem elso koros fokusz.
+- Kesobb hasznos lehet bejelentkezes / varakozas szamolashoz.
+- A `shiftStart`, `shiftEnd` es `availableForShiftSince` UTC formatumban jon, a feluleten es riportokban Budapest idore kell majd alakitani.
+
+Planned table:
+
+```text
+dsp_attendance_shifts
+```
+
+Planned columns:
+
+- `work_date`
+- `courier_id`
+- `courier_name`
+- `warehouse_name`
+- `shift_id`
+- `shift_name`
+- `shift_start`
+- `shift_end`
+- `available_for_shift_since`
+- `source_updated_at`
+
+Primary key:
+
+```text
+work_date + courier_id + shift_id
+```
+
+#### Routes
+
+A `routes` tombben latszik, hogy az adott futar milyen koroket kapott az adott napon.
+
+Fontos mezok:
+
+- `routeId`
+- `courierRegisteredAt`
+- `assignedAt`
+- `plannedDeparture`
+- `realDeparture`
+- `plannedReturn`
+- `realReturn`
+
+Pelda ertelmezes:
+
+- Bajorhegyi Adam peldajaban ket route szerepel: `1475204` es `1475560`
+- ebbol latszik, hogy az adott futar tobb kort is kaphat egy napon
+- ha egy route-nal van `realReturn`, akkor az a kor mar lezarhato / lezartkent kezelheto
+- ha egy route-nal meg nincs `realReturn`, akkor az folyamatban levo kor lehet
+- ebbol latszik, hogy hany kort vitt ki, es hany kor van meg folyamatban
+
+Planned table:
+
+```text
+dsp_attendance_routes
+```
+
+Planned columns:
+
+- `work_date`
+- `courier_id`
+- `courier_name`
+- `warehouse_name`
+- `route_id`
+- `courier_registered_at`
+- `assigned_at`
+- `planned_departure`
+- `real_departure`
+- `planned_return`
+- `real_return`
+- `route_status`
+- `source_updated_at`
+
+Primary key:
+
+```text
+route_id
+```
+
+Ha a route ID nem lenne stabil vagy hianyozna, masodlagos azonositokent hasznalhato:
+
+```text
+work_date + courier_id + assigned_at
+```
+
+#### Szamolhato adatok
+
+Ebbol a hivasbol kesobb szamolhato:
+
+- hany kort kapott a futar
+- hany kor van mar lezárva
+- folyamatban levo kor
+- bejelentkezes es route kiosztas kozti ido
+- tervezett es valos indulas elterese
+- tervezett es valos visszaerkezes elterese
+- route ido
+- varakozasi ido bizonyos esetekben
+
+Alap route statusz logika:
+
+- `realReturn` ures: folyamatban / meg nem lezart
+- `realReturn` nem ures: lezart route
+- tobb route egy futarnal: az adott napi osszes kor listaja
+
+Ido kezeles:
+
+- minden API ido UTC formatumban jon
+- adatbazisban erdemes UTC-kent tarolni
+- feluleten es riportban Budapest helyi idore kell alakitani
+- ha kesobb kell, kulon szamitott Budapest ido oszlopok is keszulhetnek riport snapshotokba
+
+Nyitott kerdes:
+
+- Az `availableForShiftSince` es `courierRegisteredAt` kozotti kapcsolatot mikor es hogyan hasznaljuk?
+- A folyamatban levo route felismeresehez eleg-e, ha `realReturn` ures?
+- A `fetch-attendance` hivas legyen-e napi egyszer, vagy napkozben tobbszor is frissitve?
+
 ## Hosszu tavu irany
 
 - A Google Sheetekbol fokozatosan atvezetjuk az adatokat adatbazisba.
