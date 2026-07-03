@@ -5,6 +5,8 @@ import streamlit as st
 
 from resources.supabase_raw import read_driver_detail_raw
 from resources.supabase_raw import read_vehicle_assignments
+from resources.db_driver_statistics import build_db_statistics
+from resources.db_driver_statistics import build_db_company_kpis
 
 
 def parse_raw_rows(raw_rows):
@@ -138,6 +140,9 @@ def show_db_probe_page():
                 end_date,
             )
         ] if not checkpoint_df.empty else checkpoint_df
+    else:
+        start_date = None
+        end_date = None
 
     metric1, metric2, metric3, metric4 = st.columns(4)
     metric1.metric(
@@ -156,6 +161,63 @@ def show_db_probe_page():
         "Megrendeles/checkpoint",
         checkpoint_df["order_id"].nunique() if not checkpoint_df.empty else 0,
     )
+
+    st.subheader("DB alapu statisztika")
+
+    try:
+        summary_df, _details = build_db_statistics(
+            start_date=start_date,
+            end_date=end_date,
+            user=None,
+        )
+    except Exception as exc:
+        st.warning(
+            f"DB statisztika szamolasi hiba: {exc}"
+        )
+        summary_df = pd.DataFrame()
+
+    if summary_df.empty:
+        st.info(
+            "Nincs DB alapu statisztika a kivalasztott idoszakra."
+        )
+    else:
+        kpis = build_db_company_kpis(
+            summary_df
+        )
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Futar", kpis.get("couriers", 0))
+        k2.metric("Kivitt cim", kpis.get("delivered_orders", 0))
+        k3.metric("Kor", kpis.get("routes", 0))
+        k4.metric(
+            "Atlag cim/kor",
+            f"{kpis.get('avg_orders_per_route', 0):.1f}",
+        )
+        k5.metric(
+            "Kesoi cim %",
+            f"{kpis.get('late_address_rate', 0):.1f}%",
+        )
+
+        visible_summary = summary_df[[
+            "courier_id",
+            "name",
+            "warehouse",
+            "delivered_orders",
+            "routes",
+            "worked_days",
+            "avg_orders_per_route",
+            "avg_wait_minutes",
+            "avg_route_minutes",
+            "avg_real_loading_minutes",
+            "late_address_rate",
+            "normal_routes",
+            "express_routes",
+            "estimated_max_revenue",
+        ]].copy()
+        st.dataframe(
+            visible_summary,
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.subheader("Route-ok")
 

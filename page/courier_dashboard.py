@@ -13,6 +13,9 @@ from resources.dsp_dashboard_statistics import (
     normalize_id,
     read_sheet_dataframe,
 )
+from resources.db_driver_statistics import (
+    build_db_statistics,
+)
 from resources.courier_card_snapshot import read_snapshot
 from resources.api import (
     load_attendance,
@@ -65,6 +68,18 @@ def format_currency(value):
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_courier_statistics(start_date, end_date, user):
+    try:
+        db_summary_df, db_details = build_db_statistics(
+            start_date=start_date,
+            end_date=end_date,
+            user=user,
+        )
+
+        if not db_summary_df.empty:
+            return db_summary_df, db_details
+    except Exception:
+        pass
+
     snapshot_month = None
 
     if end_date:

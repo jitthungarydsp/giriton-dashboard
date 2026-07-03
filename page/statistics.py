@@ -8,6 +8,9 @@ from resources.dsp_dashboard_statistics import (
     build_statistics,
     normalize_id,
 )
+from resources.db_driver_statistics import (
+    build_db_statistics,
+)
 
 
 def format_number(value, decimals=1):
@@ -434,14 +437,28 @@ def show_statistics_page():
         return
 
     try:
-        summary_df, details = build_statistics(
+        summary_df, details = build_db_statistics(
             start_date=start_date,
             end_date=end_date,
             user=user,
         )
+
+        if summary_df.empty:
+            summary_df, details = build_statistics(
+                start_date=start_date,
+                end_date=end_date,
+                user=user,
+            )
     except Exception as exc:
-        st.error(f"Nem sikerült beolvasni a DSP statisztikát: {exc}")
-        return
+        try:
+            summary_df, details = build_statistics(
+                start_date=start_date,
+                end_date=end_date,
+                user=user,
+            )
+        except Exception:
+            st.error(f"Nem sikerült beolvasni a DSP statisztikát: {exc}")
+            return
 
     if summary_df.empty:
         st.warning("Még nincs megjeleníthető DSP statisztikai adat.")
