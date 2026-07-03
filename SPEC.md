@@ -269,7 +269,6 @@ Planned columns:
 - `license_plate`
 - `warehouse_name`
 - `route_assigned_at`
-- `loading_finished_at`
 - `warehouse_departure_real`
 - `total_distance_km`
 - `distance_covered_km`
@@ -294,7 +293,7 @@ Required business value:
 Nullazodas:
 
 - A route `statistics` akkor nullazodik, amikor a futar uj turat kap.
-- Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel a `route_assigned_at`, `warehouse_departure_real`, `loading_finished_at` es a statistics valtozasa lesz fontos.
+- Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel csak olyan mezokre szabad epiteni, amelyek az adott API valaszban biztosan jelen vannak.
 - `route_assigned_at` valtozasa uj tura jelzes.
 
 Statusz / varakozas:
