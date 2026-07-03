@@ -126,6 +126,8 @@ Ide kerulhet:
 
 - `driver_id`
 - `active`
+  - `true`: a futar dolgozik / aktiv
+  - `false`: a futar kijelentkezett
 - nev
 - e-mail
 - telefonszam
@@ -167,10 +169,21 @@ Pelda valtozasok:
 - rendszam valtozik
 - homerseklet riasztasi szintet lep at
 - `route_assigned_at` valtozik
+  - ez uj tura jelzes
 - `next_stop` valtozik
 - `parcels_delivered` valtozik
 - `is_departure_delayed` valtozik
 - uj route / uj route statistics jelenik meg
+
+Minden live esemeny tablaban kotelezo mezok:
+
+- `driver_id`
+- `event_type`
+- `event_at`
+- `source_updated_at`
+- kapcsolodo ertekek az adott esemenyhez
+
+`driver_id` minden tablaban szerepeljen, mert ez lesz az egyik legfontosabb kozos kapcsolo adat.
 
 3. Percenkenti nyers snapshot csak rovid ideig
 
@@ -218,6 +231,7 @@ Igy a rendszer gyors marad, es nem tarolunk felesleges duplikalt adatot.
 - Pontosan mely statusz valtozasok legyenek esemenykent mentve?
 - A `route.timing` mezok az aktualis cimre vagy a teljes route-ra vonatkoznak?
 - A `statistics` valtozasnal eleg-e csak a kulonbseget naplozni, vagy kell teljes allapot is?
+- A varakozas mereset ebbol a hivasbol vagy masik API-bol szamoljuk-e?
 
 ### Route / kilometer adatok
 
@@ -232,57 +246,23 @@ Tarolasi elv:
 
 - az aktualis allapot tablaban mindig latszodhat a jelenlegi `total_distance_km` es `distance_covered_km`
 - kulon kilometer valtozasnaplo nem kell
-- a route adatot kulon route osszesito tablaba kell menteni
-- menteni akkor kell, amikor a route vege latszik
-- route vege jelzes: `status.next_stop` vagy `next_stop` erteke `null`
-
-Tervezett tabla:
-
-```text
-dsp_route_summary
-```
-
-Elsodleges kulcs:
-
-```text
-driver_id
-```
-
-Masodlagos / kapcsolo kulcs:
-
-```text
-route_assigned_at
-```
-
-Indok:
-
-- ebben a live hivasban nincs kulon route ID
-- az elsodleges azonosito ezert a `driver_id`
-- a `route_assigned_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
-- egy futarnak egy napon tobb turaja is lehet, ezert a `driver_id` onmagaban nem eleg a konkret tura elvalasztasara
-- a tura szintu egyediseghez a `driver_id + route_assigned_at` paros hasznalhato
-- `loading_finished_at` elofordulhat, hogy ures, ezert nem alkalmas stabil masodlagos kulcsnak
-
-Tervezett mezok:
-
-- `driver_id`
-- `courier_name`
-- `warehouse_name`
-- `license_plate`
-- `loading_finished_at`
-- `warehouse_departure_real`
-- `route_assigned_at`
-- `total_distance_km`
-- `distance_covered_km`
-- `parcels_delivered`
-- `parcels_total`
-- `finished_at`
-- `source_updated_at`
+- ebbol a `fetch-drivers` hivasbol nem keszitunk vegleges route summary tablat
+- a vegleges route osszesito majd masik API hivasbol jon, amelyben biztosan benne van a stabil route adat
+- ebben a hivasban a km inkabb live allapot es ellenorzo jellegu adat
+- route vege jelzes itt tovabbra is hasznos lehet: `status.next_stop` vagy `next_stop` erteke `null`
 
 Nullazodas:
 
 - A route `statistics` akkor nullazodik, amikor a futar uj turat kap.
 - Mivel nincs route ID ebben a live hivasban, az uj tura felismeresenel a `route_assigned_at`, `warehouse_departure_real`, `loading_finished_at` es a statistics valtozasa lesz fontos.
+- `route_assigned_at` valtozasa uj tura jelzes.
+
+Statusz / varakozas:
+
+- `status.current_state = Idle` es `next_stop = null` alapjan varakozasi allapot latszodhat.
+- A varakozasi ido tarolasa fontos lesz.
+- A vegleges varakozasi ido lehet, hogy masik API hivasbol pontosabban szamolhato.
+- Ezt kesobb ossze kell kotni az attendance / route adatokkal.
 
 Leendo felhasznalas:
 
@@ -295,8 +275,9 @@ Leendo felhasznalas:
 
 Nyitott kerdes:
 
-- Biztosan eleg-e a `next_stop = null` a route lezart allapot felismeresehez?
+- Biztosan eleg-e a `next_stop = null` a route lezart vagy varakozo allapot felismeresehez?
 - `route_assigned_at` minden turanal biztosan rendelkezésre all-e?
+- A km vegleges elszamolasi adata melyik masik API hivasbol jon majd?
 
 ## Hosszu tavu irany
 
