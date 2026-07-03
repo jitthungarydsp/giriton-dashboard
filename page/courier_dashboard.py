@@ -23,7 +23,6 @@ from resources.api import (
     load_drivers,
 )
 from resources.shift_reconciliation_sheet import (
-    rebuild_shift_reconciliation,
     read_shift_reconciliation_records_for_dates,
     read_shift_reconciliation_records,
 )
@@ -645,10 +644,6 @@ def refresh_shift_reconciliation_for_courier_card(today):
         return
 
     with st.spinner("Műszak ellenőrzés frissítése..."):
-        rebuild_shift_reconciliation(
-            start_date=today,
-            days=15,
-        )
         load_today_shift_records.clear()
         load_shift_records_for_dates.clear()
 
