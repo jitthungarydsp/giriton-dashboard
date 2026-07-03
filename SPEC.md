@@ -169,8 +169,6 @@ Pelda valtozasok:
 - `route_assigned_at` valtozik
 - `next_stop` valtozik
 - `parcels_delivered` valtozik
-- `distance_covered_km` valtozik
-- `total_distance_km` valtozik
 - `is_departure_delayed` valtozik
 - uj route / uj route statistics jelenik meg
 
@@ -221,7 +219,7 @@ Igy a rendszer gyors marad, es nem tarolunk felesleges duplikalt adatot.
 - A `route.timing` mezok az aktualis cimre vagy a teljes route-ra vonatkoznak?
 - A `statistics` valtozasnal eleg-e csak a kulonbseget naplozni, vagy kell teljes allapot is?
 
-### Kilometer adatok
+### Route / kilometer adatok
 
 A kilometer adatok fontosak, ezeket kulon figyelni kell.
 
@@ -232,9 +230,51 @@ Forras:
 
 Tarolasi elv:
 
-- az aktualis allapot tablaban mindig legyen benne a jelenlegi `total_distance_km` es `distance_covered_km`
-- valtozasnaploba keruljon be, ha a megtett kilometer no
-- route vegen kulon hasznos lesz a teljes route kilometer es a tenylegesen megtett kilometer
+- az aktualis allapot tablaban mindig latszodhat a jelenlegi `total_distance_km` es `distance_covered_km`
+- kulon kilometer valtozasnaplo nem kell
+- a route adatot kulon route osszesito tablaba kell menteni
+- menteni akkor kell, amikor a route vege latszik
+- route vege jelzes: `status.next_stop` vagy `next_stop` erteke `null`
+
+Tervezett tabla:
+
+```text
+dsp_route_summary
+```
+
+Elsodleges kulcs:
+
+```text
+id
+```
+
+Masodlagos / kapcsolo kulcs:
+
+```text
+loading_finished_at
+```
+
+Indok:
+
+- az `id` azonositja a route-ot
+- a `loading_finished_at` segit beazonositani es osszekotni mas tablakkal, hogy pontosan melyik tura volt
+
+Tervezett mezok:
+
+- `id`
+- `driver_id`
+- `courier_name`
+- `warehouse_name`
+- `license_plate`
+- `loading_finished_at`
+- `warehouse_departure_real`
+- `route_assigned_at`
+- `total_distance_km`
+- `distance_covered_km`
+- `parcels_delivered`
+- `parcels_total`
+- `finished_at`
+- `source_updated_at`
 
 Leendo felhasznalas:
 
@@ -247,9 +287,9 @@ Leendo felhasznalas:
 
 Nyitott kerdes:
 
-- A `distance_covered_km` biztosan monoton no-e egy route alatt?
-- Uj route-nal a `statistics` mikor nullazodik pontosan?
-- Kell-e minden km valtozast naplozni, vagy eleg bizonyos lepeskozonkent / route zaraskor?
+- Biztosan eleg-e a `next_stop = null` a route lezart allapot felismeresehez?
+- A route `id` minden esetben elerheto-e ebben a hivasban?
+- Ha `id` hianyzik, lehet-e ideiglenesen `driver_id + loading_finished_at` parost hasznalni?
 
 ## Hosszu tavu irany
 
