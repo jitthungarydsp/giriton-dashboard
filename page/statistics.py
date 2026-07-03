@@ -230,10 +230,30 @@ def filter_driver_rows(details, row):
         result["giriton_login"] = pd.DataFrame()
 
     customers = details.get("customers", pd.DataFrame())
-    if not customers.empty and "courierId" in customers.columns:
-        result["customers"] = customers[
-            customers["courierId"].apply(normalize_id) == courier_id
+    customer_id_column = (
+        "courierId"
+        if "courierId" in customers.columns
+        else "courier_id"
+        if "courier_id" in customers.columns
+        else ""
+    )
+    if not customers.empty and customer_id_column:
+        filtered_customers = customers[
+            customers[customer_id_column].apply(normalize_id) == courier_id
         ].copy()
+
+        if "arrival_status_normalized" not in filtered_customers.columns:
+            if "arrival_status" in filtered_customers.columns:
+                filtered_customers["arrival_status_normalized"] = (
+                    filtered_customers["arrival_status"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                )
+            else:
+                filtered_customers["arrival_status_normalized"] = ""
+
+        result["customers"] = filtered_customers
     else:
         result["customers"] = pd.DataFrame()
 
