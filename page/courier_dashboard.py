@@ -2023,6 +2023,19 @@ def render_extra_metrics(row):
     )
 
 
+def unique_courier_count(summary_df):
+    if summary_df is None or summary_df.empty or "courier_id" not in summary_df.columns:
+        return 0
+
+    return (
+        summary_df["courier_id"]
+        .apply(normalize_id)
+        .replace("", pd.NA)
+        .dropna()
+        .nunique()
+    )
+
+
 def select_visible_courier(summary_df, user):
     if summary_df.empty:
         return None
@@ -2034,18 +2047,28 @@ def select_visible_courier(summary_df, user):
         ]
         return match.iloc[0] if not match.empty else None
 
-    options = summary_df.sort_values("name")
+    options = summary_df.copy()
+    options["_courier_id"] = options["courier_id"].apply(normalize_id)
+    options = options[options["_courier_id"] != ""].copy()
+
+    if options.empty:
+        return None
+
+    if "name" not in options.columns:
+        options["name"] = options["_courier_id"]
+
+    options = (
+        options.sort_values(["name", "_courier_id"])
+        .drop_duplicates("_courier_id", keep="first")
+        .copy()
+    )
+    name_by_id = dict(zip(options["_courier_id"], options["name"]))
     selected_id = st.selectbox(
         "Futár kiválasztása",
-        options["courier_id"].tolist(),
-        format_func=lambda courier_id: (
-            options.loc[
-                options["courier_id"] == courier_id,
-                "name",
-            ].iloc[0]
-        ),
+        options["_courier_id"].tolist(),
+        format_func=lambda courier_id: name_by_id.get(courier_id, courier_id),
     )
-    match = options[options["courier_id"] == selected_id]
+    match = options[options["_courier_id"] == selected_id]
     return match.iloc[0] if not match.empty else None
 
 
@@ -2127,8 +2150,10 @@ def show_courier_dashboard_page():
 
     selector_df = monthly_summary_df
     selector_details = monthly_details
+    selector_source = "snapshot"
+    db_fallback_error = None
 
-    if user.get("role") != "user" and len(monthly_summary_df) < 2:
+    if user.get("role") != "user":
         try:
             db_summary_df, db_details = build_db_statistics(
                 start_date=selected_start,
@@ -2136,17 +2161,30 @@ def show_courier_dashboard_page():
                 user=user,
             )
 
-            if not db_summary_df.empty:
+            snapshot_couriers = unique_courier_count(monthly_summary_df)
+            db_couriers = unique_courier_count(db_summary_df)
+
+            if not db_summary_df.empty and db_couriers > snapshot_couriers:
                 selector_df = db_summary_df
                 selector_details = db_details
-        except Exception:
-            pass
+                selector_source = "db"
+        except Exception as exc:
+            db_fallback_error = str(exc)
 
     if selector_df.empty:
+        if db_fallback_error:
+            st.error(f"DB futarlista fallback hiba: {db_fallback_error}")
         st.warning(
             "Meg nincs DB snapshot ehhez a honaphoz. Futtasd a courier card stat buildert, es utana a kartya gyorsan tolt."
         )
         return
+
+    if user.get("role") != "user":
+        st.caption(
+            f"Futarlista forras: {selector_source} | {unique_courier_count(selector_df)} futar"
+        )
+        if db_fallback_error and unique_courier_count(selector_df) < 2:
+            st.warning(f"DB futarlista fallback hiba: {db_fallback_error}")
 
     current_row = select_visible_courier(selector_df, user)
 
