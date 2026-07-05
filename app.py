@@ -62,6 +62,9 @@ from page.db_probe import (
 from page.couriers import (
     show_couriers_page,
 )
+from page.giriton_attendance_db import (
+    show_giriton_attendance_db_page,
+)
 
 
 login_screen()
@@ -109,6 +112,7 @@ if user["role"] == "admin":
         "Admin",
         "Robotok",
         "DB proba",
+        "Giriton Attendance DB",
         "Futárok",
         "Mai futárok",
         "Kifli kártya",
@@ -183,6 +187,8 @@ elif page == "Robotok":
     show_robots_page()
 elif page == "DB proba":
     show_db_probe_page()
+elif page == "Giriton Attendance DB":
+    show_giriton_attendance_db_page()
 elif page in ["Futárok", "FutĂˇrok"]:
     show_couriers_page()
 elif page == "Mai futárok":

@@ -827,7 +827,20 @@ def write_raw_export(rows):
 
 def write_attendance_export(rows):
     attendance_rows = write_giriton_attendance(rows)
-    result = f"OK | Giriton_Attendance rows={attendance_rows}"
+    db_result = "skipped"
+
+    try:
+        from resources.giriton_attendance_db import upsert_giriton_attendance_rows
+
+        db_sync = upsert_giriton_attendance_rows(rows)
+        db_result = f"{db_sync.get('status')} rows={db_sync.get('rows')}"
+    except Exception as error:
+        db_result = f"error={error}"
+
+    result = (
+        f"OK | Giriton_Attendance rows={attendance_rows} | "
+        f"DB={db_result}"
+    )
     print(result)
     return result
 

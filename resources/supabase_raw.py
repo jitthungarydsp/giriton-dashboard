@@ -1,7 +1,12 @@
 import os
+from pathlib import Path
+import tomllib
 
 import requests
 import streamlit as st
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def raise_for_supabase_error(response):
@@ -25,6 +30,23 @@ def get_supabase_setting(name):
             return st.secrets.get(name)
     except Exception:
         pass
+
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+
+    if secrets_path.exists():
+        try:
+            with secrets_path.open("rb") as file:
+                secrets = tomllib.load(file)
+
+            if name in secrets:
+                return secrets.get(name)
+
+            supabase_section = secrets.get("supabase", {})
+
+            if isinstance(supabase_section, dict) and name in supabase_section:
+                return supabase_section.get(name)
+        except Exception:
+            pass
 
     return os.getenv(name, "")
 
