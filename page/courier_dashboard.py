@@ -3,6 +3,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
+from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -474,6 +475,21 @@ def render_styles():
     font-weight: 900;
     padding: 12px 14px;
     text-align: center;
+}
+.route-nav-button {
+    align-self: center;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    color: #0f172a !important;
+    display: inline-block;
+    font-weight: 900;
+    padding: 11px 14px;
+    text-align: center;
+    text-decoration: none !important;
+}
+.route-nav-button:hover {
+    background: #e2e8f0;
 }
 .route-empty-note {
     text-align: center;
@@ -1400,12 +1416,18 @@ def render_route_road(row, details):
         return
 
     current_stop = stops[0]
-    current_address = escape(str(current_stop.get("address", "")))
+    current_address_raw = str(current_stop.get("address", "") or "").strip()
+    current_address = escape(current_address_raw)
     current_position = escape(str(current_stop.get("position", "")))
     short_address = (
         current_address[:42] + "..."
         if len(current_address) > 42
         else current_address
+    )
+    waze_url = (
+        "https://waze.com/ul?"
+        f"q={quote_plus(current_address_raw)}"
+        "&navigate=yes"
     )
     kifli_logo = get_kifli_destination_logo()
 
@@ -1437,6 +1459,7 @@ def render_route_road(row, details):
       <div class="bag-alert-title">Táska hiány bejelentés - design előnézet</div>
       <div class="bag-alert-copy">Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
     </div>
+    <a class="route-nav-button" href="{waze_url}" target="_blank" rel="noopener noreferrer">Irány a cím</a>
     <div class="bag-alert-button">Táska hiány jelzése</div>
   </div>
 </div>
