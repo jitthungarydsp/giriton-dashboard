@@ -2126,6 +2126,21 @@ def show_courier_dashboard_page():
         )
 
     selector_df = monthly_summary_df
+    selector_details = monthly_details
+
+    if user.get("role") != "user" and len(monthly_summary_df) < 2:
+        try:
+            db_summary_df, db_details = build_db_statistics(
+                start_date=selected_start,
+                end_date=selected_end,
+                user=user,
+            )
+
+            if not db_summary_df.empty:
+                selector_df = db_summary_df
+                selector_details = db_details
+        except Exception:
+            pass
 
     if selector_df.empty:
         st.warning(
@@ -2166,11 +2181,11 @@ def show_courier_dashboard_page():
         shift_date,
         shift_day_label,
     )
-    render_route_road(current_row, monthly_details)
+    render_route_road(current_row, selector_details)
     st.subheader(f"Havi statisztika: {selected_start:%Y-%m}")
     render_stat_cards(
         monthly_row,
-        monthly_details,
+        selector_details,
         selected_start,
         selected_end,
     )

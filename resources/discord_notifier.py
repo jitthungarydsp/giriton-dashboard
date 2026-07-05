@@ -47,9 +47,10 @@ def _normalize_id(value):
 
 def _read_allowed_courier_ids(settings=None):
     settings = settings or {}
+    setting_value = _read_setting("DISCORD_NOTIFY_COURIER_IDS")
     raw_value = str(
-        settings.get("discord_notify_courier_ids")
-        or _read_setting("DISCORD_NOTIFY_COURIER_IDS")
+        setting_value
+        or settings.get("discord_notify_courier_ids")
         or ""
     ).strip()
 
