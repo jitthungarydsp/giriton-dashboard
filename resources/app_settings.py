@@ -10,12 +10,14 @@ DEFAULT_SETTINGS = {
     "discord_notify_courier_ids": "7644",
     "route_card_hidden": False,
     "waze_button_hidden": False,
+    "courier_card_snapshot_enabled": False,
 }
 
 BOOLEAN_SETTINGS = {
     "discord_notifications_enabled",
     "route_card_hidden",
     "waze_button_hidden",
+    "courier_card_snapshot_enabled",
 }
 
 

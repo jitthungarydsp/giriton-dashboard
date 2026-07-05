@@ -33,6 +33,12 @@ def show_settings_page():
         help="Ha be van kapcsolva, az Irány a cím Waze gomb nem jelenik meg.",
     )
 
+    courier_card_snapshot_enabled = st.toggle(
+        "Kifli kartya gyors snapshot hasznalata",
+        value=settings.get("courier_card_snapshot_enabled", False),
+        help="Most maradjon kikapcsolva: igy a Kifli kartya az osszes futart a DB-bol epiti fel.",
+    )
+
     st.subheader("Discord")
 
     discord_notifications_enabled = st.toggle(
@@ -69,6 +75,7 @@ def show_settings_page():
                 {
                     "route_card_hidden": route_card_hidden,
                     "waze_button_hidden": waze_button_hidden,
+                    "courier_card_snapshot_enabled": courier_card_snapshot_enabled,
                     "discord_notifications_enabled": discord_notifications_enabled,
                     "discord_notify_courier_ids": discord_notify_courier_ids,
                 }

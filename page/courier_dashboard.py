@@ -2142,18 +2142,45 @@ def show_courier_dashboard_page():
         st.error("A honapot EEEE-HH formatumban add meg, peldaul: 2026-07.")
         return
 
-    with st.spinner("Kifli-kartya betoltese DB-bol..."):
-        monthly_summary_df, monthly_details = load_courier_card_statistics(
-            snapshot_month=selected_start.strftime("%Y-%m"),
-            user=user,
-        )
+    app_settings = load_app_settings()
+    snapshot_enabled = app_settings.get(
+        "courier_card_snapshot_enabled",
+        False,
+    )
+
+    monthly_summary_df = pd.DataFrame()
+    monthly_details = {
+        "orders": pd.DataFrame(),
+        "customers": pd.DataFrame(),
+        "attendance_routes": pd.DataFrame(),
+        "giriton_login": pd.DataFrame(),
+    }
+
+    if snapshot_enabled:
+        with st.spinner("Kifli-kartya betoltese snapshotbol..."):
+            monthly_summary_df, monthly_details = load_courier_card_statistics(
+                snapshot_month=selected_start.strftime("%Y-%m"),
+                user=user,
+            )
 
     selector_df = monthly_summary_df
     selector_details = monthly_details
-    selector_source = "snapshot"
+    selector_source = "snapshot" if snapshot_enabled else "db"
     db_fallback_error = None
 
-    if user.get("role") != "user":
+    if not snapshot_enabled:
+        try:
+            selector_df, selector_details = build_db_statistics(
+                start_date=selected_start,
+                end_date=selected_end,
+                user=user,
+            )
+            monthly_summary_df = selector_df
+            monthly_details = selector_details
+        except Exception as exc:
+            db_fallback_error = str(exc)
+
+    elif user.get("role") != "user":
         try:
             db_summary_df, db_details = build_db_statistics(
                 start_date=selected_start,
@@ -2174,9 +2201,14 @@ def show_courier_dashboard_page():
     if selector_df.empty:
         if db_fallback_error:
             st.error(f"DB futarlista fallback hiba: {db_fallback_error}")
-        st.warning(
-            "Meg nincs DB snapshot ehhez a honaphoz. Futtasd a courier card stat buildert, es utana a kartya gyorsan tolt."
-        )
+        if snapshot_enabled:
+            st.warning(
+                "Meg nincs DB snapshot ehhez a honaphoz. Futtasd a courier card stat buildert, es utana a kartya gyorsan tolt."
+            )
+        else:
+            st.warning(
+                "Meg nincs DB statisztika ehhez a honaphoz. A Kifli kartya most direkt DB modban fut."
+            )
         return
 
     if user.get("role") != "user":
