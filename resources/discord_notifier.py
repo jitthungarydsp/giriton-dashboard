@@ -5,6 +5,8 @@ import tomllib
 import requests
 import streamlit as st
 
+from resources.app_settings import load_app_settings
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,12 +58,26 @@ def _read_allowed_courier_ids():
     }
 
 
+def read_discord_status():
+    return {
+        "webhook_configured": bool(
+            str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
+        ),
+        "allowed_courier_ids": sorted(_read_allowed_courier_ids()),
+    }
+
+
 @st.cache_resource
 def _sent_route_notifications():
     return set()
 
 
 def notify_route_assigned_once(courier_id, courier_name, route_id, order_id="", address=""):
+    settings = load_app_settings()
+
+    if not settings.get("discord_notifications_enabled", True):
+        return "disabled"
+
     webhook_url = str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
 
     if not webhook_url or not route_id:

@@ -19,6 +19,7 @@ from resources.db_driver_statistics import (
 )
 from resources.courier_card_db import read_courier_card_stats
 from resources.courier_card_snapshot import read_snapshot
+from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
 from resources.api import (
     load_attendance,
@@ -1449,6 +1450,7 @@ def get_current_route_stop(route):
 
 
 def render_route_road(row, details):
+    app_settings = load_app_settings()
     courier_id = normalize_id(row.get("courier_id"))
     attendance_data, drivers_data = load_live_courier_sources()
     attendance_courier = find_attendance_courier(
@@ -1501,6 +1503,27 @@ def render_route_road(row, details):
             or route_without_return
         )
     )
+
+    if route_is_open and app_settings.get("route_card_hidden", False):
+        hidden_route_id = normalize_id(open_route.get("id") or open_route.get("routeId"))
+
+        try:
+            notify_route_assigned_once(
+                courier_id,
+                str(row.get("name") or ""),
+                hidden_route_id,
+            )
+        except Exception:
+            pass
+
+        render_shift_state_road(
+            "Útvonal elrejtve",
+            "A route aktív, de az útvonal megjelenítése most ki van kapcsolva.",
+            "OK",
+            "Rejtve",
+            "A részletek a Beállítások oldalon kapcsolhatók vissza.",
+        )
+        return
 
     if route_is_open:
         current_route_stop = get_current_route_stop(open_route)
@@ -1578,6 +1601,11 @@ def render_route_road(row, details):
         f"q={quote_plus(current_address_raw)}"
         "&navigate=yes"
     )
+    waze_button_html = (
+        ""
+        if app_settings.get("waze_button_hidden", False)
+        else f'<a class="route-nav-button" href="{waze_url}" target="_blank" rel="noopener noreferrer">Irány a cím</a>'
+    )
     kifli_logo = get_kifli_destination_logo()
 
     st.markdown(
@@ -1608,7 +1636,7 @@ def render_route_road(row, details):
       <div class="bag-alert-title">Táska hiány bejelentés - design előnézet</div>
       <div class="bag-alert-copy">{time_window_html}Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
     </div>
-    <a class="route-nav-button" href="{waze_url}" target="_blank" rel="noopener noreferrer">Irány a cím</a>
+    {waze_button_html}
     <div class="bag-alert-button">Táska hiány jelzése</div>
   </div>
 </div>

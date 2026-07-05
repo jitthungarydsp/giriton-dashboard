@@ -71,6 +71,9 @@ from page.giriton_shifts_db import (
 from page.foglalasok_db import (
     show_foglalasok_db_page,
 )
+from page.settings import (
+    show_settings_page,
+)
 
 
 login_screen()
@@ -116,6 +119,7 @@ logout_button()
 if user["role"] == "admin":
     menu = [
         "Admin",
+        "Beállítások",
         "Robotok",
         "DB proba",
         "Giriton muszakok DB",
@@ -191,6 +195,8 @@ else:
 
 if page == "Admin":
     show_admin_page()
+elif page == "Beállítások":
+    show_settings_page()
 elif page == "Robotok":
     show_robots_page()
 elif page == "DB proba":
