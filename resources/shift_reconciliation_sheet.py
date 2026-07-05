@@ -132,6 +132,18 @@ def read_worksheet_values(spreadsheet, sheet_name):
 
 
 def read_giriton_keyed_records(spreadsheet, work_date):
+    try:
+        from resources.giriton_shifts_db import read_giriton_shift_records
+
+        db_records = read_giriton_shift_records(
+            work_date
+        )
+
+        if db_records:
+            return db_records
+    except Exception:
+        pass
+
     rows = read_worksheet_values(
         spreadsheet,
         GIRITON_LOG_WORKSHEET_NAME,
@@ -233,6 +245,18 @@ def read_giriton_keyed_records(spreadsheet, work_date):
 
 
 def read_foglalasok_keyed_records(spreadsheet, work_date):
+    try:
+        from resources.foglalasok_db import read_foglalasok_records
+
+        db_records = read_foglalasok_records(
+            work_date
+        )
+
+        if db_records:
+            return db_records
+    except Exception:
+        pass
+
     rows = read_worksheet_values(
         spreadsheet,
         FOGLALASOK_LOG_WORKSHEET_NAME,

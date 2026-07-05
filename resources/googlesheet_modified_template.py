@@ -182,57 +182,13 @@ def create_statistics():
     return "STAT_OK"
 
 def write_all_shifts(rows):
+    from resources.giriton_shifts_db import upsert_giriton_shift_rows
 
-    worksheet = spreadsheet.worksheet("Giriton")
-
-    # Régi adatok törlése (fejléc marad)
-    worksheet.batch_clear(["A2:I10000"])
-
-    emails = get_emails()
-    foglalasok_kulcsok = get_foglalasok_kulcsok()
-
-    new_rows = []
-
-    for row in rows:
-
-        datum = row[0]
-        kezdes = row[1]
-        vege = row[2]
-        raktar = row[3]
-        foglaltsag = row[4]
-        foglalt =row[5]
-        maximum =row[6]
-        nev = row[7]
-
-        email = emails.get(nev, "")
-
-        kulcs = f"{datum}_{raktar}_{kezdes}_{email}"
-
-        if kulcs in foglalasok_kulcsok:
-            statusz = "GIRITON_OK"
-        else:
-            statusz = "NINCS_FOGLALAS"
-
-        new_rows.append([
-            datum,
-            kezdes,
-            vege,
-            raktar,
-            foglaltsag,
-            foglalt,
-            maximum,
-            nev,
-            email,
-            kulcs,
-            statusz
-        ])
-
-    worksheet.update(
-    "A2:K",
-    new_rows
+    result = upsert_giriton_shift_rows(
+        rows
     )
 
-    return "OK"
+    return f"OK | DB={result.get('status')} rows={result.get('rows')}"
 
 
 def write_all_shifts_matrix(rows):

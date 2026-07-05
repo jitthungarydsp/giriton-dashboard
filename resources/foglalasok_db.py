@@ -1,0 +1,325 @@
+from datetime import datetime
+import re
+
+import pandas as pd
+import requests
+import streamlit as st
+
+from resources.source_sheet_sync import SOURCE_SPREADSHEET_ID
+from resources.supabase_raw import (
+    format_date_filter,
+    get_supabase_config,
+    raise_for_supabase_error,
+)
+
+
+SOURCE_NAME = "google-sheet-foglalasok"
+FOGLALASOK_SHEET_NAME = "Foglalasok"
+
+
+def clean(value):
+    return str(value or "").strip()
+
+
+def normalize_email(value):
+    return clean(value).casefold()
+
+
+def normalize_time(value):
+    text = clean(value)
+
+    if not text:
+        return ""
+
+    parts = text.split(":")
+
+    if len(parts) >= 2:
+        try:
+            return f"{int(parts[0])}:{int(parts[1]):02d}"
+        except ValueError:
+            return text
+
+    return text
+
+
+def db_time(value):
+    text = normalize_time(value)
+
+    if not text:
+        return None
+
+    if len(text) == 4:
+        text = f"0{text}"
+
+    if len(text) == 5:
+        return f"{text}:00"
+
+    return text
+
+
+def shift_start(shift_text):
+    text = clean(shift_text)
+
+    if "_" in text:
+        return normalize_time(text.split("_", 1)[1])
+
+    match = re.search(r"(\d{1,2}:\d{2})", text)
+
+    if match:
+        return normalize_time(match.group(1))
+
+    return ""
+
+
+def month_day(work_date):
+    text = clean(work_date)
+
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%m/%d")
+    except ValueError:
+        if len(text) >= 10:
+            return f"{text[5:7]}/{text[8:10]}"
+
+    return text
+
+
+def shift_serial(work_date, courier_id, warehouse, start):
+    if courier_id in [None, ""]:
+        return ""
+
+    return "_".join([
+        month_day(work_date),
+        str(courier_id).strip(),
+        clean(warehouse),
+        normalize_time(start),
+    ])
+
+
+def get_headers():
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError(
+            "Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beallitas."
+        )
+
+    return supabase_url, {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+
+
+def read_courier_lookup_by_email():
+    supabase_url, headers = get_headers()
+    endpoint = (
+        f"{supabase_url}/rest/v1/courier_master"
+        "?select=courier_id,courier_name,email"
+        "&limit=5000"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    lookup = {}
+
+    for row in response.json():
+        email = normalize_email(row.get("email"))
+
+        if email:
+            lookup[email] = {
+                "courier_id": row.get("courier_id"),
+                "courier_name": clean(row.get("courier_name")),
+            }
+
+    return lookup
+
+
+def build_db_rows(values, courier_lookup=None):
+    if courier_lookup is None:
+        try:
+            courier_lookup = read_courier_lookup_by_email()
+        except Exception:
+            courier_lookup = {}
+
+    fetched_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    rows = []
+
+    for source_row, row in enumerate(values[1:], start=2):
+        cells = list(row) + [""] * 12
+        timestamp_text = clean(cells[0])
+        work_date = clean(cells[1])
+        email = normalize_email(cells[2])
+        shift_text = clean(cells[3])
+        warehouse = clean(cells[4])
+        booking_code = clean(cells[5])
+
+        if not work_date or not email or not shift_text:
+            continue
+
+        driver = courier_lookup.get(
+            email,
+            {},
+        )
+        courier_id = driver.get("courier_id")
+        courier_name = driver.get("courier_name", "")
+        start = shift_start(
+            shift_text
+        )
+        serial = shift_serial(
+            work_date,
+            courier_id,
+            warehouse,
+            start,
+        )
+
+        rows.append({
+            "source_name": SOURCE_NAME,
+            "source_row": source_row,
+            "timestamp_text": timestamp_text,
+            "work_date": work_date,
+            "email": email,
+            "shift_text": shift_text,
+            "warehouse": warehouse,
+            "booking_code": booking_code,
+            "admin_recorder": clean(cells[6]),
+            "giriton_uploaded": clean(cells[7]),
+            "system_check": clean(cells[8]),
+            "legacy_key": clean(cells[10]),
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "serial": serial,
+            "response_json": {
+                "source_row": source_row,
+                "timestamp_text": timestamp_text,
+                "work_date": work_date,
+                "email": email,
+                "shift_text": shift_text,
+                "warehouse": warehouse,
+                "booking_code": booking_code,
+                "admin_recorder": clean(cells[6]),
+                "giriton_uploaded": clean(cells[7]),
+                "system_check": clean(cells[8]),
+                "legacy_key": clean(cells[10]),
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "serial": serial,
+            },
+            "fetched_at": fetched_at,
+            "updated_at": fetched_at,
+        })
+
+    return rows
+
+
+def upsert_foglalasok_rows(values):
+    db_rows = build_db_rows(
+        values
+    )
+
+    if not db_rows:
+        return {
+            "rows": 0,
+            "status": "empty",
+        }
+
+    supabase_url, headers = get_headers()
+    endpoint = (
+        f"{supabase_url}/rest/v1/foglalasok_raw"
+        "?on_conflict=source_name,work_date,email,shift_text,booking_code"
+    )
+    headers = {
+        **headers,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+    for index in range(0, len(db_rows), 500):
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            json=db_rows[index:index + 500],
+            timeout=60,
+        )
+        raise_for_supabase_error(response)
+
+    return {
+        "rows": len(db_rows),
+        "status": "ok",
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
+    supabase_url, headers = get_headers()
+    filters = [
+        (
+            "select=work_date,email,shift_text,warehouse,booking_code,"
+            "courier_id,courier_name,serial,fetched_at"
+        ),
+        "order=work_date.desc,shift_text.asc,email.asc",
+        f"limit={int(limit)}",
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+
+    if start_date_text:
+        filters.append(
+            f"work_date=gte.{start_date_text}"
+        )
+
+    if end_date_text:
+        filters.append(
+            f"work_date=lte.{end_date_text}"
+        )
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/foglalasok_raw"
+        f"?{'&'.join(filters)}"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows)
+
+
+def read_foglalasok_records(work_date):
+    df = read_foglalasok_raw(
+        start_date=work_date,
+        end_date=work_date,
+        limit=10000,
+    )
+
+    if df.empty:
+        return []
+
+    records = []
+
+    for _, row in df.iterrows():
+        serial = clean(row.get("serial"))
+
+        if not serial:
+            continue
+
+        shift = clean(row.get("shift_text"))
+
+        records.append({
+            "serial": serial,
+            "work_date": clean(row.get("work_date")),
+            "courier_id": clean(row.get("courier_id")),
+            "name": clean(row.get("courier_name")),
+            "email": normalize_email(row.get("email")),
+            "warehouse": clean(row.get("warehouse")),
+            "start": shift_start(shift),
+            "code": clean(row.get("booking_code")),
+        })
+
+    return records
