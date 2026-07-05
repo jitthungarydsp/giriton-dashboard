@@ -17,7 +17,11 @@ from resources.dsp_dashboard_statistics import (
 from resources.db_driver_statistics import (
     build_db_statistics,
 )
-from resources.courier_card_db import read_courier_card_stats
+from resources.courier_card_db import (
+    NUMERIC_COLUMNS as COURIER_CARD_NUMERIC_COLUMNS,
+    read_courier_card_stats,
+)
+from resources.courier_master_db import read_courier_master
 from resources.courier_card_snapshot import read_snapshot
 from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
@@ -174,6 +178,210 @@ def load_courier_card_statistics(snapshot_month, user):
         "giriton_login": pd.DataFrame(),
         "db_snapshot": True,
     }
+
+
+def empty_courier_details():
+    return {
+        "orders": pd.DataFrame(),
+        "customers": pd.DataFrame(),
+        "attendance_routes": pd.DataFrame(),
+        "giriton_login": pd.DataFrame(),
+    }
+
+
+def normalize_courier_base_row(row, snapshot_month=""):
+    clean_row = {
+        "courier_id": normalize_id(row.get("courier_id")),
+        "name": str(row.get("name") or "").strip(),
+        "warehouse": str(row.get("warehouse") or "").strip(),
+        "email": str(row.get("email") or "").strip(),
+        "phone": str(row.get("phone") or "").strip(),
+        "snapshot_month": snapshot_month,
+    }
+
+    if not clean_row["name"]:
+        clean_row["name"] = clean_row["courier_id"] or "Ismeretlen futar"
+
+    for column in COURIER_CARD_NUMERIC_COLUMNS:
+        clean_row.setdefault(column, 0)
+
+    return clean_row
+
+
+def build_courier_base_dataframe(records, snapshot_month=""):
+    rows = [
+        normalize_courier_base_row(record, snapshot_month=snapshot_month)
+        for record in records
+    ]
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return df
+
+    df = df[df["courier_id"].apply(normalize_id) != ""].copy()
+
+    if df.empty:
+        return df
+
+    for column in COURIER_CARD_NUMERIC_COLUMNS:
+        if column not in df.columns:
+            df[column] = 0
+
+    return (
+        df.sort_values(["name", "courier_id"])
+        .drop_duplicates("courier_id", keep="first")
+        .reset_index(drop=True)
+    )
+
+
+def build_courier_directory_from_master(snapshot_month):
+    master_df = read_courier_master()
+
+    if master_df.empty:
+        return pd.DataFrame()
+
+    records = []
+    for _, row in master_df.iterrows():
+        records.append({
+            "courier_id": row.get("courier_id"),
+            "name": row.get("courier_name"),
+            "warehouse": row.get("warehouse_name"),
+            "email": row.get("email"),
+            "phone": row.get("phone_number"),
+        })
+
+    return build_courier_base_dataframe(
+        records,
+        snapshot_month=snapshot_month,
+    )
+
+
+def build_courier_directory_from_live_drivers(snapshot_month):
+    try:
+        drivers_data = load_drivers()
+    except Exception:
+        return pd.DataFrame()
+
+    records = []
+    for driver in drivers_data.get("drivers", []):
+        personal_info = driver.get("personal_info", {}) or {}
+        records.append({
+            "courier_id": driver.get("driver_id"),
+            "name": personal_info.get("name"),
+            "warehouse": personal_info.get("warehouse_name"),
+            "email": personal_info.get("contact_email"),
+            "phone": personal_info.get("contact_number"),
+        })
+
+    return build_courier_base_dataframe(
+        records,
+        snapshot_month=snapshot_month,
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_directory(snapshot_month):
+    directory_df = build_courier_directory_from_master(snapshot_month)
+
+    if not directory_df.empty:
+        return directory_df
+
+    return build_courier_directory_from_live_drivers(snapshot_month)
+
+
+def add_user_fallback_courier(directory_df, user, snapshot_month):
+    courier_id = normalize_id(user.get("courierId"))
+
+    if not courier_id:
+        return directory_df
+
+    if (
+        not directory_df.empty
+        and courier_id
+        in set(directory_df["courier_id"].apply(normalize_id).tolist())
+    ):
+        return directory_df
+
+    fallback_df = build_courier_base_dataframe(
+        [
+            {
+                "courier_id": courier_id,
+                "name": user.get("username") or courier_id,
+                "warehouse": user.get("warehouse") or "",
+                "email": user.get("email") or "",
+                "phone": user.get("phone") or "",
+            }
+        ],
+        snapshot_month=snapshot_month,
+    )
+
+    if directory_df.empty:
+        return fallback_df
+
+    return pd.concat(
+        [directory_df, fallback_df],
+        ignore_index=True,
+    ).drop_duplicates("courier_id", keep="first")
+
+
+def merge_courier_directory_with_stats(directory_df, stats_df, snapshot_month):
+    if directory_df.empty:
+        return stats_df
+
+    stats_df = stats_df.copy() if stats_df is not None else pd.DataFrame()
+    directory_df = directory_df.copy()
+
+    if not stats_df.empty and "courier_id" in stats_df.columns:
+        stats_df["courier_id"] = stats_df["courier_id"].apply(normalize_id)
+        stats_df = stats_df.drop_duplicates("courier_id", keep="first")
+        merged = directory_df.merge(
+            stats_df,
+            on="courier_id",
+            how="left",
+            suffixes=("", "_stats"),
+        )
+
+        for column in [
+            "name",
+            "warehouse",
+            "email",
+            "phone",
+            "snapshot_month",
+            *COURIER_CARD_NUMERIC_COLUMNS,
+        ]:
+            stats_column = f"{column}_stats"
+            if stats_column in merged.columns:
+                merged[column] = merged[stats_column].replace(
+                    "",
+                    pd.NA,
+                ).combine_first(
+                    merged[column]
+                )
+                merged = merged.drop(columns=[stats_column])
+    else:
+        merged = directory_df
+
+    for column in COURIER_CARD_NUMERIC_COLUMNS:
+        if column not in merged.columns:
+            merged[column] = 0
+
+        merged[column] = pd.to_numeric(
+            merged[column],
+            errors="coerce",
+        ).fillna(0)
+
+    if "snapshot_month" not in merged.columns:
+        merged["snapshot_month"] = snapshot_month
+
+    merged["snapshot_month"] = merged["snapshot_month"].fillna(
+        snapshot_month
+    )
+
+    return (
+        merged.sort_values(["name", "courier_id"])
+        .drop_duplicates("courier_id", keep="first")
+        .reset_index(drop=True)
+    )
 
 
 def render_styles():
@@ -2147,36 +2355,47 @@ def show_courier_dashboard_page():
         "courier_card_snapshot_enabled",
         False,
     )
+    snapshot_month_text = selected_start.strftime("%Y-%m")
 
     monthly_summary_df = pd.DataFrame()
-    monthly_details = {
-        "orders": pd.DataFrame(),
-        "customers": pd.DataFrame(),
-        "attendance_routes": pd.DataFrame(),
-        "giriton_login": pd.DataFrame(),
-    }
+    monthly_details = empty_courier_details()
+    directory_df = load_courier_directory(snapshot_month_text)
+    directory_df = add_user_fallback_courier(
+        directory_df,
+        user,
+        snapshot_month_text,
+    )
 
     if snapshot_enabled:
         with st.spinner("Kifli-kartya betoltese snapshotbol..."):
             monthly_summary_df, monthly_details = load_courier_card_statistics(
-                snapshot_month=selected_start.strftime("%Y-%m"),
+                snapshot_month=snapshot_month_text,
                 user=user,
             )
 
-    selector_df = monthly_summary_df
+    selector_df = merge_courier_directory_with_stats(
+        directory_df,
+        monthly_summary_df,
+        snapshot_month_text,
+    )
     selector_details = monthly_details
-    selector_source = "snapshot" if snapshot_enabled else "db"
+    selector_source = "torzs + snapshot" if snapshot_enabled else "torzs + db"
     db_fallback_error = None
 
     if not snapshot_enabled:
         try:
-            selector_df, selector_details = build_db_statistics(
+            db_summary_df, selector_details = build_db_statistics(
                 start_date=selected_start,
                 end_date=selected_end,
                 user=user,
             )
-            monthly_summary_df = selector_df
+            monthly_summary_df = db_summary_df
             monthly_details = selector_details
+            selector_df = merge_courier_directory_with_stats(
+                directory_df,
+                db_summary_df,
+                snapshot_month_text,
+            )
         except Exception as exc:
             db_fallback_error = str(exc)
 
@@ -2192,9 +2411,14 @@ def show_courier_dashboard_page():
             db_couriers = unique_courier_count(db_summary_df)
 
             if not db_summary_df.empty and db_couriers > snapshot_couriers:
-                selector_df = db_summary_df
+                monthly_summary_df = db_summary_df
+                selector_df = merge_courier_directory_with_stats(
+                    directory_df,
+                    db_summary_df,
+                    snapshot_month_text,
+                )
                 selector_details = db_details
-                selector_source = "db"
+                selector_source = "torzs + db"
         except Exception as exc:
             db_fallback_error = str(exc)
 
