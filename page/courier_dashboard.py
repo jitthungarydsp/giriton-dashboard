@@ -27,6 +27,8 @@ from resources.shift_reconciliation_sheet import (
     read_shift_reconciliation_records_for_dates,
     read_shift_reconciliation_records,
 )
+from resources.giriton_shifts_db import read_giriton_shift_records
+from resources.foglalasok_db import read_foglalasok_records
 
 EXPRESS_MAX_FEE = 6516
 NORMAL_CITY_MAX_FEE = 13000
@@ -138,6 +140,37 @@ def load_courier_statistics(start_date, end_date, user):
         end_date=end_date,
         user=user,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
+def load_courier_card_statistics(snapshot_month, user):
+    db_snapshot_df = read_courier_card_stats(
+        snapshot_month
+    )
+
+    if db_snapshot_df.empty:
+        return db_snapshot_df, {
+            "orders": pd.DataFrame(),
+            "customers": pd.DataFrame(),
+            "attendance_routes": pd.DataFrame(),
+            "giriton_login": pd.DataFrame(),
+            "db_snapshot": True,
+        }
+
+    if user and user.get("role") == "user":
+        courier_id = normalize_id(user.get("courierId"))
+        db_snapshot_df = db_snapshot_df[
+            db_snapshot_df["courier_id"].apply(normalize_id)
+            == courier_id
+        ].copy()
+
+    return db_snapshot_df, {
+        "orders": pd.DataFrame(),
+        "customers": pd.DataFrame(),
+        "attendance_routes": pd.DataFrame(),
+        "giriton_login": pd.DataFrame(),
+        "db_snapshot": True,
+    }
 
 
 def render_styles():
@@ -570,18 +603,89 @@ def attach_live_vehicle_info(row, driver):
     return row
 
 
+def build_fast_shift_records(work_date_text):
+    try:
+        giriton_records = {
+            record["serial"]: record
+            for record in read_giriton_shift_records(
+                work_date_text
+            )
+            if record.get("serial")
+        }
+    except Exception:
+        giriton_records = {}
+
+    try:
+        foglalas_records = {
+            record["serial"]: record
+            for record in read_foglalasok_records(
+                work_date_text
+            )
+            if record.get("serial")
+        }
+    except Exception:
+        foglalas_records = {}
+
+    records = []
+
+    for serial in sorted(set(giriton_records) | set(foglalas_records)):
+        giriton_record = giriton_records.get(serial, {})
+        foglalas_record = foglalas_records.get(serial, {})
+        source = giriton_record or foglalas_record
+        records.append({
+            "work_date": source.get("work_date", work_date_text),
+            "name": source.get("name", ""),
+            "email": source.get("email", ""),
+            "warehouse": source.get("warehouse", ""),
+            "start": source.get("start", ""),
+            "end": giriton_record.get("end", ""),
+            "giriton": "OK" if giriton_record else "-",
+            "muszakpro": "OK" if foglalas_record else "-",
+            "missing": ", ".join(
+                value
+                for value, exists in [
+                    ("Giriton", bool(giriton_record)),
+                    ("MuszakPro", bool(foglalas_record)),
+                ]
+                if not exists
+            ),
+            "giriton_check": "GIRITON_OK" if giriton_record else "",
+            "muszakpro_code": foglalas_record.get("code", ""),
+            "updated_at": "",
+            "match_key": serial,
+            "courier_id": source.get("courier_id", ""),
+        })
+
+    return records
+
+
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_today_shift_records(work_date_text):
+    records = build_fast_shift_records(
+        work_date_text
+    )
+
+    if records:
+        return records
+
     try:
-        return read_shift_reconciliation_records(
-            work_date_text
-        )
+        return read_shift_reconciliation_records(work_date_text)
     except Exception:
         return []
 
 
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_shift_records_for_dates(work_date_texts):
+    records = []
+
+    for work_date_text in work_date_texts:
+        records.extend(
+            build_fast_shift_records(work_date_text)
+        )
+
+    if records:
+        return records
+
     try:
         return read_shift_reconciliation_records_for_dates(
             list(work_date_texts)
@@ -1811,22 +1915,18 @@ def show_courier_dashboard_page():
         st.error("A honapot EEEE-HH formatumban add meg, peldaul: 2026-07.")
         return
 
-    with st.spinner("Aktualis Kifli-kartya osszerakasa..."):
-        current_summary_df, current_details = load_courier_statistics(
-            start_date=today - timedelta(days=1),
-            end_date=today,
-            user=user,
-        )
-        monthly_summary_df, monthly_details = load_courier_statistics(
-            start_date=selected_start,
-            end_date=selected_end,
+    with st.spinner("Kifli-kartya betoltese DB-bol..."):
+        monthly_summary_df, monthly_details = load_courier_card_statistics(
+            snapshot_month=selected_start.strftime("%Y-%m"),
             user=user,
         )
 
-    selector_df = current_summary_df if not current_summary_df.empty else monthly_summary_df
+    selector_df = monthly_summary_df
 
     if selector_df.empty:
-        st.warning("Meg nincs eleg adat ehhez a futar-kartyahoz.")
+        st.warning(
+            "Meg nincs DB snapshot ehhez a honaphoz. Futtasd a courier card stat buildert, es utana a kartya gyorsan tolt."
+        )
         return
 
     current_row = select_visible_courier(selector_df, user)
@@ -1862,7 +1962,7 @@ def show_courier_dashboard_page():
         shift_date,
         shift_day_label,
     )
-    render_route_road(current_row, current_details)
+    render_route_road(current_row, monthly_details)
     st.subheader(f"Havi statisztika: {selected_start:%Y-%m}")
     render_stat_cards(
         monthly_row,
