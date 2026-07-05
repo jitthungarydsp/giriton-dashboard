@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+import tomllib
 
 import requests
 
@@ -25,12 +26,41 @@ KIFLI_API_BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
 SOURCE_NAME = "courier-master-sync"
 
 
+def get_local_secret(name):
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+
+    if not secrets_path.exists():
+        return ""
+
+    try:
+        with secrets_path.open("rb") as file:
+            secrets = tomllib.load(file)
+    except Exception:
+        return ""
+
+    value = secrets.get(name, "")
+
+    if value:
+        return str(value)
+
+    supabase_section = secrets.get("supabase", {})
+
+    if isinstance(supabase_section, dict):
+        value = supabase_section.get(name, "")
+
+        if value:
+            return str(value)
+
+    return ""
+
+
 def get_required_env(name):
-    value = os.getenv(name)
+    value = os.getenv(name) or get_local_secret(name)
 
     if not value:
         raise RuntimeError(
-            f"Hianyzik a(z) {name} kornyezeti valtozo."
+            f"Hianyzik a(z) {name} beallitas. Add meg kornyezeti valtozokent "
+            "vagy a .streamlit/secrets.toml fajlban."
         )
 
     return value.rstrip("/")
