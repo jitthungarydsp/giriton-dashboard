@@ -139,7 +139,12 @@ def read_courier_lookup():
 
 
 def build_db_rows(rows, courier_lookup=None):
-    courier_lookup = courier_lookup or read_courier_lookup()
+    if courier_lookup is None:
+        try:
+            courier_lookup = read_courier_lookup()
+        except Exception:
+            courier_lookup = {}
+
     fetched_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     db_rows = []
 
