@@ -40,6 +40,11 @@ def show_settings_page():
         value=settings.get("discord_notifications_enabled", True),
         help="Ha be van kapcsolva, új route esetén Discord webhook értesítés mehet.",
     )
+    discord_notify_courier_ids = st.text_input(
+        "Discord értesítés futár ID szűrés",
+        value=str(settings.get("discord_notify_courier_ids") or "7644"),
+        help="Vesszővel elválasztott futár ID-k. Üresen hagyva minden futár engedélyezett.",
+    )
 
     st.caption(
         f"Webhook állapot: {'beállítva' if discord_status['webhook_configured'] else 'nincs beállítva'}"
@@ -65,6 +70,7 @@ def show_settings_page():
                     "route_card_hidden": route_card_hidden,
                     "waze_button_hidden": waze_button_hidden,
                     "discord_notifications_enabled": discord_notifications_enabled,
+                    "discord_notify_courier_ids": discord_notify_courier_ids,
                 }
             )
             st.cache_data.clear()

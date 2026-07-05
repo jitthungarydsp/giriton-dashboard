@@ -7,8 +7,15 @@ CONFIG_PATH = PROJECT_ROOT / "data" / "config.json"
 
 DEFAULT_SETTINGS = {
     "discord_notifications_enabled": True,
+    "discord_notify_courier_ids": "7644",
     "route_card_hidden": False,
     "waze_button_hidden": False,
+}
+
+BOOLEAN_SETTINGS = {
+    "discord_notifications_enabled",
+    "route_card_hidden",
+    "waze_button_hidden",
 }
 
 
@@ -26,13 +33,14 @@ def load_app_settings():
         data = {}
 
     settings = DEFAULT_SETTINGS.copy()
-    settings.update(
-        {
-            key: bool(value)
-            for key, value in data.items()
-            if key in DEFAULT_SETTINGS
-        }
-    )
+    for key, value in data.items():
+        if key not in DEFAULT_SETTINGS:
+            continue
+
+        if key in BOOLEAN_SETTINGS:
+            settings[key] = bool(value)
+        else:
+            settings[key] = str(value or "").strip()
 
     return settings
 
@@ -44,13 +52,14 @@ def save_app_settings(settings):
     )
 
     clean_settings = DEFAULT_SETTINGS.copy()
-    clean_settings.update(
-        {
-            key: bool(value)
-            for key, value in settings.items()
-            if key in DEFAULT_SETTINGS
-        }
-    )
+    for key, value in settings.items():
+        if key not in DEFAULT_SETTINGS:
+            continue
+
+        if key in BOOLEAN_SETTINGS:
+            clean_settings[key] = bool(value)
+        else:
+            clean_settings[key] = str(value or "").strip()
 
     with CONFIG_PATH.open("w", encoding="utf-8") as file:
         json.dump(

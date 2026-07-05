@@ -45,8 +45,13 @@ def _normalize_id(value):
     )
 
 
-def _read_allowed_courier_ids():
-    raw_value = str(_read_setting("DISCORD_NOTIFY_COURIER_IDS") or "").strip()
+def _read_allowed_courier_ids(settings=None):
+    settings = settings or {}
+    raw_value = str(
+        settings.get("discord_notify_courier_ids")
+        or _read_setting("DISCORD_NOTIFY_COURIER_IDS")
+        or ""
+    ).strip()
 
     if not raw_value:
         return set()
@@ -59,11 +64,13 @@ def _read_allowed_courier_ids():
 
 
 def read_discord_status():
+    settings = load_app_settings()
+
     return {
         "webhook_configured": bool(
             str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
         ),
-        "allowed_courier_ids": sorted(_read_allowed_courier_ids()),
+        "allowed_courier_ids": sorted(_read_allowed_courier_ids(settings)),
     }
 
 
@@ -72,7 +79,15 @@ def _sent_route_notifications():
     return set()
 
 
-def notify_route_assigned_once(courier_id, courier_name, route_id, order_id="", address=""):
+def notify_route_assigned_once(
+    courier_id,
+    courier_name,
+    route_id,
+    order_id="",
+    address="",
+    planned_departure="",
+    planned_return="",
+):
     settings = load_app_settings()
 
     if not settings.get("discord_notifications_enabled", True):
@@ -83,7 +98,7 @@ def notify_route_assigned_once(courier_id, courier_name, route_id, order_id="", 
     if not webhook_url or not route_id:
         return "skipped"
 
-    allowed_courier_ids = _read_allowed_courier_ids()
+    allowed_courier_ids = _read_allowed_courier_ids(settings)
     normalized_courier_id = _normalize_id(courier_id)
 
     if allowed_courier_ids and normalized_courier_id not in allowed_courier_ids:
@@ -103,6 +118,12 @@ def notify_route_assigned_once(courier_id, courier_name, route_id, order_id="", 
 
     if order_id:
         content_lines.append(f"Aktuális rendelés: {order_id}")
+
+    if planned_departure:
+        content_lines.append(f"Tervezett kiindulás: {planned_departure}")
+
+    if planned_return:
+        content_lines.append(f"Tervezett vége: {planned_return}")
 
     if address:
         content_lines.append(f"Aktuális cím: {address}")

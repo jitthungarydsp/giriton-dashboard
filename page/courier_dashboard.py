@@ -1512,6 +1512,8 @@ def render_route_road(row, details):
                 courier_id,
                 str(row.get("name") or ""),
                 hidden_route_id,
+                planned_departure=format_time(open_route.get("plannedDeparture")),
+                planned_return=format_time(open_route.get("plannedReturn")),
             )
         except Exception:
             pass
@@ -1587,6 +1589,8 @@ def render_route_road(row, details):
             current_route_id,
             current_order_id if current_order_id != "-" else "",
             current_address_raw,
+            planned_departure=format_time(open_route.get("plannedDeparture")),
+            planned_return=format_time(open_route.get("plannedReturn")),
         )
     except Exception:
         pass
