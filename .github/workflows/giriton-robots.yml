@@ -119,7 +119,7 @@ jobs:
   girition:
     runs-on: ubuntu-latest
     needs: folgaltsag
-    if: ${{ always() && ((github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_girition == 'true')) }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.run_girition == 'true' }}
     timeout-minutes: 45
 
     env:
@@ -127,6 +127,8 @@ jobs:
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITION_START_DATE: ${{ github.event.inputs.girition_start_date || '' }}
       GIRITION_DAYS: ${{ github.event.inputs.girition_days || '10' }}
 
@@ -149,6 +151,8 @@ jobs:
           test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
           test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
           google-chrome --version || chromium-browser --version || chromium --version
 
@@ -173,10 +177,12 @@ jobs:
   dsp:
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'schedule' && (github.event.schedule == '0 1 * * *' || github.event.schedule == '0 2 * * *')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_dsp == 'true') }}
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     env:
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DSP_START_DATE: ${{ github.event.inputs.dsp_start_date || '' }}
       DSP_END_DATE: ${{ github.event.inputs.dsp_end_date || '' }}
 
@@ -218,12 +224,28 @@ jobs:
         if: ${{ steps.budapest_time.outputs.should_run == 'true' }}
         run: |
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
 
       - name: Run DSP statistics
         if: ${{ steps.budapest_time.outputs.should_run == 'true' }}
         run: |
           python dsp.py
+          if [ -n "$DSP_START_DATE" ]; then
+            raw_start="$DSP_START_DATE"
+            raw_end="${DSP_END_DATE:-$DSP_START_DATE}"
+            stats_month="${DSP_START_DATE:0:7}"
+          else
+            raw_start="$(TZ=Europe/Budapest date +%F)"
+            raw_end="$raw_start"
+            stats_month="$(TZ=Europe/Budapest date +%Y-%m)"
+          fi
+
+          echo "DSP raw date range: $raw_start - $raw_end"
+          python scripts/load_driver_detail_raw.py --all-drivers --start-date "$raw_start" --end-date "$raw_end"
+          python scripts/load_vehicle_assignments.py
+          python scripts/build_courier_card_stats.py --month "$stats_month"
 
   raw_export:
     runs-on: ubuntu-latest
@@ -235,6 +257,8 @@ jobs:
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITION_START_DATE: ${{ github.event.inputs.girition_start_date || '' }}
       GIRITION_DAYS: ${{ github.event.inputs.girition_days || '10' }}
 
@@ -257,6 +281,8 @@ jobs:
           test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
           test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
           google-chrome --version || chromium-browser --version || chromium --version
 
@@ -288,6 +314,8 @@ jobs:
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITION_START_DATE: ${{ github.event.inputs.girition_start_date || '' }}
 
     steps:
@@ -309,6 +337,8 @@ jobs:
           test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
           test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
           google-chrome --version || chromium-browser --version || chromium --version
 

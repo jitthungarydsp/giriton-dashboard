@@ -575,7 +575,14 @@ def copy_foglalasok(driver_lookup=None):
         TARGET_FOGLALASOK_SHEET,
         values,
     )
-    return len(values), changes
+
+    from resources.foglalasok_db import upsert_foglalasok_rows
+
+    db_result = upsert_foglalasok_rows(
+        values
+    )
+
+    return len(values), changes, db_result
 
 
 def _enrich_giriton_rows(rows, driver_lookup):
@@ -692,7 +699,14 @@ def write_giriton_raw(rows, driver_lookup=None):
         output,
         key_columns=[9],
     )
-    return len(rows), changes
+
+    from resources.giriton_shifts_db import upsert_giriton_shift_rows
+
+    db_result = upsert_giriton_shift_rows(
+        rows
+    )
+
+    return len(rows), changes, db_result
 
 
 def write_giriton_attendance(rows):
@@ -806,10 +820,10 @@ def write_raw_export(rows):
         raise ValueError("Nincs feldolgozhato Giriton sor.")
 
     driver_lookup = _read_driver_lookup()
-    copied_foglalasok_rows, foglalasok_changes = copy_foglalasok(
+    copied_foglalasok_rows, foglalasok_changes, foglalasok_db = copy_foglalasok(
         driver_lookup
     )
-    giriton_rows, giriton_changes = write_giriton_raw(
+    giriton_rows, giriton_changes, giriton_db = write_giriton_raw(
         rows,
         driver_lookup,
     )
@@ -817,8 +831,8 @@ def write_raw_export(rows):
 
     result = (
         "OK | "
-        f"Foglalasok copied={copied_foglalasok_rows}, changes={foglalasok_changes} | "
-        f"Giriton rows={giriton_rows}, changes={giriton_changes} | "
+        f"Foglalasok copied={copied_foglalasok_rows}, changes={foglalasok_changes}, DB={foglalasok_db.get('status')} rows={foglalasok_db.get('rows')} | "
+        f"Giriton rows={giriton_rows}, changes={giriton_changes}, DB={giriton_db.get('status')} rows={giriton_db.get('rows')} | "
         + " | ".join(matrix_summaries)
     )
     print(result)

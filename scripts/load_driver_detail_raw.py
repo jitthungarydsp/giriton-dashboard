@@ -26,6 +26,26 @@ def month_dates(month_text, include_future=False):
         yield current
 
 
+def parse_date(value):
+    if not value:
+        return None
+
+    return datetime.strptime(
+        value,
+        "%Y-%m-%d",
+    ).date()
+
+
+def date_range(start_date, end_date):
+    current = start_date
+
+    while current <= end_date:
+        yield current
+        current = date.fromordinal(
+            current.toordinal() + 1
+        )
+
+
 def build_kifli_url(driver_id, work_date):
     return (
         f"{KIFLI_API_BASE_URL}/"
@@ -156,8 +176,18 @@ def main():
     )
     parser.add_argument(
         "--month",
-        required=True,
+        required=False,
         help="Honap YYYY-MM formatumban, pelda: 2026-07",
+    )
+    parser.add_argument(
+        "--start-date",
+        required=False,
+        help="Kezdo datum YYYY-MM-DD formatumban.",
+    )
+    parser.add_argument(
+        "--end-date",
+        required=False,
+        help="Zaro datum YYYY-MM-DD formatumban.",
     )
     parser.add_argument(
         "--include-future",
@@ -182,14 +212,47 @@ def main():
             "Adj meg --driver-id erteket vagy hasznald a --all-drivers kapcsolot."
         )
 
+    if args.start_date or args.end_date:
+        start_date = parse_date(
+            args.start_date
+        )
+        end_date = parse_date(
+            args.end_date
+        ) or start_date
+
+        if start_date is None:
+            parser.error(
+                "Ha --end-date van megadva, akkor --start-date is kell."
+            )
+
+        if end_date < start_date:
+            parser.error(
+                "--end-date nem lehet kisebb, mint --start-date."
+            )
+
+        work_dates = list(
+            date_range(
+                start_date,
+                end_date,
+            )
+        )
+    elif args.month:
+        work_dates = list(
+            month_dates(
+                args.month,
+                include_future=args.include_future,
+            )
+        )
+    else:
+        parser.error(
+            "Adj meg --month vagy --start-date/--end-date erteket."
+        )
+
     pending_rows = []
     fetched_count = 0
     failed_count = 0
 
-    for work_date in month_dates(
-        args.month,
-        include_future=args.include_future,
-    ):
+    for work_date in work_dates:
         if args.all_drivers:
             try:
                 driver_ids = get_driver_ids_for_date(
