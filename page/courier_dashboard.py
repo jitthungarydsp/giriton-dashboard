@@ -19,7 +19,7 @@ from resources.db_driver_statistics import (
 )
 from resources.courier_card_db import read_courier_card_stats
 from resources.courier_card_snapshot import read_snapshot
-from resources.email_sender import send_email
+from resources.discord_notifier import notify_route_assigned_once
 from resources.api import (
     load_attendance,
     load_driver_details,
@@ -38,9 +38,6 @@ DAILY_CACHE_SECONDS = 24 * 60 * 60
 LIVE_CACHE_SECONDS = 60
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BAG_ALERT_EMAIL_TO = "gurzobalazs@gmail.com"
-BAG_ALERT_EMAIL_SUBJECT = "Aktuáksi megrendelés szám mauális kennelése"
-BAG_ALERT_EMAIL_BODY = "Próba"
 
 
 def format_number(value, decimals=1):
@@ -368,6 +365,18 @@ def render_styles():
     font-size: 18px;
     font-weight: 900;
 }
+.route-inline-meta {
+    background: #ecfdf5;
+    border: 1px solid #bbf7d0;
+    border-radius: 999px;
+    color: #166534;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 900;
+    margin-left: 8px;
+    padding: 4px 9px;
+    vertical-align: middle;
+}
 .route-road-subtitle {
     color: #64748b;
     font-size: 12px;
@@ -471,6 +480,13 @@ def render_styles():
     line-height: 1.45;
     margin-top: 4px;
 }
+.route-window-note {
+    color: #166534;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 900;
+    margin-bottom: 3px;
+}
 .bag-alert-button {
     align-self: center;
     background: #16a34a;
@@ -532,8 +548,44 @@ def render_styles():
     )
 
 
+def render_courier_profile_content(row, user):
+    name = str(row.get("name") or user.get("username") or "Kifli futár")
+    courier_id = str(row.get("courier_id") or user.get("courierId") or "-")
+    warehouse = str(row.get("warehouse") or "Kifli pálya")
+    vehicle_temperature = str(row.get("vehicle_temperature") or "Nincs adat")
+    license_plate = str(row.get("license_plate") or "-")
+    username = str(user.get("username") or "-")
+    role = str(user.get("role") or "-")
+    email = str(row.get("email") or user.get("email") or "-")
+    phone = str(row.get("phone") or row.get("contact_number") or "-")
+
+    st.write(f"**Név:** {name}")
+    st.write(f"**Futár ID:** #{courier_id}")
+    st.write(f"**Raktár:** {warehouse}")
+    st.write(f"**Aktuális autó:** {license_plate}")
+    st.write(f"**Hűtő hőmérséklet:** {vehicle_temperature}")
+    st.write(f"**E-mail:** {email}")
+    st.write(f"**Telefonszám:** {phone}")
+    st.write(f"**Felhasználó:** {username}")
+    st.write(f"**Jogosultság:** {role}")
+
+    if st.button("Bejelentés", key=f"courier_profile_report_{courier_id}"):
+        st.success("Bejelentés rögzítve előnézetként. Ide kötjük majd a következő folyamatot.")
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("Futár személyes oldala")
+    def render_courier_profile_dialog(row, user):
+        render_courier_profile_content(row, user)
+else:
+    def render_courier_profile_dialog(row, user):
+        with st.expander("Futár személyes oldala", expanded=True):
+            render_courier_profile_content(row, user)
+
+
 def render_hero(row, user):
-    name = escape(str(row.get("name") or user.get("username") or "Kifli futár"))
+    raw_name = str(row.get("name") or user.get("username") or "Kifli futár")
+    name = escape(raw_name)
     courier_id = escape(str(row.get("courier_id") or user.get("courierId") or "-"))
     warehouse = escape(str(row.get("warehouse") or "Kifli pálya"))
     vehicle_temperature = escape(str(row.get("vehicle_temperature") or "Nincs adat"))
@@ -561,6 +613,13 @@ def render_hero(row, user):
 """,
         unsafe_allow_html=True,
     )
+
+    if st.button(
+        f"Személyes oldal: {raw_name}",
+        key=f"open_courier_profile_{courier_id}",
+        use_container_width=True,
+    ):
+        render_courier_profile_dialog(row, user)
 
 
 def stat_card(label, value, note=""):
@@ -826,6 +885,46 @@ def format_time(value):
         return ""
 
     return parsed.strftime("%H:%M")
+
+
+def format_time_window(start, end):
+    start_text = format_time(start)
+    end_text = format_time(end)
+
+    if start_text and end_text:
+        return f"{start_text} - {end_text}"
+
+    return start_text or end_text or ""
+
+
+def format_minutes_compact(minutes):
+    minutes = int(round(minutes))
+    sign = "-" if minutes < 0 else ""
+    minutes = abs(minutes)
+    hours = minutes // 60
+    remaining = minutes % 60
+
+    if hours and remaining:
+        return f"{sign}{hours} óra {remaining} perc"
+
+    if hours:
+        return f"{sign}{hours} óra"
+
+    return f"{sign}{remaining} perc"
+
+
+def format_return_countdown(planned_return):
+    return_at = parse_datetime(planned_return)
+
+    if not return_at:
+        return ""
+
+    minutes_left = (return_at - local_now()).total_seconds() / 60
+
+    if minutes_left >= 0:
+        return f"Még {format_minutes_compact(minutes_left)} a raktárig"
+
+    return f"{format_minutes_compact(abs(minutes_left))} késés a tervezett visszaérkezéshez képest"
 
 
 @st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
@@ -1163,6 +1262,10 @@ def get_route_road_stops(row, details):
             {
                 "position": position,
                 "address": address or f"Cim {position}",
+                "order_id": customer.get("orderId") or customer.get("id") or "",
+                "deliver_since": customer.get("deliverSince") or "",
+                "deliver_till": customer.get("deliverTill") or "",
+                "route_id": customer.get("routeId") or "",
             }
         )
 
@@ -1317,6 +1420,10 @@ def get_route_checkpoint_stops(route):
             {
                 "position": position,
                 "address": address or f"Cím {position}",
+                "order_id": checkpoint.get("orderId") or checkpoint.get("id") or "",
+                "deliver_since": checkpoint.get("deliverSince") or "",
+                "deliver_till": checkpoint.get("deliverTill") or "",
+                "route_id": checkpoint.get("routeId") or "",
             }
         )
 
@@ -1422,7 +1529,45 @@ def render_route_road(row, details):
     current_stop = stops[0]
     current_address_raw = str(current_stop.get("address", "") or "").strip()
     current_address = escape(current_address_raw)
-    current_position = escape(str(current_stop.get("position", "")))
+    current_position_raw = str(current_stop.get("position", "") or "")
+    current_position = escape(current_position_raw)
+    current_order_id = normalize_id(current_stop.get("order_id")) or "-"
+    current_route_id = normalize_id(
+        open_route.get("id")
+        or open_route.get("routeId")
+        or current_stop.get("route_id")
+    )
+    time_window = format_time_window(
+        current_stop.get("deliver_since"),
+        current_stop.get("deliver_till"),
+    )
+    time_window_html = (
+        f'<span class="route-window-note">Időablak: {escape(time_window)}</span><br>'
+        if time_window
+        else ""
+    )
+    return_countdown = format_return_countdown(open_route.get("plannedReturn"))
+    route_title_meta = (
+        f'<span class="route-inline-meta">Rendelés #{escape(current_order_id)}</span>'
+        if current_order_id != "-"
+        else ""
+    )
+    route_subtitle = "Zöld jel = aktuális cím"
+
+    if current_route_id:
+        route_subtitle = f"{route_subtitle} | Route {current_route_id}"
+
+    try:
+        notify_route_assigned_once(
+            courier_id,
+            str(row.get("name") or ""),
+            current_route_id,
+            current_order_id if current_order_id != "-" else "",
+            current_address_raw,
+        )
+    except Exception:
+        pass
+
     short_address = (
         current_address[:42] + "..."
         if len(current_address) > 42
@@ -1442,11 +1587,11 @@ def render_route_road(row, details):
     <div class="route-brand">
       <div class="route-brand-logo">K</div>
       <div>
-        <div class="route-road-title">Mai útvonal</div>
-        <div class="route-road-subtitle">Zöld jel = aktuális cím</div>
+        <div class="route-road-title">Mai útvonal {route_title_meta}</div>
+        <div class="route-road-subtitle">{escape(route_subtitle)}</div>
       </div>
     </div>
-    <div class="route-road-subtitle">A Kifli készen áll</div>
+    <div class="route-road-subtitle">{escape(return_countdown or "A Kifli készen áll")}</div>
   </div>
   <div class="route-road-track" style="--stop-count: 1;">
     <div class="route-stop route-stop-current">
@@ -1461,33 +1606,15 @@ def render_route_road(row, details):
   <div class="bag-alert-preview">
     <div>
       <div class="bag-alert-title">Táska hiány bejelentés - design előnézet</div>
-      <div class="bag-alert-copy">Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
+      <div class="bag-alert-copy">{time_window_html}Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
     </div>
     <a class="route-nav-button" href="{waze_url}" target="_blank" rel="noopener noreferrer">Irány a cím</a>
+    <div class="bag-alert-button">Táska hiány jelzése</div>
   </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
-
-    bag_alert_key = (
-        f"bag_alert_{courier_id}_{current_position}_{quote_plus(current_address_raw)[:80]}"
-    )
-
-    if st.button(
-        "Táska hiány jelzése",
-        key=bag_alert_key,
-        use_container_width=True,
-    ):
-        try:
-            send_email(
-                BAG_ALERT_EMAIL_TO,
-                BAG_ALERT_EMAIL_SUBJECT,
-                BAG_ALERT_EMAIL_BODY,
-            )
-            st.success("Táska hiány jelzés elküldve.")
-        except Exception as exc:
-            st.error(f"Nem sikerült elküldeni az e-mailt: {exc}")
 
 
 def calculate_route_mix(details, row, start_date=None, end_date=None):
