@@ -19,6 +19,7 @@ from resources.db_driver_statistics import (
 )
 from resources.courier_card_db import read_courier_card_stats
 from resources.courier_card_snapshot import read_snapshot
+from resources.email_sender import send_email
 from resources.api import (
     load_attendance,
     load_driver_details,
@@ -37,6 +38,9 @@ DAILY_CACHE_SECONDS = 24 * 60 * 60
 LIVE_CACHE_SECONDS = 60
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+BAG_ALERT_EMAIL_TO = "gurzobalazs@gmail.com"
+BAG_ALERT_EMAIL_SUBJECT = "Aktuáksi megrendelés szám mauális kennelése"
+BAG_ALERT_EMAIL_BODY = "Próba"
 
 
 def format_number(value, decimals=1):
@@ -1460,12 +1464,30 @@ def render_route_road(row, details):
       <div class="bag-alert-copy">Aktuális cím: <strong>{current_address}</strong><br>Később innen indulhat majd a sablon e-mail és a kép csatolása az előre megadott címre.</div>
     </div>
     <a class="route-nav-button" href="{waze_url}" target="_blank" rel="noopener noreferrer">Irány a cím</a>
-    <div class="bag-alert-button">Táska hiány jelzése</div>
   </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+
+    bag_alert_key = (
+        f"bag_alert_{courier_id}_{current_position}_{quote_plus(current_address_raw)[:80]}"
+    )
+
+    if st.button(
+        "Táska hiány jelzése",
+        key=bag_alert_key,
+        use_container_width=True,
+    ):
+        try:
+            send_email(
+                BAG_ALERT_EMAIL_TO,
+                BAG_ALERT_EMAIL_SUBJECT,
+                BAG_ALERT_EMAIL_BODY,
+            )
+            st.success("Táska hiány jelzés elküldve.")
+        except Exception as exc:
+            st.error(f"Nem sikerült elküldeni az e-mailt: {exc}")
 
 
 def calculate_route_mix(details, row, start_date=None, end_date=None):
