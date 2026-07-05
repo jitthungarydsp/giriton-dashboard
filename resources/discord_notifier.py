@@ -35,6 +35,27 @@ def _read_setting(name):
     return os.getenv(name, "")
 
 
+def _normalize_id(value):
+    return "".join(
+        character
+        for character in str(value or "")
+        if character.isdigit()
+    )
+
+
+def _read_allowed_courier_ids():
+    raw_value = str(_read_setting("DISCORD_NOTIFY_COURIER_IDS") or "").strip()
+
+    if not raw_value:
+        return set()
+
+    return {
+        _normalize_id(item)
+        for item in raw_value.replace(";", ",").split(",")
+        if _normalize_id(item)
+    }
+
+
 @st.cache_resource
 def _sent_route_notifications():
     return set()
@@ -45,6 +66,12 @@ def notify_route_assigned_once(courier_id, courier_name, route_id, order_id="", 
 
     if not webhook_url or not route_id:
         return "skipped"
+
+    allowed_courier_ids = _read_allowed_courier_ids()
+    normalized_courier_id = _normalize_id(courier_id)
+
+    if allowed_courier_ids and normalized_courier_id not in allowed_courier_ids:
+        return "filtered"
 
     notification_key = f"{courier_id}:{route_id}"
     sent_notifications = _sent_route_notifications()
