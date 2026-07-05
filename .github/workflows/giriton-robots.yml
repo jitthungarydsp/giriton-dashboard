@@ -123,6 +123,7 @@ jobs:
     timeout-minutes: 45
 
     env:
+      TZ: Europe/Budapest
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
@@ -230,6 +231,7 @@ jobs:
     timeout-minutes: 45
 
     env:
+      TZ: Europe/Budapest
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
@@ -282,6 +284,7 @@ jobs:
     timeout-minutes: 45
 
     env:
+      TZ: Europe/Budapest
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
@@ -311,6 +314,8 @@ jobs:
 
       - name: Run Giriton attendance robot
         run: |
+          GIRITION_START_DATE="${GIRITION_START_DATE:-$(TZ=Europe/Budapest date +%F)}"
+          echo "Attendance date: $GIRITION_START_DATE"
           python -m robot --loglevel DEBUG --outputdir results/attendance --variable RUN_START_DATE:"$GIRITION_START_DATE" giriton_attendance_github.robot
 
       - name: Upload attendance artifacts

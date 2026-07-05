@@ -1,9 +1,13 @@
-from datetime import date, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 
 from resources.giriton_attendance_db import read_giriton_attendance_raw
+
+
+LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 
 def show_giriton_attendance_db_page():
@@ -12,11 +16,11 @@ def show_giriton_attendance_db_page():
         "Forras: Supabase giriton_attendance_raw. Ez az Attendance robot DB-s ellenorzo oldala."
     )
 
-    today = date.today()
+    today = datetime.now(LOCAL_TIMEZONE).date()
     col1, col2 = st.columns(2)
     start_date = col1.date_input(
         "Kezdo datum",
-        value=today - timedelta(days=7),
+        value=today,
     )
     end_date = col2.date_input(
         "Zaro datum",
