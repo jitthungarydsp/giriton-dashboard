@@ -93,7 +93,7 @@ const grids = [...document.querySelectorAll('.v-grid')];
 const grid = grids[0] || document;
 const rowEls = [...grid.querySelectorAll('tr')].filter(row => row.querySelectorAll('td.v-grid-cell').length >= 4);
 const statusValues = new Set(['Work', 'Left', 'Absent', "Didn't come", 'Did not come']);
-const allVisibleCells = [...document.querySelectorAll('td.v-grid-cell')]
+const allVisibleCells = [...grid.querySelectorAll('td.v-grid-cell')]
   .map(cell => {
     const rect = cell.getBoundingClientRect();
     return {
@@ -288,10 +288,19 @@ def scrape_attendance_rows(work_date):
             if _click_main_row_by_name(name):
                 time.sleep(0.8)
 
+            grid_start_time, grid_end_time = _parse_grid_time_cells(
+                base_row.get("cells", [])
+            )
             detail = _detail_text(name)
             start_time, end_time, detail_raw, detail_activity = _parse_detail_entries(
                 detail
             )
+
+            if grid_start_time:
+                start_time = grid_start_time
+
+            if grid_end_time:
+                end_time = grid_end_time
 
             if not start_time and not end_time:
                 start_time, end_time = _parse_grid_time_cells(
