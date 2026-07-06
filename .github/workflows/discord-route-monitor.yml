@@ -2,6 +2,18 @@ name: Discord Route Monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      loop_minutes:
+        description: "Hány percig fusson a monitor. Külső 5 perces cronhoz maradjon 0."
+        required: false
+        default: "0"
+      poll_seconds:
+        description: "Poll gyakoriság másodpercben, ha loop_minutes nagyobb mint 0."
+        required: false
+        default: "300"
+  repository_dispatch:
+    types:
+      - discord-route-monitor
   schedule:
     - cron: "3,18,33,48 * * * *"
 
@@ -43,4 +55,15 @@ jobs:
 
       - name: Run Discord route monitor
         run: |
-          python scripts/discord_route_monitor.py --loop-minutes 14 --poll-seconds 300 --max-age-minutes 0
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            LOOP_MINUTES="14"
+            POLL_SECONDS="300"
+          else
+            LOOP_MINUTES="${{ inputs.loop_minutes }}"
+            POLL_SECONDS="${{ inputs.poll_seconds }}"
+          fi
+
+          LOOP_MINUTES="${LOOP_MINUTES:-0}"
+          POLL_SECONDS="${POLL_SECONDS:-300}"
+
+          python scripts/discord_route_monitor.py --loop-minutes "$LOOP_MINUTES" --poll-seconds "$POLL_SECONDS" --max-age-minutes 0
