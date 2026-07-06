@@ -75,6 +75,38 @@ def format_currency(value):
     return f"{amount:,} Ft".replace(",", " ")
 
 
+def clean_display_text(value, fallback=""):
+    try:
+        if pd.isna(value):
+            return fallback
+    except (TypeError, ValueError):
+        pass
+
+    text = str(value or "").strip()
+
+    if not text or text.lower() in ["nan", "none", "null"]:
+        return fallback
+
+    return text
+
+
+def get_courier_display_name(row, user):
+    return (
+        clean_display_text(row.get("name"))
+        or clean_display_text(row.get("courier_name"))
+        or clean_display_text(user.get("username"))
+        or "Kifli futár"
+    )
+
+
+def get_courier_display_warehouse(row):
+    return (
+        clean_display_text(row.get("warehouse"))
+        or clean_display_text(row.get("warehouse_name"))
+        or "Kifli pálya"
+    )
+
+
 @st.cache_data(show_spinner=False, ttl=DAILY_CACHE_SECONDS)
 def load_courier_statistics(start_date, end_date, user):
     snapshot_month = None
@@ -192,10 +224,10 @@ def empty_courier_details():
 def normalize_courier_base_row(row, snapshot_month=""):
     clean_row = {
         "courier_id": normalize_id(row.get("courier_id")),
-        "name": str(row.get("name") or "").strip(),
-        "warehouse": str(row.get("warehouse") or "").strip(),
-        "email": str(row.get("email") or "").strip(),
-        "phone": str(row.get("phone") or "").strip(),
+        "name": clean_display_text(row.get("name")),
+        "warehouse": clean_display_text(row.get("warehouse")),
+        "email": clean_display_text(row.get("email")),
+        "phone": clean_display_text(row.get("phone")),
         "snapshot_month": snapshot_month,
     }
 
@@ -758,15 +790,15 @@ def render_styles():
 
 
 def render_courier_profile_content(row, user):
-    name = str(row.get("name") or user.get("username") or "Kifli futár")
+    name = get_courier_display_name(row, user)
     courier_id = str(row.get("courier_id") or user.get("courierId") or "-")
-    warehouse = str(row.get("warehouse") or "Kifli pálya")
-    vehicle_temperature = str(row.get("vehicle_temperature") or "Nincs adat")
-    license_plate = str(row.get("license_plate") or "-")
-    username = str(user.get("username") or "-")
-    role = str(user.get("role") or "-")
-    email = str(row.get("email") or user.get("email") or "-")
-    phone = str(row.get("phone") or row.get("contact_number") or "-")
+    warehouse = get_courier_display_warehouse(row)
+    vehicle_temperature = clean_display_text(row.get("vehicle_temperature"), "Nincs adat")
+    license_plate = clean_display_text(row.get("license_plate"), "-")
+    username = clean_display_text(user.get("username"), "-")
+    role = clean_display_text(user.get("role"), "-")
+    email = clean_display_text(row.get("email") or user.get("email"), "-")
+    phone = clean_display_text(row.get("phone") or row.get("contact_number"), "-")
 
     st.write(f"**Név:** {name}")
     st.write(f"**Futár ID:** #{courier_id}")
@@ -793,12 +825,14 @@ else:
 
 
 def render_hero(row, user):
-    raw_name = str(row.get("name") or user.get("username") or "Kifli futár")
+    raw_name = get_courier_display_name(row, user)
     name = escape(raw_name)
     courier_id = escape(str(row.get("courier_id") or user.get("courierId") or "-"))
-    warehouse = escape(str(row.get("warehouse") or "Kifli pálya"))
-    vehicle_temperature = escape(str(row.get("vehicle_temperature") or "Nincs adat"))
-    vehicle_plate = escape(str(row.get("license_plate") or ""))
+    warehouse = escape(get_courier_display_warehouse(row))
+    vehicle_temperature = escape(
+        clean_display_text(row.get("vehicle_temperature"), "Nincs adat")
+    )
+    vehicle_plate = escape(clean_display_text(row.get("license_plate")))
     vehicle_note = f"Hűtő: {vehicle_temperature}°C" if vehicle_temperature != "Nincs adat" else "Hűtő: nincs adat"
 
     if vehicle_plate:
@@ -810,7 +844,7 @@ def render_hero(row, user):
   <div>
     <div class="courier-plate-label">Kifli futár cockpit</div>
     <h1>Szia, {name}!</h1>
-    <p>Itt van a saját teljesítmény-kártyád: címek, körök, normál és expressz arányok, várakozások és azok az apró számok, amikből a nap végén látszik, hogy ment a pálya.</p>
+    <p>Itt látod a mai műszakodat, az aktuális túrádat, az autódat és a fontos gyors jelzéseket.</p>
   </div>
   <div class="courier-plate">
     <div class="courier-plate-label">Futár azonosító</div>
@@ -1657,7 +1691,67 @@ def get_current_route_stop(route):
     )
 
 
-def render_route_road(row, details):
+def render_route_assignment_popup_content(row, route, current_stop):
+    user = st.session_state.get("user", {})
+    name = get_courier_display_name(row, user)
+    courier_id = normalize_id(row.get("courier_id")) or "-"
+    route_id = normalize_id(route.get("id") or route.get("routeId")) or "-"
+    order_id = normalize_id(current_stop.get("order_id")) or "-"
+    address = clean_display_text(current_stop.get("address"), "-")
+    time_window = format_time_window(
+        current_stop.get("deliver_since"),
+        current_stop.get("deliver_till"),
+    )
+    planned_departure = format_time(route.get("plannedDeparture")) or "-"
+    planned_return = format_time(route.get("realReturn") or route.get("plannedReturn")) or "-"
+
+    st.write(f"**Futár:** {name} #{courier_id}")
+    st.write(f"**Route ID:** {route_id}")
+    st.write(f"**Aktuális rendelés:** {order_id}")
+    st.write(f"**Aktuális cím:** {address}")
+
+    if time_window:
+        st.write(f"**Ügyfél időablak:** {time_window}")
+
+    st.write(f"**Tervezett indulás:** {planned_departure}")
+    st.write(f"**Tervezett visszaérkezés:** {planned_return}")
+    st.info("Új túra került rád. A részletek a Kiflis kártyán is frissültek.")
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("Új túra érkezett")
+    def render_route_assignment_popup(row, route, current_stop):
+        render_route_assignment_popup_content(row, route, current_stop)
+else:
+    def render_route_assignment_popup(row, route, current_stop):
+        with st.expander("Új túra érkezett", expanded=True):
+            render_route_assignment_popup_content(row, route, current_stop)
+
+
+def maybe_render_route_assignment_popup(row, route, current_stop):
+    if not route or not current_stop:
+        return
+
+    courier_id = normalize_id(row.get("courier_id"))
+    route_id = normalize_id(
+        route.get("id")
+        or route.get("routeId")
+        or current_stop.get("route_id")
+    )
+
+    if not courier_id or not route_id:
+        return
+
+    state_key = f"courier_route_popup_seen_{courier_id}_{route_id}"
+
+    if st.session_state.get(state_key):
+        return
+
+    st.session_state[state_key] = True
+    render_route_assignment_popup(row, route, current_stop)
+
+
+def render_route_road(row, details, show_route_popup=False):
     app_settings = load_app_settings()
     courier_id = normalize_id(row.get("courier_id"))
     attendance_data, drivers_data = load_live_courier_sources()
@@ -1718,10 +1812,12 @@ def render_route_road(row, details):
         try:
             notify_route_assigned_once(
                 courier_id,
-                str(row.get("name") or ""),
+                get_courier_display_name(row, st.session_state.get("user", {})),
                 hidden_route_id,
                 planned_departure=format_time(open_route.get("plannedDeparture")),
-                planned_return=format_time(open_route.get("plannedReturn")),
+                planned_return=format_time(
+                    open_route.get("realReturn") or open_route.get("plannedReturn")
+                ),
             )
         except Exception:
             pass
@@ -1779,7 +1875,8 @@ def render_route_road(row, details):
         if time_window
         else ""
     )
-    return_countdown = format_return_countdown(open_route.get("plannedReturn"))
+    route_return_at = open_route.get("realReturn") or open_route.get("plannedReturn")
+    return_countdown = format_return_countdown(route_return_at)
     route_title_meta = (
         f'<span class="route-inline-meta">Rendelés #{escape(current_order_id)}</span>'
         if current_order_id != "-"
@@ -1793,15 +1890,18 @@ def render_route_road(row, details):
     try:
         notify_route_assigned_once(
             courier_id,
-            str(row.get("name") or ""),
+            get_courier_display_name(row, st.session_state.get("user", {})),
             current_route_id,
             current_order_id if current_order_id != "-" else "",
             current_address_raw,
             planned_departure=format_time(open_route.get("plannedDeparture")),
-            planned_return=format_time(open_route.get("plannedReturn")),
+            planned_return=format_time(route_return_at),
         )
     except Exception:
         pass
+
+    if show_route_popup:
+        maybe_render_route_assignment_popup(row, open_route, current_stop)
 
     short_address = (
         current_address[:42] + "..."
@@ -2331,121 +2431,29 @@ def show_courier_dashboard_page():
 
     user = st.session_state["user"]
     today = local_now().date()
-    default_month = today.strftime("%Y-%m")
-
-    refresh_shift_reconciliation_for_courier_card(today)
-
-    selected_month = st.text_input(
-        "Honap",
-        value=default_month,
-        help="Formatum: EEEE-HH, peldaul 2026-07.",
-    )
-
-    try:
-        selected_start, selected_end, _, _ = selected_month_bounds(
-            selected_month,
-            today,
-        )
-    except Exception:
-        st.error("A honapot EEEE-HH formatumban add meg, peldaul: 2026-07.")
-        return
-
-    app_settings = load_app_settings()
-    snapshot_enabled = app_settings.get(
-        "courier_card_snapshot_enabled",
-        False,
-    )
-    snapshot_month_text = selected_start.strftime("%Y-%m")
-
-    monthly_summary_df = pd.DataFrame()
-    monthly_details = empty_courier_details()
+    snapshot_month_text = today.strftime("%Y-%m")
+    selector_details = empty_courier_details()
     directory_df = load_courier_directory(snapshot_month_text)
     directory_df = add_user_fallback_courier(
         directory_df,
         user,
         snapshot_month_text,
     )
-
-    if snapshot_enabled:
-        with st.spinner("Kifli-kartya betoltese snapshotbol..."):
-            monthly_summary_df, monthly_details = load_courier_card_statistics(
-                snapshot_month=snapshot_month_text,
-                user=user,
-            )
-
-    selector_df = merge_courier_directory_with_stats(
-        directory_df,
-        monthly_summary_df,
-        snapshot_month_text,
-    )
-    selector_details = monthly_details
-    selector_source = "torzs + snapshot" if snapshot_enabled else "torzs + db"
-    db_fallback_error = None
-
-    if not snapshot_enabled:
-        try:
-            db_summary_df, selector_details = build_db_statistics(
-                start_date=selected_start,
-                end_date=selected_end,
-                user=user,
-            )
-            monthly_summary_df = db_summary_df
-            monthly_details = selector_details
-            selector_df = merge_courier_directory_with_stats(
-                directory_df,
-                db_summary_df,
-                snapshot_month_text,
-            )
-        except Exception as exc:
-            db_fallback_error = str(exc)
-
-    elif user.get("role") != "user":
-        try:
-            db_summary_df, db_details = build_db_statistics(
-                start_date=selected_start,
-                end_date=selected_end,
-                user=user,
-            )
-
-            snapshot_couriers = unique_courier_count(monthly_summary_df)
-            db_couriers = unique_courier_count(db_summary_df)
-
-            if not db_summary_df.empty and db_couriers > snapshot_couriers:
-                monthly_summary_df = db_summary_df
-                selector_df = merge_courier_directory_with_stats(
-                    directory_df,
-                    db_summary_df,
-                    snapshot_month_text,
-                )
-                selector_details = db_details
-                selector_source = "torzs + db"
-        except Exception as exc:
-            db_fallback_error = str(exc)
+    selector_df = directory_df
 
     if selector_df.empty:
-        if db_fallback_error:
-            st.error(f"DB futarlista fallback hiba: {db_fallback_error}")
-        if snapshot_enabled:
-            st.warning(
-                "Meg nincs DB snapshot ehhez a honaphoz. Futtasd a courier card stat buildert, es utana a kartya gyorsan tolt."
-            )
-        else:
-            st.warning(
-                "Meg nincs DB statisztika ehhez a honaphoz. A Kifli kartya most direkt DB modban fut."
-            )
+        st.warning("Meg nincs futar torzs adat a Kifli kartyahoz.")
         return
 
     if user.get("role") != "user":
         st.caption(
-            f"Futarlista forras: {selector_source} | {unique_courier_count(selector_df)} futar"
+            f"Futarlista forras: futar torzs | {unique_courier_count(selector_df)} futar"
         )
-        if db_fallback_error and unique_courier_count(selector_df) < 2:
-            st.warning(f"DB futarlista fallback hiba: {db_fallback_error}")
 
     current_row = select_visible_courier(selector_df, user)
 
     if current_row is None:
-        st.warning("Ehhez a belepeshez nem talaltam futar statisztikat.")
+        st.warning("Ehhez a belepeshez nem talaltam futart.")
         return
 
     _attendance_data, drivers_data = load_live_courier_sources()
@@ -2458,15 +2466,6 @@ def show_courier_dashboard_page():
         current_driver,
     )
 
-    monthly_row = current_row
-    if not monthly_summary_df.empty:
-        courier_id = normalize_id(current_row.get("courier_id"))
-        monthly_match = monthly_summary_df[
-            monthly_summary_df["courier_id"].apply(normalize_id) == courier_id
-        ]
-        if not monthly_match.empty:
-            monthly_row = monthly_match.iloc[0]
-
     render_hero(current_row, user)
     shift_date, shift_day_label = selected_shift_date(today)
     render_today_shifts(
@@ -2475,12 +2474,8 @@ def show_courier_dashboard_page():
         shift_date,
         shift_day_label,
     )
-    render_route_road(current_row, selector_details)
-    st.subheader(f"Havi statisztika: {selected_start:%Y-%m}")
-    render_stat_cards(
-        monthly_row,
+    render_route_road(
+        current_row,
         selector_details,
-        selected_start,
-        selected_end,
+        show_route_popup=user.get("role") == "user",
     )
-    render_extra_metrics(monthly_row)
