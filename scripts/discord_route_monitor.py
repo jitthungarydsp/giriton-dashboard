@@ -202,6 +202,32 @@ def get_matching_route(driver, driver_detail):
     )[-1]
 
 
+def get_latest_open_route(driver_detail):
+    routes = driver_detail.get("routes", []) or []
+    open_routes = [
+        route
+        for route in routes
+        if not route.get("realReturn")
+    ]
+
+    if not open_routes:
+        return {}
+
+    return sorted(
+        open_routes,
+        key=route_sort_datetime,
+    )[-1]
+
+
+def get_courier_name(courier_id, driver_detail):
+    return (
+        driver_detail.get("courierName")
+        or driver_detail.get("courier_name")
+        or driver_detail.get("name")
+        or f"#{courier_id}"
+    )
+
+
 def find_current_checkpoint(route):
     checkpoints = route.get("checkpoints", []) or []
 
@@ -309,8 +335,9 @@ def should_skip_driver(driver, allowed_courier_ids):
 
 def run_once(max_age_minutes):
     discord_status = read_discord_status()
-    allowed_courier_ids = set(discord_status.get("allowed_courier_ids", []))
-    drivers = load_drivers()
+    target_courier_ids = sorted(
+        set(discord_status.get("allowed_courier_ids", []))
+    )
     counters = Counter()
     sent_count = 0
     skipped_count = 0
@@ -318,28 +345,33 @@ def run_once(max_age_minutes):
     print(
         "Discord monitor status: "
         f"webhook_configured={discord_status.get('webhook_configured')} "
-        f"allowed_courier_ids={sorted(allowed_courier_ids) or 'ALL'} "
-        f"drivers={len(drivers)} "
+        f"target_courier_ids={target_courier_ids or 'NONE'} "
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
 
-    for driver in drivers:
-        courier_id = normalize_id(driver.get("driver_id"))
+    if not target_courier_ids:
+        counters["missing_target_courier_ids"] += 1
+        print(
+            "Nincs beallitott Discord futar ID. "
+            "Add meg a DISCORD_NOTIFY_COURIER_IDS secretet, peldaul: 7644",
+            flush=True,
+        )
+        print(
+            f"Monitor kor kesz: sent=0, skipped=0, reasons={dict(counters)}",
+            flush=True,
+        )
+        return
 
+    for courier_id in target_courier_ids:
         if not courier_id:
             counters["missing_courier_id"] += 1
             skipped_count += 1
             continue
 
-        if should_skip_driver(driver, allowed_courier_ids):
-            counters["filtered_courier"] += 1
-            skipped_count += 1
-            continue
-
         try:
             driver_detail = load_driver_detail(courier_id)
-            route = get_matching_route(driver, driver_detail)
+            route = get_latest_open_route(driver_detail)
         except Exception as exc:
             print(f"#{courier_id} route detail hiba: {exc}")
             counters["detail_error"] += 1
@@ -347,12 +379,7 @@ def run_once(max_age_minutes):
             continue
 
         if not route:
-            counters["missing_route"] += 1
-            skipped_count += 1
-            continue
-
-        if route.get("realReturn"):
-            counters["closed_route"] += 1
+            counters["no_open_route"] += 1
             skipped_count += 1
             continue
 
@@ -376,12 +403,7 @@ def run_once(max_age_minutes):
         checkpoint = find_current_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
-        courier_name = (
-            nested_get(driver, ["personal_info", "name"], "")
-            or driver.get("driver_name")
-            or driver_detail.get("courierName")
-            or ""
-        )
+        courier_name = get_courier_name(courier_id, driver_detail)
         result = notify_route_assigned_once(
             courier_id,
             courier_name,

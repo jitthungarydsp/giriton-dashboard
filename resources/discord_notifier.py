@@ -80,6 +80,36 @@ def _sent_route_notifications():
     return set()
 
 
+def _build_route_notification_lines(
+    courier_id,
+    courier_name,
+    route_id,
+    order_id="",
+    address="",
+    planned_departure="",
+    planned_return="",
+):
+    content_lines = [
+        "Új túra érkezett a futárra.",
+        f"Futár: {courier_name} #{courier_id}",
+        f"Route ID: {route_id}",
+    ]
+
+    if order_id:
+        content_lines.append(f"Aktuális rendelés: {order_id}")
+
+    if planned_departure:
+        content_lines.append(f"Tervezett kiindulás: {planned_departure}")
+
+    if planned_return:
+        content_lines.append(f"Tervezett vége: {planned_return}")
+
+    if address:
+        content_lines.append(f"Aktuális cím: {address}")
+
+    return content_lines
+
+
 def notify_route_assigned_once(
     courier_id,
     courier_name,
@@ -128,6 +158,16 @@ def notify_route_assigned_once(
 
     if address:
         content_lines.append(f"Aktuális cím: {address}")
+
+    content_lines = _build_route_notification_lines(
+        courier_id,
+        courier_name,
+        route_id,
+        order_id=order_id,
+        address=address,
+        planned_departure=planned_departure,
+        planned_return=planned_return,
+    )
 
     response = requests.post(
         webhook_url,

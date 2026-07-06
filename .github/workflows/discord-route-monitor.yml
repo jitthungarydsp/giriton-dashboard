@@ -43,4 +43,4 @@ jobs:
 
       - name: Run Discord route monitor
         run: |
-          python scripts/discord_route_monitor.py --loop-minutes 4 --poll-seconds 60 --max-age-minutes 720
+          python scripts/discord_route_monitor.py --loop-minutes 4 --poll-seconds 180 --max-age-minutes 0
