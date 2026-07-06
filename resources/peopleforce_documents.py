@@ -1,5 +1,7 @@
 import base64
 from datetime import date
+from datetime import datetime
+from datetime import timezone
 
 import pandas as pd
 import requests
@@ -37,6 +39,18 @@ COMPLAINT_COLUMNS = [
     "status",
     "created_by",
     "created_at",
+]
+
+STATUS_COLUMNS = [
+    "id",
+    "courier_id",
+    "courier_name",
+    "action_key",
+    "document_month",
+    "status",
+    "status_note",
+    "updated_by",
+    "updated_at",
 ]
 
 
@@ -137,6 +151,93 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
     return pd.DataFrame(rows)
 
 
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_document_markers(courier_id, document_month):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+
+    if not courier_id:
+        return pd.DataFrame(columns=["id", "document_type", "uploaded_at"])
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(),
+        params={
+            "select": "id,document_type,uploaded_at",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{format_month(document_month)}",
+            "order": "uploaded_at.desc",
+            "limit": "500",
+        },
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame(columns=["id", "document_type", "uploaded_at"])
+
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_complaint_markers(courier_id, document_month):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+
+    if not courier_id:
+        return pd.DataFrame(columns=["id", "document_type", "status", "created_at"])
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_complaints",
+        headers=supabase_headers(),
+        params={
+            "select": "id,document_type,status,created_at",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{format_month(document_month)}",
+            "order": "created_at.desc",
+            "limit": "500",
+        },
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame(columns=["id", "document_type", "status", "created_at"])
+
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_card_statuses(courier_id, document_month):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+
+    if not courier_id:
+        return pd.DataFrame(columns=STATUS_COLUMNS)
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_card_statuses",
+        headers=supabase_headers(),
+        params={
+            "select": ",".join(STATUS_COLUMNS),
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{format_month(document_month)}",
+            "order": "updated_at.desc",
+            "limit": "100",
+        },
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame(columns=STATUS_COLUMNS)
+
+    return pd.DataFrame(rows)
+
+
 def upload_peopleforce_document(
     *,
     courier_id,
@@ -172,6 +273,7 @@ def upload_peopleforce_document(
     )
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
+    read_peopleforce_document_markers.clear()
 
     return response.json()
 
@@ -204,6 +306,49 @@ def create_peopleforce_complaint(
     )
     raise_for_supabase_error(response)
     read_peopleforce_complaints.clear()
+    read_peopleforce_complaint_markers.clear()
+
+    return response.json()
+
+
+def upsert_peopleforce_card_status(
+    *,
+    courier_id,
+    courier_name,
+    action_key,
+    document_month,
+    status,
+    status_note="",
+    updated_by="",
+):
+    supabase_url = require_supabase()
+    clean_status = str(status or "").strip().lower()
+
+    if clean_status not in ["open", "done"]:
+        clean_status = "open"
+
+    payload = {
+        "courier_id": str(courier_id or "").strip(),
+        "courier_name": str(courier_name or "").strip(),
+        "action_key": str(action_key or "").strip(),
+        "document_month": format_month(document_month),
+        "status": clean_status,
+        "status_note": str(status_note or "").strip(),
+        "updated_by": str(updated_by or "").strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    headers = supabase_headers(prefer_return=True)
+    headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+
+    response = requests.post(
+        f"{supabase_url}/rest/v1/peopleforce_card_statuses"
+        "?on_conflict=courier_id,document_month,action_key",
+        headers=headers,
+        json=payload,
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_card_statuses.clear()
 
     return response.json()
 

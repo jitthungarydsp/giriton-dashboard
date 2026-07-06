@@ -41,3 +41,26 @@ create index if not exists idx_peopleforce_complaints_courier_month
 
 create index if not exists idx_peopleforce_complaints_created_at
     on public.peopleforce_complaints (created_at desc);
+
+create table if not exists public.peopleforce_card_statuses (
+    id uuid primary key default gen_random_uuid(),
+    courier_id text not null,
+    courier_name text,
+    action_key text not null,
+    document_month date not null,
+    status text not null default 'open',
+    status_note text,
+    updated_by text,
+    updated_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    constraint peopleforce_card_statuses_status_check
+        check (status in ('open', 'done')),
+    constraint peopleforce_card_statuses_unique_key
+        unique (courier_id, document_month, action_key)
+);
+
+create index if not exists idx_peopleforce_card_statuses_courier_month
+    on public.peopleforce_card_statuses (courier_id, document_month, action_key);
+
+create index if not exists idx_peopleforce_card_statuses_status
+    on public.peopleforce_card_statuses (status);

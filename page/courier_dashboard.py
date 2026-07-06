@@ -40,9 +40,13 @@ from resources.foglalasok_db import read_foglalasok_records
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     decode_document_content,
+    read_peopleforce_card_statuses,
+    read_peopleforce_complaint_markers,
     read_peopleforce_complaints,
+    read_peopleforce_document_markers,
     read_peopleforce_documents,
     upload_peopleforce_document,
+    upsert_peopleforce_card_status,
 )
 
 EXPRESS_MAX_FEE = 6516
@@ -507,6 +511,51 @@ a.peopleforce-card {
     font-size: 12px;
     font-weight: 900;
     margin-top: 14px;
+}
+.peopleforce-card-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+}
+.peopleforce-status {
+    align-items: center;
+    border-radius: 999px;
+    display: inline-flex;
+    font-size: 11px;
+    font-weight: 900;
+    gap: 6px;
+    padding: 6px 9px;
+    white-space: nowrap;
+}
+.peopleforce-status-open {
+    background: #fee2e2;
+    color: #991b1b;
+}
+.peopleforce-status-done {
+    background: #dcfce7;
+    color: #166534;
+}
+.peopleforce-lamp {
+    border-radius: 999px;
+    display: inline-block;
+    height: 10px;
+    width: 10px;
+}
+.peopleforce-lamp-open {
+    background: #ef4444;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18);
+}
+.peopleforce-lamp-done {
+    background: #22c55e;
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.18);
+}
+.peopleforce-status-panel {
+    background: #f8fafc;
+    border: 1px solid #dbeafe;
+    border-radius: 14px;
+    margin: 12px 0;
+    padding: 14px;
 }
 .peopleforce-badge {
     align-items: center;
@@ -1288,6 +1337,195 @@ def get_peopleforce_document_config(action_key):
     return configs.get(action_key, configs["my_invoices"])
 
 
+def document_type_to_peopleforce_action(document_type):
+    return {
+        "tig": "tig",
+        "settlement": "settlement",
+        "invoice": "my_invoices",
+    }.get(clean_display_text(document_type).lower(), "")
+
+
+def load_peopleforce_card_states(courier_id, selected_month):
+    states = {}
+
+    if not courier_id:
+        return states
+
+    try:
+        documents = read_peopleforce_document_markers(
+            courier_id,
+            selected_month,
+        )
+    except Exception:
+        documents = pd.DataFrame()
+
+    for _, document in documents.iterrows():
+        action_key = document_type_to_peopleforce_action(
+            document.get("document_type")
+        )
+
+        if not action_key:
+            continue
+
+        state = states.setdefault(
+            action_key,
+            {
+                "status": "open",
+                "activity_count": 0,
+            },
+        )
+        state["activity_count"] += 1
+
+    try:
+        complaints = read_peopleforce_complaint_markers(
+            courier_id,
+            selected_month,
+        )
+    except Exception:
+        complaints = pd.DataFrame()
+
+    for _, complaint in complaints.iterrows():
+        action_key = document_type_to_peopleforce_action(
+            complaint.get("document_type")
+        )
+
+        if not action_key:
+            continue
+
+        state = states.setdefault(
+            action_key,
+            {
+                "status": "open",
+                "activity_count": 0,
+            },
+        )
+        state["activity_count"] += 1
+
+    try:
+        statuses = read_peopleforce_card_statuses(
+            courier_id,
+            selected_month,
+        )
+    except Exception:
+        statuses = pd.DataFrame()
+
+    for _, status_row in statuses.iterrows():
+        action_key = clean_display_text(status_row.get("action_key"))
+
+        if not action_key:
+            continue
+
+        state = states.setdefault(
+            action_key,
+            {
+                "status": "open",
+                "activity_count": 0,
+            },
+        )
+        state["status"] = (
+            "done"
+            if clean_display_text(status_row.get("status")).lower() == "done"
+            else "open"
+        )
+        state["status_note"] = clean_display_text(status_row.get("status_note"))
+        state["updated_by"] = clean_display_text(status_row.get("updated_by"))
+        state["updated_at"] = clean_display_text(status_row.get("updated_at"))
+
+    return states
+
+
+def render_peopleforce_card_status_badge(state):
+    if not state:
+        return ""
+
+    status = clean_display_text(state.get("status"), "open").lower()
+    status_key = "done" if status == "done" else "open"
+    label = "Kész" if status_key == "done" else "Teendő"
+
+    return (
+        f'<span class="peopleforce-status peopleforce-status-{status_key}">'
+        f'<span class="peopleforce-lamp peopleforce-lamp-{status_key}"></span>'
+        f"{label}"
+        f"</span>"
+    )
+
+
+def render_peopleforce_status_panel(
+    *,
+    action_key,
+    courier_id,
+    courier_name,
+    selected_month,
+    user,
+    state,
+):
+    if not state:
+        st.caption("Ehhez a hónaphoz még nincs külön jelzés.")
+        return
+
+    status = clean_display_text(state.get("status"), "open").lower()
+    status_key = "done" if status == "done" else "open"
+    label = "Zöld - elvégezve" if status_key == "done" else "Piros - teendő van"
+    updated_by = clean_display_text(state.get("updated_by"), "-")
+    updated_at = clean_display_text(state.get("updated_at"), "")
+
+    st.markdown(
+        f"""
+<div class="peopleforce-status-panel">
+  <span class="peopleforce-status peopleforce-status-{status_key}">
+    <span class="peopleforce-lamp peopleforce-lamp-{status_key}"></span>
+    {escape(label)}
+  </span>
+  <p style="margin: 10px 0 0; color: #64748b;">Utolsó állítás: {escape(updated_by)} {escape(updated_at)}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    if user.get("role") != "admin":
+        return
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(
+            "Elvégezve - zöldre állítom",
+            disabled=status_key == "done",
+            use_container_width=True,
+            key=f"peopleforce_done_{action_key}_{courier_id}_{selected_month}",
+        ):
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                action_key=action_key,
+                document_month=selected_month,
+                status="done",
+                status_note="Admin lezárta.",
+                updated_by=user.get("username"),
+            )
+            st.success("Zöldre állítva.")
+            st.rerun()
+
+    with col2:
+        if st.button(
+            "Visszanyitás - piros",
+            disabled=status_key == "open",
+            use_container_width=True,
+            key=f"peopleforce_open_{action_key}_{courier_id}_{selected_month}",
+        ):
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                action_key=action_key,
+                document_month=selected_month,
+                status="open",
+                status_note="Admin visszanyitotta.",
+                updated_by=user.get("username"),
+            )
+            st.success("Pirosra állítva.")
+            st.rerun()
+
+
 def render_peopleforce_document_list(documents):
     if documents.empty:
         return
@@ -1395,6 +1633,22 @@ def render_peopleforce_admin_upload(
             st.caption(str(exc))
             return
 
+        try:
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                action_key=action_key,
+                document_month=selected_month,
+                status="open",
+                status_note="Új dokumentum érkezett.",
+                updated_by=user.get("username"),
+            )
+        except Exception as exc:
+            st.warning(
+                "A dokumentum feltöltődött, de a piros/zöld státusz mentése nem sikerült."
+            )
+            st.caption(str(exc))
+
         st.success("Feltöltve.")
         st.rerun()
 
@@ -1462,15 +1716,31 @@ def render_peopleforce_complaint_box(
         st.caption(str(exc))
         return
 
+    try:
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=action_key,
+            document_month=selected_month,
+            status="open",
+            status_note="Új reklamáció érkezett.",
+            updated_by=user.get("username"),
+        )
+    except Exception as exc:
+        st.warning(
+            "A reklamáció rögzült, de a piros/zöld státusz mentése nem sikerült."
+        )
+        st.caption(str(exc))
+
     st.success("Reklamáció rögzítve.")
     st.rerun()
 
 
-def render_peopleforce_monthly_documents(action_key, row, user):
+def render_peopleforce_monthly_documents(action_key, row, user, selected_month=None):
     config = get_peopleforce_document_config(action_key)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
     courier_name = get_courier_display_name(row, user)
-    selected_month = get_peopleforce_month(action_key)
+    selected_month = selected_month or get_peopleforce_month(action_key)
 
     st.subheader(config["title"])
     st.caption(
@@ -1497,6 +1767,19 @@ def render_peopleforce_monthly_documents(action_key, row, user):
         st.info(config["empty"])
     else:
         render_peopleforce_document_list(documents)
+
+    card_states = load_peopleforce_card_states(
+        courier_id,
+        selected_month,
+    )
+    render_peopleforce_status_panel(
+        action_key=action_key,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        selected_month=selected_month,
+        user=user,
+        state=card_states.get(action_key),
+    )
 
     render_peopleforce_admin_upload(
         action_key=action_key,
@@ -1629,11 +1912,16 @@ def render_peopleforce_placeholder_content(card):
     )
 
 
-def render_peopleforce_action_content(action_key, row, user):
+def render_peopleforce_action_content(action_key, row, user, selected_month=None):
     card = get_peopleforce_card(action_key)
 
     if action_key in ["tig", "settlement", "my_invoices"]:
-        render_peopleforce_monthly_documents(action_key, row, user)
+        render_peopleforce_monthly_documents(
+            action_key,
+            row,
+            user,
+            selected_month=selected_month,
+        )
         return
 
     if action_key == "invoice_submit":
@@ -1656,25 +1944,41 @@ def render_peopleforce_action_content(action_key, row, user):
 
 if hasattr(st, "dialog"):
     @st.dialog("PeopleForce")
-    def render_peopleforce_action_dialog(action_key, row, user):
-        render_peopleforce_action_content(action_key, row, user)
+    def render_peopleforce_action_dialog(action_key, row, user, selected_month=None):
+        render_peopleforce_action_content(
+            action_key,
+            row,
+            user,
+            selected_month=selected_month,
+        )
 else:
-    def render_peopleforce_action_dialog(action_key, row, user):
+    def render_peopleforce_action_dialog(action_key, row, user, selected_month=None):
         with st.expander("PeopleForce", expanded=True):
-            render_peopleforce_action_content(action_key, row, user)
+            render_peopleforce_action_content(
+                action_key,
+                row,
+                user,
+                selected_month=selected_month,
+            )
 
 
-def render_peopleforce_card_grid(cards):
+def render_peopleforce_card_grid(cards, card_states):
     for start in range(0, len(cards), 3):
         columns = st.columns(3)
 
         for offset, card in enumerate(cards[start:start + 3]):
             with columns[offset]:
                 href = escape(build_peopleforce_href(card["key"]), quote=True)
+                status_badge = render_peopleforce_card_status_badge(
+                    card_states.get(card["key"])
+                )
                 st.markdown(
                     f"""
 <a class="peopleforce-card" href="{href}">
-  <div class="peopleforce-badge">{escape(card["code"])}</div>
+  <div class="peopleforce-card-head">
+    <div class="peopleforce-badge">{escape(card["code"])}</div>
+    {status_badge}
+  </div>
   <h3>{escape(card["title"])}</h3>
   <p>{escape(card["description"])}</p>
   <span class="peopleforce-card-link">Megnyitás</span>
@@ -1688,6 +1992,12 @@ def render_peopleforce_placeholder(row=None, user=None):
     user = user or {}
     safe_row = row if row is not None else {}
     cards = get_peopleforce_cards()
+    courier_id = normalize_id(safe_row.get("courier_id") or user.get("courierId"))
+    selected_month = get_peopleforce_month("cards")
+    card_states = load_peopleforce_card_states(
+        courier_id,
+        selected_month,
+    )
 
     st.markdown(
         """
@@ -1700,11 +2010,16 @@ def render_peopleforce_placeholder(row=None, user=None):
     )
 
     st.markdown('<span id="peopleforce"></span>', unsafe_allow_html=True)
-    render_peopleforce_card_grid(cards)
+    render_peopleforce_card_grid(cards, card_states)
 
     selected_action = get_peopleforce_selected_action()
     if get_peopleforce_card(selected_action):
-        render_peopleforce_action_dialog(selected_action, safe_row, user)
+        render_peopleforce_action_dialog(
+            selected_action,
+            safe_row,
+            user,
+            selected_month=selected_month,
+        )
 
 
 if hasattr(st, "dialog"):
