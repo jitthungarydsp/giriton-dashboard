@@ -946,8 +946,11 @@ def render_peopleforce_placeholder():
         ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése."),
         ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek."),
         ("TF", "Task felvétele", "Új feladat vagy teendő rögzítésének helye."),
+        ("TG", "TIG", "Teljesítésigazolással kapcsolatos ügyek és státuszok."),
+        ("EL", "Elszámolás", "Elszámolási információk, kérdések és egyeztetések."),
+        ("SZ", "Számláim", "Saját számlák és későbbi feltöltési folyamatok."),
         ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok."),
-        ("SZ", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók."),
+        ("SB", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók."),
         ("SA", "Személyes adatok", "Saját adatok és későbbi módosítási folyamatok."),
     ]
     card_html = "".join(
