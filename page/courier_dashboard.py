@@ -3171,23 +3171,197 @@ def is_journey_stop_late(stop):
     return local_now() > planned_at
 
 
-def render_empty_kiflis_journey(message, note=""):
+def render_kiflis_status_journey(
+    title,
+    subtitle,
+    marker_label,
+    marker_text,
+    note,
+    marker_class="kifli-pawn-ok",
+    show_help=False,
+):
     kifli_logo = get_kifli_destination_logo()
+    help_html = (
+        '<div class="route-help-button">Elakadtam, segítség kell</div>'
+        if show_help
+        else ""
+    )
+
     st.markdown(
         f"""
 <div class="kifli-journey-card">
   <div class="kifli-journey-head">
     <div>
-      <div class="kifli-journey-title">Kiflis utam</div>
-      <div class="kifli-journey-subtitle">{escape(message)}</div>
+      <div class="kifli-journey-title">{escape(title)}</div>
+      <div class="kifli-journey-subtitle">{escape(subtitle)}</div>
     </div>
-    <div class="route-depot-icon">{kifli_logo}</div>
+    <div class="route-road-subtitle">A Kifli készen áll</div>
   </div>
-  <div class="fun-note route-empty-note">{escape(note or "A következő útvonal akkor jelenik meg, amikor a Discord cron route-ot logolt neked.")}</div>
+  <div class="kifli-route-list kifli-status-route">
+    <div class="kifli-route-stop">
+      <div class="kifli-stop-marker">H</div>
+      <div class="kifli-stop-card">
+        <div class="kifli-stop-title">Otthon</div>
+        <div class="kifli-stop-note">Innen indul a nap.</div>
+      </div>
+    </div>
+    <div class="kifli-route-stop kifli-route-stop-current">
+      <div class="kifli-stop-marker {marker_class}">{escape(marker_label)}</div>
+      <div class="kifli-stop-card">
+        <div class="kifli-stop-title">{escape(marker_text)}</div>
+        <div class="kifli-stop-note">{escape(subtitle)}</div>
+      </div>
+    </div>
+    <div class="kifli-route-stop">
+      <div class="route-depot-icon">{kifli_logo}</div>
+      <div class="kifli-stop-card">
+        <div class="kifli-stop-title">Kifli depó</div>
+        <div class="kifli-stop-note">A kör vége itt vár rád.</div>
+      </div>
+    </div>
+  </div>
+  <div class="fun-note route-empty-note">{escape(note)}{help_html}</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+
+
+def render_empty_kiflis_journey(message, note=""):
+    render_kiflis_status_journey(
+        "Kiflis utam",
+        message,
+        "?",
+        "Route betöltés",
+        note or "A következő útvonal akkor jelenik meg, amikor a Discord cron route-ot logolt neked.",
+    )
+
+
+def render_kiflis_before_shift_journey(minutes_to_start):
+    minutes_to_start = max(int(minutes_to_start or 0), 0)
+
+    if minutes_to_start > 40:
+        render_kiflis_status_journey(
+            "Lassan kezdődik a műszakod",
+            f"Még körülbelül {minutes_to_start} perc van a kezdésig.",
+            "40+",
+            "Készülődés",
+            "Még van idő összerakni magad, de a műszak már integet a távolból.",
+        )
+        return
+
+    render_kiflis_status_journey(
+        "Ideje Giritonba bejelentkezni",
+        f"Még körülbelül {minutes_to_start} perc van a kezdésig.",
+        "!",
+        "Depó felé",
+        "Jelentkezz be Giritonba. Ha valami nem áll össze, kérj segítséget.",
+        show_help=True,
+    )
+
+
+def render_kiflis_no_shift_journey():
+    render_kiflis_status_journey(
+        "Műszakra várunk",
+        "Ma még nem látok műszakot a neveden.",
+        "?",
+        "Pihenő mód",
+        "Ma még nincs műszakod. A futárcipő pihen, a kávé pedig jogosan lassú.",
+    )
+
+
+def render_kiflis_checked_in_waiting_journey(next_shift=None):
+    subtitle = "Amint route kerül a nevedre, frissítés után megjelenik az útvonal."
+    note = "Bent vagy a rendszerben. Most már csak a route-nak kell megérkeznie."
+
+    if next_shift:
+        start_text = next_shift["start_at"].strftime("%H:%M")
+        end_text = (
+            next_shift["end_at"].strftime("%H:%M")
+            if next_shift.get("end_at")
+            else ""
+        )
+        subtitle = f"Következő műszak: {start_text} - {end_text}."
+        note = "Visszaértél, és van még műszakod. Várjuk a következő túrát."
+
+    render_kiflis_status_journey(
+        "Bejelentkezve, túrára vársz",
+        subtitle,
+        "OK",
+        "Túrára vár",
+        note,
+    )
+
+
+def render_kiflis_day_done_journey():
+    render_kiflis_status_journey(
+        "Mára kész vagy",
+        "Nem látok több mai műszakot a neveden.",
+        "✓",
+        "Nap lezárva",
+        "Ha nincs új műszak, jöhet a pihenés. A futárcipő ma már letette a voksát a kanapé mellett.",
+    )
+
+
+def render_kiflis_shift_fallback(row, user):
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+
+    try:
+        attendance_data, drivers_data = load_live_courier_sources()
+    except Exception:
+        render_kiflis_status_journey(
+            "Kiflis utam",
+            "Most nem érem el az élő műszakadatokat.",
+            "?",
+            "Adatbetöltés",
+            "Az út látszik, az állapot pedig frissítés után újrapróbálkozik.",
+        )
+        return
+
+    attendance_courier = find_attendance_courier(
+        attendance_data,
+        courier_id,
+    )
+    driver = find_driver(
+        drivers_data,
+        courier_id,
+    )
+    shift_items = get_shift_items(attendance_courier)
+
+    if driver.get("active") is False:
+        future_shift = get_future_shift(attendance_courier)
+
+        if future_shift:
+            minutes_to_start = int(
+                (future_shift["start_at"] - local_now()).total_seconds() // 60
+            )
+            render_kiflis_before_shift_journey(minutes_to_start)
+        elif shift_items:
+            render_kiflis_day_done_journey()
+        else:
+            render_kiflis_no_shift_journey()
+
+        return
+
+    current_shift = get_current_shift(attendance_courier)
+
+    if not current_shift:
+        if shift_items:
+            render_kiflis_day_done_journey()
+        else:
+            render_kiflis_no_shift_journey()
+
+        return
+
+    shift = current_shift["raw"]
+    minutes_to_start = int(
+        (current_shift["start_at"] - local_now()).total_seconds() // 60
+    )
+
+    if shift.get("availableForShiftSince"):
+        render_kiflis_checked_in_waiting_journey()
+    else:
+        render_kiflis_before_shift_journey(minutes_to_start)
 
 
 def render_kiflis_journey(row, user):
@@ -3197,10 +3371,7 @@ def render_kiflis_journey(row, user):
     route_id = normalize_id(notification.get("route_id") or route.get("id") or route.get("routeId"))
 
     if not route_id:
-        render_empty_kiflis_journey(
-            "Most nincs betöltött route.",
-            "Ha kapsz új túrát, a Discord cron logolja, és utána itt megjelenik a Kiflis utad.",
-        )
+        render_kiflis_shift_fallback(row, user)
         return
 
     if not route or not stops:
