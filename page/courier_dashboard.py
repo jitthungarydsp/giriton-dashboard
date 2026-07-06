@@ -480,6 +480,14 @@ div[data-testid="stSegmentedControl"] label {
     min-height: 130px;
     padding: 18px;
 }
+a.peopleforce-card {
+    display: block;
+    text-decoration: none !important;
+}
+.peopleforce-card:hover {
+    border-color: #6cab2f;
+    box-shadow: 0 14px 30px rgba(36, 74, 20, 0.14);
+}
 .peopleforce-badge {
     align-items: center;
     background: #6cab2f;
@@ -943,26 +951,43 @@ def render_courier_top_menu():
 
 def render_peopleforce_placeholder():
     cards = [
-        ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése."),
-        ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek."),
-        ("TF", "Task felvétele", "Új feladat vagy teendő rögzítésének helye."),
-        ("TG", "TIG", "Teljesítésigazolással kapcsolatos ügyek és státuszok."),
-        ("EL", "Elszámolás", "Elszámolási információk, kérdések és egyeztetések."),
-        ("SZ", "Számláim", "Saját számlák és későbbi feltöltési folyamatok."),
-        ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok."),
-        ("SB", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók."),
-        ("SA", "Személyes adatok", "Saját adatok és későbbi módosítási folyamatok."),
+        ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése.", ""),
+        ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek.", ""),
+        ("TF", "Task felvétele", "Új feladat vagy teendő rögzítésének helye.", ""),
+        ("TG", "TIG", "Teljesítésigazolással kapcsolatos ügyek és státuszok.", ""),
+        ("EL", "Elszámolás", "Elszámolási információk, kérdések és egyeztetések.", ""),
+        ("SZ", "Számláim", "Saját számlák és későbbi feltöltési folyamatok.", ""),
+        (
+            "SB",
+            "Számlabeküldő rendszer",
+            "Külső Google űrlap számlabeküldéshez.",
+            "https://docs.google.com/forms/d/e/1FAIpQLSc9MQZXm21F9ZYjiKcY-lgmYB9_pHPHIteo9bR6laRMWoBTLg/viewform",
+        ),
+        ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok.", ""),
+        ("SZB", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók.", ""),
+        ("SA", "Személyes adatok", "Saját adatok és későbbi módosítási folyamatok.", ""),
     ]
-    card_html = "".join(
-        f"""
-  <div class="peopleforce-card">
+
+    card_items = []
+
+    for code, title, description, url in cards:
+        tag = "a" if url else "div"
+        href = (
+            f' href="{escape(url)}" target="_blank" rel="noopener noreferrer"'
+            if url
+            else ""
+        )
+        card_items.append(
+            f"""
+  <{tag} class="peopleforce-card"{href}>
     <div class="peopleforce-badge">{escape(code)}</div>
     <h3>{escape(title)}</h3>
     <p>{escape(description)}</p>
-  </div>
+  </{tag}>
 """
-        for code, title, description in cards
-    )
+        )
+
+    card_html = "".join(card_items)
 
     st.markdown(
         f"""
