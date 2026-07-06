@@ -31,7 +31,36 @@ def _parse_detail_entries(text):
     start_time = times[0] if times else ""
     end_time = times[-1] if len(times) > 1 else ""
 
-    return start_time, end_time, " | ".join(lines)
+    detail_activity = ""
+    activity_values = {
+        "Work",
+        "Left",
+        "Absent",
+        "Didn't come",
+        "Didn’t come",
+        "Did not come",
+    }
+
+    for line in lines:
+        if line in activity_values:
+            detail_activity = line
+            break
+
+    return start_time, end_time, " | ".join(lines), detail_activity
+
+
+def _parse_grid_time_cells(cells):
+    times = []
+
+    for value in (cells or [])[4:]:
+        text = _clean(value)
+        if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
+            times.append(text)
+
+    start_time = times[0] if times else ""
+    end_time = times[-1] if len(times) > 1 else ""
+
+    return start_time, end_time
 
 
 def _main_grid_rows():
@@ -50,6 +79,7 @@ for (const row of rowEls) {
     name: cells[0],
     shift: cells[1] || '',
     activity: cells[3] || cells[2] || '',
+    cells,
   });
 }
 return rows;
@@ -143,27 +173,52 @@ return false;
     return bool(_driver().execute_script(script, name))
 
 
-def _detail_text():
+def _detail_text(name=""):
     script = r"""
-const grids = [...document.querySelectorAll('.v-grid')];
-const main = grids[0];
+const wanted = arguments[0] || '';
+const timePattern = /(^|\s)\d{1,2}:\d{2}(:\d{2})?(\s|$)/;
 const candidates = [...document.querySelectorAll('body *')]
   .filter(el => {
     const text = (el.innerText || '').trim();
-    return text.includes('Entries') && text.includes('Activity') && text.includes('Time');
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0
+      && rect.height > 0
+      && text.includes('Entries')
+      && text.includes('Activity')
+      && text.includes('Time');
   })
-  .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+  .map(el => {
+    const text = el.innerText || '';
+    return {
+      text,
+      hasTime: timePattern.test(text),
+      hasName: wanted ? text.includes(wanted) : false,
+      length: text.length,
+    };
+  })
+  .sort((a, b) => {
+    if (a.hasTime !== b.hasTime) {
+      return a.hasTime ? -1 : 1;
+    }
+
+    if (a.hasName !== b.hasName) {
+      return a.hasName ? -1 : 1;
+    }
+
+    return a.length - b.length;
+  });
 
 if (candidates.length) {
-  return candidates[0].innerText || '';
+  return candidates[0].text || '';
 }
 
+const grids = [...document.querySelectorAll('.v-grid')];
 if (grids.length > 1) {
   return grids.slice(1).map(g => g.innerText || '').join('\n');
 }
 return '';
 """
-    return _driver().execute_script(script) or ""
+    return _driver().execute_script(script, name) or ""
 
 
 def scrape_attendance_rows(work_date):
@@ -187,10 +242,22 @@ def scrape_attendance_rows(work_date):
             activity = _clean(base_row.get("activity"))
 
             if _click_main_row_by_name(name):
-                time.sleep(0.35)
+                time.sleep(0.8)
 
-            detail = _detail_text()
-            start_time, end_time, detail_raw = _parse_detail_entries(detail)
+            detail = _detail_text(name)
+            start_time, end_time, detail_raw, detail_activity = _parse_detail_entries(
+                detail
+            )
+
+            if not start_time and not end_time:
+                start_time, end_time = _parse_grid_time_cells(
+                    base_row.get("cells", [])
+                )
+
+            if (start_time or end_time) and (
+                not activity or activity in {"Didn't come", "Didn’t come", "Did not come"}
+            ):
+                activity = detail_activity or "Work"
 
             rows.append([
                 work_date,
