@@ -420,6 +420,31 @@ def render_styles():
     st.markdown(
         """
 <style>
+.courier-inner-nav-title {
+    color: #45603b;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .08em;
+    margin: 0 0 8px;
+    text-transform: uppercase;
+}
+.courier-placeholder-card {
+    background: #ffffff;
+    border: 1px solid #dbeafe;
+    border-radius: 16px;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+    color: #0f172a;
+    margin-top: 12px;
+    padding: 24px;
+}
+.courier-placeholder-card h2 {
+    font-size: 24px;
+    margin: 0 0 8px;
+}
+.courier-placeholder-card p {
+    color: #64748b;
+    margin: 0;
+}
 .courier-hero {
     background: linear-gradient(135deg, #6cab2f 0%, #8bd346 45%, #f5fbea 100%);
     border-radius: 18px;
@@ -812,6 +837,53 @@ def render_courier_profile_content(row, user):
 
     if st.button("Bejelentés", key=f"courier_profile_report_{courier_id}"):
         st.success("Bejelentés rögzítve előnézetként. Ide kötjük majd a következő folyamatot.")
+
+
+def render_courier_top_menu():
+    options = ["PeopleForce", "Mai túrám", "Statisztika"]
+    current = st.session_state.get("courier_dashboard_tab", "Mai túrám")
+
+    if current not in options:
+        current = "Mai túrám"
+
+    st.markdown(
+        '<div class="courier-inner-nav-title">Kifli futár menü</div>',
+        unsafe_allow_html=True,
+    )
+
+    if hasattr(st, "segmented_control"):
+        try:
+            selected = st.segmented_control(
+                "Kifli futár menü",
+                options,
+                default=current,
+                key="courier_dashboard_tab",
+                label_visibility="collapsed",
+            )
+            return selected or current
+        except TypeError:
+            pass
+
+    return st.radio(
+        "Kifli futár menü",
+        options,
+        index=options.index(current),
+        horizontal=True,
+        key="courier_dashboard_tab",
+        label_visibility="collapsed",
+    )
+
+
+def render_peopleforce_placeholder():
+    st.markdown(
+        """
+<div class="courier-placeholder-card">
+  <h2>PeopleForce</h2>
+  <p>Ez a rész elő van készítve. Ide jön majd a PeopleForce-os tartalom és folyamat.</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 if hasattr(st, "dialog"):
@@ -2331,6 +2403,81 @@ def render_extra_metrics(row):
     )
 
 
+def render_courier_statistics_view(current_row, user, today):
+    default_month = today.strftime("%Y-%m")
+    selected_month = st.text_input(
+        "Hónap",
+        value=default_month,
+        help="Formátum: ÉÉÉÉ-HH, például: 2026-07.",
+        key="courier_dashboard_stats_month",
+    )
+
+    try:
+        selected_start, selected_end, _, _ = selected_month_bounds(
+            selected_month,
+            today,
+        )
+    except Exception:
+        st.error("A hónapot ÉÉÉÉ-HH formátumban add meg, például: 2026-07.")
+        return
+
+    snapshot_month_text = selected_start.strftime("%Y-%m")
+    app_settings = load_app_settings()
+    snapshot_enabled = app_settings.get(
+        "courier_card_snapshot_enabled",
+        False,
+    )
+    summary_df = pd.DataFrame()
+    details = empty_courier_details()
+    load_error = None
+
+    with st.spinner("Statisztika betöltése..."):
+        if snapshot_enabled:
+            try:
+                summary_df, details = load_courier_card_statistics(
+                    snapshot_month=snapshot_month_text,
+                    user=user,
+                )
+            except Exception as exc:
+                load_error = str(exc)
+
+        if summary_df.empty:
+            try:
+                summary_df, details = build_db_statistics(
+                    start_date=selected_start,
+                    end_date=selected_end,
+                    user=user,
+                )
+            except Exception as exc:
+                load_error = str(exc)
+
+    if summary_df.empty:
+        if load_error:
+            st.warning(f"Statisztika betöltési hiba: {load_error}")
+        else:
+            st.info("Ehhez a hónaphoz még nincs statisztikai adat.")
+        return
+
+    courier_id = normalize_id(current_row.get("courier_id"))
+    match = summary_df[
+        summary_df["courier_id"].apply(normalize_id) == courier_id
+    ].copy()
+
+    if match.empty:
+        st.info("Ehhez a futárhoz nincs statisztika a kiválasztott hónapban.")
+        return
+
+    stats_row = match.iloc[0]
+    st.subheader(f"Statisztika: {selected_start:%Y-%m}")
+    render_stat_cards(
+        stats_row,
+        details,
+        selected_start,
+        selected_end,
+    )
+    render_extra_metrics(stats_row)
+
+
 def unique_courier_count(summary_df):
     if summary_df is None or summary_df.empty or "courier_id" not in summary_df.columns:
         return 0
@@ -2431,6 +2578,12 @@ def show_courier_dashboard_page():
 
     user = st.session_state["user"]
     today = local_now().date()
+    selected_view = render_courier_top_menu()
+
+    if selected_view == "PeopleForce":
+        render_peopleforce_placeholder()
+        return
+
     snapshot_month_text = today.strftime("%Y-%m")
     selector_details = empty_courier_details()
     directory_df = load_courier_directory(snapshot_month_text)
@@ -2467,6 +2620,15 @@ def show_courier_dashboard_page():
     )
 
     render_hero(current_row, user)
+
+    if selected_view == "Statisztika":
+        render_courier_statistics_view(
+            current_row,
+            user,
+            today,
+        )
+        return
+
     shift_date, shift_day_label = selected_shift_date(today)
     render_today_shifts(
         current_row,
