@@ -57,6 +57,18 @@ def db_time(value):
     return text
 
 
+def optional_int(value):
+    text = clean(value)
+
+    if not text:
+        return None
+
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
 def shift_start(shift_text):
     text = clean(shift_text)
 
@@ -145,6 +157,26 @@ def build_db_rows(values, courier_lookup=None):
 
     fetched_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     rows = []
+    header = [
+        clean(value).casefold()
+        for value in (values[0] if values else [])
+    ]
+
+    def header_index(*names):
+        normalized_names = {
+            clean(name).casefold()
+            for name in names
+        }
+
+        for index, column in enumerate(header):
+            if column in normalized_names:
+                return index
+
+        return None
+
+    courier_id_index = header_index("courier_id")
+    courier_name_index = header_index("nev", "name", "courier_name")
+    serial_index = header_index("sorszam", "serial")
 
     for source_row, row in enumerate(values[1:], start=2):
         cells = list(row) + [""] * 12
@@ -162,12 +194,27 @@ def build_db_rows(values, courier_lookup=None):
             email,
             {},
         )
-        courier_id = driver.get("courier_id")
-        courier_name = driver.get("courier_name", "")
+        enriched_courier_id = (
+            clean(cells[courier_id_index])
+            if courier_id_index is not None and courier_id_index < len(cells)
+            else ""
+        )
+        enriched_courier_name = (
+            clean(cells[courier_name_index])
+            if courier_name_index is not None and courier_name_index < len(cells)
+            else ""
+        )
+        enriched_serial = (
+            clean(cells[serial_index])
+            if serial_index is not None and serial_index < len(cells)
+            else ""
+        )
+        courier_id = enriched_courier_id or driver.get("courier_id")
+        courier_name = enriched_courier_name or driver.get("courier_name", "")
         start = shift_start(
             shift_text
         )
-        serial = shift_serial(
+        serial = enriched_serial or shift_serial(
             work_date,
             courier_id,
             warehouse,
@@ -187,7 +234,7 @@ def build_db_rows(values, courier_lookup=None):
             "giriton_uploaded": clean(cells[7]),
             "system_check": clean(cells[8]),
             "legacy_key": clean(cells[10]),
-            "courier_id": courier_id,
+            "courier_id": optional_int(courier_id),
             "courier_name": courier_name,
             "serial": serial,
             "response_json": {

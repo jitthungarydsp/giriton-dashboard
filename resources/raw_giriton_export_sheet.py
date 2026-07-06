@@ -703,7 +703,7 @@ def write_giriton_raw(rows, driver_lookup=None):
     from resources.giriton_shifts_db import upsert_giriton_shift_rows
 
     db_result = upsert_giriton_shift_rows(
-        rows
+        output[1:]
     )
 
     return len(rows), changes, db_result

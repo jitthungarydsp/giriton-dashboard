@@ -149,21 +149,37 @@ def build_db_rows(rows, courier_lookup=None):
     db_rows = []
 
     for row in rows or []:
-        values = list(row) + [""] * 8
+        values = list(row) + [""] * 12
         work_date = clean(values[0])
         start = normalize_time(values[1])
         end = normalize_time(values[2])
         warehouse = clean(values[3])
         occupancy = clean(values[4])
 
-        if len(row) >= 8:
+        if len(row) >= 12:
             booked = clean(values[5])
             maximum = clean(values[6])
             courier_name = clean(values[7])
+            enriched_email = clean(values[8]).casefold()
+            enriched_serial = clean(values[9])
+            enriched_status = clean(values[10])
+            enriched_courier_id = clean(values[11])
+        elif len(row) >= 8:
+            booked = clean(values[5])
+            maximum = clean(values[6])
+            courier_name = clean(values[7])
+            enriched_email = ""
+            enriched_serial = ""
+            enriched_status = ""
+            enriched_courier_id = ""
         else:
             booked = ""
             maximum = ""
             courier_name = clean(values[5])
+            enriched_email = ""
+            enriched_serial = ""
+            enriched_status = ""
+            enriched_courier_id = ""
 
         if not work_date or not start or not courier_name:
             continue
@@ -179,14 +195,15 @@ def build_db_rows(rows, courier_lookup=None):
             )
             status = "GIRITON_OK"
 
-        courier_id = driver.get("courier_id")
-        email = driver.get("email", "")
-        serial = shift_serial(
+        courier_id = enriched_courier_id or driver.get("courier_id")
+        email = enriched_email or driver.get("email", "")
+        serial = enriched_serial or shift_serial(
             work_date,
             courier_id,
             warehouse,
             start,
         )
+        status = enriched_status or status
         response_json = {
             "work_date": work_date,
             "start": start,
@@ -213,7 +230,7 @@ def build_db_rows(rows, courier_lookup=None):
             "maximum": optional_int(maximum),
             "courier_name": courier_name,
             "email": email,
-            "courier_id": courier_id,
+            "courier_id": optional_int(courier_id),
             "serial": serial,
             "status": status,
             "response_json": response_json,

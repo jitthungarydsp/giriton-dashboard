@@ -1,12 +1,16 @@
 name: Giriton Robots
 
+concurrency:
+  group: giriton-robots-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
       run_folgaltsag:
         description: "Folgaltsag robot futtatasa"
         required: true
-        default: "true"
+        default: "false"
         type: choice
         options:
           - "true"
@@ -30,7 +34,7 @@ on:
       run_raw_export:
         description: "Uj nyers Giriton muszak export futtatasa"
         required: true
-        default: "false"
+        default: "true"
         type: choice
         options:
           - "true"
@@ -38,7 +42,7 @@ on:
       run_attendance:
         description: "Giriton Attendance export futtatasa"
         required: true
-        default: "false"
+        default: "true"
         type: choice
         options:
           - "true"
@@ -71,7 +75,7 @@ on:
 jobs:
   folgaltsag:
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_folgaltsag == 'true') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_folgaltsag == 'true' }}
     timeout-minutes: 45
 
     env:
@@ -306,7 +310,8 @@ jobs:
 
   attendance:
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_attendance == 'true') }}
+    needs: raw_export
+    if: ${{ always() && ((github.event_name == 'schedule' && github.event.schedule == '0 * * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_attendance == 'true')) }}
     timeout-minutes: 45
 
     env:
