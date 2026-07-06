@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 import re
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -481,14 +481,17 @@ div[data-testid="stSegmentedControl"] label {
     min-height: 150px;
     margin-bottom: 8px;
     padding: 18px;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 a.peopleforce-card {
+    color: #0f172a !important;
     display: block;
     text-decoration: none !important;
 }
 .peopleforce-card:hover {
     border-color: #6cab2f;
     box-shadow: 0 14px 30px rgba(36, 74, 20, 0.14);
+    transform: translateY(-2px);
 }
 .peopleforce-card-link {
     color: #166534;
@@ -1290,6 +1293,29 @@ def get_peopleforce_card(action_key):
     )
 
 
+def get_peopleforce_selected_action():
+    try:
+        value = st.query_params.get("peopleforce", "")
+    except Exception:
+        return ""
+
+    if isinstance(value, list):
+        value = value[0] if value else ""
+
+    return clean_display_text(value)
+
+
+def build_peopleforce_href(action_key):
+    try:
+        params = dict(st.query_params)
+    except Exception:
+        params = {}
+
+    params["peopleforce"] = action_key
+    query = urlencode(params, doseq=True)
+    return f"?{query}#peopleforce"
+
+
 def render_peopleforce_placeholder_content(card):
     st.subheader(card.get("title", "PeopleForce"))
     st.info(
@@ -1328,30 +1354,24 @@ else:
             render_peopleforce_action_content(action_key, row, user)
 
 
-def render_peopleforce_card_grid(cards, row, user):
+def render_peopleforce_card_grid(cards):
     for start in range(0, len(cards), 3):
         columns = st.columns(3)
 
         for offset, card in enumerate(cards[start:start + 3]):
             with columns[offset]:
+                href = escape(build_peopleforce_href(card["key"]), quote=True)
                 st.markdown(
                     f"""
-<div class="peopleforce-card">
+<a class="peopleforce-card" href="{href}">
   <div class="peopleforce-badge">{escape(card["code"])}</div>
   <h3>{escape(card["title"])}</h3>
   <p>{escape(card["description"])}</p>
   <span class="peopleforce-card-link">Megnyitás</span>
-</div>
+</a>
 """,
                     unsafe_allow_html=True,
                 )
-
-                if st.button(
-                    card["title"],
-                    key=f"open_peopleforce_{card['key']}",
-                    use_container_width=True,
-                ):
-                    render_peopleforce_action_dialog(card["key"], row, user)
 
 
 def render_peopleforce_placeholder(row=None, user=None):
@@ -1369,7 +1389,12 @@ def render_peopleforce_placeholder(row=None, user=None):
         unsafe_allow_html=True,
     )
 
-    render_peopleforce_card_grid(cards, safe_row, user)
+    st.markdown('<span id="peopleforce"></span>', unsafe_allow_html=True)
+    render_peopleforce_card_grid(cards)
+
+    selected_action = get_peopleforce_selected_action()
+    if get_peopleforce_card(selected_action):
+        render_peopleforce_action_dialog(selected_action, safe_row, user)
 
 
 if hasattr(st, "dialog"):
