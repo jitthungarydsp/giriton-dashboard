@@ -37,6 +37,13 @@ from resources.shift_reconciliation_sheet import (
 )
 from resources.giriton_shifts_db import read_giriton_shift_records
 from resources.foglalasok_db import read_foglalasok_records
+from resources.peopleforce_documents import (
+    create_peopleforce_complaint,
+    decode_document_content,
+    read_peopleforce_complaints,
+    read_peopleforce_documents,
+    upload_peopleforce_document,
+)
 
 EXPRESS_MAX_FEE = 6516
 NORMAL_CITY_MAX_FEE = 13000
@@ -44,6 +51,7 @@ DAILY_CACHE_SECONDS = 24 * 60 * 60
 LIVE_CACHE_SECONDS = 60
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MAX_PEOPLEFORCE_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def format_number(value, decimals=1):
@@ -1210,6 +1218,304 @@ def render_invoice_quick_check_panel(row, user):
         render_invoice_check_result(checks)
 
 
+def add_months(month_start, offset):
+    month_index = month_start.month - 1 + offset
+    year = month_start.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def build_peopleforce_month_options():
+    current_month = local_now().date().replace(day=1)
+    return [
+        add_months(current_month, -offset)
+        for offset in range(0, 13)
+    ]
+
+
+def format_peopleforce_month(month_start):
+    month_names = [
+        "január",
+        "február",
+        "március",
+        "április",
+        "május",
+        "június",
+        "július",
+        "augusztus",
+        "szeptember",
+        "október",
+        "november",
+        "december",
+    ]
+    return f"{month_start.year}. {month_names[month_start.month - 1]}"
+
+
+def get_peopleforce_month(action_key):
+    months = build_peopleforce_month_options()
+    return st.selectbox(
+        "Hónap",
+        months,
+        format_func=format_peopleforce_month,
+        key=f"peopleforce_month_{action_key}",
+    )
+
+
+def get_peopleforce_document_config(action_key):
+    configs = {
+        "tig": {
+            "document_type": "tig",
+            "title": "TIG havi nézet",
+            "empty": "Ehhez a hónaphoz még nincs feltöltött TIG.",
+            "upload_label": "TIG feltöltése",
+            "complaint": True,
+        },
+        "settlement": {
+            "document_type": "settlement",
+            "title": "Elszámolás havi nézet",
+            "empty": "Ehhez a hónaphoz még nincs feltöltött elszámolás.",
+            "upload_label": "Elszámolás feltöltése",
+            "complaint": True,
+        },
+        "my_invoices": {
+            "document_type": "invoice",
+            "title": "Számláim havi nézet",
+            "empty": "Ehhez a hónaphoz még nincs feltöltött számla.",
+            "upload_label": "Számla feltöltése",
+            "complaint": False,
+        },
+    }
+    return configs.get(action_key, configs["my_invoices"])
+
+
+def render_peopleforce_document_list(documents):
+    if documents.empty:
+        return
+
+    for _, document in documents.iterrows():
+        file_name = clean_display_text(document.get("file_name"), "dokumentum")
+        title = clean_display_text(document.get("title"), file_name)
+        note = clean_display_text(document.get("note"))
+        uploaded_at = clean_display_text(document.get("uploaded_at"))
+        uploaded_by = clean_display_text(document.get("uploaded_by"), "-")
+        file_size = document.get("file_size") or 0
+
+        with st.container(border=True):
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                st.markdown(f"**{title}**")
+                st.caption(
+                    f"{file_name} | feltöltötte: {uploaded_by} | {uploaded_at}"
+                )
+
+                if note:
+                    st.write(note)
+
+            with col2:
+                try:
+                    data = decode_document_content(
+                        document.get("file_content_base64")
+                    )
+                except Exception:
+                    data = b""
+
+                if data:
+                    st.download_button(
+                        "Letöltés",
+                        data=data,
+                        file_name=file_name,
+                        mime=clean_display_text(
+                            document.get("mime_type"),
+                            "application/octet-stream",
+                        ),
+                        use_container_width=True,
+                        key=f"download_peopleforce_{document.get('id')}",
+                    )
+                else:
+                    st.caption(f"Méret: {file_size} bájt")
+
+
+def render_peopleforce_admin_upload(
+    *,
+    action_key,
+    config,
+    courier_id,
+    courier_name,
+    selected_month,
+    user,
+):
+    if user.get("role") != "admin":
+        return
+
+    with st.expander(f"Admin feltöltés - {config['upload_label']}", expanded=False):
+        with st.form(f"peopleforce_upload_{action_key}_{courier_id}_{selected_month}"):
+            title = st.text_input(
+                "Megnevezés",
+                value=f"{config['upload_label']} - {format_peopleforce_month(selected_month)}",
+            )
+            note = st.text_area(
+                "Megjegyzés",
+                placeholder="Opcionális belső megjegyzés a futárnak.",
+                height=90,
+            )
+            uploaded_file = st.file_uploader(
+                "Fájl",
+                type=["pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv"],
+                key=f"peopleforce_file_{action_key}_{courier_id}_{selected_month}",
+            )
+            submitted = st.form_submit_button("Feltöltés")
+
+        if not submitted:
+            return
+
+        if uploaded_file is None:
+            st.error("Válassz ki egy fájlt a feltöltéshez.")
+            return
+
+        if uploaded_file.size > MAX_PEOPLEFORCE_UPLOAD_BYTES:
+            st.error("A fájl túl nagy. Első körben maximum 10 MB-ot engedünk.")
+            return
+
+        try:
+            upload_peopleforce_document(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                document_type=config["document_type"],
+                document_month=selected_month,
+                title=title,
+                note=note,
+                uploaded_file=uploaded_file,
+                uploaded_by=user.get("username"),
+            )
+        except Exception as exc:
+            st.error(
+                "A feltöltés nem sikerült. Ellenőrizd, hogy a peopleforce_documents tábla létrejött-e Supabase-ben."
+            )
+            st.caption(str(exc))
+            return
+
+        st.success("Feltöltve.")
+        st.rerun()
+
+
+def render_peopleforce_complaint_box(
+    *,
+    action_key,
+    config,
+    courier_id,
+    courier_name,
+    selected_month,
+    user,
+):
+    if not config.get("complaint"):
+        return
+
+    st.divider()
+    st.subheader("Reklamáció")
+
+    try:
+        complaints = read_peopleforce_complaints(
+            courier_id,
+            selected_month,
+            config["document_type"],
+        )
+    except Exception:
+        complaints = pd.DataFrame()
+
+    if not complaints.empty:
+        st.caption("Korábbi reklamációk ebben a hónapban")
+        for _, complaint in complaints.head(5).iterrows():
+            st.write(
+                f"**{clean_display_text(complaint.get('status'), 'new')}** - "
+                f"{clean_display_text(complaint.get('message'))}"
+            )
+
+    with st.form(f"peopleforce_complaint_{action_key}_{courier_id}_{selected_month}"):
+        message = st.text_area(
+            "Mi a gond?",
+            placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni.",
+            height=100,
+        )
+        submitted = st.form_submit_button("Reklamáció küldése")
+
+    if not submitted:
+        return
+
+    if not clean_display_text(message):
+        st.error("Írj be egy rövid reklamációs szöveget.")
+        return
+
+    try:
+        create_peopleforce_complaint(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            document_type=config["document_type"],
+            document_month=selected_month,
+            message=message,
+            created_by=user.get("username"),
+        )
+    except Exception as exc:
+        st.error(
+            "A reklamáció mentése nem sikerült. Ellenőrizd, hogy a peopleforce_complaints tábla létrejött-e Supabase-ben."
+        )
+        st.caption(str(exc))
+        return
+
+    st.success("Reklamáció rögzítve.")
+    st.rerun()
+
+
+def render_peopleforce_monthly_documents(action_key, row, user):
+    config = get_peopleforce_document_config(action_key)
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+    courier_name = get_courier_display_name(row, user)
+    selected_month = get_peopleforce_month(action_key)
+
+    st.subheader(config["title"])
+    st.caption(
+        f"{courier_name} #{courier_id} | {format_peopleforce_month(selected_month)}"
+    )
+
+    try:
+        documents = read_peopleforce_documents(
+            courier_id,
+            selected_month,
+            config["document_type"],
+        )
+    except Exception as exc:
+        documents = pd.DataFrame()
+        st.warning(
+            "Még nincs kész a PeopleForce dokumentumtár tábla, vagy nem elérhető a Supabase."
+        )
+        st.caption(
+            "Futtasd a docs/supabase_peopleforce_documents.sql fájlt a Supabase SQL Editorban."
+        )
+        st.caption(str(exc))
+
+    if documents.empty:
+        st.info(config["empty"])
+    else:
+        render_peopleforce_document_list(documents)
+
+    render_peopleforce_admin_upload(
+        action_key=action_key,
+        config=config,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        selected_month=selected_month,
+        user=user,
+    )
+    render_peopleforce_complaint_box(
+        action_key=action_key,
+        config=config,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        selected_month=selected_month,
+        user=user,
+    )
+
+
 def get_peopleforce_cards():
     return [
         {
@@ -1325,6 +1631,10 @@ def render_peopleforce_placeholder_content(card):
 
 def render_peopleforce_action_content(action_key, row, user):
     card = get_peopleforce_card(action_key)
+
+    if action_key in ["tig", "settlement", "my_invoices"]:
+        render_peopleforce_monthly_documents(action_key, row, user)
+        return
 
     if action_key == "invoice_submit":
         render_invoice_submission_panel(row, user)
