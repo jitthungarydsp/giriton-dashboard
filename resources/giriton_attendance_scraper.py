@@ -52,15 +52,24 @@ def _parse_detail_entries(text):
 def _parse_grid_time_cells(cells):
     times = []
 
-    for value in (cells or [])[4:]:
+    for value in cells or []:
         text = _clean(value)
         if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
             times.append(text)
 
     start_time = times[0] if times else ""
-    end_time = times[-1] if len(times) > 1 else ""
+    end_time = times[1] if len(times) > 1 else ""
 
     return start_time, end_time
+
+
+def _looks_not_worked(value):
+    text = _clean(value).lower()
+    return (
+        not text
+        or ("didn" in text and "come" in text)
+        or text in {"did not come", "empty"}
+    )
 
 
 def _main_grid_rows():
@@ -69,17 +78,38 @@ const rows = [];
 const grids = [...document.querySelectorAll('.v-grid')];
 const grid = grids[0] || document;
 const rowEls = [...grid.querySelectorAll('tr')].filter(row => row.querySelectorAll('td.v-grid-cell').length >= 4);
+const statusValues = new Set(['Work', 'Left', 'Absent', "Didn't come", 'Did not come']);
+const allVisibleCells = [...document.querySelectorAll('td.v-grid-cell')]
+  .map(cell => {
+    const rect = cell.getBoundingClientRect();
+    return {
+      rect,
+      text: (cell.innerText || cell.textContent || '').trim(),
+      center: rect.top + rect.height / 2,
+    };
+  })
+  .filter(item => item.rect.width > 0 && item.rect.height > 0);
 
 for (const row of rowEls) {
+  const rowRect = row.getBoundingClientRect();
   const cells = [...row.querySelectorAll('td.v-grid-cell')].map(cell => (cell.innerText || cell.textContent || '').trim());
   if (!cells[0]) {
     continue;
   }
+
+  const rowCenter = rowRect.top + rowRect.height / 2;
+  const rowTexts = allVisibleCells
+    .filter(item => Math.abs(item.center - rowCenter) <= Math.max(4, rowRect.height * 0.45))
+    .sort((a, b) => a.rect.left - b.rect.left)
+    .map(item => item.text)
+    .filter(Boolean);
+  const activity = rowTexts.find(text => statusValues.has(text)) || cells[3] || cells[2] || '';
+
   rows.push({
     name: cells[0],
     shift: cells[1] || '',
-    activity: cells[3] || cells[2] || '',
-    cells,
+    activity,
+    cells: rowTexts.length ? rowTexts : cells,
   });
 }
 return rows;
@@ -258,6 +288,9 @@ def scrape_attendance_rows(work_date):
                 not activity or activity in {"Didn't come", "Didn’t come", "Did not come"}
             ):
                 activity = detail_activity or "Work"
+
+            if (start_time or end_time) and _looks_not_worked(activity):
+                activity = detail_activity or ("Left" if end_time else "Work")
 
             rows.append([
                 work_date,
