@@ -16,6 +16,15 @@ def _clean(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _reverse_name(name):
+    parts = _clean(name).split(maxsplit=1)
+
+    if len(parts) != 2:
+        return _clean(name)
+
+    return f"{parts[1]} {parts[0]}"
+
+
 def _is_clock_time(value):
     text = _clean(value)
     match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
@@ -61,6 +70,33 @@ def _parse_detail_entries(text):
             break
 
     return start_time, end_time, " | ".join(lines), detail_activity
+
+
+def _parse_detail_entry_rows(detail):
+    entries = detail.get("entries", []) if isinstance(detail, dict) else []
+    times = []
+    activities = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        time_value = _clean(entry.get("time"))
+
+        if _is_clock_time(time_value):
+            times.append(time_value)
+
+        activity = _clean(entry.get("activity"))
+
+        if activity:
+            activities.append(activity)
+
+    start_time = times[0] if times else ""
+    end_time = times[-1] if len(times) > 1 else ""
+    detail_activity = activities[-1] if activities else ""
+    detail_raw = _clean(detail.get("raw")) if isinstance(detail, dict) else ""
+
+    return start_time, end_time, detail_raw, detail_activity
 
 
 def _parse_grid_time_cells(cells):
@@ -217,6 +253,204 @@ return false;
     return bool(_driver().execute_script(script, name))
 
 
+def _detail_entries_for_name(name):
+    script = r"""
+const wanted = arguments[0] || '';
+const original = arguments[1] || '';
+const activities = new Set(['Work', 'Left', 'Absent', "Didn't come", 'Did not come']);
+
+function clean(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isVisible(el) {
+  if (!el) {
+    return false;
+  }
+
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function isClockTime(value) {
+  const match = clean(value).match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (!match) {
+    return false;
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3] || 0);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
+}
+
+function slotText(slot) {
+  if (!slot) {
+    return '';
+  }
+
+  try {
+    const assigned = typeof slot.assignedElements === 'function'
+      ? slot.assignedElements({flatten: true})
+      : [];
+
+    const assignedText = assigned
+      .map(el => el.innerText || el.textContent || '')
+      .join('\n')
+      .trim();
+
+    if (assignedText) {
+      return assignedText;
+    }
+  } catch (error) {
+  }
+
+  return slot.innerText || slot.textContent || '';
+}
+
+function addEntriesFromText(text, source, out) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(clean)
+    .filter(Boolean);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (!activities.has(line)) {
+      continue;
+    }
+
+    for (const nextLine of lines.slice(index + 1, index + 8)) {
+      if (isClockTime(nextLine)) {
+        out.push({
+          activity: line,
+          time: clean(nextLine),
+          source,
+        });
+        break;
+      }
+    }
+  }
+}
+
+function addEntriesFromRows(root, source, out) {
+  const rows = [...root.querySelectorAll('tr')];
+
+  for (const row of rows) {
+    const cells = [...row.querySelectorAll('td, th')]
+      .map(cell => clean(cell.innerText || cell.textContent || ''))
+      .filter(Boolean);
+
+    const activity = cells.find(cell => activities.has(cell));
+    const time = cells.find(cell => isClockTime(cell));
+
+    if (activity && time) {
+      out.push({
+        activity,
+        time,
+        source,
+      });
+    }
+  }
+}
+
+function findNameNodes() {
+  const visibleNodes = [...document.querySelectorAll('body *')]
+    .filter(isVisible)
+    .sort((a, b) => clean(a.innerText || a.textContent || '').length - clean(b.innerText || b.textContent || '').length);
+  const wantedNodes = visibleNodes.filter(el => {
+    const text = clean(el.innerText || el.textContent || '');
+    return text === wanted || (wanted && text.includes(wanted));
+  });
+
+  if (wantedNodes.length) {
+    return wantedNodes;
+  }
+
+  return visibleNodes.filter(el => {
+    const text = clean(el.innerText || el.textContent || '');
+    return text === original || (original && text.includes(original));
+  });
+}
+
+const entries = [];
+const rawParts = [];
+const roots = [];
+
+for (const node of findNameNodes()) {
+  let divAncestor = node;
+  let divHops = 0;
+
+  while (divAncestor && divHops < 2) {
+    divAncestor = divAncestor.parentElement;
+
+    if (divAncestor && String(divAncestor.tagName || '').toLowerCase() === 'div') {
+      divHops += 1;
+    }
+  }
+
+  if (divAncestor) {
+    const slots = [...divAncestor.querySelectorAll('slot')];
+    const secondSlotText = slotText(slots[1]);
+
+    if (secondSlotText) {
+      rawParts.push(secondSlotText);
+      addEntriesFromText(secondSlotText, 'second-slot', entries);
+    }
+  }
+
+  let parent = node;
+
+  for (let index = 0; index < 8 && parent; index += 1) {
+    const text = parent.innerText || parent.textContent || '';
+
+    if (text.includes('Entries') && text.includes('Activity') && text.includes('Time')) {
+      roots.push(parent);
+    }
+
+    parent = parent.parentElement;
+  }
+}
+
+for (const root of roots) {
+  const text = root.innerText || root.textContent || '';
+  rawParts.push(text);
+  addEntriesFromRows(root, 'rows', entries);
+  addEntriesFromText(text, 'text', entries);
+
+  if (entries.length) {
+    break;
+  }
+}
+
+const seen = new Set();
+const uniqueEntries = [];
+
+for (const entry of entries) {
+  const key = `${entry.activity}|${entry.time}`;
+
+  if (!seen.has(key)) {
+    seen.add(key);
+    uniqueEntries.push(entry);
+  }
+}
+
+return {
+  wanted,
+  original,
+  entries: uniqueEntries,
+  raw: rawParts.join('\n---\n'),
+};
+"""
+    return _driver().execute_script(
+        script,
+        _reverse_name(name),
+        _clean(name),
+    ) or {}
+
+
 def _detail_text(name=""):
     script = r"""
 const wanted = arguments[0] || '';
@@ -284,6 +518,10 @@ def scrape_attendance_rows(work_date):
             seen.add(name)
             shift = _clean(base_row.get("shift"))
             activity = _clean(base_row.get("activity"))
+            original_activity = activity
+
+            if not shift or shift.upper() == "EMPTY":
+                continue
 
             if _click_main_row_by_name(name):
                 time.sleep(0.8)
@@ -291,7 +529,7 @@ def scrape_attendance_rows(work_date):
             grid_start_time, grid_end_time = _parse_grid_time_cells(
                 base_row.get("cells", [])
             )
-            detail = _detail_text(name)
+            detail = ""
             start_time, end_time, detail_raw, detail_activity = _parse_detail_entries(
                 detail
             )
@@ -314,6 +552,28 @@ def scrape_attendance_rows(work_date):
 
             if (start_time or end_time) and _looks_not_worked(activity):
                 activity = detail_activity or ("Left" if end_time else "Work")
+
+            name_detail = _detail_entries_for_name(name)
+            (
+                name_start_time,
+                name_end_time,
+                name_detail_raw,
+                name_detail_activity,
+            ) = _parse_detail_entry_rows(name_detail)
+
+            if name_start_time or name_end_time:
+                start_time = name_start_time
+                end_time = name_end_time
+                detail_raw = name_detail_raw
+                detail_activity = name_detail_activity
+
+                if _looks_not_worked(activity):
+                    activity = detail_activity or ("Left" if end_time else "Work")
+            else:
+                start_time = ""
+                end_time = ""
+                detail_raw = name_detail_raw
+                activity = original_activity
 
             rows.append([
                 work_date,
