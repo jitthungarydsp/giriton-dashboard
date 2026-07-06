@@ -3,7 +3,7 @@ name: Discord Route Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7,37 * * * *"
+    - cron: "3,18,33,48 * * * *"
 
 concurrency:
   group: discord-route-monitor
@@ -12,7 +12,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
 
     env:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -43,4 +43,4 @@ jobs:
 
       - name: Run Discord route monitor
         run: |
-          python scripts/discord_route_monitor.py --loop-minutes 28 --poll-seconds 300 --max-age-minutes 0
+          python scripts/discord_route_monitor.py --loop-minutes 14 --poll-seconds 300 --max-age-minutes 0
