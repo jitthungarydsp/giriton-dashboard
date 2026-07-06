@@ -717,7 +717,7 @@ def write_giriton_attendance(rows):
         cols=10,
     )
 
-    output = [[
+    header = [
         "datum",
         "nev",
         "muszak",
@@ -725,11 +725,45 @@ def write_giriton_attendance(rows):
         "bejelentkezes_kezdete",
         "bejelentkezes_vege",
         "raw_details",
-    ]]
-    output.extend(rows)
+    ]
+    normalized_rows = [
+        list(row) + [""] * max(0, len(header) - len(row))
+        for row in rows
+        if row and str(row[0] or "").strip()
+    ]
+    refreshed_dates = {
+        str(row[0] or "").strip()
+        for row in normalized_rows
+        if row
+    }
+    existing_values = ws.get_all_values()
+    existing_rows = []
+
+    if existing_values:
+        for row in existing_values[1:]:
+            row_values = list(row) + [""] * max(0, len(header) - len(row))
+            work_date = str(row_values[0] or "").strip()
+
+            if not work_date or work_date in refreshed_dates:
+                continue
+
+            existing_rows.append(row_values[:len(header)])
+
+    output_rows = existing_rows + [
+        row[:len(header)]
+        for row in normalized_rows
+    ]
+    output_rows = sorted(
+        output_rows,
+        key=lambda item: (
+            str(item[0] or ""),
+            str(item[1] or "").casefold(),
+        ),
+    )
+    output = [header] + output_rows
 
     _update_from_a1(ws, output)
-    return len(rows)
+    return len(normalized_rows)
 
 
 def _format_sheet_date(date_value):
@@ -909,9 +943,59 @@ def _read_sheet_records(sheet_name):
     return records
 
 
+def _db_cell(value):
+    if value is None:
+        return ""
+
+    try:
+        if value != value:
+            return ""
+    except Exception:
+        pass
+
+    return str(value or "").strip()
+
+
+def _read_attendance_records():
+    records = _read_sheet_records(GIRITON_ATTENDANCE_SHEET)
+
+    try:
+        from resources.giriton_attendance_db import read_giriton_attendance_raw
+
+        db_rows = read_giriton_attendance_raw(limit=20000)
+    except Exception as error:
+        print(f"Giriton attendance DB olvasas kihagyva: {error}")
+        return records
+
+    if db_rows is None or db_rows.empty:
+        return records
+
+    for _, row in db_rows.iterrows():
+        records.append({
+            "datum": _db_cell(row.get("work_date", ""))[:10],
+            "nev": _db_cell(row.get("courier_name", "")),
+            "muszak": _db_cell(row.get("shift_text", "")),
+            "statusz": _db_cell(row.get("activity_status", "")),
+            "bejelentkezes_kezdete": _db_cell(row.get("checkin_start", "")),
+            "bejelentkezes_vege": _db_cell(row.get("checkin_end", "")),
+            "raw_details": _db_cell(row.get("raw_details", "")),
+            "fetched_at": _db_cell(row.get("fetched_at", "")),
+            "updated_at": _db_cell(row.get("updated_at", "")),
+        })
+
+    return records
+
+
+def _record_freshness(record):
+    return (
+        str(record.get("updated_at", "") or ""),
+        str(record.get("fetched_at", "") or ""),
+    )
+
+
 def build_courier_login_stats():
     giriton_records = _read_sheet_records(GIRITON_RAW_SHEET)
-    attendance_records = _read_sheet_records(GIRITON_ATTENDANCE_SHEET)
+    attendance_records = _read_attendance_records()
 
     planned_counts = defaultdict(int)
 
@@ -933,7 +1017,11 @@ def build_courier_login_stats():
         if not name or re.fullmatch(r"\d+\s+persons?", name, re.I) or not work_date:
             continue
 
-        attendance_by_key[(work_date, name)] = record
+        key = (work_date, name)
+        existing = attendance_by_key.get(key)
+
+        if not existing or _record_freshness(record) >= _record_freshness(existing):
+            attendance_by_key[key] = record
 
     all_keys = sorted(
         set(planned_counts.keys()) | set(attendance_by_key.keys()),
