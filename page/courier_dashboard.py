@@ -478,7 +478,8 @@ div[data-testid="stSegmentedControl"] label {
     border-radius: 16px;
     box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
     color: #0f172a;
-    min-height: 130px;
+    min-height: 150px;
+    margin-bottom: 8px;
     padding: 18px;
 }
 a.peopleforce-card {
@@ -488,6 +489,13 @@ a.peopleforce-card {
 .peopleforce-card:hover {
     border-color: #6cab2f;
     box-shadow: 0 14px 30px rgba(36, 74, 20, 0.14);
+}
+.peopleforce-card-link {
+    color: #166534;
+    display: block;
+    font-size: 12px;
+    font-weight: 900;
+    margin-top: 14px;
 }
 .peopleforce-badge {
     align-items: center;
@@ -1199,70 +1207,169 @@ def render_invoice_quick_check_panel(row, user):
         render_invoice_check_result(checks)
 
 
+def get_peopleforce_cards():
+    return [
+        {
+            "key": "report",
+            "code": "BJ",
+            "title": "Bejelentés",
+            "description": "Gyors belső jelzés vagy kérés előkészítése.",
+        },
+        {
+            "key": "muszakpro",
+            "code": "MP",
+            "title": "MűszakPro",
+            "description": "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek.",
+        },
+        {
+            "key": "task",
+            "code": "TF",
+            "title": "Task felvétele",
+            "description": "Új feladat vagy teendő rögzítésének helye.",
+        },
+        {
+            "key": "tig",
+            "code": "TG",
+            "title": "TIG",
+            "description": "Teljesítésigazolással kapcsolatos ügyek és státuszok.",
+        },
+        {
+            "key": "settlement",
+            "code": "EL",
+            "title": "Elszámolás",
+            "description": "Elszámolási információk, kérdések és egyeztetések.",
+        },
+        {
+            "key": "my_invoices",
+            "code": "SZ",
+            "title": "Számláim",
+            "description": "Saját számlák és későbbi feltöltési folyamatok.",
+        },
+        {
+            "key": "invoice_check",
+            "code": "SE",
+            "title": "Számla ellenőrzés",
+            "description": "Feltöltött számla gyors formai ellenőrzése.",
+        },
+        {
+            "key": "invoice_submit",
+            "code": "SB",
+            "title": "Számlabeküldő rendszer",
+            "description": "Saját előkészítő felület és külső Google űrlap.",
+            "url": "https://docs.google.com/forms/d/e/1FAIpQLSc9MQZXm21F9ZYjiKcY-lgmYB9_pHPHIteo9bR6laRMWoBTLg/viewform",
+        },
+        {
+            "key": "phone_numbers",
+            "code": "FT",
+            "title": "Fontos telefonszámok",
+            "description": "Koordinátor, tréning és sürgős kapcsolatok.",
+        },
+        {
+            "key": "rules",
+            "code": "SZB",
+            "title": "Szabályzat",
+            "description": "Futár szabályok, alapfolyamatok és belső tudnivalók.",
+        },
+        {
+            "key": "personal_data",
+            "code": "SA",
+            "title": "Személyes adatok",
+            "description": "Saját adatok és későbbi módosítási folyamatok.",
+        },
+    ]
+
+
+def get_peopleforce_card(action_key):
+    return next(
+        (
+            card
+            for card in get_peopleforce_cards()
+            if card["key"] == action_key
+        ),
+        {},
+    )
+
+
+def render_peopleforce_placeholder_content(card):
+    st.subheader(card.get("title", "PeopleForce"))
+    st.info(
+        "Ez a PeopleForce modul elő van készítve. Ide kötjük majd a konkrét folyamatot, DB mentést, e-mailt vagy jóváhagyást."
+    )
+
+
+def render_peopleforce_action_content(action_key, row, user):
+    card = get_peopleforce_card(action_key)
+
+    if action_key == "invoice_submit":
+        render_invoice_submission_panel(row, user)
+
+        url = card.get("url")
+        if url:
+            st.markdown(
+                f'<a class="route-nav-button" href="{escape(url)}" target="_blank" rel="noopener noreferrer">Google űrlap megnyitása</a>',
+                unsafe_allow_html=True,
+            )
+        return
+
+    if action_key == "invoice_check":
+        render_invoice_quick_check_panel(row, user)
+        return
+
+    render_peopleforce_placeholder_content(card)
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("PeopleForce")
+    def render_peopleforce_action_dialog(action_key, row, user):
+        render_peopleforce_action_content(action_key, row, user)
+else:
+    def render_peopleforce_action_dialog(action_key, row, user):
+        with st.expander("PeopleForce", expanded=True):
+            render_peopleforce_action_content(action_key, row, user)
+
+
+def render_peopleforce_card_grid(cards, row, user):
+    for start in range(0, len(cards), 3):
+        columns = st.columns(3)
+
+        for offset, card in enumerate(cards[start:start + 3]):
+            with columns[offset]:
+                st.markdown(
+                    f"""
+<div class="peopleforce-card">
+  <div class="peopleforce-badge">{escape(card["code"])}</div>
+  <h3>{escape(card["title"])}</h3>
+  <p>{escape(card["description"])}</p>
+  <span class="peopleforce-card-link">Megnyitás</span>
+</div>
+""",
+                    unsafe_allow_html=True,
+                )
+
+                if st.button(
+                    card["title"],
+                    key=f"open_peopleforce_{card['key']}",
+                    use_container_width=True,
+                ):
+                    render_peopleforce_action_dialog(card["key"], row, user)
+
+
 def render_peopleforce_placeholder(row=None, user=None):
     user = user or {}
     safe_row = row if row is not None else {}
-    cards = [
-        ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése.", ""),
-        ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek.", ""),
-        ("TF", "Task felvétele", "Új feladat vagy teendő rögzítésének helye.", ""),
-        ("TG", "TIG", "Teljesítésigazolással kapcsolatos ügyek és státuszok.", ""),
-        ("EL", "Elszámolás", "Elszámolási információk, kérdések és egyeztetések.", ""),
-        ("SZ", "Számláim", "Saját számlák és későbbi feltöltési folyamatok.", ""),
-        ("SE", "Számla ellenőrzés", "Feltöltött számla gyors formai ellenőrzése.", ""),
-        (
-            "SB",
-            "Számlabeküldő rendszer",
-            "Saját előkészítő felület és külső Google űrlap.",
-            "https://docs.google.com/forms/d/e/1FAIpQLSc9MQZXm21F9ZYjiKcY-lgmYB9_pHPHIteo9bR6laRMWoBTLg/viewform",
-        ),
-        ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok.", ""),
-        ("SZB", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók.", ""),
-        ("SA", "Személyes adatok", "Saját adatok és későbbi módosítási folyamatok.", ""),
-    ]
-
-    card_items = []
-
-    for code, title, description, url in cards:
-        tag = "a" if url else "div"
-        href = (
-            f' href="{escape(url)}" target="_blank" rel="noopener noreferrer"'
-            if url
-            else ""
-        )
-        card_items.append(
-            f"""
-  <{tag} class="peopleforce-card"{href}>
-    <div class="peopleforce-badge">{escape(code)}</div>
-    <h3>{escape(title)}</h3>
-    <p>{escape(description)}</p>
-  </{tag}>
-"""
-        )
-
-    card_html = "".join(card_items)
+    cards = get_peopleforce_cards()
 
     st.markdown(
-        f"""
+        """
 <div class="courier-placeholder-card">
   <h2>PeopleForce</h2>
   <p>Ez a rész elő van készítve. Innen indulnak majd a futáros belső folyamatok.</p>
-  <div class="peopleforce-grid">
-    {card_html}
-  </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    st.divider()
-    left, right = st.columns([1.2, 0.8])
-
-    with left:
-        render_invoice_submission_panel(safe_row, user)
-
-    with right:
-        render_invoice_quick_check_panel(safe_row, user)
+    render_peopleforce_card_grid(cards, safe_row, user)
 
 
 if hasattr(st, "dialog"):
