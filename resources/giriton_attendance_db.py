@@ -109,6 +109,20 @@ def upsert_giriton_attendance_rows(rows):
     }
 
 
+def write_giriton_attendance_db(rows):
+    result = upsert_giriton_attendance_rows(rows)
+    message = (
+        "OK | Giriton_Attendance DB "
+        f"status={result.get('status')} rows={result.get('rows')}"
+    )
+
+    if result.get("error"):
+        message = f"{message} error={result.get('error')}"
+
+    print(message)
+    return message
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def read_giriton_attendance_raw(start_date=None, end_date=None, limit=5000):
     supabase_url, service_role_key = get_supabase_config()

@@ -1,8 +1,8 @@
 *** Settings ***
 Resource    resources/keywords_github.robot
 Resource    resources/variables.robot
-Library    resources/raw_giriton_export_sheet.py
 Library    resources/giriton_attendance_scraper.py
+Library    resources/giriton_attendance_db.py
 Library    SeleniumLibrary
 Library    DateTime
 Library    Collections
@@ -55,13 +55,8 @@ Giriton Attendance Github
     Log To Console
     ...    ATTENDANCE_SOROK_SZAMA=${attendance_count}
 
-    ${attendance_result}=    raw_giriton_export_sheet.Write Attendance Export
+    ${attendance_result}=    giriton_attendance_db.Write Giriton Attendance Db
     ...    ${attendance_rows}
 
     Log To Console
-    ...    ATTENDANCE_EXPORT=${attendance_result}
-
-    ${stats_result}=    raw_giriton_export_sheet.Build Courier Login Stats
-
-    Log To Console
-    ...    COURIER_LOGIN_STATS=${stats_result}
+    ...    ATTENDANCE_DB=${attendance_result}
