@@ -26,6 +26,7 @@ from resources.courier_master_db import read_courier_master
 from resources.courier_card_snapshot import read_snapshot
 from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
+from resources.discord_routes import read_latest_discord_route
 from resources.api import (
     load_attendance,
     load_driver_details,
@@ -433,8 +434,14 @@ def render_styles():
     st.markdown(
         """
 <style>
+.stApp {
+    background: #020617;
+}
+.block-container {
+    color: #e5e7eb;
+}
 .courier-inner-nav-title {
-    color: #45603b;
+    color: #bef264;
     font-size: 12px;
     font-weight: 900;
     letter-spacing: .08em;
@@ -932,6 +939,154 @@ a.peopleforce-card {
     background: #f97316;
     color: #ffffff;
 }
+.kifli-journey-card {
+    background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+    border: 1px solid rgba(190, 242, 100, 0.22);
+    border-radius: 22px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+    color: #e5e7eb;
+    margin: 10px 0 18px;
+    overflow: hidden;
+    padding: 22px;
+}
+.kifli-journey-head {
+    align-items: flex-start;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    margin-bottom: 18px;
+}
+.kifli-journey-title {
+    color: #fefce8;
+    font-size: 24px;
+    font-weight: 950;
+    letter-spacing: -.01em;
+}
+.kifli-journey-subtitle {
+    color: #a7f3d0;
+    font-size: 13px;
+    font-weight: 800;
+    margin-top: 4px;
+}
+.kifli-route-meta {
+    background: rgba(250, 204, 21, 0.12);
+    border: 1px solid rgba(250, 204, 21, 0.32);
+    border-radius: 999px;
+    color: #fef3c7;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 900;
+    margin: 4px 0 0 8px;
+    padding: 5px 10px;
+}
+.kifli-route-list {
+    margin: 28px 0 18px;
+    padding: 0 0 0 8px;
+    position: relative;
+}
+.kifli-route-list:before {
+    background:
+        radial-gradient(circle at 50% 0, rgba(250, 204, 21, .95) 0 4px, transparent 5px),
+        radial-gradient(circle at 50% 18px, rgba(132, 204, 22, .72) 0 4px, transparent 5px);
+    background-size: 18px 36px;
+    border-radius: 999px;
+    content: "";
+    left: 36px;
+    position: absolute;
+    top: 12px;
+    bottom: 42px;
+    width: 10px;
+}
+.kifli-route-stop {
+    align-items: center;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: 82px minmax(0, 1fr);
+    margin: 0 0 18px;
+    position: relative;
+}
+.kifli-route-stop:nth-child(even) {
+    transform: translateX(28px);
+}
+.kifli-route-stop:nth-child(odd) {
+    transform: translateX(-4px);
+}
+.kifli-stop-marker {
+    align-items: center;
+    background: #111827;
+    border: 4px solid #020617;
+    border-radius: 999px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, .35);
+    color: #fef3c7;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 950;
+    height: 54px;
+    justify-content: center;
+    position: relative;
+    width: 54px;
+    z-index: 1;
+}
+.kifli-stop-card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 16px;
+    padding: 14px 16px;
+}
+.kifli-route-stop-current .kifli-stop-card {
+    background: linear-gradient(135deg, rgba(250, 204, 21, .18), rgba(255, 255, 255, .09));
+    border-color: rgba(250, 204, 21, .55);
+    box-shadow: 0 18px 34px rgba(250, 204, 21, .10);
+}
+.kifli-pawn-ok {
+    background: #facc15;
+    color: #713f12;
+}
+.kifli-pawn-late {
+    background: #ef4444;
+    color: #ffffff;
+}
+.kifli-stop-done .kifli-stop-marker {
+    background: #22c55e;
+    color: #052e16;
+}
+.kifli-stop-title {
+    color: #f8fafc;
+    font-size: 15px;
+    font-weight: 950;
+}
+.kifli-stop-note {
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 5px;
+}
+.kifli-current-actions {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 14px;
+}
+.kifli-current-actions .stButton > button {
+    background: #facc15;
+    border: 0;
+    color: #713f12;
+    font-weight: 950;
+}
+.kifli-depot-finish {
+    align-items: center;
+    display: grid;
+    gap: 18px;
+    grid-template-columns: 82px minmax(0, 1fr);
+    margin-top: 20px;
+}
+.kifli-depot-card {
+    background: rgba(34, 197, 94, 0.10);
+    border: 1px solid rgba(34, 197, 94, 0.30);
+    border-radius: 16px;
+    color: #dcfce7;
+    padding: 14px 16px;
+}
 @media (max-width: 900px) {
     .courier-hero {
         grid-template-columns: 1fr;
@@ -944,6 +1099,13 @@ a.peopleforce-card {
     }
     .peopleforce-grid {
         grid-template-columns: 1fr;
+    }
+    .kifli-current-actions {
+        grid-template-columns: 1fr;
+    }
+    .kifli-route-stop:nth-child(even),
+    .kifli-route-stop:nth-child(odd) {
+        transform: none;
     }
 }
 </style>
@@ -978,11 +1140,11 @@ def render_courier_profile_content(row, user):
 
 
 def render_courier_top_menu():
-    options = ["PeopleForce", "Mai túrám", "Statisztika"]
-    current = st.session_state.get("courier_dashboard_tab", "Mai túrám")
+    options = ["PeopleForce", "Kiflis utam", "Statisztika"]
+    current = st.session_state.get("courier_dashboard_tab", "PeopleForce")
 
     if current not in options:
-        current = "Mai túrám"
+        current = "PeopleForce"
 
     st.markdown(
         '<div class="courier-inner-nav-title">Kifli futár menü</div>',
@@ -2065,13 +2227,6 @@ def render_hero(row, user):
         unsafe_allow_html=True,
     )
 
-    if st.button(
-        f"Személyes oldal: {raw_name}",
-        key=f"open_courier_profile_{courier_id}",
-        use_container_width=True,
-    ):
-        render_courier_profile_dialog(row, user)
-
 
 def stat_card(label, value, note=""):
     return f"""
@@ -2899,6 +3054,289 @@ def get_current_route_stop(route):
     )
 
 
+def get_kiflis_journey_stops(route):
+    checkpoints = route.get("checkpoints", []) or []
+
+    if not checkpoints:
+        return []
+
+    sorted_checkpoints = sorted(
+        checkpoints,
+        key=lambda checkpoint: (
+            int(checkpoint.get("position") or 999999),
+            parse_datetime(checkpoint.get("plannedArrivalTime"))
+            or parse_datetime(checkpoint.get("estimatedArrivalTime"))
+            or parse_datetime(checkpoint.get("deliverSince"))
+            or datetime.max.replace(tzinfo=LOCAL_TIMEZONE),
+        ),
+    )
+    stops = []
+
+    for index, checkpoint in enumerate(sorted_checkpoints):
+        position = str(checkpoint.get("position", index + 1) or index + 1)
+        stops.append(
+            {
+                "position": position,
+                "address": str(checkpoint.get("address", "") or "").strip()
+                or f"Cím {position}",
+                "order_id": checkpoint.get("orderId") or checkpoint.get("id") or "",
+                "deliver_since": checkpoint.get("deliverSince") or "",
+                "deliver_till": checkpoint.get("deliverTill") or "",
+                "planned_arrival": checkpoint.get("plannedArrivalTime") or "",
+                "estimated_arrival": checkpoint.get("estimatedArrivalTime") or "",
+                "real_arrival": checkpoint.get("realArrivalTime") or "",
+                "real_departure": checkpoint.get("realDepartureTime") or "",
+                "route_id": checkpoint.get("routeId") or "",
+            }
+        )
+
+    return stops
+
+
+def get_initial_journey_index(stops):
+    if not stops:
+        return 0
+
+    for index, stop in enumerate(stops):
+        if not (
+            clean_display_text(stop.get("real_departure"))
+            or clean_display_text(stop.get("real_arrival"))
+        ):
+            return index
+
+    return len(stops)
+
+
+def find_route_by_id(driver_detail, route_id):
+    route_id = normalize_id(route_id)
+
+    if not route_id:
+        return {}
+
+    for route in driver_detail.get("routes", []) or []:
+        if normalize_id(route.get("id") or route.get("routeId")) == route_id:
+            return route
+
+    return {}
+
+
+def load_kiflis_journey_route(row):
+    courier_id = normalize_id(row.get("courier_id"))
+
+    if not courier_id:
+        return {}, {}, []
+
+    notification = read_latest_discord_route(courier_id)
+    route_id = normalize_id(notification.get("route_id"))
+
+    if not route_id:
+        return notification, {}, []
+
+    cache_key = f"kiflis_journey_cache_{courier_id}"
+    cached = st.session_state.get(cache_key, {})
+
+    if cached.get("route_id") == route_id:
+        return (
+            cached.get("notification", {}),
+            cached.get("route", {}),
+            cached.get("stops", []),
+        )
+
+    driver_detail = load_live_driver_detail(courier_id)
+    route = find_route_by_id(driver_detail, route_id)
+    stops = get_kiflis_journey_stops(route)
+    st.session_state[cache_key] = {
+        "route_id": route_id,
+        "notification": notification,
+        "route": route,
+        "stops": stops,
+    }
+    st.session_state.pop(
+        f"kiflis_journey_index_{courier_id}_{route_id}",
+        None,
+    )
+
+    return notification, route, stops
+
+
+def is_journey_stop_late(stop):
+    planned_at = (
+        parse_datetime(stop.get("planned_arrival"))
+        or parse_datetime(stop.get("estimated_arrival"))
+    )
+
+    if not planned_at:
+        return False
+
+    return local_now() > planned_at
+
+
+def render_empty_kiflis_journey(message, note=""):
+    kifli_logo = get_kifli_destination_logo()
+    st.markdown(
+        f"""
+<div class="kifli-journey-card">
+  <div class="kifli-journey-head">
+    <div>
+      <div class="kifli-journey-title">Kiflis utam</div>
+      <div class="kifli-journey-subtitle">{escape(message)}</div>
+    </div>
+    <div class="route-depot-icon">{kifli_logo}</div>
+  </div>
+  <div class="fun-note route-empty-note">{escape(note or "A következő útvonal akkor jelenik meg, amikor a Discord cron route-ot logolt neked.")}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_kiflis_journey(row, user):
+    app_settings = load_app_settings()
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+    notification, route, stops = load_kiflis_journey_route(row)
+    route_id = normalize_id(notification.get("route_id") or route.get("id") or route.get("routeId"))
+
+    if not route_id:
+        render_empty_kiflis_journey(
+            "Most nincs betöltött route.",
+            "Ha kapsz új túrát, a Discord cron logolja, és utána itt megjelenik a Kiflis utad.",
+        )
+        return
+
+    if not route or not stops:
+        render_empty_kiflis_journey(
+            f"Route #{route_id} már látszik, de a címlista még nem töltődött be.",
+            "Frissítés után újra megpróbálom a driver-detail adatokból felhúzni a címeket.",
+        )
+        return
+
+    progress_key = f"kiflis_journey_index_{courier_id}_{route_id}"
+
+    if progress_key not in st.session_state:
+        st.session_state[progress_key] = get_initial_journey_index(stops)
+
+    current_index = min(
+        max(int(st.session_state.get(progress_key, 0)), 0),
+        len(stops),
+    )
+    st.session_state[progress_key] = current_index
+    current_stop = stops[current_index] if current_index < len(stops) else {}
+    current_order_id = normalize_id(current_stop.get("order_id")) or "-"
+    late = bool(current_stop and is_journey_stop_late(current_stop))
+    pawn_class = "kifli-pawn-late" if late else "kifli-pawn-ok"
+    status_text = "Késésben vagy a tervezett érkezéshez képest." if late else "Haladsz, még nincs késés a tervezett érkezéshez képest."
+    return_countdown = format_return_countdown(
+        route.get("realReturn")
+        or route.get("plannedReturn")
+        or notification.get("planned_return")
+    )
+    kifli_logo = get_kifli_destination_logo()
+    stop_items = []
+
+    for index, stop in enumerate(stops):
+        is_current = index == current_index
+        is_done = index < current_index
+        classes = ["kifli-route-stop"]
+
+        if is_current:
+            classes.append("kifli-route-stop-current")
+
+        if is_done:
+            classes.append("kifli-stop-done")
+
+        marker_class = f"kifli-stop-marker {pawn_class}" if is_current else "kifli-stop-marker"
+        marker_text = "K" if is_current else escape(str(stop.get("position") or index + 1))
+        address = escape(clean_display_text(stop.get("address"), "-"))
+        order_id = normalize_id(stop.get("order_id")) or "-"
+        time_window = format_time_window(
+            stop.get("deliver_since"),
+            stop.get("deliver_till"),
+        )
+        planned_arrival = format_time(
+            stop.get("planned_arrival")
+            or stop.get("estimated_arrival")
+        )
+        detail_parts = []
+
+        if order_id != "-":
+            detail_parts.append(f"Rendelés #{escape(order_id)}")
+
+        if time_window:
+            detail_parts.append(f"Időablak: {escape(time_window)}")
+
+        if planned_arrival:
+            detail_parts.append(f"Tervezett érkezés: {escape(planned_arrival)}")
+
+        stop_items.append(
+            f"""
+<div class="{' '.join(classes)}">
+  <div class="{marker_class}">{marker_text}</div>
+  <div class="kifli-stop-card">
+    <div class="kifli-stop-title">{address}</div>
+    <div class="kifli-stop-note">{' | '.join(detail_parts) or 'Nincs részletes időadat.'}</div>
+  </div>
+</div>
+"""
+        )
+
+    route_meta = (
+        f'<span class="kifli-route-meta">Route #{escape(route_id)}</span>'
+        f'<span class="kifli-route-meta">Aktuális rendelés #{escape(current_order_id)}</span>'
+    )
+
+    st.markdown(
+        f"""
+<div class="kifli-journey-card">
+  <div class="kifli-journey-head">
+    <div>
+      <div class="kifli-journey-title">Kiflis utam {route_meta}</div>
+      <div class="kifli-journey-subtitle">{escape(status_text)}</div>
+    </div>
+    <div class="route-road-subtitle">{escape(return_countdown or "A Kifli készen áll")}</div>
+  </div>
+  <div class="kifli-route-list">
+    {''.join(stop_items)}
+  </div>
+  <div class="kifli-depot-finish">
+    <div class="route-depot-icon">{kifli_logo}</div>
+    <div class="kifli-depot-card"><strong>Kifli depó</strong><br>A kör vége itt vár rád.</div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    if current_stop:
+        current_address_raw = clean_display_text(current_stop.get("address"))
+        waze_url = (
+            "https://waze.com/ul?"
+            f"q={quote_plus(current_address_raw)}"
+            "&navigate=yes"
+        )
+        left, right = st.columns(2)
+
+        with left:
+            if st.button(
+                "Elhagyom a címet",
+                key=f"kiflis_leave_stop_{courier_id}_{route_id}_{current_index}",
+                use_container_width=True,
+            ):
+                st.session_state[progress_key] = min(
+                    current_index + 1,
+                    len(stops),
+                )
+                st.rerun()
+
+        with right:
+            if not app_settings.get("waze_button_hidden", False):
+                st.markdown(
+                    f'<a class="route-nav-button" href="{escape(waze_url, quote=True)}" target="_blank" rel="noopener noreferrer">Irány a cím</a>',
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.success("Minden cím elhagyva. Irány vissza a Kiflihez.")
+
+
 def render_route_assignment_popup_content(row, route, current_stop):
     user = st.session_state.get("user", {})
     name = get_courier_display_name(row, user)
@@ -3717,7 +4155,6 @@ def show_courier_dashboard_page():
     selected_view = render_courier_top_menu()
 
     snapshot_month_text = today.strftime("%Y-%m")
-    selector_details = empty_courier_details()
     directory_df = load_courier_directory(snapshot_month_text)
     directory_df = add_user_fallback_courier(
         directory_df,
@@ -3741,21 +4178,30 @@ def show_courier_dashboard_page():
         st.warning("Ehhez a belepeshez nem talaltam futart.")
         return
 
+    try:
+        _attendance_data, drivers_data = load_live_courier_sources()
+        current_driver = find_driver(
+            drivers_data,
+            normalize_id(current_row.get("courier_id")),
+        )
+        current_row = attach_live_vehicle_info(
+            current_row,
+            current_driver,
+        )
+    except Exception:
+        pass
+
     if selected_view == "PeopleForce":
+        render_hero(current_row, user)
+        shift_date, shift_day_label = selected_shift_date(today)
+        render_today_shifts(
+            current_row,
+            user,
+            shift_date,
+            shift_day_label,
+        )
         render_peopleforce_placeholder(current_row, user)
         return
-
-    _attendance_data, drivers_data = load_live_courier_sources()
-    current_driver = find_driver(
-        drivers_data,
-        normalize_id(current_row.get("courier_id")),
-    )
-    current_row = attach_live_vehicle_info(
-        current_row,
-        current_driver,
-    )
-
-    render_hero(current_row, user)
 
     if selected_view == "Statisztika":
         render_courier_statistics_view(
@@ -3765,15 +4211,7 @@ def show_courier_dashboard_page():
         )
         return
 
-    shift_date, shift_day_label = selected_shift_date(today)
-    render_today_shifts(
+    render_kiflis_journey(
         current_row,
         user,
-        shift_date,
-        shift_day_label,
-    )
-    render_route_road(
-        current_row,
-        selector_details,
-        show_route_popup=user.get("role") == "user",
     )
