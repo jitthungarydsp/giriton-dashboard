@@ -7,7 +7,7 @@ CONFIG_PATH = PROJECT_ROOT / "data" / "config.json"
 
 DEFAULT_SETTINGS = {
     "discord_notifications_enabled": True,
-    "discord_notify_courier_ids": "7644",
+    "discord_notify_courier_ids": "",
     "route_card_hidden": False,
     "waze_button_hidden": False,
     "courier_card_snapshot_enabled": False,

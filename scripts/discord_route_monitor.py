@@ -12,7 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from resources.api import BASE_URL, DEPOT_ID, ORGANIZATION_ID
+from resources.api import (
+    BASE_URL,
+    DEPOT_ID,
+    ORGANIZATION_ID,
+    SUPABASE_ANON_KEY,
+)
 from resources.discord_notifier import (
     notify_route_assigned_once,
     read_discord_status,
@@ -58,100 +63,67 @@ def format_time(value):
     return parsed.strftime("%H:%M")
 
 
-def request_json(url):
-    response = requests.get(
+def request_json(method, url, **kwargs):
+    response = requests.request(
+        method,
         url,
         timeout=30,
+        **kwargs,
     )
     response.raise_for_status()
     return response.json()
 
 
-def load_drivers():
-    url = (
-        f"{BASE_URL}/fetch-drivers"
-        f"?id={DEPOT_ID}"
-        f"&organizationId={ORGANIZATION_ID}"
-        f"&departureDelayThreshold=10"
+def load_departure_dashboard():
+    url = f"{BASE_URL}/departure-dashboard"
+    payload = {
+        "id": DEPOT_ID,
+        "organizationId": ORGANIZATION_ID,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+    }
+
+    return request_json(
+        "POST",
+        url,
+        json=payload,
+        headers=headers,
     )
-    return request_json(url).get("drivers", [])
 
 
-def load_driver_detail(driver_id):
+def load_driver_detail(courier_id):
     today = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d")
     url = (
-        f"{BASE_URL}/fetch-drivers-detail/{driver_id}/{today}"
+        f"{BASE_URL}/fetch-drivers-detail/{courier_id}/{today}"
         f"?organizationId={ORGANIZATION_ID}"
     )
-    return request_json(url)
+
+    return request_json("GET", url)
 
 
-def nested_get(data, path, default=""):
-    current = data
+def get_dashboard_routes(dashboard_data):
+    routes = dashboard_data.get("routes", [])
 
-    for key in path:
-        if not isinstance(current, dict):
-            return default
+    if not isinstance(routes, list):
+        return []
 
-        current = current.get(key)
-
-        if current is None:
-            return default
-
-    return current
-
-
-def first_nested_value(data, paths, default=""):
-    for path in paths:
-        value = nested_get(data, path, "")
-
-        if value not in ["", None]:
-            return value
-
-    return default
+    return [
+        route
+        for route in routes
+        if normalize_id(route.get("courier_id") or route.get("courierId"))
+        and normalize_id(route.get("route_id") or route.get("routeId"))
+    ]
 
 
-def get_driver_route_id(driver):
-    return first_nested_value(
-        driver,
-        [
-            ["route", "id"],
-            ["route", "route_id"],
-            ["route", "routeId"],
-            ["route_id"],
-            ["routeId"],
-            ["status", "route_id"],
-            ["status", "routeId"],
-        ],
-    )
-
-
-def get_driver_assigned_at(driver):
-    return first_nested_value(
-        driver,
-        [
-            ["status", "assignedAt"],
-            ["status", "assigned_at"],
-            ["route", "assignedAt"],
-            ["route", "assigned_at"],
-            ["route", "route_assigned_at"],
-            ["route_assigned_at"],
-            ["status", "loading_finished_at"],
-        ],
-    )
-
-
-def route_sort_datetime(route):
-    assigned_at = parse_datetime(route.get("assignedAt"))
-
-    if assigned_at:
-        return assigned_at
-
+def route_oldest_datetime(route):
     candidates = [
-        route.get("realDeparture"),
+        route.get("createdAt"),
+        route.get("courierRegisteredAt"),
+        route.get("assignedAt"),
         route.get("plannedDeparture"),
-        route.get("plannedReturn"),
-        route.get("realReturn"),
+        route.get("realDeparture"),
     ]
     parsed_candidates = [
         parse_datetime(candidate)
@@ -165,58 +137,26 @@ def route_sort_datetime(route):
     ]
 
     if not parsed_candidates:
-        return datetime.min.replace(tzinfo=LOCAL_TIMEZONE)
+        return datetime.max.replace(tzinfo=LOCAL_TIMEZONE)
 
-    return max(parsed_candidates)
+    return min(parsed_candidates)
 
 
-def get_matching_route(driver, driver_detail):
+def get_detail_route_for_dashboard_route(driver_detail, dashboard_route_id):
     routes = driver_detail.get("routes", []) or []
 
     if not routes:
         return {}
 
-    driver_route_id = normalize_id(get_driver_route_id(driver))
-    if driver_route_id:
-        for route in routes:
-            route_id = normalize_id(route.get("id") or route.get("routeId"))
-            if route_id == driver_route_id:
-                return route
+    dashboard_route_id = normalize_id(dashboard_route_id)
 
-    assigned_at = get_driver_assigned_at(driver)
-    if assigned_at:
-        for route in routes:
-            if route.get("assignedAt") == assigned_at:
-                return route
+    for route in routes:
+        route_id = normalize_id(route.get("id") or route.get("routeId"))
 
-    open_routes = [
-        route
-        for route in routes
-        if not route.get("realReturn")
-    ]
-    candidates = open_routes or routes
+        if route_id == dashboard_route_id:
+            return route
 
-    return sorted(
-        candidates,
-        key=route_sort_datetime,
-    )[-1]
-
-
-def get_latest_open_route(driver_detail):
-    routes = driver_detail.get("routes", []) or []
-    open_routes = [
-        route
-        for route in routes
-        if not route.get("realReturn")
-    ]
-
-    if not open_routes:
-        return {}
-
-    return sorted(
-        open_routes,
-        key=route_sort_datetime,
-    )[-1]
+    return sorted(routes, key=route_oldest_datetime)[0]
 
 
 def get_courier_name(courier_id, driver_detail):
@@ -228,14 +168,21 @@ def get_courier_name(courier_id, driver_detail):
     )
 
 
-def find_current_checkpoint(route):
+def find_first_checkpoint(route):
     checkpoints = route.get("checkpoints", []) or []
 
-    for checkpoint in checkpoints:
-        if not checkpoint.get("realDepartureTime"):
-            return checkpoint
+    if not checkpoints:
+        return {}
 
-    return checkpoints[-1] if checkpoints else {}
+    return sorted(
+        checkpoints,
+        key=lambda checkpoint: (
+            int(checkpoint.get("position") or 999999),
+            parse_datetime(checkpoint.get("plannedArrivalTime"))
+            or parse_datetime(checkpoint.get("deliverSince"))
+            or datetime.max.replace(tzinfo=LOCAL_TIMEZONE),
+        ),
+    )[0]
 
 
 def is_recent_route(route, max_age_minutes):
@@ -324,20 +271,8 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint):
     raise_for_supabase_error(response)
 
 
-def should_skip_driver(driver, allowed_courier_ids):
-    courier_id = normalize_id(driver.get("driver_id"))
-
-    return bool(
-        allowed_courier_ids
-        and courier_id not in allowed_courier_ids
-    )
-
-
-def run_once(max_age_minutes):
+def run_once(max_age_minutes, dry_run=False):
     discord_status = read_discord_status()
-    target_courier_ids = sorted(
-        set(discord_status.get("allowed_courier_ids", []))
-    )
     counters = Counter()
     sent_count = 0
     skipped_count = 0
@@ -345,16 +280,18 @@ def run_once(max_age_minutes):
     print(
         "Discord monitor status: "
         f"webhook_configured={discord_status.get('webhook_configured')} "
-        f"target_courier_ids={target_courier_ids or 'NONE'} "
+        "source=departure-dashboard.routes "
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
 
-    if not target_courier_ids:
-        counters["missing_target_courier_ids"] += 1
+    try:
+        dashboard_data = load_departure_dashboard()
+        dashboard_routes = get_dashboard_routes(dashboard_data)
+    except Exception as exc:
+        counters["departure_dashboard_error"] += 1
         print(
-            "Nincs beallitott Discord futar ID. "
-            "Add meg a DISCORD_NOTIFY_COURIER_IDS secretet, peldaul: 7644",
+            f"departure-dashboard hiba: {exc}",
             flush=True,
         )
         print(
@@ -363,15 +300,37 @@ def run_once(max_age_minutes):
         )
         return
 
-    for courier_id in target_courier_ids:
+    print(
+        f"departure-dashboard routes talalat: {len(dashboard_routes)}",
+        flush=True,
+    )
+
+    for dashboard_route in dashboard_routes:
+        courier_id = normalize_id(
+            dashboard_route.get("courier_id")
+            or dashboard_route.get("courierId")
+        )
+        route_id = normalize_id(
+            dashboard_route.get("route_id")
+            or dashboard_route.get("routeId")
+        )
+
         if not courier_id:
             counters["missing_courier_id"] += 1
             skipped_count += 1
             continue
 
+        if not route_id:
+            counters["missing_route_id"] += 1
+            skipped_count += 1
+            continue
+
         try:
             driver_detail = load_driver_detail(courier_id)
-            route = get_latest_open_route(driver_detail)
+            route = get_detail_route_for_dashboard_route(
+                driver_detail,
+                route_id,
+            )
         except Exception as exc:
             print(f"#{courier_id} route detail hiba: {exc}")
             counters["detail_error"] += 1
@@ -379,14 +338,7 @@ def run_once(max_age_minutes):
             continue
 
         if not route:
-            counters["no_open_route"] += 1
-            skipped_count += 1
-            continue
-
-        route_id = normalize_id(route.get("id") or route.get("routeId"))
-
-        if not route_id:
-            counters["missing_route_id"] += 1
+            counters["no_detail_route"] += 1
             skipped_count += 1
             continue
 
@@ -400,10 +352,27 @@ def run_once(max_age_minutes):
             skipped_count += 1
             continue
 
-        checkpoint = find_current_checkpoint(route)
+        checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
-        courier_name = get_courier_name(courier_id, driver_detail)
+        courier_name = (
+            str(dashboard_route.get("courier_name") or "").strip()
+            or get_courier_name(courier_id, driver_detail)
+        )
+
+        if dry_run:
+            counters["dry_run_would_send"] += 1
+            skipped_count += 1
+            print(
+                "DRY RUN Discord route jelzes: "
+                f"#{courier_id} {courier_name} route {route_id} "
+                f"order {order_id or '-'} "
+                f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
+                f"planned_return={format_time(route.get('plannedReturn')) or '-'}",
+                flush=True,
+            )
+            continue
+
         result = notify_route_assigned_once(
             courier_id,
             courier_name,
@@ -412,6 +381,7 @@ def run_once(max_age_minutes):
             address=address,
             planned_departure=format_time(route.get("plannedDeparture")),
             planned_return=format_time(route.get("plannedReturn")),
+            ignore_courier_filter=True,
         )
 
         if result == "sent":
@@ -423,11 +393,16 @@ def run_once(max_age_minutes):
                 checkpoint,
             )
             sent_count += 1
-            print(f"Discord route jelzes elkuldve: #{courier_id} route {route_id}")
+            print(
+                f"Discord route jelzes elkuldve: #{courier_id} route {route_id}"
+            )
         else:
             counters[result or "not_sent"] += 1
             skipped_count += 1
-            print(f"Discord route jelzes kihagyva: #{courier_id} route {route_id} ({result})")
+            print(
+                f"Discord route jelzes kihagyva: "
+                f"#{courier_id} route {route_id} ({result})"
+            )
 
     print(
         f"Monitor kor kesz: sent={sent_count}, skipped={skipped_count}, reasons={dict(counters)}",
@@ -440,16 +415,17 @@ def main():
     parser.add_argument("--max-age-minutes", type=int, default=10)
     parser.add_argument("--loop-minutes", type=int, default=0)
     parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     if args.loop_minutes <= 0:
-        run_once(args.max_age_minutes)
+        run_once(args.max_age_minutes, dry_run=args.dry_run)
         return
 
     deadline = time.monotonic() + args.loop_minutes * 60
 
     while True:
-        run_once(args.max_age_minutes)
+        run_once(args.max_age_minutes, dry_run=args.dry_run)
 
         if time.monotonic() + args.poll_seconds > deadline:
             break

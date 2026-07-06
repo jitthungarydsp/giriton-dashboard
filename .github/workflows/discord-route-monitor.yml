@@ -39,8 +39,8 @@ jobs:
           test -n "$DISCORD_WEBHOOK_URL" || (echo "Missing DISCORD_WEBHOOK_URL secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          echo "Discord courier filter: ${DISCORD_NOTIFY_COURIER_IDS:-app/default}"
+          echo "Discord courier filter: ${DISCORD_NOTIFY_COURIER_IDS:-disabled/all couriers}"
 
       - name: Run Discord route monitor
         run: |
-          python scripts/discord_route_monitor.py --loop-minutes 4 --poll-seconds 180 --max-age-minutes 0
+          python scripts/discord_route_monitor.py --max-age-minutes 0

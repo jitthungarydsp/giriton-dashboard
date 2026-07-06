@@ -118,6 +118,7 @@ def notify_route_assigned_once(
     address="",
     planned_departure="",
     planned_return="",
+    ignore_courier_filter=False,
 ):
     settings = load_app_settings()
 
@@ -132,7 +133,11 @@ def notify_route_assigned_once(
     allowed_courier_ids = _read_allowed_courier_ids(settings)
     normalized_courier_id = _normalize_id(courier_id)
 
-    if allowed_courier_ids and normalized_courier_id not in allowed_courier_ids:
+    if (
+        not ignore_courier_filter
+        and allowed_courier_ids
+        and normalized_courier_id not in allowed_courier_ids
+    ):
         return "filtered"
 
     notification_key = f"{courier_id}:{route_id}"
@@ -140,24 +145,6 @@ def notify_route_assigned_once(
 
     if notification_key in sent_notifications:
         return "already_sent"
-
-    content_lines = [
-        "Új túra érkezett a futárra.",
-        f"Futár: {courier_name} #{courier_id}",
-        f"Route ID: {route_id}",
-    ]
-
-    if order_id:
-        content_lines.append(f"Aktuális rendelés: {order_id}")
-
-    if planned_departure:
-        content_lines.append(f"Tervezett kiindulás: {planned_departure}")
-
-    if planned_return:
-        content_lines.append(f"Tervezett vége: {planned_return}")
-
-    if address:
-        content_lines.append(f"Aktuális cím: {address}")
 
     content_lines = _build_route_notification_lines(
         courier_id,
