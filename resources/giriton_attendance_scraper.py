@@ -16,6 +16,20 @@ def _clean(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _is_clock_time(value):
+    text = _clean(value)
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
+
+    if not match:
+        return False
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    second = int(match.group(3) or 0)
+
+    return 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59
+
+
 def _parse_detail_entries(text):
     lines = [
         _clean(line)
@@ -25,7 +39,7 @@ def _parse_detail_entries(text):
     times = []
 
     for line in lines:
-        if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", line):
+        if _is_clock_time(line):
             times.append(line)
 
     start_time = times[0] if times else ""
@@ -54,7 +68,7 @@ def _parse_grid_time_cells(cells):
 
     for value in cells or []:
         text = _clean(value)
-        if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", text):
+        if _is_clock_time(text):
             times.append(text)
 
     start_time = times[0] if times else ""

@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -25,10 +26,19 @@ def _normalize_time(value):
     if not text:
         return None
 
-    if len(text) == 5:
-        return f"{text}:00"
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
 
-    return text
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    second = int(match.group(3) or 0)
+
+    if hour > 23 or minute > 59 or second > 59:
+        return None
+
+    return f"{hour:02d}:{minute:02d}:{second:02d}"
 
 
 def _supabase_host(supabase_url):
