@@ -428,6 +428,26 @@ def render_styles():
     margin: 0 0 8px;
     text-transform: uppercase;
 }
+div[data-testid="stSegmentedControl"] {
+    background: linear-gradient(135deg, #6cab2f 0%, #8bd346 52%, #f5fbea 100%);
+    border: 1px solid rgba(22, 101, 52, 0.16);
+    border-radius: 18px;
+    box-shadow: 0 14px 30px rgba(36, 74, 20, 0.12);
+    margin-bottom: 18px;
+    padding: 8px;
+    width: 100%;
+}
+div[data-testid="stSegmentedControl"] > div {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+}
+div[data-testid="stSegmentedControl"] label {
+    justify-content: center;
+    min-height: 42px;
+    width: 100%;
+}
 .courier-placeholder-card {
     background: #ffffff;
     border: 1px solid #dbeafe;
@@ -443,6 +463,44 @@ def render_styles():
 }
 .courier-placeholder-card p {
     color: #64748b;
+    margin: 0;
+}
+.peopleforce-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 14px;
+}
+.peopleforce-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f7fee7 100%);
+    border: 1px solid #bbf7d0;
+    border-radius: 16px;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.06);
+    color: #0f172a;
+    min-height: 130px;
+    padding: 18px;
+}
+.peopleforce-badge {
+    align-items: center;
+    background: #6cab2f;
+    border-radius: 12px;
+    color: #ffffff;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 900;
+    height: 34px;
+    justify-content: center;
+    margin-bottom: 14px;
+    width: 42px;
+}
+.peopleforce-card h3 {
+    font-size: 18px;
+    margin: 0 0 8px;
+}
+.peopleforce-card p {
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.4;
     margin: 0;
 }
 .courier-hero {
@@ -807,6 +865,9 @@ def render_styles():
     .bag-alert-preview {
         grid-template-columns: 1fr;
     }
+    .peopleforce-grid {
+        grid-template-columns: 1fr;
+    }
 }
 </style>
 """,
@@ -864,22 +925,50 @@ def render_courier_top_menu():
         except TypeError:
             pass
 
-    return st.radio(
-        "Kifli futár menü",
-        options,
-        index=options.index(current),
-        horizontal=True,
-        key="courier_dashboard_tab",
-        label_visibility="collapsed",
-    )
+    columns = st.columns(3)
+
+    for index, option in enumerate(options):
+        with columns[index]:
+            if st.button(
+                option,
+                key=f"courier_dashboard_tab_button_{option}",
+                type="primary" if option == current else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["courier_dashboard_tab"] = option
+                return option
+
+    return current
 
 
 def render_peopleforce_placeholder():
+    cards = [
+        ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése."),
+        ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek."),
+        ("TF", "Task felvétele", "Új feladat vagy teendő rögzítésének helye."),
+        ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok."),
+        ("SZ", "Szabályzat", "Futár szabályok, alapfolyamatok és belső tudnivalók."),
+        ("SA", "Személyes adatok", "Saját adatok és későbbi módosítási folyamatok."),
+    ]
+    card_html = "".join(
+        f"""
+  <div class="peopleforce-card">
+    <div class="peopleforce-badge">{escape(code)}</div>
+    <h3>{escape(title)}</h3>
+    <p>{escape(description)}</p>
+  </div>
+"""
+        for code, title, description in cards
+    )
+
     st.markdown(
-        """
+        f"""
 <div class="courier-placeholder-card">
   <h2>PeopleForce</h2>
-  <p>Ez a rész elő van készítve. Ide jön majd a PeopleForce-os tartalom és folyamat.</p>
+  <p>Ez a rész elő van készítve. Innen indulnak majd a futáros belső folyamatok.</p>
+  <div class="peopleforce-grid">
+    {card_html}
+  </div>
 </div>
 """,
         unsafe_allow_html=True,
