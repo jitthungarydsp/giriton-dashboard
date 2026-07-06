@@ -368,7 +368,7 @@ def run_once(max_age_minutes, dry_run=False):
                 f"#{courier_id} {courier_name} route {route_id} "
                 f"order {order_id or '-'} "
                 f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
-                f"planned_return={format_time(route.get('plannedReturn')) or '-'}",
+                f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'}",
                 flush=True,
             )
             continue
@@ -380,7 +380,9 @@ def run_once(max_age_minutes, dry_run=False):
             order_id=order_id,
             address=address,
             planned_departure=format_time(route.get("plannedDeparture")),
-            planned_return=format_time(route.get("plannedReturn")),
+            planned_return=format_time(
+                route.get("realReturn") or route.get("plannedReturn")
+            ),
             ignore_courier_filter=True,
         )
 
