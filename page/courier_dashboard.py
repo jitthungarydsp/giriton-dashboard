@@ -3,6 +3,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
+import re
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
@@ -949,7 +950,258 @@ def render_courier_top_menu():
     return current
 
 
-def render_peopleforce_placeholder():
+def format_upload_size(size_bytes):
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def normalize_filename_token(value):
+    text = clean_display_text(value).lower()
+    text = re.sub(r"[^a-z0-9]+", "", text)
+    return text
+
+
+def invoice_file_signature_ok(file_name, content):
+    extension = Path(file_name or "").suffix.lower().lstrip(".")
+
+    if extension == "pdf":
+        return content.startswith(b"%PDF"), "PDF"
+
+    if extension in ["jpg", "jpeg"]:
+        return content.startswith(b"\xff\xd8"), "JPG"
+
+    if extension == "png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n"), "PNG"
+
+    return False, extension.upper() or "ismeretlen"
+
+
+def build_invoice_checks(
+    uploaded_file,
+    invoice_month=None,
+    invoice_number="",
+    gross_amount=0,
+    courier_id="",
+    courier_name="",
+    require_invoice_fields=False,
+):
+    checks = []
+
+    def add(status, title, detail):
+        checks.append({
+            "status": status,
+            "title": title,
+            "detail": detail,
+        })
+
+    if not uploaded_file:
+        add("error", "Fájl", "Nincs feltöltött számla.")
+        return checks
+
+    file_name = clean_display_text(uploaded_file.name, "ismeretlen_fajl")
+    content = uploaded_file.getvalue()
+    extension = Path(file_name).suffix.lower().lstrip(".")
+    allowed_extensions = ["pdf", "jpg", "jpeg", "png"]
+
+    if content:
+        add("ok", "Fájl olvasható", f"{file_name} ({format_upload_size(len(content))})")
+    else:
+        add("error", "Fájl olvasható", "A fájl üres vagy nem olvasható.")
+
+    if extension in allowed_extensions:
+        add("ok", "Fájltípus", f"Elfogadott formátum: {extension.upper()}.")
+    else:
+        add("error", "Fájltípus", "Csak PDF, JPG, JPEG vagy PNG tölthető fel.")
+
+    if len(content) <= 10 * 1024 * 1024:
+        add("ok", "Fájlméret", "10 MB alatt van.")
+    else:
+        add("error", "Fájlméret", "A fájl túl nagy. Javasolt maximum: 10 MB.")
+
+    signature_ok, signature_label = invoice_file_signature_ok(file_name, content)
+
+    if signature_ok:
+        add("ok", "Fájlfejléc", f"A fájl ténylegesen {signature_label} formátumnak tűnik.")
+    else:
+        add(
+            "warn" if extension in allowed_extensions else "error",
+            "Fájlfejléc",
+            "A fájl kiterjesztése és belső formátuma nem tűnik egyértelműnek.",
+        )
+
+    if require_invoice_fields:
+        if clean_display_text(invoice_number):
+            add("ok", "Számlaszám", "Kitöltve.")
+        else:
+            add("error", "Számlaszám", "A számlaszám kötelező a beküldéshez.")
+
+        try:
+            amount = float(gross_amount or 0)
+        except (TypeError, ValueError):
+            amount = 0
+
+        if amount > 0:
+            add("ok", "Bruttó összeg", f"{format_currency(amount)} megadva.")
+        else:
+            add("error", "Bruttó összeg", "A bruttó összeget 0 Ft fölé kell állítani.")
+
+    if invoice_month:
+        month_text = invoice_month.strftime("%Y-%m")
+        compact_month = invoice_month.strftime("%Y%m")
+        file_token = normalize_filename_token(file_name)
+
+        if month_text.replace("-", "") in file_token or compact_month in file_token:
+            add("ok", "Hónap a fájlnévben", f"A fájlnév tartalmazza a hónapot: {month_text}.")
+        else:
+            add(
+                "warn",
+                "Hónap a fájlnévben",
+                f"Jó lenne, ha a fájlnévben szerepelne a hónap: {month_text}.",
+            )
+
+    invoice_token = normalize_filename_token(invoice_number)
+
+    if invoice_token and invoice_token in normalize_filename_token(file_name):
+        add("ok", "Számlaszám a fájlnévben", "A fájlnév tartalmazza a számlaszámot.")
+    elif invoice_token:
+        add(
+            "warn",
+            "Számlaszám a fájlnévben",
+            "Nem gond, de később könnyebb keresni, ha a fájlnévben is szerepel.",
+        )
+
+    courier_token = normalize_filename_token(courier_id or courier_name)
+
+    if courier_token and courier_token in normalize_filename_token(file_name):
+        add("ok", "Futár azonosító a fájlnévben", "A fájlnévben látszik a futár azonosítója/neve.")
+    elif courier_token:
+        add(
+            "warn",
+            "Futár azonosító a fájlnévben",
+            "Javasolt a fájlnévbe betenni a futár ID-t vagy nevet.",
+        )
+
+    return checks
+
+
+def render_invoice_check_result(checks):
+    errors = [check for check in checks if check["status"] == "error"]
+    warnings = [check for check in checks if check["status"] == "warn"]
+    passed = len([check for check in checks if check["status"] == "ok"])
+    total = len(checks) or 1
+    score = round((passed / total) * 100)
+
+    if errors:
+        st.error(f"Számla ellenőrzés: javítandó ({score}%).")
+    elif warnings:
+        st.warning(f"Számla ellenőrzés: beküldhető, de van pár finomítás ({score}%).")
+    else:
+        st.success(f"Számla ellenőrzés: rendben ({score}%).")
+
+    for check in checks:
+        icon = {
+            "ok": "OK",
+            "warn": "FIGYELEM",
+            "error": "HIBA",
+        }.get(check["status"], "INFO")
+        st.write(f"**{icon} - {check['title']}:** {check['detail']}")
+
+
+def render_invoice_submission_panel(row, user):
+    name = get_courier_display_name(row, user)
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+    current_month = local_now().date().replace(day=1)
+
+    st.subheader("Számlabeküldő rendszer")
+    st.caption("Első körös saját űrlap: még nem küld adatot, csak előkészít és formai alapon ellenőriz.")
+
+    with st.form("peopleforce_invoice_submission_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.text_input("Futár", value=f"{name} #{courier_id}", disabled=True)
+            invoice_month = st.date_input(
+                "Számla hónapja",
+                value=current_month,
+                key="peopleforce_invoice_month",
+            )
+            invoice_number = st.text_input(
+                "Számlaszám",
+                placeholder="pl. JIT-2026-07-001",
+            )
+
+        with col2:
+            gross_amount = st.number_input(
+                "Bruttó összeg",
+                min_value=0,
+                step=1000,
+                value=0,
+            )
+            tig_reference = st.text_input(
+                "TIG / elszámolás azonosító",
+                placeholder="ha van",
+            )
+            st.text_area(
+                "Megjegyzés",
+                placeholder="Rövid megjegyzés, ha valami eltér a megszokottól.",
+                height=88,
+            )
+
+        uploaded_invoice = st.file_uploader(
+            "Számla feltöltése",
+            type=["pdf", "png", "jpg", "jpeg"],
+            key="peopleforce_invoice_upload",
+        )
+        submitted = st.form_submit_button("Számla ellenőrzése")
+
+    if submitted:
+        checks = build_invoice_checks(
+            uploaded_invoice,
+            invoice_month=invoice_month,
+            invoice_number=invoice_number,
+            gross_amount=gross_amount,
+            courier_id=courier_id,
+            courier_name=name,
+            require_invoice_fields=True,
+        )
+        render_invoice_check_result(checks)
+
+        if not any(check["status"] == "error" for check in checks):
+            st.info(
+                "Ez most még csak előnézet. A következő lépésben ide tudjuk kötni a DB mentést, e-mailt vagy jóváhagyási folyamatot."
+            )
+
+
+def render_invoice_quick_check_panel(row, user):
+    name = get_courier_display_name(row, user)
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+
+    st.subheader("Számla ellenőrzés")
+    st.caption("Gyors formai ellenőrzés már meglévő számlára. Tartalmi/PDF szövegolvasást később kötünk rá.")
+
+    uploaded_file = st.file_uploader(
+        "Ellenőrizendő számla",
+        type=["pdf", "png", "jpg", "jpeg"],
+        key="peopleforce_invoice_quick_check_upload",
+    )
+
+    if st.button("Feltöltött számla ellenőrzése", use_container_width=True):
+        checks = build_invoice_checks(
+            uploaded_file,
+            courier_id=courier_id,
+            courier_name=name,
+        )
+        render_invoice_check_result(checks)
+
+
+def render_peopleforce_placeholder(row=None, user=None):
+    user = user or {}
+    safe_row = row if row is not None else {}
     cards = [
         ("BJ", "Bejelentés", "Gyors belső jelzés vagy kérés előkészítése.", ""),
         ("MP", "MűszakPro", "Műszakhoz kapcsolódó PeopleForce és MűszakPro ügyek.", ""),
@@ -957,10 +1209,11 @@ def render_peopleforce_placeholder():
         ("TG", "TIG", "Teljesítésigazolással kapcsolatos ügyek és státuszok.", ""),
         ("EL", "Elszámolás", "Elszámolási információk, kérdések és egyeztetések.", ""),
         ("SZ", "Számláim", "Saját számlák és későbbi feltöltési folyamatok.", ""),
+        ("SE", "Számla ellenőrzés", "Feltöltött számla gyors formai ellenőrzése.", ""),
         (
             "SB",
             "Számlabeküldő rendszer",
-            "Külső Google űrlap számlabeküldéshez.",
+            "Saját előkészítő felület és külső Google űrlap.",
             "https://docs.google.com/forms/d/e/1FAIpQLSc9MQZXm21F9ZYjiKcY-lgmYB9_pHPHIteo9bR6laRMWoBTLg/viewform",
         ),
         ("FT", "Fontos telefonszámok", "Koordinátor, tréning és sürgős kapcsolatok.", ""),
@@ -1001,6 +1254,15 @@ def render_peopleforce_placeholder():
 """,
         unsafe_allow_html=True,
     )
+
+    st.divider()
+    left, right = st.columns([1.2, 0.8])
+
+    with left:
+        render_invoice_submission_panel(safe_row, user)
+
+    with right:
+        render_invoice_quick_check_panel(safe_row, user)
 
 
 if hasattr(st, "dialog"):
@@ -2697,10 +2959,6 @@ def show_courier_dashboard_page():
     today = local_now().date()
     selected_view = render_courier_top_menu()
 
-    if selected_view == "PeopleForce":
-        render_peopleforce_placeholder()
-        return
-
     snapshot_month_text = today.strftime("%Y-%m")
     selector_details = empty_courier_details()
     directory_df = load_courier_directory(snapshot_month_text)
@@ -2724,6 +2982,10 @@ def show_courier_dashboard_page():
 
     if current_row is None:
         st.warning("Ehhez a belepeshez nem talaltam futart.")
+        return
+
+    if selected_view == "PeopleForce":
+        render_peopleforce_placeholder(current_row, user)
         return
 
     _attendance_data, drivers_data = load_live_courier_sources()
