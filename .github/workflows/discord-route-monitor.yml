@@ -3,7 +3,7 @@ name: Discord Route Monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "2-59/5 * * * *"
 
 concurrency:
   group: discord-route-monitor
@@ -43,4 +43,4 @@ jobs:
 
       - name: Run Discord route monitor
         run: |
-          python scripts/discord_route_monitor.py --max-age-minutes 0
+          python scripts/discord_route_monitor.py --loop-minutes 4 --poll-seconds 60 --max-age-minutes 0
