@@ -90,23 +90,24 @@ def _build_route_notification_lines(
     planned_return="",
 ):
     content_lines = [
-        "Új túra érkezett a futárra.",
-        f"Futár: {courier_name} #{courier_id}",
-        f"Route ID: {route_id}",
+        "**Új túra érkezett**",
+        "",
+        f"**{courier_name}** `#{courier_id}`",
+        f"**Route ID:** `{route_id}`",
     ]
 
     if order_id:
-        content_lines.append(f"Aktuális rendelés: {order_id}")
+        content_lines.append(f"**Aktuális rendelés:** `{order_id}`")
 
     if planned_departure:
-        content_lines.append(f"Tervezett kiindulás: {planned_departure}")
+        content_lines.append(f"**Tervezett kiindulás:** {planned_departure}")
 
     content_lines.append(
-        f"Tervezett visszaérkezés: {planned_return or 'nincs adat'}"
+        f"**Tervezett visszaérkezés:** {planned_return or 'nincs adat'}"
     )
 
     if address:
-        content_lines.append(f"Aktuális cím: {address}")
+        content_lines.append(f"**Aktuális cím:** {address}")
 
     return content_lines
 
