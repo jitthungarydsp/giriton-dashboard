@@ -101,8 +101,9 @@ def _build_route_notification_lines(
     if planned_departure:
         content_lines.append(f"Tervezett kiindulás: {planned_departure}")
 
-    if planned_return:
-        content_lines.append(f"Tervezett vége: {planned_return}")
+    content_lines.append(
+        f"Tervezett visszaérkezés: {planned_return or 'nincs adat'}"
+    )
 
     if address:
         content_lines.append(f"Aktuális cím: {address}")
