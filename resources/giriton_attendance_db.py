@@ -1,4 +1,5 @@
 from datetime import datetime
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -28,6 +29,10 @@ def _normalize_time(value):
         return f"{text}:00"
 
     return text
+
+
+def _supabase_host(supabase_url):
+    return urlparse(supabase_url).netloc or supabase_url
 
 
 def _build_db_rows(rows):
@@ -67,6 +72,38 @@ def _build_db_rows(rows):
     return db_rows
 
 
+def _count_stored_rows(supabase_url, service_role_key, work_dates):
+    dates = [
+        str(date)
+        for date in sorted(set(work_dates))
+        if str(date).strip()
+    ]
+
+    if not dates:
+        return 0
+
+    date_filter = ",".join(dates)
+    endpoint = (
+        f"{supabase_url}/rest/v1/giriton_attendance_raw"
+        "?select=id"
+        f"&source_name=eq.{SOURCE_NAME}"
+        f"&work_date=in.({date_filter})"
+        "&limit=10000"
+    )
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+
+    return len(response.json())
+
+
 def upsert_giriton_attendance_rows(rows):
     db_rows = _build_db_rows(rows)
 
@@ -85,6 +122,10 @@ def upsert_giriton_attendance_rows(rows):
             "error": "missing_supabase_config",
         }
 
+    work_dates = [
+        row.get("work_date")
+        for row in db_rows
+    ]
     endpoint = (
         f"{supabase_url}/rest/v1/giriton_attendance_raw"
         "?on_conflict=source_name,work_date,courier_name"
@@ -93,7 +134,7 @@ def upsert_giriton_attendance_rows(rows):
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
+        "Prefer": "resolution=merge-duplicates,return=representation",
     }
     response = requests.post(
         endpoint,
@@ -103,18 +144,52 @@ def upsert_giriton_attendance_rows(rows):
     )
     raise_for_supabase_error(response)
 
+    returned_rows = response.json() if response.text.strip() else []
+    stored_rows = _count_stored_rows(
+        supabase_url,
+        service_role_key,
+        work_dates,
+    )
+
     return {
         "rows": len(db_rows),
         "status": "ok",
+        "host": _supabase_host(supabase_url),
+        "dates": ",".join(sorted(set(work_dates))),
+        "returned_rows": len(returned_rows),
+        "stored_rows": stored_rows,
     }
 
 
 def write_giriton_attendance_db(rows):
     result = upsert_giriton_attendance_rows(rows)
+
+    if result.get("status") == "empty":
+        raise RuntimeError(
+            "Giriton Attendance scraper nem adott vissza sort, ezert nem irtunk DB-be."
+        )
+
+    if result.get("status") == "skipped":
+        raise RuntimeError(
+            "Giriton Attendance DB iras kihagyva: hianyzik a Supabase beallitas."
+        )
+
     message = (
         "OK | Giriton_Attendance DB "
         f"status={result.get('status')} rows={result.get('rows')}"
     )
+
+    if result.get("host"):
+        message = f"{message} host={result.get('host')}"
+
+    if result.get("dates"):
+        message = f"{message} dates={result.get('dates')}"
+
+    if result.get("returned_rows") is not None:
+        message = f"{message} returned_rows={result.get('returned_rows')}"
+
+    if result.get("stored_rows") is not None:
+        message = f"{message} stored_rows={result.get('stored_rows')}"
 
     if result.get("error"):
         message = f"{message} error={result.get('error')}"

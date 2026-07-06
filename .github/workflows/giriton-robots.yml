@@ -157,6 +157,7 @@ jobs:
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          python -c "from urllib.parse import urlparse; import os; print('SUPABASE_HOST=' + urlparse(os.environ['SUPABASE_URL']).netloc)"
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
           google-chrome --version || chromium-browser --version || chromium --version
 
@@ -344,6 +345,7 @@ jobs:
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          python -c "from urllib.parse import urlparse; import os; print('SUPABASE_HOST=' + urlparse(os.environ['SUPABASE_URL']).netloc)"
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
           google-chrome --version || chromium-browser --version || chromium --version
 
