@@ -1,4 +1,5 @@
 import argparse
+from collections import Counter
 import sys
 import time
 from datetime import datetime, timedelta
@@ -310,13 +311,29 @@ def run_once(max_age_minutes):
     discord_status = read_discord_status()
     allowed_courier_ids = set(discord_status.get("allowed_courier_ids", []))
     drivers = load_drivers()
+    counters = Counter()
     sent_count = 0
     skipped_count = 0
+
+    print(
+        "Discord monitor status: "
+        f"webhook_configured={discord_status.get('webhook_configured')} "
+        f"allowed_courier_ids={sorted(allowed_courier_ids) or 'ALL'} "
+        f"drivers={len(drivers)} "
+        f"max_age_minutes={max_age_minutes}",
+        flush=True,
+    )
 
     for driver in drivers:
         courier_id = normalize_id(driver.get("driver_id"))
 
-        if not courier_id or should_skip_driver(driver, allowed_courier_ids):
+        if not courier_id:
+            counters["missing_courier_id"] += 1
+            skipped_count += 1
+            continue
+
+        if should_skip_driver(driver, allowed_courier_ids):
+            counters["filtered_courier"] += 1
             skipped_count += 1
             continue
 
@@ -325,20 +342,34 @@ def run_once(max_age_minutes):
             route = get_matching_route(driver, driver_detail)
         except Exception as exc:
             print(f"#{courier_id} route detail hiba: {exc}")
+            counters["detail_error"] += 1
             skipped_count += 1
             continue
 
-        if not route or route.get("realReturn"):
+        if not route:
+            counters["missing_route"] += 1
+            skipped_count += 1
+            continue
+
+        if route.get("realReturn"):
+            counters["closed_route"] += 1
             skipped_count += 1
             continue
 
         route_id = normalize_id(route.get("id") or route.get("routeId"))
 
-        if not route_id or not is_recent_route(route, max_age_minutes):
+        if not route_id:
+            counters["missing_route_id"] += 1
+            skipped_count += 1
+            continue
+
+        if max_age_minutes > 0 and not is_recent_route(route, max_age_minutes):
+            counters["route_too_old"] += 1
             skipped_count += 1
             continue
 
         if notification_already_logged(courier_id, route_id):
+            counters["already_logged"] += 1
             skipped_count += 1
             continue
 
@@ -372,10 +403,14 @@ def run_once(max_age_minutes):
             sent_count += 1
             print(f"Discord route jelzes elkuldve: #{courier_id} route {route_id}")
         else:
+            counters[result or "not_sent"] += 1
             skipped_count += 1
             print(f"Discord route jelzes kihagyva: #{courier_id} route {route_id} ({result})")
 
-    print(f"Monitor kor kesz: sent={sent_count}, skipped={skipped_count}")
+    print(
+        f"Monitor kor kesz: sent={sent_count}, skipped={skipped_count}, reasons={dict(counters)}",
+        flush=True,
+    )
 
 
 def main():
