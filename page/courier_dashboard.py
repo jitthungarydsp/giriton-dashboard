@@ -448,25 +448,55 @@ def render_styles():
     margin: 0 0 8px;
     text-transform: uppercase;
 }
-div[data-testid="stSegmentedControl"] {
-    background: linear-gradient(135deg, #6cab2f 0%, #8bd346 52%, #f5fbea 100%);
-    border: 1px solid rgba(22, 101, 52, 0.16);
-    border-radius: 18px;
-    box-shadow: 0 14px 30px rgba(36, 74, 20, 0.12);
-    margin-bottom: 18px;
-    padding: 8px;
+.courier-menu-shell {
+    background: linear-gradient(90deg, #365314 0%, #65a30d 38%, #bef264 100%);
+    border: 1px solid rgba(190, 242, 100, .34);
+    border-radius: 20px;
+    box-shadow: 0 18px 34px rgba(0, 0, 0, .30);
+    margin: 0 0 16px;
+    padding: 10px;
     width: 100%;
 }
-div[data-testid="stSegmentedControl"] > div {
+.courier-menu-title {
+    color: #ecfccb;
+    font-size: 11px;
+    font-weight: 950;
+    letter-spacing: .11em;
+    margin: 2px 4px 10px;
+    text-transform: uppercase;
+}
+.courier-menu-buttons {
     display: grid;
-    gap: 8px;
+    gap: 10px;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
 }
-div[data-testid="stSegmentedControl"] label {
+.courier-menu-button {
+    align-items: center;
+    background: rgba(255, 255, 255, .82);
+    border: 1px solid rgba(255, 255, 255, .72);
+    border-radius: 14px;
+    color: #1f2937 !important;
+    display: flex;
+    font-size: 15px;
+    font-weight: 950;
     justify-content: center;
-    min-height: 42px;
-    width: 100%;
+    min-height: 48px;
+    padding: 12px 14px;
+    text-align: center;
+    text-decoration: none !important;
+    transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.courier-menu-button:hover {
+    background: #ffffff;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, .16);
+    transform: translateY(-1px);
+}
+.courier-menu-button-active {
+    background: #020617;
+    border-color: rgba(2, 6, 23, .94);
+    box-shadow: inset 0 0 0 1px rgba(190, 242, 100, .45), 0 12px 24px rgba(2, 6, 23, .24);
+    color: #bef264 !important;
 }
 .courier-placeholder-card {
     background: #ffffff;
@@ -1100,6 +1130,9 @@ a.peopleforce-card {
     .peopleforce-grid {
         grid-template-columns: 1fr;
     }
+    .courier-menu-buttons {
+        grid-template-columns: 1fr;
+    }
     .kifli-current-actions {
         grid-template-columns: 1fr;
     }
@@ -1139,7 +1172,7 @@ def render_courier_profile_content(row, user):
         st.success("Bejelentés rögzítve előnézetként. Ide kötjük majd a következő folyamatot.")
 
 
-def render_courier_top_menu():
+def render_courier_top_menu_legacy():
     options = ["PeopleForce", "Kiflis utam", "Statisztika"]
     current = st.session_state.get("courier_dashboard_tab", "PeopleForce")
 
@@ -1176,6 +1209,59 @@ def render_courier_top_menu():
             ):
                 st.session_state["courier_dashboard_tab"] = option
                 return option
+
+    return current
+
+
+def render_courier_top_menu():
+    options = ["PeopleForce", "Kiflis utam", "Statisztika"]
+    current = st.session_state.get("courier_dashboard_tab", "PeopleForce")
+
+    try:
+        query_params = st.query_params.to_dict()
+    except AttributeError:
+        try:
+            query_params = dict(st.query_params)
+        except Exception:
+            query_params = {}
+
+    query_tab = query_params.get("courier_tab", "")
+
+    if isinstance(query_tab, list):
+        query_tab = query_tab[0] if query_tab else ""
+
+    if query_tab in options:
+        current = query_tab
+        st.session_state["courier_dashboard_tab"] = current
+
+    if current not in options:
+        current = "PeopleForce"
+
+    menu_items = []
+
+    for option in options:
+        option_params = {
+            key: (value[0] if isinstance(value, list) and value else value)
+            for key, value in query_params.items()
+        }
+        option_params["courier_tab"] = option
+        href = f"?{urlencode(option_params)}"
+        active_class = " courier-menu-button-active" if option == current else ""
+        menu_items.append(
+            f'<a class="courier-menu-button{active_class}" href="{escape(href, quote=True)}">{escape(option)}</a>'
+        )
+
+    st.markdown(
+        f"""
+<div class="courier-menu-shell">
+  <div class="courier-menu-title">Kifli fut&aacute;r men&uuml;</div>
+  <div class="courier-menu-buttons">
+    {''.join(menu_items)}
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     return current
 
