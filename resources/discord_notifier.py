@@ -88,6 +88,8 @@ def _build_route_notification_lines(
     address="",
     planned_departure="",
     planned_return="",
+    orders_in_route="",
+    licence_plate=""
 ):
     content_lines = [
         "**Új túra érkezett**",
@@ -106,9 +108,12 @@ def _build_route_notification_lines(
         f"**Tervezett visszaérkezés:** {planned_return or 'nincs adat'}"
     )
 
-    if address:
-        content_lines.append(f"**Aktuális cím:** {address}")
-
+    if orders_in_route:
+        content_lines.append(f"**Aktuális megrendelés száma:** {orders_in_route}")
+    
+    if licence_plate:
+        content_lines.append(f"**Aktuális rendszám:** {licence_plate}")
+        
     return content_lines
 
 
@@ -121,6 +126,8 @@ def notify_route_assigned_once(
     planned_departure="",
     planned_return="",
     ignore_courier_filter=False,
+    orders_in_route="",
+    licence_plate=""
 ):
     settings = load_app_settings()
 
@@ -156,6 +163,8 @@ def notify_route_assigned_once(
         address=address,
         planned_departure=planned_departure,
         planned_return=planned_return,
+        orders_in_route=orders_in_route,
+        licence_plate=licence_plate
     )
 
     response = requests.post(
