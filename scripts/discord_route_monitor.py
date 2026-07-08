@@ -236,7 +236,7 @@ def notification_already_logged(courier_id, route_id):
     return bool(response.json())
 
 
-def log_notification(courier_id, courier_name, route_id, route, checkpoint,licencePlate,ordersInRoute):
+def log_notification(courier_id, courier_name, route_id, route, checkpoint, licencePlate, ordersInRoute):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -357,6 +357,12 @@ def run_once(max_age_minutes, dry_run=False):
         checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
+        licencePlate = ( 
+            str(dashboard_route.get("licence_plate") or "").strip()
+        )
+        ordersInRoute = (
+            str(dashboard_route.get("orders_in_route") or "").strip()  
+        )
         courier_name = (
             str(dashboard_route.get("courier_name") or "").strip()
             or get_courier_name(courier_id, driver_detail)
@@ -386,6 +392,8 @@ def run_once(max_age_minutes, dry_run=False):
                 route.get("realReturn") or route.get("plannedReturn")
             ),
             ignore_courier_filter=True,
+            licencePlate=licencePlate,
+            ordersInRoute=ordersInRoute
         )
 
         if result == "sent":
