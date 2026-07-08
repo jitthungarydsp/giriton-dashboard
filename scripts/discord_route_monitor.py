@@ -236,7 +236,7 @@ def notification_already_logged(courier_id, route_id):
     return bool(response.json())
 
 
-def log_notification(courier_id, courier_name, route_id, route, checkpoint):
+def log_notification(courier_id, courier_name, route_id, route, checkpoint,licencePlate,ordersInRoute):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -250,6 +250,8 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint):
         "assigned_at": route.get("assignedAt"),
         "planned_departure": route.get("plannedDeparture"),
         "planned_return": route.get("plannedReturn"),
+        "licence_plate": str(licencePlate),
+        "orders_in_route": str(ordersInRoute)
     }
     endpoint = (
         f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
@@ -393,6 +395,8 @@ def run_once(max_age_minutes, dry_run=False):
                 route_id,
                 route,
                 checkpoint,
+                licencePlate,
+                ordersInRoute
             )
             sent_count += 1
             print(
