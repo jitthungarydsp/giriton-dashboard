@@ -17,6 +17,8 @@ DISCORD_ROUTE_COLUMNS = [
     "planned_departure",
     "planned_return",
     "notified_at",
+    "orders_in_route",
+    "licence_plate"
 ]
 
 
