@@ -236,7 +236,7 @@ def notification_already_logged(courier_id, route_id):
     return bool(response.json())
 
 
-def log_notification(courier_id, courier_name, route_id, route, checkpoint, licencePlate, ordersInRoute):
+def log_notification(courier_id, courier_name, route_id, route, checkpoint, licence_plate, orders_in_route):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -250,8 +250,8 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint, lice
         "assigned_at": route.get("assignedAt"),
         "planned_departure": route.get("plannedDeparture"),
         "planned_return": route.get("plannedReturn"),
-        "licence_plate": str(licencePlate),
-        "orders_in_route": str(ordersInRoute)
+        "licence_plate": str(licence_plate),
+        "orders_in_route": str(orders_in_route)
     }
     endpoint = (
         f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
@@ -357,10 +357,10 @@ def run_once(max_age_minutes, dry_run=False):
         checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
-        licencePlate = ( 
+        licence_plate = ( 
             str(dashboard_route.get("licence_plate") or "").strip()
         )
-        ordersInRoute = (
+        orders_in_route = (
             str(dashboard_route.get("orders_in_route") or "").strip()  
         )
         courier_name = (
@@ -392,8 +392,8 @@ def run_once(max_age_minutes, dry_run=False):
                 route.get("realReturn") or route.get("plannedReturn")
             ),
             ignore_courier_filter=True,
-            licencePlate=licencePlate,
-            ordersInRoute=ordersInRoute
+            licence_plate=licence_plate,
+            orders_in_route=orders_in_route
         )
 
         if result == "sent":
@@ -403,8 +403,8 @@ def run_once(max_age_minutes, dry_run=False):
                 route_id,
                 route,
                 checkpoint,
-                licencePlate,
-                ordersInRoute
+                licence_plate,
+                orders_in_route
             )
             sent_count += 1
             print(
