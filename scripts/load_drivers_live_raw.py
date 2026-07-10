@@ -29,6 +29,62 @@ SOURCE_NAME = "fetch-drivers"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TABLE_SQL_PATH = PROJECT_ROOT / "docs" / "dsp_live_driver_tables.sql"
+RAW_COLUMNS = [
+    "fetch_batch_id",
+    "source_name",
+    "organization_id",
+    "dsp_id",
+    "agency_id",
+    "driver_id",
+    "courier_name",
+    "warehouse_name",
+    "active",
+    "license_plate",
+    "current_state",
+    "route_assigned_at",
+    "shift_id",
+    "shift_name",
+    "shift_start",
+    "shift_end",
+    "available_for_shift_since",
+    "courier_registered_at",
+    "attendance_assigned_at",
+    "queue_wait_minutes",
+    "fetched_at",
+    "request_url",
+    "status_code",
+    "response_json",
+]
+KM_COLUMNS = [
+    "driver_id",
+    "route_assigned_at",
+    "courier_name",
+    "warehouse_name",
+    "license_plate",
+    "active",
+    "current_state",
+    "next_stop",
+    "is_departure_delayed",
+    "delay_minutes",
+    "shift_id",
+    "shift_name",
+    "shift_start",
+    "shift_end",
+    "available_for_shift_since",
+    "courier_registered_at",
+    "attendance_assigned_at",
+    "queue_wait_minutes",
+    "temperature",
+    "last_measurement_timestamp",
+    "loading_finished_at",
+    "warehouse_departure_real",
+    "total_distance_km",
+    "distance_covered_km",
+    "parcels_delivered",
+    "parcels_total",
+    "last_seen_at",
+    "last_raw_fetch_batch_id",
+]
 
 
 def get_required_env(name):
@@ -40,6 +96,10 @@ def get_required_env(name):
         )
 
     return value
+
+
+def get_optional_env(name):
+    return os.getenv(name, "").strip()
 
 
 def build_fetch_drivers_url():
@@ -467,6 +527,91 @@ def ensure_tables(cursor):
     )
 
 
+def serialize_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    if isinstance(value, Decimal):
+        return float(value)
+
+    if hasattr(value, "adapted"):
+        return value.adapted
+
+    return value
+
+
+def rows_to_dicts(columns, rows):
+    return [
+        {
+            column: serialize_value(value)
+            for column, value in zip(columns, row)
+        }
+        for row in rows
+    ]
+
+
+def raise_for_supabase_error(response):
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = response.text.strip()
+
+        if detail:
+            raise requests.HTTPError(
+                f"{exc}; Supabase valasz: {detail[:1000]}",
+                response=response,
+            ) from exc
+
+        raise
+
+
+def post_supabase_rows(table_name, rows, columns, on_conflict, prefer):
+    if not rows:
+        return 0
+
+    supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    supabase_key = get_required_env("SUPABASE_SERVICE_ROLE_KEY")
+    endpoint = f"{supabase_url}/rest/v1/{table_name}"
+
+    if on_conflict:
+        endpoint = f"{endpoint}?on_conflict={on_conflict}"
+
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": prefer,
+    }
+    response = requests.post(
+        endpoint,
+        headers=headers,
+        json=rows_to_dicts(columns, rows),
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    return len(rows)
+
+
+def insert_raw_rows_rest(rows):
+    return post_supabase_rows(
+        "dsp_drivers_live_raw",
+        rows,
+        RAW_COLUMNS,
+        "fetch_batch_id,driver_id",
+        "resolution=ignore-duplicates,return=minimal",
+    )
+
+
+def upsert_km_rows_rest(rows):
+    return post_supabase_rows(
+        "dsp_route_km_latest",
+        rows,
+        KM_COLUMNS,
+        "driver_id,route_assigned_at",
+        "resolution=merge-duplicates,return=minimal",
+    )
+
+
 def insert_raw_rows(cursor, rows):
     if not rows:
         return 0
@@ -620,14 +765,18 @@ def main():
     if args.dry_run:
         return
 
-    database_url = get_required_env("DATABASE_URL")
+    database_url = get_optional_env("DATABASE_URL")
 
-    with psycopg2.connect(database_url) as connection:
-        with connection.cursor() as cursor:
-            ensure_tables(cursor)
-            raw_count = insert_raw_rows(cursor, raw_rows)
-            km_count = upsert_km_rows(cursor, km_rows)
-            connection.commit()
+    if database_url:
+        with psycopg2.connect(database_url) as connection:
+            with connection.cursor() as cursor:
+                ensure_tables(cursor)
+                raw_count = insert_raw_rows(cursor, raw_rows)
+                km_count = upsert_km_rows(cursor, km_rows)
+                connection.commit()
+    else:
+        raw_count = insert_raw_rows_rest(raw_rows)
+        km_count = upsert_km_rows_rest(km_rows)
 
     print(
         f"DB kesz: raw_snapshot={raw_count}, route_km_upsert={km_count}"
