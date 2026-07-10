@@ -244,8 +244,8 @@ jobs:
             raw_end="${DSP_END_DATE:-$DSP_START_DATE}"
             stats_month="${DSP_START_DATE:0:7}"
           else
-            raw_start="$(TZ=Europe/Budapest date +%F)"
-            raw_end="$raw_start"
+            raw_start="$(TZ=Europe/Budapest date +%Y-%m-01)"
+            raw_end="$(TZ=Europe/Budapest date +%F)"
             stats_month="$(TZ=Europe/Budapest date +%Y-%m)"
           fi
 
