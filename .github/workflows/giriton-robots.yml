@@ -253,7 +253,7 @@ jobs:
           python scripts/load_driver_detail_raw.py --all-drivers --start-date "$raw_start" --end-date "$raw_end"
           python scripts/calculate_route_distances.py --start-date "$raw_start" --end-date "$raw_end"
           python scripts/load_vehicle_assignments.py
-          python dsp_refresh_statistics.py
+          python scripts/dsp_refresh_all.py
           python scripts/build_courier_card_stats.py --month "$stats_month"
 
   raw_export:
