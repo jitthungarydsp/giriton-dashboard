@@ -188,6 +188,7 @@ jobs:
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DSP_START_DATE: ${{ github.event.inputs.dsp_start_date || '' }}
       DSP_END_DATE: ${{ github.event.inputs.dsp_end_date || '' }}
 
@@ -231,6 +232,7 @@ jobs:
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$DATABASE_URL" || (echo "Missing DATABASE_URL secret" && exit 1)
           python -c "import json, os; json.loads(os.environ['GIRITON_GOOGLE_CREDENTIALS_JSON']); print('Google credentials JSON OK')"
 
       - name: Run DSP statistics
@@ -250,6 +252,7 @@ jobs:
           echo "DSP raw date range: $raw_start - $raw_end"
           python scripts/load_driver_detail_raw.py --all-drivers --start-date "$raw_start" --end-date "$raw_end"
           python scripts/load_vehicle_assignments.py
+          python dsp_refresh_statistics.py
           python scripts/build_courier_card_stats.py --month "$stats_month"
 
   raw_export:
