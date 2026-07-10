@@ -1,9 +1,10 @@
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -25,6 +26,7 @@ DSP_ID = "JIT"
 ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 KIFLI_API_BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
 SOURCE_NAME = "fetch-drivers"
+LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TABLE_SQL_PATH = PROJECT_ROOT / "docs" / "dsp_live_driver_tables.sql"
 
@@ -51,6 +53,23 @@ def build_fetch_drivers_url():
 
 def fetch_drivers():
     url = build_fetch_drivers_url()
+    response = requests.get(
+        url,
+        timeout=60,
+    )
+    response.raise_for_status()
+    return url, response.status_code, response.json()
+
+
+def build_fetch_attendance_url(work_date):
+    return (
+        f"{KIFLI_API_BASE_URL}/fetch-attendance/{DSP_ID}/{work_date}"
+        f"?organizationId={ORGANIZATION_ID}"
+    )
+
+
+def fetch_attendance(work_date):
+    url = build_fetch_attendance_url(work_date)
     response = requests.get(
         url,
         timeout=60,
@@ -92,9 +111,14 @@ def parse_timestamp(value):
         return None
 
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+
+    return parsed
 
 
 def to_decimal(value):
@@ -144,8 +168,199 @@ def get_statistics(driver):
     return {}
 
 
-def build_rows(payload, request_url, status_code, fetch_batch_id, fetched_at):
+def build_attendance_by_driver(payload):
+    couriers = []
+
+    for key in ["couriers", "drivers", "data"]:
+        value = payload.get(key)
+
+        if isinstance(value, list):
+            couriers = value
+            break
+
+    attendance_by_driver = {}
+
+    for courier in couriers:
+        driver_id = to_int(
+            first_value(
+                courier.get("courierId"),
+                courier.get("driver_id"),
+                courier.get("courier_id"),
+            )
+        )
+
+        if driver_id is not None:
+            attendance_by_driver[driver_id] = courier
+
+    return attendance_by_driver
+
+
+def sort_timestamp(value, fallback):
+    return value or fallback
+
+
+def select_attendance_shift(courier, now):
+    shifts = []
+
+    for shift in courier.get("shifts", []) or []:
+        start_at = parse_timestamp(shift.get("shiftStart"))
+        end_at = parse_timestamp(shift.get("shiftEnd"))
+        available_since = parse_timestamp(shift.get("availableForShiftSince"))
+        shifts.append(
+            {
+                "raw": shift,
+                "shift_id": str(shift.get("shiftId") or "").strip() or None,
+                "shift_name": str(shift.get("shiftName") or "").strip(),
+                "shift_start": start_at,
+                "shift_end": end_at,
+                "available_for_shift_since": available_since,
+            }
+        )
+
+    if not shifts:
+        return {}
+
+    active_window_start = now - timedelta(minutes=15)
+    active_or_future = [
+        shift
+        for shift in shifts
+        if shift["shift_end"] is None or shift["shift_end"] >= active_window_start
+    ]
+    with_queue_time = [
+        shift
+        for shift in active_or_future
+        if shift["available_for_shift_since"] is not None
+    ]
+
+    if with_queue_time:
+        return sorted(
+            with_queue_time,
+            key=lambda item: sort_timestamp(
+                item["shift_start"],
+                datetime.max.replace(tzinfo=timezone.utc),
+            ),
+        )[0]
+
+    if active_or_future:
+        return sorted(
+            active_or_future,
+            key=lambda item: sort_timestamp(
+                item["shift_start"],
+                datetime.max.replace(tzinfo=timezone.utc),
+            ),
+        )[0]
+
+    return sorted(
+        shifts,
+        key=lambda item: sort_timestamp(
+            item["shift_start"],
+            datetime.min.replace(tzinfo=timezone.utc),
+        ),
+    )[-1]
+
+
+def timestamps_match(left, right, tolerance_seconds=90):
+    if left is None or right is None:
+        return False
+
+    return abs((left - right).total_seconds()) <= tolerance_seconds
+
+
+def select_attendance_route(courier, route_assigned_at):
+    routes = courier.get("routes", []) or []
+
+    if not routes:
+        return {}
+
+    normalized_routes = []
+
+    for route in routes:
+        assigned_at = parse_timestamp(route.get("assignedAt"))
+        registered_at = parse_timestamp(route.get("courierRegisteredAt"))
+        normalized_routes.append(
+            {
+                "raw": route,
+                "assigned_at": assigned_at,
+                "registered_at": registered_at,
+                "real_return": parse_timestamp(route.get("realReturn")),
+            }
+        )
+
+    if route_assigned_at is not None:
+        for route in normalized_routes:
+            if timestamps_match(route["assigned_at"], route_assigned_at):
+                return route
+
+    open_routes = [
+        route
+        for route in normalized_routes
+        if route["real_return"] is None
+    ]
+
+    if open_routes:
+        return sorted(
+            open_routes,
+            key=lambda item: sort_timestamp(
+                item["assigned_at"] or item["registered_at"],
+                datetime.min.replace(tzinfo=timezone.utc),
+            ),
+        )[-1]
+
+    return sorted(
+        normalized_routes,
+        key=lambda item: sort_timestamp(
+            item["assigned_at"] or item["registered_at"],
+            datetime.min.replace(tzinfo=timezone.utc),
+        ),
+    )[-1]
+
+
+def calculate_queue_wait_minutes(available_since, courier_registered_at, assigned_at, fetched_at):
+    if available_since is None:
+        return None
+
+    wait_until = None
+
+    for candidate in [courier_registered_at, assigned_at, fetched_at]:
+        if candidate is not None and candidate >= available_since:
+            wait_until = candidate
+            break
+
+    if wait_until is None:
+        return None
+
+    return int(round((wait_until - available_since).total_seconds() / 60))
+
+
+def get_attendance_info(attendance_by_driver, driver_id, route_assigned_at, fetched_at):
+    courier = attendance_by_driver.get(driver_id) or {}
+    shift = select_attendance_shift(courier, fetched_at)
+    route = select_attendance_route(courier, route_assigned_at)
+    route_raw = route.get("raw", {}) or {}
+    courier_registered_at = parse_timestamp(route_raw.get("courierRegisteredAt"))
+    attendance_assigned_at = parse_timestamp(route_raw.get("assignedAt"))
+    available_since = shift.get("available_for_shift_since")
+
+    return {
+        "shift_id": shift.get("shift_id"),
+        "shift_name": shift.get("shift_name"),
+        "shift_start": shift.get("shift_start"),
+        "shift_end": shift.get("shift_end"),
+        "available_for_shift_since": available_since,
+        "courier_registered_at": courier_registered_at,
+        "attendance_assigned_at": attendance_assigned_at,
+        "queue_wait_minutes": calculate_queue_wait_minutes(
+            available_since,
+            courier_registered_at,
+            attendance_assigned_at,
+            fetched_at,
+        ),
+    }
+
+
+def build_rows(payload, request_url, status_code, fetch_batch_id, fetched_at, attendance_by_driver=None):
     agency_id = payload.get("agency_id")
+    attendance_by_driver = attendance_by_driver or {}
     raw_rows = []
     km_rows = []
 
@@ -166,6 +381,12 @@ def build_rows(payload, request_url, status_code, fetch_batch_id, fetched_at):
         warehouse_name = str(personal_info.get("warehouse_name") or "").strip()
         license_plate = str(vehicle.get("license_plate") or "").strip()
         current_state = str(status.get("current_state") or "").strip()
+        attendance_info = get_attendance_info(
+            attendance_by_driver,
+            driver_id,
+            route_assigned_at,
+            fetched_at,
+        )
 
         raw_rows.append(
             (
@@ -181,6 +402,14 @@ def build_rows(payload, request_url, status_code, fetch_batch_id, fetched_at):
                 license_plate,
                 current_state,
                 route_assigned_at,
+                attendance_info["shift_id"],
+                attendance_info["shift_name"],
+                attendance_info["shift_start"],
+                attendance_info["shift_end"],
+                attendance_info["available_for_shift_since"],
+                attendance_info["courier_registered_at"],
+                attendance_info["attendance_assigned_at"],
+                attendance_info["queue_wait_minutes"],
                 fetched_at,
                 request_url,
                 status_code,
@@ -203,6 +432,14 @@ def build_rows(payload, request_url, status_code, fetch_batch_id, fetched_at):
                 status.get("next_stop"),
                 status.get("is_departure_delayed"),
                 to_int(status.get("delay_minutes")),
+                attendance_info["shift_id"],
+                attendance_info["shift_name"],
+                attendance_info["shift_start"],
+                attendance_info["shift_end"],
+                attendance_info["available_for_shift_since"],
+                attendance_info["courier_registered_at"],
+                attendance_info["attendance_assigned_at"],
+                attendance_info["queue_wait_minutes"],
                 to_decimal(vehicle.get("temperature")),
                 parse_timestamp(vehicle.get("last_measurement_timestamp")),
                 parse_timestamp(status.get("loading_finished_at")),
@@ -248,6 +485,14 @@ def insert_raw_rows(cursor, rows):
             license_plate,
             current_state,
             route_assigned_at,
+            shift_id,
+            shift_name,
+            shift_start,
+            shift_end,
+            available_for_shift_since,
+            courier_registered_at,
+            attendance_assigned_at,
+            queue_wait_minutes,
             fetched_at,
             request_url,
             status_code,
@@ -277,6 +522,14 @@ def upsert_km_rows(cursor, rows):
             next_stop,
             is_departure_delayed,
             delay_minutes,
+            shift_id,
+            shift_name,
+            shift_start,
+            shift_end,
+            available_for_shift_since,
+            courier_registered_at,
+            attendance_assigned_at,
+            queue_wait_minutes,
             temperature,
             last_measurement_timestamp,
             loading_finished_at,
@@ -299,6 +552,14 @@ def upsert_km_rows(cursor, rows):
             next_stop = excluded.next_stop,
             is_departure_delayed = excluded.is_departure_delayed,
             delay_minutes = excluded.delay_minutes,
+            shift_id = excluded.shift_id,
+            shift_name = excluded.shift_name,
+            shift_start = excluded.shift_start,
+            shift_end = excluded.shift_end,
+            available_for_shift_since = excluded.available_for_shift_since,
+            courier_registered_at = excluded.courier_registered_at,
+            attendance_assigned_at = excluded.attendance_assigned_at,
+            queue_wait_minutes = excluded.queue_wait_minutes,
             temperature = excluded.temperature,
             last_measurement_timestamp = excluded.last_measurement_timestamp,
             loading_finished_at = excluded.loading_finished_at,
@@ -328,6 +589,20 @@ def main():
 
     request_url, status_code, payload = fetch_drivers()
     fetched_at = datetime.now(timezone.utc)
+    work_date = fetched_at.astimezone(LOCAL_TIMEZONE).date().isoformat()
+    attendance_by_driver = {}
+
+    try:
+        attendance_url, attendance_status, attendance_payload = fetch_attendance(work_date)
+        attendance_by_driver = build_attendance_by_driver(attendance_payload)
+        print(
+            f"fetch-attendance status={attendance_status} date={work_date} couriers={len(attendance_by_driver)} url={attendance_url}"
+        )
+    except requests.RequestException as exc:
+        print(
+            f"FIGYELEM: fetch-attendance sikertelen date={work_date}: {exc}"
+        )
+
     fetch_batch_id = str(uuid4())
     raw_rows, km_rows = build_rows(
         payload,
@@ -335,6 +610,7 @@ def main():
         status_code,
         fetch_batch_id,
         fetched_at,
+        attendance_by_driver,
     )
 
     print(

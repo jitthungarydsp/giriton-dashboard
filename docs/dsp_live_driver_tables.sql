@@ -11,6 +11,14 @@ create table if not exists public.dsp_drivers_live_raw (
     license_plate text,
     current_state text,
     route_assigned_at timestamptz,
+    shift_id text,
+    shift_name text,
+    shift_start timestamptz,
+    shift_end timestamptz,
+    available_for_shift_since timestamptz,
+    courier_registered_at timestamptz,
+    attendance_assigned_at timestamptz,
+    queue_wait_minutes integer,
     fetched_at timestamptz not null default now(),
     request_url text,
     status_code integer,
@@ -36,6 +44,14 @@ create table if not exists public.dsp_route_km_latest (
     next_stop text,
     is_departure_delayed boolean,
     delay_minutes integer,
+    shift_id text,
+    shift_name text,
+    shift_start timestamptz,
+    shift_end timestamptz,
+    available_for_shift_since timestamptz,
+    courier_registered_at timestamptz,
+    attendance_assigned_at timestamptz,
+    queue_wait_minutes integer,
     temperature numeric(10,2),
     last_measurement_timestamp timestamptz,
     loading_finished_at timestamptz,
@@ -51,8 +67,34 @@ create table if not exists public.dsp_route_km_latest (
     primary key (driver_id, route_assigned_at)
 );
 
+alter table public.dsp_drivers_live_raw
+    add column if not exists shift_id text,
+    add column if not exists shift_name text,
+    add column if not exists shift_start timestamptz,
+    add column if not exists shift_end timestamptz,
+    add column if not exists available_for_shift_since timestamptz,
+    add column if not exists courier_registered_at timestamptz,
+    add column if not exists attendance_assigned_at timestamptz,
+    add column if not exists queue_wait_minutes integer;
+
+alter table public.dsp_route_km_latest
+    add column if not exists shift_id text,
+    add column if not exists shift_name text,
+    add column if not exists shift_start timestamptz,
+    add column if not exists shift_end timestamptz,
+    add column if not exists available_for_shift_since timestamptz,
+    add column if not exists courier_registered_at timestamptz,
+    add column if not exists attendance_assigned_at timestamptz,
+    add column if not exists queue_wait_minutes integer;
+
 create index if not exists idx_dsp_route_km_latest_last_seen
     on public.dsp_route_km_latest (last_seen_at desc);
 
 create index if not exists idx_dsp_route_km_latest_license_plate
     on public.dsp_route_km_latest (license_plate);
+
+create index if not exists idx_dsp_drivers_live_raw_available_since
+    on public.dsp_drivers_live_raw (available_for_shift_since);
+
+create index if not exists idx_dsp_route_km_latest_available_since
+    on public.dsp_route_km_latest (available_for_shift_since);
