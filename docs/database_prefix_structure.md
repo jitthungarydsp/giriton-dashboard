@@ -84,8 +84,16 @@ nevezzuk at azonnal. Elso lepesben alias view-kat hozunk letre prefixelt nevekke
 | `ops_peopleforce_complaints` | `peopleforce_complaints` | reklamaciok |
 | `ops_peopleforce_card_statuses` | `peopleforce_card_statuses` | futar/admin visszajelzo lampak |
 
+## Futtathato SQL-ek
+
+| Fajl | Mire valo | Biztonsagi szint |
+| --- | --- | --- |
+| `database_prefix_alias_views.sql` | Prefixelt view-kat keszit a regi tablak fole. Tesztelesre jo. | Nem rombolo |
+| `database_rename_tables_to_prefixed.sql` | A regi VALODI tablakat atnevezi prefixelt nevekre. | Eles migracio |
+
 ## Fontos
 
-- Ezek elso korben view-k, nem uj adatos tablak.
-- Az app es a robotok tovabbra is hasznalhatjak a regi neveket.
-- Ha mar minden stabil, kesobb donthetunk tenyleges tabla-atnevezesrol vagy kulon schema-krol.
+- A `database_prefix_alias_views.sql` csak tesztelesre valo, mert view-kat hoz letre.
+- A `database_rename_tables_to_prefixed.sql` mar tenylegesen atnevezi a tablakat.
+- A tenyleges atnevezes utan a Streamlit oldalakat es robotokat is at kell vezetni az uj nevekre.
+- Ha mar minden stabil, kesobb donthetunk kulon schema-krol is.
