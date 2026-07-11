@@ -47,6 +47,9 @@ nevezzuk at azonnal. Elso lepesben alias view-kat hozunk letre prefixelt nevekke
 | `stg_dsp_route_delay` | `dsp_route_delay_statistics` | route keses statisztika |
 | `stg_dsp_route_distance` | `dsp_route_distance_calculated` | szamolt route tavolsag |
 | `stg_dsp_route_km_latest` | `dsp_route_km_latest` | live km/tura allapot |
+| `stg_dsp_attendance_shifts` | `dsp_attendance_shifts` | DSP attendance muszak bontas |
+| `stg_dsp_attendance_routes` | `dsp_attendance_routes` | DSP attendance route bontas |
+| `stg_dsp_shift_route_summary` | `dsp_shift_route_summary` | route + muszak parositas |
 | `stg_jitt_invoice_performance_couriers` | uj stage tabla | Courier Hub performance futar bontas |
 
 ### Mart
@@ -55,6 +58,7 @@ nevezzuk at azonnal. Elso lepesben alias view-kat hozunk letre prefixelt nevekke
 | --- | --- | --- |
 | `mart_dsp_driver_month` | `dsp_driver_month_summary` | havi futar KPI |
 | `mart_courier_card_stats` | `courier_card_stats` | Kiflis kartya gyors stat |
+| `mart_dsp_route_stories` | uj mart tabla | route szintu szoveges tortenet |
 
 ### Billing
 
