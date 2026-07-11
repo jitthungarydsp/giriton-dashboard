@@ -47,6 +47,7 @@ nevezzuk at azonnal. Elso lepesben alias view-kat hozunk letre prefixelt nevekke
 | `stg_dsp_route_delay` | `dsp_route_delay_statistics` | route keses statisztika |
 | `stg_dsp_route_distance` | `dsp_route_distance_calculated` | szamolt route tavolsag |
 | `stg_dsp_route_km_latest` | `dsp_route_km_latest` | live km/tura allapot |
+| `stg_jitt_invoice_performance_couriers` | uj stage tabla | Courier Hub performance futar bontas |
 
 ### Mart
 

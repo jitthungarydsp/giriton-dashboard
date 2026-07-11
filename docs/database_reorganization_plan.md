@@ -44,6 +44,7 @@ robot adat. Eles tablat csak kulon jovahagyassal nevezunk at vagy torlunk.
 | `dsp_route_delay_statistics` | Turaszintu keses statisztika |
 | `dsp_route_distance_calculated` | Szamolt turatavolsag |
 | `dsp_route_km_latest` | Live API-bol latott utolso km/tura allapot |
+| `stg_jitt_invoice_performance_couriers` | Courier Hub performance futar bontas es szerzodeses mutatok |
 
 ### Mart / app
 

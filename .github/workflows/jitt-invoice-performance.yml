@@ -95,3 +95,21 @@ jobs:
           fi
 
           python scripts/load_jitt_invoice_performance_raw.py "${args[@]}"
+
+      - name: Build Courier Hub performance stage
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            START_DATE="2026-06-01"
+            END_DATE=""
+          else
+            START_DATE="${{ inputs.start_date }}"
+            END_DATE="${{ inputs.end_date }}"
+          fi
+
+          args=(--start-date "$START_DATE")
+
+          if [ -n "$END_DATE" ]; then
+            args+=(--end-date "$END_DATE")
+          fi
+
+          python scripts/build_jitt_invoice_performance_stage.py "${args[@]}"
