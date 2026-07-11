@@ -10,3 +10,4 @@ robotframework-seleniumlibrary
 selenium
 psycopg2-binary
 python-dotenv
+openpyxl
