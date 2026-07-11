@@ -90,7 +90,6 @@ jobs:
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout
@@ -111,7 +110,6 @@ jobs:
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$DATABASE_URL" || (echo "Missing DATABASE_URL secret" && exit 1)
 
       - name: Load JITT invoice workbook
         run: |
