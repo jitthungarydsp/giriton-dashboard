@@ -23,8 +23,8 @@ DEFAULT_DSP_ID = 8
 DEFAULT_START_DATE = "2026-06-01"
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 WAREHOUSE_TABLES = {
-    1: ("BUD1", "jitt_invoice_performance_bud1_raw"),
-    2: ("BUD2", "jitt_invoice_performance_bud2_raw"),
+    1: ("BUD1", ["raw_jitt_invoice_perf_bud1", "jitt_invoice_performance_bud1_raw"]),
+    2: ("BUD2", ["raw_jitt_invoice_perf_bud2", "jitt_invoice_performance_bud2_raw"]),
 }
 
 
@@ -201,7 +201,7 @@ def build_raw_row(
     response_json,
     fetch_batch_id,
 ):
-    warehouse_code, _table_name = WAREHOUSE_TABLES[warehouse_id]
+    warehouse_code, _table_names = WAREHOUSE_TABLES[warehouse_id]
     now_utc = datetime.now(timezone.utc).isoformat()
 
     return {
@@ -262,6 +262,44 @@ def post_supabase_rows(table_name, rows):
     return len(rows)
 
 
+def is_missing_table_response(response):
+    if response.status_code == 404:
+        return True
+
+    text = response.text.lower()
+
+    return (
+        "could not find the table" in text
+        or ("relation" in text and "does not exist" in text)
+        or ("pgrst" in text and "not found" in text)
+    )
+
+
+def post_supabase_rows_with_fallback(table_names, rows):
+    if not rows:
+        return "", 0
+
+    last_error = None
+
+    for table_name in table_names:
+        try:
+            count = post_supabase_rows(table_name, rows)
+            return table_name, count
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+
+            if response is not None and is_missing_table_response(response):
+                last_error = exc
+                continue
+
+            raise
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError("No target table names configured.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Courier Hub performance raw import JITT invoice rendszerhez."
@@ -320,14 +358,14 @@ def main():
     headers = build_courier_hub_headers()
     fetch_batch_id = str(uuid4())
     rows_by_table = {
-        table_name: []
-        for _warehouse_code, table_name in WAREHOUSE_TABLES.values()
+        tuple(table_names): []
+        for _warehouse_code, table_names in WAREHOUSE_TABLES.values()
     }
     ok_count = 0
     failed_count = 0
 
     for warehouse_id in warehouse_ids:
-        warehouse_code, table_name = WAREHOUSE_TABLES[warehouse_id]
+        warehouse_code, table_names = WAREHOUSE_TABLES[warehouse_id]
 
         for date_from, date_to in iter_chunks(
             start_date,
@@ -353,7 +391,7 @@ def main():
                         f"Courier Hub HTTP {status_code}: {str(response_json)[:500]}"
                     )
 
-                rows_by_table[table_name].append(
+                rows_by_table[tuple(table_names)].append(
                     build_raw_row(
                         args.dsp_code,
                         args.dsp_id,
@@ -377,15 +415,18 @@ def main():
                 )
 
     if args.dry_run:
-        for table_name, rows in rows_by_table.items():
-            print(f"DRY_RUN {table_name}: rows={len(rows)}")
+        for table_names, rows in rows_by_table.items():
+            print(f"DRY_RUN {list(table_names)}: rows={len(rows)}")
         print(f"SUMMARY ok={ok_count} failed={failed_count}")
         return
 
     written = 0
 
-    for table_name, rows in rows_by_table.items():
-        count = post_supabase_rows(table_name, rows)
+    for table_names, rows in rows_by_table.items():
+        table_name, count = post_supabase_rows_with_fallback(
+            list(table_names),
+            rows,
+        )
         written += count
         print(f"DB_UPSERT {table_name}: {count}")
 
