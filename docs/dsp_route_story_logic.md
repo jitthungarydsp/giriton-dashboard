@@ -71,6 +71,9 @@ Kozvetlen raw JSON-bol:
 python scripts\build_dsp_route_stories.py --start-date 2026-06-01 --raw
 ```
 
+A raw JSON forrasokat napi bontasban olvassa, mert a `response_json` mezo nagy,
+es egy teljes honap egyben Supabase statement timeoutot okozhat.
+
 Proba feltoltes nelkul:
 
 ```powershell

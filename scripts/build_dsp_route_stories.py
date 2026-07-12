@@ -3,7 +3,7 @@ import os
 import sys
 import tomllib
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -130,6 +130,14 @@ def today_budapest():
 
 def parse_date(value):
     return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def iter_dates(start_date, end_date):
+    current = start_date
+
+    while current <= end_date:
+        yield current
+        current += timedelta(days=1)
 
 
 def parse_datetime(value):
@@ -263,12 +271,19 @@ def read_table_range(
 ):
     rows = []
     selected_columns = ",".join(columns)
-    filters = [
-        f"select={selected_columns}",
-        f"work_date=gte.{start_date.isoformat()}",
-        f"work_date=lte.{end_date.isoformat()}",
-        f"order={order}",
-    ]
+    filters = [f"select={selected_columns}"]
+
+    if start_date == end_date:
+        filters.append(f"work_date=eq.{start_date.isoformat()}")
+    else:
+        filters.extend(
+            [
+                f"work_date=gte.{start_date.isoformat()}",
+                f"work_date=lte.{end_date.isoformat()}",
+            ]
+        )
+
+    filters.append(f"order={order}")
     endpoint = f"{supabase_url}/rest/v1/{table_name}?{'&'.join(filters)}"
 
     while True:
@@ -301,6 +316,39 @@ def read_table_range(
     return rows
 
 
+def read_table_range_by_day(
+    supabase_url,
+    service_role_key,
+    table_name,
+    columns,
+    start_date,
+    end_date,
+    order,
+    page_size=250,
+):
+    rows = []
+
+    for current_date in iter_dates(start_date, end_date):
+        daily_rows = read_table_range(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            table_name=table_name,
+            columns=columns,
+            start_date=current_date,
+            end_date=current_date,
+            order=order,
+            page_size=page_size,
+        )
+
+        if daily_rows is None:
+            return None
+
+        rows.extend(daily_rows)
+        print(f"{table_name}: {current_date.isoformat()} -> {len(daily_rows)} sor")
+
+    return rows
+
+
 def read_first_existing_table(
     supabase_url,
     service_role_key,
@@ -309,25 +357,56 @@ def read_first_existing_table(
     start_date,
     end_date,
     order,
+    chunk_by_day=False,
+    page_size=1000,
 ):
     missing = []
+    last_error = None
 
     for table_name in candidates:
-        rows = read_table_range(
-            supabase_url=supabase_url,
-            service_role_key=service_role_key,
-            table_name=table_name,
-            columns=columns,
-            start_date=start_date,
-            end_date=end_date,
-            order=order,
-        )
+        try:
+            if chunk_by_day:
+                rows = read_table_range_by_day(
+                    supabase_url=supabase_url,
+                    service_role_key=service_role_key,
+                    table_name=table_name,
+                    columns=columns,
+                    start_date=start_date,
+                    end_date=end_date,
+                    order=order,
+                    page_size=page_size,
+                )
+            else:
+                rows = read_table_range(
+                    supabase_url=supabase_url,
+                    service_role_key=service_role_key,
+                    table_name=table_name,
+                    columns=columns,
+                    start_date=start_date,
+                    end_date=end_date,
+                    order=order,
+                    page_size=page_size,
+                )
+        except requests.HTTPError as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", 0)
+            error_text = str(exc)
+
+            if status_code >= 500 or "statement timeout" in error_text.lower():
+                last_error = exc
+                missing.append(f"{table_name} ({error_text[:160]})")
+                print(f"{table_name} nem hasznalhato, kovetkezo forras probaja indul.")
+                continue
+
+            raise
 
         if rows is None:
             missing.append(table_name)
             continue
 
         return table_name, rows
+
+    if last_error is not None:
+        raise last_error
 
     raise RuntimeError(
         "Nem talalhato forras tabla. Probalt tablazatok: "
@@ -852,6 +931,8 @@ def load_raw_sources(supabase_url, service_role_key, start_date, end_date):
         start_date=start_date,
         end_date=end_date,
         order="work_date.asc",
+        chunk_by_day=True,
+        page_size=50,
     )
     detail_table, detail_raw_rows = read_first_existing_table(
         supabase_url=supabase_url,
@@ -860,7 +941,9 @@ def load_raw_sources(supabase_url, service_role_key, start_date, end_date):
         columns=DRIVER_DETAIL_RAW_COLUMNS,
         start_date=start_date,
         end_date=end_date,
-        order="work_date.asc,driver_id.asc",
+        order="driver_id.asc",
+        chunk_by_day=True,
+        page_size=100,
     )
 
     summary_rows = parse_raw_attendance_rows(attendance_raw_rows)
