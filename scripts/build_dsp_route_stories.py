@@ -35,6 +35,14 @@ DRIVER_DETAIL_RAW_TABLE_CANDIDATES = [
     "raw_dsp_driver_detail",
     "dsp_driver_detail_raw",
 ]
+DISTANCE_TABLE_CANDIDATES = [
+    "stg_dsp_route_distance",
+    "dsp_route_distance_calculated",
+]
+BOOKING_TABLE_CANDIDATES = [
+    "raw_muszakpro_bookings",
+    "foglalasok_raw",
+]
 
 
 SUMMARY_COLUMNS = [
@@ -84,6 +92,25 @@ DRIVER_DETAIL_RAW_COLUMNS = [
     "work_date",
     "driver_id",
     "response_json",
+]
+
+DISTANCE_COLUMNS = [
+    "work_date",
+    "driver_id",
+    "route_id",
+    "gps_distance_km",
+    "checkpoint_straight_km",
+    "gps_points_count",
+    "checkpoints_count",
+]
+
+BOOKING_COLUMNS = [
+    "work_date",
+    "courier_id",
+    "shift_text",
+    "warehouse",
+    "booking_code",
+    "serial",
 ]
 
 
@@ -173,11 +200,66 @@ def to_int(value):
         return None
 
 
+def to_float(value):
+    if value in (None, ""):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def minutes_between(start, end):
     if not start or not end:
         return None
 
     return int(round((end - start).total_seconds() / 60))
+
+
+def parse_time_text(value):
+    text = str(value or "").strip()
+
+    if not text:
+        return None
+
+    import re
+
+    match = re.search(r"(\d{1,2}):(\d{2})", text)
+
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+
+    if hour > 23 or minute > 59:
+        return None
+
+    return hour, minute
+
+
+def combine_date_time(work_date, time_parts):
+    if not work_date or not time_parts:
+        return None
+
+    if isinstance(work_date, date):
+        parsed_date = work_date
+    else:
+        try:
+            parsed_date = parse_date(str(work_date)[:10])
+        except ValueError:
+            return None
+
+    hour, minute = time_parts
+
+    return datetime(
+        parsed_date.year,
+        parsed_date.month,
+        parsed_date.day,
+        hour,
+        minute,
+    )
 
 
 def format_datetime(value):
@@ -216,6 +298,15 @@ def format_queue_delta(value):
         return f"{format_minutes(abs(value))} perccel korabban"
 
     return "pontosan a muszak kezdetekor"
+
+
+def format_km(value):
+    number = to_float(value)
+
+    if number is None:
+        return "nincs adat"
+
+    return f"{number:.1f} km"
 
 
 def supabase_headers(service_role_key, extra=None):
@@ -491,9 +582,116 @@ def build_arrival_stats(arrivals):
     return grouped
 
 
+def build_distance_lookup(distance_rows):
+    lookup = {}
+
+    for row in distance_rows:
+        key = normalize_route_key(
+            row.get("work_date"),
+            row.get("driver_id"),
+            row.get("route_id"),
+        )
+
+        if key is None:
+            continue
+
+        lookup[key] = {
+            "gps_distance_km": to_float(row.get("gps_distance_km")),
+            "checkpoint_straight_km": to_float(
+                row.get("checkpoint_straight_km")
+            ),
+        }
+
+    return lookup
+
+
+def build_booking_lookup(booking_rows):
+    lookup = defaultdict(list)
+
+    for row in booking_rows:
+        courier_id = to_int(row.get("courier_id"))
+        work_date = str(row.get("work_date") or "").strip()[:10]
+        shift_text = str(row.get("shift_text") or "").strip()
+
+        if courier_id is None or not work_date or not shift_text:
+            continue
+
+        shift_start = combine_date_time(
+            work_date,
+            parse_time_text(shift_text),
+        )
+
+        lookup[(work_date, courier_id)].append(
+            {
+                "work_date": work_date,
+                "courier_id": courier_id,
+                "shift_text": shift_text,
+                "warehouse": row.get("warehouse"),
+                "booking_code": row.get("booking_code"),
+                "serial": row.get("serial"),
+                "shift_start": shift_start,
+            }
+        )
+
+    for key, rows in lookup.items():
+        rows.sort(
+            key=lambda item: (
+                item.get("shift_start") or datetime.max,
+                item.get("shift_text") or "",
+            )
+        )
+
+    return lookup
+
+
+def find_booking_context(row, booking_lookup):
+    work_date = str(row.get("work_date") or "").strip()[:10]
+    courier_id = to_int(row.get("courier_id"))
+    bookings = booking_lookup.get((work_date, courier_id), [])
+    shift_start = parse_datetime(row.get("shift_start"))
+    assigned_at = parse_datetime(row.get("assigned_at"))
+    real_return = parse_datetime(row.get("real_return"))
+    planned_return = parse_datetime(row.get("planned_return"))
+    reference_start = shift_start or assigned_at
+    return_reference = real_return or planned_return
+    next_booking = None
+
+    for booking in bookings:
+        booking_start = booking.get("shift_start")
+
+        if not booking_start:
+            continue
+
+        if reference_start and booking_start <= reference_start:
+            continue
+
+        next_booking = booking
+        break
+
+    next_shift_delay = None
+
+    if next_booking and return_reference and next_booking.get("shift_start"):
+        next_shift_delay = minutes_between(
+            next_booking["shift_start"],
+            return_reference,
+        )
+
+    return {
+        "booking_shift_count": len(bookings),
+        "next_booking_shift_text": (
+            next_booking.get("shift_text") if next_booking else None
+        ),
+        "next_booking_shift_start": (
+            next_booking.get("shift_start") if next_booking else None
+        ),
+        "next_shift_delay_minutes": next_shift_delay,
+    }
+
+
 def choose_matching_shift(route_row, shifts):
     planned_departure = parse_datetime(route_row.get("planned_departure"))
     registered_at = parse_datetime(route_row.get("courier_registered_at"))
+    assigned_at = parse_datetime(route_row.get("assigned_at"))
 
     def contains(shift, value):
         if not value:
@@ -506,6 +704,60 @@ def choose_matching_shift(route_row, shifts):
             return False
 
         return shift_start <= value <= shift_end
+
+    queue_candidates = []
+
+    if assigned_at:
+        for shift in shifts:
+            available_at = parse_datetime(
+                shift.get("available_for_shift_since")
+            )
+
+            if not available_at or available_at > assigned_at:
+                continue
+
+            queue_candidates.append(
+                (
+                    abs((assigned_at - available_at).total_seconds()),
+                    available_at,
+                    shift,
+                )
+            )
+
+    if queue_candidates:
+        queue_candidates.sort(
+            key=lambda item: (
+                item[0],
+                -item[1].timestamp(),
+            )
+        )
+        return queue_candidates[0][2]
+
+    if assigned_at:
+        shift_start_candidates = []
+
+        for shift in shifts:
+            shift_start = parse_datetime(shift.get("shift_start"))
+
+            if not shift_start or shift_start > assigned_at:
+                continue
+
+            shift_start_candidates.append(
+                (
+                    abs((assigned_at - shift_start).total_seconds()),
+                    shift_start,
+                    shift,
+                )
+            )
+
+        if shift_start_candidates:
+            shift_start_candidates.sort(
+                key=lambda item: (
+                    item[0],
+                    -item[1].timestamp(),
+                )
+            )
+            return shift_start_candidates[0][2]
 
     for shift in shifts:
         if contains(shift, planned_departure) or contains(shift, registered_at):
@@ -680,7 +932,7 @@ def parse_raw_driver_detail_arrivals(raw_rows):
     return arrivals
 
 
-def build_story(row, stats):
+def build_story(row, stats, distance, booking):
     shift_start = parse_datetime(row.get("shift_start"))
     shift_end = parse_datetime(row.get("shift_end"))
     available_at = parse_datetime(row.get("available_for_shift_since"))
@@ -699,7 +951,9 @@ def build_story(row, stats):
     real_route = minutes_between(real_departure, real_return)
     assigned_to_return = minutes_between(assigned_at, real_return)
 
-    if available_at and assigned_at:
+    if assigned_at and not courier_registered_at:
+        assignment_mode = "MANUAL"
+    elif available_at and assigned_at:
         assignment_mode = "QUEUE"
     elif assigned_at:
         assignment_mode = "MANUAL"
@@ -738,6 +992,11 @@ def build_story(row, stats):
         registration_text = (
             f"A DSP route regisztracio ideje: {format_datetime(courier_registered_at)}."
         )
+    elif assigned_at:
+        registration_text = (
+            "DSP route regisztracio ideje: nincs adat, "
+            "ez manualis tura kiosztast jelez."
+        )
     else:
         registration_text = "DSP route regisztracio ideje: nincs adat."
 
@@ -752,6 +1011,43 @@ def build_story(row, stats):
         f"valos {format_minutes(real_route)}, "
         f"kiosztastol visszaerkezesig {format_minutes(assigned_to_return)}."
     )
+    distance_text = (
+        "Megtett tavolsag: "
+        f"GPS alapjan {format_km(distance.get('gps_distance_km'))}, "
+        f"cimek kozti egyenes tavolsag {format_km(distance.get('checkpoint_straight_km'))}."
+    )
+    booking_count = int(booking.get("booking_shift_count") or 0)
+    next_shift_start = booking.get("next_booking_shift_start")
+    next_shift_text = booking.get("next_booking_shift_text")
+    next_shift_delay = booking.get("next_shift_delay_minutes")
+    booking_text = (
+        f"A Foglalasok tabla szerint ezen a napon {booking_count} muszakja volt."
+    )
+
+    if next_shift_text and next_shift_start:
+        if next_shift_delay is None:
+            next_shift_text_value = (
+                f"A kovetkezo foglalt muszak: {next_shift_text} "
+                f"({format_datetime(next_shift_start)}), de a keses nem szamolhato."
+            )
+        elif next_shift_delay > 0:
+            next_shift_text_value = (
+                f"A kovetkezo foglalt muszak: {next_shift_text} "
+                f"({format_datetime(next_shift_start)}). "
+                f"A route visszaerkezese alapjan ebbol {format_minutes(next_shift_delay)} keses lett."
+            )
+        else:
+            next_shift_text_value = (
+                f"A kovetkezo foglalt muszak: {next_shift_text} "
+                f"({format_datetime(next_shift_start)}). "
+                f"A route visszaerkezese alapjan nem kesik, "
+                f"{format_minutes(abs(next_shift_delay))} tartalek maradt."
+            )
+    elif booking_count:
+        next_shift_text_value = "A Foglalasok tabla szerint nincs tovabbi aznapi muszak."
+    else:
+        next_shift_text_value = "A Foglalasok tablaban nincs aznapi muszak adat."
+
     address_text = (
         f"Cimek: {stats['address_count']} db. "
         f"Tervezetthez kepest korai: {stats['planned_early_count']} db, "
@@ -769,6 +1065,9 @@ def build_story(row, stats):
             registration_text,
             loading_text,
             route_time_text,
+            distance_text,
+            booking_text,
+            next_shift_text_value,
             address_text,
         ]
     )
@@ -790,6 +1089,12 @@ def build_story(row, stats):
         "planned_route_minutes": planned_route,
         "real_route_minutes": real_route,
         "assigned_to_return_minutes": assigned_to_return,
+        "gps_distance_km": distance.get("gps_distance_km"),
+        "checkpoint_straight_km": distance.get("checkpoint_straight_km"),
+        "booking_shift_count": booking_count,
+        "next_booking_shift_text": next_shift_text,
+        "next_booking_shift_start": next_shift_start,
+        "next_shift_delay_minutes": next_shift_delay,
         "assignment_mode": assignment_mode,
         "story_text": story_text,
     }
@@ -802,7 +1107,14 @@ def serialize_datetime(value):
     return value.isoformat(timespec="seconds")
 
 
-def build_output_rows(summary_rows, arrival_stats, source_summary_table, source_arrivals_table):
+def build_output_rows(
+    summary_rows,
+    arrival_stats,
+    distance_lookup,
+    booking_lookup,
+    source_summary_table,
+    source_arrivals_table,
+):
     output_rows = []
 
     for row in summary_rows:
@@ -825,7 +1137,15 @@ def build_output_rows(summary_rows, arrival_stats, source_summary_table, source_
                 "time_window_late_count": 0,
             },
         )
-        story = build_story(row, stats)
+        distance = distance_lookup.get(
+            key,
+            {
+                "gps_distance_km": None,
+                "checkpoint_straight_km": None,
+            },
+        )
+        booking = find_booking_context(row, booking_lookup)
+        story = build_story(row, stats, distance, booking)
 
         output_rows.append(
             {
@@ -856,6 +1176,14 @@ def build_output_rows(summary_rows, arrival_stats, source_summary_table, source_
                 "planned_route_minutes": story["planned_route_minutes"],
                 "real_route_minutes": story["real_route_minutes"],
                 "assigned_to_return_minutes": story["assigned_to_return_minutes"],
+                "gps_distance_km": story["gps_distance_km"],
+                "checkpoint_straight_km": story["checkpoint_straight_km"],
+                "booking_shift_count": story["booking_shift_count"],
+                "next_booking_shift_text": story["next_booking_shift_text"],
+                "next_booking_shift_start": serialize_datetime(
+                    story["next_booking_shift_start"]
+                ),
+                "next_shift_delay_minutes": story["next_shift_delay_minutes"],
                 "address_count": stats["address_count"],
                 "planned_early_count": stats["planned_early_count"],
                 "planned_late_count": stats["planned_late_count"],
@@ -957,6 +1285,37 @@ def load_raw_sources(supabase_url, service_role_key, start_date, end_date):
     )
 
 
+def load_optional_table(
+    supabase_url,
+    service_role_key,
+    candidates,
+    columns,
+    start_date,
+    end_date,
+    order,
+    chunk_by_day=False,
+    page_size=500,
+):
+    try:
+        table_name, rows = read_first_existing_table(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            candidates=candidates,
+            columns=columns,
+            start_date=start_date,
+            end_date=end_date,
+            order=order,
+            chunk_by_day=chunk_by_day,
+            page_size=page_size,
+        )
+    except Exception as exc:
+        print(f"Opcionális forras kihagyva ({', '.join(candidates)}): {exc}")
+        return "", []
+
+    print(f"Opcionális forras tabla: {table_name}, sorok: {len(rows)}")
+    return table_name, rows
+
+
 def load_sources(supabase_url, service_role_key, start_date, end_date, force_raw):
     if not force_raw:
         try:
@@ -1034,10 +1393,37 @@ def main():
     print(f"Forras summary tabla: {summary_table}, sorok: {len(summary_rows)}")
     print(f"Forras cimsor tabla: {arrivals_table}, sorok: {len(arrivals)}")
 
+    distance_table, distance_rows = load_optional_table(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        candidates=DISTANCE_TABLE_CANDIDATES,
+        columns=DISTANCE_COLUMNS,
+        start_date=start_date,
+        end_date=end_date,
+        order="work_date.asc,driver_id.asc,route_id.asc",
+        chunk_by_day=True,
+        page_size=500,
+    )
+    booking_table, booking_rows = load_optional_table(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        candidates=BOOKING_TABLE_CANDIDATES,
+        columns=BOOKING_COLUMNS,
+        start_date=start_date,
+        end_date=end_date,
+        order="work_date.asc,courier_id.asc,shift_text.asc",
+        chunk_by_day=True,
+        page_size=500,
+    )
+
     arrival_stats = build_arrival_stats(arrivals)
+    distance_lookup = build_distance_lookup(distance_rows)
+    booking_lookup = build_booking_lookup(booking_rows)
     output_rows = build_output_rows(
         summary_rows=summary_rows,
         arrival_stats=arrival_stats,
+        distance_lookup=distance_lookup,
+        booking_lookup=booking_lookup,
         source_summary_table=summary_table,
         source_arrivals_table=arrivals_table,
     )

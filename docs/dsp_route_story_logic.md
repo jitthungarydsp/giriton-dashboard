@@ -9,7 +9,9 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
   - `dsp_order_arrivals`: cimszintu tervezett/valos erkezes es idoablak statusz.
 - Raw fallback:
   - `dsp_attendance_raw`: `fetch-attendance` napi JSON, ebbol jonnek a muszakok, `availableForShiftSince` es route idok.
-  - `dsp_driver_detail_raw`: `fetch-drivers-detail` napi/futar JSON, ebbol jonnek a cimek es idoablakok.
+- `dsp_driver_detail_raw`: `fetch-drivers-detail` napi/futar JSON, ebbol jonnek a cimek es idoablakok.
+- `dsp_route_distance_calculated`: route ID szintu szamolt GPS tavolsag.
+- `foglalasok_raw`: MuszakPro/Foglalasok sorok, ebbol jon a napi foglalt muszakszam es a kovetkezo muszak kockazata.
 - Cel tabla: `mart_dsp_route_stories`.
 
 ## Fo mezok
@@ -21,6 +23,8 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
 - Tervezett indulas: `planned_departure`.
 - Tervezett visszaerkezes: `planned_return`.
 - Valos visszaerkezes: `real_return`.
+- Megtett tavolsag: `gps_distance_km`, fallback informaciokent `checkpoint_straight_km`.
+- Foglalas szerinti muszakok: `foglalasok_raw` sorok szama `(work_date, courier_id)` szerint.
 
 ## Szamitasok
 
@@ -33,6 +37,10 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
 - Tervezett turaido: `planned_return - planned_departure`.
 - Valos turaido: `real_return - real_departure`.
 - Teljes kiosztastol visszaerkezesig ido: `real_return - assigned_at`.
+- Kovetkezo muszak kesesi kockazat:
+  - megkeresi az adott futar kovetkezo foglalt muszakjat ugyanazon a napon,
+  - ha `real_return` kesobb van, mint a kovetkezo muszak kezdete, akkor keses,
+  - ha korabban van, akkor a kulonbseg a tartalek ido.
 - Tervezett cimhez kepest korai/keso: `tervhez_kepest_perc`.
 - Idoablakhoz kepest korai/keso: `idoablakhoz_kepest_statusz`, illetve ahol lehet, `valos_erkezes` es `idoablak_kezdete`.
 
@@ -41,6 +49,10 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
 Ha nincs `available_for_shift_since`, de van `assigned_at`, akkor a story szoveg ezt irja:
 
 `Nem latszik sorba allas, de turat kapott, ezert manualisan raktak ra.`
+
+Ha nincs `courier_registered_at`, de van `assigned_at`, akkor ezt is manualis kiosztasnak jeloljuk:
+
+`DSP route regisztracio ideje: nincs adat, ez manualis tura kiosztast jelez.`
 
 ## Frissitesi elv
 
