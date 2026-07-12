@@ -17,8 +17,11 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
 ## Fo mezok
 
 - Sorba allas: `available_for_shift_since`.
+  - Ha ez nincs, de van `courier_registered_at`, akkor a varakozas szamitasahoz `courier_registered_at` a fallback kezdopont.
 - Muszak kezdete: `shift_start`.
 - Tura kiosztasa: `assigned_at`.
+- Tura letrehozasa: `route_created_at`.
+- Tervezett bepakolas vege: `loading_time`.
 - Valos indulas: `real_departure`.
 - Tervezett indulas: `planned_departure`.
 - Tervezett visszaerkezes: `planned_return`.
@@ -29,10 +32,13 @@ Cel: minden route ID kapjon egy rovid, emberileg olvashato tortenetet 2026-06-01
 ## Szamitasok
 
 - Sorba allasi elteres: `available_for_shift_since - shift_start`.
+  - Fallback: `courier_registered_at - shift_start`.
   - Pozitiv: kesve jelentkezett elerhetonek.
   - Negativ: elobb jelentkezett elerhetonek.
 - Varakozas turara: `assigned_at - available_for_shift_since`.
-- Tervezett bepakolasi ido: `planned_departure - assigned_at`.
+  - Fallback: `assigned_at - courier_registered_at`.
+- Tervezett bepakolasi ido: `loading_time - assigned_at`, ha van `loading_time`.
+  - Fallback: `planned_departure - assigned_at`.
 - Valos bepakolasi ido: `real_departure - assigned_at`.
 - Tervezett turaido: `planned_return - planned_departure`.
 - Valos turaido: `real_return - real_departure`.
@@ -50,7 +56,7 @@ Ha nincs `available_for_shift_since`, de van `assigned_at`, akkor a story szoveg
 
 `Nem latszik sorba allas, de turat kapott, ezert manualisan raktak ra.`
 
-Ha nincs `courier_registered_at`, de van `assigned_at`, akkor ezt is manualis kiosztasnak jeloljuk:
+Ha nincs `courier_registered_at`, de van `assigned_at`, akkor ezt manualis kiosztasnak jeloljuk:
 
 `DSP route regisztracio ideje: nincs adat, ez manualis tura kiosztast jelez.`
 

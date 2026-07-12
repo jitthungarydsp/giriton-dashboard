@@ -18,8 +18,8 @@ def load_order_customers():
     except:
         ws_customers = spreadsheet.add_worksheet(
             title="DSP_Order_Customers",
-            rows=100000,
-            cols=30
+            rows=1000,
+            cols=17
         )
 
     drivers = ws_drivers.get_all_values()
@@ -108,6 +108,19 @@ def load_order_customers():
             print(
                 f"HIBA {driver_id} {datum}: {e}"
             )
+
+    target_rows = max(len(rows), 1)
+    target_cols = max(len(rows[0]) if rows else 1, 1)
+
+    try:
+        ws_customers.resize(
+            rows=target_rows,
+            cols=target_cols
+        )
+    except Exception as e:
+        print(
+            f"DSP_Order_Customers meretezes kihagyva: {e}"
+        )
 
     ws_customers.clear()
 

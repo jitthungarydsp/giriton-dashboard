@@ -870,6 +870,83 @@ def parse_raw_attendance_rows(raw_rows):
     return summary_rows
 
 
+def build_route_detail_lookup(raw_rows):
+    lookup = {}
+
+    for raw in raw_rows:
+        response_json = raw.get("response_json") or {}
+        work_date = raw.get("work_date")
+        driver_id = to_int(raw.get("driver_id")) or to_int(
+            response_json.get("courier-id")
+        )
+
+        if driver_id is None:
+            continue
+
+        for route in response_json.get("routes", []) or []:
+            route_id = route.get("id") or route.get("routeId")
+            key = normalize_route_key(work_date, driver_id, route_id)
+
+            if key is None:
+                continue
+
+            lookup[key] = {
+                "route_created_at": serialize_datetime(
+                    parse_datetime(route.get("createdAt"))
+                ),
+                "courier_registered_at": serialize_datetime(
+                    parse_datetime(route.get("courierRegisteredAt"))
+                ),
+                "assigned_at": serialize_datetime(parse_datetime(route.get("assignedAt"))),
+                "loading_time": serialize_datetime(
+                    parse_datetime(route.get("loadingTime"))
+                ),
+                "planned_departure": serialize_datetime(
+                    parse_datetime(route.get("plannedDeparture"))
+                ),
+                "real_departure": serialize_datetime(
+                    parse_datetime(route.get("realDeparture"))
+                ),
+                "planned_return": serialize_datetime(
+                    parse_datetime(route.get("plannedReturn"))
+                ),
+                "real_return": serialize_datetime(parse_datetime(route.get("realReturn"))),
+            }
+
+    return lookup
+
+
+def enrich_summary_with_route_details(summary_rows, route_detail_lookup):
+    enriched_rows = []
+    route_detail_fields = [
+        "route_created_at",
+        "courier_registered_at",
+        "assigned_at",
+        "loading_time",
+        "planned_departure",
+        "real_departure",
+        "planned_return",
+        "real_return",
+    ]
+
+    for row in summary_rows:
+        key = normalize_route_key(
+            row.get("work_date"),
+            row.get("courier_id"),
+            row.get("route_id"),
+        )
+        detail = route_detail_lookup.get(key, {})
+        enriched = dict(row)
+
+        for field in route_detail_fields:
+            if detail.get(field):
+                enriched[field] = detail[field]
+
+        enriched_rows.append(enriched)
+
+    return enriched_rows
+
+
 def parse_raw_driver_detail_arrivals(raw_rows):
     arrivals = []
 
@@ -936,25 +1013,28 @@ def build_story(row, stats, distance, booking):
     shift_start = parse_datetime(row.get("shift_start"))
     shift_end = parse_datetime(row.get("shift_end"))
     available_at = parse_datetime(row.get("available_for_shift_since"))
+    route_created_at = parse_datetime(row.get("route_created_at"))
     courier_registered_at = parse_datetime(row.get("courier_registered_at"))
     assigned_at = parse_datetime(row.get("assigned_at"))
+    loading_time = parse_datetime(row.get("loading_time"))
     planned_departure = parse_datetime(row.get("planned_departure"))
     real_departure = parse_datetime(row.get("real_departure"))
     planned_return = parse_datetime(row.get("planned_return"))
     real_return = parse_datetime(row.get("real_return"))
+    queue_started_at = available_at or courier_registered_at
 
-    queue_entry_delta = minutes_between(shift_start, available_at)
-    queue_wait = minutes_between(available_at, assigned_at)
-    planned_loading = minutes_between(assigned_at, planned_departure)
+    queue_entry_delta = minutes_between(shift_start, queue_started_at)
+    queue_wait = minutes_between(queue_started_at, assigned_at)
+    planned_loading = minutes_between(assigned_at, loading_time or planned_departure)
     real_loading = minutes_between(assigned_at, real_departure)
     planned_route = minutes_between(planned_departure, planned_return)
     real_route = minutes_between(real_departure, real_return)
     assigned_to_return = minutes_between(assigned_at, real_return)
 
-    if assigned_at and not courier_registered_at:
-        assignment_mode = "MANUAL"
-    elif available_at and assigned_at:
+    if available_at and assigned_at:
         assignment_mode = "QUEUE"
+    elif courier_registered_at and assigned_at:
+        assignment_mode = "REGISTERED"
     elif assigned_at:
         assignment_mode = "MANUAL"
     else:
@@ -967,6 +1047,12 @@ def build_story(row, stats, distance, booking):
     if available_at:
         availability_text = (
             f"Elerhetonek {format_datetime(available_at)} idopontban jelentkezett, "
+            f"ez a muszakkezdeshez kepest {format_queue_delta(queue_entry_delta)} tortent."
+        )
+    elif courier_registered_at:
+        availability_text = (
+            f"Kulon availableForShiftSince nem latszik, "
+            f"de a DSP route regisztracio {format_datetime(courier_registered_at)} idopontban megtortent, "
             f"ez a muszakkezdeshez kepest {format_queue_delta(queue_entry_delta)} tortent."
         )
     elif assigned_at:
@@ -1076,8 +1162,10 @@ def build_story(row, stats, distance, booking):
         "shift_start": shift_start,
         "shift_end": shift_end,
         "available_for_shift_since": available_at,
+        "route_created_at": route_created_at,
         "courier_registered_at": courier_registered_at,
         "assigned_at": assigned_at,
+        "loading_time": loading_time,
         "planned_departure": planned_departure,
         "real_departure": real_departure,
         "planned_return": planned_return,
@@ -1161,10 +1249,12 @@ def build_output_rows(
                 "available_for_shift_since": serialize_datetime(
                     story["available_for_shift_since"]
                 ),
+                "route_created_at": serialize_datetime(story["route_created_at"]),
                 "courier_registered_at": serialize_datetime(
                     story["courier_registered_at"]
                 ),
                 "assigned_at": serialize_datetime(story["assigned_at"]),
+                "loading_time": serialize_datetime(story["loading_time"]),
                 "planned_departure": serialize_datetime(story["planned_departure"]),
                 "real_departure": serialize_datetime(story["real_departure"]),
                 "planned_return": serialize_datetime(story["planned_return"]),
@@ -1275,6 +1365,11 @@ def load_raw_sources(supabase_url, service_role_key, start_date, end_date):
     )
 
     summary_rows = parse_raw_attendance_rows(attendance_raw_rows)
+    route_detail_lookup = build_route_detail_lookup(detail_raw_rows)
+    summary_rows = enrich_summary_with_route_details(
+        summary_rows,
+        route_detail_lookup,
+    )
     arrivals = parse_raw_driver_detail_arrivals(detail_raw_rows)
 
     return (
