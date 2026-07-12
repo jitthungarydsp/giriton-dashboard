@@ -296,7 +296,7 @@ def format_queue_delta(value):
         return f"{format_minutes(value)} kesessel"
 
     if value < 0:
-        return f"{format_minutes(abs(value))} perccel korabban"
+        return f"{format_minutes(abs(value))} korabban"
 
     return "pontosan a muszak kezdetekor"
 
@@ -532,6 +532,89 @@ def read_first_existing_table(
         "Nem talalhato forras tabla. Probalt tablazatok: "
         + ", ".join(missing or candidates)
     )
+
+
+def read_latest_work_date_from_table(supabase_url, service_role_key, table_name):
+    endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        "?select=work_date"
+        "&order=work_date.desc"
+        "&limit=1"
+    )
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(service_role_key),
+        timeout=30,
+    )
+
+    if is_missing_table_response(response):
+        return None
+
+    raise_for_supabase_error(response, table_name)
+    rows = response.json()
+
+    if not rows:
+        return None
+
+    return parse_date(rows[0].get("work_date"))
+
+
+def read_latest_work_date_from_candidates(supabase_url, service_role_key, candidates):
+    for table_name in candidates:
+        latest_date = read_latest_work_date_from_table(
+            supabase_url,
+            service_role_key,
+            table_name,
+        )
+
+        if latest_date:
+            return table_name, latest_date
+
+    return "", None
+
+
+def resolve_incremental_window(supabase_url, service_role_key, force_raw):
+    target_table, target_latest = read_latest_work_date_from_candidates(
+        supabase_url,
+        service_role_key,
+        [TARGET_TABLE],
+    )
+
+    if force_raw:
+        source_groups = [
+            ATTENDANCE_RAW_TABLE_CANDIDATES,
+            DRIVER_DETAIL_RAW_TABLE_CANDIDATES,
+        ]
+    else:
+        source_groups = [
+            SUMMARY_TABLE_CANDIDATES + ATTENDANCE_RAW_TABLE_CANDIDATES,
+            ARRIVALS_TABLE_CANDIDATES + DRIVER_DETAIL_RAW_TABLE_CANDIDATES,
+        ]
+
+    source_latest_values = []
+
+    for candidates in source_groups:
+        source_table, latest_date = read_latest_work_date_from_candidates(
+            supabase_url,
+            service_role_key,
+            candidates,
+        )
+
+        if latest_date:
+            source_latest_values.append((source_table, latest_date))
+
+    if not source_latest_values:
+        return parse_date(DEFAULT_START_DATE), today_budapest(), target_latest, []
+
+    source_latest = min(latest_date for _table_name, latest_date in source_latest_values)
+
+    if target_latest and target_latest >= source_latest:
+        return None, None, target_latest, source_latest_values
+
+    start_date = target_latest or parse_date(DEFAULT_START_DATE)
+    end_date = source_latest
+
+    return start_date, end_date, target_latest, source_latest_values
 
 
 def normalize_route_key(work_date, courier_id, route_id):
@@ -1094,6 +1177,7 @@ def build_story(row, stats, distance, booking):
     planned_route = minutes_between(planned_departure, planned_return)
     real_route = minutes_between(real_departure, real_return)
     assigned_to_return = minutes_between(assigned_at, real_return)
+    total_route = assigned_to_return
 
     if available_at and assigned_at:
         assignment_mode = "QUEUE"
@@ -1104,128 +1188,135 @@ def build_story(row, stats, distance, booking):
     else:
         assignment_mode = "UNKNOWN"
 
-    shift_text = (
-        f"A muszak {format_datetime(shift_start)} es {format_datetime(shift_end)} kozott volt."
-    )
+    shift_text = f"{format_datetime(shift_start)} - {format_datetime(shift_end)}"
 
     if available_at:
         availability_text = (
-            f"Elerhetonek {format_datetime(available_at)} idopontban jelentkezett, "
-            f"ez a muszakkezdeshez kepest {format_queue_delta(queue_entry_delta)} tortent."
+            f"elerheto: {format_datetime(available_at)} "
+            f"({format_queue_delta(queue_entry_delta)} a muszakkezdeshez kepest)"
         )
     elif courier_registered_at:
         availability_text = (
-            f"Kulon availableForShiftSince nem latszik, "
-            f"de a DSP route regisztracio {format_datetime(courier_registered_at)} idopontban megtortent, "
-            f"ez a muszakkezdeshez kepest {format_queue_delta(queue_entry_delta)} tortent."
+            "elerheto: nincs kulon availableForShiftSince, "
+            f"route regisztracio: {format_datetime(courier_registered_at)} "
+            f"({format_queue_delta(queue_entry_delta)} a muszakkezdeshez kepest)"
         )
     elif assigned_at:
         availability_text = (
-            "Nem latszik sorba allas, de van assignedAt, "
-            "ezert manualisan raktak ra."
+            "elerheto/sorba allas: nincs adat, de van assignedAt, "
+            "ezert manualis kiosztasnak latszik"
         )
     else:
-        availability_text = "Nem latszik sorba allas es tura kiosztas sem."
+        availability_text = "elerheto/sorba allas: nincs adat"
 
     assignment_text = (
-        f"A turat {format_datetime(assigned_at)} idopontban kapta meg."
+        f"tura kiosztva: {format_datetime(assigned_at)}"
     )
 
     if queue_wait is not None:
-        wait_text = f"A turara {format_minutes(queue_wait)} ideig vart."
+        wait_text = f"sorban allt: {format_minutes(queue_wait)}"
     elif assigned_at:
-        wait_text = "Varakozasi ido nem szamolhato, mert nincs sorba allasi ido."
+        wait_text = "sorban allt: nem szamolhato, mert nincs sorba allasi ido"
     else:
-        wait_text = "Varakozasi ido nem szamolhato."
+        wait_text = "sorban allt: nem szamolhato"
 
     if courier_registered_at:
         registration_text = (
-            f"A DSP route regisztracio ideje: {format_datetime(courier_registered_at)}."
+            f"route regisztracio: {format_datetime(courier_registered_at)}"
         )
     elif assigned_at:
         registration_text = (
-            "DSP route regisztracio ideje: nincs adat, "
-            "ez manualis tura kiosztast jelez."
+            "route regisztracio: nincs adat, ez manualis tura kiosztast jelez"
         )
     else:
-        registration_text = "DSP route regisztracio ideje: nincs adat."
+        registration_text = "route regisztracio: nincs adat"
 
     loading_text = (
-        "Bepakolasi ido: "
-        f"tervezett {format_minutes(planned_loading)}, "
-        f"valos {format_minutes(real_loading)}."
+        f"tervezett: {format_minutes(planned_loading)} | "
+        f"valos: {format_minutes(real_loading)}"
     )
     route_time_text = (
-        "Tura hossza: "
-        f"tervezett {format_minutes(planned_route)}, "
-        f"valos {format_minutes(real_route)}, "
-        f"kiosztastol visszaerkezesig {format_minutes(assigned_to_return)}."
+        f"tervezett: {format_minutes(planned_route)} | "
+        f"valos: {format_minutes(real_route)} | "
+        f"osszes: {format_minutes(total_route)}"
     )
     distance_text = (
-        "Megtett tavolsag: "
-        f"GPS alapjan {format_km(distance.get('gps_distance_km'))}, "
-        f"cimek kozti egyenes tavolsag {format_km(distance.get('checkpoint_straight_km'))}."
+        f"GPS: {format_km(distance.get('gps_distance_km'))} | "
+        f"cimek kozti egyenes: {format_km(distance.get('checkpoint_straight_km'))}"
     )
     booking_count = int(booking.get("booking_shift_count") or 0)
-    next_shift_start = booking.get("next_booking_shift_start")
+    next_shift_start = parse_datetime(booking.get("next_booking_shift_start"))
     next_shift_text = booking.get("next_booking_shift_text")
     next_shift_delay = booking.get("next_shift_delay_minutes")
     booking_text = (
-        f"A Foglalasok tabla szerint ezen a napon {booking_count} muszakja volt."
+        f"napi foglalt muszakok szama: {booking_count}"
     )
 
     if next_shift_text and next_shift_start:
         if next_shift_delay is None:
             next_shift_text_value = (
                 f"A kovetkezo foglalt muszak: {next_shift_text} "
-                f"({format_datetime(next_shift_start)}), de a keses nem szamolhato."
+                f"({format_datetime(next_shift_start)}), de a keses nem szamolhato"
             )
         elif next_shift_delay > 0:
             next_shift_text_value = (
                 f"A kovetkezo foglalt muszak: {next_shift_text} "
                 f"({format_datetime(next_shift_start)}). "
-                f"A route visszaerkezese alapjan ebbol {format_minutes(next_shift_delay)} keses lett."
+                f"A route visszaerkezese alapjan ebbol {format_minutes(next_shift_delay)} keses lett"
             )
         else:
             next_shift_text_value = (
                 f"A kovetkezo foglalt muszak: {next_shift_text} "
                 f"({format_datetime(next_shift_start)}). "
                 f"A route visszaerkezese alapjan nem kesik, "
-                f"{format_minutes(abs(next_shift_delay))} tartalek maradt."
+                f"{format_minutes(abs(next_shift_delay))} tartalek maradt"
             )
     elif booking_count:
-        next_shift_text_value = "A Foglalasok tabla szerint nincs tovabbi aznapi muszak."
+        next_shift_text_value = "nincs tovabbi aznapi foglalt muszak"
     else:
-        next_shift_text_value = "A Foglalasok tablaban nincs aznapi muszak adat."
+        next_shift_text_value = "nincs aznapi foglalasi adat"
 
     address_text = (
-        f"Cimek: {stats['address_count']} db. "
-        f"Tervezetthez kepest korai: {stats['planned_early_count']} db, "
-        f"keso: {stats['planned_late_count']} db. "
-        f"Idokapuhoz kepest korai: {stats['time_window_early_count']} db, "
-        f"keso: {stats['time_window_late_count']} db."
+        f"osszes: {stats['address_count']} db | "
+        f"tervezetthez kepest korai: {stats['planned_early_count']} db | "
+        f"tervezetthez kepest keso: {stats['planned_late_count']} db | "
+        f"idokapuhoz kepest korai: {stats['time_window_early_count']} db | "
+        f"idokapuhoz kepest keso: {stats['time_window_late_count']} db"
     )
 
-    story_text = " ".join(
+    story_text = "\n".join(
         [
-            shift_text,
-            availability_text,
-            assignment_text,
-            wait_text,
-            registration_text,
-            loading_text,
-            route_time_text,
-            distance_text,
-            booking_text,
-            next_shift_text_value,
-            address_text,
+            "Route tortenet",
+            f"  Futar: {row.get('courier_name') or 'nincs adat'} (#{row.get('courier_id') or 'nincs adat'})",
+            f"  Route: {row.get('route_id') or 'nincs adat'}",
+            "",
+            "Muszak es sor",
+            f"  - muszak: {shift_text}",
+            f"  - {availability_text}",
+            f"  - {registration_text}",
+            f"  - {assignment_text}",
+            f"  - {wait_text}",
+            "",
+            "Idok",
+            f"  - bepakolas: {loading_text}",
+            f"  - tura hossz: {route_time_text}",
+            f"  - tavolsag: {distance_text}",
+            "",
+            "Foglalas es kovetkezo muszak",
+            f"  - {booking_text}",
+            f"  - {next_shift_text_value}",
+            "",
+            "Cimek",
+            f"  - {address_text}",
         ]
     )
 
     return {
         "shift_start": shift_start,
         "shift_end": shift_end,
+        "available_at": available_at,
         "available_for_shift_since": available_at,
+        "queue_started_at": queue_started_at,
         "route_created_at": route_created_at,
         "courier_registered_at": courier_registered_at,
         "assigned_at": assigned_at,
@@ -1241,6 +1332,7 @@ def build_story(row, stats, distance, booking):
         "planned_route_minutes": planned_route,
         "real_route_minutes": real_route,
         "assigned_to_return_minutes": assigned_to_return,
+        "total_route_minutes": total_route,
         "gps_distance_km": distance.get("gps_distance_km"),
         "checkpoint_straight_km": distance.get("checkpoint_straight_km"),
         "booking_shift_count": booking_count,
@@ -1310,9 +1402,11 @@ def build_output_rows(
                 "shift_name": row.get("shift_name"),
                 "shift_start": serialize_datetime(story["shift_start"]),
                 "shift_end": serialize_datetime(story["shift_end"]),
+                "available_at": serialize_datetime(story["available_at"]),
                 "available_for_shift_since": serialize_datetime(
                     story["available_for_shift_since"]
                 ),
+                "queue_started_at": serialize_datetime(story["queue_started_at"]),
                 "route_created_at": serialize_datetime(story["route_created_at"]),
                 "courier_registered_at": serialize_datetime(
                     story["courier_registered_at"]
@@ -1330,6 +1424,7 @@ def build_output_rows(
                 "planned_route_minutes": story["planned_route_minutes"],
                 "real_route_minutes": story["real_route_minutes"],
                 "assigned_to_return_minutes": story["assigned_to_return_minutes"],
+                "total_route_minutes": story["total_route_minutes"],
                 "gps_distance_km": story["gps_distance_km"],
                 "checkpoint_straight_km": story["checkpoint_straight_km"],
                 "booking_shift_count": story["booking_shift_count"],
@@ -1533,8 +1628,11 @@ def parse_args():
     )
     parser.add_argument(
         "--start-date",
-        default=DEFAULT_START_DATE,
-        help="Kezdo datum YYYY-MM-DD formatumban. Alap: 2026-06-01.",
+        default="",
+        help=(
+            "Kezdo datum YYYY-MM-DD formatumban. "
+            "Ha nincs megadva, a script a mart tabla legutolso napjatol frissit."
+        ),
     )
     parser.add_argument(
         "--end-date",
@@ -1551,19 +1649,53 @@ def parse_args():
         action="store_true",
         help="Kozvetlenul a raw JSON tablakbol epit, stage tablak kihagyasaval.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Akkor is ujraepiti a tartomanyt, ha az inkrementalis ellenorzes szerint friss.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    start_date = parse_date(args.start_date)
-    end_date = parse_date(args.end_date) if args.end_date else today_budapest()
+    supabase_url = get_required_setting("SUPABASE_URL").rstrip("/")
+    service_role_key = get_required_setting("SUPABASE_SERVICE_ROLE_KEY")
+
+    if args.start_date:
+        start_date = parse_date(args.start_date)
+        end_date = parse_date(args.end_date) if args.end_date else today_budapest()
+    else:
+        (
+            start_date,
+            end_date,
+            target_latest,
+            source_latest_values,
+        ) = resolve_incremental_window(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            force_raw=args.raw,
+        )
+
+        source_text = ", ".join(
+            f"{table_name}={latest_date}"
+            for table_name, latest_date in source_latest_values
+        ) or "nincs forras datum"
+        print(
+            f"Inkrementalis ellenorzes: target={target_latest or 'nincs adat'}, "
+            f"forrasok: {source_text}"
+        )
+
+        if start_date is None and end_date is None:
+            if not args.force:
+                print("Route story adatok frissek, nincs uj nap amit epiteni kell.")
+                return
+
+            start_date = target_latest or parse_date(DEFAULT_START_DATE)
+            end_date = parse_date(args.end_date) if args.end_date else today_budapest()
 
     if end_date < start_date:
         raise ValueError("Az end-date nem lehet korabbi, mint a start-date.")
-
-    supabase_url = get_required_setting("SUPABASE_URL").rstrip("/")
-    service_role_key = get_required_setting("SUPABASE_SERVICE_ROLE_KEY")
 
     print(f"DSP route story epites: {start_date} - {end_date}")
 

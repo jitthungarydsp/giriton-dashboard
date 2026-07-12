@@ -206,12 +206,17 @@ def main():
         print("DSP stage/mart SQL frissites alapbol kikapcsolva. Kapcsolo: --run-sql-refresh")
 
     if not args.skip_stories:
+        route_story_date_args = (
+            date_args
+            if args.start_date or args.end_date or args.no_from_latest
+            else []
+        )
         run_command(
             "DSP route story frissites",
             [
                 sys.executable,
                 "scripts/build_dsp_route_stories.py",
-                *date_args,
+                *route_story_date_args,
                 "--raw",
                 *dry_run_arg,
             ],
