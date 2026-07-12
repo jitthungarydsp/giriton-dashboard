@@ -719,6 +719,7 @@ def find_booking_context(row, booking_lookup):
 
 def choose_matching_shift(route_row, shifts):
     planned_departure = parse_datetime(route_row.get("planned_departure"))
+    real_departure = parse_datetime(route_row.get("real_departure"))
     registered_at = parse_datetime(route_row.get("courier_registered_at"))
     assigned_at = parse_datetime(route_row.get("assigned_at"))
 
@@ -734,6 +735,30 @@ def choose_matching_shift(route_row, shifts):
 
         return shift_start <= value <= shift_end
 
+    window_references = [
+        planned_departure,
+        real_departure,
+        assigned_at,
+        registered_at,
+    ]
+
+    for reference in window_references:
+        if not reference:
+            continue
+
+        matches = [shift for shift in shifts if contains(shift, reference)]
+
+        if matches:
+            return min(
+                matches,
+                key=lambda shift: abs(
+                    (
+                        (parse_datetime(shift.get("shift_start")) or reference)
+                        - reference
+                    ).total_seconds()
+                ),
+            )
+
     queue_candidates = []
 
     if assigned_at:
@@ -741,6 +766,7 @@ def choose_matching_shift(route_row, shifts):
             available_at = parse_datetime(
                 shift.get("available_for_shift_since")
             )
+            shift_start = parse_datetime(shift.get("shift_start"))
 
             if not available_at or available_at > assigned_at:
                 continue
@@ -748,6 +774,13 @@ def choose_matching_shift(route_row, shifts):
             queue_candidates.append(
                 (
                     abs((assigned_at - available_at).total_seconds()),
+                    0 if shift_start and shift_start <= assigned_at else 1,
+                    abs(
+                        (
+                            (shift_start or assigned_at)
+                            - assigned_at
+                        ).total_seconds()
+                    ),
                     available_at,
                     shift,
                 )
@@ -757,10 +790,12 @@ def choose_matching_shift(route_row, shifts):
         queue_candidates.sort(
             key=lambda item: (
                 item[0],
-                -item[1].timestamp(),
+                item[1],
+                item[2],
+                -item[3].timestamp(),
             )
         )
-        return queue_candidates[0][2]
+        return queue_candidates[0][4]
 
     if assigned_at:
         shift_start_candidates = []
