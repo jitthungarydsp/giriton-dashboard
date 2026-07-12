@@ -62,3 +62,5 @@ alter table public.mart_dsp_route_stories
     add column if not exists next_booking_shift_text text,
     add column if not exists next_booking_shift_start timestamp,
     add column if not exists next_shift_delay_minutes integer;
+
+notify pgrst, 'reload schema';

@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 import tomllib
 from collections import defaultdict
@@ -334,6 +335,34 @@ def raise_for_supabase_error(response, table_name):
             ) from exc
 
         raise
+
+
+def missing_column_from_response(response):
+    if response.status_code != 400:
+        return None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if payload.get("code") != "PGRST204":
+        return None
+
+    message = str(payload.get("message") or response.text or "")
+    match = re.search(r"Could not find the '([^']+)' column", message)
+
+    if not match:
+        return None
+
+    return match.group(1)
+
+
+def remove_column_from_rows(rows, column_name):
+    return [
+        {key: value for key, value in row.items() if key != column_name}
+        for row in rows
+    ]
 
 
 def is_missing_table_response(response):
@@ -1304,16 +1333,42 @@ def upsert_rows(supabase_url, service_role_key, rows, chunk_size=500):
             "Prefer": "resolution=merge-duplicates,return=minimal",
         },
     )
+    skipped_columns = set()
 
     for start in range(0, len(rows), chunk_size):
         chunk = rows[start : start + chunk_size]
-        response = requests.post(
-            endpoint,
-            headers=headers,
-            json=chunk,
-            timeout=60,
-        )
-        raise_for_supabase_error(response, TARGET_TABLE)
+        payload = chunk
+
+        if skipped_columns:
+            for column_name in skipped_columns:
+                payload = remove_column_from_rows(payload, column_name)
+
+        while True:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            missing_column = missing_column_from_response(response)
+
+            if missing_column:
+                if missing_column in skipped_columns and not any(
+                    missing_column in row for row in payload
+                ):
+                    raise_for_supabase_error(response, TARGET_TABLE)
+
+                skipped_columns.add(missing_column)
+                payload = remove_column_from_rows(payload, missing_column)
+                print(
+                    f"FIGYELEM: {TARGET_TABLE} tabla nem tartalmazza ezt az oszlopot, "
+                    f"feltoltes kozben kihagyva: {missing_column}"
+                )
+                continue
+
+            raise_for_supabase_error(response, TARGET_TABLE)
+            break
+
         print(f"Feltoltve: {start + len(chunk)} / {len(rows)} route story")
 
 
