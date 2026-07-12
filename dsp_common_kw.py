@@ -1,6 +1,8 @@
 import os
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
+from datetime import timedelta
+import calendar
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
@@ -26,7 +28,6 @@ def parse_date(value):
         return datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError:
         return None
-
 
 def dsp_date_range():
     today = local_today()

@@ -29,6 +29,14 @@ SOURCE_NAME = "fetch-drivers"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TABLE_SQL_PATH = PROJECT_ROOT / "docs" / "dsp_live_driver_tables.sql"
+LIVE_RAW_TABLE_CANDIDATES = [
+    "raw_dsp_live_drivers",
+    "dsp_drivers_live_raw",
+]
+ROUTE_KM_TABLE_CANDIDATES = [
+    "stg_dsp_route_km_latest",
+    "dsp_route_km_latest",
+]
 RAW_COLUMNS = [
     "fetch_batch_id",
     "source_name",
@@ -565,6 +573,53 @@ def raise_for_supabase_error(response):
         raise
 
 
+def is_missing_table_response(response):
+    if response.status_code not in (400, 404):
+        return False
+
+    text = response.text.lower()
+
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def table_exists(table_name, select_column):
+    supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        f"?select={select_column}&limit=1"
+    )
+    response = requests.get(
+        endpoint,
+        headers={
+            "apikey": get_required_env("SUPABASE_SERVICE_ROLE_KEY"),
+            "Authorization": f"Bearer {get_required_env('SUPABASE_SERVICE_ROLE_KEY')}",
+        },
+        timeout=30,
+    )
+
+    if is_missing_table_response(response):
+        return False
+
+    raise_for_supabase_error(response)
+    return True
+
+
+def resolve_table(candidates, select_column):
+    for table_name in candidates:
+        if table_exists(table_name, select_column):
+            return table_name
+
+    raise RuntimeError(
+        "Egyik Supabase tabla sem talalhato: "
+        + ", ".join(candidates)
+    )
+
+
 def post_supabase_rows(table_name, rows, columns, on_conflict, prefer):
     if not rows:
         return 0
@@ -594,7 +649,7 @@ def post_supabase_rows(table_name, rows, columns, on_conflict, prefer):
 
 def insert_raw_rows_rest(rows):
     return post_supabase_rows(
-        "dsp_drivers_live_raw",
+        resolve_table(LIVE_RAW_TABLE_CANDIDATES, "fetch_batch_id"),
         rows,
         RAW_COLUMNS,
         "fetch_batch_id,driver_id",
@@ -604,7 +659,7 @@ def insert_raw_rows_rest(rows):
 
 def upsert_km_rows_rest(rows):
     return post_supabase_rows(
-        "dsp_route_km_latest",
+        resolve_table(ROUTE_KM_TABLE_CANDIDATES, "driver_id"),
         rows,
         KM_COLUMNS,
         "driver_id,route_assigned_at",
@@ -766,8 +821,9 @@ def main():
         return
 
     database_url = get_optional_env("DATABASE_URL")
+    use_database_url = get_optional_env("DSP_LIVE_USE_DATABASE_URL") == "1"
 
-    if database_url:
+    if database_url and use_database_url:
         with psycopg2.connect(database_url) as connection:
             with connection.cursor() as cursor:
                 ensure_tables(cursor)

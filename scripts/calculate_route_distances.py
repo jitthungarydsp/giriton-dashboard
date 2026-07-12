@@ -26,6 +26,14 @@ DEFAULT_MAX_SPEED_KMH = 130
 DEFAULT_MAX_SEGMENT_KM = 5
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TABLE_SQL_PATH = PROJECT_ROOT / "docs" / "dsp_route_distance_calculated.sql"
+DRIVER_DETAIL_RAW_TABLE_CANDIDATES = [
+    "raw_dsp_driver_detail",
+    "dsp_driver_detail_raw",
+]
+ROUTE_DISTANCE_TABLE_CANDIDATES = [
+    "stg_dsp_route_distance",
+    "dsp_route_distance_calculated",
+]
 ROUTE_DISTANCE_COLUMNS = [
     "source_name",
     "calculation_version",
@@ -216,8 +224,53 @@ def supabase_headers():
     }
 
 
+def is_missing_table_response(response):
+    if response.status_code not in (400, 404):
+        return False
+
+    text = response.text.lower()
+
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def table_exists(table_name, select_column="work_date"):
+    supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        f"?select={select_column}&limit=1"
+    )
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(),
+        timeout=30,
+    )
+
+    if is_missing_table_response(response):
+        return False
+
+    raise_for_supabase_error(response)
+    return True
+
+
+def resolve_table(candidates, select_column="work_date"):
+    for table_name in candidates:
+        if table_exists(table_name, select_column=select_column):
+            return table_name
+
+    raise RuntimeError(
+        "Egyik Supabase tabla sem talalhato: "
+        + ", ".join(candidates)
+    )
+
+
 def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, page_size=500):
     supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    table_name = resolve_table(DRIVER_DETAIL_RAW_TABLE_CANDIDATES)
     filters = [
         "select=driver_id,work_date,response_json,fetched_at",
         "order=work_date.asc,driver_id.asc",
@@ -231,7 +284,7 @@ def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, pa
         )
 
     endpoint = (
-        f"{supabase_url}/rest/v1/dsp_driver_detail_raw"
+        f"{supabase_url}/rest/v1/{table_name}"
         f"?{'&'.join(filters)}"
     )
     rows = []
@@ -466,8 +519,9 @@ def upsert_distance_rows(rows, batch_size=200):
         return 0
 
     supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    table_name = resolve_table(ROUTE_DISTANCE_TABLE_CANDIDATES)
     endpoint = (
-        f"{supabase_url}/rest/v1/dsp_route_distance_calculated"
+        f"{supabase_url}/rest/v1/{table_name}"
         "?on_conflict=calculation_version,driver_id,work_date,route_id"
     )
     headers = {

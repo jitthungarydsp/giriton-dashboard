@@ -29,10 +29,10 @@ except ModuleNotFoundError:
 DSP_ID = "JIT"
 ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 KIFLI_API_BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
-SOURCE_NAME = "fetch-drivers-detail"
+SOURCE_NAME = "fetch-attendance"
 TARGET_TABLE_CANDIDATES = [
-    "raw_dsp_driver_detail",
-    "dsp_driver_detail_raw",
+    "raw_dsp_attendance",
+    "dsp_attendance_raw",
 ]
 
 
@@ -58,14 +58,6 @@ def date_range(start_date, end_date):
         current = date.fromordinal(current.toordinal() + 1)
 
 
-def build_kifli_url(driver_id, work_date):
-    return (
-        f"{KIFLI_API_BASE_URL}/"
-        f"fetch-drivers-detail/{driver_id}/{work_date.isoformat()}"
-        f"?organizationId={ORGANIZATION_ID}"
-    )
-
-
 def build_attendance_url(work_date):
     return (
         f"{KIFLI_API_BASE_URL}/"
@@ -76,26 +68,6 @@ def build_attendance_url(work_date):
 
 def fetch_attendance(work_date):
     url = build_attendance_url(work_date)
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_driver_ids_for_date(work_date):
-    data = fetch_attendance(work_date)
-    driver_ids = []
-
-    for courier in data.get("couriers", []) or []:
-        courier_id = courier.get("courierId")
-
-        if courier_id is not None:
-            driver_ids.append(int(courier_id))
-
-    return sorted(set(driver_ids))
-
-
-def fetch_driver_detail(driver_id, work_date):
-    url = build_kifli_url(driver_id, work_date)
     response = requests.get(url, timeout=60)
     response.raise_for_status()
     return url, response.status_code, response.json()
@@ -109,7 +81,7 @@ def upsert_raw_rows(rows):
     table_name = resolve_table(TARGET_TABLE_CANDIDATES)
     endpoint = (
         f"{supabase_url}/rest/v1/{table_name}"
-        "?on_conflict=source_name,driver_id,work_date"
+        "?on_conflict=source_name,dsp_id,work_date"
     )
     headers = supabase_headers(
         {
@@ -117,22 +89,16 @@ def upsert_raw_rows(rows):
             "Prefer": "resolution=merge-duplicates,return=minimal",
         }
     )
-    response = requests.post(
-        endpoint,
-        headers=headers,
-        json=rows,
-        timeout=60,
-    )
+    response = requests.post(endpoint, headers=headers, json=rows, timeout=60)
     raise_for_supabase_error(response, table_name)
     return len(rows)
 
 
-def build_raw_row(driver_id, work_date, request_url, status_code, response_json):
+def build_raw_row(work_date, request_url, status_code, response_json):
     return {
         "source_name": SOURCE_NAME,
         "organization_id": ORGANIZATION_ID,
         "dsp_id": DSP_ID,
-        "driver_id": int(driver_id),
         "work_date": work_date.isoformat(),
         "request_url": request_url,
         "status_code": int(status_code),
@@ -159,7 +125,7 @@ def resolve_work_dates(args):
         start_date = latest_date or DEFAULT_BACKFILL_START_DATE
         end_date = date.today()
         print(
-            f"Driver-detail inkrementalis indulas: tabla={table_name}, start={start_date}, end={end_date}"
+            f"Attendance inkrementalis indulas: tabla={table_name}, start={start_date}, end={end_date}"
         )
         return list(date_range(start_date, end_date))
 
@@ -171,13 +137,7 @@ def resolve_work_dates(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="fetch-drivers-detail raw feltoltes Supabase DB-be."
-    )
-    parser.add_argument("--driver-id", required=False, help="Futar ID, pelda: 7688")
-    parser.add_argument(
-        "--all-drivers",
-        action="store_true",
-        help="Az adott nap attendance-ben lathato osszes futarjat feltolti.",
+        description="fetch-attendance raw feltoltes Supabase DB-be."
     )
     parser.add_argument("--month", required=False, help="Honap YYYY-MM formatumban.")
     parser.add_argument("--start-date", required=False, help="Kezdo datum YYYY-MM-DD.")
@@ -196,9 +156,6 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    if not args.driver_id and not args.all_drivers:
-        parser.error("Adj meg --driver-id erteket vagy hasznald a --all-drivers kapcsolot.")
-
     try:
         work_dates = resolve_work_dates(args)
     except ValueError as exc:
@@ -209,46 +166,25 @@ def main():
     failed_count = 0
 
     for work_date in work_dates:
-        if args.all_drivers:
-            try:
-                driver_ids = get_driver_ids_for_date(work_date)
-                print(f"ATTENDANCE {work_date.isoformat()}: {len(driver_ids)} futar")
-            except Exception as exc:
-                failed_count += 1
-                print(f"HIBA attendance {work_date.isoformat()}: {exc}")
-                continue
-        else:
-            driver_ids = [int(args.driver_id)]
+        try:
+            request_url, status_code, response_json = fetch_attendance(work_date)
+            pending_rows.append(
+                build_raw_row(work_date, request_url, status_code, response_json)
+            )
+            fetched_count += 1
+            print(f"OK attendance {work_date.isoformat()}")
+        except Exception as exc:
+            failed_count += 1
+            print(f"HIBA attendance {work_date.isoformat()}: {exc}")
 
-        for driver_id in driver_ids:
-            try:
-                request_url, status_code, response_json = fetch_driver_detail(
-                    driver_id,
-                    work_date,
-                )
-                pending_rows.append(
-                    build_raw_row(
-                        driver_id,
-                        work_date,
-                        request_url,
-                        status_code,
-                        response_json,
-                    )
-                )
-                fetched_count += 1
-                print(f"OK driver-detail {driver_id} {work_date.isoformat()}")
-            except Exception as exc:
-                failed_count += 1
-                print(f"HIBA driver-detail {driver_id} {work_date.isoformat()}: {exc}")
+        if len(pending_rows) >= args.batch_size:
+            if not args.dry_run:
+                upsert_raw_rows(pending_rows)
 
-            if len(pending_rows) >= args.batch_size:
-                if not args.dry_run:
-                    upsert_raw_rows(pending_rows)
-
-                print(
-                    f"{'DRY RUN, DB iras kihagyva' if args.dry_run else 'DB feltoltes'}: {len(pending_rows)} sor"
-                )
-                pending_rows = []
+            print(
+                f"{'DRY RUN, DB iras kihagyva' if args.dry_run else 'DB feltoltes'}: {len(pending_rows)} sor"
+            )
+            pending_rows = []
 
     if pending_rows:
         if not args.dry_run:
@@ -258,7 +194,7 @@ def main():
             f"{'DRY RUN, DB iras kihagyva' if args.dry_run else 'DB feltoltes'}: {len(pending_rows)} sor"
         )
 
-    print(f"Kesz. Sikeres driver-detail sorok: {fetched_count}, hibak: {failed_count}")
+    print(f"Kesz. Sikeres attendance napok: {fetched_count}, hibak: {failed_count}")
 
 
 if __name__ == "__main__":
