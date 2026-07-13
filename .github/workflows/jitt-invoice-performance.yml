@@ -43,6 +43,7 @@ jobs:
       KIFLI_COURIER_HUB_COOKIE: ${{ secrets.KIFLI_COURIER_HUB_COOKIE }}
       KIFLI_COURIER_HUB_API_KEY: ${{ secrets.KIFLI_COURIER_HUB_API_KEY }}
       KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON: ${{ secrets.KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON }}
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: ${{ secrets.KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND }}
 
     steps:
       - name: Checkout
@@ -62,7 +63,7 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$KIFLI_COURIER_HUB_AUTHORIZATION$KIFLI_COURIER_HUB_BEARER_TOKEN$KIFLI_COURIER_HUB_COOKIE$KIFLI_COURIER_HUB_API_KEY$KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON" || (echo "Missing Courier Hub auth secret" && exit 1)
+          test -n "$KIFLI_COURIER_HUB_AUTHORIZATION$KIFLI_COURIER_HUB_BEARER_TOKEN$KIFLI_COURIER_HUB_COOKIE$KIFLI_COURIER_HUB_API_KEY$KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON$KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND" || (echo "Missing Courier Hub auth secret" && exit 1)
 
       - name: Load Courier Hub performance raw
         run: |

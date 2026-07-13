@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tomllib
 from datetime import date, datetime, timedelta, timezone
@@ -26,6 +27,7 @@ WAREHOUSE_TABLES = {
     1: ("BUD1", ["raw_jitt_invoice_perf_bud1", "jitt_invoice_performance_bud1_raw"]),
     2: ("BUD2", ["raw_jitt_invoice_perf_bud2", "jitt_invoice_performance_bud2_raw"]),
 }
+AUTH_REFRESH_STATUS_CODES = {401, 403}
 
 
 def get_setting(name):
@@ -166,6 +168,127 @@ def build_courier_hub_headers():
                 str(key): str(value)
                 for key, value in extra_headers.items()
             }
+        )
+
+    return headers
+
+
+def _parse_auth_command_output(output):
+    text = str(output or "").strip()
+
+    if not text:
+        return {}
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+
+        if not line:
+            continue
+
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+    raise ValueError(
+        "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND output must be JSON."
+    )
+
+
+def _headers_from_auth_payload(payload):
+    if not payload:
+        return {}
+
+    if isinstance(payload, str):
+        return {"Authorization": normalize_authorization(payload)}
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND JSON output must be an object."
+        )
+
+    headers = {}
+    nested_headers = payload.get("headers")
+
+    if isinstance(nested_headers, dict):
+        headers.update(
+            {
+                str(key): str(value)
+                for key, value in nested_headers.items()
+                if value is not None
+            }
+        )
+
+    authorization = (
+        payload.get("Authorization")
+        or payload.get("authorization")
+        or payload.get("bearer_token")
+        or payload.get("token")
+        or payload.get("access_token")
+    )
+    cookie = payload.get("Cookie") or payload.get("cookie")
+    api_key = payload.get("x-api-key") or payload.get("api_key")
+    extra_headers = payload.get("extra_headers")
+
+    if authorization:
+        headers["Authorization"] = normalize_authorization(authorization)
+
+    if cookie:
+        headers["Cookie"] = str(cookie)
+
+    if api_key:
+        headers["x-api-key"] = str(api_key)
+
+    if isinstance(extra_headers, str) and extra_headers.strip():
+        extra_headers = json.loads(extra_headers)
+
+    if isinstance(extra_headers, dict):
+        headers.update(
+            {
+                str(key): str(value)
+                for key, value in extra_headers.items()
+                if value is not None
+            }
+        )
+
+    return headers
+
+
+def refresh_courier_hub_headers():
+    command = str(
+        get_setting("KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND") or ""
+    ).strip()
+
+    if not command:
+        return {}
+
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND failed "
+            f"with exit code {completed.returncode}."
+        )
+
+    payload = _parse_auth_command_output(completed.stdout)
+    headers = _headers_from_auth_payload(payload)
+
+    if not headers:
+        raise RuntimeError(
+            "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND returned no usable auth headers."
         )
 
     return headers
@@ -385,6 +508,20 @@ def main():
                     request_url,
                     headers,
                 )
+
+                if status_code in AUTH_REFRESH_STATUS_CODES:
+                    refreshed_headers = refresh_courier_hub_headers()
+
+                    if refreshed_headers:
+                        headers.update(refreshed_headers)
+                        print(
+                            f"AUTH_REFRESH_RETRY {warehouse_code} "
+                            f"{date_from.isoformat()}..{date_to.isoformat()}"
+                        )
+                        status_code, response_json = fetch_performance(
+                            request_url,
+                            headers,
+                        )
 
                 if status_code >= 400 and not args.save_http_errors:
                     raise RuntimeError(

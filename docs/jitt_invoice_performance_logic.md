@@ -162,3 +162,39 @@ Ha van mar valodi raw JSON a DB-ben, meg kell nezni 2-3 futar sorat:
 1. A script ugyanazt hozza-e, mint a Courier Hub felulet.
 2. A `compliance_bad_percent` es `compliance_score_percent` nem keveredik-e.
 3. A `delay_level` es `compliance_level` a szerzodes szerinti savba esik-e.
+
+## 7. Courier Hub auth frissites
+
+A `scripts/load_jitt_invoice_performance_raw.py` alapbol tovabbra is elfogadja
+ezeket a statikus auth beallitasokat:
+
+- `KIFLI_COURIER_HUB_AUTHORIZATION`
+- `KIFLI_COURIER_HUB_BEARER_TOKEN`
+- `KIFLI_COURIER_HUB_COOKIE`
+- `KIFLI_COURIER_HUB_API_KEY`
+- `KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON`
+
+Ha a Courier Hub token/cookie lejar es az API `401` vagy `403` valaszt ad,
+a script megprobalja lefuttatni ezt a parancsot:
+
+```text
+KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND
+```
+
+A parancsnak JSON-t kell kiirnia stdout-ra. Elfogadott formatumok:
+
+```json
+{"Authorization": "Bearer ..."}
+```
+
+```json
+{"bearer_token": "..."}
+```
+
+```json
+{"headers": {"Authorization": "Bearer ...", "Cookie": "..."}}
+```
+
+A script a kapott headerekkel ujrahivja ugyanazt a Courier Hub API kereset.
+Ez azert fontos, mert igy a kesobbi login/Playwright vagy refresh-token megoldas
+kulon script lehet, az invoice import logikajat nem kell ujra szetszedni.
