@@ -3,6 +3,7 @@ import unicodedata
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from resources.dsp_route_explanations import (
     format_dt,
@@ -263,6 +264,44 @@ def build_performance_table(performance_df):
     )
 
 
+def select_performance_period_rows(performance_df, start_date, end_date):
+    if performance_df.empty:
+        return performance_df
+
+    df = performance_df.copy()
+    df["_date_from"] = pd.to_datetime(
+        df.get("date_from"),
+        errors="coerce",
+    ).dt.date
+    df["_date_to"] = pd.to_datetime(
+        df.get("date_to"),
+        errors="coerce",
+    ).dt.date
+    helper_columns = ["_date_from", "_date_to"]
+    selected = df
+
+    exact_rows = df[
+        (df["_date_from"] == start_date)
+        & (df["_date_to"] == end_date)
+    ]
+
+    if not exact_rows.empty:
+        selected = exact_rows
+    else:
+        inside_rows = df[
+            (df["_date_from"] >= start_date)
+            & (df["_date_to"] <= end_date)
+        ]
+        daily_rows = inside_rows[inside_rows["_date_from"] == inside_rows["_date_to"]]
+
+        if not daily_rows.empty:
+            selected = daily_rows
+        elif not inside_rows.empty:
+            selected = inside_rows
+
+    return selected.drop(columns=helper_columns, errors="ignore").copy()
+
+
 def build_story_table(stories_df):
     if stories_df.empty:
         return pd.DataFrame()
@@ -332,7 +371,7 @@ def render_formula_box():
         """
 <div class="perf-formula">
     <b>Hogyan olvassuk?</b><br>
-    Delay % = késő order / összes order. A késést itt a tervezett érkezéshez képest nézzük.<br>
+    Delay % = késő order / összes order. A fő késést itt az ügyfél-időablakhoz képest nézzük; a tervezett érkezéstől való eltérés külön látszik a route magyarázatban.<br>
     Late % = késve sorba állt vagy késve kezdett műszak / összes műszak.<br>
     Compliance = 100 - (0.7 × no-show % + 0.3 × late %).<br>
     Az availableForShiftSince és courierRegisteredAt azért látszik külön, mert ha ugyanaz, akkor a rendszer a sorba állást és route-regisztrációt ugyanarra az eseményre adta vissza.
@@ -385,9 +424,91 @@ def render_route_expanders(stories_df, orders_df):
                 st.caption("Ehhez a route-hoz nincs cím/order bontás betöltve.")
                 continue
 
-            st.markdown(
-                render_route_path_html(route_orders),
-                unsafe_allow_html=True,
+            route_html = render_route_path_html(route_orders)
+            components.html(
+                f"""
+                <style>
+                body {{
+                    margin: 0;
+                    font-family: sans-serif;
+                    color: #0f172a;
+                }}
+                .perf-route-path {{
+                    position: relative;
+                    margin: 14px 0 4px 0;
+                    padding-left: 24px;
+                }}
+                .perf-route-path::before {{
+                    content: "";
+                    position: absolute;
+                    top: 10px;
+                    bottom: 10px;
+                    left: 36px;
+                    width: 4px;
+                    border-radius: 999px;
+                    background: linear-gradient(180deg, #facc15, #84cc16, #22c55e);
+                }}
+                .perf-stop {{
+                    display: grid;
+                    grid-template-columns: 48px 1fr;
+                    gap: 14px;
+                    margin-bottom: 12px;
+                    position: relative;
+                }}
+                .perf-stop-dot {{
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 999px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: 800;
+                    color: #111827;
+                    background: #facc15;
+                    box-shadow: 0 0 0 4px #fff, 0 8px 18px rgba(15, 23, 42, 0.18);
+                    z-index: 2;
+                }}
+                .perf-stop-late .perf-stop-dot {{
+                    background: #ef4444;
+                    color: #fff;
+                }}
+                .perf-stop-early .perf-stop-dot {{
+                    background: #fb923c;
+                    color: #fff;
+                }}
+                .perf-stop-ok .perf-stop-dot {{
+                    background: #22c55e;
+                    color: #fff;
+                }}
+                .perf-stop-card {{
+                    border: 1px solid #e2e8f0;
+                    border-radius: 8px;
+                    padding: 10px 12px;
+                    background: #fff;
+                }}
+                .perf-stop-title {{
+                    font-weight: 800;
+                    color: #0f172a;
+                }}
+                .perf-stop-address {{
+                    color: #111827;
+                    margin-top: 2px;
+                }}
+                .perf-stop-meta {{
+                    color: #64748b;
+                    font-size: 12px;
+                    margin-top: 3px;
+                }}
+                .perf-stop-status {{
+                    margin-top: 6px;
+                    font-weight: 700;
+                    color: #334155;
+                }}
+                </style>
+                {route_html}
+                """,
+                height=min(900, 90 + len(route_orders) * 95),
+                scrolling=True,
             )
 
             display_columns = [
@@ -523,6 +644,11 @@ def show_dsp_route_explanations_page():
         performance_df,
         search_text,
         ["courier_id", "courier_name"],
+    )
+    performance_df = select_performance_period_rows(
+        performance_df,
+        start_date,
+        end_date,
     )
 
     if stories_df.empty:

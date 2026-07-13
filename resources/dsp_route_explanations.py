@@ -636,7 +636,7 @@ def summarize_story_rows(stories_df, official_shifts=0):
             df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
 
     orders = int(df.get("address_count", pd.Series(dtype=float)).sum())
-    delayed = int(df.get("planned_late_count", pd.Series(dtype=float)).sum())
+    delayed = int(df.get("time_window_late_count", pd.Series(dtype=float)).sum())
     late_shift_count = int(
         (df.get("queue_entry_delta_minutes", pd.Series(dtype=float)) > 0).sum()
     )
@@ -706,16 +706,16 @@ def route_status_label(row):
         pd.Series([row.get("queue_entry_delta_minutes")]),
         errors="coerce",
     ).iloc[0]
-    planned_late = pd.to_numeric(
-        pd.Series([row.get("planned_late_count")]),
+    time_window_late = pd.to_numeric(
+        pd.Series([row.get("time_window_late_count")]),
         errors="coerce",
     ).fillna(0).iloc[0]
 
     if pd.notna(queue_delta) and queue_delta > 0:
         return "Sorba allas kesett", "bad"
 
-    if planned_late > 0:
-        return "Cim keses volt", "warn"
+    if time_window_late > 0:
+        return "Idokapu keses volt", "warn"
 
     return "Rendben", "ok"
 
