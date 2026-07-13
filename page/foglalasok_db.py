@@ -9,7 +9,7 @@ from resources.foglalasok_db import read_foglalasok_raw
 def show_foglalasok_db_page():
     st.title("Foglalasok DB")
     st.caption(
-        "Forras: MuszakPRO Foglalasok Google Sheet -> Supabase foglalasok_raw."
+        "Forras: MuszakPRO -> Supabase raw_muszakpro_bookings, regi fallback: foglalasok_raw."
     )
 
     today = date.today()
@@ -35,13 +35,13 @@ def show_foglalasok_db_page():
             f"Foglalasok DB olvasasi hiba: {exc}"
         )
         st.info(
-            "Ha meg nincs tabla, futtasd a docs/supabase_foglalasok_raw.sql fajlt a Supabase SQL Editorban."
+            "Ha meg nincs tabla, futtasd a docs/supabase_muszakpro_live.sql fajlt a Supabase SQL Editorban."
         )
         return
 
     if df.empty:
         st.warning(
-            "Meg nincs adat a foglalasok_raw tablaban erre az idoszakra."
+            "Meg nincs adat a MuszakPRO DB tablaban erre az idoszakra."
         )
         return
 

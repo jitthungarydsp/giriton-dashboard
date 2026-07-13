@@ -1,2 +1,4 @@
 __pycache__/
 .streamlit/secrets.toml
+muszakpro/Kod_gs_*.txt
+muszakpro/index_html_*.txt

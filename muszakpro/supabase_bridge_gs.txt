@@ -1,0 +1,318 @@
+// MuszakPro -> Supabase bridge.
+//
+// Apps Script Properties:
+// - SUPABASE_URL
+// - SUPABASE_SERVICE_ROLE_KEY
+// - MUSZAKPRO_DB_ENABLED = TRUE/FALSE
+// - MUSZAKPRO_DB_TABLE = raw_muszakpro_bookings
+// - MUSZAKPRO_DB_EVENT_TABLE = ops_muszakpro_events
+
+const MUSZAKPRO_DB_SOURCE_NAME = "muszakpro-app";
+
+function muszakProDbConfig_() {
+  const props = PropertiesService.getScriptProperties();
+  const rawUrl = props.getProperty("SUPABASE_URL") || "";
+  const url = rawUrl.replace(/\/+$/, "");
+  const key = props.getProperty("SUPABASE_SERVICE_ROLE_KEY") || props.getProperty("SUPABASE_KEY") || "";
+  const enabled = (props.getProperty("MUSZAKPRO_DB_ENABLED") || "TRUE").toUpperCase() !== "FALSE";
+  const table = props.getProperty("MUSZAKPRO_DB_TABLE") || "raw_muszakpro_bookings";
+  const eventTable = props.getProperty("MUSZAKPRO_DB_EVENT_TABLE") || "ops_muszakpro_events";
+  return { url: url, key: key, enabled: enabled, table: table, eventTable: eventTable };
+}
+
+function muszakProDbIsReady_() {
+  const cfg = muszakProDbConfig_();
+  return cfg.enabled && cfg.url && cfg.key;
+}
+
+function muszakProDbIsoNow_() {
+  return new Date().toISOString();
+}
+
+function muszakProDbNormalizeDate_(value) {
+  if (!value) return "";
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  }
+  return value.toString().trim().substring(0, 10);
+}
+
+function muszakProDbNormalizeEmail_(value) {
+  return (value || "").toString().toLowerCase().trim();
+}
+
+function muszakProDbShiftStart_(shiftText) {
+  const text = (shiftText || "").toString().trim();
+  const match = text.match(/(\d{1,2}:\d{2})/);
+  return match ? match[1].replace(/^0(\d:)/, "$1") : "";
+}
+
+function muszakProDbMonthDay_(workDate) {
+  const text = muszakProDbNormalizeDate_(workDate);
+  return text.length >= 10 ? text.substring(5, 7) + "/" + text.substring(8, 10) : text;
+}
+
+function muszakProDbLookupCourier_(email) {
+  const normalizedEmail = muszakProDbNormalizeEmail_(email);
+  const result = { courier_id: null, courier_name: "" };
+
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Felhasznalok");
+    if (!sheet) return result;
+
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const rowEmail = muszakProDbNormalizeEmail_(data[i][3]);
+      if (rowEmail === normalizedEmail) {
+        result.courier_name = (data[i][0] || "").toString().trim();
+        const possibleId = data[i][1] || data[i][2] || "";
+        const parsedId = parseInt(possibleId, 10);
+        result.courier_id = isNaN(parsedId) ? null : parsedId;
+        return result;
+      }
+    }
+  } catch (err) {
+    console.error("MuszakPro DB courier lookup hiba: " + err.message);
+  }
+
+  return result;
+}
+
+function muszakProDbSerial_(workDate, courierId, warehouse, shiftText, email) {
+  const start = muszakProDbShiftStart_(shiftText);
+  if (courierId) {
+    return [
+      muszakProDbMonthDay_(workDate),
+      courierId,
+      (warehouse || "").toString().trim(),
+      start
+    ].join("_");
+  }
+
+  return [
+    muszakProDbMonthDay_(workDate),
+    muszakProDbNormalizeEmail_(email),
+    (warehouse || "").toString().trim(),
+    start
+  ].join("_");
+}
+
+function muszakProDbBookingPayload_(dateStr, email, shiftName, warehouse, bookingCode, adminRecorder, status, eventType, extra) {
+  const now = muszakProDbIsoNow_();
+  const cleanEmail = muszakProDbNormalizeEmail_(email);
+  const cleanDate = muszakProDbNormalizeDate_(dateStr);
+  const cleanShift = typeof formatShiftName === "function" ? formatShiftName(shiftName) : (shiftName || "").toString().trim();
+  const cleanWarehouse = (warehouse || "BUD1").toString().trim();
+  const courier = muszakProDbLookupCourier_(cleanEmail);
+  const cleanStatus = status || "ACTIVE";
+  const payload = {
+    source_name: MUSZAKPRO_DB_SOURCE_NAME,
+    source_row: null,
+    timestamp_text: now,
+    work_date: cleanDate,
+    email: cleanEmail,
+    shift_text: cleanShift,
+    warehouse: cleanWarehouse,
+    booking_code: (bookingCode || "").toString().trim(),
+    admin_recorder: (adminRecorder || "").toString().trim(),
+    giriton_uploaded: "",
+    system_check: cleanStatus,
+    legacy_key: "",
+    courier_id: courier.courier_id,
+    courier_name: courier.courier_name,
+    serial: muszakProDbSerial_(cleanDate, courier.courier_id, cleanWarehouse, cleanShift, cleanEmail),
+    status: cleanStatus,
+    event_type: eventType || "BOOK",
+    cancelled_at: cleanStatus === "CANCELLED" ? now : null,
+    cancelled_by: cleanStatus === "CANCELLED" ? (adminRecorder || "").toString().trim() : null,
+    fetched_at: now,
+    updated_at: now,
+    response_json: {
+      source: MUSZAKPRO_DB_SOURCE_NAME,
+      work_date: cleanDate,
+      email: cleanEmail,
+      shift_text: cleanShift,
+      warehouse: cleanWarehouse,
+      booking_code: (bookingCode || "").toString().trim(),
+      admin_recorder: (adminRecorder || "").toString().trim(),
+      courier_id: courier.courier_id,
+      courier_name: courier.courier_name,
+      status: cleanStatus,
+      event_type: eventType || "BOOK",
+      extra: extra || {}
+    }
+  };
+  return payload;
+}
+
+function muszakProDbPost_(table, payload, query) {
+  const cfg = muszakProDbConfig_();
+  if (!muszakProDbIsReady_()) return { skipped: true };
+
+  const url = cfg.url + "/rest/v1/" + table + (query || "");
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    headers: {
+      apikey: cfg.key,
+      Authorization: "Bearer " + cfg.key,
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const code = response.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error("Supabase POST hiba " + code + ": " + response.getContentText());
+  }
+
+  return { status: "ok", code: code };
+}
+
+function muszakProDbUpsertBookings_(rows) {
+  if (!rows || rows.length === 0) return { rows: 0 };
+  const cfg = muszakProDbConfig_();
+  return muszakProDbPost_(
+    cfg.table,
+    rows,
+    "?on_conflict=source_name,work_date,email,shift_text,booking_code"
+  );
+}
+
+function muszakProDbEvent_(actionType, payload) {
+  try {
+    const cfg = muszakProDbConfig_();
+    if (!muszakProDbIsReady_()) return;
+    muszakProDbPost_(cfg.eventTable, [{
+      source_name: MUSZAKPRO_DB_SOURCE_NAME,
+      action_type: actionType,
+      work_date: payload.work_date || null,
+      email: payload.email || "",
+      shift_text: payload.shift_text || "",
+      warehouse: payload.warehouse || "",
+      booking_code: payload.booking_code || "",
+      actor_email: payload.admin_recorder || "",
+      payload: payload
+    }], "");
+  } catch (err) {
+    console.error("MuszakPro DB event hiba: " + err.message);
+  }
+}
+
+function muszakProDbBook(dateStr, email, shiftName, warehouse, bookingCode, adminRecorder, extra) {
+  try {
+    const row = muszakProDbBookingPayload_(
+      dateStr,
+      email,
+      shiftName,
+      warehouse,
+      bookingCode,
+      adminRecorder,
+      "ACTIVE",
+      "BOOK",
+      extra
+    );
+    muszakProDbUpsertBookings_([row]);
+    muszakProDbEvent_("BOOK", row.response_json);
+  } catch (err) {
+    console.error("MuszakPro DB BOOK hiba: " + err.message);
+  }
+}
+
+function muszakProDbCancel(dateStr, email, shiftName, warehouse, bookingCode, adminRecorder, extra) {
+  try {
+    const row = muszakProDbBookingPayload_(
+      dateStr,
+      email,
+      shiftName,
+      warehouse,
+      bookingCode,
+      adminRecorder,
+      "CANCELLED",
+      "CANCEL",
+      extra
+    );
+    muszakProDbUpsertBookings_([row]);
+    muszakProDbEvent_("CANCEL", row.response_json);
+  } catch (err) {
+    console.error("MuszakPro DB CANCEL hiba: " + err.message);
+  }
+}
+
+function muszakProDbBulkBookRows(sheetRows, adminRecorder, eventType) {
+  try {
+    if (!sheetRows || sheetRows.length === 0) return;
+    const rows = sheetRows.map(function(row) {
+      return muszakProDbBookingPayload_(
+        row[1],
+        row[2],
+        row[3],
+        row[4],
+        row[5],
+        adminRecorder || row[6] || "",
+        "ACTIVE",
+        eventType || "BULK_BOOK",
+        { sheet_row: row }
+      );
+    });
+    muszakProDbUpsertBookings_(rows);
+    rows.forEach(function(row) {
+      muszakProDbEvent_(eventType || "BULK_BOOK", row.response_json);
+    });
+  } catch (err) {
+    console.error("MuszakPro DB BULK BOOK hiba: " + err.message);
+  }
+}
+
+function muszakProDbBulkCancelRows(sheetRows, adminRecorder, eventType) {
+  try {
+    if (!sheetRows || sheetRows.length === 0) return;
+    const rows = sheetRows.map(function(row) {
+      return muszakProDbBookingPayload_(
+        row[1],
+        row[2],
+        row[3],
+        row[4],
+        row[5],
+        adminRecorder || "",
+        "CANCELLED",
+        eventType || "BULK_CANCEL",
+        { sheet_row: row }
+      );
+    });
+    muszakProDbUpsertBookings_(rows);
+    rows.forEach(function(row) {
+      muszakProDbEvent_(eventType || "BULK_CANCEL", row.response_json);
+    });
+  } catch (err) {
+    console.error("MuszakPro DB BULK CANCEL hiba: " + err.message);
+  }
+}
+
+function muszakProDbSyncActiveBookingsFromSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const logSheet = ss.getSheetByName("Foglalasok");
+  if (!logSheet) throw new Error("Nincs Foglalasok sheet.");
+
+  const values = logSheet.getDataRange().getValues();
+  const rows = [];
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    if (!row[1] || !row[2] || !row[3]) continue;
+    rows.push(muszakProDbBookingPayload_(
+      row[1],
+      row[2],
+      row[3],
+      row[4],
+      row[5],
+      row[6],
+      "ACTIVE",
+      "SHEET_SYNC",
+      { source_row: i + 1 }
+    ));
+  }
+
+  muszakProDbUpsertBookings_(rows);
+  return "MuszakPro DB sync kesz: " + rows.length + " aktiv foglalas.";
+}

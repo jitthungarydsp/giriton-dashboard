@@ -15,6 +15,10 @@ from resources.supabase_raw import (
 
 SOURCE_NAME = "google-sheet-foglalasok"
 FOGLALASOK_SHEET_NAME = "Foglalasok"
+FOGLALASOK_TABLE_CANDIDATES = [
+    "raw_muszakpro_bookings",
+    "foglalasok_raw",
+]
 
 
 def clean(value):
@@ -119,6 +123,40 @@ def get_headers():
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
     }
+
+
+def is_missing_table_response(response):
+    if response.status_code not in (400, 404):
+        return False
+
+    text = response.text.lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def resolve_foglalasok_table(supabase_url, headers):
+    for table_name in FOGLALASOK_TABLE_CANDIDATES:
+        endpoint = (
+            f"{supabase_url}/rest/v1/{table_name}"
+            "?select=id&limit=1"
+        )
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=30,
+        )
+
+        if is_missing_table_response(response):
+            continue
+
+        raise_for_supabase_error(response)
+        return table_name
+
+    return "foglalasok_raw"
 
 
 def read_courier_lookup_by_email():
@@ -272,8 +310,12 @@ def upsert_foglalasok_rows(values):
         }
 
     supabase_url, headers = get_headers()
+    table_name = resolve_foglalasok_table(
+        supabase_url,
+        headers,
+    )
     endpoint = (
-        f"{supabase_url}/rest/v1/foglalasok_raw"
+        f"{supabase_url}/rest/v1/{table_name}"
         "?on_conflict=source_name,work_date,email,shift_text,booking_code"
     )
     headers = {
@@ -299,29 +341,44 @@ def upsert_foglalasok_rows(values):
 @st.cache_data(show_spinner=False, ttl=300)
 def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
     supabase_url, headers = get_headers()
-    filters = [
-        (
-            "select=work_date,email,shift_text,warehouse,booking_code,"
-            "courier_id,courier_name,serial,fetched_at"
-        ),
-        "order=work_date.desc,shift_text.asc,email.asc",
-        f"limit={int(limit)}",
-    ]
-    start_date_text = format_date_filter(start_date)
-    end_date_text = format_date_filter(end_date)
+    table_name = resolve_foglalasok_table(
+        supabase_url,
+        headers,
+    )
 
-    if start_date_text:
-        filters.append(
-            f"work_date=gte.{start_date_text}"
-        )
+    base_select = (
+        "work_date,email,shift_text,warehouse,booking_code,"
+        "courier_id,courier_name,serial,fetched_at"
+    )
+    select_fields = f"{base_select},status,cancelled_at"
 
-    if end_date_text:
-        filters.append(
-            f"work_date=lte.{end_date_text}"
-        )
+    def build_filters(select_text):
+        filters = [
+            f"select={select_text}",
+            "order=work_date.desc,shift_text.asc,email.asc",
+            f"limit={int(limit)}",
+        ]
+        start_date_text = format_date_filter(start_date)
+        end_date_text = format_date_filter(end_date)
+
+        if start_date_text:
+            filters.append(
+                f"work_date=gte.{start_date_text}"
+            )
+
+        if end_date_text:
+            filters.append(
+                f"work_date=lte.{end_date_text}"
+            )
+
+        return filters
+
+    filters = build_filters(
+        select_fields
+    )
 
     endpoint = (
-        f"{supabase_url}/rest/v1/foglalasok_raw"
+        f"{supabase_url}/rest/v1/{table_name}"
         f"?{'&'.join(filters)}"
     )
     response = requests.get(
@@ -329,13 +386,35 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
         headers=headers,
         timeout=60,
     )
+
+    if response.status_code == 400 and "status" in response.text.lower():
+        filters = build_filters(
+            base_select
+        )
+        endpoint = (
+            f"{supabase_url}/rest/v1/{table_name}"
+            f"?{'&'.join(filters)}"
+        )
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=60,
+        )
+
     raise_for_supabase_error(response)
     rows = response.json()
 
     if not rows:
         return pd.DataFrame()
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    if "status" in df.columns:
+        df = df[
+            df["status"].fillna("ACTIVE").astype(str).str.upper() != "CANCELLED"
+        ]
+
+    return df
 
 
 def read_foglalasok_records(work_date):
