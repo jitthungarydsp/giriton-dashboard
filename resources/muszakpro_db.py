@@ -1,5 +1,6 @@
 from datetime import datetime
 import random
+import re
 import string
 from urllib.parse import quote
 
@@ -85,14 +86,50 @@ def shift_start(shift_text):
     text = clean(shift_text)
 
     if "_" in text:
-        return normalize_time(text.split("_", 1)[1])
+        text = text.split("_", 1)[1]
 
-    parts = text.split("-")
+    match = re.search(r"(\d{1,2})(?::(\d{2}))?", text)
 
-    if parts:
-        return normalize_time(parts[0])
+    if not match:
+        return ""
 
-    return ""
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+
+    return f"{hour}:{minute:02d}"
+
+
+def shift_minutes(shift_text):
+    start = shift_start(
+        shift_text
+    )
+
+    if ":" not in start:
+        return None
+
+    try:
+        hour, minute = start.split(":", 1)
+        return int(hour) * 60 + int(minute)
+    except ValueError:
+        return None
+
+
+def shift_end_minutes(shift_text):
+    start = shift_minutes(
+        shift_text
+    )
+
+    if start is None:
+        return None
+
+    text = clean(
+        shift_text
+    ).upper()
+
+    if "EXP" in text:
+        return start + 13 * 60
+
+    return start + 270
 
 
 def quote_filter(value):
@@ -168,6 +205,11 @@ def normalize_bookings(bookings):
 
     df = bookings.copy()
 
+    if "status" in df.columns:
+        df = df[
+            df["status"].fillna("ACTIVE").astype(str).str.upper() != "CANCELLED"
+        ].copy()
+
     if "warehouse" not in df.columns:
         df["warehouse"] = ""
 
@@ -180,6 +222,13 @@ def normalize_bookings(bookings):
 
 def build_daily_shift_view(work_date, user_email="", warehouse_filter="Mind"):
     work_date_text = parse_work_date(work_date)
+    selected_date = datetime.strptime(
+        work_date_text,
+        "%Y-%m-%d",
+    ).date()
+    now = datetime.now()
+    today = now.date()
+    current_minutes = now.hour * 60 + now.minute
     capacity = read_shift_capacity(
         start_date=work_date_text,
         end_date=work_date_text,
@@ -201,6 +250,25 @@ def build_daily_shift_view(work_date, user_email="", warehouse_filter="Mind"):
 
     rows = []
     filtered_capacity = capacity.copy()
+    user_intervals = []
+
+    if user_email_norm and not bookings.empty:
+        user_rows = bookings[
+            bookings["email_norm"] == user_email_norm
+        ]
+
+        for _, booked_row in user_rows.iterrows():
+            start_minutes = shift_minutes(
+                booked_row.get("shift_text")
+            )
+            end_minutes = shift_end_minutes(
+                booked_row.get("shift_text")
+            )
+
+            if start_minutes is not None and end_minutes is not None:
+                user_intervals.append(
+                    (start_minutes, end_minutes)
+                )
 
     if warehouse_filter and warehouse_filter != "Mind":
         filtered_capacity = filtered_capacity[
@@ -241,16 +309,43 @@ def build_daily_shift_view(work_date, user_email="", warehouse_filter="Mind"):
                 user_booking.iloc[0].get("booking_code")
             )
 
+        start_minutes = shift_minutes(
+            shift_text
+        )
+        end_minutes = shift_end_minutes(
+            shift_text
+        )
+        is_expired = False
+        is_urgent = False
+        conflict = False
+
+        if selected_date < today:
+            is_expired = True
+        elif selected_date == today and start_minutes is not None:
+            is_expired = current_minutes >= start_minutes
+            is_urgent = 0 < (start_minutes - current_minutes) <= 72 * 60
+
+        if not is_mine and start_minutes is not None and end_minutes is not None:
+            for own_start, own_end in user_intervals:
+                if start_minutes < own_end and end_minutes > own_start:
+                    conflict = True
+                    break
+
         rows.append({
             "work_date": work_date_text,
             "shift_text": shift_text,
             "start": shift_start(shift_text),
+            "end": _minutes_to_time(end_minutes),
             "warehouse": warehouse,
             "limit_count": limit_count,
             "booked_count": booked_count,
             "free_count": max(limit_count - booked_count, 0),
             "slack_quota": optional_int(row.get("slack_quota"), 0),
             "is_mine": is_mine,
+            "is_waiting": booking_code.startswith("TF-"),
+            "is_expired": is_expired,
+            "is_urgent": is_urgent,
+            "conflict": conflict,
             "booking_code": booking_code,
             "status": "Foglalva" if is_mine else ("Betelt" if booked_count >= limit_count else "Szabad"),
         })
@@ -283,6 +378,14 @@ def _sort_minutes(value):
         return int(hour) * 60 + int(minute)
     except ValueError:
         return 99999
+
+
+def _minutes_to_time(value):
+    if value is None:
+        return ""
+
+    value = int(value) % (24 * 60)
+    return f"{value // 60}:{value % 60:02d}"
 
 
 def generate_booking_code(prefix):

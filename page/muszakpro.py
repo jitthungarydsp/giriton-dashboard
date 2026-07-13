@@ -1,4 +1,6 @@
+from calendar import monthrange
 from datetime import date, timedelta
+import html
 
 import pandas as pd
 import streamlit as st
@@ -60,6 +62,213 @@ MuszakPro mar a Supabase tablakat hasznalja.
         )
 
 
+def _inject_muszakpro_css():
+    st.markdown(
+        """
+<style>
+.mpro-shell {
+    background: #f1f5f9;
+    border: 1px solid #dbe3ef;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+}
+.mpro-header {
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 18px 12px;
+}
+.mpro-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+}
+.mpro-logo {
+    font-size: 26px;
+    font-weight: 950;
+    font-style: italic;
+    letter-spacing: -1px;
+    color: #0f172a;
+}
+.mpro-logo span {
+    color: #2563eb;
+}
+.mpro-user-pill {
+    max-width: 360px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: #f8fafc;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 900;
+}
+.mpro-layout {
+    display: grid;
+    grid-template-columns: minmax(290px, 350px) minmax(0, 1fr);
+    gap: 0;
+}
+.mpro-side {
+    background: #ffffff;
+    border-right: 1px solid #e2e8f0;
+    padding: 16px;
+}
+.mpro-main {
+    padding: 18px;
+}
+.mpro-month-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.mpro-month-label {
+    font-size: 13px;
+    color: #2563eb;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+.mpro-week-head,
+.mpro-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+}
+.mpro-week-head div {
+    text-align: center;
+    font-size: 10px;
+    color: #94a3b8;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+.mpro-day-note {
+    text-align: center;
+    font-size: 9px;
+    min-height: 14px;
+    color: #2563eb;
+    font-weight: 900;
+    margin-top: -8px;
+    margin-bottom: 4px;
+}
+.mpro-admin-box {
+    margin-top: 14px;
+    background: #f8fafc;
+    border: 1px solid #dbe3ef;
+    border-radius: 16px;
+    padding: 12px;
+}
+.mpro-admin-title {
+    font-size: 10px;
+    font-weight: 950;
+    color: #64748b;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.mpro-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.mpro-summary-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 12px;
+}
+.mpro-summary-card b {
+    font-size: 22px;
+    color: #0f172a;
+}
+.mpro-summary-card span {
+    display: block;
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+.mpro-shift-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(275px, 1fr));
+    gap: 12px;
+}
+.mpro-shift-card {
+    min-height: 94px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+.mpro-shift-card.mine {
+    border: 2px solid #2563eb;
+    background: #eff6ff;
+}
+.mpro-shift-card.waiting {
+    border: 2px solid #f59e0b;
+    background: #fffbeb;
+}
+.mpro-shift-card.conflict {
+    opacity: 0.55;
+    filter: grayscale(1);
+}
+.mpro-shift-card.expired {
+    opacity: 0.62;
+}
+.mpro-shift-title {
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 950;
+    font-style: italic;
+    text-transform: uppercase;
+}
+.mpro-shift-card.mine .mpro-shift-title {
+    color: #2563eb;
+}
+.mpro-shift-meta {
+    margin-top: 4px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+}
+.mpro-status {
+    margin-top: 8px;
+    font-size: 11px;
+    font-weight: 950;
+    text-transform: uppercase;
+}
+.mpro-status.ok { color: #2563eb; }
+.mpro-status.wait { color: #b45309; }
+.mpro-status.full { color: #1d4ed8; }
+.mpro-status.bad { color: #991b1b; }
+.mpro-action-note {
+    margin-top: 10px;
+    font-size: 10px;
+    color: #64748b;
+    font-weight: 700;
+}
+@media (max-width: 900px) {
+    .mpro-layout {
+        grid-template-columns: 1fr;
+    }
+    .mpro-side {
+        border-right: none;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .mpro-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def _status_badge(text, tone):
     colors = {
         "green": ("#dcfce7", "#166534"),
@@ -78,6 +287,361 @@ def _status_badge(text, tone):
     )
 
 
+def _month_name(month):
+    names = [
+        "Január",
+        "Február",
+        "Március",
+        "Aprilis",
+        "Május",
+        "Junius",
+        "Julius",
+        "Augusztus",
+        "Szeptember",
+        "Október",
+        "November",
+        "December",
+    ]
+    return names[month - 1]
+
+
+def _safe(value):
+    return html.escape(
+        str(value or "")
+    )
+
+
+def _calendar_month_bounds(month_date):
+    first_day = date(
+        month_date.year,
+        month_date.month,
+        1,
+    )
+    last_day = date(
+        month_date.year,
+        month_date.month,
+        monthrange(month_date.year, month_date.month)[1],
+    )
+    return first_day, last_day
+
+
+def _read_booking_day_counts(month_date, email):
+    first_day, last_day = _calendar_month_bounds(
+        month_date
+    )
+
+    try:
+        bookings = read_foglalasok_raw(
+            start_date=first_day,
+            end_date=last_day,
+            limit=50000,
+        )
+    except Exception:
+        return {}
+
+    if bookings.empty:
+        return {}
+
+    email_norm = normalize_email(
+        email
+    )
+
+    if email_norm and "email" in bookings.columns:
+        bookings = bookings[
+            bookings["email"].fillna("").astype(str).map(normalize_email)
+            == email_norm
+        ]
+
+    if bookings.empty or "work_date" not in bookings.columns:
+        return {}
+
+    counts = {}
+
+    for work_date, group in bookings.groupby("work_date"):
+        counts[str(work_date)[:10]] = len(group)
+
+    return counts
+
+
+def _render_wh_selector():
+    selected = st.session_state.setdefault(
+        "muszakpro_wh",
+        "BUD1",
+    )
+    col1, col2 = st.columns(2)
+
+    if col1.button(
+        "BUD1",
+        key="mpro_wh_bud1",
+        type="primary" if selected == "BUD1" else "secondary",
+        use_container_width=True,
+    ):
+        st.session_state["muszakpro_wh"] = "BUD1"
+        st.rerun()
+
+    if col2.button(
+        "BUD2",
+        key="mpro_wh_bud2",
+        type="primary" if selected == "BUD2" else "secondary",
+        use_container_width=True,
+    ):
+        st.session_state["muszakpro_wh"] = "BUD2"
+        st.rerun()
+
+    return st.session_state["muszakpro_wh"]
+
+
+def _render_calendar_legacy(selected_date, selected_email):
+    month_date = st.session_state.setdefault(
+        "muszakpro_view_month",
+        date(selected_date.year, selected_date.month, 1),
+    )
+    first_day, last_day = _calendar_month_bounds(
+        month_date
+    )
+    counts = _read_booking_day_counts(
+        month_date,
+        selected_email,
+    )
+
+    col_prev, col_label, col_next = st.columns([1, 4, 1])
+
+    if col_prev.button(
+        "«",
+        key="mpro_month_prev",
+        use_container_width=True,
+    ):
+        prev_month = (first_day - timedelta(days=1)).replace(day=1)
+        st.session_state["muszakpro_view_month"] = prev_month
+        st.session_state["muszakpro_daily_date"] = prev_month
+        st.rerun()
+
+    col_label.markdown(
+        f"<div class='mpro-month-label'>{_month_name(month_date.month)} {month_date.year}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if col_next.button(
+        "»",
+        key="mpro_month_next",
+        use_container_width=True,
+    ):
+        next_month = (last_day + timedelta(days=1)).replace(day=1)
+        st.session_state["muszakpro_view_month"] = next_month
+        st.session_state["muszakpro_daily_date"] = next_month
+        st.rerun()
+
+    st.markdown(
+        """
+<div class="mpro-week-head">
+  <div>He</div><div>Ke</div><div>Sze</div><div>Cs</div><div>Pe</div><div>Szo</div><div>Va</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    offset = first_day.weekday()
+    days = [None] * offset + [
+        date(month_date.year, month_date.month, day)
+        for day in range(1, last_day.day + 1)
+    ]
+
+    while len(days) % 7 != 0:
+        days.append(None)
+
+    for row_index in range(0, len(days), 7):
+        cols = st.columns(7)
+
+        for col, day_value in zip(cols, days[row_index:row_index + 7]):
+            if day_value is None:
+                col.markdown("&nbsp;", unsafe_allow_html=True)
+                continue
+
+            day_key = day_value.isoformat()
+            count = counts.get(
+                day_key,
+                0,
+            )
+            label = str(day_value.day)
+
+            if count:
+                label = f"{day_value.day}\n{count} műszak"
+
+            if col.button(
+                label,
+                key=f"mpro_day_{day_key}",
+                type="primary" if day_value == selected_date else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["muszakpro_daily_date"] = day_value
+                st.session_state["muszakpro_view_month"] = date(
+                    day_value.year,
+                    day_value.month,
+                    1,
+                )
+                st.rerun()
+
+            if count:
+                col.markdown(
+                    f"<div class='mpro-day-note'>{count} MUSZAK</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+def _render_calendar(selected_date, selected_email):
+    month_date = st.session_state.setdefault(
+        "muszakpro_view_month",
+        date(selected_date.year, selected_date.month, 1),
+    )
+    first_day, last_day = _calendar_month_bounds(
+        month_date
+    )
+    counts = _read_booking_day_counts(
+        month_date,
+        selected_email,
+    )
+
+    col_prev, col_label, col_next = st.columns([1, 4, 1])
+
+    if col_prev.button(
+        "‹",
+        key="mpro_month_prev_clean",
+        use_container_width=True,
+    ):
+        prev_month = (first_day - timedelta(days=1)).replace(day=1)
+        st.session_state["muszakpro_view_month"] = prev_month
+        st.session_state["muszakpro_daily_date"] = prev_month
+        st.rerun()
+
+    col_label.markdown(
+        f"<div class='mpro-month-label'>{_month_name(month_date.month)} {month_date.year}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if col_next.button(
+        "›",
+        key="mpro_month_next_clean",
+        use_container_width=True,
+    ):
+        next_month = (last_day + timedelta(days=1)).replace(day=1)
+        st.session_state["muszakpro_view_month"] = next_month
+        st.session_state["muszakpro_daily_date"] = next_month
+        st.rerun()
+
+    st.markdown(
+        """
+<div class="mpro-week-head">
+  <div>He</div><div>Ke</div><div>Sze</div><div>Cs</div><div>Pe</div><div>Szo</div><div>Va</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    offset = first_day.weekday()
+    days = [None] * offset + [
+        date(month_date.year, month_date.month, day)
+        for day in range(1, last_day.day + 1)
+    ]
+
+    while len(days) % 7 != 0:
+        days.append(None)
+
+    for row_index in range(0, len(days), 7):
+        cols = st.columns(7)
+
+        for col, day_value in zip(cols, days[row_index:row_index + 7]):
+            if day_value is None:
+                col.markdown("&nbsp;", unsafe_allow_html=True)
+                continue
+
+            day_key = day_value.isoformat()
+            count = counts.get(
+                day_key,
+                0,
+            )
+            label = str(day_value.day)
+
+            if count:
+                label = f"{day_value.day}\n{count} műszak"
+
+            if col.button(
+                label,
+                key=f"mpro_day_clean_{day_key}",
+                type="primary" if day_value == selected_date else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["muszakpro_daily_date"] = day_value
+                st.session_state["muszakpro_view_month"] = date(
+                    day_value.year,
+                    day_value.month,
+                    1,
+                )
+                st.rerun()
+
+            if count:
+                col.markdown(
+                    f"<div class='mpro-day-note'>{count} MŰSZAK</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+def _render_summary_cards(daily):
+    st.markdown(
+        f"""
+<div class="mpro-summary">
+  <div class="mpro-summary-card"><b>{len(daily)}</b><span>Műszak</span></div>
+  <div class="mpro-summary-card"><b>{int(daily["limit_count"].sum())}</b><span>Össz limit</span></div>
+  <div class="mpro-summary-card"><b>{int(daily["booked_count"].sum())}</b><span>Foglalt</span></div>
+  <div class="mpro-summary-card"><b>{int(daily["is_mine"].sum())}</b><span>Saját foglalás</span></div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _shift_card_class(row):
+    classes = ["mpro-shift-card"]
+
+    if bool(row.get("is_mine")):
+        classes.append(
+            "waiting" if bool(row.get("is_waiting")) else "mine"
+        )
+
+    if bool(row.get("conflict")):
+        classes.append("conflict")
+
+    if bool(row.get("is_expired")) and not bool(row.get("is_mine")):
+        classes.append("expired")
+
+    return " ".join(classes)
+
+
+def _shift_status_text(row):
+    is_mine = bool(row.get("is_mine"))
+    is_waiting = bool(row.get("is_waiting"))
+    is_expired = bool(row.get("is_expired"))
+    conflict = bool(row.get("conflict"))
+    booked = int(row.get("booked_count") or 0)
+    limit = int(row.get("limit_count") or 0)
+
+    if is_mine and is_waiting:
+        return "VÁRÓLISTÁN VAGY", "wait"
+
+    if is_mine:
+        return "FIXÁLVA", "ok"
+
+    if is_expired:
+        return "MÁR ELMÚLT", "bad"
+
+    if conflict:
+        return "ÜTKÖZÉS - NEM FOGLALHATÓ", "bad"
+
+    if booked >= limit:
+        return f"{booked}/{limit} HELY - VÁRÓLISTA", "full"
+
+    return f"{booked}/{limit} HELY", "ok"
+
+
 def _render_shift_card(row, selected_courier, actor_email):
     shift_text = clean(row.get("shift_text"))
     warehouse = clean(row.get("warehouse"))
@@ -87,47 +651,41 @@ def _render_shift_card(row, selected_courier, actor_email):
     limit_count = int(row.get("limit_count") or 0)
     free_count = int(row.get("free_count") or 0)
     booking_code = clean(row.get("booking_code"))
-    status_tone = "green"
-    status_text = "Szabad"
-
-    if is_mine:
-        status_tone = "yellow" if booking_code.startswith("TF-") else "green"
-        status_text = f"Foglalva ({booking_code or '-'})"
-    elif free_count <= 0:
-        status_tone = "red"
-        status_text = "Betelt / varolista"
+    status_text, status_class = _shift_status_text(
+        row
+    )
+    disabled = bool(row.get("conflict")) or (
+        bool(row.get("is_expired")) and not is_mine
+    )
+    action_label = "✕" if is_mine else ("🔨" if booked_count >= limit_count else "✓")
 
     st.markdown(
         f"""
-<div style="border:1px solid #dbeafe;border-radius:10px;padding:14px 16px;
-background:linear-gradient(135deg,#ffffff,#f8fafc);min-height:140px">
-  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-    <div>
-      <div style="font-size:20px;font-weight:800;color:#0f172a">{shift_text}</div>
-      <div style="font-size:13px;color:#64748b;margin-top:4px">{warehouse} | {work_date}</div>
-    </div>
-    {_status_badge(status_text, status_tone)}
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px">
-    <div><b>{limit_count}</b><br><span style="color:#64748b;font-size:12px">Limit</span></div>
-    <div><b>{booked_count}</b><br><span style="color:#64748b;font-size:12px">Foglalt</span></div>
-    <div><b>{free_count}</b><br><span style="color:#64748b;font-size:12px">Szabad</span></div>
-  </div>
+<div class="{_shift_card_class(row)}">
+  <div class="mpro-shift-title">{_safe(shift_text)}</div>
+  <div class="mpro-shift-meta">{_safe(warehouse)} | {_safe(work_date)} | szabad: {free_count}</div>
+  <div class="mpro-status {status_class}">{_safe(status_text)}</div>
+  <div class="mpro-action-note">Kod: {_safe(booking_code or "-")} | Limit: {limit_count} | Foglalt: {booked_count}</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
-    col1, col2 = st.columns(2)
-    key_base = (
-        f"{work_date}_{warehouse}_{shift_text}_"
-        f"{selected_courier.get('email', '')}_{booking_code}"
-    ).replace(" ", "_")
+
+    if disabled:
+        st.button(
+            action_label,
+            key=f"disabled_{work_date}_{warehouse}_{shift_text}_{selected_courier.get('email', '')}",
+            use_container_width=True,
+            disabled=True,
+        )
+        return
 
     if is_mine:
-        if col1.button(
-            "Torles",
-            key=f"cancel_{key_base}",
+        if st.button(
+            action_label,
+            key=f"cancel_{work_date}_{warehouse}_{shift_text}_{selected_courier.get('email', '')}_{booking_code}",
             use_container_width=True,
+            type="secondary",
         ):
             result = cancel_booking(
                 work_date,
@@ -142,14 +700,13 @@ background:linear-gradient(135deg,#ffffff,#f8fafc);min-height:140px">
                 )
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error(
-                    result.get("message")
-                )
+            st.error(
+                result.get("message")
+            )
     else:
-        if col1.button(
-            "Foglalas",
-            key=f"book_{key_base}",
+        if st.button(
+            action_label,
+            key=f"book_{work_date}_{warehouse}_{shift_text}_{selected_courier.get('email', '')}",
             use_container_width=True,
             type="primary",
         ):
@@ -167,9 +724,43 @@ background:linear-gradient(135deg,#ffffff,#f8fafc);min-height:140px">
                 )
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error(
-                    result.get("message")
+            st.error(
+                result.get("message")
+            )
+
+
+def _render_legacy_shell_open(selected_courier):
+    st.markdown(
+        f"""
+<div class="mpro-shell">
+  <div class="mpro-header">
+    <div class="mpro-top">
+      <div class="mpro-logo">M&Uuml;SZAK<span>PRO</span></div>
+      <div class="mpro-user-pill">{_safe(selected_courier.get("email") or "Betoltes...")}</div>
+    </div>
+  </div>
+  <div class="mpro-layout">
+    <div class="mpro-side">
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_shift_grid(daily, selected_courier, actor_email):
+    rows = daily.to_dict(
+        "records"
+    )
+
+    for index in range(0, len(rows), 3):
+        cols = st.columns(3)
+
+        for col, row in zip(cols, rows[index:index + 3]):
+            with col:
+                _render_shift_card(
+                    row,
+                    selected_courier,
+                    actor_email,
                 )
 
 
@@ -248,97 +839,140 @@ def _selected_courier_from_form():
 
 
 def _render_daily_booking_tab():
-    st.subheader("Napi foglalas")
     selected_courier, actor_email = _selected_courier_from_form()
-    col1, col2, col3 = st.columns([1, 1, 2])
-    work_date = col1.date_input(
-        "Datum",
-        value=date.today(),
-        key="muszakpro_daily_date",
-    )
-    warehouse = col2.selectbox(
-        "Raktar",
-        options=["Mind", "BUD1", "BUD2"],
-        key="muszakpro_daily_warehouse",
-    )
 
-    with col3:
-        st.info(
-            f"Futar: {selected_courier.get('courier_name') or '-'} | "
-            f"{selected_courier.get('email') or 'nincs e-mail'}"
+    if "muszakpro_daily_date" not in st.session_state:
+        st.session_state["muszakpro_daily_date"] = date.today()
+
+    selected_date = st.session_state["muszakpro_daily_date"]
+
+    if not hasattr(selected_date, "year"):
+        selected_date = date.fromisoformat(
+            str(selected_date)[:10]
+        )
+        st.session_state["muszakpro_daily_date"] = selected_date
+
+    if "muszakpro_view_month" not in st.session_state:
+        st.session_state["muszakpro_view_month"] = date(
+            selected_date.year,
+            selected_date.month,
+            1,
         )
 
-    if st.button(
-        "Kapacitas frissitese a DB-bol",
-        key="muszakpro_refresh",
-        use_container_width=True,
-    ):
-        st.cache_data.clear()
-        st.rerun()
-
-    if not selected_courier.get("email"):
-        st.error(
-            "Foglalashoz kell e-mail cim. Eloszor a courier_master/Felhasznalok adatot javitsuk."
-        )
-        return
-
-    try:
-        daily = build_daily_shift_view(
-            work_date,
-            user_email=selected_courier.get("email"),
-            warehouse_filter=warehouse,
-        )
-    except Exception as exc:
-        st.error(
-            f"MuszakPro napi adatok olvasasi hiba: {exc}"
-        )
-        return
-
-    if daily.empty:
-        st.warning(
-            "Nincs megnyitott kapacitas erre a napra. Futtasd: python scripts\\load_muszakpro_capacity.py"
-        )
-        return
-
-    metric_cols = st.columns(4)
-    metric_cols[0].metric(
-        "Muszak",
-        len(daily),
-    )
-    metric_cols[1].metric(
-        "Ossz limit",
-        int(daily["limit_count"].sum()),
-    )
-    metric_cols[2].metric(
-        "Foglalt",
-        int(daily["booked_count"].sum()),
-    )
-    metric_cols[3].metric(
-        "Sajat foglalas",
-        int(daily["is_mine"].sum()),
+    st.markdown(
+        f"""
+<div class="mpro-shell">
+  <div class="mpro-header">
+    <div class="mpro-top">
+      <div>
+        <div class="mpro-logo">M&Uuml;SZAK<span>PRO</span></div>
+        <div style="font-size:11px;color:#64748b;font-weight:800;margin-top:2px">
+          Saját Python felület, a régi Google Sheet-es logikával.
+        </div>
+      </div>
+      <div class="mpro-user-pill">{_safe(selected_courier.get("email") or "nincs e-mail")}</div>
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
     )
 
-    for warehouse_name, group in daily.groupby(
-        "warehouse",
-        sort=False,
-    ):
+    side, main = st.columns([0.32, 0.68])
+
+    with side:
+        warehouse = _render_wh_selector()
+        _render_calendar(
+            selected_date,
+            selected_courier.get("email"),
+        )
         st.markdown(
-            f"### {warehouse_name}"
+            "<div class='mpro-admin-box'><div class='mpro-admin-title'>Admin mód</div>",
+            unsafe_allow_html=True,
         )
-        rows = group.to_dict(
-            "records"
+        jump_date = st.date_input(
+            "Gyors dátum",
+            value=selected_date,
+            key="muszakpro_jump_date",
         )
 
-        for index in range(0, len(rows), 3):
-            cols = st.columns(3)
+        if jump_date != selected_date:
+            st.session_state["muszakpro_daily_date"] = jump_date
+            st.session_state["muszakpro_view_month"] = date(
+                jump_date.year,
+                jump_date.month,
+                1,
+            )
+            st.rerun()
 
-            for col, row in zip(cols, rows[index:index + 3]):
-                with col:
-                    _render_shift_card(
-                        row,
-                        selected_courier,
-                        actor_email,
-                    )
+        st.markdown(
+            f"""
+<div style="font-size:11px;color:#64748b;font-weight:800;margin-top:8px">
+  Fut&aacute;r: <b>{_safe(selected_courier.get("courier_name") or "-")}</b><br>
+  E-mail: {_safe(selected_courier.get("email") or "-")}
+</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    with main:
+        top_cols = st.columns([2, 1])
+        top_cols[0].markdown(
+            f"### {selected_date.isoformat()} | {warehouse}"
+        )
+
+        if top_cols[1].button(
+            "Frissítés",
+            key="muszakpro_refresh",
+            use_container_width=True,
+        ):
+            st.cache_data.clear()
+            st.rerun()
+
+        if not selected_courier.get("email"):
+            st.error(
+                "Foglaláshoz kell e-mail cím. Először a courier_master/Felhasználók adatot javítsuk."
+            )
+            return
+
+        try:
+            daily = build_daily_shift_view(
+                selected_date,
+                user_email=selected_courier.get("email"),
+                warehouse_filter=warehouse,
+            )
+        except Exception as exc:
+            st.error(
+                f"MűszakPro napi adatok olvasási hiba: {exc}"
+            )
+            return
+
+        if daily.empty:
+            st.warning(
+                "Nincs megnyitott kapacitás erre a napra. Futtasd: python scripts\\load_muszakpro_capacity.py"
+            )
+            return
+
+        daily = daily.sort_values(
+            [
+                "is_mine",
+                "is_expired",
+                "conflict",
+                "booked_count",
+                "start",
+            ],
+            ascending=[False, True, True, True, True],
+            kind="stable",
+        )
+        _render_summary_cards(
+            daily
+        )
+        _render_shift_grid(
+            daily,
+            selected_courier,
+            actor_email,
+        )
 
 
 def _render_bookings_tab(start_date, end_date):
@@ -529,20 +1163,21 @@ def _render_capacity_tab(start_date, end_date):
 
 
 def show_muszakpro_page():
-    st.title("MuszakPro")
+    _inject_muszakpro_css()
+    st.title("MűszakPro")
     st.caption(
-        "Sajat Python/Streamlit MuszakPro felulet Supabase alapon."
+        "Saját Python/Streamlit MűszakPro felület Supabase alapon."
     )
 
     today = date.today()
     col1, col2 = st.columns(2)
     start_date = col1.date_input(
-        "Kezdo datum",
+        "Kezdő dátum",
         value=today,
         key="muszakpro_start",
     )
     end_date = col2.date_input(
-        "Zaro datum",
+        "Záró dátum",
         value=today + timedelta(days=10),
         key="muszakpro_end",
     )
@@ -551,11 +1186,11 @@ def show_muszakpro_page():
 
     tab_daily, tab_bookings, tab_capacity, tab_events, tab_debug = st.tabs(
         [
-            "Napi foglalas",
-            "Foglalasok",
-            "Kapacitas",
-            "Esemenynaplo",
-            "Ellenorzes",
+            "Napi foglalás",
+            "Foglalások",
+            "Kapacitás",
+            "Eseménynapló",
+            "Ellenőrzés",
         ]
     )
 
@@ -581,14 +1216,14 @@ def show_muszakpro_page():
         )
 
     with tab_debug:
-        st.subheader("Gyors ellenorzes")
+        st.subheader("Gyors ellenőrzés")
         st.markdown(
             """
-- Foglalas tabla: `raw_muszakpro_bookings`
-- Kapacitas tabla: `raw_muszakpro_shift_capacity`
-- Esemeny tabla: `ops_muszakpro_events`
-- Torlesnel nincs fizikai torles: a sor `status = CANCELLED` allapotot kap.
-- A regi megosztott Google Sheetet a Python oldal csak importforraskent hasznalja.
+- Foglalás tábla: `raw_muszakpro_bookings`
+- Kapacitás tábla: `raw_muszakpro_shift_capacity`
+- Esemény tábla: `ops_muszakpro_events`
+- Törlésnél nincs fizikai törlés: a sor `status = CANCELLED` állapotot kap.
+- A régi megosztott Google Sheetet a Python oldal csak importforrásként használja.
 """
         )
 
@@ -605,10 +1240,10 @@ def show_muszakpro_page():
             )
             col1, col2 = st.columns(2)
             col1.metric(
-                "Hianyzo courier ID",
+                "Hiányzó courier ID",
                 int(missing_id_count),
             )
             col2.metric(
-                "Hianyzo sorszam",
+                "Hiányzó sorszám",
                 int(missing_serial_count),
             )
