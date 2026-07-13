@@ -1,4 +1,5 @@
 from datetime import date
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -178,6 +179,86 @@ def metric_row(title, summary):
     c8.metric(
         "Compliance rossz %",
         format_percent(summary.get("compliance_bad_percent", 0)),
+    )
+
+
+def normalize_search_text(value):
+    text = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", text)
+
+    return "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character)
+    )
+
+
+def filter_dataframe_by_search(df, search_text, columns):
+    if df.empty:
+        return df
+
+    needle = normalize_search_text(search_text)
+
+    if not needle:
+        return df
+
+    mask = pd.Series(False, index=df.index)
+
+    for column in columns:
+        if column not in df.columns:
+            continue
+
+        values = df[column].fillna("").astype(str).map(normalize_search_text)
+        mask = mask | values.str.contains(needle, na=False, regex=False)
+
+    return df[mask].copy()
+
+
+def build_performance_table(performance_df):
+    if performance_df.empty:
+        return pd.DataFrame()
+
+    columns = [
+        "date_from",
+        "date_to",
+        "warehouse_code",
+        "courier_id",
+        "courier_name",
+        "shifts",
+        "orders",
+        "delayed",
+        "delay_percent",
+        "late_percent",
+        "no_show_percent",
+        "compliance_score_percent",
+    ]
+    columns = [column for column in columns if column in performance_df.columns]
+    table = performance_df[columns].copy()
+
+    for column in [
+        "delay_percent",
+        "late_percent",
+        "no_show_percent",
+        "compliance_score_percent",
+    ]:
+        if column in table.columns:
+            table[column] = table[column].apply(format_percent)
+
+    return table.rename(
+        columns={
+            "date_from": "Időszak kezdete",
+            "date_to": "Időszak vége",
+            "warehouse_code": "Raktár",
+            "courier_id": "Courier ID",
+            "courier_name": "Futár",
+            "shifts": "Műszak",
+            "orders": "Order",
+            "delayed": "Késő order",
+            "delay_percent": "Delay %",
+            "late_percent": "Late %",
+            "no_show_percent": "No-show %",
+            "compliance_score_percent": "Compliance",
+        }
     )
 
 
@@ -403,7 +484,11 @@ def show_dsp_route_explanations_page():
     start_date = c1.date_input("Kezdő dátum", value=default_start)
     end_date = c2.date_input("Záró dátum", value=today)
     warehouse = c3.selectbox("Raktár", ["Mind", "BUD1", "BUD2", "Budapest"])
-    courier_id = c4.text_input("Courier ID", value="7644")
+    search_text = c4.text_input(
+        "Keresés",
+        value="",
+        placeholder="Courier ID vagy név",
+    )
 
     if start_date > end_date:
         st.error("A kezdő dátum nem lehet későbbi, mint a záró dátum.")
@@ -413,13 +498,13 @@ def show_dsp_route_explanations_page():
         stories_df = read_route_stories(
             start_date=start_date,
             end_date=end_date,
-            courier_id=courier_id,
+            courier_id="",
             warehouse=warehouse,
         )
         performance_df = read_performance_rows(
             start_date=start_date,
             end_date=end_date,
-            courier_id=courier_id,
+            courier_id="",
             warehouse=warehouse,
         )
     except Exception as exc:
@@ -427,6 +512,21 @@ def show_dsp_route_explanations_page():
         return
 
     stories_df = apply_soft_story_warehouse_filter(stories_df, warehouse)
+    stories_df = filter_dataframe_by_search(
+        stories_df,
+        search_text,
+        ["courier_id", "courier_name", "route_id", "shift_name"],
+    )
+    performance_df = filter_dataframe_by_search(
+        performance_df,
+        search_text,
+        ["courier_id", "courier_name"],
+    )
+
+    st.caption(
+        f"Találatok: Courier Hub sor {len(performance_df)}, "
+        f"route story sor {len(stories_df)}."
+    )
 
     if not performance_df.empty and stories_df.empty:
         st.warning(
@@ -472,6 +572,15 @@ def show_dsp_route_explanations_page():
 
     st.divider()
 
+    st.subheader("Courier Hub futár lista")
+    st.dataframe(
+        build_performance_table(performance_df),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
     st.subheader("Route lista")
     st.dataframe(
         build_story_table(stories_df),
@@ -487,7 +596,7 @@ def show_dsp_route_explanations_page():
         else []
     )
 
-    if not courier_id.strip() and len(route_ids) > 30:
+    if not search_text.strip() and len(route_ids) > 30:
         st.info(
             "A cím/order bontáshoz adj meg Courier ID-t, különben túl sok raw JSON-t kellene egyszerre betölteni."
         )
@@ -497,7 +606,7 @@ def show_dsp_route_explanations_page():
             orders_df = read_order_details_for_routes(
                 start_date=start_date,
                 end_date=end_date,
-                courier_id=courier_id,
+                courier_id=search_text if search_text.strip().isdigit() else "",
                 route_ids=route_ids,
             )
         except Exception as exc:
