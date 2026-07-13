@@ -12,6 +12,7 @@ from resources.dsp_route_explanations import (
     read_performance_rows,
     read_route_stories,
     render_route_path_html,
+    rebuild_route_stories_from_sources,
     route_status_label,
     summarize_performance,
     summarize_story_rows,
@@ -511,6 +512,7 @@ def show_dsp_route_explanations_page():
         st.error(f"Nem sikerült beolvasni a performance magyarázat adatait: {exc}")
         return
 
+    route_story_source = "mart"
     stories_df = apply_soft_story_warehouse_filter(stories_df, warehouse)
     stories_df = filter_dataframe_by_search(
         stories_df,
@@ -523,9 +525,32 @@ def show_dsp_route_explanations_page():
         ["courier_id", "courier_name"],
     )
 
+    if stories_df.empty:
+        try:
+            rebuilt_stories_df = rebuild_route_stories_from_sources(
+                start_date=start_date,
+                end_date=end_date,
+            )
+            rebuilt_stories_df = apply_soft_story_warehouse_filter(
+                rebuilt_stories_df,
+                warehouse,
+            )
+            rebuilt_stories_df = filter_dataframe_by_search(
+                rebuilt_stories_df,
+                search_text,
+                ["courier_id", "courier_name", "route_id", "shift_name"],
+            )
+
+            if not rebuilt_stories_df.empty:
+                stories_df = rebuilt_stories_df
+                route_story_source = "raw"
+        except Exception as exc:
+            st.warning(f"A route story raw visszaépítés most nem sikerült: {exc}")
+
     st.caption(
         f"Találatok: Courier Hub sor {len(performance_df)}, "
-        f"route story sor {len(stories_df)}."
+        f"route story sor {len(stories_df)}. "
+        f"Forrás: {'kész mart tábla' if route_story_source == 'mart' else 'raw/stage visszaépítés'}."
     )
 
     if not performance_df.empty and stories_df.empty:

@@ -6,6 +6,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from scripts import build_dsp_route_stories as route_story_builder
+
 from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
@@ -249,6 +251,60 @@ def read_route_stories(start_date, end_date, courier_id="", warehouse=""):
         limit=20000,
         page_size=500,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def rebuild_route_stories_from_sources(start_date, end_date):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError(
+            "Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beallitas."
+        )
+
+    parsed_start = route_story_builder.parse_date(format_date_filter(start_date))
+    parsed_end = route_story_builder.parse_date(format_date_filter(end_date))
+    summary_table, summary_rows, arrivals_table, arrivals = (
+        route_story_builder.load_sources(
+            supabase_url=supabase_url.rstrip("/"),
+            service_role_key=service_role_key,
+            start_date=parsed_start,
+            end_date=parsed_end,
+            force_raw=False,
+        )
+    )
+    _distance_table, distance_rows = route_story_builder.load_optional_table(
+        supabase_url=supabase_url.rstrip("/"),
+        service_role_key=service_role_key,
+        candidates=route_story_builder.DISTANCE_TABLE_CANDIDATES,
+        columns=route_story_builder.DISTANCE_COLUMNS,
+        start_date=parsed_start,
+        end_date=parsed_end,
+        order="work_date.asc,driver_id.asc,route_id.asc",
+        chunk_by_day=True,
+        page_size=500,
+    )
+    _booking_table, booking_rows = route_story_builder.load_optional_table(
+        supabase_url=supabase_url.rstrip("/"),
+        service_role_key=service_role_key,
+        candidates=route_story_builder.BOOKING_TABLE_CANDIDATES,
+        columns=route_story_builder.BOOKING_COLUMNS,
+        start_date=parsed_start,
+        end_date=parsed_end,
+        order="work_date.asc,courier_id.asc,shift_text.asc",
+        chunk_by_day=True,
+        page_size=500,
+    )
+    rows = route_story_builder.build_output_rows(
+        summary_rows=summary_rows,
+        arrival_stats=route_story_builder.build_arrival_stats(arrivals),
+        distance_lookup=route_story_builder.build_distance_lookup(distance_rows),
+        booking_lookup=route_story_builder.build_booking_lookup(booking_rows),
+        source_summary_table=summary_table,
+        source_arrivals_table=arrivals_table,
+    )
+
+    return pd.DataFrame(rows)
 
 
 def read_table_with_filter_list(
