@@ -1,5 +1,4 @@
 from datetime import date
-import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -184,36 +183,128 @@ def metric_row(title, summary):
     )
 
 
-def normalize_search_text(value):
-    text = str(value or "").strip().lower()
-    normalized = unicodedata.normalize("NFKD", text)
+def normalize_courier_id(value):
+    text = str(value or "").strip()
 
-    return "".join(
-        character
-        for character in normalized
-        if not unicodedata.combining(character)
-    )
+    if text.endswith(".0"):
+        text = text[:-2]
+
+    return text
 
 
-def filter_dataframe_by_search(df, search_text, columns):
+def filter_dataframe_by_courier_id(df, courier_id):
     if df.empty:
         return df
 
-    needle = normalize_search_text(search_text)
+    selected_id = normalize_courier_id(courier_id)
 
-    if not needle:
+    if not selected_id:
         return df
 
-    mask = pd.Series(False, index=df.index)
+    if "courier_id" not in df.columns:
+        return df.iloc[0:0].copy()
 
-    for column in columns:
-        if column not in df.columns:
+    mask = df["courier_id"].fillna("").map(normalize_courier_id) == selected_id
+    return df[mask].copy()
+
+
+def build_courier_options(performance_df, stories_df):
+    by_id = {}
+
+    for df in [performance_df, stories_df]:
+        if df.empty or "courier_id" not in df.columns:
             continue
 
-        values = df[column].fillna("").astype(str).map(normalize_search_text)
-        mask = mask | values.str.contains(needle, na=False, regex=False)
+        for _, row in df.iterrows():
+            courier_id = normalize_courier_id(row.get("courier_id"))
 
-    return df[mask].copy()
+            if not courier_id:
+                continue
+
+            name = str(row.get("courier_name") or "").strip()
+            current = by_id.get(courier_id, "")
+
+            if name and (not current or len(name) > len(current)):
+                by_id[courier_id] = name
+            else:
+                by_id.setdefault(courier_id, current)
+
+    options = [("", "Összes futár")]
+
+    for courier_id, name in sorted(
+        by_id.items(),
+        key=lambda item: (item[1].lower() if item[1] else "", item[0]),
+    ):
+        label = f"#{courier_id} - {name}" if name else f"#{courier_id}"
+        options.append((courier_id, label))
+
+    return options
+
+
+def render_source_box(
+    start_date,
+    end_date,
+    warehouse,
+    route_story_source,
+    selected_courier_id,
+):
+    warehouse_map = {
+        "BUD1": "1",
+        "BUD2": "2",
+    }
+    selected_warehouse = str(warehouse or "").strip().upper()
+
+    if selected_warehouse in warehouse_map:
+        warehouse_ids = [(selected_warehouse, warehouse_map[selected_warehouse])]
+    else:
+        warehouse_ids = [("BUD1", "1"), ("BUD2", "2")]
+
+    urls = [
+        (
+            f"{code}: https://courier-hub.kifli.hu/services/courier-hub-service/"
+            f"external/performance/dsp/JIT/couriers?dateFrom={start_date.isoformat()}"
+            f"&dateTo={end_date.isoformat()}&dspId=8&warehouseId={warehouse_id}"
+        )
+        for code, warehouse_id in warehouse_ids
+    ]
+    attendance_url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        f"fetch-attendance/JIT/{start_date.isoformat()}"
+        "?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    )
+    detail_courier = selected_courier_id or "{courier_id}"
+    detail_url = (
+        "https://uftplslamjbbhlozsygo.supabase.co/functions/v1/"
+        f"fetch-drivers-detail/{detail_courier}/{start_date.isoformat()}"
+        "?organizationId=f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+    )
+
+    with st.expander("Adatforrás és API hívás"):
+        st.markdown("**Bal oldal - Courier Hub érték**")
+        st.code("\n".join(urls), language="text")
+        st.caption(
+            "DB stage: stg_jitt_invoice_performance_couriers. "
+            "Raw táblák: raw_jitt_invoice_perf_bud1 / raw_jitt_invoice_perf_bud2."
+        )
+        st.markdown("**Jobb oldal - Route story alapján visszaépítve**")
+        st.code(
+            "\n".join(
+                [
+                    f"Attendance példa: {attendance_url}",
+                    f"Driver detail példa: {detail_url}",
+                ]
+            ),
+            language="text",
+        )
+        st.caption(
+            "Elsődleges DB: mart_dsp_route_stories. "
+            "Ha ez üres, akkor raw/stage visszaépítés fut: raw_dsp_attendance, "
+            "raw_dsp_driver_detail, opcionálisan stg_dsp_route_distance és raw_muszakpro_bookings."
+        )
+        st.caption(
+            f"A jelenlegi route story forrás: "
+            f"{'kész mart tábla' if route_story_source == 'mart' else 'raw/stage visszaépítés'}."
+        )
 
 
 def build_performance_table(performance_df):
@@ -602,15 +693,10 @@ def show_dsp_route_explanations_page():
     today = date.today()
     default_start = today.replace(day=1)
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    c1, c2, c3 = st.columns([1, 1, 1])
     start_date = c1.date_input("Kezdő dátum", value=default_start)
     end_date = c2.date_input("Záró dátum", value=today)
     warehouse = c3.selectbox("Raktár", ["Mind", "BUD1", "BUD2", "Budapest"])
-    search_text = c4.text_input(
-        "Keresés",
-        value="",
-        placeholder="Courier ID vagy név",
-    )
 
     if start_date > end_date:
         st.error("A kezdő dátum nem lehet későbbi, mint a záró dátum.")
@@ -635,21 +721,6 @@ def show_dsp_route_explanations_page():
 
     route_story_source = "mart"
     stories_df = apply_soft_story_warehouse_filter(stories_df, warehouse)
-    stories_df = filter_dataframe_by_search(
-        stories_df,
-        search_text,
-        ["courier_id", "courier_name", "route_id", "shift_name"],
-    )
-    performance_df = filter_dataframe_by_search(
-        performance_df,
-        search_text,
-        ["courier_id", "courier_name"],
-    )
-    performance_df = select_performance_period_rows(
-        performance_df,
-        start_date,
-        end_date,
-    )
 
     if stories_df.empty:
         try:
@@ -661,11 +732,6 @@ def show_dsp_route_explanations_page():
                 rebuilt_stories_df,
                 warehouse,
             )
-            rebuilt_stories_df = filter_dataframe_by_search(
-                rebuilt_stories_df,
-                search_text,
-                ["courier_id", "courier_name", "route_id", "shift_name"],
-            )
 
             if not rebuilt_stories_df.empty:
                 stories_df = rebuilt_stories_df
@@ -673,10 +739,39 @@ def show_dsp_route_explanations_page():
         except Exception as exc:
             st.warning(f"A route story raw visszaépítés most nem sikerült: {exc}")
 
+    courier_options = build_courier_options(performance_df, stories_df)
+    selected_courier = st.selectbox(
+        "Futár",
+        options=courier_options,
+        format_func=lambda option: option[1],
+    )
+    selected_courier_id = selected_courier[0]
+
+    stories_df = filter_dataframe_by_courier_id(
+        stories_df,
+        selected_courier_id,
+    )
+    performance_df = filter_dataframe_by_courier_id(
+        performance_df,
+        selected_courier_id,
+    )
+    performance_df = select_performance_period_rows(
+        performance_df,
+        start_date,
+        end_date,
+    )
+
     st.caption(
         f"Találatok: Courier Hub sor {len(performance_df)}, "
         f"route story sor {len(stories_df)}. "
         f"Forrás: {'kész mart tábla' if route_story_source == 'mart' else 'raw/stage visszaépítés'}."
+    )
+    render_source_box(
+        start_date,
+        end_date,
+        warehouse,
+        route_story_source,
+        selected_courier_id,
     )
 
     if not performance_df.empty and stories_df.empty:
@@ -747,7 +842,7 @@ def show_dsp_route_explanations_page():
         else []
     )
 
-    if not search_text.strip() and len(route_ids) > 30:
+    if not selected_courier_id and len(route_ids) > 30:
         st.info(
             "A cím/order bontáshoz adj meg Courier ID-t, különben túl sok raw JSON-t kellene egyszerre betölteni."
         )
@@ -757,7 +852,7 @@ def show_dsp_route_explanations_page():
             orders_df = read_order_details_for_routes(
                 start_date=start_date,
                 end_date=end_date,
-                courier_id=search_text if search_text.strip().isdigit() else "",
+                courier_id=selected_courier_id,
                 route_ids=route_ids,
             )
         except Exception as exc:
