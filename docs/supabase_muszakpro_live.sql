@@ -4,6 +4,31 @@
 -- - a helyi MuszakPro Google Apps Script tudjon kozvetlenul Supabase-be irni,
 -- - a regi Foglalasok sheet importja mellett legyen sajat, aktiv DB tabla,
 -- - a torles ne fizikai torles legyen, hanem status = CANCELLED.
+--
+-- Fontos:
+-- Ha korabban lefutott a prefix alias SQL, akkor a public.raw_muszakpro_bookings
+-- view lehet. View-t nem lehet ALTER TABLE-lel boviteni, ezert a script elobb
+-- ledobja az alias view-t, majd letrehozza a valodi tablat.
+
+do $$
+declare
+    target_kind text;
+begin
+    select c.relkind::text
+    into target_kind
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'raw_muszakpro_bookings';
+
+    if target_kind = 'v' then
+        drop view public.raw_muszakpro_bookings;
+        raise notice 'Dropped alias view public.raw_muszakpro_bookings.';
+    elsif target_kind = 'm' then
+        drop materialized view public.raw_muszakpro_bookings;
+        raise notice 'Dropped materialized view public.raw_muszakpro_bookings.';
+    end if;
+end $$;
 
 create table if not exists public.raw_muszakpro_bookings (
     id uuid primary key default gen_random_uuid(),
@@ -79,8 +104,17 @@ create index if not exists idx_ops_muszakpro_events_email
 -- Ha a regi tabla meg letezik, kapja meg ugyanazokat az oszlopokat, hogy a kod
 -- visszafele is kompatibilis maradjon.
 do $$
+declare
+    legacy_kind text;
 begin
-    if to_regclass('public.foglalasok_raw') is not null then
+    select c.relkind::text
+    into legacy_kind
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'foglalasok_raw';
+
+    if legacy_kind in ('r', 'p') then
         alter table public.foglalasok_raw
             add column if not exists status text not null default 'ACTIVE',
             add column if not exists event_type text,
@@ -92,8 +126,17 @@ end $$;
 -- Egyszeri seed: a regi foglalasok_raw aktiv sorait atemeli az uj nev ala.
 -- Nem torol es nem ir felul rombolo modon.
 do $$
+declare
+    legacy_kind text;
 begin
-    if to_regclass('public.foglalasok_raw') is not null then
+    select c.relkind::text
+    into legacy_kind
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'foglalasok_raw';
+
+    if legacy_kind in ('r', 'p') then
         insert into public.raw_muszakpro_bookings (
             source_name,
             source_row,
