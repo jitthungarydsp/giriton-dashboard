@@ -354,6 +354,35 @@ def render_route_expanders(stories_df, orders_df):
             )
 
 
+def apply_soft_story_warehouse_filter(stories_df, warehouse):
+    if stories_df.empty:
+        return stories_df
+
+    clean_warehouse = str(warehouse or "").strip()
+
+    if not clean_warehouse or clean_warehouse in ["Mind", "Budapest"]:
+        return stories_df
+
+    mask = pd.Series(False, index=stories_df.index)
+
+    for column in ["warehouse_name", "shift_name"]:
+        if column in stories_df.columns:
+            mask = mask | stories_df[column].astype(str).str.contains(
+                clean_warehouse,
+                case=False,
+                na=False,
+            )
+
+    if mask.any():
+        return stories_df[mask].copy()
+
+    st.caption(
+        f"A route story táblában nincs egyértelmű {clean_warehouse} jelölés, "
+        "ezért a futár route-jait raktárszűrés nélkül mutatom."
+    )
+    return stories_df
+
+
 def show_dsp_route_explanations_page():
     inject_styles()
 
@@ -396,6 +425,15 @@ def show_dsp_route_explanations_page():
     except Exception as exc:
         st.error(f"Nem sikerült beolvasni a performance magyarázat adatait: {exc}")
         return
+
+    stories_df = apply_soft_story_warehouse_filter(stories_df, warehouse)
+
+    if not performance_df.empty and stories_df.empty:
+        st.warning(
+            "Courier Hub performance adat van erre a szűrésre, de a route story "
+            "táblában nincs hozzá tartozó sor. Ilyenkor a mart_dsp_route_stories "
+            "frissítést kell lefuttatni erre a dátumtartományra."
+        )
 
     performance_summary = summarize_performance(performance_df)
     story_summary = summarize_story_rows(

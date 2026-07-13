@@ -241,11 +241,6 @@ def read_route_stories(start_date, end_date, courier_id="", warehouse=""):
     if clean_courier_id:
         filters_list.append(("courier_id", f"eq.{clean_courier_id}"))
 
-    clean_warehouse = str(warehouse or "").strip()
-
-    if clean_warehouse and clean_warehouse != "Mind":
-        filters_list.append(("warehouse_name", f"ilike.*{clean_warehouse}*"))
-
     return read_table_with_filter_list(
         table_name=ROUTE_STORY_TABLE,
         columns=ROUTE_STORY_COLUMNS,
