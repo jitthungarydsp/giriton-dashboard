@@ -417,6 +417,52 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
     return df
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def read_muszakpro_events(start_date=None, end_date=None, limit=1000):
+    supabase_url, headers = get_headers()
+    filters = [
+        (
+            "select=created_at,action_type,work_date,email,shift_text,"
+            "warehouse,booking_code,actor_email"
+        ),
+        "order=created_at.desc",
+        f"limit={int(limit)}",
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+
+    if start_date_text:
+        filters.append(
+            f"work_date=gte.{start_date_text}"
+        )
+
+    if end_date_text:
+        filters.append(
+            f"work_date=lte.{end_date_text}"
+        )
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/ops_muszakpro_events"
+        f"?{'&'.join(filters)}"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+
+    if is_missing_table_response(response):
+        return pd.DataFrame()
+
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows)
+
+
 def read_foglalasok_records(work_date):
     df = read_foglalasok_raw(
         start_date=work_date,
