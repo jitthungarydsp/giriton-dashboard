@@ -50,6 +50,9 @@ from page.statistics import (
 from page.order_statistics import (
     show_order_statistics_page,
 )
+from page.dsp_route_explanations import (
+    show_dsp_route_explanations_page,
+)
 from page.courier_dashboard import (
     show_courier_dashboard_page,
 )
@@ -125,6 +128,7 @@ if user["role"] == "admin":
         "Giriton muszakok DB",
         "Foglalasok DB",
         "Giriton Attendance DB",
+        "Performance magyarazat",
         "Futárok",
         "Mai futárok",
         "Kifli kártya",
@@ -223,6 +227,8 @@ elif page == "Statisztika":
     show_statistics_page()
 elif page == "Megrendeles statisztika":
     show_order_statistics_page()
+elif page == "Performance magyarazat":
+    show_dsp_route_explanations_page()
 elif page == "Trainer":
     st.title(
         "Trainer felület"
