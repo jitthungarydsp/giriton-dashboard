@@ -23,6 +23,10 @@ on:
         description: "HTTP hiba valaszokat is mentse raw sorba."
         required: false
         default: "false"
+      only_missing:
+        description: "Csak a hianyzo sikeres raw chunkokat tolti."
+        required: false
+        default: "false"
   schedule:
     - cron: "35 2 * * *"
 
@@ -73,12 +77,14 @@ jobs:
             WAREHOUSE_IDS="1,2"
             CHUNK_DAYS="7"
             SAVE_HTTP_ERRORS="false"
+            ONLY_MISSING="false"
           else
             START_DATE="${{ inputs.start_date }}"
             END_DATE="${{ inputs.end_date }}"
             WAREHOUSE_IDS="${{ inputs.warehouse_ids }}"
             CHUNK_DAYS="${{ inputs.chunk_days }}"
             SAVE_HTTP_ERRORS="${{ inputs.save_http_errors }}"
+            ONLY_MISSING="${{ inputs.only_missing }}"
           fi
 
           args=(
@@ -93,6 +99,10 @@ jobs:
 
           if [ "$SAVE_HTTP_ERRORS" = "true" ]; then
             args+=(--save-http-errors)
+          fi
+
+          if [ "$ONLY_MISSING" = "true" ]; then
+            args+=(--only-missing)
           fi
 
           python scripts/load_jitt_invoice_performance_raw.py "${args[@]}"

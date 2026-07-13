@@ -198,3 +198,37 @@ A parancsnak JSON-t kell kiirnia stdout-ra. Elfogadott formatumok:
 A script a kapott headerekkel ujrahivja ugyanazt a Courier Hub API kereset.
 Ez azert fontos, mert igy a kesobbi login/Playwright vagy refresh-token megoldas
 kulon script lehet, az invoice import logikajat nem kell ujra szetszedni.
+
+## 8. Visszamenoleges betoltes
+
+A raw import visszamenolegesen is futtathato:
+
+```text
+python scripts/load_jitt_invoice_performance_raw.py --start-date 2026-06-01 --end-date 2026-07-13
+```
+
+A GitHub Action `workflow_dispatch` inputjai is ezt tudjak:
+
+- `start_date`
+- `end_date`
+- `warehouse_ids`
+- `chunk_days`
+- `save_http_errors`
+- `only_missing`
+
+Az `only_missing=true` mod elobb megnezi, hogy az adott raktar + datum chunkra
+letezik-e mar sikeres `status_code=200` raw sor. Ha igen, kihagyja az API hivast.
+Ez akkor hasznos, ha egy lejar token miatt csak nehany chunk maradt ki, es nem
+akarjuk ujrahivni az egesz honapot.
+
+Pelda manualis backfillre:
+
+```text
+start_date=2026-06-01
+end_date=
+warehouse_ids=1,2
+chunk_days=7
+only_missing=true
+```
+
+Ha a mar meglevo adatokat is frissiteni akarjuk, akkor `only_missing=false`.

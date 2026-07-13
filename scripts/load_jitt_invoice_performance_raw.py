@@ -385,6 +385,15 @@ def post_supabase_rows(table_name, rows):
     return len(rows)
 
 
+def supabase_read_headers():
+    supabase_key = get_required_setting("SUPABASE_SERVICE_ROLE_KEY")
+
+    return {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+    }
+
+
 def is_missing_table_response(response):
     if response.status_code == 404:
         return True
@@ -396,6 +405,50 @@ def is_missing_table_response(response):
         or ("relation" in text and "does not exist" in text)
         or ("pgrst" in text and "not found" in text)
     )
+
+
+def raw_chunk_exists(
+    table_names,
+    dsp_code,
+    dsp_id,
+    warehouse_id,
+    date_from,
+    date_to,
+):
+    supabase_url = get_required_setting("SUPABASE_URL").rstrip("/")
+    headers = supabase_read_headers()
+    params = {
+        "select": "date_from",
+        "source_name": f"eq.{SOURCE_NAME}",
+        "dsp_code": f"eq.{dsp_code}",
+        "dsp_id": f"eq.{int(dsp_id)}",
+        "warehouse_id": f"eq.{int(warehouse_id)}",
+        "date_from": f"eq.{date_from.isoformat()}",
+        "date_to": f"eq.{date_to.isoformat()}",
+        "status_code": "eq.200",
+        "limit": "1",
+    }
+    last_error = None
+
+    for table_name in table_names:
+        response = requests.get(
+            f"{supabase_url}/rest/v1/{table_name}",
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+
+        if is_missing_table_response(response):
+            last_error = response
+            continue
+
+        raise_for_supabase_error(response)
+        return table_name, bool(response.json())
+
+    if last_error is not None:
+        return "", False
+
+    return "", False
 
 
 def post_supabase_rows_with_fallback(table_names, rows):
@@ -469,6 +522,11 @@ def main():
         action="store_true",
         help="HTTP 4xx/5xx valaszokat is elmenti raw sorba.",
     )
+    parser.add_argument(
+        "--only-missing",
+        action="store_true",
+        help="Csak azokat a chunkokat hivja, ahol meg nincs sikeres 200-as raw sor.",
+    )
     args = parser.parse_args()
 
     start_date = parse_date(args.start_date)
@@ -486,6 +544,7 @@ def main():
     }
     ok_count = 0
     failed_count = 0
+    skipped_count = 0
 
     for warehouse_id in warehouse_ids:
         warehouse_code, table_names = WAREHOUSE_TABLES[warehouse_id]
@@ -504,6 +563,25 @@ def main():
             )
 
             try:
+                if args.only_missing:
+                    existing_table, exists = raw_chunk_exists(
+                        table_names,
+                        args.dsp_code,
+                        args.dsp_id,
+                        warehouse_id,
+                        date_from,
+                        date_to,
+                    )
+
+                    if exists:
+                        skipped_count += 1
+                        print(
+                            f"SKIP_EXISTS {warehouse_code} "
+                            f"{date_from.isoformat()}..{date_to.isoformat()} "
+                            f"table={existing_table}"
+                        )
+                        continue
+
                 status_code, response_json = fetch_performance(
                     request_url,
                     headers,
@@ -554,7 +632,7 @@ def main():
     if args.dry_run:
         for table_names, rows in rows_by_table.items():
             print(f"DRY_RUN {list(table_names)}: rows={len(rows)}")
-        print(f"SUMMARY ok={ok_count} failed={failed_count}")
+        print(f"SUMMARY ok={ok_count} skipped={skipped_count} failed={failed_count}")
         return
 
     written = 0
@@ -568,7 +646,7 @@ def main():
         print(f"DB_UPSERT {table_name}: {count}")
 
     print(
-        f"SUMMARY written={written} ok={ok_count} failed={failed_count} batch={fetch_batch_id}"
+        f"SUMMARY written={written} ok={ok_count} skipped={skipped_count} failed={failed_count} batch={fetch_batch_id}"
     )
 
     if failed_count:
