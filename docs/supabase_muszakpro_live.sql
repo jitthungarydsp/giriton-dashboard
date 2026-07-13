@@ -28,7 +28,7 @@ begin
         drop materialized view public.raw_muszakpro_bookings;
         raise notice 'Dropped materialized view public.raw_muszakpro_bookings.';
     end if;
-end $$;
+end; $$;
 
 create table if not exists public.raw_muszakpro_bookings (
     id uuid primary key default gen_random_uuid(),
@@ -101,6 +101,35 @@ create index if not exists idx_ops_muszakpro_events_work_date
 create index if not exists idx_ops_muszakpro_events_email
     on public.ops_muszakpro_events (email);
 
+create table if not exists public.raw_muszakpro_shift_capacity (
+    id uuid primary key default gen_random_uuid(),
+    source_name text not null default 'google-sheet-beo',
+    source_row integer,
+    work_date date not null,
+    shift_text text not null,
+    warehouse text not null default 'BUD1',
+    limit_count integer not null default 0,
+    booked_count integer not null default 0,
+    active boolean not null default true,
+    slack_quota integer not null default 0,
+    response_json jsonb not null default '{}'::jsonb,
+    fetched_at timestamptz not null default now(),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+
+    constraint raw_muszakpro_shift_capacity_unique
+        unique (source_name, work_date, shift_text, warehouse)
+);
+
+create index if not exists idx_raw_muszakpro_shift_capacity_work_date
+    on public.raw_muszakpro_shift_capacity (work_date);
+
+create index if not exists idx_raw_muszakpro_shift_capacity_warehouse
+    on public.raw_muszakpro_shift_capacity (warehouse);
+
+create index if not exists idx_raw_muszakpro_shift_capacity_shift
+    on public.raw_muszakpro_shift_capacity (shift_text);
+
 -- Ha a regi tabla meg letezik, kapja meg ugyanazokat az oszlopokat, hogy a kod
 -- visszafele is kompatibilis maradjon.
 do $$
@@ -121,7 +150,7 @@ begin
             add column if not exists cancelled_at timestamptz,
             add column if not exists cancelled_by text;
     end if;
-end $$;
+end; $$;
 
 -- Egyszeri seed: a regi foglalasok_raw aktiv sorait atemeli az uj nev ala.
 -- Nem torol es nem ir felul rombolo modon.
@@ -199,4 +228,4 @@ begin
             fetched_at = excluded.fetched_at,
             updated_at = now();
     end if;
-end $$;
+end; $$;
