@@ -71,9 +71,6 @@ from page.giriton_shifts_db import (
 from page.foglalasok_db import (
     show_foglalasok_db_page,
 )
-from page.muszakpro import (
-    show_muszakpro_page,
-)
 from page.settings import (
     show_settings_page,
 )
@@ -125,7 +122,6 @@ if user["role"] == "admin":
         "Beállítások",
         "Robotok",
         "DB proba",
-        "MuszakPro",
         "Giriton muszakok DB",
         "Foglalasok DB",
         "Giriton Attendance DB",
@@ -205,8 +201,6 @@ elif page == "Robotok":
     show_robots_page()
 elif page == "DB proba":
     show_db_probe_page()
-elif page == "MuszakPro":
-    show_muszakpro_page()
 elif page == "Giriton muszakok DB":
     show_giriton_shifts_db_page()
 elif page == "Foglalasok DB":
