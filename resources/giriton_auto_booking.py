@@ -1,0 +1,226 @@
+from datetime import datetime, timedelta
+from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+import requests
+
+from resources.foglalasok_db import (
+    clean,
+    normalize_time,
+    read_foglalasok_raw,
+    shift_start,
+)
+from resources.supabase_raw import (
+    get_supabase_config,
+    raise_for_supabase_error,
+)
+
+
+BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
+LOG_TABLE = "ops_giriton_auto_booking_log"
+
+
+def _today_budapest():
+    return datetime.now(BUDAPEST_TZ).date()
+
+
+def _parse_date(value):
+    text = clean(value)
+
+    if not text:
+        return None
+
+    return datetime.strptime(text, "%Y-%m-%d").date()
+
+
+def _format_giriton_date(value):
+    work_date = _parse_date(value)
+
+    if not work_date:
+        return ""
+
+    return work_date.strftime("%d/%m/%Y")
+
+
+def _normalize_warehouse(value):
+    text = clean(value).upper()
+
+    if "BUD1" in text:
+        return "BUD1"
+
+    if "BUD2" in text:
+        return "BUD2"
+
+    return clean(value)
+
+
+def _candidate_key(row):
+    return (
+        clean(row.get("work_date")),
+        _normalize_warehouse(row.get("warehouse")),
+        normalize_time(row.get("shift_start")),
+        clean(row.get("courier_name")).casefold(),
+        clean(row.get("email")).casefold(),
+    )
+
+
+def _build_candidate(row):
+    shift_text = clean(row.get("shift_text"))
+    start = shift_start(shift_text)
+    work_date = clean(row.get("work_date"))
+
+    return {
+        "work_date": work_date,
+        "giriton_date": _format_giriton_date(work_date),
+        "warehouse": _normalize_warehouse(row.get("warehouse")),
+        "shift_text": shift_text,
+        "shift_start": normalize_time(start),
+        "booking_code": clean(row.get("booking_code")),
+        "courier_id": clean(row.get("courier_id")),
+        "courier_name": clean(row.get("courier_name")),
+        "email": clean(row.get("email")).casefold(),
+        "serial": clean(row.get("serial")),
+    }
+
+
+def get_t_plus_booking_candidates(
+    days_ahead=3,
+    horizon_days=1,
+    start_date="",
+    end_date="",
+    limit=10000,
+):
+    """Return Foglalasok rows that the Giriton auto-booking robot should process."""
+
+    if start_date:
+        from_date = _parse_date(start_date)
+    else:
+        from_date = _today_budapest() + timedelta(days=int(days_ahead))
+
+    if end_date:
+        to_date = _parse_date(end_date)
+    else:
+        to_date = from_date + timedelta(days=max(int(horizon_days), 1) - 1)
+
+    df = read_foglalasok_raw(
+        start_date=from_date.isoformat(),
+        end_date=to_date.isoformat(),
+        limit=int(limit),
+    )
+
+    if df.empty:
+        return []
+
+    candidates = []
+    seen = set()
+
+    for row in df.to_dict("records"):
+        candidate = _build_candidate(row)
+
+        if not candidate["work_date"]:
+            continue
+
+        if not candidate["shift_start"]:
+            continue
+
+        if not candidate["warehouse"]:
+            continue
+
+        if not candidate["courier_id"] and not candidate["courier_name"]:
+            continue
+
+        key = _candidate_key(candidate)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        candidates.append(candidate)
+
+    candidates.sort(
+        key=lambda item: (
+            item["work_date"],
+            item["warehouse"],
+            item["shift_start"],
+            item["courier_name"].casefold(),
+            item["email"],
+        )
+    )
+
+    return candidates
+
+
+def _supabase_headers():
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return "", {}
+
+    return supabase_url.rstrip("/"), {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+
+def _is_missing_table_response(response):
+    if response.status_code not in (400, 404):
+        return False
+
+    text = response.text.lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def log_giriton_booking_result(candidate, status, message=""):
+    """Append one auto-booking robot result row to Supabase when the log table exists."""
+
+    candidate = candidate or {}
+    supabase_url, headers = _supabase_headers()
+
+    if not supabase_url:
+        print(
+            "GIRITON_AUTO_BOOK_LOG_SKIPPED missing Supabase config "
+            f"status={status} message={message}"
+        )
+        return "SKIPPED_NO_SUPABASE"
+
+    now_utc = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    row = {
+        "id": str(uuid4()),
+        "source_name": "giriton-auto-booking-robot",
+        "work_date": clean(candidate.get("work_date")) or None,
+        "courier_id": int(candidate["courier_id"]) if clean(candidate.get("courier_id")).isdigit() else None,
+        "courier_name": clean(candidate.get("courier_name")),
+        "email": clean(candidate.get("email")).casefold(),
+        "warehouse": clean(candidate.get("warehouse")),
+        "shift_text": clean(candidate.get("shift_text")),
+        "shift_start": clean(candidate.get("shift_start")),
+        "booking_code": clean(candidate.get("booking_code")),
+        "serial": clean(candidate.get("serial")),
+        "status": clean(status),
+        "message": clean(message),
+        "response_json": candidate,
+        "created_at": now_utc,
+    }
+    endpoint = f"{supabase_url}/rest/v1/{LOG_TABLE}"
+    response = requests.post(
+        endpoint,
+        headers=headers,
+        json=[row],
+        timeout=30,
+    )
+
+    if _is_missing_table_response(response):
+        print(
+            f"GIRITON_AUTO_BOOK_LOG_TABLE_MISSING status={status} message={message}"
+        )
+        return "SKIPPED_MISSING_TABLE"
+
+    raise_for_supabase_error(response)
+    return "OK"
