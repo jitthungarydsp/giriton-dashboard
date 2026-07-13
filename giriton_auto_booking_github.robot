@@ -60,10 +60,15 @@ Giriton Auto Booking From Foglalasok
             ...    DRY_RUN_FOUND
             ...    A Giriton muszakkartya megvan, eles kattintas kihagyva.
         ELSE IF    '${result}' == 'FOUND_CLICKED'
+            ${add_result}=    Add Courier To Shift Subscription
+            ...    ${candidate}
+
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
-            ...    SHIFT_CLICKED
-            ...    A Giriton muszakkartya megvan es kattintva lett. A futar hozzaadas modal meg kulon bekotes.
+            ...    ${add_result}
+            ...    A Giriton muszakkartya megvan, a futar hozzaadasi folyamat lefutott.
+
+            Close Giriton Popup
         ELSE
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
@@ -155,3 +160,155 @@ Find Giriton Shift Card
     END
 
     RETURN    NOT_FOUND
+
+
+Add Courier To Shift Subscription
+    [Arguments]    ${candidate}
+
+    ${courier_name}=    Set Variable    ${candidate}[courier_name]
+    ${courier_id}=      Set Variable    ${candidate}[courier_id]
+    ${email}=           Set Variable    ${candidate}[email]
+
+    Wait Until Page Contains
+    ...    Shift subscription
+    ...    timeout=20s
+
+    ${tab_result}=    Execute Javascript
+    ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"]')];
+    ...    const tab=tabs.find(el => (el.innerText || '').includes('Subscribed users') && el.offsetWidth >= 0);
+    ...    if(tab){tab.click(); return 'OK';}
+    ...    return 'NOT_FOUND';
+
+    IF    '${tab_result}' != 'OK'
+        RETURN    SUBSCRIBED_TAB_NOT_FOUND
+    END
+
+    Sleep    1s
+
+    ${already_added}=    Execute Javascript
+    ...    const courierId=String(arguments[0] || '').trim();
+    ...    const courierName=String(arguments[1] || '').trim();
+    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const win=windows[windows.length - 1] || document;
+    ...    const text=win.innerText || '';
+    ...    if(userNumber && text.includes(userNumber)){return 'YES';}
+    ...    if(courierName && text.toLowerCase().includes(courierName.toLowerCase())){return 'YES';}
+    ...    return 'NO';
+    ...    ${courier_id}
+    ...    ${courier_name}
+
+    IF    '${already_added}' == 'YES'
+        RETURN    ALREADY_BOOKED
+    END
+
+    ${plus_result}=    Execute Javascript
+    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const win=windows[windows.length - 1] || document;
+    ...    const buttons=[...win.querySelectorAll('.v-button')];
+    ...    const plus=buttons.find(button => {
+    ...      const style=getComputedStyle(button);
+    ...      const cls=String(button.className || '');
+    ...      return button.offsetWidth > 0 && button.offsetHeight > 0 && (cls.includes('friendly') || cls.includes('v-button-friendly') || style.backgroundColor.includes('76, 175, 80'));
+    ...    });
+    ...    if(!plus){return 'NOT_FOUND';}
+    ...    plus.click();
+    ...    return 'OK';
+
+    IF    '${plus_result}' != 'OK'
+        RETURN    ADD_BUTTON_NOT_FOUND
+    END
+
+    Wait Until Element Is Visible
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+    ...    timeout=20s
+
+    Click Element
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+
+    Press Keys
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+    ...    CTRL+A
+
+    ${search_text}=    Set Variable If    '${courier_name}' != ''    ${courier_name}    ${email}
+
+    Input Text
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+    ...    ${search_text}
+
+    Sleep    2s
+
+    ${select_result}=    Execute Javascript
+    ...    const courierId=String(arguments[0] || '').trim();
+    ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
+    ...    const email=String(arguments[2] || '').trim().toLowerCase();
+    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const nameParts=courierName.split(/\s+/).filter(Boolean);
+    ...    const reversedName=nameParts.length > 1 ? `${nameParts.slice(1).join(' ')} ${nameParts[0]}` : courierName;
+    ...    const dialogs=[...document.querySelectorAll('.v-window')];
+    ...    const dialog=dialogs[dialogs.length - 1] || document;
+    ...    const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"]')];
+    ...    const row=rows.find(item => {
+    ...      const text=(item.innerText || '').replace(/\s+/g,' ').trim();
+    ...      const lower=text.toLowerCase();
+    ...      if(userNumber && text.includes(userNumber)){return true;}
+    ...      if(courierName && lower.includes(courierName)){return true;}
+    ...      if(reversedName && lower.includes(reversedName)){return true;}
+    ...      if(email && lower.includes(email)){return true;}
+    ...      return false;
+    ...    });
+    ...    if(!row){return 'NOT_FOUND';}
+    ...    const checkbox=row.querySelector('input[type="checkbox"]');
+    ...    if(checkbox){checkbox.click(); return 'OK';}
+    ...    row.click();
+    ...    return 'OK';
+    ...    ${courier_id}
+    ...    ${courier_name}
+    ...    ${email}
+
+    IF    '${select_result}' != 'OK'
+        RETURN    COURIER_NOT_FOUND
+    END
+
+    Sleep    1s
+
+    ${choose_result}=    Execute Javascript
+    ...    const button=document.querySelector('#SelectionDialog-btn-confirm-selection') || [...document.querySelectorAll('.v-button')].find(el => (el.innerText || '').includes('Choose') && el.offsetWidth > 0 && el.offsetHeight > 0);
+    ...    if(!button){return 'NOT_FOUND';}
+    ...    button.click();
+    ...    return 'OK';
+
+    IF    '${choose_result}' != 'OK'
+        RETURN    CHOOSE_BUTTON_NOT_FOUND
+    END
+
+    Sleep    2s
+
+    ${verify_result}=    Execute Javascript
+    ...    const courierId=String(arguments[0] || '').trim();
+    ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
+    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const win=windows[windows.length - 1] || document;
+    ...    const text=(win.innerText || '').toLowerCase();
+    ...    const raw=win.innerText || '';
+    ...    if(userNumber && raw.includes(userNumber)){return 'COURIER_ADDED';}
+    ...    if(courierName && text.includes(courierName)){return 'COURIER_ADDED';}
+    ...    return 'COURIER_SELECTED_NOT_VERIFIED';
+    ...    ${courier_id}
+    ...    ${courier_name}
+
+    RETURN    ${verify_result}
+
+
+Close Giriton Popup
+    ${result}=    Execute Javascript
+    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const win=windows[windows.length - 1];
+    ...    if(!win){return 'NO_WINDOW';}
+    ...    const close=win.querySelector('.v-window-closebox');
+    ...    if(close){close.click(); return 'CLOSED';}
+    ...    return 'NO_CLOSE';
+
+    Sleep    1s
+    RETURN    ${result}

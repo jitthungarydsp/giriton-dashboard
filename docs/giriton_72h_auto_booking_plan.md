@@ -55,10 +55,18 @@ A robot jelenleg dry-run modban mukodik:
 - datumot allit Giritonban
 - megkeresi a megfelelo muszakkartyat
 - logolja, hogy megtalalta-e
-- nem adja hozza elesben a futart
+- alapertelmezetten nem adja hozza elesben a futart
 
-Ez szandekos vedelmi lepes, mert a Giriton hozzaadasi modal pontos DOM-utvonala
-meg nincs rogzitve.
+Eles modban (`AUTO_BOOK_DRY_RUN=false`) a kepernyok alapjan ezt a lepeskort
+hasznalja:
+
+1. Muszakkartya megnyitasa.
+2. `Subscribed users` ful megnyitasa.
+3. Zold `+` gomb megnyomasa.
+4. Kereses a `//*[@id="SearchField-tfTextSearch"]` mezoben.
+5. Futar sor kivalasztasa nev, forditott nev vagy `D{courier_id}` alapjan.
+6. `SelectionDialog-btn-confirm-selection` gomb megnyomasa.
+7. Eredmeny ellenorzese a subscribed users tablaban.
 
 ## Log tabla
 
@@ -75,19 +83,16 @@ Fontos statuszok:
 - `DRY_RUN_FOUND`
 - `SHIFT_CLICKED`
 - `SHIFT_NOT_FOUND`
-- kesobb: `COURIER_ADDED`
-- kesobb: `ALREADY_BOOKED`
-- kesobb: `NO_CAPACITY`
-- kesobb: `ERROR`
+- `COURIER_ADDED`
+- `COURIER_SELECTED_NOT_VERIFIED`
+- `ALREADY_BOOKED`
+- `SUBSCRIBED_TAB_NOT_FOUND`
+- `ADD_BUTTON_NOT_FOUND`
+- `COURIER_NOT_FOUND`
+- `CHOOSE_BUTTON_NOT_FOUND`
 
 ## Elesites elotti kovetkezo pont
 
-Meg kell nezni egy konkret Giriton muszakkartyara kattintas utan:
-
-1. milyen modal nyilik meg
-2. hol van a futar hozzaadas gomb
-3. hogyan lehet futar nev/e-mail alapjan keresni
-4. milyen gomb menti a valtozast
-5. milyen szovegbol ellenorizheto, hogy a futar tenyleg felkerult
-
-Amint ez megvan, a dry-run utani reszt lehet elesiteni.
+Eloszor GitHub Actionbol dry-runban kell futtatni, majd 1-2 soron eles modban
+ellenorizni. Ha a Giriton valtoztat a modal DOM-on, a robot ne foglaljon vakon,
+hanem logoljon hibat.
