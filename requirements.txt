@@ -15,3 +15,4 @@ streamlit
 streamlit-option-menu
 pandas
 plotly-express
+pathlib
