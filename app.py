@@ -1,5 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
+import pandas as pd
+import plotly.express as px
 
 # --- Oldal alapbeállításai ---
 st.set_page_config(
@@ -98,4 +100,52 @@ elif selected_page == "Aktuális címek":
     
 elif selected_page == "Napi statisztika":
     st.title("Napi Statisztika 📊")
-    st.info("Itt láthatod a teljesítményedet, megtett kilométereket és a borravaló eloszlását.")
+    st.markdown("---")
+    
+    # 1. Sor: Két grafikon egymás mellett
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Címek állapota diagram
+        df_status = pd.DataFrame({
+            "Állapot": ["Kiszállítva", "Hátralévő", "Sikertelen"],
+            "Darab": [12, 6, 2]
+        })
+        fig1 = px.pie(df_status, values="Darab", names="Állapot", title="📦 Címek állapota",
+                      color_discrete_sequence=["#4CAF50", "#FFC107", "#F44336"], hole=0.3)
+        st.plotly_chart(fig1, use_container_width=True)
+        
+    with col2:
+        # Fizetési módok diagram
+        df_payment = pd.DataFrame({
+            "Mód": ["Előre fizetve", "Készpénz", "Bankkártya (Terminál)"],
+            "Darab": [10, 5, 5]
+        })
+        fig2 = px.pie(df_payment, values="Darab", names="Mód", title="💳 Fizetési módok a helyszínen",
+                      color_discrete_sequence=["#2196F3", "#9C27B0", "#FF9800"], hole=0.3)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # 2. Sor: Újabb két grafikon
+    st.markdown("---")
+    col3, col4 = st.columns(2)
+    
+    with col3:
+        # Pontosság diagram
+        df_timing = pd.DataFrame({
+            "Kategória": ["Időben érkezett", "0-10 perc késés", "10+ perc késés"],
+            "Darab": [15, 3, 2]
+        })
+        fig3 = px.pie(df_timing, values="Darab", names="Kategória", title="⏱️ Kiszállítási pontosság",
+                      color_discrete_sequence=["#00BCD4", "#8BC34A", "#E91E63"])
+        fig3.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig3, use_container_width=True)
+        
+    with col4:
+        # Csomagtípusok diagram
+        df_packages = pd.DataFrame({
+            "Típus": ["Normál (Száraz)", "Hűtős", "Fagyasztott"],
+            "Darab": [25, 10, 5]
+        })
+        fig4 = px.pie(df_packages, values="Darab", names="Típus", title="❄️ Csomagok típusai",
+                      color_discrete_sequence=["#8D6E63", "#03A9F4", "#3F51B5"])
+        st.plotly_chart(fig4, use_container_width=True)

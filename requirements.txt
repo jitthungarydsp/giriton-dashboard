@@ -13,3 +13,5 @@ python-dotenv
 openpyxl
 streamlit
 streamlit-option-menu
+pandas
+plotly-express
