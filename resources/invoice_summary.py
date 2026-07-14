@@ -416,10 +416,14 @@ def build_display_driver_summary(summary_df):
 def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.lib.units import cm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
         from reportlab.platypus import (
+            PageBreak,
             Paragraph,
             SimpleDocTemplate,
             Spacer,
@@ -431,79 +435,294 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             "A PDF generalashoz hianyzik a reportlab csomag."
         ) from exc
 
+    font_name, bold_font_name = register_pdf_fonts(
+        pdfmetrics,
+        TTFont,
+    )
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(A4),
-        leftMargin=1 * cm,
-        rightMargin=1 * cm,
-        topMargin=1 * cm,
-        bottomMargin=1 * cm,
+        pagesize=A4,
+        leftMargin=1.15 * cm,
+        rightMargin=1.15 * cm,
+        topMargin=0.9 * cm,
+        bottomMargin=0.9 * cm,
     )
     styles = getSampleStyleSheet()
-    story = [
-        Paragraph(title, styles["Title"]),
-        Spacer(1, 0.3 * cm),
-    ]
 
-    summary_display = build_display_driver_summary(driver_summary_df)
-    summary_columns = [
-        "Futar",
-        "Raktar ful",
-        "Rendeles",
-        "Kor",
-        "Kesedelmi dij",
-        "Turamegfeleles",
-        "Levonas / plusz",
-        "Fizetendo osszesen",
-    ]
-    summary_columns = [
-        column for column in summary_columns if column in summary_display.columns
-    ]
-    summary_table = [summary_columns] + summary_display[summary_columns].astype(str).values.tolist()
-    table = Table(summary_table, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9ead3")),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ]
+    for style in styles.byName.values():
+        style.fontName = font_name
+
+    styles["Title"].fontName = bold_font_name
+    styles["Heading2"].fontName = bold_font_name
+    styles["Heading3"].fontName = bold_font_name
+
+    title_style = styles["Title"]
+    title_style.alignment = TA_CENTER
+    title_style.textColor = colors.HexColor("#1f7a1f")
+
+    center_style = styles["Normal"].clone("invoice_center")
+    center_style.alignment = TA_CENTER
+    section_style = styles["Heading2"].clone("invoice_section")
+    section_style.textColor = colors.HexColor("#245c24")
+
+    story = []
+    summary_df = driver_summary_df.copy()
+    route_df = route_df.copy()
+
+    for index, driver_row in summary_df.reset_index(drop=True).iterrows():
+        driver_name = normalize_text(driver_row.get("driver_name")) or "Ismeretlen futar"
+        sheet_name = normalize_text(driver_row.get("worksheet_name"))
+        route_driver_names = (
+            route_df["driver_name"].astype(str)
+            if "driver_name" in route_df.columns
+            else pd.Series("", index=route_df.index)
         )
-    )
-    story.extend([table, Spacer(1, 0.4 * cm)])
+        route_sheet_names = (
+            route_df["worksheet_name"].astype(str)
+            if "worksheet_name" in route_df.columns
+            else pd.Series("", index=route_df.index)
+        )
+        driver_routes = route_df[
+            (route_driver_names == driver_name)
+            & (route_sheet_names == sheet_name)
+        ].copy()
 
-    route_display = build_display_routes(route_df)
-    route_columns = [
-        "Datum",
-        "Futar",
-        "Route ID",
-        "Rendeles",
-        "Alapdij",
-        "Kesedelmi dij",
-        "Turamegfeleles",
-        "Osszesen",
-    ]
-    route_columns = [
-        column for column in route_columns if column in route_display.columns
-    ]
-    if not route_display.empty:
-        story.append(Paragraph("Route reszletek", styles["Heading2"]))
-        route_table = [route_columns] + route_display[route_columns].astype(str).head(200).values.tolist()
-        table = Table(route_table, repeatRows=1)
-        table.setStyle(
+        orders = int(money(driver_row.get("orders")))
+        routes = int(money(driver_row.get("routes")))
+        payable_total = money(driver_row.get("payable_total_huf"))
+        fixed_total = money(driver_row.get("fixed_rate_huf"))
+        delay_bonus = money(driver_row.get("delay_bonus_huf"))
+        compliance_bonus = money(driver_row.get("compliance_bonus_huf"))
+        fill_rate_bonus = money(driver_row.get("fill_rate_bonus_huf"))
+        fuel_bonus = money(driver_row.get("fuel_bonus_huf"))
+        fridge_bonus = money(driver_row.get("car_fridge_bonus_huf"))
+        branding = money(driver_row.get("branding_huf"))
+        tip = money(driver_row.get("tip_huf"))
+        extra_bonus = money(driver_row.get("extra_bonus_huf"))
+        adjustment = money(driver_row.get("adjustment_huf"))
+        bonus_total = (
+            delay_bonus
+            + compliance_bonus
+            + fill_rate_bonus
+            + fuel_bonus
+            + fridge_bonus
+            + branding
+            + extra_bonus
+        )
+        average_per_order = payable_total / orders if orders else 0
+        bonus_per_order = bonus_total / orders if orders else 0
+        base_per_order = fixed_total / orders if orders else 0
+
+        if index:
+            story.append(PageBreak())
+
+        story.append(Paragraph(f"{driver_name} elszámoló", title_style))
+        story.append(Paragraph(f"Időszak: {title} | Raktár fül: {sheet_name}", center_style))
+        story.append(Spacer(1, 0.22 * cm))
+
+        hero = Table(
+            [
+                [
+                    Paragraph("<b>TELJESÍTMÉNY INDEX</b>", center_style),
+                    Paragraph("<b>FT / KISZÁLLÍTOTT CÍM</b>", center_style),
+                ],
+                [
+                    Paragraph(
+                        "Minden egyes kiszállított címed átlagosan ennyit ért ebben az időszakban:",
+                        center_style,
+                    ),
+                    Paragraph(
+                        f"<font size='18'><b>{format_huf(average_per_order)}</b></font>",
+                        center_style,
+                    ),
+                ],
+                [
+                    Paragraph(f"{format_huf(payable_total)} / {orders} cím", center_style),
+                    Paragraph(
+                        "Tartalmazza az alapdíjat, bónuszokat, pótlékokat, borravalót és az elszámolási tételeket.",
+                        center_style,
+                    ),
+                ],
+            ],
+            colWidths=[9.2 * cm, 8.0 * cm],
+        )
+        hero.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#e8f7d8")),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#75b843")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#bddda5")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("FONTNAME", (0, 0), (-1, -1), font_name),
+                    ("PADDING", (0, 0), (-1, -1), 6),
                 ]
             )
         )
-        story.append(table)
+        story.append(hero)
+        story.append(Spacer(1, 0.28 * cm))
+
+        story.append(Paragraph("ALAPADATOK ÉS CÉLTARTALÉK", section_style))
+        base = Table(
+            [
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Nyitó céltartalék", "0 Ft"],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Célt. feltöltés (+)", "0 Ft"],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Célt. záró egyenleg", "0 Ft"],
+            ],
+            colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
+        )
+        apply_statement_table_style(base, font_name, bold_font_name, TableStyle, colors)
+        story.append(base)
+        story.append(Spacer(1, 0.28 * cm))
+
+        story.append(Paragraph("BÓNUSZOK ÉS TELJESÍTMÉNY", section_style))
+        bonus_table = Table(
+            [
+                ["Kiszállított címek", orders, "Körök", routes],
+                ["Just in Time / késés", format_huf(delay_bonus), "Túramegfelelés", format_huf(compliance_bonus)],
+                ["Töltési / fill-rate bónusz", format_huf(fill_rate_bonus), "Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding)],
+                ["Egyéb bónusz", format_huf(extra_bonus), "Borravaló", format_huf(tip)],
+            ],
+            colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
+        )
+        apply_statement_table_style(bonus_table, font_name, bold_font_name, TableStyle, colors)
+        story.append(bonus_table)
+        story.append(Spacer(1, 0.28 * cm))
+
+        revenues = [
+            ["Szállítási díj", format_huf(fixed_total)],
+            ["DSP bónuszok", format_huf(bonus_total)],
+            ["Borravaló", format_huf(tip)],
+            ["Egyéb / Mátrix", format_huf(max(extra_bonus, 0))],
+        ]
+        expenses = [
+            ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
+            ["Károkozás", "0 Ft"],
+            ["Be nem fiz. KP", "0 Ft"],
+            ["Egyéb plusz", format_huf(adjustment) if adjustment > 0 else "0 Ft"],
+        ]
+        settlement_rows = [["Bevételek", "Ft", "Kiadások", "Ft"]]
+        for left, right in zip(revenues, expenses):
+            settlement_rows.append([left[0], left[1], right[0], right[1]])
+        settlement_rows.append(
+            [
+                "BEVÉTELEK ÖSSZESEN",
+                format_huf(fixed_total + bonus_total + tip + max(extra_bonus, 0)),
+                "KIADÁSOK ÖSSZESEN",
+                format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft",
+            ]
+        )
+        settlement = Table(
+            settlement_rows,
+            colWidths=[5.2 * cm, 3.2 * cm, 5.2 * cm, 3.2 * cm],
+        )
+        apply_statement_table_style(settlement, font_name, bold_font_name, TableStyle, colors)
+        settlement.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (1, 0), colors.HexColor("#d9ead3")),
+                    ("BACKGROUND", (2, 0), (3, 0), colors.HexColor("#f4cccc")),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eeeeee")),
+                    ("FONTNAME", (0, -1), (-1, -1), bold_font_name),
+                ]
+            )
+        )
+        story.append(settlement)
+        story.append(Spacer(1, 0.28 * cm))
+
+        final_table = Table(
+            [["PÉNZÜGYILEG RENDEZENDŐ EGYENLEG", format_huf(payable_total)]],
+            colWidths=[11 * cm, 6 * cm],
+        )
+        final_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#222222")),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+                    ("FONTNAME", (0, 0), (-1, -1), bold_font_name),
+                    ("FONTSIZE", (0, 0), (-1, -1), 13),
+                    ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.black),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                ]
+            )
+        )
+        story.append(final_table)
+
+        if not driver_routes.empty:
+            story.append(Spacer(1, 0.28 * cm))
+            story.append(Paragraph("Route részletek", section_style))
+            route_display = build_display_routes(driver_routes)
+            route_columns = [
+                "Datum",
+                "Route ID",
+                "Rendeles",
+                "Alapdij",
+                "Kesedelmi dij",
+                "Turamegfeleles",
+                "Osszesen",
+            ]
+            route_columns = [
+                column for column in route_columns if column in route_display.columns
+            ]
+            route_rows = [route_columns] + route_display[route_columns].astype(str).head(18).values.tolist()
+            route_table = Table(route_rows, repeatRows=1)
+            route_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+                        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                        ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+                        ("FONTNAME", (0, 1), (-1, -1), font_name),
+                        ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ]
+                )
+            )
+            story.append(route_table)
+
+        story.append(Spacer(1, 0.18 * cm))
+        story.append(
+            Paragraph(
+                "Számlázásra NEM JOGOSÍT! Változtatás jogát fenntartjuk.",
+                center_style,
+            )
+        )
 
     document.build(story)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def register_pdf_fonts(pdfmetrics, TTFont):
+    font_candidates = [
+        ("ArialUnicode", "ArialUnicodeBold", "C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/arialbd.ttf"),
+        ("DejaVuSans", "DejaVuSansBold", "C:/Windows/Fonts/DejaVuSans.ttf", "C:/Windows/Fonts/DejaVuSans-Bold.ttf"),
+    ]
+
+    for regular_name, bold_name, regular_path, bold_path in font_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont(regular_name, regular_path))
+            pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+            return regular_name, bold_name
+        except Exception:
+            continue
+
+    return "Helvetica", "Helvetica-Bold"
+
+
+def apply_statement_table_style(table, font_name, bold_font_name, TableStyle, colors):
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#b7b7b7")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3f6f0")),
+                ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+                ("FONTNAME", (0, 1), (-1, -1), font_name),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
