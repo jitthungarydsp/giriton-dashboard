@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from io import BytesIO
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -27,6 +28,30 @@ PENALTY_TABLES = [
     "bill_jitt_invoice_penalties",
     "jitt_invoice_penalties",
 ]
+MANUAL_ITEM_TABLES = [
+    "bill_jitt_invoice_manual_items",
+    "jitt_invoice_manual_items",
+]
+
+BASE_RATE_MATRIX = [
+    {"service_type": "EXPRESSZ", "day_type": "Kiemelt nap", "amount_huf": 3350},
+    {"service_type": "City", "day_type": "Kiemelt nap", "amount_huf": 6500},
+    {"service_type": "Régió", "day_type": "Kiemelt nap", "amount_huf": 9000},
+    {"service_type": "EXPRESSZ", "day_type": "Nem kiemelt nap", "amount_huf": 2650},
+    {"service_type": "City", "day_type": "Nem kiemelt nap", "amount_huf": 4500},
+    {"service_type": "Régió", "day_type": "Nem kiemelt nap", "amount_huf": 6300},
+]
+
+MANUAL_ITEM_TYPES = {
+    "target_reserve_open_huf": "Nyitó céltartalék",
+    "target_reserve_topup_huf": "Céltartalék feltöltés",
+    "target_reserve_close_huf": "Céltartalék záró egyenleg",
+    "fuel_huf": "Üzemanyag",
+    "damage_huf": "Károkozás",
+    "cash_missing_huf": "Be nem fizetett KP",
+    "other_income_huf": "Egyéb bevétel",
+    "other_deduction_huf": "Egyéb levonás",
+}
 
 
 def money(value):
@@ -110,6 +135,56 @@ def read_first_existing_table(table_names, select, extra_filters=None, limit=100
     )
 
 
+def read_optional_first_existing_table(table_names, select, extra_filters=None, limit=10000):
+    try:
+        return read_first_existing_table(
+            table_names,
+            select,
+            extra_filters,
+            limit,
+        )
+    except Exception:
+        return None, pd.DataFrame()
+
+
+def post_supabase_row(table_names, row):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError(
+            "Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beallitas."
+        )
+
+    headers = get_headers()
+    headers.update(
+        {
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+    )
+    last_error = None
+
+    for table_name in table_names:
+        endpoint = f"{supabase_url}/rest/v1/{table_name}"
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            json=row,
+            timeout=60,
+        )
+
+        if response.status_code in [404, 406]:
+            last_error = response.text
+            continue
+
+        raise_for_supabase_error(response)
+        return table_name
+
+    raise RuntimeError(
+        f"Egyik manualis invoice tabla sem irhato: {', '.join(table_names)}. {last_error or ''}"
+    )
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def read_invoice_data(start_date, end_date):
     start_text = format_date_filter(start_date)
@@ -173,6 +248,16 @@ def read_invoice_data(start_date, end_date):
         ],
         limit=10000,
     )
+    _manual_table, manual_df = read_optional_first_existing_table(
+        MANUAL_ITEM_TABLES,
+        "id,item_date,worksheet_name,driver_name,item_type,item_label,amount_huf,note,created_by,created_at",
+        [
+            f"item_date=gte.{start_text}",
+            f"item_date=lte.{end_text}",
+            "order=driver_name.asc,item_date.asc,created_at.asc",
+        ],
+        limit=10000,
+    )
 
     return {
         "final_table": final_table,
@@ -180,7 +265,34 @@ def read_invoice_data(start_date, end_date):
         "summary": summary_df,
         "bonus": bonus_df,
         "penalties": penalty_df,
+        "manual": manual_df,
     }
+
+
+def create_manual_invoice_item(
+    item_date,
+    worksheet_name,
+    driver_name,
+    item_type,
+    amount_huf,
+    note="",
+    created_by="",
+):
+    item_type = normalize_text(item_type)
+    if item_type not in MANUAL_ITEM_TYPES:
+        raise ValueError("Ismeretlen manualis tetel tipus.")
+
+    row = {
+        "item_date": format_date_filter(item_date),
+        "worksheet_name": normalize_text(worksheet_name),
+        "driver_name": normalize_text(driver_name),
+        "item_type": item_type,
+        "item_label": MANUAL_ITEM_TYPES[item_type],
+        "amount_huf": money(amount_huf),
+        "note": normalize_text(note),
+        "created_by": normalize_text(created_by),
+    }
+    return post_supabase_row(MANUAL_ITEM_TABLES, row)
 
 
 def add_numeric_columns(df, columns):
@@ -195,7 +307,77 @@ def add_numeric_columns(df, columns):
     return df
 
 
-def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None):
+def build_weekday_counts(final_df):
+    columns = [
+        "driver_name",
+        "worksheet_name",
+        "hetfo",
+        "kedd",
+        "szerda",
+        "csutortok",
+        "pentek",
+        "szombat",
+        "vasarnap",
+        "worked_days",
+    ]
+
+    if final_df.empty or "work_date" not in final_df.columns:
+        return pd.DataFrame(columns=columns)
+
+    dates = final_df[["driver_name", "worksheet_name", "work_date"]].copy()
+    dates["driver_name"] = dates["driver_name"].map(normalize_text)
+    dates["worksheet_name"] = dates["worksheet_name"].map(normalize_text)
+    dates["work_date"] = pd.to_datetime(
+        dates["work_date"],
+        errors="coerce",
+    )
+    dates = dates.dropna(subset=["work_date"]).drop_duplicates()
+    dates["weekday"] = dates["work_date"].dt.weekday
+
+    grouped = (
+        dates.groupby(["driver_name", "worksheet_name"], dropna=False)
+        .agg(
+            worked_days=("work_date", "nunique"),
+            hetfo=("weekday", lambda value: int((value == 0).sum())),
+            kedd=("weekday", lambda value: int((value == 1).sum())),
+            szerda=("weekday", lambda value: int((value == 2).sum())),
+            csutortok=("weekday", lambda value: int((value == 3).sum())),
+            pentek=("weekday", lambda value: int((value == 4).sum())),
+            szombat=("weekday", lambda value: int((value == 5).sum())),
+            vasarnap=("weekday", lambda value: int((value == 6).sum())),
+        )
+        .reset_index()
+    )
+
+    return grouped[columns]
+
+
+def build_manual_item_summary(manual_df):
+    if manual_df is None or manual_df.empty:
+        return pd.DataFrame()
+
+    manual_df = manual_df.copy()
+    manual_df["driver_name"] = manual_df["driver_name"].map(normalize_text)
+    manual_df["worksheet_name"] = manual_df["worksheet_name"].map(normalize_text)
+    manual_df = add_numeric_columns(
+        manual_df,
+        ["amount_huf"],
+    )
+    pivot = (
+        manual_df.pivot_table(
+            index=["driver_name", "worksheet_name"],
+            columns="item_type",
+            values="amount_huf",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    pivot.columns.name = None
+    return pivot
+
+
+def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manual_df=None):
     if final_df.empty:
         return pd.DataFrame()
 
@@ -232,6 +414,12 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None):
     )
     grouped = grouped.merge(
         route_counts,
+        on=["driver_name", "worksheet_name"],
+        how="left",
+    )
+    weekday_counts = build_weekday_counts(final_df)
+    grouped = grouped.merge(
+        weekday_counts,
         on=["driver_name", "worksheet_name"],
         how="left",
     )
@@ -276,12 +464,52 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None):
     else:
         grouped["adjustment_huf"] = 0
 
+    manual_summary = build_manual_item_summary(manual_df)
+    if not manual_summary.empty:
+        grouped = grouped.merge(
+            manual_summary,
+            on=["driver_name", "worksheet_name"],
+            how="left",
+        )
+
+    for column in [
+        "worked_days",
+        "hetfo",
+        "kedd",
+        "szerda",
+        "csutortok",
+        "pentek",
+        "szombat",
+        "vasarnap",
+    ]:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = grouped[column].fillna(0).astype(int)
+
+    for column in MANUAL_ITEM_TYPES:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = pd.to_numeric(
+            grouped[column],
+            errors="coerce",
+        ).fillna(0)
+
     grouped["extra_bonus_huf"] = grouped["extra_bonus_huf"].fillna(0)
     grouped["adjustment_huf"] = grouped["adjustment_huf"].fillna(0)
+    grouped["manual_total_huf"] = grouped[list(MANUAL_ITEM_TYPES.keys())].sum(axis=1)
+    grouped["manual_payable_huf"] = (
+        grouped["target_reserve_topup_huf"]
+        + grouped["fuel_huf"]
+        + grouped["damage_huf"]
+        + grouped["cash_missing_huf"]
+        + grouped["other_income_huf"]
+        + grouped["other_deduction_huf"]
+    )
     grouped["payable_total_huf"] = (
         grouped["route_total_huf"]
         + grouped["extra_bonus_huf"]
         + grouped["adjustment_huf"]
+        + grouped["manual_payable_huf"]
     )
 
     return grouped.sort_values(
@@ -387,6 +615,8 @@ def build_display_driver_summary(summary_df):
         "route_total_huf",
         "extra_bonus_huf",
         "adjustment_huf",
+        "manual_total_huf",
+        "manual_payable_huf",
         "payable_total_huf",
     ]:
         if column in visible.columns:
@@ -398,6 +628,14 @@ def build_display_driver_summary(summary_df):
             "worksheet_name": "Raktar ful",
             "orders": "Rendeles",
             "routes": "Kor",
+            "worked_days": "Dolgozott nap",
+            "hetfo": "Hetfo",
+            "kedd": "Kedd",
+            "szerda": "Szerda",
+            "csutortok": "Csutortok",
+            "pentek": "Pentek",
+            "szombat": "Szombat",
+            "vasarnap": "Vasarnap",
             "route_count": "Route db",
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
@@ -408,9 +646,67 @@ def build_display_driver_summary(summary_df):
             "route_total_huf": "Route osszesen",
             "extra_bonus_huf": "Egyeb bonusz",
             "adjustment_huf": "Levonas / plusz",
+            "manual_total_huf": "Manualis tetelek",
+            "manual_payable_huf": "Manualis fizetendo hatas",
             "payable_total_huf": "Fizetendo osszesen",
         }
     )
+
+
+def build_display_manual_items(manual_df):
+    if manual_df is None or manual_df.empty:
+        return pd.DataFrame()
+
+    visible = manual_df.copy()
+    if "amount_huf" in visible.columns:
+        visible["amount_huf"] = visible["amount_huf"].map(format_huf)
+
+    columns = [
+        "item_date",
+        "worksheet_name",
+        "driver_name",
+        "item_label",
+        "amount_huf",
+        "note",
+        "created_by",
+    ]
+    columns = [column for column in columns if column in visible.columns]
+    return visible[columns].rename(
+        columns={
+            "item_date": "Datum",
+            "worksheet_name": "Raktar ful",
+            "driver_name": "Futar",
+            "item_label": "Tetel",
+            "amount_huf": "Osszeg",
+            "note": "Megjegyzes",
+            "created_by": "Rogzitette",
+        }
+    )
+
+
+def build_base_rate_matrix_df():
+    return pd.DataFrame(BASE_RATE_MATRIX)
+
+
+def build_display_base_rate_matrix():
+    df = build_base_rate_matrix_df()
+    if df.empty:
+        return df
+
+    pivot = (
+        df.pivot_table(
+            index="day_type",
+            columns="service_type",
+            values="amount_huf",
+            aggfunc="first",
+        )
+        .reset_index()
+    )
+    for column in ["EXPRESSZ", "City", "Régió"]:
+        if column in pivot.columns:
+            pivot[column] = pivot[column].map(format_huf)
+
+    return pivot.rename(columns={"day_type": "Nap tipus"})
 
 
 def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
@@ -501,6 +797,15 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         tip = money(driver_row.get("tip_huf"))
         extra_bonus = money(driver_row.get("extra_bonus_huf"))
         adjustment = money(driver_row.get("adjustment_huf"))
+        manual_total = money(driver_row.get("manual_total_huf"))
+        target_open = money(driver_row.get("target_reserve_open_huf"))
+        target_topup = money(driver_row.get("target_reserve_topup_huf"))
+        target_close = money(driver_row.get("target_reserve_close_huf"))
+        fuel_manual = money(driver_row.get("fuel_huf"))
+        damage = money(driver_row.get("damage_huf"))
+        cash_missing = money(driver_row.get("cash_missing_huf"))
+        other_income = money(driver_row.get("other_income_huf"))
+        other_deduction = money(driver_row.get("other_deduction_huf"))
         bonus_total = (
             delay_bonus
             + compliance_bonus
@@ -565,9 +870,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(Paragraph("ALAPADATOK ÉS CÉLTARTALÉK", section_style))
         base = Table(
             [
-                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Nyitó céltartalék", "0 Ft"],
-                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Célt. feltöltés (+)", "0 Ft"],
-                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Célt. záró egyenleg", "0 Ft"],
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Nyitó céltartalék", format_huf(target_open)],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Célt. feltöltés (+)", format_huf(target_topup)],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Célt. záró egyenleg", format_huf(target_close)],
             ],
             colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
@@ -575,13 +880,41 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(base)
         story.append(Spacer(1, 0.28 * cm))
 
+        story.append(Paragraph("ALAPDÍJ MÁTRIX", section_style))
+        rate_rows = [["Nap típusa", "EXPRESSZ", "City", "Régió"]]
+        base_rate_df = build_display_base_rate_matrix()
+        for _row_index, rate_row in base_rate_df.iterrows():
+            rate_rows.append(
+                [
+                    rate_row.get("Nap tipus", ""),
+                    rate_row.get("EXPRESSZ", ""),
+                    rate_row.get("City", ""),
+                    rate_row.get("Régió", ""),
+                ]
+            )
+        rate_table = Table(
+            rate_rows,
+            colWidths=[5.2 * cm, 3.9 * cm, 3.9 * cm, 3.9 * cm],
+        )
+        apply_statement_table_style(rate_table, font_name, bold_font_name, TableStyle, colors)
+        rate_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#d9ead3")),
+                    ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#fff2cc")),
+                ]
+            )
+        )
+        story.append(rate_table)
+        story.append(Spacer(1, 0.28 * cm))
+
         story.append(Paragraph("BÓNUSZOK ÉS TELJESÍTMÉNY", section_style))
         bonus_table = Table(
             [
                 ["Kiszállított címek", orders, "Körök", routes],
                 ["Just in Time / késés", format_huf(delay_bonus), "Túramegfelelés", format_huf(compliance_bonus)],
-                ["Töltési / fill-rate bónusz", format_huf(fill_rate_bonus), "Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding)],
-                ["Egyéb bónusz", format_huf(extra_bonus), "Borravaló", format_huf(tip)],
+                ["Töltési / fill-rate bónusz", format_huf(fill_rate_bonus), "Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding + fuel_manual)],
+                ["Egyéb bónusz", format_huf(extra_bonus + other_income), "Borravaló", format_huf(tip)],
             ],
             colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
@@ -593,13 +926,13 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Szállítási díj", format_huf(fixed_total)],
             ["DSP bónuszok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
-            ["Egyéb / Mátrix", format_huf(max(extra_bonus, 0))],
+            ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income)],
         ]
         expenses = [
             ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
-            ["Károkozás", "0 Ft"],
-            ["Be nem fiz. KP", "0 Ft"],
-            ["Egyéb plusz", format_huf(adjustment) if adjustment > 0 else "0 Ft"],
+            ["Károkozás", format_huf(abs(damage))],
+            ["Be nem fiz. KP", format_huf(abs(cash_missing))],
+            ["Egyéb levonás", format_huf(abs(other_deduction))],
         ]
         settlement_rows = [["Bevételek", "Ft", "Kiadások", "Ft"]]
         for left, right in zip(revenues, expenses):
@@ -607,9 +940,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         settlement_rows.append(
             [
                 "BEVÉTELEK ÖSSZESEN",
-                format_huf(fixed_total + bonus_total + tip + max(extra_bonus, 0)),
+                format_huf(fixed_total + bonus_total + tip + target_topup + fuel_manual + other_income),
                 "KIADÁSOK ÖSSZESEN",
-                format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft",
+                format_huf((abs(adjustment) if adjustment < 0 else 0) + abs(damage) + abs(cash_missing) + abs(other_deduction)),
             ]
         )
         settlement = Table(
@@ -649,36 +982,23 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         )
         story.append(final_table)
 
-        if not driver_routes.empty:
+        manual_rows = [
+            ["Nyitó céltartalék", format_huf(target_open)],
+            ["Céltartalék feltöltés", format_huf(target_topup)],
+            ["Céltartalék záró egyenleg", format_huf(target_close)],
+            ["Üzemanyag / egyéb bevétel", format_huf(fuel_manual + other_income)],
+            ["Károkozás / KP / egyéb levonás", format_huf(abs(damage) + abs(cash_missing) + abs(other_deduction))],
+            ["Manuális tételek összesen", format_huf(manual_total)],
+        ]
+        if any(money(row[1].replace(" Ft", "").replace(" ", "")) for row in manual_rows):
             story.append(Spacer(1, 0.28 * cm))
-            story.append(Paragraph("Route részletek", section_style))
-            route_display = build_display_routes(driver_routes)
-            route_columns = [
-                "Datum",
-                "Route ID",
-                "Rendeles",
-                "Alapdij",
-                "Kesedelmi dij",
-                "Turamegfeleles",
-                "Osszesen",
-            ]
-            route_columns = [
-                column for column in route_columns if column in route_display.columns
-            ]
-            route_rows = [route_columns] + route_display[route_columns].astype(str).head(18).values.tolist()
-            route_table = Table(route_rows, repeatRows=1)
-            route_table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
-                        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                        ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
-                        ("FONTNAME", (0, 1), (-1, -1), font_name),
-                        ("FONTSIZE", (0, 0), (-1, -1), 7),
-                    ]
-                )
+            story.append(Paragraph("MANUÁLISAN FELVETT TÉTELEK", section_style))
+            manual_table = Table(
+                [["Tétel", "Összeg"]] + manual_rows,
+                colWidths=[11 * cm, 6 * cm],
             )
-            story.append(route_table)
+            apply_statement_table_style(manual_table, font_name, bold_font_name, TableStyle, colors)
+            story.append(manual_table)
 
         story.append(Spacer(1, 0.18 * cm))
         story.append(

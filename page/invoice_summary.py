@@ -4,11 +4,15 @@ import pandas as pd
 import streamlit as st
 
 from resources.invoice_summary import (
+    MANUAL_ITEM_TYPES,
+    build_display_base_rate_matrix,
     build_display_driver_summary,
+    build_display_manual_items,
     build_display_routes,
     build_display_summary,
     build_driver_invoice_summary,
     build_invoice_pdf_bytes,
+    create_manual_invoice_item,
     format_huf,
     read_invoice_data,
 )
@@ -74,6 +78,7 @@ def show_invoice_summary_page():
     summary_df = data["summary"]
     bonus_df = data["bonus"]
     penalty_df = data["penalties"]
+    manual_df = data["manual"]
 
     final_df = filter_by_worksheet(
         final_df,
@@ -99,6 +104,7 @@ def show_invoice_summary_page():
         final_df,
         bonus_df,
         penalty_df,
+        manual_df,
     )
 
     if driver_summary.empty:
@@ -112,15 +118,17 @@ def show_invoice_summary_page():
     total_delay = pd.to_numeric(driver_summary["delay_bonus_huf"], errors="coerce").fillna(0).sum()
     total_compliance = pd.to_numeric(driver_summary["compliance_bonus_huf"], errors="coerce").fillna(0).sum()
     total_adjustment = pd.to_numeric(driver_summary["adjustment_huf"], errors="coerce").fillna(0).sum()
+    total_manual = pd.to_numeric(driver_summary.get("manual_payable_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_payable = pd.to_numeric(driver_summary["payable_total_huf"], errors="coerce").fillna(0).sum()
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
     m1.metric("Rendeles", total_orders)
     m2.metric("Kor", total_routes)
     m3.metric("Kesedelmi dij", format_huf(total_delay))
     m4.metric("Turamegfeleles", format_huf(total_compliance))
     m5.metric("Levonas / plusz", format_huf(total_adjustment))
-    m6.metric("Fizetendo", format_huf(total_payable))
+    m6.metric("Manualis", format_huf(total_manual))
+    m7.metric("Fizetendo", format_huf(total_payable))
 
     st.subheader("Futar osszesito")
     display_summary = build_display_driver_summary(driver_summary)
@@ -151,6 +159,82 @@ def show_invoice_summary_page():
             f"PDF generalas nem elerheto: {exc}"
         )
 
+    with st.expander("Manualis elszamolasi tetelek", expanded=False):
+        st.caption(
+            "Ide kerulnek azok az osszegek, amelyek meg nincsenek a DB-ben automatikus forrasbol: "
+            "celtartalek, uzemanyag, karokozas, KP vagy egyeb plusz/levonas."
+        )
+        form_col1, form_col2, form_col3 = st.columns([1, 1, 1])
+        manual_date = form_col1.date_input(
+            "Tetel datuma",
+            value=end_date,
+            key="invoice_manual_date",
+        )
+        manual_sheet = form_col2.selectbox(
+            "Raktar ful",
+            ["BUD1_JIT", "BUD2_JIT"],
+            key="invoice_manual_sheet",
+        )
+        manual_driver_options = drivers or sorted(
+            value
+            for value in final_df.get("driver_name", pd.Series(dtype=str)).dropna().astype(str).unique()
+            if value.strip()
+        )
+        manual_driver = form_col3.selectbox(
+            "Futar",
+            manual_driver_options,
+            key="invoice_manual_driver",
+        )
+        form_col4, form_col5 = st.columns([1, 1])
+        manual_type = form_col4.selectbox(
+            "Tetel tipusa",
+            list(MANUAL_ITEM_TYPES.keys()),
+            format_func=lambda value: MANUAL_ITEM_TYPES[value],
+            key="invoice_manual_type",
+        )
+        manual_amount = form_col5.number_input(
+            "Osszeg Ft",
+            value=0,
+            step=500,
+            key="invoice_manual_amount",
+        )
+        manual_note = st.text_input(
+            "Megjegyzes",
+            key="invoice_manual_note",
+        )
+        if st.button("Manualis tetel mentese", use_container_width=True):
+            if not manual_driver:
+                st.warning("Valassz futart a manualis tetelhez.")
+            else:
+                try:
+                    table_name = create_manual_invoice_item(
+                        manual_date,
+                        manual_sheet,
+                        manual_driver,
+                        manual_type,
+                        manual_amount,
+                        manual_note,
+                        created_by=str(st.session_state.get("username", "admin")),
+                    )
+                    st.cache_data.clear()
+                    st.success(f"Manualis tetel mentve: {table_name}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Manualis tetel mentese sikertelen: {exc}")
+
+        st.dataframe(
+            build_display_manual_items(manual_df),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with st.expander("Alapdij matrix"):
+        st.dataframe(
+            build_display_base_rate_matrix(),
+            use_container_width=True,
+            hide_index=True,
+        )
+
     with st.expander("Felso osszesito tabla"):
         st.dataframe(
             build_display_summary(summary_df),
@@ -158,7 +242,8 @@ def show_invoice_summary_page():
             hide_index=True,
         )
 
-    with st.expander("Route reszletek"):
+    with st.expander("Route reszletek - nyers ellenorzes"):
+        st.caption("A PDF-be ezt mar nem generaljuk, csak oldali ellenorzesre marad.")
         st.dataframe(
             build_display_routes(final_df),
             use_container_width=True,
