@@ -1,5 +1,7 @@
 from datetime import date, datetime
 from io import BytesIO
+import re
+import unicodedata
 from urllib.parse import quote
 
 import pandas as pd
@@ -74,6 +76,22 @@ def format_huf(value):
 
 def normalize_text(value):
     return str(value or "").strip()
+
+
+def normalize_person_key(value):
+    text = unicodedata.normalize("NFKD", normalize_text(value).casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    tokens = re.findall(r"[a-z0-9]+", text)
+    return " ".join(sorted(tokens))
+
+
+def normalize_bonus_worksheet(site):
+    value = normalize_text(site).upper().replace("-", "_").replace(" ", "_")
+    if "BUD1" in value:
+        return "BUD1_JIT"
+    if "BUD2" in value:
+        return "BUD2_JIT"
+    return value
 
 
 def normalize_service_type(value):
@@ -351,7 +369,7 @@ def read_invoice_data(start_date, end_date):
     )
     _bonus_table, bonus_df = read_first_existing_table(
         BONUS_TABLES,
-        "worksheet_name,courier_id,driver_name,routes,bonus_huf",
+        "worksheet_name,site,courier_id,driver_name,routes,bonus_huf",
         ["order=driver_name.asc"],
         limit=10000,
     )
@@ -544,6 +562,7 @@ def build_driver_invoice_summary(
     final_df = enrich_invoice_routes(final_df, day_rates_df)
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)
+    final_df["driver_match_key"] = final_df["driver_name"].map(normalize_person_key)
 
     numeric_columns = [
         "orders",
@@ -585,7 +604,10 @@ def build_driver_invoice_summary(
     )
 
     grouped = (
-        final_df.groupby(["driver_name", "worksheet_name"], dropna=False)[numeric_columns]
+        final_df.groupby(
+            ["driver_name", "driver_match_key", "worksheet_name"],
+            dropna=False,
+        )[numeric_columns]
         .sum()
         .reset_index()
     )
@@ -650,7 +672,11 @@ def build_driver_invoice_summary(
     if bonus_df is not None and not bonus_df.empty:
         bonus_df = bonus_df.copy()
         bonus_df["driver_name"] = bonus_df["driver_name"].map(normalize_text)
-        bonus_df["worksheet_name"] = bonus_df["worksheet_name"].map(normalize_text)
+        bonus_df["driver_match_key"] = bonus_df["driver_name"].map(normalize_person_key)
+        bonus_df["worksheet_name"] = bonus_df.get(
+            "site",
+            pd.Series("", index=bonus_df.index),
+        ).map(normalize_bonus_worksheet)
         if "courier_id" in bonus_df.columns:
             bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
@@ -659,7 +685,7 @@ def build_driver_invoice_summary(
         )
         bonus_grouped = (
             bonus_df.groupby(
-                ["driver_name", "worksheet_name"],
+                ["driver_match_key", "worksheet_name"],
                 dropna=False,
             )["bonus_huf"]
             .sum()
@@ -667,16 +693,16 @@ def build_driver_invoice_summary(
         )
         grouped = grouped.merge(
             bonus_grouped,
-            on=["driver_name", "worksheet_name"],
+            on=["driver_match_key", "worksheet_name"],
             how="left",
         )
         if "courier_id" in bonus_df.columns:
             bonus_ids = (
-                bonus_df[["driver_name", "worksheet_name", "courier_id"]]
+                bonus_df[["driver_match_key", "worksheet_name", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
                 .groupby(
-                    ["driver_name", "worksheet_name"],
+                    ["driver_match_key", "worksheet_name"],
                     dropna=False,
                 )["courier_id"]
                 .first()
@@ -684,7 +710,7 @@ def build_driver_invoice_summary(
             )
             grouped = grouped.merge(
                 bonus_ids,
-                on=["driver_name", "worksheet_name"],
+                on=["driver_match_key", "worksheet_name"],
                 how="left",
             )
     else:

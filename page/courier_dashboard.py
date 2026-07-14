@@ -1479,13 +1479,13 @@ def render_invoice_check_result(checks):
         st.write(f"**{icon} - {check['title']}:** {check['detail']}")
 
 
-def render_invoice_submission_panel(row, user):
+def render_invoice_submission_panel(row, user, selected_month=None):
     name = get_courier_display_name(row, user)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
-    current_month = local_now().date().replace(day=1)
+    current_month = selected_month or local_now().date().replace(day=1)
 
     st.subheader("Számlabeküldő rendszer")
-    st.caption("Első körös saját űrlap: még nem küld adatot, csak előkészít és formai alapon ellenőriz.")
+    st.caption("A sikeres ellenőrzés után a számla bekerül a dokumentumtárba.")
 
     with st.form("peopleforce_invoice_submission_form"):
         col1, col2 = st.columns(2)
@@ -1513,7 +1513,7 @@ def render_invoice_submission_panel(row, user):
                 "TIG / elszámolás azonosító",
                 placeholder="ha van",
             )
-            st.text_area(
+            note = st.text_area(
                 "Megjegyzés",
                 placeholder="Rövid megjegyzés, ha valami eltér a megszokottól.",
                 height=88,
@@ -1539,12 +1539,34 @@ def render_invoice_submission_panel(row, user):
         render_invoice_check_result(checks)
 
         if not any(check["status"] == "error" for check in checks):
-            st.info(
-                "Ez most még csak előnézet. A következő lépésben ide tudjuk kötni a DB mentést, e-mailt vagy jóváhagyási folyamatot."
+            upload_peopleforce_document(
+                courier_id=courier_id,
+                courier_name=name,
+                document_type="invoice",
+                document_month=invoice_month.replace(day=1),
+                title=f"Számla {invoice_number}",
+                note=(
+                    f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. "
+                    f"{note}"
+                ).strip(),
+                uploaded_file=uploaded_invoice,
+                uploaded_by=user.get("username") or name,
             )
+            for action_key in ["invoice_submit", "my_invoices"]:
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=name,
+                    action_key=action_key,
+                    document_month=invoice_month.replace(day=1),
+                    status="done",
+                    status_note="A számla ellenőrizve és eltárolva.",
+                    updated_by=user.get("username") or name,
+                )
+            st.success("A számla PDF eltárolva és beküldve.")
+            st.rerun()
 
 
-def render_invoice_quick_check_panel(row, user):
+def render_invoice_quick_check_panel(row, user, selected_month=None):
     name = get_courier_display_name(row, user)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
 
@@ -1564,6 +1586,19 @@ def render_invoice_quick_check_panel(row, user):
             courier_name=name,
         )
         render_invoice_check_result(checks)
+        if not any(check["status"] == "error" for check in checks):
+            month = selected_month or local_now().date().replace(day=1)
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=name,
+                action_key="invoice_check",
+                document_month=month,
+                status="done",
+                status_note="A számla formai ellenőrzése sikeres.",
+                updated_by=user.get("username") or name,
+            )
+            st.success("A számlaellenőrzés sikeres. A számlafeltöltés aktívvá vált.")
+            st.rerun()
 
 
 def add_months(month_start, offset):
@@ -2043,6 +2078,52 @@ def render_peopleforce_complaint_box(
     st.rerun()
 
 
+def render_peopleforce_acceptance_box(
+    *,
+    action_key,
+    courier_id,
+    courier_name,
+    selected_month,
+    user,
+    documents,
+    state,
+):
+    if action_key not in ["settlement", "tig"] or user.get("role") == "admin" or documents.empty:
+        return
+
+    status = clean_display_text((state or {}).get("status"), "open").lower()
+
+    st.divider()
+    st.subheader("Elfogadás")
+
+    if status == "done":
+        st.success("✅ A dokumentumot elfogadtad. Ezt admin oldalon is látjuk.")
+        return
+
+    st.caption(
+        "Ha a dokumentum rendben van, zöld pipával elfogadhatod. "
+        "Ha valami nem stimmel, lent reklamációt tudsz írni."
+    )
+
+    if st.button(
+        "✅ Elfogadom a dokumentumot",
+        use_container_width=True,
+        type="primary",
+        key=f"peopleforce_accept_{action_key}_{courier_id}_{selected_month}",
+    ):
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=action_key,
+            document_month=selected_month,
+            status="done",
+            status_note="Futár elfogadta a dokumentumot.",
+            updated_by=user.get("username") or courier_name,
+        )
+        st.success("Elfogadás rögzítve.")
+        st.rerun()
+
+
 def render_peopleforce_monthly_documents(action_key, row, user, selected_month=None):
     config = get_peopleforce_document_config(action_key)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
@@ -2079,13 +2160,14 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         courier_id,
         selected_month,
     )
+    state = card_states.get(action_key)
     render_peopleforce_status_panel(
         action_key=action_key,
         courier_id=courier_id,
         courier_name=courier_name,
         selected_month=selected_month,
         user=user,
-        state=card_states.get(action_key),
+        state=state,
     )
 
     render_peopleforce_admin_upload(
@@ -2095,6 +2177,15 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         courier_name=courier_name,
         selected_month=selected_month,
         user=user,
+    )
+    render_peopleforce_acceptance_box(
+        action_key=action_key,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        selected_month=selected_month,
+        user=user,
+        documents=documents,
+        state=state,
     )
     render_peopleforce_complaint_box(
         action_key=action_key,
@@ -2232,7 +2323,7 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
         return
 
     if action_key == "invoice_submit":
-        render_invoice_submission_panel(row, user)
+        render_invoice_submission_panel(row, user, selected_month=selected_month)
 
         url = card.get("url")
         if url:
@@ -2243,7 +2334,7 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
         return
 
     if action_key == "invoice_check":
-        render_invoice_quick_check_panel(row, user)
+        render_invoice_quick_check_panel(row, user, selected_month=selected_month)
         return
 
     render_peopleforce_placeholder_content(card)
@@ -2269,16 +2360,56 @@ else:
             )
 
 
+WORKFLOW_PREREQUISITES = {
+    "tig": ("settlement", "az elszámolás futár általi jóváhagyása"),
+    "invoice_check": ("tig", "a teljesítményigazolás futár általi jóváhagyása"),
+    "invoice_submit": ("invoice_check", "a sikeres számlaellenőrzés"),
+    "my_invoices": ("invoice_submit", "a számla sikeres feltöltése"),
+}
+
+
+def peopleforce_action_is_done(card_states, action_key):
+    state = card_states.get(action_key) or {}
+    return clean_display_text(state.get("status")).lower() == "done"
+
+
+def peopleforce_action_lock_reason(card_states, action_key):
+    prerequisite = WORKFLOW_PREREQUISITES.get(action_key)
+    if not prerequisite:
+        return ""
+    prerequisite_key, prerequisite_label = prerequisite
+    if peopleforce_action_is_done(card_states, prerequisite_key):
+        return ""
+    return f"Előbb szükséges: {prerequisite_label}."
+
+
 def render_peopleforce_card_grid(cards, card_states):
     for start in range(0, len(cards), 3):
         columns = st.columns(3)
 
         for offset, card in enumerate(cards[start:start + 3]):
             with columns[offset]:
+                lock_reason = peopleforce_action_lock_reason(card_states, card["key"])
                 href = escape(build_peopleforce_href(card["key"]), quote=True)
                 status_badge = render_peopleforce_card_status_badge(
                     card_states.get(card["key"])
                 )
+                if lock_reason:
+                    st.markdown(
+                        f"""
+<div class="peopleforce-card" style="opacity:.48; cursor:not-allowed;">
+  <div class="peopleforce-card-head">
+    <div class="peopleforce-badge">🔒</div>
+    {status_badge}
+  </div>
+  <h3>{escape(card["title"])}</h3>
+  <p>{escape(lock_reason)}</p>
+  <span class="peopleforce-card-link">Zárolva</span>
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                    continue
                 st.markdown(
                     f"""
 <a class="peopleforce-card" href="{href}">
@@ -2321,6 +2452,10 @@ def render_peopleforce_placeholder(row=None, user=None):
 
     selected_action = get_peopleforce_selected_action()
     if get_peopleforce_card(selected_action):
+        lock_reason = peopleforce_action_lock_reason(card_states, selected_action)
+        if lock_reason:
+            st.warning(lock_reason)
+            return
         render_peopleforce_action_dialog(
             selected_action,
             safe_row,
