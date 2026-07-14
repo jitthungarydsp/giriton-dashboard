@@ -1,5 +1,6 @@
 import base64
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
@@ -22,7 +23,10 @@ from resources.courier_card_db import (
     NUMERIC_COLUMNS as COURIER_CARD_NUMERIC_COLUMNS,
     read_courier_card_stats,
 )
-from resources.courier_master_db import read_courier_master
+from resources.courier_master_db import (
+    read_courier_master,
+    read_courier_master_by_id,
+)
 from resources.courier_card_snapshot import read_snapshot
 from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
@@ -302,6 +306,28 @@ def build_courier_directory_from_master(snapshot_month):
     )
 
 
+def build_single_courier_directory_from_master(snapshot_month, courier_id):
+    master_df = read_courier_master_by_id(courier_id)
+
+    if master_df.empty:
+        return pd.DataFrame()
+
+    records = []
+    for _, row in master_df.iterrows():
+        records.append({
+            "courier_id": row.get("courier_id"),
+            "name": row.get("courier_name"),
+            "warehouse": row.get("warehouse_name"),
+            "email": row.get("email"),
+            "phone": row.get("phone_number"),
+        })
+
+    return build_courier_base_dataframe(
+        records,
+        snapshot_month=snapshot_month,
+    )
+
+
 def build_courier_directory_from_live_drivers(snapshot_month):
     try:
         drivers_data = load_drivers()
@@ -333,6 +359,27 @@ def load_courier_directory(snapshot_month):
         return directory_df
 
     return build_courier_directory_from_live_drivers(snapshot_month)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_single_courier_directory(snapshot_month, courier_id):
+    directory_df = build_single_courier_directory_from_master(
+        snapshot_month,
+        courier_id,
+    )
+
+    if not directory_df.empty:
+        return directory_df
+
+    live_df = build_courier_directory_from_live_drivers(snapshot_month)
+
+    if live_df.empty:
+        return live_df
+
+    courier_id = normalize_id(courier_id)
+    return live_df[
+        live_df["courier_id"].apply(normalize_id) == courier_id
+    ].copy()
 
 
 def add_user_fallback_courier(directory_df, user, snapshot_month):
@@ -1599,11 +1646,25 @@ def load_peopleforce_card_states(courier_id, selected_month):
     if not courier_id:
         return states
 
-    try:
-        documents = read_peopleforce_document_markers(
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        documents_future = executor.submit(
+            read_peopleforce_document_markers,
             courier_id,
             selected_month,
         )
+        complaints_future = executor.submit(
+            read_peopleforce_complaint_markers,
+            courier_id,
+            selected_month,
+        )
+        statuses_future = executor.submit(
+            read_peopleforce_card_statuses,
+            courier_id,
+            selected_month,
+        )
+
+    try:
+        documents = documents_future.result()
     except Exception:
         documents = pd.DataFrame()
 
@@ -1625,10 +1686,7 @@ def load_peopleforce_card_states(courier_id, selected_month):
         state["activity_count"] += 1
 
     try:
-        complaints = read_peopleforce_complaint_markers(
-            courier_id,
-            selected_month,
-        )
+        complaints = complaints_future.result()
     except Exception:
         complaints = pd.DataFrame()
 
@@ -1650,10 +1708,7 @@ def load_peopleforce_card_states(courier_id, selected_month):
         state["activity_count"] += 1
 
     try:
-        statuses = read_peopleforce_card_statuses(
-            courier_id,
-            selected_month,
-        )
+        statuses = statuses_future.result()
     except Exception:
         statuses = pd.DataFrame()
 
@@ -2375,12 +2430,20 @@ def attach_live_vehicle_info(row, driver):
 
 
 def build_fast_shift_records(work_date_text):
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        giriton_future = executor.submit(
+            read_giriton_shift_records,
+            work_date_text,
+        )
+        foglalas_future = executor.submit(
+            read_foglalasok_records,
+            work_date_text,
+        )
+
     try:
         giriton_records = {
             record["serial"]: record
-            for record in read_giriton_shift_records(
-                work_date_text
-            )
+            for record in giriton_future.result()
             if record.get("serial")
         }
     except Exception:
@@ -2389,9 +2452,7 @@ def build_fast_shift_records(work_date_text):
     try:
         foglalas_records = {
             record["serial"]: record
-            for record in read_foglalasok_records(
-                work_date_text
-            )
+            for record in foglalas_future.result()
             if record.get("serial")
         }
     except Exception:
@@ -2622,6 +2683,11 @@ def format_return_countdown(planned_return):
 @st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
 def load_live_courier_sources():
     return load_attendance(), load_drivers()
+
+
+@st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
+def load_live_drivers_source():
+    return load_drivers()
 
 
 @st.cache_data(show_spinner=False, ttl=LIVE_CACHE_SECONDS)
@@ -4412,7 +4478,16 @@ def show_courier_dashboard_page():
     selected_view = render_courier_top_menu()
 
     snapshot_month_text = today.strftime("%Y-%m")
-    directory_df = load_courier_directory(snapshot_month_text)
+    user_courier_id = normalize_id(user.get("courierId"))
+
+    if user.get("role") == "user" and user_courier_id:
+        directory_df = load_single_courier_directory(
+            snapshot_month_text,
+            user_courier_id,
+        )
+    else:
+        directory_df = load_courier_directory(snapshot_month_text)
+
     directory_df = add_user_fallback_courier(
         directory_df,
         user,
@@ -4435,20 +4510,20 @@ def show_courier_dashboard_page():
         st.warning("Ehhez a belepeshez nem talaltam futart.")
         return
 
-    try:
-        _attendance_data, drivers_data = load_live_courier_sources()
-        current_driver = find_driver(
-            drivers_data,
-            normalize_id(current_row.get("courier_id")),
-        )
-        current_row = attach_live_vehicle_info(
-            current_row,
-            current_driver,
-        )
-    except Exception:
-        pass
-
     if selected_view == "PeopleForce":
+        try:
+            drivers_data = load_live_drivers_source()
+            current_driver = find_driver(
+                drivers_data,
+                normalize_id(current_row.get("courier_id")),
+            )
+            current_row = attach_live_vehicle_info(
+                current_row,
+                current_driver,
+            )
+        except Exception:
+            pass
+
         render_hero(current_row, user)
         shift_date, shift_day_label = selected_shift_date(today)
         render_today_shifts(
