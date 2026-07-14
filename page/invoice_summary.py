@@ -18,6 +18,30 @@ from resources.invoice_summary import (
 )
 
 
+def slugify_filename(value):
+    text = str(value or "").strip().lower()
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ö": "o",
+        "ő": "o",
+        "ú": "u",
+        "ü": "u",
+        "ű": "u",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    safe = []
+    for char in text:
+        if char.isalnum():
+            safe.append(char)
+        elif char in [" ", "-", "_", "."]:
+            safe.append("_")
+    return "".join(safe).strip("_") or "osszes"
+
+
 def filter_by_worksheet(df, selected_sheet):
     if df.empty or selected_sheet == "Mind":
         return df
@@ -79,6 +103,7 @@ def show_invoice_summary_page():
     bonus_df = data["bonus"]
     penalty_df = data["penalties"]
     manual_df = data["manual"]
+    day_rates_df = data.get("day_rates", pd.DataFrame())
 
     final_df = filter_by_worksheet(
         final_df,
@@ -105,6 +130,7 @@ def show_invoice_summary_page():
         bonus_df,
         penalty_df,
         manual_df,
+        day_rates_df,
     )
 
     if driver_summary.empty:
@@ -114,7 +140,17 @@ def show_invoice_summary_page():
         return
 
     total_orders = int(pd.to_numeric(driver_summary["orders"], errors="coerce").fillna(0).sum())
-    total_routes = int(pd.to_numeric(driver_summary["routes"], errors="coerce").fillna(0).sum())
+    total_routes_source = (
+        "route_count" if "route_count" in driver_summary.columns else "routes"
+    )
+    total_routes = int(
+        pd.to_numeric(
+            driver_summary[total_routes_source],
+            errors="coerce",
+        )
+        .fillna(0)
+        .sum()
+    )
     total_delay = pd.to_numeric(driver_summary["delay_bonus_huf"], errors="coerce").fillna(0).sum()
     total_compliance = pd.to_numeric(driver_summary["compliance_bonus_huf"], errors="coerce").fillna(0).sum()
     total_adjustment = pd.to_numeric(driver_summary["adjustment_huf"], errors="coerce").fillna(0).sum()
@@ -142,6 +178,14 @@ def show_invoice_summary_page():
         f"JITT elszamolas {start_date.isoformat()} - {end_date.isoformat()}"
     )
     try:
+        filename_driver = "osszes"
+        if selected_driver != "Mind" and not driver_summary.empty:
+            selected_row = driver_summary.iloc[0]
+            courier_id = str(selected_row.get("courier_id", "") or "").strip()
+            driver_slug = slugify_filename(selected_driver)
+            filename_driver = (
+                f"{courier_id}_{driver_slug}" if courier_id else driver_slug
+            )
         pdf_bytes = build_invoice_pdf_bytes(
             driver_summary,
             final_df,
@@ -150,7 +194,7 @@ def show_invoice_summary_page():
         st.download_button(
             "PDF generalasa",
             data=pdf_bytes,
-            file_name=f"jitt_elszamolas_{start_date.isoformat()}_{end_date.isoformat()}.pdf",
+            file_name=f"jitt_elszamolas_{filename_driver}_{start_date.isoformat()}_{end_date.isoformat()}.pdf",
             mime="application/pdf",
             use_container_width=True,
         )

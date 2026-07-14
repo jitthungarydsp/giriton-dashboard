@@ -32,6 +32,9 @@ MANUAL_ITEM_TABLES = [
     "bill_jitt_invoice_manual_items",
     "jitt_invoice_manual_items",
 ]
+DAY_RATE_TABLES = [
+    "dsp_day_rates",
+]
 
 BASE_RATE_MATRIX = [
     {"service_type": "EXPRESSZ", "day_type": "Kiemelt nap", "amount_huf": 3350},
@@ -41,6 +44,10 @@ BASE_RATE_MATRIX = [
     {"service_type": "City", "day_type": "Nem kiemelt nap", "amount_huf": 4500},
     {"service_type": "Régió", "day_type": "Nem kiemelt nap", "amount_huf": 6300},
 ]
+
+COURIER_BONUS_AMOUNT_OVERRIDES = {
+    750: 500,
+}
 
 MANUAL_ITEM_TYPES = {
     "target_reserve_open_huf": "Nyitó céltartalék",
@@ -67,6 +74,108 @@ def format_huf(value):
 
 def normalize_text(value):
     return str(value or "").strip()
+
+
+def normalize_service_type(value):
+    text = normalize_text(value).lower()
+
+    if "exp" in text:
+        return "EXPRESSZ"
+    if "reg" in text or "rĂ©g" in text or "rég" in text:
+        return "Regio"
+
+    return "City"
+
+
+def normalize_day_rate_key(value):
+    text = normalize_text(value).lower()
+
+    if "kiemelt" in text and "nem" not in text:
+        return "KIEMELT"
+    if text in ["kiemelt", "highlighted"]:
+        return "KIEMELT"
+
+    return "SIMA"
+
+
+def classify_day_type(work_date):
+    parsed = pd.to_datetime(
+        work_date,
+        errors="coerce",
+    )
+
+    if pd.isna(parsed):
+        return "SIMA"
+
+    # Kiemelt nap: hetfo, pentek, szombat, vasarnap.
+    # Unnepnapot kulon naptarral kesobb tudunk finomitani.
+    return "KIEMELT" if int(parsed.weekday()) in [0, 4, 5, 6] else "SIMA"
+
+
+def courier_bonus_amount(value):
+    raw = money(value)
+    rounded = int(round(raw))
+    return float(COURIER_BONUS_AMOUNT_OVERRIDES.get(rounded, raw))
+
+
+def build_day_rate_lookup(day_rates_df=None):
+    lookup = {}
+
+    if day_rates_df is not None and not day_rates_df.empty:
+        rates = day_rates_df.copy()
+        for column in ["service_type", "day_type", "loyalty_bonus", "amount"]:
+            if column not in rates.columns:
+                rates[column] = None
+
+        for _index, row in rates.iterrows():
+            if bool(row.get("loyalty_bonus")):
+                continue
+
+            service_type = normalize_service_type(row.get("service_type"))
+            day_type = normalize_day_rate_key(row.get("day_type"))
+            amount = money(row.get("amount"))
+
+            if amount:
+                lookup[(service_type, day_type)] = amount
+
+    if lookup:
+        return lookup
+
+    fallback = {}
+    for row in BASE_RATE_MATRIX:
+        service_type = normalize_service_type(row.get("service_type"))
+        day_type = normalize_day_rate_key(row.get("day_type"))
+        fallback[(service_type, day_type)] = money(row.get("amount_huf"))
+
+    return fallback
+
+
+def enrich_invoice_routes(final_df, day_rates_df=None):
+    if final_df.empty:
+        return final_df.copy()
+
+    enriched = final_df.copy()
+    rate_lookup = build_day_rate_lookup(day_rates_df)
+    enriched["calculated_service_type"] = enriched.get(
+        "route_type",
+        pd.Series("", index=enriched.index),
+    ).map(normalize_service_type)
+    enriched["calculated_day_type"] = enriched.get(
+        "work_date",
+        pd.Series("", index=enriched.index),
+    ).map(classify_day_type)
+    enriched["calculated_base_huf"] = enriched.apply(
+        lambda row: rate_lookup.get(
+            (
+                row.get("calculated_service_type"),
+                row.get("calculated_day_type"),
+            ),
+            0,
+        ),
+        axis=1,
+    )
+
+    return enriched
 
 
 def format_date_filter(value):
@@ -258,6 +367,14 @@ def read_invoice_data(start_date, end_date):
         ],
         limit=10000,
     )
+    _day_rate_table, day_rates_df = read_optional_first_existing_table(
+        DAY_RATE_TABLES,
+        "valid_from,valid_to,service_type,day_type,loyalty_bonus,amount",
+        [
+            "order=service_type.asc,day_type.asc,loyalty_bonus.asc",
+        ],
+        limit=1000,
+    )
 
     return {
         "final_table": final_table,
@@ -266,6 +383,7 @@ def read_invoice_data(start_date, end_date):
         "bonus": bonus_df,
         "penalties": penalty_df,
         "manual": manual_df,
+        "day_rates": day_rates_df,
     }
 
 
@@ -324,20 +442,38 @@ def build_weekday_counts(final_df):
     if final_df.empty or "work_date" not in final_df.columns:
         return pd.DataFrame(columns=columns)
 
-    dates = final_df[["driver_name", "worksheet_name", "work_date"]].copy()
-    dates["driver_name"] = dates["driver_name"].map(normalize_text)
-    dates["worksheet_name"] = dates["worksheet_name"].map(normalize_text)
-    dates["work_date"] = pd.to_datetime(
-        dates["work_date"],
+    route_id_column = "route_unique_id" if "route_unique_id" in final_df.columns else None
+    required_columns = ["driver_name", "worksheet_name", "work_date"]
+    if route_id_column:
+        required_columns.append(route_id_column)
+
+    routes = final_df[required_columns].copy()
+    routes["driver_name"] = routes["driver_name"].map(normalize_text)
+    routes["worksheet_name"] = routes["worksheet_name"].map(normalize_text)
+    routes["work_date"] = pd.to_datetime(
+        routes["work_date"],
         errors="coerce",
     )
-    dates = dates.dropna(subset=["work_date"]).drop_duplicates()
-    dates["weekday"] = dates["work_date"].dt.weekday
+    routes = routes.dropna(subset=["work_date"])
+    if route_id_column:
+        routes[route_id_column] = routes[route_id_column].map(normalize_text)
+        routes["_route_key"] = routes[route_id_column]
+        empty_route = routes["_route_key"] == ""
+        routes.loc[empty_route, "_route_key"] = routes.index[empty_route].astype(str)
+    else:
+        routes["_route_key"] = routes.index.astype(str)
+
+    worked_dates = routes[
+        ["driver_name", "worksheet_name", "work_date"]
+    ].drop_duplicates()
+    routes = routes.drop_duplicates(
+        subset=["driver_name", "worksheet_name", "work_date", "_route_key"]
+    )
+    routes["weekday"] = routes["work_date"].dt.weekday
 
     grouped = (
-        dates.groupby(["driver_name", "worksheet_name"], dropna=False)
+        routes.groupby(["driver_name", "worksheet_name"], dropna=False)
         .agg(
-            worked_days=("work_date", "nunique"),
             hetfo=("weekday", lambda value: int((value == 0).sum())),
             kedd=("weekday", lambda value: int((value == 1).sum())),
             szerda=("weekday", lambda value: int((value == 2).sum())),
@@ -347,6 +483,16 @@ def build_weekday_counts(final_df):
             vasarnap=("weekday", lambda value: int((value == 6).sum())),
         )
         .reset_index()
+    )
+    worked_days = (
+        worked_dates.groupby(["driver_name", "worksheet_name"], dropna=False)["work_date"]
+        .nunique()
+        .reset_index(name="worked_days")
+    )
+    grouped = grouped.merge(
+        worked_days,
+        on=["driver_name", "worksheet_name"],
+        how="left",
     )
 
     return grouped[columns]
@@ -377,11 +523,17 @@ def build_manual_item_summary(manual_df):
     return pivot
 
 
-def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manual_df=None):
+def build_driver_invoice_summary(
+    final_df,
+    bonus_df=None,
+    penalty_df=None,
+    manual_df=None,
+    day_rates_df=None,
+):
     if final_df.empty:
         return pd.DataFrame()
 
-    final_df = final_df.copy()
+    final_df = enrich_invoice_routes(final_df, day_rates_df)
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)
 
@@ -399,8 +551,31 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manua
         "tip_huf",
         "route_total_without_tip_huf",
         "route_total_huf",
+        "calculated_base_huf",
     ]
     final_df = add_numeric_columns(final_df, numeric_columns)
+    final_df["source_fixed_rate_huf"] = final_df["fixed_rate_huf"]
+    final_df["source_delay_bonus_huf"] = final_df["delay_bonus_huf"]
+    final_df["source_compliance_bonus_huf"] = final_df["compliance_bonus_huf"]
+    final_df["fixed_rate_huf"] = final_df["calculated_base_huf"]
+    final_df["delay_bonus_huf"] = final_df["delay_bonus_huf"].map(courier_bonus_amount)
+    final_df["compliance_bonus_huf"] = final_df["compliance_bonus_huf"].map(courier_bonus_amount)
+    final_df["bonus_total_huf"] = (
+        final_df["fuel_bonus_huf"]
+        + final_df["car_fridge_bonus_huf"]
+        + final_df["branding_huf"]
+        + final_df["delay_bonus_huf"]
+        + final_df["compliance_bonus_huf"]
+        + final_df["fill_rate_bonus_huf"]
+    )
+    final_df["route_total_without_tip_huf"] = (
+        final_df["fixed_rate_huf"]
+        + final_df["bonus_total_huf"]
+    )
+    final_df["route_total_huf"] = (
+        final_df["route_total_without_tip_huf"]
+        + final_df["tip_huf"]
+    )
 
     grouped = (
         final_df.groupby(["driver_name", "worksheet_name"], dropna=False)[numeric_columns]
@@ -427,6 +602,8 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manua
     if bonus_df is not None and not bonus_df.empty:
         bonus_df = bonus_df.copy()
         bonus_df["driver_name"] = bonus_df["driver_name"].map(normalize_text)
+        if "courier_id" in bonus_df.columns:
+            bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
             bonus_df,
             ["bonus_huf"],
@@ -441,12 +618,28 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manua
             on="driver_name",
             how="left",
         )
+        if "courier_id" in bonus_df.columns:
+            bonus_ids = (
+                bonus_df[["driver_name", "courier_id"]]
+                .dropna()
+                .drop_duplicates()
+                .groupby("driver_name", dropna=False)["courier_id"]
+                .first()
+                .reset_index()
+            )
+            grouped = grouped.merge(
+                bonus_ids,
+                on="driver_name",
+                how="left",
+            )
     else:
         grouped["extra_bonus_huf"] = 0
 
     if penalty_df is not None and not penalty_df.empty:
         penalty_df = penalty_df.copy()
         penalty_df["driver_name"] = penalty_df["driver_name"].map(normalize_text)
+        if "courier_id" in penalty_df.columns:
+            penalty_df["courier_id"] = penalty_df["courier_id"].map(normalize_text)
         penalty_df = add_numeric_columns(
             penalty_df,
             ["amount_huf"],
@@ -461,8 +654,26 @@ def build_driver_invoice_summary(final_df, bonus_df=None, penalty_df=None, manua
             on="driver_name",
             how="left",
         )
+        if "courier_id" not in grouped.columns and "courier_id" in penalty_df.columns:
+            penalty_ids = (
+                penalty_df[["driver_name", "courier_id"]]
+                .dropna()
+                .drop_duplicates()
+                .groupby("driver_name", dropna=False)["courier_id"]
+                .first()
+                .reset_index()
+            )
+            grouped = grouped.merge(
+                penalty_ids,
+                on="driver_name",
+                how="left",
+            )
     else:
         grouped["adjustment_huf"] = 0
+
+    if "courier_id" not in grouped.columns:
+        grouped["courier_id"] = ""
+    grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_text)
 
     manual_summary = build_manual_item_summary(manual_df)
     if not manual_summary.empty:
@@ -624,18 +835,19 @@ def build_display_driver_summary(summary_df):
 
     return visible.rename(
         columns={
+            "courier_id": "Futar ID",
             "driver_name": "Futar",
             "worksheet_name": "Raktar ful",
             "orders": "Rendeles",
             "routes": "Kor",
             "worked_days": "Dolgozott nap",
-            "hetfo": "Hetfo",
-            "kedd": "Kedd",
-            "szerda": "Szerda",
-            "csutortok": "Csutortok",
-            "pentek": "Pentek",
-            "szombat": "Szombat",
-            "vasarnap": "Vasarnap",
+            "hetfo": "Hetfo kor",
+            "kedd": "Kedd kor",
+            "szerda": "Szerda kor",
+            "csutortok": "Csutortok kor",
+            "pentek": "Pentek kor",
+            "szombat": "Szombat kor",
+            "vasarnap": "Vasarnap kor",
             "route_count": "Route db",
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
@@ -702,9 +914,8 @@ def build_display_base_rate_matrix():
         )
         .reset_index()
     )
-    for column in ["EXPRESSZ", "City", "Régió"]:
-        if column in pivot.columns:
-            pivot[column] = pivot[column].map(format_huf)
+    for column in [column for column in pivot.columns if column != "day_type"]:
+        pivot[column] = pivot[column].map(format_huf)
 
     return pivot.rename(columns={"day_type": "Nap tipus"})
 
