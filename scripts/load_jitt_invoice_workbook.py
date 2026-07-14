@@ -688,9 +688,12 @@ def raise_for_supabase_error(response):
         raise
 
 
-def post_supabase_rows(table_name, rows, on_conflict):
+def post_supabase_rows(table_names, rows, on_conflict):
     if not rows:
         return 0
+
+    if isinstance(table_names, str):
+        table_names = [table_names]
 
     supabase_url, supabase_key = get_supabase_config()
 
@@ -699,7 +702,6 @@ def post_supabase_rows(table_name, rows, on_conflict):
             "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY setting."
         )
 
-    endpoint = f"{supabase_url}/rest/v1/{table_name}?on_conflict={on_conflict}"
     headers = {
         "apikey": supabase_key,
         "Authorization": f"Bearer {supabase_key}",
@@ -707,16 +709,38 @@ def post_supabase_rows(table_name, rows, on_conflict):
         "Prefer": "resolution=merge-duplicates,return=minimal",
     }
     total = 0
+    selected_table = None
 
     for index in range(0, len(rows), 500):
         batch = rows[index:index + 500]
-        response = requests.post(
-            endpoint,
-            headers=headers,
-            json=batch,
-            timeout=90,
-        )
-        raise_for_supabase_error(response)
+        response = None
+
+        for table_name in ([selected_table] if selected_table else table_names):
+            if not table_name:
+                continue
+
+            endpoint = f"{supabase_url}/rest/v1/{table_name}?on_conflict={on_conflict}"
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=batch,
+                timeout=90,
+            )
+
+            if response.status_code in [404, 406]:
+                continue
+
+            raise_for_supabase_error(response)
+            selected_table = table_name
+            break
+        else:
+            if response is not None:
+                raise_for_supabase_error(response)
+
+            raise RuntimeError(
+                f"No writable invoice table found: {', '.join(table_names)}"
+            )
+
         total += len(batch)
 
     return total
@@ -726,37 +750,37 @@ def upsert_all(rows):
     ensure_tables_if_possible()
     return {
         "imports": post_supabase_rows(
-            "jitt_invoice_imports",
+            ["bill_jitt_invoice_imports", "jitt_invoice_imports"],
             rows["imports"],
             "source_name,source_spreadsheet_id",
         ),
         "summary": post_supabase_rows(
-            "jitt_invoice_summary_rows",
+            ["bill_jitt_invoice_summary", "jitt_invoice_summary_rows"],
             rows["summary"],
             "source_name,source_spreadsheet_id,worksheet_name,row_number",
         ),
         "routes": post_supabase_rows(
-            "jitt_invoice_route_rows",
+            ["bill_jitt_invoice_routes", "jitt_invoice_route_rows"],
             rows["routes"],
             "source_name,source_spreadsheet_id,worksheet_name,row_number",
         ),
         "final": post_supabase_rows(
-            "jitt_invoice_final_routes",
+            ["bill_jitt_invoice_final_routes", "jitt_invoice_final_routes"],
             rows["final"],
             "source_name,source_spreadsheet_id,worksheet_name,row_number",
         ),
         "bonus": post_supabase_rows(
-            "jitt_invoice_bonus_routes",
+            ["bill_jitt_invoice_bonus_routes", "jitt_invoice_bonus_routes"],
             rows["bonus"],
             "source_name,source_spreadsheet_id,worksheet_name,row_number",
         ),
         "penalties": post_supabase_rows(
-            "jitt_invoice_penalties",
+            ["bill_jitt_invoice_penalties", "jitt_invoice_penalties"],
             rows["penalties"],
             "source_name,source_spreadsheet_id,worksheet_name,row_number",
         ),
         "contract": post_supabase_rows(
-            "jitt_invoice_contract_bonus_rules",
+            ["bill_jitt_contract_bonus_rules", "jitt_invoice_contract_bonus_rules"],
             rows["contract"],
             "rule_id",
         ),
