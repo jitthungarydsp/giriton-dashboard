@@ -1852,9 +1852,18 @@ def format_peopleforce_month(month_start):
 
 def get_peopleforce_month(action_key):
     months = build_peopleforce_month_options()
+    billing_actions = {
+        "cards",
+        "settlement",
+        "tig",
+        "invoice_check",
+        "invoice_submit",
+        "my_invoices",
+    }
     return st.selectbox(
         "Hónap",
         months,
+        index=1 if action_key in billing_actions and len(months) > 1 else 0,
         format_func=format_peopleforce_month,
         key=f"peopleforce_month_{action_key}",
     )

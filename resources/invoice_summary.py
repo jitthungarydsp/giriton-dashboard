@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from io import BytesIO
+import json
 import re
 import unicodedata
 from urllib.parse import quote
@@ -17,6 +18,10 @@ from resources.supabase_raw import (
 FINAL_TABLES = [
     "bill_jitt_invoice_final_routes",
     "jitt_invoice_final_routes",
+]
+ROUTE_TABLES = [
+    "bill_jitt_invoice_routes",
+    "jitt_invoice_route_rows",
 ]
 SUMMARY_TABLES = [
     "bill_jitt_invoice_summary",
@@ -334,6 +339,7 @@ def read_invoice_data(start_date, end_date):
         ",".join(
             [
                 "worksheet_name",
+                "row_number",
                 "location",
                 "driver_name",
                 "route_unique_id",
@@ -357,6 +363,13 @@ def read_invoice_data(start_date, end_date):
                 "comment",
             ]
         ),
+        date_filters,
+        limit=50000,
+    )
+
+    _route_table, raw_route_df = read_optional_first_existing_table(
+        ROUTE_TABLES,
+        "worksheet_name,row_number,work_date,row_values",
         date_filters,
         limit=50000,
     )
@@ -405,6 +418,7 @@ def read_invoice_data(start_date, end_date):
     return {
         "final_table": final_table,
         "final": final_df,
+        "routes": raw_route_df,
         "summary": summary_df,
         "bonus": bonus_df,
         "penalties": penalty_df,
@@ -449,6 +463,34 @@ def add_numeric_columns(df, columns):
         ).fillna(0)
 
     return df
+
+
+def raw_compliance_bonus(row_values):
+    values = row_values
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 0
+    if not isinstance(values, (list, tuple)) or len(values) <= 16:
+        return 0
+    return money(values[16])
+
+
+def restore_raw_compliance_bonus(final_df, raw_route_df):
+    if final_df.empty or raw_route_df is None or raw_route_df.empty:
+        return final_df
+    required = {"worksheet_name", "row_number", "row_values"}
+    if not required.issubset(raw_route_df.columns) or "row_number" not in final_df.columns:
+        return final_df
+    raw = raw_route_df[["worksheet_name", "row_number", "row_values"]].copy()
+    raw["raw_compliance_bonus_huf"] = raw["row_values"].map(raw_compliance_bonus)
+    raw = raw.drop(columns=["row_values"]).drop_duplicates()
+    restored = final_df.merge(raw, on=["worksheet_name", "row_number"], how="left")
+    current = pd.to_numeric(restored.get("compliance_bonus_huf"), errors="coerce").fillna(0)
+    fallback = pd.to_numeric(restored.get("raw_compliance_bonus_huf"), errors="coerce").fillna(0)
+    restored["compliance_bonus_huf"] = current.where(current != 0, fallback)
+    return restored.drop(columns=["raw_compliance_bonus_huf"])
 
 
 def build_weekday_counts(final_df):
@@ -555,10 +597,12 @@ def build_driver_invoice_summary(
     penalty_df=None,
     manual_df=None,
     day_rates_df=None,
+    raw_route_df=None,
 ):
     if final_df.empty:
         return pd.DataFrame()
 
+    final_df = restore_raw_compliance_bonus(final_df, raw_route_df)
     final_df = enrich_invoice_routes(final_df, day_rates_df)
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)

@@ -382,6 +382,21 @@ def create_peopleforce_complaint(
     return response.json()
 
 
+def update_peopleforce_complaint_status(complaint_id, status):
+    supabase_url = require_supabase()
+    response = requests.patch(
+        f"{supabase_url}/rest/v1/peopleforce_complaints",
+        headers=supabase_headers(prefer_return=True),
+        params={"id": f"eq.{str(complaint_id or '').strip()}"},
+        json={"status": str(status or "resolved").strip()},
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_complaints.clear()
+    read_peopleforce_complaint_markers.clear()
+    return response.json()
+
+
 def upsert_peopleforce_card_status(
     *,
     courier_id,

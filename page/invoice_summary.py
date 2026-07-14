@@ -18,6 +18,8 @@ from resources.invoice_summary import (
     read_invoice_data,
 )
 from resources.peopleforce_documents import (
+    read_peopleforce_complaints,
+    update_peopleforce_complaint_status,
     upload_peopleforce_document_bytes,
     upsert_peopleforce_card_status,
 )
@@ -148,6 +150,7 @@ def show_invoice_summary_page():
     penalty_df = data["penalties"]
     manual_df = data["manual"]
     day_rates_df = data.get("day_rates", pd.DataFrame())
+    raw_route_df = data.get("routes", pd.DataFrame())
 
     final_df = filter_by_worksheet(
         final_df,
@@ -175,6 +178,7 @@ def show_invoice_summary_page():
         penalty_df,
         manual_df,
         day_rates_df,
+        raw_route_df,
     )
 
     if driver_summary.empty:
@@ -217,6 +221,35 @@ def show_invoice_summary_page():
         use_container_width=True,
         hide_index=True,
     )
+
+    if selected_driver != "Mind" and not driver_summary.empty:
+        selected_row = driver_summary.iloc[0]
+        courier_id, courier_name = resolve_courier_identity(selected_row, selected_driver)
+        if courier_id:
+            try:
+                complaints = read_peopleforce_complaints(
+                    courier_id,
+                    month_start_from_date(start_date),
+                    "settlement",
+                )
+            except Exception:
+                complaints = pd.DataFrame()
+            open_complaints = complaints[
+                complaints.get("status", pd.Series(dtype=str)).astype(str).str.lower() != "resolved"
+            ] if not complaints.empty else complaints
+            if not open_complaints.empty:
+                st.error("A futár reklamációt küldött ehhez az elszámoláshoz. Az elszámolás visszanyitva.")
+                for _, complaint in open_complaints.iterrows():
+                    with st.container(border=True):
+                        st.write(complaint.get("message", ""))
+                        st.caption(f"Beküldte: {complaint.get('created_by', courier_name)} | {complaint.get('created_at', '')}")
+                        if st.button(
+                            "Reklamáció kezelve",
+                            key=f"resolve_invoice_complaint_{complaint.get('id')}",
+                        ):
+                            update_peopleforce_complaint_status(complaint.get("id"), "resolved")
+                            st.success("A reklamáció lezárva. Az elszámolás javítható és újraküldhető.")
+                            st.rerun()
 
     pdf_title = (
         f"JITT elszamolas {start_date.isoformat()} - {end_date.isoformat()}"
