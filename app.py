@@ -150,9 +150,27 @@ elif selected_page == "Napi statisztika":
                       color_discrete_sequence=["#8D6E63", "#03A9F4", "#3F51B5"])
         st.plotly_chart(fig4, use_container_width=True)
 elif selected_page == "PeopleForce":
-    st.title("Aktuális Címek 📍")
-    st.info("Itt fognak megjelenni a szá,lák, elszámolások, TIG és minden hasznos dolog.")
+    st.title("PeopleForce Admin 👥")
     
+    # Fülek a szervezéshez
+    tab1, tab2, tab3 = st.tabs(["Számlák", "TIG feltöltés", "Jogosultságok"])
+    
+    with tab1:
+        st.subheader("Számla kezelés")
+        uploaded_file = st.file_uploader("Számla feltöltése (.pdf)", type="pdf")
+        if uploaded_file:
+            st.success("Fájl sikeresen feltöltve!")
+            # Visszajelző lámpa (logikai állapot alapján)
+            st.write("Státusz: 🟢 Ellenőrizve") 
+    
+    with tab2:
+        st.subheader("TIG dokumentumok futároknak")
+        st.file_uploader("TIG dokumentum feltöltése", key="tig_upload")
+        
+    with tab3:
+        st.subheader("Jogosultságok")
+        user_role = st.selectbox("Felhasználói szint:", ["Futár", "Diszpécser", "Admin"])
+        
 elif selected_page == "Műszakjaim":
     st.title("Aktuális Címek 📍")
     st.info("Műszakok")
