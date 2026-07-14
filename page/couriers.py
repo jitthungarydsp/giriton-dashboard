@@ -1,7 +1,36 @@
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
 from resources.courier_master_db import read_courier_master
+from resources.peopleforce_documents import read_peopleforce_card_statuses_for_month
+
+
+def build_settlement_status_map():
+    current_month = date.today().replace(day=1)
+
+    try:
+        statuses = read_peopleforce_card_statuses_for_month(
+            current_month,
+            action_key="settlement",
+        )
+    except Exception:
+        return {}
+
+    if statuses.empty:
+        return {}
+
+    status_map = {}
+    for _index, row in statuses.iterrows():
+        courier_id = str(row.get("courier_id", "") or "").strip()
+        if not courier_id or courier_id in status_map:
+            continue
+
+        status = str(row.get("status", "") or "").strip().lower()
+        status_map[courier_id] = "🟢 Elfogadva" if status == "done" else "🔴 Teendő"
+
+    return status_map
 
 
 def show_couriers_page():
@@ -75,9 +104,18 @@ def show_couriers_page():
             searchable.str.contains(search, na=False)
         ]
 
+    settlement_status_map = build_settlement_status_map()
+    visible_df["settlement_status"] = (
+        visible_df.get("courier_id", pd.Series(dtype=str))
+        .astype(str)
+        .map(settlement_status_map)
+        .fillna("-")
+    )
+
     display_columns = [
         "courier_id",
         "courier_name",
+        "settlement_status",
         "phone_number",
         "email",
         "warehouse_name",
@@ -95,6 +133,7 @@ def show_couriers_page():
             columns={
                 "courier_id": "Courier ID",
                 "courier_name": "Név",
+                "settlement_status": "Elszámolás",
                 "phone_number": "Telefonszám",
                 "email": "E-mail",
                 "warehouse_name": "Raktár",

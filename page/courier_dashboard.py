@@ -2043,6 +2043,52 @@ def render_peopleforce_complaint_box(
     st.rerun()
 
 
+def render_peopleforce_acceptance_box(
+    *,
+    action_key,
+    courier_id,
+    courier_name,
+    selected_month,
+    user,
+    documents,
+    state,
+):
+    if action_key != "settlement" or user.get("role") == "admin" or documents.empty:
+        return
+
+    status = clean_display_text((state or {}).get("status"), "open").lower()
+
+    st.divider()
+    st.subheader("Elfogadás")
+
+    if status == "done":
+        st.success("✅ Az elszámolást elfogadtad. Ezt admin oldalon is látjuk.")
+        return
+
+    st.caption(
+        "Ha az elszámolás rendben van, zöld pipával elfogadhatod. "
+        "Ha valami nem stimmel, lent reklamációt tudsz írni."
+    )
+
+    if st.button(
+        "✅ Elfogadom az elszámolást",
+        use_container_width=True,
+        type="primary",
+        key=f"peopleforce_accept_{action_key}_{courier_id}_{selected_month}",
+    ):
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=action_key,
+            document_month=selected_month,
+            status="done",
+            status_note="Futár elfogadta az elszámolást.",
+            updated_by=user.get("username") or courier_name,
+        )
+        st.success("Elfogadás rögzítve.")
+        st.rerun()
+
+
 def render_peopleforce_monthly_documents(action_key, row, user, selected_month=None):
     config = get_peopleforce_document_config(action_key)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
@@ -2079,13 +2125,14 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         courier_id,
         selected_month,
     )
+    state = card_states.get(action_key)
     render_peopleforce_status_panel(
         action_key=action_key,
         courier_id=courier_id,
         courier_name=courier_name,
         selected_month=selected_month,
         user=user,
-        state=card_states.get(action_key),
+        state=state,
     )
 
     render_peopleforce_admin_upload(
@@ -2095,6 +2142,15 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         courier_name=courier_name,
         selected_month=selected_month,
         user=user,
+    )
+    render_peopleforce_acceptance_box(
+        action_key=action_key,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        selected_month=selected_month,
+        user=user,
+        documents=documents,
+        state=state,
     )
     render_peopleforce_complaint_box(
         action_key=action_key,

@@ -5,7 +5,7 @@
             "role": "admin",
             "courierId": 1234,
             "active": true,
-            "token": "cc7610b33fe1fd39b9b76c1eb54706a8dee9a2e1bd94471eca7da45c91682408",
+            "token": "a4673aabbdf4173734a5c19de9ced1ecaf1863611d527e9fc94945cab7e280c8",
             "passwordHash": "pbkdf2_sha256$260000$Ytf4JrR5A4agju9rdAC1AA==$1EcjZXnh2gBmBZymlamUyneXqVAwI7i2c2fV7f/EKJA="
         },
         {

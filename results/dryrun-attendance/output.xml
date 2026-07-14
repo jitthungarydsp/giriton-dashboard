@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 6.1.1 (Python 3.11.5 on win32)" generated="20260630 23:42:38.770" rpa="false" schemaversion="4">
+<suite id="s1" name="Giriton Attendance Github" source="C:\Giriton\giriton-dashboard\giriton_attendance_github.robot">
+<test id="s1-t1" name="Giriton Attendance Github" line="16">
+<kw name="Bejelentkezes" library="keywords_github">
+<kw name="Create Github Chrome Options" library="chrome_options">
+<var>${options}</var>
+<status status="NOT RUN" starttime="20260630 23:42:47.085" endtime="20260630 23:42:47.086"/>
+</kw>
+<kw name="Open Browser" library="SeleniumLibrary">
+<arg>https://kiflihu.giriton.com/</arg>
+<arg>chrome</arg>
+<arg>options=${options}</arg>
+<doc>Opens a new browser instance to the optional ``url``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.086" endtime="20260630 23:42:47.087"/>
+</kw>
+<kw name="Set Window Size" library="SeleniumLibrary">
+<arg>1920</arg>
+<arg>1080</arg>
+<doc>Sets current windows size to given ``width`` and ``height``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.087" endtime="20260630 23:42:47.087"/>
+</kw>
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.087" endtime="20260630 23:42:47.088"/>
+</kw>
+<kw name="Input Text" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
+<arg>text=%{GIRITON_USER}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.088" endtime="20260630 23:42:47.090"/>
+</kw>
+<kw name="Input Text" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-pfUserPassword"]</arg>
+<arg>text=%{GIRITON_PASSWORD}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.091" endtime="20260630 23:42:47.091"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>locator=//*[@id="ROOT-2521314"]/div/div[2]/div/div/div/div[3]/div/div[3]/div/div[1]/div</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.092" endtime="20260630 23:42:47.093"/>
+</kw>
+<status status="PASS" starttime="20260630 23:42:47.085" endtime="20260630 23:42:47.093"/>
+</kw>
+<kw name="Click Attendance" library="keywords_github">
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.093" endtime="20260630 23:42:47.094"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.094" endtime="20260630 23:42:47.094"/>
+</kw>
+<status status="PASS" starttime="20260630 23:42:47.093" endtime="20260630 23:42:47.094"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>5s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.094" endtime="20260630 23:42:47.094"/>
+</kw>
+<kw name="Get Current Date" library="DateTime">
+<var>${today}</var>
+<arg>result_format=%Y-%m-%d</arg>
+<doc>Returns current local or UTC time with an optional increment.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.094" endtime="20260630 23:42:47.094"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${base_date}</var>
+<arg>${today}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.096" endtime="20260630 23:42:47.096"/>
+</kw>
+<if>
+<branch type="IF" condition="'${RUN_START_DATE}' != ''">
+<kw name="Set Variable" library="BuiltIn">
+<var>${base_date}</var>
+<arg>${RUN_START_DATE}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.097" endtime="20260630 23:42:47.097"/>
+</kw>
+<status status="PASS" starttime="20260630 23:42:47.096" endtime="20260630 23:42:47.097"/>
+</branch>
+<status status="PASS" starttime="20260630 23:42:47.096" endtime="20260630 23:42:47.097"/>
+</if>
+<kw name="Add Time To Date" library="DateTime">
+<var>${attendance_datum_giriton}</var>
+<arg>${base_date}</arg>
+<arg>0 days</arg>
+<arg>result_format=%d/%m/%Y</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.098" endtime="20260630 23:42:47.098"/>
+</kw>
+<kw name="Add Time To Date" library="DateTime">
+<var>${attendance_datum_sheet}</var>
+<arg>${base_date}</arg>
+<arg>0 days</arg>
+<arg>result_format=%Y-%m-%d</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.098" endtime="20260630 23:42:47.098"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_DATUM=${attendance_datum_giriton}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.098" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el =&gt; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));</arg>
+<arg>ARGUMENTS</arg>
+<arg>${attendance_datum_giriton}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>5s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Scrape Attendance Rows" library="giriton_attendance_scraper">
+<var>${attendance_rows}</var>
+<arg>${attendance_datum_sheet}</arg>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Get Length" library="BuiltIn">
+<var>${attendance_count}</var>
+<arg>${attendance_rows}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_SOROK_SZAMA=${attendance_count}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Write Attendance Export" library="raw_giriton_export_sheet">
+<var>${attendance_result}</var>
+<arg>${attendance_rows}</arg>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.099"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_EXPORT=${attendance_result}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.099" endtime="20260630 23:42:47.100"/>
+</kw>
+<kw name="Build Courier Login Stats" library="raw_giriton_export_sheet">
+<var>${stats_result}</var>
+<status status="NOT RUN" starttime="20260630 23:42:47.100" endtime="20260630 23:42:47.100"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>COURIER_LOGIN_STATS=${stats_result}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:42:47.100" endtime="20260630 23:42:47.100"/>
+</kw>
+<status status="PASS" starttime="20260630 23:42:47.084" endtime="20260630 23:42:47.100"/>
+</test>
+<status status="PASS" starttime="20260630 23:42:38.774" endtime="20260630 23:42:47.102"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="0" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat pass="1" fail="0" skip="0" id="s1" name="Giriton Attendance Github">Giriton Attendance Github</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>

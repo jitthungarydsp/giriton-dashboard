@@ -235,6 +235,10 @@ def read_first_existing_table(table_names, select, extra_filters=None, limit=100
             last_error = response.text
             continue
 
+        if response.status_code == 400 and "PGRST205" in response.text:
+            last_error = response.text
+            continue
+
         raise_for_supabase_error(response)
         rows = response.json()
         return table_name, pd.DataFrame(rows)
@@ -283,6 +287,10 @@ def post_supabase_row(table_names, row):
         )
 
         if response.status_code in [404, 406]:
+            last_error = response.text
+            continue
+
+        if response.status_code == 400 and "PGRST205" in response.text:
             last_error = response.text
             continue
 
@@ -566,7 +574,6 @@ def build_driver_invoice_summary(
         + final_df["branding_huf"]
         + final_df["delay_bonus_huf"]
         + final_df["compliance_bonus_huf"]
-        + final_df["fill_rate_bonus_huf"]
     )
     final_df["route_total_without_tip_huf"] = (
         final_df["fixed_rate_huf"]
@@ -643,6 +650,7 @@ def build_driver_invoice_summary(
     if bonus_df is not None and not bonus_df.empty:
         bonus_df = bonus_df.copy()
         bonus_df["driver_name"] = bonus_df["driver_name"].map(normalize_text)
+        bonus_df["worksheet_name"] = bonus_df["worksheet_name"].map(normalize_text)
         if "courier_id" in bonus_df.columns:
             bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
@@ -650,31 +658,37 @@ def build_driver_invoice_summary(
             ["bonus_huf"],
         )
         bonus_grouped = (
-            bonus_df.groupby("driver_name", dropna=False)["bonus_huf"]
+            bonus_df.groupby(
+                ["driver_name", "worksheet_name"],
+                dropna=False,
+            )["bonus_huf"]
             .sum()
-            .reset_index(name="extra_bonus_huf")
+            .reset_index(name="compliance_extra_huf")
         )
         grouped = grouped.merge(
             bonus_grouped,
-            on="driver_name",
+            on=["driver_name", "worksheet_name"],
             how="left",
         )
         if "courier_id" in bonus_df.columns:
             bonus_ids = (
-                bonus_df[["driver_name", "courier_id"]]
+                bonus_df[["driver_name", "worksheet_name", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
-                .groupby("driver_name", dropna=False)["courier_id"]
+                .groupby(
+                    ["driver_name", "worksheet_name"],
+                    dropna=False,
+                )["courier_id"]
                 .first()
                 .reset_index()
             )
             grouped = grouped.merge(
                 bonus_ids,
-                on="driver_name",
+                on=["driver_name", "worksheet_name"],
                 how="left",
             )
     else:
-        grouped["extra_bonus_huf"] = 0
+        grouped["compliance_extra_huf"] = 0
 
     if penalty_df is not None and not penalty_df.empty:
         penalty_df = penalty_df.copy()
@@ -756,7 +770,25 @@ def build_driver_invoice_summary(
             errors="coerce",
         ).fillna(0)
 
-    grouped["extra_bonus_huf"] = grouped["extra_bonus_huf"].fillna(0)
+    grouped["compliance_extra_huf"] = grouped["compliance_extra_huf"].fillna(0)
+    grouped["compliance_bonus_huf"] = (
+        grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
+    )
+    grouped["bonus_total_huf"] = (
+        grouped["fuel_bonus_huf"]
+        + grouped["car_fridge_bonus_huf"]
+        + grouped["branding_huf"]
+        + grouped["delay_bonus_huf"]
+        + grouped["compliance_bonus_huf"]
+    )
+    grouped["route_total_without_tip_huf"] = (
+        grouped["fixed_rate_huf"] + grouped["bonus_total_huf"]
+    )
+    grouped["route_total_huf"] = (
+        grouped["route_total_without_tip_huf"] + grouped["tip_huf"]
+    )
+    # Kept for display/PDF compatibility; bonus route rows are compliance bonuses.
+    grouped["extra_bonus_huf"] = 0
     grouped["adjustment_huf"] = grouped["adjustment_huf"].fillna(0)
     grouped["manual_total_huf"] = grouped[list(MANUAL_ITEM_TYPES.keys())].sum(axis=1)
     grouped["manual_payable_huf"] = (
@@ -820,7 +852,6 @@ def build_display_routes(final_df):
         "fixed_rate_huf",
         "delay_bonus_huf",
         "compliance_bonus_huf",
-        "fill_rate_bonus_huf",
         "tip_huf",
         "route_total_huf",
         "comment",
@@ -831,7 +862,6 @@ def build_display_routes(final_df):
         "fixed_rate_huf",
         "delay_bonus_huf",
         "compliance_bonus_huf",
-        "fill_rate_bonus_huf",
         "tip_huf",
         "route_total_huf",
     ]
@@ -851,7 +881,6 @@ def build_display_routes(final_df):
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
             "compliance_bonus_huf": "Turamegfeleles",
-            "fill_rate_bonus_huf": "Toltesi dij",
             "tip_huf": "Tip",
             "route_total_huf": "Osszesen",
             "comment": "Megjegyzes",
@@ -871,7 +900,6 @@ def build_display_driver_summary(summary_df):
         "branding_huf",
         "delay_bonus_huf",
         "compliance_bonus_huf",
-        "fill_rate_bonus_huf",
         "bonus_total_huf",
         "tip_huf",
         "route_total_huf",
@@ -910,7 +938,6 @@ def build_display_driver_summary(summary_df):
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
             "compliance_bonus_huf": "Turamegfeleles",
-            "fill_rate_bonus_huf": "Toltesi dij",
             "bonus_total_huf": "Bonusz osszesen",
             "tip_huf": "Tip",
             "route_total_huf": "Route osszesen",
@@ -1064,7 +1091,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         regular_base = money(driver_row.get("sima_base_huf"))
         delay_bonus = money(driver_row.get("delay_bonus_huf"))
         compliance_bonus = money(driver_row.get("compliance_bonus_huf"))
-        fill_rate_bonus = money(driver_row.get("fill_rate_bonus_huf"))
         fuel_bonus = money(driver_row.get("fuel_bonus_huf"))
         fridge_bonus = money(driver_row.get("car_fridge_bonus_huf"))
         branding = money(driver_row.get("branding_huf"))
@@ -1083,7 +1109,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         bonus_total = (
             delay_bonus
             + compliance_bonus
-            + fill_rate_bonus
             + fuel_bonus
             + fridge_bonus
             + branding
@@ -1211,8 +1236,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             [
                 ["Kiszállított címek", orders, "Körök", routes],
                 ["Just in Time / késés", format_huf(delay_bonus), "Túramegfelelés", format_huf(compliance_bonus)],
-                ["Töltési / fill-rate bónusz", format_huf(fill_rate_bonus), "Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding + fuel_manual)],
-                ["Egyéb bónusz", format_huf(extra_bonus + other_income), "Borravaló", format_huf(tip)],
+                ["Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding + fuel_manual), "Borravaló", format_huf(tip)],
+                ["Egyéb plusz", format_huf(extra_bonus + other_income), "Be nem fiz. KP", format_huf(abs(cash_missing))],
             ],
             colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
@@ -1222,7 +1247,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
 
         revenues = [
             ["Szállítási díj", format_huf(fixed_total)],
-            ["DSP bónuszok", format_huf(bonus_total)],
+            ["Bónuszok / pótlékok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
             ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income)],
         ]

@@ -3,6 +3,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from resources.courier_master_db import read_courier_master
 from resources.invoice_summary import (
     MANUAL_ITEM_TYPES,
     build_display_base_rate_matrix,
@@ -15,6 +16,10 @@ from resources.invoice_summary import (
     create_manual_invoice_item,
     format_huf,
     read_invoice_data,
+)
+from resources.peopleforce_documents import (
+    upload_peopleforce_document_bytes,
+    upsert_peopleforce_card_status,
 )
 
 
@@ -42,6 +47,41 @@ def slugify_filename(value):
     return "".join(safe).strip("_") or "osszes"
 
 
+def normalize_name(value):
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def resolve_courier_identity(selected_row, selected_driver):
+    courier_id = str(selected_row.get("courier_id", "") or "").strip()
+    courier_name = str(
+        selected_row.get("driver_name", selected_driver) or selected_driver
+    ).strip()
+
+    if courier_id:
+        return courier_id, courier_name
+
+    try:
+        master = read_courier_master()
+    except Exception:
+        master = pd.DataFrame()
+
+    if master.empty or "courier_name" not in master.columns:
+        return courier_id, courier_name
+
+    target_name = normalize_name(courier_name)
+    matches = master[
+        master["courier_name"].astype(str).map(normalize_name) == target_name
+    ].copy()
+
+    if matches.empty:
+        return courier_id, courier_name
+
+    match = matches.iloc[0]
+    courier_id = str(match.get("courier_id", "") or "").strip()
+    courier_name = str(match.get("courier_name", courier_name) or courier_name).strip()
+    return courier_id, courier_name
+
+
 def filter_by_worksheet(df, selected_sheet):
     if df.empty or selected_sheet == "Mind":
         return df
@@ -58,6 +98,10 @@ def filter_by_driver(df, selected_driver):
     return df[
         df["driver_name"].astype(str) == selected_driver
     ].copy()
+
+
+def month_start_from_date(value):
+    return value.replace(day=1)
 
 
 def show_invoice_summary_page():
@@ -181,7 +225,10 @@ def show_invoice_summary_page():
         filename_driver = "osszes"
         if selected_driver != "Mind" and not driver_summary.empty:
             selected_row = driver_summary.iloc[0]
-            courier_id = str(selected_row.get("courier_id", "") or "").strip()
+            courier_id, _courier_name = resolve_courier_identity(
+                selected_row,
+                selected_driver,
+            )
             driver_slug = slugify_filename(selected_driver)
             filename_driver = (
                 f"{courier_id}_{driver_slug}" if courier_id else driver_slug
@@ -198,6 +245,51 @@ def show_invoice_summary_page():
             mime="application/pdf",
             use_container_width=True,
         )
+        if selected_driver != "Mind" and st.button(
+            "Kártyára küldés",
+            use_container_width=True,
+            key="invoice_send_to_courier_card",
+        ):
+            selected_row = driver_summary.iloc[0]
+            courier_id, courier_name = resolve_courier_identity(
+                selected_row,
+                selected_driver,
+            )
+
+            if not courier_id:
+                st.warning("Ehhez a futárhoz nincs courier ID, így nem tudom a Kifli kártyára küldeni.")
+            else:
+                document_month = month_start_from_date(start_date)
+                file_name = (
+                    f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_"
+                    f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+                )
+                upload_peopleforce_document_bytes(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    document_type="settlement",
+                    document_month=document_month,
+                    title=f"Elszamolas - {start_date.isoformat()} - {end_date.isoformat()}",
+                    note="Admin által kártyára küldött elszámolás.",
+                    file_name=file_name,
+                    mime_type="application/pdf",
+                    file_bytes=pdf_bytes,
+                    uploaded_by=str(st.session_state.get("username", "admin")),
+                )
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    action_key="settlement",
+                    document_month=document_month,
+                    status="open",
+                    status_note="Elszámolás kártyára küldve, futár visszajelzésre vár.",
+                    updated_by=str(st.session_state.get("username", "admin")),
+                )
+                st.cache_data.clear()
+                st.success("Elszámolás elküldve a futár Kifli kártyájára.")
+                st.rerun()
+        elif selected_driver == "Mind":
+            st.caption("Kártyára küldéshez válassz ki egy konkrét futárt.")
     except Exception as exc:
         st.info(
             f"PDF generalas nem elerheto: {exc}"

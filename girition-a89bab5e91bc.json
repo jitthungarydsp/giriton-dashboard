@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "girition",
+  "private_key_id": "a89bab5e91bcb773e5ad7e302a8fc35b2c11b5ba",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEuwIBADANBgkqhkiG9w0BAQEFAASCBKUwggShAgEAAoIBAQDBYPRRjLXDfUSN\n0jurADOPxpiJfgV7N1PiNCUs3CV86HdAxqMNAiVanZ2u4NoPAoHJdgkRxQp42vJO\nt2wYdSsKeh0xEx5OW5B5wolPQAwtI0BQR6P426JJrJBFZk9CeViAnP53veA+BiSd\nROCHcAS71kuf7+YetVYk8WgWQz3p7xfECTMsVo6Uh1CKZYX1HzZxJg0cfL2LZLoY\ngPsyrdGYvXRD0aNZaliLfRQFG3ptwykDR15oOAJG0/5pRoMz9toVNcpElgStpx3q\nsuk4pk2jbAyQIgdv2sByEo08iT/NGeUMtOunFURdR3YDvuxTc7cCD8TEeOVbdlwP\n6uGZLcL7AgMBAAECgf8lHTJPhY/ln8/dzq7YNA+PM0o1f6UFIyHUNz7rTCIH6C+D\npYr7BTs3KQkJZS9jshd7CnCzK5WSrYP1/gr0QFVoz36Ghkb1ba6AFl6qgdOQK4ks\nZ8a7YuNthLEawt1iXCwGpU4xivttuNEsCKW54U5+vpE8mHkanuY+/a+4L7gpxw7Z\noU0UwS2Bq13btJ5yzt0Htw7Whqg/lWiTK2oJRGWOijL09AJARxABBqayGygVzHw3\nQPQYI/p4Vw6v9OrJ3HpHX2JVc9ceLEIyP8UALO+9GDI9lT/1O77la/KvxnYYrSuw\njMHknf3/k6gD4EtdNjnsYeX1ZJEy6Ener9yYZ2ECgYEA5wgCz6B42jckf1EZXgFQ\nQH9LFwSyvlgeWSljuOHUAl/ttJMaDPaxbiepSh1guMlcFZ44CdwOLbYSn8g02QsE\njfOYp1mCta+WgW6t21FBHZKUO8gfkVUwQKzwCvbPQlPzJLTzXV/IkjOok1fNBr7c\nzoL3LHBj7C7srnzs1LK8NUsCgYEA1kczzJAXZ/nMCCKw1YWOdvYiwH9iViwdcSDm\nbxgnyu3EKzayjl/XPPuB34Bw2EQSIN2QAte+d2tRjWEVHWtnW7owFjTe/jadaZWC\noJNGQNasY1sMaTZePGcsAS/lVVP2HqcFC3My5SSScXnuMy2RDadYDE4MrSWMsjVV\nl8KsCxECgYEA5Hftn7oICXRCqY1f0rDl1gKMFYVV5hpqWK4vqePZr0eCYPKf7nX/\nXPnn1h1bSyIF6HMA4+80LkxB+rUYXhMhO+fL7KL+OgIcin8TezHNfRs5cC0l2qku\nAKeE8rLEn8k5R/GSQaK5TKu9Z4iKfsM8xRSKru2uQyDcemmcI3Nl4CUCgYBJ9ge2\nGyJJHFrFkBvTh6b1/t1d7lol/lInQ0DmpcLOc6VbeSTGqeQkQ3e/ipjovQ440+Eq\nagdvNtbOYu0j23ewnKKOd69ktbs9v4J4JH2CUdbs8HdnNYHvfXkd68dP3Yw9Zk8C\ndb/ige4eRwTmG1tPCC0HCkWr2iMnO+uQV3yE0QKBgHJ4bYKYtlYFwzd00KqqZaWe\n8BUKqTRSKig8IL8E+Baybno/ZrUuLnNQPmbdHS5AfvrH3Che0a14BBs8U6rWUMyr\nKcetcvxEeWZecMNVcR7/wQjcd+uksoIFymexRvSJbiKYpAtwM2rL7QAEKbJog5WE\nGF4oFlAP8cPn4F8CiI7b\n-----END PRIVATE KEY-----\n",
+  "client_email": "giriton-bot@girition.iam.gserviceaccount.com",
+  "client_id": "104309397807588990322",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/giriton-bot%40girition.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
