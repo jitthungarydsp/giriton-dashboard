@@ -1,247 +1,101 @@
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
+from streamlit_option_menu import option_menu
 
+# --- Oldal alapbeállításai ---
 st.set_page_config(
-    page_title="Giriton Dashboard",
-    layout="wide",
+    page_title="Futár Központ", 
+    page_icon="🚴‍♂️", 
+    layout="wide", # Szélesvásznú nézet, hogy kiférjenek a kártyák
+    initial_sidebar_state="expanded"
 )
 
-st.markdown(
-    """
-<style>
-.block-container {
-    max-width: none;
-    padding-left: 1rem;
-    padding-right: 1rem;
-}
-[data-testid="stHorizontalBlock"] {
-    gap: 1rem;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
+# --- Segédfüggvények (a te logikád alapján) ---
+def render_kiflis_status_card(title, subtitle, icon, status, message, type="info"):
+    """Egy szép vizuális kártyát generál a státusznak megfelelően."""
+    if type == "warning":
+        st.warning(f"**{title}**\n\n{message}")
+    elif type == "info":
+        st.info(f"**{title}**\n\n{message}")
+    elif type == "success":
+        st.success(f"**{title}**\n\n{message}")
 
-from page.profile import (
-    show_profile_page,
-)
-from resources.auth import (
-    login_screen,
-    logout_button,
-)
-from page.admin import (
-    show_admin_page,
-)
-from page.today_couriers import (
-    show_today_couriers_page,
-)
-from page.today_shifts import (
-    show_today_shifts_page,
-)
-from page.live_map import (
-    show_live_map_page,
-)
-from page.waiting_couriers import (
-    show_waiting_couriers_page,
-)
-from page.statistics import (
-    show_statistics_page,
-)
-from page.order_statistics import (
-    show_order_statistics_page,
-)
-from page.dsp_route_explanations import (
-    show_dsp_route_explanations_page,
-)
-from page.courier_dashboard import (
-    show_courier_dashboard_page,
-)
-from page.robots import (
-    show_robots_page,
-)
-from page.db_probe import (
-    show_db_probe_page,
-)
-from page.couriers import (
-    show_couriers_page,
-)
-from page.giriton_attendance_db import (
-    show_giriton_attendance_db_page,
-)
-from page.giriton_shifts_db import (
-    show_giriton_shifts_db_page,
-)
-from page.foglalasok_db import (
-    show_foglalasok_db_page,
-)
-from page.settings import (
-    show_settings_page,
-)
-
-
-login_screen()
-
-if "user" not in st.session_state:
-    st.stop()
-
-user = st.session_state["user"]
-
-if user.get("role") == "user":
-    st.markdown(
-        """
-<style>
-[data-testid="stSidebar"] {
-    display: none;
-}
-[data-testid="collapsedControl"] {
-    display: none;
-}
-.block-container {
-    padding-left: 1rem;
-    padding-right: 1rem;
-}
-</style>
-""",
-        unsafe_allow_html=True,
-    )
-    st_autorefresh(
-        interval=5 * 60 * 1000,
-        key="courier_card_auto_refresh",
-    )
-    show_courier_dashboard_page()
-    st.stop()
-
-st.sidebar.success(
-    f"👤 {user['username']}"
-)
-st.sidebar.info(
-    f"Jogosultság: {user['role']}"
-)
-logout_button()
-
-if user["role"] == "admin":
-    menu = [
-        "Admin",
-        "Beállítások",
-        "Robotok",
-        "DB proba",
-        "Giriton muszakok DB",
-        "Foglalasok DB",
-        "Giriton Attendance DB",
-        "Performance magyarazat",
-        "Futárok",
-        "Mai futárok",
-        "Kifli kártya",
-        "Mai műszakok",
-        "Várakozó futárok",
-        "Live Map",
-        "Profil",
-    ]
-else:
-    menu = [
-        "Mai futárok",
-        "Kifli kártya",
-        "Mai műszakok",
-        "Várakozó futárok",
-        "Live Map",
-        "Profil",
-    ]
-
-if "Statisztika" not in menu:
-    menu.insert(
-        max(len(menu) - 1, 0),
-        "Statisztika",
-    )
-
-if "Megrendeles statisztika" not in menu:
-    menu.insert(
-        max(len(menu) - 1, 0),
-        "Megrendeles statisztika",
-    )
-
-page = st.sidebar.radio(
-    "Menü",
-    menu,
-)
-
-if page == "Live Map":
-    st_autorefresh(
-        interval=30 * 1000,
-        key="live_map_auto_refresh",
-    )
-    st.sidebar.caption(
-        "Live Map automatikus frissítés: 30 mp"
-    )
-else:
-    if st.sidebar.button(
-        "Frissítés",
-        use_container_width=True,
-    ):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.session_state["manual_refresh_requested"] = True
-        st.session_state["manual_refresh_counter"] = (
-            st.session_state.get(
-                "manual_refresh_counter",
-                0,
-            )
-            + 1
+def check_shift_status(minutes_to_start):
+    """Eldönti, milyen üzenetet mutasson a műszak közeledtével."""
+    minutes_to_start = max(int(minutes_to_start or 0), 0)
+    
+    if minutes_to_start > 40:
+        render_kiflis_status_card(
+            title="Lassan kezdődik a műszakod ⏳",
+            subtitle=f"Még {minutes_to_start} perc van a kezdésig.",
+            icon="40+",
+            status="Készülődés",
+            message="Még van idő összerakni magad, de a műszak már integet a távolból.",
+            type="info"
         )
-        st.rerun()
+    else:
+        render_kiflis_status_card(
+            title="Ideje Giritonba bejelentkezni! ❗",
+            subtitle=f"Még {minutes_to_start} perc van a kezdésig.",
+            icon="!",
+            status="Depó felé",
+            message="Jelentkezz be Giritonba. Ha valami nem áll össze, kérj segítséget a diszpécsertől.",
+            type="warning"
+        )
 
-    st_autorefresh(
-        interval=5 * 60 * 1000,
-        key=f"{page}_auto_refresh",
-    )
-    st.sidebar.caption(
-        "Automatikus frissítés: 5 perc"
+# --- Oldalsáv / Navigáció ---
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/2972/2972185.png", width=100) # Ide jöhet egy egyedi logó
+    st.write("### Szia, Futár!")
+    
+    selected_page = option_menu(
+        menu_title=None,
+        options=["Műszak áttekintés", "Aktuális címek", "Napi statisztika"],
+        icons=["house", "geo-alt", "bar-chart-line"],
+        default_index=0,
+        styles={
+            "container": {"padding": "0!important", "background-color": "transparent"},
+            "icon": {"color": "orange", "font-size": "18px"}, 
+            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px"},
+            "nav-link-selected": {"background-color": "#4CAF50"}, # Zöld kiemelés
+        }
     )
 
-if page == "Admin":
-    show_admin_page()
-elif page == "Beállítások":
-    show_settings_page()
-elif page == "Robotok":
-    show_robots_page()
-elif page == "DB proba":
-    show_db_probe_page()
-elif page == "Giriton muszakok DB":
-    show_giriton_shifts_db_page()
-elif page == "Foglalasok DB":
-    show_foglalasok_db_page()
-elif page == "Giriton Attendance DB":
-    show_giriton_attendance_db_page()
-elif page in ["Futárok", "FutĂˇrok"]:
-    show_couriers_page()
-elif page == "Mai futárok":
-    show_today_couriers_page()
-elif page == "Kifli kártya":
-    show_courier_dashboard_page()
-elif page == "Mai műszakok":
-    show_today_shifts_page()
-elif page == "Live Map":
-    show_live_map_page()
-elif page == "Várakozó futárok":
-    show_waiting_couriers_page()
-elif page == "Statisztika":
-    show_statistics_page()
-elif page == "Megrendeles statisztika":
-    show_order_statistics_page()
-elif page == "Performance magyarazat":
-    show_dsp_route_explanations_page()
-elif page == "Trainer":
-    st.title(
-        "Trainer felület"
-    )
-    st.info(
-        "Fejlesztés alatt"
-    )
-elif page == "Saját adatok":
-    st.title(
-        "Saját adatok"
-    )
-    st.info(
-        "Fejlesztés alatt"
-    )
-elif page == "Profil":
-    show_profile_page()
+# --- Főképernyő tartalom ---
+
+if selected_page == "Műszak áttekintés":
+    st.title("Mai Műszak 📦")
+    st.markdown("---")
+    
+    # Felső mutatók (KPI kártyák)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(label="Kiszállított", value="12 / 20", delta="8 hátra", delta_color="normal")
+    with col2:
+        st.metric(label="Borravaló", value="4 500 Ft", delta="Jó átlag", delta_color="normal")
+    with col3:
+        st.metric(label="Műszak vége", value="16:00", delta="-2.5 óra", delta_color="inverse")
+    with col4:
+        st.metric(label="Késés", value="0 perc", delta="Időben vagy!", delta_color="off")
+    
+    st.markdown("### Aktuális teendők")
+    # Itt használjuk a te logikádat, egy csúszkával tesztelheted:
+    test_minutes = st.slider("Mennyi idő van a kezdésig? (Teszt)", 0, 60, 45)
+    check_shift_status(test_minutes)
+    
+    # Alsó rész: Gyorsgombok
+    st.markdown("### Gyorsműveletek")
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    with btn_col1:
+        st.button("🗺️ Útvonaltervező indítása", use_container_width=True)
+    with btn_col2:
+        st.button("📞 Diszpécser hívása", use_container_width=True)
+    with btn_col3:
+        st.button("☕ Szünet kérése", use_container_width=True)
+
+elif selected_page == "Aktuális címek":
+    st.title("Aktuális Címek 📍")
+    st.info("Itt fognak megjelenni a soron következő szállítási címek és a vásárlói megjegyzések.")
+    
+elif selected_page == "Napi statisztika":
+    st.title("Napi Statisztika 📊")
+    st.info("Itt láthatod a teljesítményedet, megtett kilométereket és a borravaló eloszlását.")
