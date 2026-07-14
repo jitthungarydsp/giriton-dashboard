@@ -149,28 +149,45 @@ elif selected_page == "Napi statisztika":
         fig4 = px.pie(df_packages, values="Darab", names="Típus", title="❄️ Csomagok típusai",
                       color_discrete_sequence=["#8D6E63", "#03A9F4", "#3F51B5"])
         st.plotly_chart(fig4, use_container_width=True)
+
 elif selected_page == "PeopleForce":
     st.title("PeopleForce Admin 👥")
     
-    # Fülek a szervezéshez
-    tab1, tab2, tab3 = st.tabs(["Számlák", "TIG feltöltés", "Jogosultságok"])
+    # Jogosultsági szint szimulálása (ezt később adatbázisból/loginból szedjük)
+    user_role = "Admin" # Lehet: "Admin", "Diszpécser", "Futár"
+    
+    tab1, tab2 = st.tabs(["Számlák & TIG", "Adminisztrációs Panel"])
     
     with tab1:
-        st.subheader("Számla kezelés")
-        uploaded_file = st.file_uploader("Számla feltöltése (.pdf)", type="pdf")
-        if uploaded_file:
-            st.success("Fájl sikeresen feltöltve!")
-            # Visszajelző lámpa (logikai állapot alapján)
-            st.write("Státusz: 🟢 Ellenőrizve") 
-    
+        st.subheader("Dokumentumok kezelése")
+        
+        # Példa egy táblázatos megjelenítésre státusz lámpákkal
+        data = {
+            "Dokumentum": ["Számla_001.pdf", "TIG_Július.pdf", "Számla_002.pdf"],
+            "Státusz": ["🟢 Elfogadva", "🟡 Ellenőrzésre vár", "🔴 Javítandó"]
+        }
+        df = pd.DataFrame(data)
+        st.table(df)
+
+        if user_role in ["Admin", "Diszpécser"]:
+            st.markdown("---")
+            st.subheader("Új dokumentum feltöltése")
+            uploaded_file = st.file_uploader("Válassz fájlt a feltöltéshez", type=["pdf", "jpg", "png"])
+            if uploaded_file:
+                st.success(f"Fájl sikeresen feltöltve: {uploaded_file.name}")
+
     with tab2:
-        st.subheader("TIG dokumentumok futároknak")
-        st.file_uploader("TIG dokumentum feltöltése", key="tig_upload")
-        
-    with tab3:
-        st.subheader("Jogosultságok")
-        user_role = st.selectbox("Felhasználói szint:", ["Futár", "Diszpécser", "Admin"])
-        
+        st.subheader("Jogosultsági beállítások")
+        if user_role == "Admin":
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.text_input("Futár neve/azonosítója")
+            with col2:
+                st.selectbox("Új jogosultság:", ["Futár", "Diszpécser", "Admin"])
+            st.button("Mentés")
+        else:
+            st.warning("Ehhez a menüponthoz Adminisztrátori jogosultság szükséges.")
+
 elif selected_page == "Műszakjaim":
     st.title("Aktuális Címek 📍")
     st.info("Műszakok")
