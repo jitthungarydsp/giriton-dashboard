@@ -17,3 +17,4 @@ pandas
 plotly-express
 pathlib
 reportlab
+pypdf
