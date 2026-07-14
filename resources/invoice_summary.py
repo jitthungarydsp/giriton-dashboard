@@ -592,6 +592,47 @@ def build_driver_invoice_summary(
         on=["driver_name", "worksheet_name"],
         how="left",
     )
+    day_type_summary = (
+        final_df.groupby(["driver_name", "worksheet_name", "calculated_day_type"], dropna=False)
+        .agg(
+            day_type_routes=("route_unique_id", "nunique"),
+            day_type_base_huf=("fixed_rate_huf", "sum"),
+        )
+        .reset_index()
+    )
+    day_type_pivot = pd.DataFrame()
+    if not day_type_summary.empty:
+        route_pivot = day_type_summary.pivot_table(
+            index=["driver_name", "worksheet_name"],
+            columns="calculated_day_type",
+            values="day_type_routes",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        base_pivot = day_type_summary.pivot_table(
+            index=["driver_name", "worksheet_name"],
+            columns="calculated_day_type",
+            values="day_type_base_huf",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        day_type_pivot = pd.DataFrame(index=route_pivot.index)
+        day_type_pivot["kiemelt_routes"] = route_pivot.get("KIEMELT", 0)
+        day_type_pivot["sima_routes"] = route_pivot.get("SIMA", 0)
+        day_type_pivot["kiemelt_base_huf"] = base_pivot.get("KIEMELT", 0)
+        day_type_pivot["sima_base_huf"] = base_pivot.get("SIMA", 0)
+        day_type_pivot = day_type_pivot.reset_index()
+    if not day_type_pivot.empty:
+        grouped = grouped.merge(
+            day_type_pivot,
+            on=["driver_name", "worksheet_name"],
+            how="left",
+        )
+    else:
+        grouped["kiemelt_routes"] = 0
+        grouped["sima_routes"] = 0
+        grouped["kiemelt_base_huf"] = 0
+        grouped["sima_base_huf"] = 0
     weekday_counts = build_weekday_counts(final_df)
     grouped = grouped.merge(
         weekday_counts,
@@ -692,10 +733,20 @@ def build_driver_invoice_summary(
         "pentek",
         "szombat",
         "vasarnap",
+        "kiemelt_routes",
+        "sima_routes",
     ]:
         if column not in grouped.columns:
             grouped[column] = 0
         grouped[column] = grouped[column].fillna(0).astype(int)
+
+    for column in ["kiemelt_base_huf", "sima_base_huf"]:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = pd.to_numeric(
+            grouped[column],
+            errors="coerce",
+        ).fillna(0)
 
     for column in MANUAL_ITEM_TYPES:
         if column not in grouped.columns:
@@ -826,7 +877,10 @@ def build_display_driver_summary(summary_df):
         "route_total_huf",
         "extra_bonus_huf",
         "adjustment_huf",
+        "kiemelt_base_huf",
+        "sima_base_huf",
         "manual_total_huf",
+        "cash_missing_huf",
         "manual_payable_huf",
         "payable_total_huf",
     ]:
@@ -848,6 +902,10 @@ def build_display_driver_summary(summary_df):
             "pentek": "Pentek kor",
             "szombat": "Szombat kor",
             "vasarnap": "Vasarnap kor",
+            "kiemelt_routes": "Kiemelt kor",
+            "sima_routes": "Sima kor",
+            "kiemelt_base_huf": "Kiemelt alapdij",
+            "sima_base_huf": "Sima alapdij",
             "route_count": "Route db",
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
@@ -858,6 +916,7 @@ def build_display_driver_summary(summary_df):
             "route_total_huf": "Route osszesen",
             "extra_bonus_huf": "Egyeb bonusz",
             "adjustment_huf": "Levonas / plusz",
+            "cash_missing_huf": "Be nem fizetett KP",
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
             "payable_total_huf": "Fizetendo osszesen",
@@ -996,9 +1055,13 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         ].copy()
 
         orders = int(money(driver_row.get("orders")))
-        routes = int(money(driver_row.get("routes")))
+        routes = int(money(driver_row.get("route_count") or driver_row.get("routes")))
         payable_total = money(driver_row.get("payable_total_huf"))
         fixed_total = money(driver_row.get("fixed_rate_huf"))
+        highlighted_routes = int(money(driver_row.get("kiemelt_routes")))
+        regular_routes = int(money(driver_row.get("sima_routes")))
+        highlighted_base = money(driver_row.get("kiemelt_base_huf"))
+        regular_base = money(driver_row.get("sima_base_huf"))
         delay_bonus = money(driver_row.get("delay_bonus_huf"))
         compliance_bonus = money(driver_row.get("compliance_bonus_huf"))
         fill_rate_bonus = money(driver_row.get("fill_rate_bonus_huf"))
@@ -1089,6 +1152,30 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         )
         apply_statement_table_style(base, font_name, bold_font_name, TableStyle, colors)
         story.append(base)
+        story.append(Spacer(1, 0.28 * cm))
+
+        story.append(Paragraph("KIEMELT / SIMA TÚRÁK ALAPDÍJA", section_style))
+        route_base_table = Table(
+            [
+                ["Nap típus", "Túra db", "Alapösszeg"],
+                ["Kiemelt nap", highlighted_routes, format_huf(highlighted_base)],
+                ["Nem kiemelt nap", regular_routes, format_huf(regular_base)],
+                ["Összesen", highlighted_routes + regular_routes, format_huf(highlighted_base + regular_base)],
+            ],
+            colWidths=[7.0 * cm, 4.0 * cm, 6.0 * cm],
+        )
+        apply_statement_table_style(route_base_table, font_name, bold_font_name, TableStyle, colors)
+        route_base_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#d9ead3")),
+                    ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#fff2cc")),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eeeeee")),
+                    ("FONTNAME", (0, -1), (-1, -1), bold_font_name),
+                ]
+            )
+        )
+        story.append(route_base_table)
         story.append(Spacer(1, 0.28 * cm))
 
         story.append(Paragraph("ALAPDÍJ MÁTRIX", section_style))
