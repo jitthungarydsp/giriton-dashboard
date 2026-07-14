@@ -238,6 +238,35 @@ def read_peopleforce_card_statuses(courier_id, document_month):
     return pd.DataFrame(rows)
 
 
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_card_statuses_for_month(document_month, action_key=None):
+    supabase_url = require_supabase()
+    params = {
+        "select": ",".join(STATUS_COLUMNS),
+        "document_month": f"eq.{format_month(document_month)}",
+        "order": "updated_at.desc",
+        "limit": "5000",
+    }
+
+    action_key = str(action_key or "").strip()
+    if action_key:
+        params["action_key"] = f"eq.{action_key}"
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_card_statuses",
+        headers=supabase_headers(),
+        params=params,
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+
+    if not rows:
+        return pd.DataFrame(columns=STATUS_COLUMNS)
+
+    return pd.DataFrame(rows)
+
+
 def upload_peopleforce_document(
     *,
     courier_id,
@@ -259,6 +288,48 @@ def upload_peopleforce_document(
         "title": str(title or "").strip(),
         "file_name": str(uploaded_file.name or "").strip(),
         "mime_type": str(uploaded_file.type or "").strip(),
+        "file_size": len(file_bytes),
+        "file_content_base64": base64.b64encode(file_bytes).decode("ascii"),
+        "note": str(note or "").strip(),
+        "uploaded_by": str(uploaded_by or "").strip(),
+    }
+
+    response = requests.post(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(prefer_return=True),
+        json=payload,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_documents.clear()
+    read_peopleforce_document_markers.clear()
+
+    return response.json()
+
+
+def upload_peopleforce_document_bytes(
+    *,
+    courier_id,
+    courier_name,
+    document_type,
+    document_month,
+    title,
+    note,
+    file_name,
+    mime_type,
+    file_bytes,
+    uploaded_by,
+):
+    supabase_url = require_supabase()
+    file_bytes = file_bytes or b""
+    payload = {
+        "courier_id": str(courier_id or "").strip(),
+        "courier_name": str(courier_name or "").strip(),
+        "document_type": str(document_type or "").strip(),
+        "document_month": format_month(document_month),
+        "title": str(title or "").strip(),
+        "file_name": str(file_name or "").strip(),
+        "mime_type": str(mime_type or "application/octet-stream").strip(),
         "file_size": len(file_bytes),
         "file_content_base64": base64.b64encode(file_bytes).decode("ascii"),
         "note": str(note or "").strip(),
@@ -349,6 +420,7 @@ def upsert_peopleforce_card_status(
     )
     raise_for_supabase_error(response)
     read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
 
     return response.json()
 
