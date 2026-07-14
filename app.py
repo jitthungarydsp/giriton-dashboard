@@ -46,11 +46,11 @@ def check_shift_status(minutes_to_start):
 
 # --- Oldalsáv / Navigáció ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2972/2972185.png", width=100) # Ide jöhet egy egyedi logó
+    # A helyi fájl behívása. A szélességet (width) kicsit nagyobbra állítottam, hogy szebben mutasson.
+    st.image("letöltés.jfif", width=150) 
     st.write("### Szia, Futár!")
     
     selected_page = option_menu(
-        menu_title=None,
         options=["Műszak áttekintés", "Aktuális címek", "Napi statisztika"],
         icons=["house", "geo-alt", "bar-chart-line"],
         default_index=0,
