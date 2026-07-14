@@ -1,0 +1,735 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 6.1.1 (Python 3.11.5 on win32)" generated="20260630 23:10:16.601" rpa="false" schemaversion="4">
+<suite id="s1" name="Giriton Raw Export Github" source="C:\Giriton\giriton-dashboard\giriton_raw_export_github.robot">
+<test id="s1-t1" name="Giriton Raw Export Github" line="18">
+<kw name="Bejelentkezes" library="keywords_github">
+<kw name="Create Github Chrome Options" library="chrome_options">
+<var>${options}</var>
+<status status="NOT RUN" starttime="20260630 23:10:25.981" endtime="20260630 23:10:25.981"/>
+</kw>
+<kw name="Open Browser" library="SeleniumLibrary">
+<arg>https://kiflihu.giriton.com/</arg>
+<arg>chrome</arg>
+<arg>options=${options}</arg>
+<doc>Opens a new browser instance to the optional ``url``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.982" endtime="20260630 23:10:25.982"/>
+</kw>
+<kw name="Set Window Size" library="SeleniumLibrary">
+<arg>1920</arg>
+<arg>1080</arg>
+<doc>Sets current windows size to given ``width`` and ``height``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.982" endtime="20260630 23:10:25.983"/>
+</kw>
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.983" endtime="20260630 23:10:25.985"/>
+</kw>
+<kw name="Input Text" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
+<arg>text=%{GIRITON_USER}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.985" endtime="20260630 23:10:25.986"/>
+</kw>
+<kw name="Input Text" library="SeleniumLibrary">
+<arg>locator=//*[@id="CompanyLoginPanel-pfUserPassword"]</arg>
+<arg>text=%{GIRITON_PASSWORD}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.986" endtime="20260630 23:10:25.988"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>locator=//*[@id="ROOT-2521314"]/div/div[2]/div/div/div/div[3]/div/div[3]/div/div[1]/div</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.988" endtime="20260630 23:10:25.991"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:25.981" endtime="20260630 23:10:25.991"/>
+</kw>
+<kw name="Click Shift Subs" library="keywords_github">
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>locator=//*[@id="layMenuItems"]/div[5]/div/span</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.992" endtime="20260630 23:10:25.994"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>locator=//*[@id="layMenuItems"]/div[5]/div/span</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.994" endtime="20260630 23:10:25.996"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:25.991" endtime="20260630 23:10:25.996"/>
+</kw>
+<kw name="Select All Departments" library="keywords_github">
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>xpath=//span[contains(@class,'v-button-caption') and (contains(normalize-space(.),'Just in Time Kft') or contains(normalize-space(.),'multiple departm') or contains(normalize-space(.),'all departments'))]</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.996" endtime="20260630 23:10:25.999"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const departmentButton=[...document.querySelectorAll('.v-button')].find(el =&gt; { const text=(el.innerText || '').trim(); return (text.includes('Just in Time Kft') || text.includes('multiple departm') || text.includes('all departments')) &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0; }); if(departmentButton){departmentButton.click();} else {throw new Error('Visible department button not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:25.999" endtime="20260630 23:10:25.999"/>
+</kw>
+<kw name="Wait Until Page Contains" library="SeleniumLibrary">
+<arg>Departments</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until ``text`` appears on the current page.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.000" endtime="20260630 23:10:26.001"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const label=[...document.querySelectorAll('label')].find(el =&gt; (el.innerText || '').includes('all departments') &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(label){label.click();} else {throw new Error('Visible all departments label not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.001" endtime="20260630 23:10:26.001"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.001" endtime="20260630 23:10:26.001"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const button=[...document.querySelectorAll('.v-button')].find(el =&gt; (el.innerText || '').trim() === 'Choose' &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(button){button.click();} else {throw new Error('Visible Choose button not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.002" endtime="20260630 23:10:26.002"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>3s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.002" endtime="20260630 23:10:26.002"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:25.996" endtime="20260630 23:10:26.002"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>10</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.002" endtime="20260630 23:10:26.002"/>
+</kw>
+<kw name="Get Current Date" library="DateTime">
+<var>${today}</var>
+<arg>result_format=%Y-%m-%d</arg>
+<doc>Returns current local or UTC time with an optional increment.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.002" endtime="20260630 23:10:26.003"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${base_date}</var>
+<arg>${today}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.003" endtime="20260630 23:10:26.003"/>
+</kw>
+<if>
+<branch type="IF" condition="'${RUN_START_DATE}' != ''">
+<kw name="Set Variable" library="BuiltIn">
+<var>${base_date}</var>
+<arg>${RUN_START_DATE}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.003" endtime="20260630 23:10:26.003"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.003" endtime="20260630 23:10:26.003"/>
+</branch>
+<status status="PASS" starttime="20260630 23:10:26.003" endtime="20260630 23:10:26.003"/>
+</if>
+<kw name="Create List" library="BuiltIn">
+<var>@{rows}</var>
+<doc>Returns a list containing given items.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.004" endtime="20260630 23:10:26.004"/>
+</kw>
+<kw name="Set Variable If" library="BuiltIn">
+<var>${days_to_sync}</var>
+<arg>'${DAYS_TO_SYNC}' == ''</arg>
+<arg>10</arg>
+<arg>${DAYS_TO_SYNC}</arg>
+<doc>Sets variable based on the given condition.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.004" endtime="20260630 23:10:26.004"/>
+</kw>
+<kw name="Convert To Integer" library="BuiltIn">
+<var>${days_to_sync}</var>
+<arg>${days_to_sync}</arg>
+<doc>Converts the given item to an integer number.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.004" endtime="20260630 23:10:26.005"/>
+</kw>
+<for flavor="IN RANGE">
+<var>${nap}</var>
+<value>0</value>
+<value>${days_to_sync}</value>
+<iter>
+<var name="${nap}"/>
+<kw name="Add Time To Date" library="DateTime">
+<var>${datum_giriton}</var>
+<arg>${base_date}</arg>
+<arg>${nap} days</arg>
+<arg>result_format=%d/%m/%Y</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.005"/>
+</kw>
+<kw name="Add Time To Date" library="DateTime">
+<var>${datum_sheet}</var>
+<arg>${base_date}</arg>
+<arg>${nap} days</arg>
+<arg>result_format=%Y-%m-%d</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.005"/>
+</kw>
+<kw name="Add Time To Date" library="DateTime">
+<var>${datum_oldal}</var>
+<arg>${base_date}</arg>
+<arg>${nap} days</arg>
+<arg>result_format=%d.%m.%Y</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.005"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>DATUM=${datum_giriton}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.005"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>xpath=//input[contains(@class,'v-datefield-textfield')]</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.005"/>
+</kw>
+<kw name="Press Keys" library="SeleniumLibrary">
+<arg>xpath=//input[contains(@class,'v-datefield-textfield')]</arg>
+<arg>CTRL+A</arg>
+<doc>Simulates the user pressing key(s) to an element or on the active browser.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.009" endtime="20260630 23:10:26.010"/>
+</kw>
+<kw name="Input Text" library="SeleniumLibrary">
+<arg>xpath=//input[contains(@class,'v-datefield-textfield')]</arg>
+<arg>${datum_giriton}</arg>
+<doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.010" endtime="20260630 23:10:26.011"/>
+</kw>
+<kw name="Press Keys" library="SeleniumLibrary">
+<arg>xpath=//input[contains(@class,'v-datefield-textfield')]</arg>
+<arg>ENTER</arg>
+<doc>Simulates the user pressing key(s) to an element or on the active browser.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.011" endtime="20260630 23:10:26.011"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>5s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.011" endtime="20260630 23:10:26.013"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>let els=[...document.querySelectorAll('*')]; let scrollable=els.filter(e=&gt;e.scrollHeight&gt;e.clientHeight); let biggest=scrollable.sort((a,b)=&gt;b.scrollHeight-a.scrollHeight)[0]; if(biggest){biggest.scrollTop=0;}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.013" endtime="20260630 23:10:26.013"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>2</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.013" endtime="20260630 23:10:26.013"/>
+</kw>
+<for flavor="IN RANGE">
+<var>${i}</var>
+<value>15</value>
+<iter>
+<var name="${i}"/>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>let els=[...document.querySelectorAll('*')];</arg>
+<arg>let scrollable=els.filter(e=&gt;e.scrollHeight&gt;e.clientHeight);</arg>
+<arg>let biggest=scrollable.sort((a,b)=&gt;b.scrollHeight-a.scrollHeight)[0];</arg>
+<arg>if(biggest){biggest.scrollTop=biggest.scrollHeight;}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.014" endtime="20260630 23:10:26.014"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.014" endtime="20260630 23:10:26.014"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.014" endtime="20260630 23:10:26.014"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.013" endtime="20260630 23:10:26.014"/>
+</for>
+<kw name="Sleep" library="BuiltIn">
+<arg>2s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.015" endtime="20260630 23:10:26.015"/>
+</kw>
+<kw name="Get WebElements" library="SeleniumLibrary">
+<var>${muszakok}</var>
+<arg>xpath=//div[contains(@class,'panel-title')]</arg>
+<doc>Returns a list of WebElement objects matching the ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.015" endtime="20260630 23:10:26.016"/>
+</kw>
+<kw name="Get WebElements" library="SeleniumLibrary">
+<var>${raktarak}</var>
+<arg>xpath=//div[contains(@class,'elementDirectionRtl ')]</arg>
+<doc>Returns a list of WebElement objects matching the ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.016" endtime="20260630 23:10:26.018"/>
+</kw>
+<kw name="Get WebElements" library="SeleniumLibrary">
+<var>${users}</var>
+<arg>xpath=//div[contains(@class,'subscribed-persons-label')]</arg>
+<doc>Returns a list of WebElement objects matching the ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.019" endtime="20260630 23:10:26.022"/>
+</kw>
+<kw name="Get WebElements" library="SeleniumLibrary">
+<var>${foglaltsagok}</var>
+<arg>xpath=//div[@class='v-label v-widget v-label-undef-w']</arg>
+<doc>Returns a list of WebElement objects matching the ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.023" endtime="20260630 23:10:26.024"/>
+</kw>
+<kw name="Create List" library="BuiltIn">
+<var>@{uj_foglaltsagok}</var>
+<doc>Returns a list containing given items.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<kw name="Get Length" library="BuiltIn">
+<var>${dbfog}</var>
+<arg>${foglaltsagok}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<for flavor="IN RANGE">
+<var>${i}</var>
+<value>${dbfog}</value>
+<iter>
+<var name="${i}"/>
+<kw name="Get Text" library="SeleniumLibrary">
+<var>${txt}</var>
+<arg>${foglaltsagok}[${i}]</arg>
+<doc>Returns the text value of the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${txt}</var>
+<arg>${txt}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<if>
+<branch type="IF" condition="'/' in '${txt}'">
+<kw name="Append To List" library="Collections">
+<arg>${uj_foglaltsagok}</arg>
+<arg>${foglaltsagok}[${i}]</arg>
+<doc>Adds ``values`` to the end of ``list``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</branch>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</if>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</for>
+<kw name="Set Variable" library="BuiltIn">
+<var>${foglaltsagok}</var>
+<arg>${uj_foglaltsagok}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<kw name="Get Length" library="BuiltIn">
+<var>${db}</var>
+<arg>${muszakok}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.025"/>
+</kw>
+<for flavor="IN RANGE">
+<var>${i}</var>
+<value>${db}</value>
+<iter>
+<var name="${i}"/>
+<kw name="Get Text" library="SeleniumLibrary">
+<var>${muszak}</var>
+<arg>${muszakok}[${i}]</arg>
+<doc>Returns the text value of the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.027" endtime="20260630 23:10:26.027"/>
+</kw>
+<kw name="Get Text" library="SeleniumLibrary">
+<var>${raktar_txt}</var>
+<arg>${raktarak}[${i}]</arg>
+<doc>Returns the text value of the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.027" endtime="20260630 23:10:26.028"/>
+</kw>
+<kw name="Get Text" library="SeleniumLibrary">
+<var>${user_txt}</var>
+<arg>${users}[${i}]</arg>
+<doc>Returns the text value of the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.028" endtime="20260630 23:10:26.028"/>
+</kw>
+<kw name="Get Text" library="SeleniumLibrary">
+<var>${foglaltsag}</var>
+<arg>${foglaltsagok}[${i}]</arg>
+<doc>Returns the text value of the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.029"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${foglaltsag}</var>
+<arg>${foglaltsag}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.029"/>
+</kw>
+<kw name="Split String" library="String">
+<var>${fog_parts}</var>
+<arg>${foglaltsag}</arg>
+<arg>/</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.029"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${foglalt}</var>
+<arg>${fog_parts}[0]</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.029"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${maximum}</var>
+<arg>${fog_parts}[1]</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.029"/>
+</kw>
+<kw name="Convert To Integer" library="BuiltIn">
+<var>${foglalt_int}</var>
+<arg>${foglalt}</arg>
+<doc>Converts the given item to an integer number.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.029" endtime="20260630 23:10:26.030"/>
+</kw>
+<kw name="Convert To Integer" library="BuiltIn">
+<var>${maximum_int}</var>
+<arg>${maximum}</arg>
+<doc>Converts the given item to an integer number.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.030" endtime="20260630 23:10:26.030"/>
+</kw>
+<kw name="Split String" library="String">
+<var>${parts}</var>
+<arg>${muszak}</arg>
+<arg>körös:</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.031"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${idoszak}</var>
+<arg>${parts}[1]</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.031"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${idoszak}</var>
+<arg>${idoszak}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.031"/>
+</kw>
+<kw name="Split String" library="String">
+<var>${times}</var>
+<arg>${idoszak}</arg>
+<arg>-</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.031"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${kezdes}</var>
+<arg>${times}[0]</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.031"/>
+</kw>
+<kw name="Fetch From Left" library="String">
+<var>${ora}</var>
+<arg>${kezdes}</arg>
+<arg>:</arg>
+<doc>Returns contents of the ``string`` before the first occurrence of ``marker``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.031" endtime="20260630 23:10:26.032"/>
+</kw>
+<kw name="Fetch From Right" library="String">
+<var>${perc}</var>
+<arg>${kezdes}</arg>
+<arg>:</arg>
+<doc>Returns contents of the ``string`` after the last occurrence of ``marker``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.032" endtime="20260630 23:10:26.032"/>
+</kw>
+<kw name="Convert To Integer" library="BuiltIn">
+<var>${ora}</var>
+<arg>${ora}</arg>
+<doc>Converts the given item to an integer number.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.032" endtime="20260630 23:10:26.032"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${kezdes}</var>
+<arg>${ora}:${perc}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.032" endtime="20260630 23:10:26.032"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${vege}</var>
+<arg>${times}[1]</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.032" endtime="20260630 23:10:26.032"/>
+</kw>
+<kw name="Fetch From Left" library="String">
+<var>${ora}</var>
+<arg>${vege}</arg>
+<arg>:</arg>
+<doc>Returns contents of the ``string`` before the first occurrence of ``marker``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.032" endtime="20260630 23:10:26.033"/>
+</kw>
+<kw name="Fetch From Right" library="String">
+<var>${perc}</var>
+<arg>${vege}</arg>
+<arg>:</arg>
+<doc>Returns contents of the ``string`` after the last occurrence of ``marker``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.033" endtime="20260630 23:10:26.033"/>
+</kw>
+<kw name="Convert To Integer" library="BuiltIn">
+<var>${ora}</var>
+<arg>${ora}</arg>
+<doc>Converts the given item to an integer number.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.033" endtime="20260630 23:10:26.033"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${vege}</var>
+<arg>${ora}:${perc}</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.034" endtime="20260630 23:10:26.034"/>
+</kw>
+<kw name="Split String" library="String">
+<var>${nev_parts}</var>
+<arg>${user_txt}</arg>
+<arg>:</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.035" endtime="20260630 23:10:26.035"/>
+</kw>
+<kw name="Set Variable" library="BuiltIn">
+<var>${nev}</var>
+<arg>${nev_parts}[1]</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.035" endtime="20260630 23:10:26.035"/>
+</kw>
+<kw name="Strip String" library="String">
+<var>${nev}</var>
+<arg>${nev}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.035" endtime="20260630 23:10:26.036"/>
+</kw>
+<if>
+<branch type="IF" condition="'${nev}' == '(none)'">
+<kw name="Create List" library="BuiltIn">
+<var>@{nevek}</var>
+<arg>URES</arg>
+<doc>Returns a list containing given items.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.036" endtime="20260630 23:10:26.036"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.036" endtime="20260630 23:10:26.036"/>
+</branch>
+<branch type="ELSE">
+<kw name="Split String" library="String">
+<var>@{nevek}</var>
+<arg>${nev}</arg>
+<arg>,</arg>
+<doc>Splits the ``string`` using ``separator`` as a delimiter string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.036" endtime="20260630 23:10:26.036"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.036" endtime="20260630 23:10:26.037"/>
+</branch>
+<status status="PASS" starttime="20260630 23:10:26.036" endtime="20260630 23:10:26.037"/>
+</if>
+<kw name="Set Variable" library="BuiltIn">
+<var>${raktar}</var>
+<arg>URES</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.037" endtime="20260630 23:10:26.037"/>
+</kw>
+<if>
+<branch type="IF" condition="'BUD1' in '''${raktar_txt}'''">
+<kw name="Set Variable" library="BuiltIn">
+<var>${raktar}</var>
+<arg>BUD1</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.038" endtime="20260630 23:10:26.038"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.037" endtime="20260630 23:10:26.038"/>
+</branch>
+<branch type="ELSE IF" condition="'BUD2' in '''${raktar_txt}'''">
+<kw name="Set Variable" library="BuiltIn">
+<var>${raktar}</var>
+<arg>BUD2</arg>
+<doc>Returns the given values which can then be assigned to a variables.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.038" endtime="20260630 23:10:26.039"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.038" endtime="20260630 23:10:26.039"/>
+</branch>
+<status status="PASS" starttime="20260630 23:10:26.037" endtime="20260630 23:10:26.039"/>
+</if>
+<for flavor="IN">
+<var>${egy_nev}</var>
+<value>@{nevek}</value>
+<iter>
+<var name="${egy_nev}"/>
+<kw name="Strip String" library="String">
+<var>${egy_nev}</var>
+<arg>${egy_nev}</arg>
+<doc>Remove leading and/or trailing whitespaces from the given string.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.039" endtime="20260630 23:10:26.039"/>
+</kw>
+<kw name="Create List" library="BuiltIn">
+<var>${row}</var>
+<arg>${datum_sheet}</arg>
+<arg>${kezdes}</arg>
+<arg>${vege}</arg>
+<arg>${raktar}</arg>
+<arg>${foglaltsag}</arg>
+<arg>${foglalt}</arg>
+<arg>${maximum}</arg>
+<arg>${egy_nev}</arg>
+<doc>Returns a list containing given items.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.039" endtime="20260630 23:10:26.039"/>
+</kw>
+<kw name="Append To List" library="Collections">
+<arg>${rows}</arg>
+<arg>${row}</arg>
+<doc>Adds ``values`` to the end of ``list``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.039" endtime="20260630 23:10:26.039"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.039" endtime="20260630 23:10:26.039"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.039" endtime="20260630 23:10:26.039"/>
+</for>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.039"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.025" endtime="20260630 23:10:26.039"/>
+</for>
+<status status="PASS" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.039"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.005" endtime="20260630 23:10:26.039"/>
+</for>
+<kw name="Get Length" library="BuiltIn">
+<var>${dbrows}</var>
+<arg>${rows}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.042" endtime="20260630 23:10:26.042"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>SOROK_SZAMA=${dbrows}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.042" endtime="20260630 23:10:26.042"/>
+</kw>
+<kw name="Write Raw Export" library="raw_giriton_export_sheet">
+<var>${result}</var>
+<arg>${rows}</arg>
+<status status="NOT RUN" starttime="20260630 23:10:26.042" endtime="20260630 23:10:26.042"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>RAW_EXPORT=${result}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.044" endtime="20260630 23:10:26.044"/>
+</kw>
+<kw name="Click Attendance" library="keywords_github">
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.045" endtime="20260630 23:10:26.046"/>
+</kw>
+<kw name="Click Element" library="SeleniumLibrary">
+<arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
+<doc>Click the element identified by ``locator``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.046" endtime="20260630 23:10:26.050"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.044" endtime="20260630 23:10:26.051"/>
+</kw>
+<kw name="Create List" library="BuiltIn">
+<var>@{attendance_rows}</var>
+<doc>Returns a list containing given items.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.051" endtime="20260630 23:10:26.051"/>
+</kw>
+<kw name="Add Time To Date" library="DateTime">
+<var>${attendance_datum_giriton}</var>
+<arg>${base_date}</arg>
+<arg>0 days</arg>
+<arg>result_format=%d/%m/%Y</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.051" endtime="20260630 23:10:26.051"/>
+</kw>
+<kw name="Add Time To Date" library="DateTime">
+<var>${attendance_datum_sheet}</var>
+<arg>${base_date}</arg>
+<arg>0 days</arg>
+<arg>result_format=%Y-%m-%d</arg>
+<doc>Adds time to date and returns the resulting date.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.051" endtime="20260630 23:10:26.052"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_DATUM=${attendance_datum_giriton}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.052" endtime="20260630 23:10:26.052"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el =&gt; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));</arg>
+<arg>ARGUMENTS</arg>
+<arg>${attendance_datum_giriton}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.053" endtime="20260630 23:10:26.053"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>4s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.053" endtime="20260630 23:10:26.053"/>
+</kw>
+<kw name="Scrape Attendance Rows" library="giriton_attendance_scraper">
+<var>${daily_attendance}</var>
+<arg>${attendance_datum_sheet}</arg>
+<status status="NOT RUN" starttime="20260630 23:10:26.053" endtime="20260630 23:10:26.053"/>
+</kw>
+<for flavor="IN">
+<var>${attendance_row}</var>
+<value>@{daily_attendance}</value>
+<iter>
+<var name="${attendance_row}"/>
+<kw name="Append To List" library="Collections">
+<arg>${attendance_rows}</arg>
+<arg>${attendance_row}</arg>
+<doc>Adds ``values`` to the end of ``list``.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.054"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.054"/>
+</iter>
+<status status="PASS" starttime="20260630 23:10:26.053" endtime="20260630 23:10:26.054"/>
+</for>
+<kw name="Get Length" library="BuiltIn">
+<var>${attendance_count}</var>
+<arg>${attendance_rows}</arg>
+<doc>Returns and logs the length of the given item as an integer.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.054"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_SOROK_SZAMA=${attendance_count}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.054"/>
+</kw>
+<kw name="Write Attendance Export" library="raw_giriton_export_sheet">
+<var>${attendance_result}</var>
+<arg>${attendance_rows}</arg>
+<status status="NOT RUN" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.054"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>ATTENDANCE_EXPORT=${attendance_result}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.054" endtime="20260630 23:10:26.055"/>
+</kw>
+<kw name="Build Courier Login Stats" library="raw_giriton_export_sheet">
+<var>${stats_result}</var>
+<status status="NOT RUN" starttime="20260630 23:10:26.055" endtime="20260630 23:10:26.055"/>
+</kw>
+<kw name="Log To Console" library="BuiltIn">
+<arg>COURIER_LOGIN_STATS=${stats_result}</arg>
+<doc>Logs the given message to the console.</doc>
+<status status="NOT RUN" starttime="20260630 23:10:26.055" endtime="20260630 23:10:26.055"/>
+</kw>
+<status status="PASS" starttime="20260630 23:10:25.980" endtime="20260630 23:10:26.056"/>
+</test>
+<status status="PASS" starttime="20260630 23:10:16.936" endtime="20260630 23:10:26.057"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="0" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat pass="1" fail="0" skip="0" id="s1" name="Giriton Raw Export Github">Giriton Raw Export Github</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>

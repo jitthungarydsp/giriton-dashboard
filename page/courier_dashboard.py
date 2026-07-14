@@ -3,6 +3,7 @@ from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from html import escape
+from io import BytesIO
 from pathlib import Path
 import re
 from urllib.parse import quote_plus, urlencode
@@ -1348,6 +1349,95 @@ def invoice_file_signature_ok(file_name, content):
     return False, extension.upper() or "ismeretlen"
 
 
+def extract_pdf_text(content):
+    if not content:
+        return ""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(BytesIO(content))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception:
+        return ""
+
+
+def parse_huf(value):
+    digits = re.sub(r"[^0-9-]", "", clean_display_text(value))
+    try:
+        return int(digits)
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_hungarian_date(value):
+    match = re.search(r"(20\d{2})\D+(\d{1,2})\D+(\d{1,2})", clean_display_text(value))
+    if not match:
+        return None
+    try:
+        return date(*map(int, match.groups()))
+    except ValueError:
+        return None
+
+
+def extract_labeled_date(text, label):
+    match = re.search(
+        rf"{label}\s*:?\s*(20\d{{2}}\s*[.\-/]\s*\d{{1,2}}\s*[.\-/]\s*\d{{1,2}})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return parse_hungarian_date(match.group(1)) if match else None
+
+
+def parse_invoice_pdf(content):
+    text = extract_pdf_text(content)
+    tax_numbers = re.findall(r"\b\d{8}-\d-\d{2}\b", text)
+    totals = re.findall(
+        r"FIZETEND[ŐO]\s+BRUTT[ÓO]\s+V[ÉE]G[ÖO]SSZEG\s*:\s*([\d\s]+)\s*Ft",
+        text,
+        flags=re.IGNORECASE,
+    )
+    invoice_number_match = re.search(
+        r"Sz[áa]mla\s*\n\s*(\d{4}-\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return {
+        "text": text,
+        "tax_numbers": tax_numbers,
+        "seller_tax_number": tax_numbers[0] if tax_numbers else "",
+        "buyer_tax_number": tax_numbers[1] if len(tax_numbers) > 1 else "",
+        "issue_date": extract_labeled_date(text, r"SZ[ÁA]MLA\s+KELTE"),
+        "performance_date": extract_labeled_date(text, r"TELJES[ÍI]T[ÉE]S\s+KELTE"),
+        "due_date": extract_labeled_date(text, r"FIZET[ÉE]SI\s+HAT[ÁA]RID[ŐO]"),
+        "gross_total": parse_huf(totals[-1]) if totals else 0,
+        "invoice_number": invoice_number_match.group(1) if invoice_number_match else "",
+    }
+
+
+def normalized_invoice_text(value):
+    text = clean_display_text(value).casefold()
+    replacements = {"á":"a","é":"e","í":"i","ó":"o","ö":"o","ő":"o","ú":"u","ü":"u","ű":"u"}
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def read_tig_expected_amount(courier_id, selected_month):
+    try:
+        documents = read_peopleforce_documents(courier_id, selected_month, "tig")
+    except Exception:
+        return 0
+    for _, document in documents.iterrows():
+        content = decode_document_content(document.get("file_content_base64"))
+        fields = parse_invoice_pdf(content)
+        if fields["gross_total"]:
+            return fields["gross_total"]
+        amounts = re.findall(r"([\d\s]+)\s*Ft", fields["text"])
+        parsed = [parse_huf(amount) for amount in amounts]
+        if parsed:
+            return max(parsed)
+    return 0
+
+
 def build_invoice_checks(
     uploaded_file,
     invoice_month=None,
@@ -1355,6 +1445,9 @@ def build_invoice_checks(
     gross_amount=0,
     courier_id="",
     courier_name="",
+    expected_gross_amount=0,
+    expected_seller_tax_number="",
+    expected_seller_address="",
     require_invoice_fields=False,
 ):
     checks = []
@@ -1401,9 +1494,109 @@ def build_invoice_checks(
             "A fájl kiterjesztése és belső formátuma nem tűnik egyértelműnek.",
         )
 
+    invoice_fields = parse_invoice_pdf(content) if extension == "pdf" else {}
+    invoice_text = invoice_fields.get("text", "")
+    normalized_text = normalized_invoice_text(invoice_text)
+
+    if extension == "pdf":
+        if invoice_text:
+            add("ok", "PDF szövege", "A számla mezői géppel olvashatók.")
+        else:
+            add("error", "PDF szövege", "A PDF-ből nem olvasható ki szöveg; kérj szöveges PDF számlát.")
+
+    expected_name = normalized_invoice_text(courier_name)
+    if expected_name and all(token in normalized_text for token in expected_name.split()):
+        add("ok", "Eladó neve", f"A futár neve szerepel a számlán: {courier_name}.")
+    elif expected_name:
+        add("error", "Eladó neve", f"A számlán nem található a várt név: {courier_name}.")
+
+    buyer_name = "Just in Time Transport Hungary Kft."
+    if normalized_invoice_text(buyer_name) in normalized_text:
+        add("ok", "Vevő neve", buyer_name)
+    else:
+        add("error", "Vevő neve", f"A vevő helyesen: {buyer_name}")
+
+    if all(token in normalized_text for token in ["budapest", "atleta", "utca", "44", "1201"]):
+        add("ok", "Vevő címe", "1201 Budapest, Atléta utca 44.")
+    else:
+        add("error", "Vevő címe", "A várt vevőcím: 1201 Budapest, Atléta utca 44.")
+
+    seller_tax = clean_display_text(invoice_fields.get("seller_tax_number"))
+    expected_seller_tax = clean_display_text(expected_seller_tax_number)
+    if expected_seller_tax:
+        if seller_tax == expected_seller_tax:
+            add("ok", "Eladó adószáma", seller_tax)
+        else:
+            add("error", "Eladó adószáma", f"A számlán {seller_tax or 'nem található'}, a nyilvántartásban {expected_seller_tax}.")
+    elif re.fullmatch(r"\d{8}-\d-\d{2}", seller_tax):
+        add("warn", "Eladó adószáma", f"Formailag megfelelő ({seller_tax}), de nincs profiladathoz összehasonlítva.")
+    else:
+        add("error", "Eladó adószáma", "Hiányzik vagy hibás formátumú.")
+
+    buyer_tax = clean_display_text(invoice_fields.get("buyer_tax_number"))
+    if buyer_tax == "32649460-2-43":
+        add("ok", "Vevő adószáma", buyer_tax)
+    else:
+        add("error", "Vevő adószáma", f"A helyes vevő adószám: 32649460-2-43; talált: {buyer_tax or 'nincs'}.")
+
+    expected_address = normalized_invoice_text(expected_seller_address)
+    if expected_address:
+        if all(token in normalized_text for token in expected_address.split()):
+            add("ok", "Eladó címe", expected_seller_address)
+        else:
+            add("error", "Eladó címe", f"Nem egyezik a nyilvántartott címmel: {expected_seller_address}.")
+    else:
+        add("warn", "Eladó címe", "A cím szerepelhet a számlán, de a futárprofilban nincs ellenőrzési alapadat.")
+
+    issue_date = invoice_fields.get("issue_date")
+    performance_date = invoice_fields.get("performance_date")
+    due_date = invoice_fields.get("due_date")
+    for title, value in [("Számla kelte", issue_date), ("Teljesítés kelte", performance_date), ("Fizetési határidő", due_date)]:
+        if value:
+            add("ok", title, value.isoformat())
+        else:
+            add("error", title, "Nem található vagy nem értelmezhető a számlán.")
+
+    if issue_date and due_date:
+        payment_days = (due_date - issue_date).days
+        if payment_days == 8:
+            add("ok", "8 napos fizetési szabály", "A fizetési határidő a számla keltétől pontosan 8 nap.")
+        else:
+            add("error", "8 napos fizetési szabály", f"A számla kelte és a fizetési határidő között {payment_days} nap van, 8 nap szükséges.")
+
+    if issue_date and performance_date:
+        issue_delay = (issue_date - performance_date).days
+        if issue_delay <= 8:
+            add("ok", "8 napos kiállítási szabály", "A számla kiállítása nem későbbi 8 napnál a teljesítéshez képest.")
+        else:
+            add("error", "8 napos kiállítási szabály", f"A számla {issue_delay} nappal a teljesítés után készült.")
+
+    if invoice_month and performance_date:
+        if (performance_date.year, performance_date.month) == (invoice_month.year, invoice_month.month):
+            add("ok", "TIG időszaka", "A teljesítés hónapja egyezik a kiválasztott TIG hónappal.")
+        else:
+            add("error", "TIG időszaka", f"A teljesítés {performance_date:%Y-%m}, a kiválasztott TIG {invoice_month:%Y-%m}.")
+
+    pdf_gross = float(invoice_fields.get("gross_total") or 0)
+    expected_gross = float(expected_gross_amount or 0)
+    if expected_gross:
+        if pdf_gross == expected_gross:
+            add("ok", "TIG szerinti végösszeg", f"A számla és a TIG összege egyezik: {format_currency(pdf_gross)}.")
+        else:
+            add("error", "TIG szerinti végösszeg", f"Számla: {format_currency(pdf_gross)}; TIG: {format_currency(expected_gross)}; eltérés: {format_currency(pdf_gross - expected_gross)}.")
+    elif pdf_gross:
+        add("warn", "TIG szerinti végösszeg", f"A számlán {format_currency(pdf_gross)} szerepel, de nincs kiolvasható TIG összeg az összevetéshez.")
+
     if require_invoice_fields:
         if clean_display_text(invoice_number):
             add("ok", "Számlaszám", "Kitöltve.")
+            pdf_invoice_number = clean_display_text(invoice_fields.get("invoice_number"))
+            if pdf_invoice_number and normalize_filename_token(pdf_invoice_number) == normalize_filename_token(invoice_number):
+                add("ok", "Számlaszám egyezése", f"A PDF-ben is {pdf_invoice_number} szerepel.")
+            elif pdf_invoice_number:
+                add("error", "Számlaszám egyezése", f"Megadva: {invoice_number}; a PDF-ben: {pdf_invoice_number}.")
+            else:
+                add("error", "Számlaszám egyezése", "A PDF-ből nem olvasható ki a számlaszám.")
         else:
             add("error", "Számlaszám", "A számlaszám kötelező a beküldéshez.")
 
@@ -1414,6 +1607,10 @@ def build_invoice_checks(
 
         if amount > 0:
             add("ok", "Bruttó összeg", f"{format_currency(amount)} megadva.")
+            if pdf_gross and amount != pdf_gross:
+                add("error", "Megadott bruttó összeg", f"Megadva: {format_currency(amount)}; a PDF-ben: {format_currency(pdf_gross)}.")
+            elif pdf_gross:
+                add("ok", "Megadott bruttó összeg", "Egyezik a PDF végösszegével.")
         else:
             add("error", "Bruttó összeg", "A bruttó összeget 0 Ft fölé kell állítani.")
 
@@ -1479,13 +1676,13 @@ def render_invoice_check_result(checks):
         st.write(f"**{icon} - {check['title']}:** {check['detail']}")
 
 
-def render_invoice_submission_panel(row, user):
+def render_invoice_submission_panel(row, user, selected_month=None):
     name = get_courier_display_name(row, user)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
-    current_month = local_now().date().replace(day=1)
+    current_month = selected_month or local_now().date().replace(day=1)
 
     st.subheader("Számlabeküldő rendszer")
-    st.caption("Első körös saját űrlap: még nem küld adatot, csak előkészít és formai alapon ellenőriz.")
+    st.caption("A sikeres ellenőrzés után a számla bekerül a dokumentumtárba.")
 
     with st.form("peopleforce_invoice_submission_form"):
         col1, col2 = st.columns(2)
@@ -1513,7 +1710,7 @@ def render_invoice_submission_panel(row, user):
                 "TIG / elszámolás azonosító",
                 placeholder="ha van",
             )
-            st.text_area(
+            note = st.text_area(
                 "Megjegyzés",
                 placeholder="Rövid megjegyzés, ha valami eltér a megszokottól.",
                 height=88,
@@ -1527,6 +1724,10 @@ def render_invoice_submission_panel(row, user):
         submitted = st.form_submit_button("Számla ellenőrzése")
 
     if submitted:
+        expected_tig_amount = read_tig_expected_amount(
+            courier_id,
+            invoice_month.replace(day=1),
+        )
         checks = build_invoice_checks(
             uploaded_invoice,
             invoice_month=invoice_month,
@@ -1534,17 +1735,46 @@ def render_invoice_submission_panel(row, user):
             gross_amount=gross_amount,
             courier_id=courier_id,
             courier_name=name,
+            expected_gross_amount=expected_tig_amount,
+            expected_seller_tax_number=(
+                row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
+            ),
+            expected_seller_address=(
+                row.get("billing_address") or row.get("address") or row.get("cim") or ""
+            ),
             require_invoice_fields=True,
         )
         render_invoice_check_result(checks)
 
         if not any(check["status"] == "error" for check in checks):
-            st.info(
-                "Ez most még csak előnézet. A következő lépésben ide tudjuk kötni a DB mentést, e-mailt vagy jóváhagyási folyamatot."
+            upload_peopleforce_document(
+                courier_id=courier_id,
+                courier_name=name,
+                document_type="invoice",
+                document_month=invoice_month.replace(day=1),
+                title=f"Számla {invoice_number}",
+                note=(
+                    f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. "
+                    f"{note}"
+                ).strip(),
+                uploaded_file=uploaded_invoice,
+                uploaded_by=user.get("username") or name,
             )
+            for action_key in ["invoice_submit", "my_invoices"]:
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=name,
+                    action_key=action_key,
+                    document_month=invoice_month.replace(day=1),
+                    status="done",
+                    status_note="A számla ellenőrizve és eltárolva.",
+                    updated_by=user.get("username") or name,
+                )
+            st.success("A számla PDF eltárolva és beküldve.")
+            st.rerun()
 
 
-def render_invoice_quick_check_panel(row, user):
+def render_invoice_quick_check_panel(row, user, selected_month=None):
     name = get_courier_display_name(row, user)
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
 
@@ -1558,12 +1788,33 @@ def render_invoice_quick_check_panel(row, user):
     )
 
     if st.button("Feltöltött számla ellenőrzése", use_container_width=True):
+        month = selected_month or local_now().date().replace(day=1)
         checks = build_invoice_checks(
             uploaded_file,
+            invoice_month=month,
             courier_id=courier_id,
             courier_name=name,
+            expected_gross_amount=read_tig_expected_amount(courier_id, month),
+            expected_seller_tax_number=(
+                row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
+            ),
+            expected_seller_address=(
+                row.get("billing_address") or row.get("address") or row.get("cim") or ""
+            ),
         )
         render_invoice_check_result(checks)
+        if not any(check["status"] == "error" for check in checks):
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=name,
+                action_key="invoice_check",
+                document_month=month,
+                status="done",
+                status_note="A számla formai ellenőrzése sikeres.",
+                updated_by=user.get("username") or name,
+            )
+            st.success("A számlaellenőrzés sikeres. A számlafeltöltés aktívvá vált.")
+            st.rerun()
 
 
 def add_months(month_start, offset):
@@ -2053,7 +2304,7 @@ def render_peopleforce_acceptance_box(
     documents,
     state,
 ):
-    if action_key != "settlement" or user.get("role") == "admin" or documents.empty:
+    if action_key not in ["settlement", "tig"] or user.get("role") == "admin" or documents.empty:
         return
 
     status = clean_display_text((state or {}).get("status"), "open").lower()
@@ -2062,16 +2313,16 @@ def render_peopleforce_acceptance_box(
     st.subheader("Elfogadás")
 
     if status == "done":
-        st.success("✅ Az elszámolást elfogadtad. Ezt admin oldalon is látjuk.")
+        st.success("✅ A dokumentumot elfogadtad. Ezt admin oldalon is látjuk.")
         return
 
     st.caption(
-        "Ha az elszámolás rendben van, zöld pipával elfogadhatod. "
+        "Ha a dokumentum rendben van, zöld pipával elfogadhatod. "
         "Ha valami nem stimmel, lent reklamációt tudsz írni."
     )
 
     if st.button(
-        "✅ Elfogadom az elszámolást",
+        "✅ Elfogadom a dokumentumot",
         use_container_width=True,
         type="primary",
         key=f"peopleforce_accept_{action_key}_{courier_id}_{selected_month}",
@@ -2082,7 +2333,7 @@ def render_peopleforce_acceptance_box(
             action_key=action_key,
             document_month=selected_month,
             status="done",
-            status_note="Futár elfogadta az elszámolást.",
+            status_note="Futár elfogadta a dokumentumot.",
             updated_by=user.get("username") or courier_name,
         )
         st.success("Elfogadás rögzítve.")
@@ -2288,7 +2539,7 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
         return
 
     if action_key == "invoice_submit":
-        render_invoice_submission_panel(row, user)
+        render_invoice_submission_panel(row, user, selected_month=selected_month)
 
         url = card.get("url")
         if url:
@@ -2299,7 +2550,7 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
         return
 
     if action_key == "invoice_check":
-        render_invoice_quick_check_panel(row, user)
+        render_invoice_quick_check_panel(row, user, selected_month=selected_month)
         return
 
     render_peopleforce_placeholder_content(card)
@@ -2325,16 +2576,56 @@ else:
             )
 
 
+WORKFLOW_PREREQUISITES = {
+    "tig": ("settlement", "az elszámolás futár általi jóváhagyása"),
+    "invoice_check": ("tig", "a teljesítményigazolás futár általi jóváhagyása"),
+    "invoice_submit": ("invoice_check", "a sikeres számlaellenőrzés"),
+    "my_invoices": ("invoice_submit", "a számla sikeres feltöltése"),
+}
+
+
+def peopleforce_action_is_done(card_states, action_key):
+    state = card_states.get(action_key) or {}
+    return clean_display_text(state.get("status")).lower() == "done"
+
+
+def peopleforce_action_lock_reason(card_states, action_key):
+    prerequisite = WORKFLOW_PREREQUISITES.get(action_key)
+    if not prerequisite:
+        return ""
+    prerequisite_key, prerequisite_label = prerequisite
+    if peopleforce_action_is_done(card_states, prerequisite_key):
+        return ""
+    return f"Előbb szükséges: {prerequisite_label}."
+
+
 def render_peopleforce_card_grid(cards, card_states):
     for start in range(0, len(cards), 3):
         columns = st.columns(3)
 
         for offset, card in enumerate(cards[start:start + 3]):
             with columns[offset]:
+                lock_reason = peopleforce_action_lock_reason(card_states, card["key"])
                 href = escape(build_peopleforce_href(card["key"]), quote=True)
                 status_badge = render_peopleforce_card_status_badge(
                     card_states.get(card["key"])
                 )
+                if lock_reason:
+                    st.markdown(
+                        f"""
+<div class="peopleforce-card" style="opacity:.48; cursor:not-allowed;">
+  <div class="peopleforce-card-head">
+    <div class="peopleforce-badge">🔒</div>
+    {status_badge}
+  </div>
+  <h3>{escape(card["title"])}</h3>
+  <p>{escape(lock_reason)}</p>
+  <span class="peopleforce-card-link">Zárolva</span>
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+                    continue
                 st.markdown(
                     f"""
 <a class="peopleforce-card" href="{href}">
@@ -2377,6 +2668,10 @@ def render_peopleforce_placeholder(row=None, user=None):
 
     selected_action = get_peopleforce_selected_action()
     if get_peopleforce_card(selected_action):
+        lock_reason = peopleforce_action_lock_reason(card_states, selected_action)
+        if lock_reason:
+            st.warning(lock_reason)
+            return
         render_peopleforce_action_dialog(
             selected_action,
             safe_row,

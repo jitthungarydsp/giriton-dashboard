@@ -246,7 +246,7 @@ def show_invoice_summary_page():
             use_container_width=True,
         )
         if selected_driver != "Mind" and st.button(
-            "Kártyára küldés",
+            "Feltöltés a futár profiljába",
             use_container_width=True,
             key="invoice_send_to_courier_card",
         ):
@@ -286,10 +286,10 @@ def show_invoice_summary_page():
                     updated_by=str(st.session_state.get("username", "admin")),
                 )
                 st.cache_data.clear()
-                st.success("Elszámolás elküldve a futár Kifli kártyájára.")
+                st.success("Az elszámolás bekerült a futár profiljába.")
                 st.rerun()
         elif selected_driver == "Mind":
-            st.caption("Kártyára küldéshez válassz ki egy konkrét futárt.")
+            st.caption("Profilba feltöltéshez válassz ki egy konkrét futárt.")
     except Exception as exc:
         st.info(
             f"PDF generalas nem elerheto: {exc}"
