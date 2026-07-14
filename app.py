@@ -2,8 +2,6 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 import pandas as pd
 import plotly.express as px
-import os
-from pathlib import Path
 
 # --- Oldal alapbeállításai ---
 # --- Oldal alapbeállításai ---
@@ -151,43 +149,44 @@ elif selected_page == "Napi statisztika":
         fig4 = px.pie(df_packages, values="Darab", names="Típus", title="❄️ Csomagok típusai",
                       color_discrete_sequence=["#8D6E63", "#03A9F4", "#3F51B5"])
         st.plotly_chart(fig4, use_container_width=True)
-    
+
 elif selected_page == "PeopleForce":
     st.title("PeopleForce Admin 👥")
     
-    # Útvonal beállítása (a projekt gyökeréhez képest)
-    base_path = Path("Elszamolas/7644/2026/Junius")
+    # Jogosultsági szint szimulálása (ezt később adatbázisból/loginból szedjük)
+    user_role = "Admin" # Lehet: "Admin", "Diszpécser", "Futár"
     
-    st.subheader("Fájlok a mappában: 7644/2026/Junius")
+    tab1, tab2 = st.tabs(["Számlák & TIG", "Adminisztrációs Panel"])
     
-    # Ellenőrizzük, létezik-e a mappa
-    if base_path.exists():
-        # PDF fájlok listázása
-        files = [f.name for f in base_path.glob("*.pdf")]
+    with tab1:
+        st.subheader("Dokumentumok kezelése")
         
-        if files:
-            # Táblázat összeállítása a fájlokból
-            # Itt később beillesztheted a saját státusz-logikádat
-            data = {
-                "Fájl név": files,
-                "Státusz": ["🟡 Ellenőrzésre vár"] * len(files) 
-            }
-            df = pd.DataFrame(data)
-            st.table(df)
-        else:
-            st.info("Ebben a mappában jelenleg nincsenek PDF fájlok.")
-    else:
-        st.error(f"A mappa nem található: {base_path}")
+        # Példa egy táblázatos megjelenítésre státusz lámpákkal
+        data = {
+            "Dokumentum": ["Számla_001.pdf", "TIG_Július.pdf", "Számla_002.pdf"],
+            "Státusz": ["🟢 Elfogadva", "🟡 Ellenőrzésre vár", "🔴 Javítandó"]
+        }
+        df = pd.DataFrame(data)
+        st.table(df)
 
-    # Feltöltő rész
-    with st.expander("Új fájl feltöltése ide"):
-        uploaded_file = st.file_uploader("Válassz fájlt", type=["pdf"])
-        if uploaded_file:
-            # Mentés a megfelelő mappába
-            save_path = base_path / uploaded_file.name
-            with open(save_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            st.success(f"Fájl mentve: {uploaded_file.name}")
+        if user_role in ["Admin", "Diszpécser"]:
+            st.markdown("---")
+            st.subheader("Új dokumentum feltöltése")
+            uploaded_file = st.file_uploader("Válassz fájlt a feltöltéshez", type=["pdf", "jpg", "png"])
+            if uploaded_file:
+                st.success(f"Fájl sikeresen feltöltve: {uploaded_file.name}")
+
+    with tab2:
+        st.subheader("Jogosultsági beállítások")
+        if user_role == "Admin":
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.text_input("Futár neve/azonosítója")
+            with col2:
+                st.selectbox("Új jogosultság:", ["Futár", "Diszpécser", "Admin"])
+            st.button("Mentés")
+        else:
+            st.warning("Ehhez a menüponthoz Adminisztrátori jogosultság szükséges.")
 
 elif selected_page == "Műszakjaim":
     st.title("Aktuális Címek 📍")
