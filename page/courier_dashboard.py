@@ -31,6 +31,10 @@ from resources.courier_card_snapshot import read_snapshot
 from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
 from resources.discord_routes import read_latest_discord_route
+from resources.courier_hub_performance import (
+    read_courier_hub_performance_rows,
+    summarize_courier_hub_performance,
+)
 from resources.api import (
     load_attendance,
     load_driver_details,
@@ -4300,6 +4304,101 @@ def render_extra_metrics(row):
     )
 
 
+def get_performance_warehouse(row):
+    warehouse = clean_display_text(
+        row.get("warehouse")
+        or row.get("warehouse_name")
+    ).upper()
+
+    if "BUD2" in warehouse:
+        return "BUD2"
+
+    if "BUD1" in warehouse or "BUDAPEST" in warehouse:
+        return "BUD1"
+
+    return "BUD2"
+
+
+def courier_hub_performance_url(start_date, end_date, warehouse):
+    warehouse_id = {
+        "BUD1": "1",
+        "BUD2": "2",
+    }.get(str(warehouse or "").upper(), "2")
+
+    return (
+        "https://courier-hub.kifli.hu/services/courier-hub-service/"
+        "external/performance/dsp/JIT/couriers"
+        f"?dateFrom={start_date.isoformat()}"
+        f"&dateTo={end_date.isoformat()}"
+        "&dspId=8"
+        f"&warehouseId={warehouse_id}"
+    )
+
+
+def build_courier_hub_performance_table(performance_df):
+    if performance_df.empty:
+        return pd.DataFrame()
+
+    columns = [
+        "date_from",
+        "date_to",
+        "warehouse_code",
+        "courier_id",
+        "courier_name",
+        "shifts",
+        "orders",
+        "delayed",
+        "delay_percent",
+        "late_percent",
+        "no_show_percent",
+        "compliance_score_percent",
+    ]
+    columns = [column for column in columns if column in performance_df.columns]
+    table = performance_df[columns].copy()
+
+    for column in [
+        "delay_percent",
+        "late_percent",
+        "no_show_percent",
+        "compliance_score_percent",
+    ]:
+        if column in table.columns:
+            table[column] = table[column].apply(format_percent)
+
+    return table.rename(
+        columns={
+            "date_from": "Időszak kezdete",
+            "date_to": "Időszak vége",
+            "warehouse_code": "Raktár",
+            "courier_id": "Courier ID",
+            "courier_name": "Futár",
+            "shifts": "Műszak",
+            "orders": "Order",
+            "delayed": "Késő order",
+            "delay_percent": "Delay %",
+            "late_percent": "Late %",
+            "no_show_percent": "No-show %",
+            "compliance_score_percent": "Compliance",
+        }
+    )
+
+
+def render_courier_hub_performance_metrics(summary):
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Műszak", int(summary.get("shifts", 0)))
+    col2.metric("Order", int(summary.get("orders", 0)))
+    col3.metric("Késő order", int(summary.get("delayed", 0)))
+    col4.metric("Delay %", format_percent(summary.get("delay_percent", 0)))
+
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Late %", format_percent(summary.get("late_percent", 0)))
+    col6.metric("No-show %", format_percent(summary.get("no_show_percent", 0)))
+    col7.metric(
+        "Compliance",
+        format_percent(summary.get("compliance_score_percent", 0)),
+    )
+
+
 def render_courier_statistics_view(current_row, user, today):
     default_month = today.strftime("%Y-%m")
     selected_month = st.text_input(
@@ -4373,6 +4472,73 @@ def render_courier_statistics_view(current_row, user, today):
         selected_end,
     )
     render_extra_metrics(stats_row)
+
+
+def render_courier_statistics_view(current_row, user, today):
+    courier_id = normalize_id(current_row.get("courier_id"))
+    default_start = today - timedelta(days=7)
+    default_warehouse = get_performance_warehouse(current_row)
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    selected_start = c1.date_input(
+        "Időszak kezdete",
+        value=default_start,
+        key="courier_hub_perf_start",
+    )
+    selected_end = c2.date_input(
+        "Időszak vége",
+        value=today,
+        key="courier_hub_perf_end",
+    )
+    selected_warehouse = c3.selectbox(
+        "Raktár",
+        ["BUD1", "BUD2"],
+        index=1 if default_warehouse == "BUD2" else 0,
+        key="courier_hub_perf_warehouse",
+    )
+
+    if selected_start > selected_end:
+        st.error("Az időszak kezdete nem lehet későbbi, mint a vége.")
+        return
+
+    api_url = courier_hub_performance_url(
+        selected_start,
+        selected_end,
+        selected_warehouse,
+    )
+    st.caption(
+        "Forrás: Courier Hub performance API, DB stage-ből olvasva, pontos Courier ID szűréssel."
+    )
+    st.code(api_url, language="text")
+
+    if not courier_id:
+        st.warning("Ehhez a futárhoz nincs Courier ID.")
+        return
+
+    try:
+        performance_df = read_courier_hub_performance_rows(
+            selected_start,
+            selected_end,
+            courier_id=courier_id,
+            warehouse=selected_warehouse,
+        )
+    except Exception as exc:
+        st.warning(f"Courier Hub performance adat betöltési hiba: {exc}")
+        return
+
+    if performance_df.empty:
+        st.info("Ehhez a futárhoz nincs Courier Hub performance adat ebben az időszakban.")
+        return
+
+    st.subheader(f"Courier Hub statisztika #{courier_id}")
+    render_courier_hub_performance_metrics(
+        summarize_courier_hub_performance(performance_df)
+    )
+    st.dataframe(
+        build_courier_hub_performance_table(performance_df),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def unique_courier_count(summary_df):
