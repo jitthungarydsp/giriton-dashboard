@@ -57,7 +57,7 @@ with st.sidebar:
     # A hiba elkerülése végett egyszerűsítettem a stílus megadást
     selected_page = option_menu(
         menu_title=None,
-        options=["Műszak áttekintés", "Aktuális címek", "Napi statisztika"],
+        options=["Műszak áttekintés", "Aktuális címek", "Napi statisztika", "PeopleForce", "Műszakjaim"],
         icons=["house", "geo-alt", "bar-chart-line"],
         default_index=0,
     )
@@ -149,3 +149,11 @@ elif selected_page == "Napi statisztika":
         fig4 = px.pie(df_packages, values="Darab", names="Típus", title="❄️ Csomagok típusai",
                       color_discrete_sequence=["#8D6E63", "#03A9F4", "#3F51B5"])
         st.plotly_chart(fig4, use_container_width=True)
+elif selected_page == "PeopleForce":
+    st.title("Aktuális Címek 📍")
+    st.info("Itt fognak megjelenni a szá,lák, elszámolások, TIG és minden hasznos dolog.")
+    
+elif selected_page == "Műszakjaim":
+    st.title("Aktuális Címek 📍")
+    st.info("Műszakok")
+        
