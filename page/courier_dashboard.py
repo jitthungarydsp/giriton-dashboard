@@ -1859,6 +1859,7 @@ def get_peopleforce_month(action_key):
         "invoice_check",
         "invoice_submit",
         "my_invoices",
+        "loyalty_bonus",
     }
     return st.selectbox(
         "Hónap",
@@ -2425,6 +2426,12 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
 def get_peopleforce_cards():
     return [
         {
+            "key": "loyalty_bonus",
+            "code": "LB",
+            "title": "Lojalitási Bónusz",
+            "description": "A bónusz feltételeinek megtekintése és egyszeri elfogadása.",
+        },
+        {
             "key": "report",
             "code": "BJ",
             "title": "Bejelentés",
@@ -2537,6 +2544,41 @@ def render_peopleforce_placeholder_content(card):
 
 def render_peopleforce_action_content(action_key, row, user, selected_month=None):
     card = get_peopleforce_card(action_key)
+
+    if action_key == "loyalty_bonus":
+        acceptance_month = date(2026, 6, 1)
+        courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+        courier_name = clean_display_text(
+            row.get("courier_name") or row.get("name") or user.get("username")
+        )
+        states = load_peopleforce_card_states(courier_id, acceptance_month)
+        accepted = peopleforce_action_is_done(states, "loyalty_bonus_acceptance")
+        st.subheader("Lojalitási Bónusz")
+        st.write(
+            "+1 000 Ft / normál kör 45 előző havi normál körtől; "
+            "+500 Ft / normál kör 25–44 kör között. A bónusz a jogviszony "
+            "7. hónapjától, aktív jogviszony és előre leadott foglalás mellett "
+            "jár, 2026.06.01-től."
+        )
+        if accepted:
+            st.success("A lojalitási bónusz feltételeit elfogadtad.")
+        elif st.button(
+            "Elfogadom a lojalitási bónusz feltételeit",
+            use_container_width=True,
+            key=f"accept_loyalty_{courier_id}",
+        ):
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                action_key="loyalty_bonus_acceptance",
+                document_month=acceptance_month,
+                status="done",
+                status_note="A futár elfogadta a lojalitási bónusz feltételeit.",
+                updated_by=user.get("username") or courier_name,
+            )
+            st.success("Elfogadás rögzítve.")
+            st.rerun()
+        return
 
     if action_key in ["tig", "settlement", "my_invoices"]:
         render_peopleforce_monthly_documents(

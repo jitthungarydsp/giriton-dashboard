@@ -57,6 +57,7 @@ COURIER_BONUS_AMOUNT_OVERRIDES = {
 }
 
 MANUAL_ITEM_TYPES = {
+    "instructor_fee_huf": "Oktatói Díj",
     "target_reserve_open_huf": "Nyitó céltartalék",
     "target_reserve_topup_huf": "Céltartalék feltöltés",
     "target_reserve_close_huf": "Céltartalék záró egyenleg",
@@ -66,6 +67,9 @@ MANUAL_ITEM_TYPES = {
     "other_income_huf": "Egyéb bevétel",
     "other_deduction_huf": "Egyéb levonás",
 }
+
+LOYALTY_ACCEPTANCE_ACTION = "loyalty_bonus_acceptance"
+LOYALTY_EFFECTIVE_FROM = date(2026, 6, 1)
 
 
 def money(value):
@@ -220,6 +224,12 @@ def month_bounds(month_value):
         next_month = first.replace(month=first.month + 1)
 
     return first, next_month - pd.Timedelta(days=1)
+
+
+def previous_month_bounds(value):
+    first, _last = month_bounds(value)
+    previous_last = first - pd.Timedelta(days=1)
+    return previous_last.replace(day=1), previous_last
 
 
 def get_headers():
@@ -415,6 +425,38 @@ def read_invoice_data(start_date, end_date):
         limit=1000,
     )
 
+    previous_start, previous_end = previous_month_bounds(start_date)
+    _previous_table, previous_routes_df = read_optional_first_existing_table(
+        FINAL_TABLES,
+        "worksheet_name,driver_name,route_unique_id,route_type,work_date",
+        [
+            f"work_date=gte.{format_date_filter(previous_start)}",
+            f"work_date=lte.{format_date_filter(previous_end)}",
+            "order=driver_name.asc,work_date.asc",
+        ],
+        limit=50000,
+    )
+    try:
+        from resources.foglalasok_db import read_foglalasok_raw
+        bookings_df = read_foglalasok_raw(start_date, end_date, limit=50000)
+    except Exception:
+        bookings_df = pd.DataFrame()
+    try:
+        from resources.peopleforce_documents import read_peopleforce_card_statuses_for_month
+        acceptance_df = read_peopleforce_card_statuses_for_month(
+            LOYALTY_EFFECTIVE_FROM,
+            LOYALTY_ACCEPTANCE_ACTION,
+        )
+    except Exception:
+        acceptance_df = pd.DataFrame()
+    loyalty_error = ""
+    try:
+        from resources.loyalty_bonus import read_loyalty_profiles
+        loyalty_profiles_df = read_loyalty_profiles()
+    except Exception as exc:
+        loyalty_profiles_df = pd.DataFrame()
+        loyalty_error = str(exc)
+
     return {
         "final_table": final_table,
         "final": final_df,
@@ -424,6 +466,11 @@ def read_invoice_data(start_date, end_date):
         "penalties": penalty_df,
         "manual": manual_df,
         "day_rates": day_rates_df,
+        "previous_routes": previous_routes_df,
+        "bookings": bookings_df,
+        "loyalty_acceptance": acceptance_df,
+        "loyalty_profiles": loyalty_profiles_df,
+        "loyalty_error": loyalty_error,
     }
 
 
@@ -591,6 +638,80 @@ def build_manual_item_summary(manual_df):
     return pivot
 
 
+def _normal_route_counts(routes_df, output_column):
+    columns = ["driver_match_key", "worksheet_name", output_column]
+    if routes_df is None or routes_df.empty:
+        return pd.DataFrame(columns=columns)
+    routes = routes_df.copy()
+    routes["driver_match_key"] = routes.get("driver_name", pd.Series("", index=routes.index)).map(normalize_person_key)
+    routes["worksheet_name"] = routes.get("worksheet_name", pd.Series("", index=routes.index)).map(normalize_text)
+    route_type = routes.get("route_type", pd.Series("", index=routes.index)).astype(str).str.upper()
+    routes = routes[route_type.str.contains("NORMAL", na=False)].copy()
+    if routes.empty:
+        return pd.DataFrame(columns=columns)
+    if "route_unique_id" in routes.columns:
+        counts = routes.groupby(["driver_match_key", "worksheet_name"])["route_unique_id"].nunique()
+    else:
+        counts = routes.groupby(["driver_match_key", "worksheet_name"]).size()
+    return counts.reset_index(name=output_column)
+
+
+def build_loyalty_bonus_summary(current_routes_df, previous_routes_df, profiles_df, bookings_df, acceptance_df, period_start):
+    current = _normal_route_counts(current_routes_df, "loyalty_current_normal_routes")
+    if current.empty:
+        return current
+    previous = _normal_route_counts(previous_routes_df, "loyalty_previous_normal_routes")
+    result = current.merge(previous, on=["driver_match_key", "worksheet_name"], how="left")
+    result["loyalty_previous_normal_routes"] = result["loyalty_previous_normal_routes"].fillna(0).astype(int)
+
+    profiles = profiles_df.copy() if profiles_df is not None else pd.DataFrame()
+    if not profiles.empty:
+        profiles["driver_match_key"] = profiles["driver_name"].map(normalize_person_key)
+        keep = ["driver_match_key", "start_date", "is_active", "is_notice_period", "employment_status"]
+        result = result.merge(profiles[[c for c in keep if c in profiles.columns]], on="driver_match_key", how="left")
+    for column, default in [("is_active", False), ("is_notice_period", False)]:
+        if column not in result.columns:
+            result[column] = default
+        result[column] = result[column].fillna(default).astype(bool)
+    if "start_date" not in result.columns:
+        result["start_date"] = pd.NaT
+    result["start_date"] = pd.to_datetime(result["start_date"], errors="coerce")
+
+    accepted_names = set()
+    if acceptance_df is not None and not acceptance_df.empty:
+        accepted = acceptance_df.copy()
+        status = accepted.get("status", pd.Series("", index=accepted.index)).astype(str).str.lower()
+        accepted = accepted[status == "done"]
+        accepted_names = set(accepted.get("courier_name", pd.Series(dtype=str)).map(normalize_person_key))
+    booking_names = set()
+    if bookings_df is not None and not bookings_df.empty:
+        booking_names = set(bookings_df.get("courier_name", pd.Series(dtype=str)).map(normalize_person_key))
+
+    period = pd.Timestamp(period_start).date().replace(day=1)
+    def calculate(row):
+        previous_count = int(row.get("loyalty_previous_normal_routes") or 0)
+        rate = 1000 if previous_count >= 45 else 500 if previous_count >= 25 else 0
+        start = row.get("start_date")
+        service_months = -1 if pd.isna(start) else (period.year - start.year) * 12 + period.month - start.month
+        checks = {
+            "hatályos": period >= LOYALTY_EFFECTIVE_FROM,
+            "7. hónap": service_months >= 6,
+            "aktív jogviszony": bool(row.get("is_active")) and not bool(row.get("is_notice_period")),
+            "előfoglalás": row["driver_match_key"] in booking_names,
+            "elfogadás": row["driver_match_key"] in accepted_names,
+            "előző havi 25 kör": rate > 0,
+        }
+        missing = [label for label, ok in checks.items() if not ok]
+        eligible = not missing
+        return pd.Series({
+            "loyalty_rate_huf": rate,
+            "loyalty_bonus_huf": int(row.get("loyalty_current_normal_routes") or 0) * rate if eligible else 0,
+            "loyalty_eligible": eligible,
+            "loyalty_status": "Jogosult" if eligible else "Hiányzik: " + ", ".join(missing),
+        })
+    return pd.concat([result, result.apply(calculate, axis=1)], axis=1)
+
+
 def build_driver_invoice_summary(
     final_df,
     bonus_df=None,
@@ -598,6 +719,11 @@ def build_driver_invoice_summary(
     manual_df=None,
     day_rates_df=None,
     raw_route_df=None,
+    previous_routes_df=None,
+    loyalty_profiles_df=None,
+    bookings_df=None,
+    loyalty_acceptance_df=None,
+    period_start=None,
 ):
     if final_df.empty:
         return pd.DataFrame()
@@ -712,6 +838,25 @@ def build_driver_invoice_summary(
         on=["driver_name", "worksheet_name"],
         how="left",
     )
+    loyalty = build_loyalty_bonus_summary(
+        final_df,
+        previous_routes_df,
+        loyalty_profiles_df,
+        bookings_df,
+        loyalty_acceptance_df,
+        period_start or date.today().replace(day=1),
+    )
+    if not loyalty.empty:
+        loyalty_columns = [
+            "driver_match_key", "worksheet_name", "loyalty_current_normal_routes",
+            "loyalty_previous_normal_routes", "loyalty_rate_huf", "loyalty_bonus_huf",
+            "loyalty_eligible", "loyalty_status",
+        ]
+        grouped = grouped.merge(
+            loyalty[loyalty_columns],
+            on=["driver_match_key", "worksheet_name"],
+            how="left",
+        )
 
     if bonus_df is not None and not bonus_df.empty:
         bonus_df = bonus_df.copy()
@@ -840,6 +985,13 @@ def build_driver_invoice_summary(
             errors="coerce",
         ).fillna(0)
 
+    for column in ["loyalty_current_normal_routes", "loyalty_previous_normal_routes", "loyalty_rate_huf", "loyalty_bonus_huf"]:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = pd.to_numeric(grouped[column], errors="coerce").fillna(0)
+    if "loyalty_status" not in grouped.columns:
+        grouped["loyalty_status"] = "Nincs normál kör"
+
     grouped["compliance_extra_huf"] = grouped["compliance_extra_huf"].fillna(0)
     grouped["compliance_bonus_huf"] = (
         grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
@@ -868,6 +1020,8 @@ def build_driver_invoice_summary(
         + grouped["cash_missing_huf"]
         + grouped["other_income_huf"]
         + grouped["other_deduction_huf"]
+        + grouped["instructor_fee_huf"]
+        + grouped["loyalty_bonus_huf"]
     )
     grouped["payable_total_huf"] = (
         grouped["route_total_huf"]
@@ -981,6 +1135,8 @@ def build_display_driver_summary(summary_df):
         "cash_missing_huf",
         "manual_payable_huf",
         "payable_total_huf",
+        "loyalty_bonus_huf",
+        "instructor_fee_huf",
     ]:
         if column in visible.columns:
             visible[column] = visible[column].map(format_huf)
@@ -1017,6 +1173,12 @@ def build_display_driver_summary(summary_df):
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
             "payable_total_huf": "Fizetendo osszesen",
+            "loyalty_bonus_huf": "Lojalitási bónusz",
+            "instructor_fee_huf": "Oktatói Díj",
+            "loyalty_previous_normal_routes": "Előző havi normál kör",
+            "loyalty_current_normal_routes": "Aktuális normál kör",
+            "loyalty_rate_huf": "Lojalitás Ft / kör",
+            "loyalty_status": "Lojalitás ellenőrzés",
         }
     )
 
@@ -1176,6 +1338,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         cash_missing = money(driver_row.get("cash_missing_huf"))
         other_income = money(driver_row.get("other_income_huf"))
         other_deduction = money(driver_row.get("other_deduction_huf"))
+        instructor_fee = money(driver_row.get("instructor_fee_huf"))
+        loyalty_bonus = money(driver_row.get("loyalty_bonus_huf"))
         bonus_total = (
             delay_bonus
             + compliance_bonus
@@ -1183,6 +1347,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             + fridge_bonus
             + branding
             + extra_bonus
+            + loyalty_bonus
         )
         average_per_order = payable_total / orders if orders else 0
         bonus_per_order = bonus_total / orders if orders else 0
@@ -1308,6 +1473,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
                 ["Just in Time / késés", format_huf(delay_bonus), "Túramegfelelés", format_huf(compliance_bonus)],
                 ["Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding + fuel_manual), "Borravaló", format_huf(tip)],
                 ["Egyéb plusz", format_huf(extra_bonus + other_income), "Be nem fiz. KP", format_huf(abs(cash_missing))],
+                ["Lojalitási bónusz", format_huf(loyalty_bonus), "Oktatói Díj", format_huf(instructor_fee)],
             ],
             colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
@@ -1319,7 +1485,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Szállítási díj", format_huf(fixed_total)],
             ["Bónuszok / pótlékok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
-            ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income)],
+            ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income + instructor_fee)],
         ]
         expenses = [
             ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
@@ -1333,7 +1499,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         settlement_rows.append(
             [
                 "BEVÉTELEK ÖSSZESEN",
-                format_huf(fixed_total + bonus_total + tip + target_topup + fuel_manual + other_income),
+                format_huf(fixed_total + bonus_total + tip + target_topup + fuel_manual + other_income + instructor_fee),
                 "KIADÁSOK ÖSSZESEN",
                 format_huf((abs(adjustment) if adjustment < 0 else 0) + abs(damage) + abs(cash_missing) + abs(other_deduction)),
             ]
@@ -1380,6 +1546,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Céltartalék feltöltés", format_huf(target_topup)],
             ["Céltartalék záró egyenleg", format_huf(target_close)],
             ["Üzemanyag / egyéb bevétel", format_huf(fuel_manual + other_income)],
+            ["Oktatói Díj", format_huf(instructor_fee)],
             ["Károkozás / KP / egyéb levonás", format_huf(abs(damage) + abs(cash_missing) + abs(other_deduction))],
             ["Manuális tételek összesen", format_huf(manual_total)],
         ]

@@ -179,6 +179,11 @@ def show_invoice_summary_page():
         manual_df,
         day_rates_df,
         raw_route_df,
+        previous_routes_df=data.get("previous_routes", pd.DataFrame()),
+        loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
+        bookings_df=data.get("bookings", pd.DataFrame()),
+        loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
+        period_start=start_date,
     )
 
     if driver_summary.empty:
@@ -203,16 +208,20 @@ def show_invoice_summary_page():
     total_compliance = pd.to_numeric(driver_summary["compliance_bonus_huf"], errors="coerce").fillna(0).sum()
     total_adjustment = pd.to_numeric(driver_summary["adjustment_huf"], errors="coerce").fillna(0).sum()
     total_manual = pd.to_numeric(driver_summary.get("manual_payable_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    total_loyalty = pd.to_numeric(driver_summary.get("loyalty_bonus_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    total_instructor = pd.to_numeric(driver_summary.get("instructor_fee_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_payable = pd.to_numeric(driver_summary["payable_total_huf"], errors="coerce").fillna(0).sum()
 
-    m1, m2, m3, m4, m5, m6, m7 = st.columns(7)
+    m1, m2, m3, m4, m5, m6, m7, m8, m9 = st.columns(9)
     m1.metric("Rendeles", total_orders)
     m2.metric("Kor", total_routes)
     m3.metric("Kesedelmi dij", format_huf(total_delay))
     m4.metric("Turamegfeleles", format_huf(total_compliance))
     m5.metric("Levonas / plusz", format_huf(total_adjustment))
-    m6.metric("Manualis", format_huf(total_manual))
-    m7.metric("Fizetendo", format_huf(total_payable))
+    m6.metric("Lojalitás", format_huf(total_loyalty))
+    m7.metric("Oktatói Díj", format_huf(total_instructor))
+    m8.metric("Manuális", format_huf(total_manual - total_loyalty - total_instructor))
+    m9.metric("Fizetendő", format_huf(total_payable))
 
     st.subheader("Futar osszesito")
     display_summary = build_display_driver_summary(driver_summary)
@@ -221,6 +230,18 @@ def show_invoice_summary_page():
         use_container_width=True,
         hide_index=True,
     )
+    if data.get("loyalty_error"):
+        st.warning(f"A lojalitási törzsadat nem volt olvasható: {data['loyalty_error']}")
+    with st.expander("Lojalitási bónusz ellenőrzése", expanded=False):
+        loyalty_columns = [
+            "driver_name", "loyalty_previous_normal_routes", "loyalty_current_normal_routes",
+            "loyalty_rate_huf", "loyalty_bonus_huf", "loyalty_status",
+        ]
+        st.dataframe(
+            driver_summary[[column for column in loyalty_columns if column in driver_summary.columns]],
+            use_container_width=True,
+            hide_index=True,
+        )
 
     if selected_driver != "Mind" and not driver_summary.empty:
         selected_row = driver_summary.iloc[0]
