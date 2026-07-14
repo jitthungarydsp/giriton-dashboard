@@ -4,13 +4,13 @@ import pandas as pd
 import plotly.express as px
 
 # --- Oldal alapbeállításai ---
+# --- Oldal alapbeállításai ---
 st.set_page_config(
     page_title="Futár Központ", 
-    page_icon="🚴‍♂️", 
-    layout="wide", # Szélesvásznú nézet, hogy kiférjenek a kártyák
+    page_icon="🥐", # Lecseréltük a biciklit kiflire
+    layout="wide", 
     initial_sidebar_state="expanded"
 )
-
 # --- Segédfüggvények (a te logikád alapján) ---
 def render_kiflis_status_card(title, subtitle, icon, status, message, type="info"):
     """Egy szép vizuális kártyát generál a státusznak megfelelően."""
@@ -46,20 +46,20 @@ def check_shift_status(minutes_to_start):
 
 # --- Oldalsáv / Navigáció ---
 with st.sidebar:
-    # A helyi fájl behívása. A szélességet (width) kicsit nagyobbra állítottam, hogy szebben mutasson.
-    st.image("letöltés.jfif", width=150) 
+    # A képet egy try-except blokkba tesszük, hogy ne dobjon hibát, ha a fájl nem található
+    try:
+        st.image("letöltés.jfif", width=150)
+    except:
+        st.write("Logó nem található")
+    
     st.write("### Szia, Futár!")
     
+    # A hiba elkerülése végett egyszerűsítettem a stílus megadást
     selected_page = option_menu(
+        menu_title=None,
         options=["Műszak áttekintés", "Aktuális címek", "Napi statisztika"],
         icons=["house", "geo-alt", "bar-chart-line"],
         default_index=0,
-        styles={
-            "container": {"padding": "0!important", "background-color": "transparent"},
-            "icon": {"color": "orange", "font-size": "18px"}, 
-            "nav-link": {"font-size": "16px", "text-align": "left", "margin":"0px"},
-            "nav-link-selected": {"background-color": "#4CAF50"}, # Zöld kiemelés
-        }
     )
 
 # --- Főképernyő tartalom ---
