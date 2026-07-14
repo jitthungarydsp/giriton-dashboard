@@ -293,6 +293,24 @@ def read_optional_first_existing_table(table_names, select, extra_filters=None, 
         return None, pd.DataFrame()
 
 
+def read_optional_first_nonempty_table(table_names, select, extra_filters=None, limit=10000):
+    """Prefer the first table that actually contains rows, not merely the first existing table."""
+    first_existing_name = None
+    first_existing_df = pd.DataFrame()
+    for table_name in table_names:
+        try:
+            resolved_name, frame = read_first_existing_table(
+                [table_name], select, extra_filters, limit
+            )
+        except Exception:
+            continue
+        if first_existing_name is None:
+            first_existing_name, first_existing_df = resolved_name, frame
+        if not frame.empty:
+            return resolved_name, frame
+    return first_existing_name, first_existing_df
+
+
 def post_supabase_row(table_names, row):
     supabase_url, service_role_key = get_supabase_config()
 
@@ -377,12 +395,19 @@ def read_invoice_data(start_date, end_date):
         limit=50000,
     )
 
-    _route_table, raw_route_df = read_optional_first_existing_table(
+    _route_table, raw_route_df = read_optional_first_nonempty_table(
         ROUTE_TABLES,
-        "worksheet_name,row_number,work_date,row_values",
+        "worksheet_name,row_number,driver_name,route_unique_id,work_date,compliance_bonus_huf,row_data,row_values",
         date_filters,
         limit=50000,
     )
+    if raw_route_df.empty:
+        _route_table, raw_route_df = read_optional_first_nonempty_table(
+            ROUTE_TABLES,
+            "worksheet_name,row_number,work_date,row_values",
+            date_filters,
+            limit=50000,
+        )
 
     _summary_table, summary_df = read_first_existing_table(
         SUMMARY_TABLES,
@@ -390,7 +415,7 @@ def read_invoice_data(start_date, end_date):
         ["order=worksheet_name.asc,row_number.asc"],
         limit=1000,
     )
-    _bonus_table, bonus_df = read_first_existing_table(
+    _bonus_table, bonus_df = read_optional_first_nonempty_table(
         BONUS_TABLES,
         "worksheet_name,site,courier_id,driver_name,routes,bonus_huf",
         ["order=driver_name.asc"],
@@ -524,19 +549,48 @@ def raw_compliance_bonus(row_values):
     return money(values[16])
 
 
+def raw_compliance_from_record(row):
+    direct = money(row.get("compliance_bonus_huf"))
+    if direct:
+        return direct
+    row_data = row.get("row_data")
+    if isinstance(row_data, str):
+        try:
+            row_data = json.loads(row_data)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            row_data = {}
+    if isinstance(row_data, dict):
+        for key, value in row_data.items():
+            normalized = normalize_text(key).lower().replace(" ", "_")
+            if "compliance" in normalized and "bonus" in normalized:
+                parsed = money(value)
+                if parsed:
+                    return parsed
+    return raw_compliance_bonus(row.get("row_values"))
+
+
 def restore_raw_compliance_bonus(final_df, raw_route_df):
     if final_df.empty or raw_route_df is None or raw_route_df.empty:
         return final_df
-    required = {"worksheet_name", "row_number", "row_values"}
+    required = {"worksheet_name", "row_number"}
     if not required.issubset(raw_route_df.columns) or "row_number" not in final_df.columns:
         return final_df
-    raw = raw_route_df[["worksheet_name", "row_number", "row_values"]].copy()
-    raw["raw_compliance_bonus_huf"] = raw["row_values"].map(raw_compliance_bonus)
-    raw = raw.drop(columns=["row_values"]).drop_duplicates()
+    raw = raw_route_df.copy()
+    raw["raw_compliance_bonus_huf"] = raw.apply(raw_compliance_from_record, axis=1)
+    raw = raw[["worksheet_name", "row_number", "raw_compliance_bonus_huf"]].drop_duplicates()
     restored = final_df.merge(raw, on=["worksheet_name", "row_number"], how="left")
     current = pd.to_numeric(restored.get("compliance_bonus_huf"), errors="coerce").fillna(0)
     fallback = pd.to_numeric(restored.get("raw_compliance_bonus_huf"), errors="coerce").fillna(0)
     restored["compliance_bonus_huf"] = current.where(current != 0, fallback)
+    missing = restored["compliance_bonus_huf"].eq(0)
+    if missing.any() and "route_unique_id" in final_df.columns and "route_unique_id" in raw_route_df.columns:
+        route_fallback = raw_route_df.copy()
+        route_fallback["raw_route_compliance_huf"] = route_fallback.apply(raw_compliance_from_record, axis=1)
+        route_fallback = route_fallback[["worksheet_name", "route_unique_id", "raw_route_compliance_huf"]].drop_duplicates()
+        restored = restored.merge(route_fallback, on=["worksheet_name", "route_unique_id"], how="left")
+        route_values = pd.to_numeric(restored["raw_route_compliance_huf"], errors="coerce").fillna(0)
+        restored["compliance_bonus_huf"] = restored["compliance_bonus_huf"].where(~missing, route_values)
+        restored = restored.drop(columns=["raw_route_compliance_huf"])
     return restored.drop(columns=["raw_compliance_bonus_huf"])
 
 

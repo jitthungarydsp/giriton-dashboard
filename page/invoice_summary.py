@@ -18,7 +18,13 @@ from resources.invoice_summary import (
     read_invoice_data,
 )
 from resources.peopleforce_documents import (
+    decode_document_content,
+    delete_peopleforce_document,
     read_peopleforce_complaints,
+    read_peopleforce_documents_for_courier,
+    read_peopleforce_document_content,
+    respond_to_peopleforce_complaint,
+    update_peopleforce_document,
     update_peopleforce_complaint_status,
     upload_peopleforce_document_bytes,
     upsert_peopleforce_card_status,
@@ -104,6 +110,78 @@ def filter_by_driver(df, selected_driver):
 
 def month_start_from_date(value):
     return value.replace(day=1)
+
+
+def render_admin_document_manager(courier_id, courier_name):
+    with st.expander("A futárnak feltöltött dokumentumok kezelése", expanded=False):
+        try:
+            documents = read_peopleforce_documents_for_courier(courier_id)
+        except Exception as exc:
+            st.error(f"A dokumentumlista nem tölthető be: {exc}")
+            return
+        if documents.empty:
+            st.info("Ehhez a futárhoz még nincs feltöltött dokumentum.")
+            return
+        type_labels = {
+            "settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla",
+            "complaint_response": "Reklamációs válasz",
+        }
+        st.caption(f"{len(documents)} feltöltött dokumentum – {courier_name}")
+        overview = documents.copy()
+        overview["Típus"] = overview["document_type"].map(
+            lambda value: type_labels.get(str(value), str(value))
+        )
+        overview["Hónap"] = overview["document_month"].astype(str).str[:7]
+        st.dataframe(
+            overview[["Hónap", "Típus", "title", "file_name", "uploaded_at"]].rename(
+                columns={"title": "Megnevezés", "file_name": "Fájl", "uploaded_at": "Feltöltve"}
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        rows_by_id = {
+            str(row.get("id")): row for _, row in documents.iterrows()
+        }
+        selected_id = st.selectbox(
+            "Kezelendő dokumentum",
+            list(rows_by_id),
+            format_func=lambda value: (
+                f"{str(rows_by_id[value].get('document_month', ''))[:7]} | "
+                f"{type_labels.get(str(rows_by_id[value].get('document_type', '')), str(rows_by_id[value].get('document_type', '')))} | "
+                f"{rows_by_id[value].get('title') or rows_by_id[value].get('file_name')}"
+            ),
+        )
+        document = rows_by_id[selected_id]
+        file_name = str(document.get("file_name") or "dokumentum")
+        title = str(document.get("title") or file_name)
+        note = str(document.get("note") or "")
+        try:
+            content = read_peopleforce_document_content(selected_id)
+            file_bytes = decode_document_content(content.get("file_content_base64"))
+        except Exception:
+            file_bytes = b""
+        if file_bytes:
+            st.download_button(
+                "Kiválasztott dokumentum letöltése",
+                data=file_bytes,
+                file_name=file_name,
+                mime=str(document.get("mime_type") or "application/octet-stream"),
+            )
+        with st.form(f"admin_document_edit_{selected_id}"):
+            edited_title = st.text_input("Megnevezés", value=title)
+            edited_note = st.text_area("Megjegyzés", value=note, height=70)
+            if st.form_submit_button("Adatok mentése"):
+                update_peopleforce_document(selected_id, title=edited_title, note=edited_note)
+                st.success("A dokumentum adatai frissültek.")
+                st.rerun()
+        confirm_delete = st.checkbox(
+            "Törlés megerősítése",
+            key=f"admin_document_delete_confirm_{selected_id}",
+        )
+        if st.button("Dokumentum törlése", disabled=not confirm_delete):
+            delete_peopleforce_document(selected_id)
+            st.success("A dokumentum törölve.")
+            st.rerun()
 
 
 def show_invoice_summary_page():
@@ -231,7 +309,10 @@ def show_invoice_summary_page():
         hide_index=True,
     )
     if data.get("loyalty_error"):
-        st.warning(f"A lojalitási törzsadat nem volt olvasható: {data['loyalty_error']}")
+        st.warning(
+            "A lojalitási Google-törzsadat jelenleg nem olvasható. "
+            "A Google service-account kulcsot frissíteni kell; ez a Túramegfelelés számítását nem érinti."
+        )
     with st.expander("Lojalitási bónusz ellenőrzése", expanded=False):
         loyalty_columns = [
             "driver_name", "loyalty_previous_normal_routes", "loyalty_current_normal_routes",
@@ -264,13 +345,39 @@ def show_invoice_summary_page():
                     with st.container(border=True):
                         st.write(complaint.get("message", ""))
                         st.caption(f"Beküldte: {complaint.get('created_by', courier_name)} | {complaint.get('created_at', '')}")
+                        complaint_id = complaint.get("id")
+                        with st.form(f"reply_invoice_complaint_{complaint_id}"):
+                            response_message = st.text_area(
+                                "Válasz a futárnak",
+                                placeholder="Írd le, mit javítottál vagy miért helyes az elszámolás.",
+                                height=100,
+                            )
+                            send_response = st.form_submit_button(
+                                "Válasz küldése és reklamáció lezárása"
+                            )
+                        if send_response:
+                            if not str(response_message or "").strip():
+                                st.warning("Írj választ a futárnak.")
+                            else:
+                                respond_to_peopleforce_complaint(
+                                    complaint_id,
+                                    response_message,
+                                    str(st.session_state.get("username", "admin")),
+                                    courier_id=courier_id,
+                                    courier_name=courier_name,
+                                    document_type="settlement",
+                                    document_month=month_start_from_date(start_date),
+                                )
+                                st.success("A választ elküldtük a futárnak, a reklamáció lezárva.")
+                                st.rerun()
                         if st.button(
-                            "Reklamáció kezelve",
-                            key=f"resolve_invoice_complaint_{complaint.get('id')}",
+                            "Lezárás válasz nélkül",
+                            key=f"resolve_invoice_complaint_{complaint_id}",
                         ):
-                            update_peopleforce_complaint_status(complaint.get("id"), "resolved")
-                            st.success("A reklamáció lezárva. Az elszámolás javítható és újraküldhető.")
+                            update_peopleforce_complaint_status(complaint_id, "resolved")
+                            st.success("A reklamáció lezárva.")
                             st.rerun()
+            render_admin_document_manager(courier_id, courier_name)
 
     pdf_title = (
         f"JITT elszamolas {start_date.isoformat()} - {end_date.isoformat()}"

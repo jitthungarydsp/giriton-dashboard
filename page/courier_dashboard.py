@@ -2252,6 +2252,38 @@ def render_peopleforce_complaint_box(
                 f"**{clean_display_text(complaint.get('status'), 'new')}** - "
                 f"{clean_display_text(complaint.get('message'))}"
             )
+            admin_response = clean_display_text(complaint.get("admin_response"))
+            if admin_response:
+                st.success(f"Admin válasza: {admin_response}")
+                st.caption(
+                    f"Válaszolta: {clean_display_text(complaint.get('responded_by'), 'admin')} | "
+                    f"{clean_display_text(complaint.get('responded_at'))}"
+                )
+
+    try:
+        response_documents = read_peopleforce_documents(
+            courier_id,
+            selected_month,
+            "complaint_response",
+        )
+    except Exception:
+        response_documents = pd.DataFrame()
+    if not response_documents.empty:
+        document_type_token = f"({config['document_type']})"
+        matching_responses = response_documents[
+            response_documents.get("title", pd.Series(dtype=str))
+            .astype(str)
+            .str.contains(document_type_token, regex=False, na=False)
+        ]
+        for _, response_document in matching_responses.iterrows():
+            st.success(
+                "Admin válasza: "
+                + clean_display_text(response_document.get("note"))
+            )
+            st.caption(
+                f"Válaszolta: {clean_display_text(response_document.get('uploaded_by'), 'admin')} | "
+                f"{clean_display_text(response_document.get('uploaded_at'))}"
+            )
 
     with st.form(f"peopleforce_complaint_{action_key}_{courier_id}_{selected_month}"):
         message = st.text_area(

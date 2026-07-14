@@ -28,6 +28,9 @@ DOCUMENT_COLUMNS = [
     "uploaded_at",
     "file_content_base64",
 ]
+DOCUMENT_METADATA_COLUMNS = [
+    column for column in DOCUMENT_COLUMNS if column != "file_content_base64"
+]
 
 COMPLAINT_COLUMNS = [
     "id",
@@ -39,6 +42,9 @@ COMPLAINT_COLUMNS = [
     "status",
     "created_by",
     "created_at",
+    "admin_response",
+    "responded_by",
+    "responded_at",
 ]
 
 STATUS_COLUMNS = [
@@ -122,6 +128,46 @@ def read_peopleforce_documents(courier_id, document_month, document_type):
 
 
 @st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_documents_for_courier(courier_id, limit=500):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+    if not courier_id:
+        return pd.DataFrame(columns=DOCUMENT_COLUMNS)
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(),
+        params={
+            "select": ",".join(DOCUMENT_METADATA_COLUMNS),
+            "courier_id": f"eq.{courier_id}",
+            "order": "document_month.desc,uploaded_at.desc",
+            "limit": str(int(limit)),
+        },
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=DOCUMENT_METADATA_COLUMNS)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_document_content(document_id):
+    supabase_url = require_supabase()
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(),
+        params={
+            "select": "id,file_name,mime_type,file_content_base64",
+            "id": f"eq.{str(document_id or '').strip()}",
+            "limit": "1",
+        },
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    return rows[0] if rows else {}
+
+
+@st.cache_data(show_spinner=False, ttl=120)
 def read_peopleforce_complaints(courier_id, document_month, document_type):
     supabase_url = require_supabase()
     courier_id = str(courier_id or "").strip()
@@ -142,6 +188,20 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
         },
         timeout=30,
     )
+    if response.status_code == 400 and "admin_response" in response.text:
+        response = requests.get(
+            f"{supabase_url}/rest/v1/peopleforce_complaints",
+            headers=supabase_headers(),
+            params={
+                "select": ",".join(COMPLAINT_COLUMNS[:9]),
+                "courier_id": f"eq.{courier_id}",
+                "document_month": f"eq.{format_month(document_month)}",
+                "document_type": f"eq.{document_type}",
+                "order": "created_at.desc",
+                "limit": "100",
+            },
+            timeout=30,
+        )
     raise_for_supabase_error(response)
     rows = response.json()
 
@@ -302,6 +362,8 @@ def upload_peopleforce_document(
     )
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
+    read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
 
     return response.json()
@@ -344,8 +406,43 @@ def upload_peopleforce_document_bytes(
     )
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
+    read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
 
+    return response.json()
+
+
+def update_peopleforce_document(document_id, *, title, note):
+    supabase_url = require_supabase()
+    response = requests.patch(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(prefer_return=True),
+        params={"id": f"eq.{str(document_id or '').strip()}"},
+        json={"title": str(title or "").strip(), "note": str(note or "").strip()},
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_documents.clear()
+    read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_document_content.clear()
+    read_peopleforce_document_markers.clear()
+    return response.json()
+
+
+def delete_peopleforce_document(document_id):
+    supabase_url = require_supabase()
+    response = requests.delete(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(prefer_return=True),
+        params={"id": f"eq.{str(document_id or '').strip()}"},
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_documents.clear()
+    read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_document_content.clear()
+    read_peopleforce_document_markers.clear()
     return response.json()
 
 
@@ -391,6 +488,56 @@ def update_peopleforce_complaint_status(complaint_id, status):
         json={"status": str(status or "resolved").strip()},
         timeout=30,
     )
+    raise_for_supabase_error(response)
+    read_peopleforce_complaints.clear()
+    read_peopleforce_complaint_markers.clear()
+    return response.json()
+
+
+def respond_to_peopleforce_complaint(
+    complaint_id,
+    response_message,
+    responded_by,
+    *,
+    courier_id,
+    courier_name,
+    document_type,
+    document_month,
+):
+    supabase_url = require_supabase()
+    message = str(response_message or "").strip()
+    upload_peopleforce_document_bytes(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        document_type="complaint_response",
+        document_month=document_month,
+        title=f"Reklamáció válasz ({document_type}) - {complaint_id}",
+        note=message,
+        file_name=f"reklamacio_valasz_{complaint_id}.txt",
+        mime_type="text/plain; charset=utf-8",
+        file_bytes=message.encode("utf-8"),
+        uploaded_by=responded_by,
+    )
+    response = requests.patch(
+        f"{supabase_url}/rest/v1/peopleforce_complaints",
+        headers=supabase_headers(prefer_return=True),
+        params={"id": f"eq.{str(complaint_id or '').strip()}"},
+        json={
+            "admin_response": str(response_message or "").strip(),
+            "responded_by": str(responded_by or "").strip(),
+            "responded_at": datetime.now(timezone.utc).isoformat(),
+            "status": "resolved",
+        },
+        timeout=30,
+    )
+    if response.status_code == 400 and "admin_response" in response.text:
+        response = requests.patch(
+            f"{supabase_url}/rest/v1/peopleforce_complaints",
+            headers=supabase_headers(prefer_return=True),
+            params={"id": f"eq.{str(complaint_id or '').strip()}"},
+            json={"status": "resolved"},
+            timeout=30,
+        )
     raise_for_supabase_error(response)
     read_peopleforce_complaints.clear()
     read_peopleforce_complaint_markers.clear()

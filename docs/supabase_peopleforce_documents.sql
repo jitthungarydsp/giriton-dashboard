@@ -36,6 +36,11 @@ create table if not exists public.peopleforce_complaints (
     created_at timestamptz not null default now()
 );
 
+alter table public.peopleforce_complaints
+    add column if not exists admin_response text,
+    add column if not exists responded_by text,
+    add column if not exists responded_at timestamptz;
+
 create index if not exists idx_peopleforce_complaints_courier_month
     on public.peopleforce_complaints (courier_id, document_month, document_type);
 
