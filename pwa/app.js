@@ -1,4 +1,11 @@
-const state = { user: null, data: null, selectedDate: null };
+const state = {
+  user: null,
+  data: null,
+  selectedDate: null,
+  workflow: null,
+  workflowMonth: new Date().toISOString().slice(0, 7),
+  section: "home",
+};
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -11,13 +18,16 @@ function escapeHtml(value) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const response = await fetch(path, { credentials: "same-origin", ...options, headers });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || "A kérés nem sikerült.");
+  if (!response.ok) {
+    const detail = payload.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message || "A kérés nem sikerült.");
+  }
   return payload;
 }
 
@@ -47,6 +57,16 @@ function showApp() {
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
   $("#welcome").textContent = `Szia, ${state.user.username.split(" ")[0]}!`;
+}
+
+function showSection(section) {
+  state.section = section;
+  $("#home-content").classList.toggle("hidden", section !== "home");
+  $("#settlement-content").classList.toggle("hidden", section !== "settlement");
+  $("#nav-home").classList.toggle("active", section === "home");
+  $("#nav-settlement").classList.toggle("active", section === "settlement");
+  if (section === "settlement" && !state.workflow) loadWorkflow();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function renderTabs() {
@@ -125,6 +145,180 @@ async function loadShifts() {
   }
 }
 
+function workflowStep(key) {
+  return state.workflow?.steps?.find((step) => step.key === key) || {};
+}
+
+function renderWorkflowSteps() {
+  $("#workflow-steps").innerHTML = (state.workflow?.steps || []).map((step, index) => {
+    const status = step.done ? "Kész" : step.locked ? "Zárolva" : "Aktív";
+    return `<li class="workflow-step ${step.done ? "done" : ""} ${step.locked ? "locked" : ""}">
+      <span class="workflow-step-index">${step.done ? "✓" : index + 1}</span>
+      <div><strong>${escapeHtml(step.title)}</strong><small>${status}</small></div>
+      <span class="workflow-step-state">${step.done ? "✓" : step.locked ? "🔒" : "→"}</span>
+    </li>`;
+  }).join("");
+}
+
+function documentList(documents) {
+  if (!documents.length) return `<div class="empty-card">Ehhez a hónaphoz még nincs feltöltött dokumentum.</div>`;
+  return `<div class="document-list">${documents.map((document) => `
+    <div class="document-row">
+      <div><strong>${escapeHtml(document.title || document.file_name)}</strong><small>${escapeHtml(document.file_name)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
+      <a class="download-link" href="${escapeHtml(document.downloadUrl)}">Letöltés</a>
+    </div>`).join("")}</div>`;
+}
+
+function complaintList(complaints) {
+  if (!complaints.length) return "";
+  return `<div class="complaint-list">${complaints.map((complaint) => `
+    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}</div>` : ""}</div></div>
+  `).join("")}</div>`;
+}
+
+function renderDocumentPanel(action, title, stepNumber) {
+  const panel = $(`#${action}-panel`);
+  const documents = state.workflow?.documents?.[action] || [];
+  const complaints = state.workflow?.complaints?.[action] || [];
+  const accepted = state.workflow?.states?.[action]?.status === "done";
+  const documentStep = workflowStep(`${action}_document`);
+  const locked = Boolean(documentStep.locked);
+  panel.classList.toggle("locked", locked);
+  panel.innerHTML = `
+    <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>${title}</h3><p>${locked ? "Az előző lépés lezárása után válik aktívvá." : "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."}</p></div></div>
+    ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
+    ${accepted
+      ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
+      : documents.length && !locked
+        ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
+        : ""}
+    <div class="complaint-box">
+      <strong>Reklamáció</strong>
+      ${complaintList(complaints)}
+      ${!locked ? `<form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>` : ""}
+    </div>`;
+
+  const acceptButton = $(`#accept-${action}`);
+  if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
+  const complaintForm = $(`#complaint-${action}`);
+  if (complaintForm) complaintForm.addEventListener("submit", (event) => submitComplaint(event, action));
+}
+
+function setPanelLocked(id, locked) {
+  const panel = $(id);
+  panel.classList.toggle("locked", locked);
+  panel.querySelectorAll("input, textarea, button").forEach((control) => { control.disabled = locked; });
+}
+
+function renderWorkflow() {
+  renderWorkflowSteps();
+  renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
+  renderDocumentPanel("tig", "TIG és elfogadás", 3);
+  setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
+  setPanelLocked("#invoice-submit-panel", Boolean(workflowStep("invoice_submit").locked));
+  $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
+    ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
+    : "";
+  $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")}`;
+}
+
+function showWorkflowMessage(message, isError = false) {
+  $("#workflow-message").innerHTML = message ? `<div class="notice ${isError ? "error" : ""}">${escapeHtml(message)}</div>` : "";
+}
+
+async function loadWorkflow() {
+  showWorkflowMessage("Folyamat betöltése…");
+  try {
+    state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
+    renderWorkflow();
+    showWorkflowMessage("");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function acceptDocument(action) {
+  showWorkflowMessage("Elfogadás mentése…");
+  try {
+    const payload = await api(`/api/workflow/${action}/accept`, {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("Az elfogadás rögzítve. A következő lépés aktívvá vált.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function submitComplaint(event, action) {
+  event.preventDefault();
+  const message = new FormData(event.currentTarget).get("message");
+  showWorkflowMessage("Reklamáció küldése…");
+  try {
+    const payload = await api("/api/workflow/complaints", {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth, action, message }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("A reklamáció megérkezett az admin elszámolási felületére.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+function renderValidation(target, validation, stored = null) {
+  const summary = validation.ok
+    ? stored === true ? "A számla ellenőrizve és eltárolva." : "Az ellenőrzés sikeres. A számlafeltöltés aktív."
+    : `Javítandó számla (${validation.score}%).`;
+  target.innerHTML = `<div class="result-box">
+    <div class="result-summary ${validation.ok ? "ok" : "error"}">${escapeHtml(summary)}</div>
+    ${(validation.checks || []).map((check) => `<div class="check-row ${escapeHtml(check.status)}"><strong>${escapeHtml(check.title)}</strong><br>${escapeHtml(check.detail)}</div>`).join("")}
+  </div>`;
+}
+
+$("#invoice-check-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  form.append("month", state.workflowMonth);
+  showWorkflowMessage("A számla ellenőrzése folyamatban…");
+  try {
+    const payload = await api("/api/invoices/check", { method: "POST", body: form });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    renderValidation($("#invoice-check-result"), payload.validation);
+    showWorkflowMessage(payload.validation.ok ? "Sikeres ellenőrzés." : "A hibákat javítani kell a feltöltés előtt.", !payload.validation.ok);
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+});
+
+$("#invoice-submit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  form.append("month", state.workflowMonth);
+  showWorkflowMessage("A számla végső ellenőrzése és tárolása folyamatban…");
+  try {
+    const payload = await api("/api/invoices/submit", { method: "POST", body: form });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    renderValidation($("#invoice-submit-result"), payload.validation, payload.stored);
+    showWorkflowMessage(payload.stored ? "A számla bekerült a dokumentumtárba." : "A számla nem került eltárolásra, mert hibát találtunk.", !payload.stored);
+    if (payload.stored) event.currentTarget.reset();
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+});
+
+$("#workflow-month").value = state.workflowMonth;
+$("#workflow-month").addEventListener("change", (event) => {
+  state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  state.workflow = null;
+  loadWorkflow();
+});
+
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   $("#login-error").textContent = "";
@@ -135,6 +329,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     });
     state.user = payload.user;
     showApp();
+    showSection("home");
     await loadShifts();
   } catch (error) {
     $("#login-error").textContent = error.message;
@@ -144,15 +339,19 @@ $("#login-form").addEventListener("submit", async (event) => {
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   state.user = null;
+  state.workflow = null;
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
+$("#nav-home").addEventListener("click", () => showSection("home"));
+$("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 
 async function start() {
   try {
     const payload = await api("/api/me");
     state.user = payload.user;
     showApp();
+    showSection("home");
     await loadShifts();
   } catch (_) {
     showLogin();

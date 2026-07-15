@@ -1,21 +1,24 @@
 import hashlib
 import hmac
+import base64
 import json
 import os
 import secrets
 import time
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 import tomllib
-from fastapi import Cookie, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.security import verify_password
 
 
@@ -30,6 +33,16 @@ SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class WorkflowActionRequest(BaseModel):
+    month: str
+
+
+class ComplaintRequest(BaseModel):
+    month: str
+    action: str
+    message: str
 
 
 def load_setting(name: str) -> str:
@@ -310,6 +323,261 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     }
 
 
+WORKFLOW_PREREQUISITES = {
+    "tig": "settlement",
+    "invoice_check": "tig",
+    "invoice_submit": "invoice_check",
+}
+WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
+
+
+def parse_month(value: str | date | None) -> date:
+    if isinstance(value, date):
+        return value.replace(day=1)
+    text = str(value or "").strip()
+    if not text:
+        return date.today().replace(day=1)
+    try:
+        return date.fromisoformat(text[:7] + "-01")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="A hónap formátuma YYYY-MM legyen.") from exc
+
+
+def supabase_headers(*, prefer: str = "") -> dict[str, str]:
+    key = load_setting("SUPABASE_SERVICE_ROLE_KEY")
+    if not load_setting("SUPABASE_URL") or not key:
+        raise HTTPException(status_code=503, detail="Hiányzik a Supabase konfiguráció.")
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    if prefer:
+        headers["Content-Type"] = "application/json"
+        headers["Prefer"] = prefer
+    return headers
+
+
+def supabase_rest(
+    method: str,
+    table: str,
+    *,
+    params: dict[str, str] | None = None,
+    payload: dict[str, Any] | None = None,
+    prefer: str = "",
+    timeout: int = 30,
+) -> Any:
+    url = load_setting("SUPABASE_URL").rstrip("/")
+    response = requests.request(
+        method,
+        f"{url}/rest/v1/{table}",
+        headers=supabase_headers(prefer=prefer),
+        params=params,
+        json=payload,
+        timeout=timeout,
+    )
+    if not response.ok:
+        raise HTTPException(status_code=502, detail=f"Adatbázis-hiba ({response.status_code}).")
+    if not response.content:
+        return []
+    try:
+        return response.json()
+    except ValueError:
+        return []
+
+
+def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
+    courier_id = str(user.get("courierId") or "").strip()
+    courier_name = str(user.get("username") or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=422, detail="A felhasználóhoz nincs futárazonosító rendelve.")
+    return courier_id, courier_name
+
+
+def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
+    courier_id, _courier_name = courier_identity(user)
+    month_value = month.isoformat()
+    documents = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id,document_type,document_month,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month_value}",
+            "order": "uploaded_at.desc",
+            "limit": "200",
+        },
+    )
+    statuses = supabase_rest(
+        "GET",
+        "peopleforce_card_statuses",
+        params={
+            "select": "action_key,status,status_note,updated_by,updated_at",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month_value}",
+            "order": "updated_at.desc",
+            "limit": "100",
+        },
+    )
+    complaints = supabase_rest(
+        "GET",
+        "peopleforce_complaints",
+        params={
+            "select": "id,document_type,message,status,created_at,admin_response,responded_by,responded_at",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month_value}",
+            "order": "created_at.desc",
+            "limit": "100",
+        },
+    )
+    return documents, statuses, complaints
+
+
+def status_map(rows: list[dict]) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for row in rows:
+        key = str(row.get("action_key") or "")
+        if key and key not in result:
+            result[key] = row
+    return result
+
+
+def workflow_done(states: dict[str, dict], action: str) -> bool:
+    return str((states.get(action) or {}).get("status") or "").lower() == "done"
+
+
+def upsert_workflow_status(
+    user: dict[str, Any],
+    month: date,
+    action: str,
+    status: str,
+    note: str,
+) -> None:
+    courier_id, courier_name = courier_identity(user)
+    supabase_rest(
+        "POST",
+        "peopleforce_card_statuses",
+        params={"on_conflict": "courier_id,document_month,action_key"},
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "action_key": action,
+            "document_month": month.isoformat(),
+            "status": "done" if status == "done" else "open",
+            "status_note": note,
+            "updated_by": courier_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+
+
+def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
+    documents, status_rows, complaints = read_workflow_rows(user, month)
+    states = status_map(status_rows)
+    document_groups = {
+        document_type: [row for row in documents if row.get("document_type") == document_type]
+        for document_type in WORKFLOW_DOCUMENT_TYPES
+    }
+    for action in ("settlement", "tig"):
+        if document_groups[action] and action not in states:
+            states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
+
+    steps = [
+        {
+            "key": "settlement_document",
+            "title": "Elszámolás",
+            "done": bool(document_groups["settlement"]),
+            "locked": False,
+        },
+        {
+            "key": "settlement",
+            "title": "Elszámolás elfogadása",
+            "done": workflow_done(states, "settlement"),
+            "locked": not bool(document_groups["settlement"]),
+        },
+        {
+            "key": "tig_document",
+            "title": "TIG",
+            "done": bool(document_groups["tig"]),
+            "locked": not workflow_done(states, "settlement"),
+        },
+        {
+            "key": "tig",
+            "title": "TIG elfogadása",
+            "done": workflow_done(states, "tig"),
+            "locked": not workflow_done(states, "settlement") or not bool(document_groups["tig"]),
+        },
+        {
+            "key": "invoice_check",
+            "title": "Számlaellenőrzés",
+            "done": workflow_done(states, "invoice_check"),
+            "locked": not workflow_done(states, "tig"),
+        },
+        {
+            "key": "invoice_submit",
+            "title": "Számlafeltöltés",
+            "done": workflow_done(states, "invoice_submit"),
+            "locked": not workflow_done(states, "invoice_check"),
+        },
+    ]
+    safe_documents: dict[str, list[dict[str, Any]]] = {}
+    for document_type, rows in document_groups.items():
+        safe_documents[document_type] = [
+            {
+                **row,
+                "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
+            }
+            for row in rows
+        ]
+    return {
+        "month": month.strftime("%Y-%m"),
+        "steps": steps,
+        "states": states,
+        "documents": safe_documents,
+        "complaints": {
+            action: [row for row in complaints if row.get("document_type") == action]
+            for action in ("settlement", "tig")
+        },
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def expected_tig_amount(user: dict[str, Any], month: date) -> int:
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "file_content_base64",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month.isoformat()}",
+            "document_type": "eq.tig",
+            "order": "uploaded_at.desc",
+            "limit": "5",
+        },
+        timeout=60,
+    )
+    for row in rows:
+        try:
+            amount = extract_expected_amount(base64.b64decode(row.get("file_content_base64") or ""))
+        except Exception:
+            amount = 0
+        if amount:
+            return amount
+    return 0
+
+
+def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None:
+    prerequisite = WORKFLOW_PREREQUISITES.get(action)
+    if not prerequisite:
+        return
+    _documents, status_rows, _complaints = read_workflow_rows(user, month)
+    if not workflow_done(status_map(status_rows), prerequisite):
+        labels = {
+            "settlement": "az elszámolás elfogadása",
+            "tig": "a TIG elfogadása",
+            "invoice_check": "a sikeres számlaellenőrzés",
+        }
+        raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
+
+
 app = FastAPI(title="Giriton Futár PWA", docs_url=None, redoc_url=None)
 
 
@@ -350,6 +618,191 @@ def shifts(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     return read_shifts(require_user(giriton_pwa_session), days)
+
+
+@app.get("/api/workflow")
+def workflow(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    return build_workflow(require_user(giriton_pwa_session), parse_month(month))
+
+
+@app.post("/api/workflow/{action}/accept")
+def accept_workflow_document(
+    action: str,
+    payload: WorkflowActionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    if action not in {"settlement", "tig"}:
+        raise HTTPException(status_code=404, detail="Ismeretlen elfogadási lépés.")
+    user = require_user(giriton_pwa_session)
+    month = parse_month(payload.month)
+    if action == "tig":
+        require_prerequisite(user, month, "tig")
+    documents, _statuses, _complaints = read_workflow_rows(user, month)
+    if not any(row.get("document_type") == action for row in documents):
+        raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
+    upsert_workflow_status(
+        user,
+        month,
+        action,
+        "done",
+        "A futár elfogadta a dokumentumot.",
+    )
+    return {"ok": True, "workflow": build_workflow(user, month)}
+
+
+@app.post("/api/workflow/complaints")
+def create_workflow_complaint(
+    payload: ComplaintRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    if payload.action not in {"settlement", "tig"}:
+        raise HTTPException(status_code=422, detail="Reklamáció csak elszámoláshoz vagy TIG-hez küldhető.")
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Írd le röviden a reklamációt.")
+    user = require_user(giriton_pwa_session)
+    month = parse_month(payload.month)
+    courier_id, courier_name = courier_identity(user)
+    supabase_rest(
+        "POST",
+        "peopleforce_complaints",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "document_type": payload.action,
+            "document_month": month.isoformat(),
+            "message": message,
+            "status": "new",
+            "created_by": courier_name,
+        },
+        prefer="return=representation",
+    )
+    upsert_workflow_status(user, month, payload.action, "open", "Új reklamáció érkezett.")
+    return {"ok": True, "workflow": build_workflow(user, month)}
+
+
+@app.get("/api/documents/{document_id}")
+def download_document(
+    document_id: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id,courier_id,file_name,mime_type,file_content_base64",
+            "id": f"eq.{document_id}",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+        timeout=60,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A dokumentum nem található.")
+    row = rows[0]
+    try:
+        content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A dokumentum tartalma sérült.") from exc
+    file_name = str(row.get("file_name") or "dokumentum").replace('"', "")
+    return Response(
+        content=content,
+        media_type=str(row.get("mime_type") or "application/octet-stream"),
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"},
+    )
+
+
+@app.post("/api/invoices/check")
+async def check_invoice(
+    month: str = Form(...),
+    invoice_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    month_value = parse_month(month)
+    require_prerequisite(user, month_value, "invoice_check")
+    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
+    courier_id, courier_name = courier_identity(user)
+    result = validate_invoice(
+        file_name=invoice_file.filename or "szamla",
+        content=content,
+        invoice_month=month_value,
+        courier_name=courier_name,
+        courier_id=courier_id,
+        expected_gross_amount=expected_tig_amount(user, month_value),
+        expected_seller_tax_number=str(user.get("taxNumber") or user.get("tax_number") or ""),
+        expected_seller_address=str(user.get("billingAddress") or user.get("billing_address") or ""),
+    )
+    if result["ok"]:
+        upsert_workflow_status(
+            user,
+            month_value,
+            "invoice_check",
+            "done",
+            "A számla automatikus ellenőrzése sikeres.",
+        )
+    return {"validation": result, "workflow": build_workflow(user, month_value)}
+
+
+@app.post("/api/invoices/submit")
+async def submit_invoice(
+    month: str = Form(...),
+    invoice_number: str = Form(...),
+    gross_amount: int = Form(...),
+    tig_reference: str = Form(default=""),
+    note: str = Form(default=""),
+    invoice_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    month_value = parse_month(month)
+    require_prerequisite(user, month_value, "invoice_submit")
+    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
+    courier_id, courier_name = courier_identity(user)
+    result = validate_invoice(
+        file_name=invoice_file.filename or "szamla",
+        content=content,
+        invoice_month=month_value,
+        courier_name=courier_name,
+        courier_id=courier_id,
+        expected_gross_amount=expected_tig_amount(user, month_value),
+        invoice_number=invoice_number,
+        gross_amount=gross_amount,
+        require_submission_fields=True,
+        expected_seller_tax_number=str(user.get("taxNumber") or user.get("tax_number") or ""),
+        expected_seller_address=str(user.get("billingAddress") or user.get("billing_address") or ""),
+    )
+    if not result["ok"]:
+        return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
+
+    file_name = invoice_file.filename or f"szamla_{invoice_number}.pdf"
+    supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "document_type": "invoice",
+            "document_month": month_value.isoformat(),
+            "title": f"Számla {invoice_number}",
+            "file_name": file_name,
+            "mime_type": invoice_file.content_type or "application/octet-stream",
+            "file_size": len(content),
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "note": f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. {note}".strip(),
+            "uploaded_by": courier_name,
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+    for action in ("invoice_submit", "my_invoices"):
+        upsert_workflow_status(user, month_value, action, "done", "A számla ellenőrizve és eltárolva.")
+    return {"stored": True, "validation": result, "workflow": build_workflow(user, month_value)}
 
 
 @app.get("/api/health")

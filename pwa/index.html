@@ -36,28 +36,72 @@
         <button id="logout" class="icon-button" aria-label="Kilépés">↗</button>
       </header>
 
-      <section class="hero-card">
-        <div>
-          <p class="eyebrow">KÖVETKEZŐ MŰSZAK</p>
-          <h2 id="next-shift">Betöltés…</h2>
-          <p id="next-shift-detail" class="hero-detail"></p>
-        </div>
-        <span id="next-status" class="status-pill">Frissítés</span>
-      </section>
+      <div id="home-content">
+        <section class="hero-card">
+          <div>
+            <p class="eyebrow">KÖVETKEZŐ MŰSZAK</p>
+            <h2 id="next-shift">Betöltés…</h2>
+            <p id="next-shift-detail" class="hero-detail"></p>
+          </div>
+          <span id="next-status" class="status-pill">Frissítés</span>
+        </section>
 
-      <section class="section-heading">
-        <div><p class="eyebrow">TERVEZÉS</p><h2>Műszakjaim</h2></div>
-        <button id="refresh" class="text-button">Frissítés</button>
-      </section>
+        <section class="section-heading">
+          <div><p class="eyebrow">TERVEZÉS</p><h2>Műszakjaim</h2></div>
+          <button id="refresh" class="text-button">Frissítés</button>
+        </section>
 
-      <nav id="day-tabs" class="day-tabs" aria-label="Műszaknapok"></nav>
-      <section id="warning-list" aria-live="polite"></section>
-      <section id="shift-list" class="shift-list" aria-live="polite"></section>
-      <p id="updated-at" class="updated-at"></p>
+        <nav id="day-tabs" class="day-tabs" aria-label="Műszaknapok"></nav>
+        <section id="warning-list" aria-live="polite"></section>
+        <section id="shift-list" class="shift-list" aria-live="polite"></section>
+        <p id="updated-at" class="updated-at"></p>
+      </div>
+
+      <div id="settlement-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">HAVI FOLYAMAT</p>
+            <h2>Elszámolás és számla</h2>
+            <p class="muted">Minden lépés csak az előző sikeres lezárása után válik aktívvá.</p>
+          </div>
+          <label class="month-picker">Hónap<input id="workflow-month" type="month" /></label>
+        </section>
+
+        <section id="workflow-message" aria-live="polite"></section>
+        <ol id="workflow-steps" class="workflow-steps"></ol>
+
+        <section id="settlement-panel" class="process-card"></section>
+        <section id="tig-panel" class="process-card"></section>
+
+        <section id="invoice-check-panel" class="process-card">
+          <div class="process-title"><span class="step-code">5</span><div><h3>Számlaellenőrzés</h3><p>A TIG elfogadása után válik aktívvá.</p></div></div>
+          <form id="invoice-check-form" class="process-form">
+            <label>PDF számla<input id="invoice-check-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
+            <button class="primary" type="submit">Számla ellenőrzése</button>
+          </form>
+          <div id="invoice-check-result"></div>
+        </section>
+
+        <section id="invoice-submit-panel" class="process-card">
+          <div class="process-title"><span class="step-code">6</span><div><h3>Számlafeltöltés</h3><p>Csak sikeres ellenőrzés után küldhető be.</p></div></div>
+          <form id="invoice-submit-form" class="process-form two-column">
+            <label>Számlaszám<input id="invoice-number" name="invoice_number" required /></label>
+            <label>Bruttó összeg (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
+            <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
+            <label>Megjegyzés<input id="invoice-note" name="note" /></label>
+            <label class="full-width">Végleges PDF számla<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
+            <button class="primary full-width" type="submit">Ellenőrzés és számlafeltöltés</button>
+          </form>
+          <div id="invoice-submit-result"></div>
+          <div id="invoice-document-list"></div>
+        </section>
+
+        <p id="workflow-updated-at" class="updated-at"></p>
+      </div>
 
       <nav class="bottom-nav" aria-label="Főmenü">
-        <button class="active"><span>⌂</span>Kezdőlap</button>
-        <button disabled><span>▣</span>Elszámolás</button>
+        <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
+        <button id="nav-settlement"><span>▣</span>Elszámolás</button>
         <button disabled><span>◇</span>Dokumentumok</button>
         <button disabled><span>☻</span>Profil</button>
       </nav>
