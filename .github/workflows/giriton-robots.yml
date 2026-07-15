@@ -8,6 +8,7 @@ on:
   push:
     paths:
       - ".github/jitt-invoice-import.trigger"
+      - ".github/jitt-invoice-cleanup.trigger"
   workflow_dispatch:
     inputs:
       run_folgaltsag:
@@ -84,9 +85,32 @@ on:
     - cron: "0 2 * * *"
 
 jobs:
+  cleanup_jitt_invoice:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && contains(toJson(github.event.commits), '.github/jitt-invoice-cleanup.trigger') }}
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Remove stale JITT invoice imports
+        run: |
+          python scripts/cleanup_jitt_invoice_import.py \
+            --keep-imported-at "$(cat .github/jitt-invoice-cleanup.trigger)"
+
   jitt_invoice:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_jitt_invoice == 'true') }}
+    if: ${{ (github.event_name == 'push' && contains(toJson(github.event.commits), '.github/jitt-invoice-import.trigger')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_jitt_invoice == 'true') }}
     timeout-minutes: 15
 
     env:
