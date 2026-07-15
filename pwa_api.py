@@ -63,6 +63,15 @@ def load_setting(name: str) -> str:
         return ""
 
 
+def supabase_key_headers(key: str) -> dict[str, str]:
+    """Support both legacy JWT service-role keys and the new sb_secret_ keys."""
+    clean_key = str(key or "").strip()
+    headers = {"apikey": clean_key}
+    if clean_key and not clean_key.startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {clean_key}"
+    return headers
+
+
 def session_secret() -> bytes:
     value = load_setting("PWA_SESSION_SECRET") or load_setting("AUTH_TOKEN_SECRET")
     if not value and LOCAL_SESSION_SECRET_FILE.exists():
@@ -187,13 +196,13 @@ def normalize_warehouse(value: Any) -> str:
 
 def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]:
     url = load_setting("SUPABASE_URL").rstrip("/")
-    key = load_setting("SUPABASE_SERVICE_ROLE_KEY")
+    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
     if not url or not key:
         raise RuntimeError("Hiányzik a Supabase konfiguráció.")
 
     response = requests.get(
         f"{url}/rest/v1/{table}",
-        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+        headers=supabase_key_headers(key),
         params={
             "select": select,
             "work_date": f"gte.{start.isoformat()}",
@@ -344,10 +353,10 @@ def parse_month(value: str | date | None) -> date:
 
 
 def supabase_headers(*, prefer: str = "") -> dict[str, str]:
-    key = load_setting("SUPABASE_SERVICE_ROLE_KEY")
+    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
     if not load_setting("SUPABASE_URL") or not key:
         raise HTTPException(status_code=503, detail="Hiányzik a Supabase konfiguráció.")
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    headers = supabase_key_headers(key)
     if prefer:
         headers["Content-Type"] = "application/json"
         headers["Prefer"] = prefer
@@ -482,7 +491,11 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
     steps = [
         {
             "key": "settlement_document",
-            "title": "Elszámolás",
+            "title": (
+                "Elszámolás elkészült"
+                if document_groups["settlement"]
+                else "Várakozás az elszámolás elkészítésére"
+            ),
             "done": bool(document_groups["settlement"]),
             "locked": False,
         },
@@ -494,7 +507,11 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         },
         {
             "key": "tig_document",
-            "title": "TIG",
+            "title": (
+                "TIG elkészült"
+                if document_groups["tig"]
+                else "Várakozás a TIG elkészítésére"
+            ),
             "done": bool(document_groups["tig"]),
             "locked": not workflow_done(states, "settlement"),
         },

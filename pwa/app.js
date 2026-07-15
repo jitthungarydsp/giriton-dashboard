@@ -151,11 +151,12 @@ function workflowStep(key) {
 
 function renderWorkflowSteps() {
   $("#workflow-steps").innerHTML = (state.workflow?.steps || []).map((step, index) => {
-    const status = step.done ? "Kész" : step.locked ? "Zárolva" : "Aktív";
+    const waiting = step.key.endsWith("_document") && !step.done && !step.locked;
+    const status = step.done ? "Kész" : step.locked ? "Zárolva" : waiting ? "Várakozás" : "Aktív";
     return `<li class="workflow-step ${step.done ? "done" : ""} ${step.locked ? "locked" : ""}">
       <span class="workflow-step-index">${step.done ? "✓" : index + 1}</span>
       <div><strong>${escapeHtml(step.title)}</strong><small>${status}</small></div>
-      <span class="workflow-step-state">${step.done ? "✓" : step.locked ? "🔒" : "→"}</span>
+      <span class="workflow-step-state">${step.done ? "✓" : step.locked ? "🔒" : waiting ? "…" : "→"}</span>
     </li>`;
   }).join("");
 }
@@ -183,20 +184,29 @@ function renderDocumentPanel(action, title, stepNumber) {
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);
+  const waitingTitle = action === "settlement"
+    ? "Várakozás az elszámolás elkészítésére"
+    : "Várakozás a TIG elkészítésére";
+  const visibleTitle = documents.length ? title : waitingTitle;
+  const description = locked
+    ? "Az előző lépés lezárása után válik aktívvá."
+    : documents.length
+      ? "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."
+      : "Amint az admin elkészíti és elküldi, itt automatikusan megjelenik.";
   panel.classList.toggle("locked", locked);
   panel.innerHTML = `
-    <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>${title}</h3><p>${locked ? "Az előző lépés lezárása után válik aktívvá." : "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."}</p></div></div>
+    <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>${visibleTitle}</h3><p>${description}</p></div></div>
     ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
     ${accepted
       ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
       : documents.length && !locked
         ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
         : ""}
-    <div class="complaint-box">
+    ${documents.length && !locked ? `<div class="complaint-box">
       <strong>Reklamáció</strong>
       ${complaintList(complaints)}
-      ${!locked ? `<form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>` : ""}
-    </div>`;
+      <form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>
+    </div>` : ""}`;
 
   const acceptButton = $(`#accept-${action}`);
   if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
@@ -226,14 +236,37 @@ function showWorkflowMessage(message, isError = false) {
   $("#workflow-message").innerHTML = message ? `<div class="notice ${isError ? "error" : ""}">${escapeHtml(message)}</div>` : "";
 }
 
+function waitingWorkflow() {
+  const titles = [
+    ["settlement_document", "Várakozás az elszámolás elkészítésére", false],
+    ["settlement", "Elszámolás elfogadása", true],
+    ["tig_document", "Várakozás a TIG elkészítésére", true],
+    ["tig", "TIG elfogadása", true],
+    ["invoice_check", "Számlaellenőrzés", true],
+    ["invoice_submit", "Számlafeltöltés", true],
+  ];
+  return {
+    month: state.workflowMonth,
+    steps: titles.map(([key, title, locked]) => ({ key, title, locked, done: false })),
+    states: {},
+    documents: { settlement: [], tig: [], invoice: [] },
+    complaints: { settlement: [], tig: [] },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 async function loadWorkflow() {
+  state.workflow = waitingWorkflow();
+  renderWorkflow();
   showWorkflowMessage("Folyamat betöltése…");
   try {
     state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
     renderWorkflow();
     showWorkflowMessage("");
   } catch (error) {
-    showWorkflowMessage(error.message, true);
+    state.workflow = waitingWorkflow();
+    renderWorkflow();
+    showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
   }
 }
 
