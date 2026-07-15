@@ -20,3 +20,5 @@ reportlab
 pypdf
 fastapi
 uvicorn[standard]
+pywebpush
+py-vapid

@@ -54,6 +54,17 @@ class BillingProfileUpdate(BaseModel):
     billing_email: str = ""
 
 
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+    user_agent: str = ""
+
+
 def load_setting(name: str) -> str:
     value = os.getenv(name, "")
     if value:
@@ -776,6 +787,76 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
         raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
 
 
+
+def public_vapid_key() -> str:
+    key = load_setting("VAPID_PUBLIC_KEY").strip()
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail="A push értesítések még nincsenek konfigurálva.",
+        )
+    return key
+
+
+def save_push_subscription(
+    user: dict[str, Any],
+    payload: PushSubscriptionRequest,
+) -> None:
+    courier_id, courier_name = courier_identity(user)
+    endpoint = payload.endpoint.strip()
+    p256dh = payload.keys.p256dh.strip()
+    auth = payload.keys.auth.strip()
+
+    if not endpoint or not p256dh or not auth:
+        raise HTTPException(
+            status_code=422,
+            detail="Hiányos push feliratkozási adatok.",
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    supabase_rest(
+        "POST",
+        "pwa_push_subscriptions",
+        params={"on_conflict": "endpoint"},
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "endpoint": endpoint,
+            "p256dh": p256dh,
+            "auth": auth,
+            "user_agent": payload.user_agent.strip(),
+            "active": True,
+            "last_seen_at": now,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+
+
+def disable_push_subscription(
+    user: dict[str, Any],
+    endpoint: str,
+) -> None:
+    courier_id, _courier_name = courier_identity(user)
+    clean_endpoint = endpoint.strip()
+    if not clean_endpoint:
+        return
+
+    supabase_rest(
+        "PATCH",
+        "pwa_push_subscriptions",
+        params={
+            "courier_id": f"eq.{courier_id}",
+            "endpoint": f"eq.{clean_endpoint}",
+        },
+        payload={
+            "active": False,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
 app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None)
 
 
@@ -808,6 +889,34 @@ def logout(response: Response):
 @app.get("/api/me")
 def me(giriton_pwa_session: str | None = Cookie(default=None)):
     return {"user": public_user(require_user(giriton_pwa_session))}
+
+
+@app.get("/api/push/public-key")
+def get_push_public_key(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_user(giriton_pwa_session)
+    return {"publicKey": public_vapid_key()}
+
+
+@app.post("/api/push/subscribe")
+def subscribe_push(
+    payload: PushSubscriptionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    save_push_subscription(user, payload)
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+def unsubscribe_push(
+    payload: PushSubscriptionRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    disable_push_subscription(user, payload.endpoint)
+    return {"ok": True}
 
 
 @app.get("/api/profile/billing")
