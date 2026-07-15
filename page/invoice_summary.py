@@ -406,51 +406,110 @@ def show_invoice_summary_page():
             mime="application/pdf",
             use_container_width=True,
         )
-        if selected_driver != "Mind" and st.button(
-            "Feltöltés a futár profiljába",
-            use_container_width=True,
-            key="invoice_send_to_courier_card",
-        ):
+        if selected_driver != "Mind":
             selected_row = driver_summary.iloc[0]
             courier_id, courier_name = resolve_courier_identity(
                 selected_row,
                 selected_driver,
             )
 
-            if not courier_id:
-                st.warning("Ehhez a futárhoz nincs courier ID, így nem tudom a Kifli kártyára küldeni.")
-            else:
-                document_month = month_start_from_date(start_date)
-                file_name = (
-                    f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_"
-                    f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
-                )
-                upload_peopleforce_document_bytes(
-                    courier_id=courier_id,
-                    courier_name=courier_name,
-                    document_type="settlement",
-                    document_month=document_month,
-                    title=f"Elszamolas - {start_date.isoformat()} - {end_date.isoformat()}",
-                    note="Admin által kártyára küldött elszámolás.",
-                    file_name=file_name,
-                    mime_type="application/pdf",
-                    file_bytes=pdf_bytes,
-                    uploaded_by=str(st.session_state.get("username", "admin")),
-                )
-                upsert_peopleforce_card_status(
-                    courier_id=courier_id,
-                    courier_name=courier_name,
-                    action_key="settlement",
-                    document_month=document_month,
-                    status="open",
-                    status_note="Elszámolás kártyára küldve, futár visszajelzésre vár.",
-                    updated_by=str(st.session_state.get("username", "admin")),
-                )
-                st.cache_data.clear()
-                st.success("Az elszámolás bekerült a futár profiljába.")
-                st.rerun()
-        elif selected_driver == "Mind":
-            st.caption("Profilba feltöltéshez válassz ki egy konkrét futárt.")
+            if st.button(
+                "Elszámolás feltöltése a futár profiljába",
+                use_container_width=True,
+                key="invoice_send_to_courier_card",
+            ):
+                if not courier_id:
+                    st.warning(
+                        "Ehhez a futárhoz nincs courier ID, így nem tudom a profiljába küldeni."
+                    )
+                else:
+                    document_month = month_start_from_date(start_date)
+                    file_name = (
+                        f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_"
+                        f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+                    )
+                    upload_peopleforce_document_bytes(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        document_type="settlement",
+                        document_month=document_month,
+                        title=f"Elszamolas - {start_date.isoformat()} - {end_date.isoformat()}",
+                        note="Admin által profilba feltöltött elszámolás.",
+                        file_name=file_name,
+                        mime_type="application/pdf",
+                        file_bytes=pdf_bytes,
+                        uploaded_by=str(st.session_state.get("username", "admin")),
+                    )
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        action_key="settlement",
+                        document_month=document_month,
+                        status="open",
+                        status_note="Elszámolás feltöltve, futár visszajelzésére vár.",
+                        updated_by=str(st.session_state.get("username", "admin")),
+                    )
+                    st.cache_data.clear()
+                    st.success("Az elszámolás bekerült a futár profiljába.")
+                    st.rerun()
+
+            st.divider()
+            st.subheader("TIG feltöltése")
+            st.caption(
+                "A feltöltött TIG megjelenik a mobilos folyamatban, ahol a futár elfogadhatja."
+            )
+            uploaded_tig = st.file_uploader(
+                "TIG dokumentum (PDF)",
+                type=["pdf"],
+                key=f"tig_pdf_upload_{courier_id}_{start_date.isoformat()}",
+            )
+
+            if st.button(
+                "TIG feltöltése a futár profiljába",
+                use_container_width=True,
+                key="tig_send_to_courier_card",
+                disabled=uploaded_tig is None,
+            ):
+                if not courier_id:
+                    st.warning(
+                        "Ehhez a futárhoz nincs courier ID, így nem tudom a TIG-et feltölteni."
+                    )
+                elif uploaded_tig is None:
+                    st.warning("Válassz ki egy TIG PDF-fájlt.")
+                else:
+                    document_month = month_start_from_date(start_date)
+                    tig_file_name = (
+                        f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                        f"{document_month.strftime('%Y-%m')}.pdf"
+                    )
+                    upload_peopleforce_document_bytes(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        document_type="tig",
+                        document_month=document_month,
+                        title=f"TIG - {document_month.strftime('%Y-%m')}",
+                        note="Admin által profilba feltöltött TIG.",
+                        file_name=tig_file_name,
+                        mime_type=uploaded_tig.type or "application/pdf",
+                        file_bytes=uploaded_tig.getvalue(),
+                        uploaded_by=str(st.session_state.get("username", "admin")),
+                    )
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        action_key="tig",
+                        document_month=document_month,
+                        status="open",
+                        status_note="TIG feltöltve, futár elfogadására vár.",
+                        updated_by=str(st.session_state.get("username", "admin")),
+                    )
+                    st.cache_data.clear()
+                    st.success("A TIG bekerült a futár profiljába.")
+                    st.rerun()
+        else:
+            st.caption(
+                "Elszámolás vagy TIG feltöltéséhez válassz ki egy konkrét futárt."
+            )
     except Exception as exc:
         st.info(
             f"PDF generalas nem elerheto: {exc}"
