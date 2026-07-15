@@ -473,7 +473,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=7");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=8");
 }
 
 start();
