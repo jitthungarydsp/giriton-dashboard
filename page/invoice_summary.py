@@ -1,6 +1,16 @@
 from datetime import date
+from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
 from resources.courier_master_db import read_courier_master
@@ -53,6 +63,208 @@ def slugify_filename(value):
         elif char in [" ", "-", "_", "."]:
             safe.append("_")
     return "".join(safe).strip("_") or "osszes"
+
+
+def _register_tig_font():
+    """Magyar ékezeteket támogató betűtípus regisztrálása, ha elérhető."""
+    font_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    bold_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    ]
+    try:
+        for regular_path in font_candidates:
+            if Path(regular_path).exists():
+                pdfmetrics.registerFont(TTFont("TIGFont", regular_path))
+                break
+        else:
+            return "Helvetica", "Helvetica-Bold"
+
+        for bold_path in bold_candidates:
+            if Path(bold_path).exists():
+                pdfmetrics.registerFont(TTFont("TIGFont-Bold", bold_path))
+                return "TIGFont", "TIGFont-Bold"
+        return "TIGFont", "TIGFont"
+    except Exception:
+        return "Helvetica", "Helvetica-Bold"
+
+
+def _huf(value):
+    try:
+        amount = int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        amount = 0
+    return f"{amount:,}".replace(",", " ") + " Ft"
+
+
+def build_tig_pdf_bytes(
+    *,
+    courier_name: str,
+    courier_address: str,
+    courier_tax_number: str,
+    courier_id: str,
+    document_month: date,
+    transfer_amount_huf: float,
+    cash_amount_huf: float = 0,
+) -> bytes:
+    """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
+    regular_font, bold_font = _register_tig_font()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=f"TIG {document_month:%Y-%m} - {courier_name}",
+    )
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle(
+        "TIGNormal", parent=styles["Normal"], fontName=regular_font,
+        fontSize=9.5, leading=12, textColor=colors.HexColor("#222222")
+    )
+    small = ParagraphStyle(
+        "TIGSmall", parent=normal, fontSize=8, leading=10
+    )
+    title_style = ParagraphStyle(
+        "TIGTitle", parent=normal, fontName=bold_font, fontSize=21,
+        leading=24, alignment=TA_LEFT, spaceAfter=8
+    )
+    heading = ParagraphStyle(
+        "TIGHeading", parent=normal, fontName=bold_font, fontSize=10,
+        textColor=colors.HexColor("#666666")
+    )
+    center = ParagraphStyle("TIGCenter", parent=normal, alignment=TA_CENTER)
+    right = ParagraphStyle("TIGRight", parent=normal, alignment=TA_RIGHT)
+    bold = ParagraphStyle("TIGBold", parent=normal, fontName=bold_font)
+    red_bold = ParagraphStyle(
+        "TIGRedBold", parent=right, fontName=bold_font,
+        textColor=colors.HexColor("#d60000"), fontSize=12
+    )
+
+    period_label = f"{document_month.year}. {document_month.strftime('%B')}"
+    hu_months = {
+        1: "január", 2: "február", 3: "március", 4: "április",
+        5: "május", 6: "június", 7: "július", 8: "augusztus",
+        9: "szeptember", 10: "október", 11: "november", 12: "december",
+    }
+    period_label = f"{document_month.year}. {hu_months[document_month.month]}"
+    transfer_amount_huf = int(round(float(transfer_amount_huf or 0)))
+    cash_amount_huf = int(round(float(cash_amount_huf or 0)))
+
+    story = [
+        Paragraph("TELJESÍTÉSI IGAZOLÁS", title_style),
+        Spacer(1, 3 * mm),
+    ]
+
+    party_data = [
+        [
+            Paragraph("SZOLGÁLTATÓ (ELADÓ):", heading),
+            Paragraph("MEGBÍZÓ (VEVŐ):", heading),
+        ],
+        [
+            Paragraph(
+                f"<b>{courier_name}</b><br/>{courier_address or '—'}<br/>"
+                f"Adószám: <b>{courier_tax_number or '—'}</b>", normal
+            ),
+            Paragraph(
+                "<b>Just in Time Transport Hungary Kft.</b><br/>"
+                "1201 Budapest, Atléta utca 44<br/>"
+                "Adószám: <b>32649460-2-43</b>", normal
+            ),
+        ],
+    ]
+    party_table = Table(party_data, colWidths=[82 * mm, 82 * mm])
+    party_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (0, 1), 0.7, colors.HexColor("#cccccc")),
+        ("BOX", (1, 0), (1, 1), 0.7, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f5f5f5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([party_table, Spacer(1, 5 * mm)])
+
+    timing = Table([
+        [Paragraph("Számlázott időszak", bold), Paragraph("Teljesítés napja", bold), Paragraph("Fizetési határidő", bold), Paragraph("Fizetés módja", bold)],
+        [Paragraph(period_label, center), Paragraph("Kiállítás napja + 8 nap", center), Paragraph("Kiállítás napja + 8 nap", center), Paragraph("Átutalás", center)],
+    ], colWidths=[40 * mm, 48 * mm, 48 * mm, 30 * mm])
+    timing.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([timing, Spacer(1, 5 * mm)])
+
+    amount_table = Table([
+        [Paragraph("Tétel megnevezése", bold), Paragraph("Nettó (Ft)", bold), Paragraph("ÁFA (Ft)", bold), Paragraph("Bruttó (Ft)", bold)],
+        [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(transfer_amount_huf), right), Paragraph("AAM", center), Paragraph(_huf(transfer_amount_huf), right)],
+        [Paragraph("VÉGÖSSZEG:", bold), "", "", Paragraph(_huf(transfer_amount_huf), red_bold)],
+    ], colWidths=[76 * mm, 32 * mm, 28 * mm, 32 * mm])
+    amount_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, 1), 0.7, colors.HexColor("#444444")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("SPAN", (0, 2), (2, 2)),
+        ("ALIGN", (0, 2), (2, 2), "RIGHT"),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#f9f9f9")),
+        ("BOX", (0, 2), (-1, 2), 0.7, colors.HexColor("#444444")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([amount_table, Spacer(1, 4 * mm)])
+
+    id_table = Table([[Paragraph("Megjegyzésbe kötelező az azonosító:", bold), Paragraph(str(courier_id), red_bold)]], colWidths=[116 * mm, 52 * mm])
+    id_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#777777")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.7, colors.HexColor("#777777")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story.extend([id_table, Spacer(1, 5 * mm)])
+
+    story.append(Paragraph(
+        "<b>⚠ SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
+        "• A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd.<br/>"
+        "• Hibás számla (stornó/javítás) esetén nettó 5 000 Ft adminisztrációs költséget érvényesítünk.",
+        normal,
+    ))
+
+    if cash_amount_huf:
+        story.extend([Spacer(1, 5 * mm), Paragraph("KÉSZPÉNZES SZÁMLA (csak ha a levonás miatt szükséges)", heading)])
+        cash_table = Table([
+            [Paragraph("Megnevezés", bold), Paragraph("Nettó", bold), Paragraph("ÁFA", bold), Paragraph("Bruttó", bold), Paragraph("Mód", bold)],
+            [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(cash_amount_huf), right), Paragraph("TA (0%)", center), Paragraph(_huf(cash_amount_huf), right), Paragraph("KP", bold)],
+        ], colWidths=[68 * mm, 29 * mm, 25 * mm, 29 * mm, 17 * mm])
+        cash_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(cash_table)
+
+    story.extend([
+        Spacer(1, 8 * mm),
+        Paragraph(
+            "Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/>"
+            "<b>Just in Time Transport Hungary Kft.</b><br/>"
+            "Észrevétel és kifogások: elszamolas@jitt.hu",
+            ParagraphStyle("TIGFooter", parent=small, alignment=TA_CENTER, textColor=colors.HexColor("#777777")),
+        ),
+    ])
+
+    doc.build(story)
+    return buffer.getvalue()
 
 
 def normalize_name(value):
@@ -454,44 +666,129 @@ def show_invoice_summary_page():
                     st.rerun()
 
             st.divider()
-            st.subheader("TIG feltöltése")
+            st.subheader("TIG generálása")
             st.caption(
-                "A feltöltött TIG megjelenik a mobilos folyamatban, ahol a futár elfogadhatja."
-            )
-            uploaded_tig = st.file_uploader(
-                "TIG dokumentum (PDF)",
-                type=["pdf"],
-                key=f"tig_pdf_upload_{courier_id}_{start_date.isoformat()}",
+                "Az admin itt állítja elő a teljesítési igazolást, majd közvetlenül a futár profiljába töltheti."
             )
 
-            if st.button(
-                "TIG feltöltése a futár profiljába",
-                use_container_width=True,
-                key="tig_send_to_courier_card",
-                disabled=uploaded_tig is None,
-            ):
+            master_row = {}
+            try:
+                master_df = read_courier_master()
+                if not master_df.empty and "courier_id" in master_df.columns:
+                    matches = master_df[
+                        master_df["courier_id"].astype(str).str.strip() == str(courier_id).strip()
+                    ]
+                    if not matches.empty:
+                        master_row = matches.iloc[0].to_dict()
+            except Exception:
+                master_row = {}
+
+            def first_value(*names, default=""):
+                for name in names:
+                    value = master_row.get(name, selected_row.get(name, ""))
+                    if value is not None and str(value).strip():
+                        return str(value).strip()
+                return default
+
+            default_address = first_value(
+                "courier_address", "address", "billing_address", "invoice_address"
+            )
+            default_tax_number = first_value(
+                "tax_number", "tax_id", "vat_number", "adoszam"
+            )
+            default_transfer_amount = int(
+                round(float(selected_row.get("payable_total_huf", 0) or 0))
+            )
+
+            with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
+                tig_col1, tig_col2 = st.columns(2)
+                tig_seller_name = tig_col1.text_input(
+                    "Szolgáltató neve",
+                    value=courier_name,
+                )
+                tig_tax_number = tig_col2.text_input(
+                    "Adószám",
+                    value=default_tax_number,
+                )
+                tig_address = st.text_input(
+                    "Szolgáltató címe",
+                    value=default_address,
+                )
+                amount_col1, amount_col2 = st.columns(2)
+                tig_transfer_amount = amount_col1.number_input(
+                    "Átutalásos számla összege (Ft)",
+                    min_value=0,
+                    value=max(default_transfer_amount, 0),
+                    step=100,
+                )
+                tig_cash_amount = amount_col2.number_input(
+                    "Készpénzes számla összege (Ft, ha szükséges)",
+                    min_value=0,
+                    value=0,
+                    step=100,
+                )
+                generate_tig = st.form_submit_button(
+                    "TIG előállítása",
+                    use_container_width=True,
+                )
+
+            tig_state_key = f"generated_tig_{courier_id}_{start_date.isoformat()}"
+            if generate_tig:
                 if not courier_id:
-                    st.warning(
-                        "Ehhez a futárhoz nincs courier ID, így nem tudom a TIG-et feltölteni."
-                    )
-                elif uploaded_tig is None:
-                    st.warning("Válassz ki egy TIG PDF-fájlt.")
+                    st.warning("Ehhez a futárhoz nincs courier ID.")
+                elif not str(tig_seller_name).strip():
+                    st.warning("Add meg a szolgáltató nevét.")
+                elif not str(tig_tax_number).strip():
+                    st.warning("Add meg az adószámot.")
+                elif not str(tig_address).strip():
+                    st.warning("Add meg a szolgáltató címét.")
                 else:
                     document_month = month_start_from_date(start_date)
-                    tig_file_name = (
-                        f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
-                        f"{document_month.strftime('%Y-%m')}.pdf"
+                    generated_tig_bytes = build_tig_pdf_bytes(
+                        courier_name=str(tig_seller_name).strip(),
+                        courier_address=str(tig_address).strip(),
+                        courier_tax_number=str(tig_tax_number).strip(),
+                        courier_id=courier_id,
+                        document_month=document_month,
+                        transfer_amount_huf=tig_transfer_amount,
+                        cash_amount_huf=tig_cash_amount,
                     )
+                    st.session_state[tig_state_key] = {
+                        "bytes": generated_tig_bytes,
+                        "seller_name": str(tig_seller_name).strip(),
+                        "month": document_month,
+                    }
+                    st.success("A TIG elkészült. Ellenőrizd, majd töltsd fel a futár profiljába.")
+
+            generated_tig = st.session_state.get(tig_state_key)
+            if generated_tig:
+                document_month = generated_tig["month"]
+                tig_file_name = (
+                    f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                    f"{document_month.strftime('%Y-%m')}.pdf"
+                )
+                st.download_button(
+                    "TIG letöltése ellenőrzéshez",
+                    data=generated_tig["bytes"],
+                    file_name=tig_file_name,
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+                if st.button(
+                    "TIG feltöltése a futár profiljába",
+                    use_container_width=True,
+                    key=f"tig_send_to_courier_card_{courier_id}_{start_date.isoformat()}",
+                ):
                     upload_peopleforce_document_bytes(
                         courier_id=courier_id,
                         courier_name=courier_name,
                         document_type="tig",
                         document_month=document_month,
                         title=f"TIG - {document_month.strftime('%Y-%m')}",
-                        note="Admin által profilba feltöltött TIG.",
+                        note="Admin által generált teljesítési igazolás.",
                         file_name=tig_file_name,
-                        mime_type=uploaded_tig.type or "application/pdf",
-                        file_bytes=uploaded_tig.getvalue(),
+                        mime_type="application/pdf",
+                        file_bytes=generated_tig["bytes"],
                         uploaded_by=str(st.session_state.get("username", "admin")),
                     )
                     upsert_peopleforce_card_status(
@@ -500,12 +797,14 @@ def show_invoice_summary_page():
                         action_key="tig",
                         document_month=document_month,
                         status="open",
-                        status_note="TIG feltöltve, futár elfogadására vár.",
+                        status_note="TIG elkészült, futár elfogadására vár.",
                         updated_by=str(st.session_state.get("username", "admin")),
                     )
+                    st.session_state.pop(tig_state_key, None)
                     st.cache_data.clear()
-                    st.success("A TIG bekerült a futár profiljába.")
+                    st.success("A generált TIG bekerült a futár profiljába.")
                     st.rerun()
+
         else:
             st.caption(
                 "Elszámolás vagy TIG feltöltéséhez válassz ki egy konkrét futárt."
