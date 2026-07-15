@@ -1,5 +1,6 @@
 import json
 import secrets
+from copy import deepcopy
 from datetime import datetime
 
 from resources.security import hash_password
@@ -11,7 +12,7 @@ USERS_FILE = "data/users.json"
 def load_users():
 
     with open(
-        "data/users.json",
+        USERS_FILE,
         "r",
         encoding="utf-8"
     ) as f:
@@ -22,7 +23,7 @@ def load_users():
 def save_users(data):
 
     with open(
-        "data/users.json",
+        USERS_FILE,
         "w",
         encoding="utf-8"
     ) as f:
@@ -126,6 +127,57 @@ def reset_password(
     )
 
     return password
+
+
+def reset_password_and_send(
+    username,
+    recipient_email,
+    send_function,
+):
+    data = load_users()
+    selected_index = None
+
+    for index, user in enumerate(data.get("users", [])):
+        if user.get("username") == username:
+            selected_index = index
+            break
+
+    if selected_index is None:
+        raise ValueError("A felhasználó nem található.")
+
+    previous_user = deepcopy(data["users"][selected_index])
+    password = generate_password()
+    user = data["users"][selected_index]
+    user["passwordHash"] = hash_password(password)
+    user.pop("password", None)
+    user["token"] = ""
+    save_users(data)
+
+    try:
+        result = send_function(
+            recipient_email,
+            username,
+            password,
+        )
+    except Exception:
+        rollback_data = load_users()
+        for index, current_user in enumerate(rollback_data.get("users", [])):
+            if current_user.get("username") == username:
+                rollback_data["users"][index] = previous_user
+                break
+        save_users(rollback_data)
+        raise
+
+    final_data = load_users()
+    for current_user in final_data.get("users", []):
+        if current_user.get("username") == username:
+            current_user["credentialEmail"] = str(recipient_email).strip()
+            current_user["credentialEmailSentAt"] = datetime.now().isoformat(
+                timespec="seconds"
+            )
+            break
+    save_users(final_data)
+    return result
 
 
 def update_role(

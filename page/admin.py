@@ -2,13 +2,19 @@ import pandas as pd
 import streamlit as st
 
 from resources.courier_db_sheet import (
+    build_courier_lookup,
     sync_courier_db_from_drivers,
     upsert_couriers,
+)
+from resources.email_sender import (
+    send_login_credentials,
+    validate_email,
 )
 from resources.users import (
     load_users,
     create_user,
     reset_password,
+    reset_password_and_send,
     update_role,
     toggle_active,
     update_trainer,
@@ -282,6 +288,60 @@ def show_admin_page():
             st.rerun()
 
     with col2:
+
+        st.markdown("**Belépési adatok küldése**")
+
+        default_email = selected_data.get(
+            "credentialEmail",
+            "",
+        )
+
+        if not default_email:
+            try:
+                courier_lookup = build_courier_lookup()
+                courier_record = courier_lookup["by_id"].get(
+                    str(selected_data.get("courierId") or "").strip(),
+                    {},
+                )
+                default_email = courier_record.get("email", "")
+            except Exception:
+                default_email = ""
+
+        with st.form("send_login_credentials_form"):
+            recipient_email = st.text_input(
+                "Futár e-mail-címe",
+                value=default_email,
+            )
+            confirm_reset = st.checkbox(
+                "Új ideiglenes jelszó készül, a korábbi jelszó megszűnik."
+            )
+            send_credentials = st.form_submit_button(
+                "Belépési adatok elküldése",
+                type="primary",
+            )
+
+        if send_credentials:
+            if not confirm_reset:
+                st.error("A jelszóváltoztatást jóvá kell hagyni.")
+            else:
+                try:
+                    recipient_email = validate_email(recipient_email)
+                    result = reset_password_and_send(
+                        selected_user,
+                        recipient_email,
+                        send_login_credentials,
+                    )
+                    st.success(
+                        "A felhasználónév és az új ideiglenes jelszó "
+                        f"elküldve ide: {result['recipient']}"
+                    )
+                except Exception as exc:
+                    st.error(
+                        "A levélküldés sikertelen. A korábbi jelszó "
+                        f"érvényben maradt. Hiba: {exc}"
+                    )
+
+        st.divider()
 
         if st.button(
             "🔑 Jelszó reset"
