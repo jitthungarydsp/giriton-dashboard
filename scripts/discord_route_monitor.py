@@ -166,7 +166,7 @@ def get_courier_name(courier_id, driver_detail):
         or driver_detail.get("name")
         or f"#{courier_id}"
     )
-def 
+
 
 def find_first_checkpoint(route):
     checkpoints = route.get("checkpoints", []) or []
