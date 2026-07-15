@@ -605,7 +605,7 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
         raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
 
 
-app = FastAPI(title="Giriton Futár PWA", docs_url=None, redoc_url=None)
+app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None)
 
 
 @app.post("/api/login")
