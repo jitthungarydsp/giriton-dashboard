@@ -1,8 +1,8 @@
-const CACHE = "giriton-pwa-v8";
+const CACHE = "giriton-pwa-v9";
 const APP_SHELL = [
   "/",
   "/styles.css",
-  "/app.js?v=8",
+  "/app.js?v=9",
   "/manifest.webmanifest",
   "/icon.svg"
 ];

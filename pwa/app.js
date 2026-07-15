@@ -310,6 +310,159 @@ async function submitComplaint(event, action) {
 }
 
 
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding)
+    .replaceAll("-", "+")
+    .replaceAll("_", "/");
+  const raw = atob(base64);
+  return Uint8Array.from(
+    [...raw].map((character) => character.charCodeAt(0))
+  );
+}
+
+function ensureNotificationCard() {
+  let card = $("#notification-card");
+  if (card) return card;
+
+  const home = $("#home-content");
+  const hero = home?.querySelector(".hero-card");
+  if (!home || !hero) return null;
+
+  card = document.createElement("section");
+  card.id = "notification-card";
+  card.className = "process-card";
+  card.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">🔔</span>
+      <div>
+        <h3>Műszakértesítések</h3>
+        <p id="notification-status">Ellenőrzés…</p>
+      </div>
+    </div>
+    <button
+      id="enable-notifications"
+      class="primary"
+      type="button"
+    >
+      Értesítések bekapcsolása
+    </button>
+  `;
+
+  hero.insertAdjacentElement("afterend", card);
+  return card;
+}
+
+async function getPushSubscription() {
+  if (
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window)
+  ) {
+    return null;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+
+async function refreshNotificationStatus() {
+  const card = ensureNotificationCard();
+  if (!card) return;
+
+  const status = $("#notification-status");
+  const button = $("#enable-notifications");
+
+  if (
+    !("Notification" in window) ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window)
+  ) {
+    status.textContent =
+      "Ezen az eszközön a push értesítés nem támogatott.";
+    button.hidden = true;
+    return;
+  }
+
+  const subscription = await getPushSubscription();
+
+  if (Notification.permission === "granted" && subscription) {
+    status.textContent =
+      "Bekapcsolva. A holnapi műszakról értesítést kapsz.";
+    button.textContent = "Értesítések bekapcsolva";
+    button.disabled = true;
+    return;
+  }
+
+  if (Notification.permission === "denied") {
+    status.textContent =
+      "Az értesítések le vannak tiltva a böngészőben.";
+    button.textContent = "Értesítések letiltva";
+    button.disabled = true;
+    return;
+  }
+
+  status.textContent =
+    "Kapcsold be, hogy értesítést kapj a holnapi műszakodról.";
+  button.textContent = "Értesítések bekapcsolása";
+  button.disabled = false;
+}
+
+async function enablePushNotifications() {
+  const button = $("#enable-notifications");
+  const status = $("#notification-status");
+
+  if (!button || !status) return;
+
+  button.disabled = true;
+  status.textContent = "Engedélykérés…";
+
+  try {
+    const permission = await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      throw new Error("Az értesítési engedély nem lett megadva.");
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+
+    if (!subscription) {
+      const keyPayload = await api("/api/push/public-key");
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(
+          keyPayload.publicKey
+        ),
+      });
+    }
+
+    const serialized = subscription.toJSON();
+
+    await api("/api/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint: serialized.endpoint,
+        keys: serialized.keys,
+        user_agent: navigator.userAgent,
+      }),
+    });
+
+    await refreshNotificationStatus();
+  } catch (error) {
+    status.textContent =
+      `Az értesítés nem kapcsolható be: ${error.message}`;
+    button.disabled = false;
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target?.id === "enable-notifications") {
+    enablePushNotifications();
+  }
+});
+
+
 function setBillingMessage(message, isError = false) {
   const target = $("#billing-profile-message");
   if (!target) return;
@@ -446,6 +599,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     showApp();
     showSection("home");
     await loadShifts();
+    await refreshNotificationStatus();
   } catch (error) {
     $("#login-error").textContent = error.message;
   }
@@ -470,10 +624,11 @@ async function start() {
     showApp();
     showSection("home");
     await loadShifts();
+    await refreshNotificationStatus();
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=8");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=9");
 }
 
 start();
