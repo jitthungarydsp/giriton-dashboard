@@ -260,6 +260,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["snapshot", "compare"], required=True)
     parser.add_argument("--date", help="Celnap YYYY-MM-DD; alapertelmezett: holnap/ma.")
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=1,
+        help="Snapshot modban hany napot toltsunk le a kezdodattol.",
+    )
     parser.add_argument("--grace-minutes", type=int, default=30)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -270,37 +276,71 @@ def main():
         if args.mode == "snapshot"
         else now_local.date()
     )
-    fetched_at = datetime.now(timezone.utc)
-    payload = fetch_attendance(target_date)
-
     if args.mode == "snapshot":
-        rows = flatten_snapshot(payload, now_local.date(), target_date, fetched_at)
-        if not rows:
-            raise RuntimeError(f"Az API nem adott vissza muszakot ehhez a naphoz: {target_date}")
-        couriers = len({row["courier_id"] for row in rows})
-        print(f"SNAPSHOT date={target_date} couriers={couriers} shifts={len(rows)}")
+        days = max(1, args.days)
+        total_days = 0
+        total_couriers = 0
+        total_shifts = 0
+
+        for offset in range(days):
+            work_date = target_date + timedelta(days=offset)
+            fetched_at = datetime.now(timezone.utc)
+            payload = fetch_attendance(work_date)
+            rows = flatten_snapshot(
+                payload,
+                now_local.date(),
+                work_date,
+                fetched_at,
+            )
+
+            if not rows:
+                print(f"SNAPSHOT_EMPTY date={work_date}")
+                continue
+
+            couriers = len({row["courier_id"] for row in rows})
+            shifts = len(rows)
+            total_days += 1
+            total_couriers += couriers
+            total_shifts += shifts
+
+            print(
+                f"SNAPSHOT date={work_date} "
+                f"couriers={couriers} shifts={shifts}"
+            )
+
+            if args.dry_run:
+                continue
+
+            snapshot_json = {
+                "kind": SNAPSHOT_SOURCE,
+                "snapshot_date": now_local.date().isoformat(),
+                "work_date": work_date.isoformat(),
+                "snapshot_fetched_at": iso_datetime(fetched_at),
+                "courier_count": couriers,
+                "shift_count": shifts,
+                "api_payload": payload,
+            }
+            table = upsert_record(
+                SNAPSHOT_SOURCE,
+                work_date,
+                attendance_url(work_date),
+                snapshot_json,
+                fetched_at,
+            )
+            print(f"SNAPSHOT_OK date={work_date} table={table}")
+
         if args.dry_run:
             print("DRY_RUN no DB write")
-            return
-        snapshot_json = {
-            "kind": SNAPSHOT_SOURCE,
-            "snapshot_date": now_local.date().isoformat(),
-            "work_date": target_date.isoformat(),
-            "snapshot_fetched_at": iso_datetime(fetched_at),
-            "courier_count": couriers,
-            "shift_count": len(rows),
-            "api_payload": payload,
-        }
-        table = upsert_record(
-            SNAPSHOT_SOURCE,
-            target_date,
-            attendance_url(target_date),
-            snapshot_json,
-            fetched_at,
+
+        print(
+            f"SNAPSHOT_SUMMARY requested_days={days} "
+            f"stored_days={total_days} couriers_total={total_couriers} "
+            f"shifts_total={total_shifts}"
         )
-        print(f"SNAPSHOT_OK table={table}")
         return
 
+    fetched_at = datetime.now(timezone.utc)
+    payload = fetch_attendance(target_date)
     snapshot_json = load_snapshot(target_date)
     if not snapshot_json:
         raise RuntimeError(f"Nincs elozo napi snapshot ehhez a naphoz: {target_date}")

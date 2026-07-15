@@ -45,6 +45,14 @@ class ComplaintRequest(BaseModel):
     message: str
 
 
+class BillingProfileUpdate(BaseModel):
+    company_name: str = ""
+    company_address: str = ""
+    tax_number: str = ""
+    bank_account_number: str = ""
+    billing_email: str = ""
+
+
 def load_setting(name: str) -> str:
     value = os.getenv(name, "")
     if value:
@@ -216,6 +224,57 @@ def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]
     return [row for row in rows if str(row.get("work_date") or "") <= end.isoformat()]
 
 
+def read_giriton_future_shifts(
+    user: dict[str, Any],
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    courier_id = str(user.get("courierId") or "").strip()
+    if not courier_id:
+        return []
+
+    rows = supabase_rest(
+        "GET",
+        "giriton_future_shifts_latest",
+        params={
+            "select": (
+                "work_date,courier_id,courier_name,warehouse_name,"
+                "shift_id,shift_name,shift_start,shift_end,fetched_at"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "shift_start.asc",
+            "limit": "500",
+        },
+    )
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        work_date = str(row.get("work_date") or "")
+        if not work_date or work_date > end.isoformat():
+            continue
+
+        start_value = str(row.get("shift_start") or "")
+        end_value = str(row.get("shift_end") or "")
+
+        result.append(
+            {
+                "work_date": work_date,
+                "start_time": start_value[11:16] if len(start_value) >= 16 else "",
+                "end_time": end_value[11:16] if len(end_value) >= 16 else "",
+                "warehouse": str(row.get("warehouse_name") or ""),
+                "courier_name": str(row.get("courier_name") or ""),
+                "courier_id": str(row.get("courier_id") or ""),
+                "status": "ACTIVE",
+                "fetched_at": row.get("fetched_at"),
+                "shift_id": row.get("shift_id"),
+                "shift_name": str(row.get("shift_name") or ""),
+            }
+        )
+
+    return result
+
+
 def belongs_to_user(row: dict, user: dict) -> bool:
     courier_id = str(user.get("courierId") or "").strip()
     row_id = str(row.get("courier_id") or "").strip()
@@ -254,13 +313,9 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     source_errors: list[str] = []
 
     try:
-        giriton_raw = supabase_rows(
-            "giriton_shifts_raw",
-            "work_date,start_time,end_time,warehouse,courier_name,courier_id,status,fetched_at",
-            start,
-            end,
-        )
-    except Exception:
+        giriton_raw = read_giriton_future_shifts(user, start, end)
+    except Exception as exc:
+        print("Giriton future shifts error:", exc)
         giriton_raw = []
         source_errors.append("A Giriton adatok jelenleg nem érhetők el.")
 
@@ -407,6 +462,61 @@ def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
     if not courier_id:
         raise HTTPException(status_code=422, detail="A felhasználóhoz nincs futárazonosító rendelve.")
     return courier_id, courier_name
+
+
+BILLING_PROFILE_FIELDS = (
+    "company_name,company_address,tax_number,"
+    "bank_account_number,billing_email,billing_data_updated_at"
+)
+
+
+def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "courier_master",
+        params={
+            "select": BILLING_PROFILE_FIELDS,
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A futár profilja nem található.")
+    row = rows[0]
+    return {
+        "company_name": str(row.get("company_name") or ""),
+        "company_address": str(row.get("company_address") or ""),
+        "tax_number": str(row.get("tax_number") or ""),
+        "bank_account_number": str(row.get("bank_account_number") or ""),
+        "billing_email": str(row.get("billing_email") or ""),
+        "updated_at": row.get("billing_data_updated_at"),
+    }
+
+
+def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
+    company_name = payload.company_name.strip()
+    company_address = payload.company_address.strip()
+    tax_number = payload.tax_number.strip()
+    bank_account_number = payload.bank_account_number.strip()
+    billing_email = payload.billing_email.strip()
+
+    if not company_name:
+        raise HTTPException(status_code=422, detail="A vállalkozás neve kötelező.")
+    if not company_address:
+        raise HTTPException(status_code=422, detail="A vállalkozás székhelye kötelező.")
+    if not tax_number:
+        raise HTTPException(status_code=422, detail="Az adószám kötelező.")
+    if billing_email and ("@" not in billing_email or "." not in billing_email.rsplit("@", 1)[-1]):
+        raise HTTPException(status_code=422, detail="A számlázási e-mail formátuma hibás.")
+
+    return {
+        "company_name": company_name,
+        "company_address": company_address,
+        "tax_number": tax_number,
+        "bank_account_number": bank_account_number,
+        "billing_email": billing_email,
+    }
 
 
 def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
@@ -639,6 +749,46 @@ def me(giriton_pwa_session: str | None = Cookie(default=None)):
     return {"user": public_user(require_user(giriton_pwa_session))}
 
 
+@app.get("/api/profile/billing")
+def get_billing_profile(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    return {"billing": read_billing_profile(user)}
+
+
+@app.put("/api/profile/billing")
+def update_billing_profile(
+    payload: BillingProfileUpdate,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    billing = validate_billing_profile(payload)
+    now = datetime.now(timezone.utc).isoformat()
+
+    supabase_rest(
+        "PATCH",
+        "courier_master",
+        params={"courier_id": f"eq.{courier_id}"},
+        payload={
+            **billing,
+            "billing_data_source": "pwa_profile",
+            "billing_data_updated_at": now,
+            "updated_at": now,
+        },
+        prefer="return=minimal",
+    )
+
+    return {
+        "ok": True,
+        "billing": {
+            **billing,
+            "updated_at": now,
+        },
+    }
+
+
 @app.get("/api/shifts")
 def shifts(
     days: int = Query(default=5, ge=1, le=14),
@@ -762,8 +912,8 @@ async def check_invoice(
         courier_name=courier_name,
         courier_id=courier_id,
         expected_gross_amount=expected_tig_amount(user, month_value),
-        expected_seller_tax_number=str(user.get("taxNumber") or user.get("tax_number") or ""),
-        expected_seller_address=str(user.get("billingAddress") or user.get("billing_address") or ""),
+        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
+        expected_seller_address=read_billing_profile(user)["company_address"],
     )
     if result["ok"]:
         upsert_workflow_status(
@@ -801,8 +951,8 @@ async def submit_invoice(
         invoice_number=invoice_number,
         gross_amount=gross_amount,
         require_submission_fields=True,
-        expected_seller_tax_number=str(user.get("taxNumber") or user.get("tax_number") or ""),
-        expected_seller_address=str(user.get("billingAddress") or user.get("billing_address") or ""),
+        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
+        expected_seller_address=read_billing_profile(user)["company_address"],
     )
     if not result["ok"]:
         return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
