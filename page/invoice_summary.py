@@ -690,11 +690,21 @@ def show_invoice_summary_page():
                         return str(value).strip()
                 return default
 
+            default_company_name = first_value(
+                "company_name", default=courier_name
+            )
             default_address = first_value(
-                "courier_address", "address", "billing_address", "invoice_address"
+                "company_address", "courier_address", "address",
+                "billing_address", "invoice_address"
             )
             default_tax_number = first_value(
                 "tax_number", "tax_id", "vat_number", "adoszam"
+            )
+            default_bank_account = first_value(
+                "bank_account_number", "bank_account", "bankszamlaszam"
+            )
+            default_billing_email = first_value(
+                "billing_email", "email"
             )
             default_transfer_amount = int(
                 round(float(selected_row.get("payable_total_huf", 0) or 0))
@@ -703,16 +713,27 @@ def show_invoice_summary_page():
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
                 tig_col1, tig_col2 = st.columns(2)
                 tig_seller_name = tig_col1.text_input(
-                    "Szolgáltató neve",
-                    value=courier_name,
+                    "Szolgáltató / vállalkozás neve",
+                    value=default_company_name,
                 )
                 tig_tax_number = tig_col2.text_input(
                     "Adószám",
                     value=default_tax_number,
                 )
                 tig_address = st.text_input(
-                    "Szolgáltató címe",
+                    "Vállalkozás székhelye",
                     value=default_address,
+                )
+                details_col1, details_col2 = st.columns(2)
+                details_col1.text_input(
+                    "Bankszámlaszám",
+                    value=default_bank_account,
+                    disabled=True,
+                )
+                details_col2.text_input(
+                    "Számlázási e-mail",
+                    value=default_billing_email,
+                    disabled=True,
                 )
                 amount_col1, amount_col2 = st.columns(2)
                 tig_transfer_amount = amount_col1.number_input(
@@ -758,7 +779,9 @@ def show_invoice_summary_page():
                         "seller_name": str(tig_seller_name).strip(),
                         "month": document_month,
                     }
-                    st.success("A TIG elkészült. Ellenőrizd, majd töltsd fel a futár profiljába.")
+                    st.success(
+                        "A TIG elkészült. Ellenőrizd a PDF-et, majd nyomd meg a TIG feltöltése gombot."
+                    )
 
             generated_tig = st.session_state.get(tig_state_key)
             if generated_tig:
