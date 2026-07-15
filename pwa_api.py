@@ -382,7 +382,13 @@ def supabase_rest(
         timeout=timeout,
     )
     if not response.ok:
-        raise HTTPException(status_code=502, detail=f"Adatbázis-hiba ({response.status_code}).")
+        print("Supabase status:", response.status_code)
+        print("Supabase response:", response.text)
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Adatbázis-hiba ({response.status_code}).",
+    )
     if not response.content:
         return []
     try:
