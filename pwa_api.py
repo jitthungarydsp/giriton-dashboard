@@ -362,7 +362,6 @@ def supabase_headers(*, prefer: str = "") -> dict[str, str]:
         headers["Prefer"] = prefer
     return headers
 
-
 def supabase_rest(
     method: str,
     table: str,
@@ -373,6 +372,7 @@ def supabase_rest(
     timeout: int = 30,
 ) -> Any:
     url = load_setting("SUPABASE_URL").rstrip("/")
+
     response = requests.request(
         method,
         f"{url}/rest/v1/{table}",
@@ -381,20 +381,12 @@ def supabase_rest(
         json=payload,
         timeout=timeout,
     )
+
     if not response.ok:
+        print("Supabase table:", table)
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
 
-    response = requests.request(
-    method,
-    f"{url}/rest/v1/{table}",
-    headers=supabase_headers(prefer=prefer),
-    params=params,
-    json=payload,
-    timeout=timeout,
-)
-
-    if not response.ok:
         raise HTTPException(
             status_code=502,
             detail=f"Adatbázis-hiba ({response.status_code}).",
