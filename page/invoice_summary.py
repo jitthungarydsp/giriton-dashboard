@@ -691,24 +691,34 @@ def show_invoice_summary_page():
                 return default
 
             default_company_name = first_value(
-                "company_name", default=courier_name
+                "company_name",
+                default=courier_name,
             )
+
             default_address = first_value(
-                "company_address", "courier_address", "address",
-                "billing_address", "invoice_address"
+                "company_address",
+                "courier_address",
+                "address",
+                "billing_address",
+                "invoice_address",
             )
+
             default_tax_number = first_value(
-                "tax_number", "tax_id", "vat_number", "adoszam"
+                "tax_number",
+                "tax_id",
+                "vat_number",
+                "adoszam",
             )
+
             default_bank_account = first_value(
-                "bank_account_number", "bank_account", "bankszamlaszam"
+                "bank_account_number",
             )
+
             default_billing_email = first_value(
-                "billing_email", "email"
+                "billing_email",
+                "email",
             )
-            default_transfer_amount = int(
-                round(float(selected_row.get("payable_total_huf", 0) or 0))
-            )
+            
 
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
                 tig_col1, tig_col2 = st.columns(2)
