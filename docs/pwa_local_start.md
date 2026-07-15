@@ -34,3 +34,16 @@ http://localhost:8080
 Azonos Wi-Fi hálózaton a számítógép helyi IP-címével telefonról is megnyitható,
 például `http://192.168.1.20:8080`. A tényleges PWA-telepítéshez az éles környezetben
 HTTPS szükséges.
+
+## Render telepítés
+
+A gyökérben található `render.yaml` létrehoz egy ingyenes Python webszolgáltatást,
+amely a `main` ág változásait automatikusan telepíti. A Blueprint első létrehozásakor
+a Render felületén kell megadni a `SUPABASE_URL` és `SUPABASE_SERVICE_ROLE_KEY`
+értékeket. A `PWA_SESSION_SECRET` értékét a Render automatikusan generálja.
+
+A szolgáltatás indítási parancsa:
+
+```text
+uvicorn pwa_api:app --host 0.0.0.0 --port $PORT
+```
