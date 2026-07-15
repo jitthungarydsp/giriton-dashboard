@@ -1,4 +1,6 @@
 __pycache__/
+venv/
 .streamlit/secrets.toml
+.pwa_session_secret
 muszakpro/Kod_gs_*.txt
 muszakpro/index_html_*.txt

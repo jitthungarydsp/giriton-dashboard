@@ -18,3 +18,5 @@ plotly-express
 pathlib
 reportlab
 pypdf
+fastapi
+uvicorn[standard]
