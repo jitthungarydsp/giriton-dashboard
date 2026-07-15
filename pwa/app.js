@@ -71,7 +71,7 @@ function showSection(section) {
   $("#nav-profile").classList.toggle("active", section === "profile");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
-  if (section === "profile" && !state.billingProfile) loadBillingProfile();
+  if (section === "profile") loadBillingProfile();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -312,73 +312,76 @@ async function submitComplaint(event, action) {
 
 function setBillingMessage(message, isError = false) {
   const target = $("#billing-profile-message");
+  if (!target) return;
   target.textContent = message || "";
   target.classList.toggle("error", Boolean(isError));
 }
 
+function prepareReadonlyBillingProfile() {
+  const form = $("#billing-profile-form");
+  if (!form) return;
+
+  form.querySelectorAll("input").forEach((input) => {
+    input.readOnly = true;
+    input.setAttribute("aria-readonly", "true");
+  });
+
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.hidden = true;
+}
+
 function fillBillingProfile(data = {}) {
-  $("#billing-company-name").value = data.company_name || "";
-  $("#billing-company-address").value = data.company_address || "";
-  $("#billing-tax-number").value = data.tax_number || "";
-  $("#billing-bank-account").value = data.bank_account_number || "";
-  $("#billing-email").value = data.billing_email || "";
+  const values = {
+    "#billing-company-name": data.company_name || "",
+    "#billing-company-address": data.company_address || "",
+    "#billing-tax-number": data.tax_number || "",
+    "#billing-bank-account": data.bank_account_number || "",
+    "#billing-email": data.billing_email || "",
+  };
+
+  Object.entries(values).forEach(([selector, value]) => {
+    const input = $(selector);
+    if (input) input.value = value;
+  });
 }
 
 async function loadBillingProfile() {
-  const form = $("#billing-profile-form");
-  form.querySelectorAll("input, button").forEach((control) => {
-    control.disabled = true;
-  });
+  prepareReadonlyBillingProfile();
   setBillingMessage("Számlázási adatok betöltése…");
 
   try {
     const payload = await api("/api/profile/billing");
-    state.billingProfile = payload.billing || {};
-    fillBillingProfile(state.billingProfile);
+    // Kezeli mindkét válaszformát: { billing: {...} } vagy közvetlen {...}.
+    const billing = payload.billing || payload || {};
+    state.billingProfile = billing;
+    fillBillingProfile(billing);
+
+    const hasData = [
+      billing.company_name,
+      billing.company_address,
+      billing.tax_number,
+      billing.bank_account_number,
+      billing.billing_email,
+    ].some((value) => String(value || "").trim());
+
+    if (!hasData) {
+      setBillingMessage("Ehhez a profilhoz még nincsenek rögzített számlázási adatok.", true);
+      return;
+    }
+
     setBillingMessage(
-      state.billingProfile.updated_at
-        ? `Utolsó módosítás: ${new Date(state.billingProfile.updated_at).toLocaleString("hu-HU")}`
-        : ""
+      billing.updated_at
+        ? `Utolsó frissítés: ${new Date(billing.updated_at).toLocaleString("hu-HU")}`
+        : "A számlázási adatok központilag kezeltek, itt csak megtekinthetők."
     );
   } catch (error) {
-    setBillingMessage(error.message, true);
-  } finally {
-    form.querySelectorAll("input, button").forEach((control) => {
-      control.disabled = false;
-    });
+    state.billingProfile = null;
+    fillBillingProfile({});
+    setBillingMessage(`A számlázási adatok nem tölthetők be: ${error.message}`, true);
   }
 }
 
-$("#billing-profile-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-
-  const form = event.currentTarget;
-  const submitButton = form.querySelector('button[type="submit"]');
-  submitButton.disabled = true;
-  setBillingMessage("Mentés folyamatban…");
-
-  const payload = {
-    company_name: $("#billing-company-name").value.trim(),
-    company_address: $("#billing-company-address").value.trim(),
-    tax_number: $("#billing-tax-number").value.trim(),
-    bank_account_number: $("#billing-bank-account").value.trim(),
-    billing_email: $("#billing-email").value.trim(),
-  };
-
-  try {
-    const result = await api("/api/profile/billing", {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    });
-    state.billingProfile = result.billing || payload;
-    fillBillingProfile(state.billingProfile);
-    setBillingMessage("A számlázási adatok elmentve.");
-  } catch (error) {
-    setBillingMessage(error.message, true);
-  } finally {
-    submitButton.disabled = false;
-  }
-});
+prepareReadonlyBillingProfile();
 
 
 function renderValidation(target, validation, stored = null) {
@@ -470,7 +473,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=4");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=5");
 }
 
 start();
