@@ -5,6 +5,9 @@ concurrency:
   cancel-in-progress: false
 
 on:
+  push:
+    paths:
+      - ".github/jitt-invoice-import.trigger"
   workflow_dispatch:
     inputs:
       run_folgaltsag:
@@ -83,7 +86,7 @@ on:
 jobs:
   jitt_invoice:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_jitt_invoice == 'true' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_jitt_invoice == 'true') }}
     timeout-minutes: 15
 
     env:
