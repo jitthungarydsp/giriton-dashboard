@@ -1,12 +1,9 @@
 import argparse
 import os
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import psycopg2
-from psycopg2.extras import Json, execute_values
 import requests
 
 
@@ -14,8 +11,9 @@ ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 DSP_ID = "JIT"
 API_BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TABLE_SQL_PATH = PROJECT_ROOT / "docs" / "next_day_attendance_tables.sql"
+SNAPSHOT_SOURCE = "next-day-shift-snapshot"
+CHECK_SOURCE = "next-day-attendance-check"
+TARGET_TABLE_CANDIDATES = ["raw_dsp_attendance", "dsp_attendance_raw"]
 
 
 def parse_datetime(value):
@@ -32,6 +30,10 @@ def parse_datetime(value):
 
 def parse_date(value):
     return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+
+def iso_datetime(value):
+    return value.isoformat() if value else None
 
 
 def attendance_url(work_date):
@@ -76,77 +78,95 @@ def flatten_snapshot(payload, snapshot_date, work_date, fetched_at):
                     "shift_name": shift.get("shiftName"),
                     "shift_start": shift_start,
                     "shift_end": parse_datetime(shift.get("shiftEnd")),
-                    "raw_shift": shift,
                 }
             )
     return rows
 
 
-def database_url():
-    value = (os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL") or "").strip()
-    if not value:
-        raise RuntimeError("Hianyzik a DATABASE_URL vagy SUPABASE_DB_URL.")
-    return value
+def supabase_config():
+    url = str(os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    key = str(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if not url or not key:
+        raise RuntimeError("Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY.")
+    return url, key
 
 
-def ensure_tables(cursor):
-    cursor.execute(TABLE_SQL_PATH.read_text(encoding="utf-8"))
+def supabase_headers(extra=None):
+    _url, key = supabase_config()
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    if extra:
+        headers.update(extra)
+    return headers
 
 
-def save_snapshot(connection, rows, snapshot_date, work_date):
-    with connection.cursor() as cursor:
-        ensure_tables(cursor)
-        cursor.execute(
-            """
-            delete from public.ops_dsp_next_day_shift_snapshots
-            where snapshot_date = %s and work_date = %s
-            """,
-            (snapshot_date, work_date),
+def resolve_table():
+    url, _key = supabase_config()
+    for table in TARGET_TABLE_CANDIDATES:
+        response = requests.get(
+            f"{url}/rest/v1/{table}",
+            headers=supabase_headers(),
+            params={"select": "work_date", "limit": "1"},
+            timeout=30,
         )
-        execute_values(
-            cursor,
-            """
-            insert into public.ops_dsp_next_day_shift_snapshots (
-                snapshot_date, work_date, snapshot_fetched_at,
-                organization_id, dsp_id, dsp_name, courier_id, courier_name,
-                warehouse_name, shift_id, shift_name, shift_start, shift_end,
-                raw_shift, updated_at
-            ) values %s
-            """,
-            [
-                (
-                    row["snapshot_date"], row["work_date"], row["snapshot_fetched_at"],
-                    row["organization_id"], row["dsp_id"], row["dsp_name"],
-                    row["courier_id"], row["courier_name"], row["warehouse_name"],
-                    row["shift_id"], row["shift_name"], row["shift_start"],
-                    row["shift_end"], Json(row["raw_shift"]), row["snapshot_fetched_at"],
-                )
-                for row in rows
-            ],
-        )
+        if response.status_code in (400, 404) and (
+            "PGRST205" in response.text or "does not exist" in response.text
+        ):
+            continue
+        response.raise_for_status()
+        return table
+    raise RuntimeError("Nem talalhato raw DSP attendance tabla.")
 
 
-def load_snapshot(connection, work_date):
-    with connection.cursor() as cursor:
-        ensure_tables(cursor)
-        cursor.execute(
-            """
-            select snapshot_date, work_date, snapshot_fetched_at,
-                   organization_id, dsp_id, dsp_name, courier_id, courier_name,
-                   warehouse_name, shift_id, shift_name, shift_start, shift_end
-            from public.ops_dsp_next_day_shift_snapshots
-            where work_date = %s
-              and snapshot_date = (
-                  select max(snapshot_date)
-                  from public.ops_dsp_next_day_shift_snapshots
-                  where work_date = %s
-              )
-            order by shift_start, courier_name
-            """,
-            (work_date, work_date),
-        )
-        columns = [column.name for column in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+def upsert_record(source_name, work_date, request_url, response_json, fetched_at):
+    url, _key = supabase_config()
+    table = resolve_table()
+    row = {
+        "source_name": source_name,
+        "organization_id": ORGANIZATION_ID,
+        "dsp_id": DSP_ID,
+        "work_date": work_date.isoformat(),
+        "request_url": request_url,
+        "status_code": 200,
+        "response_json": response_json,
+        "fetched_at": iso_datetime(fetched_at),
+    }
+    response = requests.post(
+        f"{url}/rest/v1/{table}",
+        headers=supabase_headers(
+            {
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            }
+        ),
+        params={"on_conflict": "source_name,dsp_id,work_date"},
+        json=row,
+        timeout=60,
+    )
+    response.raise_for_status()
+    return table
+
+
+def load_snapshot(work_date):
+    url, _key = supabase_config()
+    table = resolve_table()
+    response = requests.get(
+        f"{url}/rest/v1/{table}",
+        headers=supabase_headers(),
+        params={
+            "select": "response_json,fetched_at",
+            "source_name": f"eq.{SNAPSHOT_SOURCE}",
+            "dsp_id": f"eq.{DSP_ID}",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "fetched_at.desc",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    rows = response.json()
+    if not rows:
+        return None
+    return rows[0].get("response_json") or {}
 
 
 def current_maps(payload):
@@ -211,10 +231,21 @@ def build_checks(snapshot_rows, payload, checked_at, grace_minutes):
 
         checks.append(
             {
-                **row,
-                "checked_at": checked_at,
+                "snapshot_date": row["snapshot_date"].isoformat(),
+                "work_date": row["work_date"].isoformat(),
+                "snapshot_fetched_at": iso_datetime(row["snapshot_fetched_at"]),
+                "checked_at": iso_datetime(checked_at),
+                "organization_id": row["organization_id"],
+                "dsp_id": row["dsp_id"],
+                "courier_id": row["courier_id"],
+                "courier_name": row["courier_name"],
+                "warehouse_name": row["warehouse_name"],
+                "shift_id": row["shift_id"],
+                "shift_name": row["shift_name"],
+                "shift_start": iso_datetime(shift_start),
+                "shift_end": iso_datetime(shift_end),
                 "current_shift_found": current_shift is not None,
-                "available_for_shift_since": available_at,
+                "available_for_shift_since": iso_datetime(available_at),
                 "evidence_route_ids": evidence_routes,
                 "grace_minutes": grace_minutes,
                 "minutes_after_start": minutes_after_start,
@@ -223,55 +254,6 @@ def build_checks(snapshot_rows, payload, checked_at, grace_minutes):
             }
         )
     return checks
-
-
-def save_checks(connection, checks):
-    with connection.cursor() as cursor:
-        ensure_tables(cursor)
-        execute_values(
-            cursor,
-            """
-            insert into public.ops_dsp_shift_attendance_checks (
-                work_date, courier_id, shift_id, snapshot_date,
-                snapshot_fetched_at, checked_at, organization_id, dsp_id,
-                courier_name, warehouse_name, shift_name, shift_start, shift_end,
-                current_shift_found, available_for_shift_since, evidence_route_ids,
-                grace_minutes, minutes_after_start, attendance_status,
-                status_reason, updated_at
-            ) values %s
-            on conflict (work_date, courier_id, shift_id) do update set
-                snapshot_date = excluded.snapshot_date,
-                snapshot_fetched_at = excluded.snapshot_fetched_at,
-                checked_at = excluded.checked_at,
-                courier_name = excluded.courier_name,
-                warehouse_name = excluded.warehouse_name,
-                shift_name = excluded.shift_name,
-                shift_start = excluded.shift_start,
-                shift_end = excluded.shift_end,
-                current_shift_found = excluded.current_shift_found,
-                available_for_shift_since = excluded.available_for_shift_since,
-                evidence_route_ids = excluded.evidence_route_ids,
-                grace_minutes = excluded.grace_minutes,
-                minutes_after_start = excluded.minutes_after_start,
-                attendance_status = excluded.attendance_status,
-                status_reason = excluded.status_reason,
-                updated_at = excluded.updated_at
-            """,
-            [
-                (
-                    row["work_date"], row["courier_id"], row["shift_id"],
-                    row["snapshot_date"], row["snapshot_fetched_at"],
-                    row["checked_at"], row["organization_id"], row["dsp_id"],
-                    row["courier_name"], row["warehouse_name"], row["shift_name"],
-                    row["shift_start"], row["shift_end"],
-                    row["current_shift_found"], row["available_for_shift_since"],
-                    Json(row["evidence_route_ids"]), row["grace_minutes"],
-                    row["minutes_after_start"], row["attendance_status"],
-                    row["status_reason"], row["checked_at"],
-                )
-                for row in checks
-            ],
-        )
 
 
 def main():
@@ -300,21 +282,58 @@ def main():
         if args.dry_run:
             print("DRY_RUN no DB write")
             return
-        with psycopg2.connect(database_url()) as connection:
-            save_snapshot(connection, rows, now_local.date(), target_date)
-        print("SNAPSHOT_OK")
+        snapshot_json = {
+            "kind": SNAPSHOT_SOURCE,
+            "snapshot_date": now_local.date().isoformat(),
+            "work_date": target_date.isoformat(),
+            "snapshot_fetched_at": iso_datetime(fetched_at),
+            "courier_count": couriers,
+            "shift_count": len(rows),
+            "api_payload": payload,
+        }
+        table = upsert_record(
+            SNAPSHOT_SOURCE,
+            target_date,
+            attendance_url(target_date),
+            snapshot_json,
+            fetched_at,
+        )
+        print(f"SNAPSHOT_OK table={table}")
         return
 
-    with psycopg2.connect(database_url()) as connection:
-        snapshot_rows = load_snapshot(connection, target_date)
-        if not snapshot_rows:
-            raise RuntimeError(f"Nincs elozo napi snapshot ehhez a naphoz: {target_date}")
-        checks = build_checks(
-            snapshot_rows, payload, fetched_at, max(0, args.grace_minutes)
-        )
-        save_checks(connection, checks)
-
+    snapshot_json = load_snapshot(target_date)
+    if not snapshot_json:
+        raise RuntimeError(f"Nincs elozo napi snapshot ehhez a naphoz: {target_date}")
+    snapshot_rows = flatten_snapshot(
+        snapshot_json.get("api_payload") or {},
+        parse_date(snapshot_json["snapshot_date"]),
+        target_date,
+        parse_datetime(snapshot_json["snapshot_fetched_at"]),
+    )
+    checks = build_checks(
+        snapshot_rows, payload, fetched_at, max(0, args.grace_minutes)
+    )
     counts = Counter(row["attendance_status"] for row in checks)
+    result_json = {
+        "kind": CHECK_SOURCE,
+        "work_date": target_date.isoformat(),
+        "snapshot_date": snapshot_json.get("snapshot_date"),
+        "snapshot_fetched_at": snapshot_json.get("snapshot_fetched_at"),
+        "checked_at": iso_datetime(fetched_at),
+        "grace_minutes": max(0, args.grace_minutes),
+        "counts": dict(counts),
+        "checks": checks,
+    }
+    if not args.dry_run:
+        table = upsert_record(
+            CHECK_SOURCE,
+            target_date,
+            attendance_url(target_date),
+            result_json,
+            fetched_at,
+        )
+        print(f"COMPARE_TABLE table={table}")
+
     print(
         "COMPARE_OK "
         f"date={target_date} total={len(checks)} "

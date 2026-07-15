@@ -5,7 +5,6 @@ on:
     paths:
       - ".github/workflows/next-day-attendance.yml"
       - "scripts/next_day_attendance_monitor.py"
-      - "docs/next_day_attendance_tables.sql"
   workflow_dispatch:
     inputs:
       mode:
@@ -40,7 +39,8 @@ jobs:
     timeout-minutes: 10
     env:
       TZ: Europe/Budapest
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,10 +51,12 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests psycopg2-binary
+        run: pip install requests
 
       - name: Validate database environment
-        run: test -n "$DATABASE_URL" || (echo "Missing DATABASE_URL secret" && exit 1)
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
 
       - name: Snapshot or compare attendance
         env:
