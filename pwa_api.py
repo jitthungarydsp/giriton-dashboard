@@ -260,28 +260,66 @@ def read_giriton_future_shifts(
     print("Giriton shifts rows:", rows)
 
     result: list[dict[str, Any]] = []
+    budapest_timezone = ZoneInfo("Europe/Budapest")
 
     for row in rows:
         work_date = str(row.get("work_date") or "").strip()
         if not work_date or work_date > end.isoformat():
             continue
 
-        shift_start_value = parse_datetime(row.get("shift_start"))
-        shift_end_value = parse_datetime(row.get("shift_end"))
+        shift_start_text = str(row.get("shift_start") or "").strip()
+        shift_end_text = str(row.get("shift_end") or "").strip()
 
-        if shift_start_value is None:
+        if not shift_start_text:
             continue
 
-        local_start = shift_start_value.astimezone(ZoneInfo("Europe/Budapest"))
+        # A Supabase UTC időpontjait biztosan időzónás datetime-ként értelmezzük.
+        if shift_start_text.endswith("Z"):
+            shift_start_text = shift_start_text[:-1] + "+00:00"
+        if shift_end_text.endswith("Z"):
+            shift_end_text = shift_end_text[:-1] + "+00:00"
+
+        try:
+            shift_start_value = datetime.fromisoformat(shift_start_text)
+            shift_end_value = (
+                datetime.fromisoformat(shift_end_text)
+                if shift_end_text
+                else None
+            )
+        except ValueError as exc:
+            print(
+                "Invalid shift datetime:",
+                {
+                    "shift_start": shift_start_text,
+                    "shift_end": shift_end_text,
+                    "error": str(exc),
+                },
+            )
+            continue
+
+        if shift_start_value.tzinfo is None:
+            shift_start_value = shift_start_value.replace(tzinfo=timezone.utc)
+
+        if shift_end_value is not None and shift_end_value.tzinfo is None:
+            shift_end_value = shift_end_value.replace(tzinfo=timezone.utc)
+
+        local_start = shift_start_value.astimezone(budapest_timezone)
         local_end = (
-            shift_end_value.astimezone(ZoneInfo("Europe/Budapest"))
+            shift_end_value.astimezone(budapest_timezone)
             if shift_end_value is not None
             else None
         )
 
+        print(
+            "Shift timezone debug:",
+            shift_start_text,
+            "=>",
+            local_start.isoformat(),
+        )
+
         result.append(
             {
-                "work_date": work_date,
+                "work_date": local_start.date().isoformat(),
                 "start_time": local_start.strftime("%H:%M"),
                 "end_time": local_end.strftime("%H:%M") if local_end else "",
                 "warehouse": str(row.get("warehouse_name") or ""),
