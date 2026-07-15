@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 import tomllib
@@ -224,14 +225,22 @@ def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]
     return [row for row in rows if str(row.get("work_date") or "") <= end.isoformat()]
 
 
+
 def read_giriton_future_shifts(
     user: dict[str, Any],
     start: date,
     end: date,
 ) -> list[dict[str, Any]]:
-    courier_id = str(user.get("courierId") or "").strip()
-    if not courier_id:
-        return []
+    courier_id, courier_name = courier_identity(user)
+
+    print(
+        "Giriton shifts query:",
+        {
+            "courier_id": courier_id,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+    )
 
     rows = supabase_rest(
         "GET",
@@ -248,23 +257,36 @@ def read_giriton_future_shifts(
         },
     )
 
+    print("Giriton shifts rows:", rows)
+
     result: list[dict[str, Any]] = []
+
     for row in rows:
-        work_date = str(row.get("work_date") or "")
+        work_date = str(row.get("work_date") or "").strip()
         if not work_date or work_date > end.isoformat():
             continue
 
-        start_value = str(row.get("shift_start") or "")
-        end_value = str(row.get("shift_end") or "")
+        shift_start_value = parse_datetime(row.get("shift_start"))
+        shift_end_value = parse_datetime(row.get("shift_end"))
+
+        if shift_start_value is None:
+            continue
+
+        local_start = shift_start_value.astimezone(ZoneInfo("Europe/Budapest"))
+        local_end = (
+            shift_end_value.astimezone(ZoneInfo("Europe/Budapest"))
+            if shift_end_value is not None
+            else None
+        )
 
         result.append(
             {
                 "work_date": work_date,
-                "start_time": start_value[11:16] if len(start_value) >= 16 else "",
-                "end_time": end_value[11:16] if len(end_value) >= 16 else "",
+                "start_time": local_start.strftime("%H:%M"),
+                "end_time": local_end.strftime("%H:%M") if local_end else "",
                 "warehouse": str(row.get("warehouse_name") or ""),
-                "courier_name": str(row.get("courier_name") or ""),
-                "courier_id": str(row.get("courier_id") or ""),
+                "courier_name": str(row.get("courier_name") or courier_name),
+                "courier_id": str(row.get("courier_id") or courier_id),
                 "status": "ACTIVE",
                 "fetched_at": row.get("fetched_at"),
                 "shift_id": row.get("shift_id"),
@@ -272,6 +294,7 @@ def read_giriton_future_shifts(
             }
         )
 
+    print("Giriton converted shifts:", result)
     return result
 
 
