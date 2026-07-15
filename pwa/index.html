@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#17231c" />
+    <meta name="description" content="Giriton futár mobilalkalmazás" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>Giriton Futár</title>
+  </head>
+  <body>
+    <main id="login-view" class="login-shell hidden">
+      <section class="login-card">
+        <div class="brand-mark">G</div>
+        <p class="eyebrow">GIRITON FUTÁR</p>
+        <h1>Jó újra látni.</h1>
+        <p class="muted">Lépj be a jelenlegi futáros felhasználóneveddel és jelszavaddal.</p>
+        <form id="login-form">
+          <label>Felhasználónév<input id="username" autocomplete="username" required /></label>
+          <label>Jelszó<input id="password" type="password" autocomplete="current-password" required /></label>
+          <p id="login-error" class="error" role="alert"></p>
+          <button class="primary" type="submit">Belépés</button>
+        </form>
+      </section>
+    </main>
+
+    <main id="app-view" class="app-shell hidden">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">GIRITON FUTÁR</p>
+          <h1 id="welcome">Szia!</h1>
+        </div>
+        <button id="logout" class="icon-button" aria-label="Kilépés">↗</button>
+      </header>
+
+      <section class="hero-card">
+        <div>
+          <p class="eyebrow">KÖVETKEZŐ MŰSZAK</p>
+          <h2 id="next-shift">Betöltés…</h2>
+          <p id="next-shift-detail" class="hero-detail"></p>
+        </div>
+        <span id="next-status" class="status-pill">Frissítés</span>
+      </section>
+
+      <section class="section-heading">
+        <div><p class="eyebrow">TERVEZÉS</p><h2>Műszakjaim</h2></div>
+        <button id="refresh" class="text-button">Frissítés</button>
+      </section>
+
+      <nav id="day-tabs" class="day-tabs" aria-label="Műszaknapok"></nav>
+      <section id="warning-list" aria-live="polite"></section>
+      <section id="shift-list" class="shift-list" aria-live="polite"></section>
+      <p id="updated-at" class="updated-at"></p>
+
+      <nav class="bottom-nav" aria-label="Főmenü">
+        <button class="active"><span>⌂</span>Kezdőlap</button>
+        <button disabled><span>▣</span>Elszámolás</button>
+        <button disabled><span>◇</span>Dokumentumok</button>
+        <button disabled><span>☻</span>Profil</button>
+      </nav>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
