@@ -1224,8 +1224,15 @@ def render_courier_profile_content(row, user):
         st.success("Bejelentés rögzítve előnézetként. Ide kötjük majd a következő folyamatot.")
 
 
-def render_courier_top_menu_legacy():
-    options = ["PeopleForce", "Kiflis utam", "Statisztika"]
+def get_courier_top_menu_options(user=None):
+    if (user or {}).get("role") == "user":
+        return ["PeopleForce"]
+
+    return ["PeopleForce", "Kiflis utam", "Statisztika"]
+
+
+def render_courier_top_menu_legacy(user=None):
+    options = get_courier_top_menu_options(user)
     current = st.session_state.get("courier_dashboard_tab", "PeopleForce")
 
     if current not in options:
@@ -1249,7 +1256,7 @@ def render_courier_top_menu_legacy():
         except TypeError:
             pass
 
-    columns = st.columns(3)
+    columns = st.columns(len(options))
 
     for index, option in enumerate(options):
         with columns[index]:
@@ -1265,8 +1272,8 @@ def render_courier_top_menu_legacy():
     return current
 
 
-def render_courier_top_menu():
-    options = ["PeopleForce", "Kiflis utam", "Statisztika"]
+def render_courier_top_menu(user=None):
+    options = get_courier_top_menu_options(user)
     current = st.session_state.get("courier_dashboard_tab", "PeopleForce")
 
     try:
@@ -5075,7 +5082,7 @@ def show_courier_dashboard_page():
 
     user = st.session_state["user"]
     today = local_now().date()
-    selected_view = render_courier_top_menu()
+    selected_view = render_courier_top_menu(user)
 
     snapshot_month_text = today.strftime("%Y-%m")
     user_courier_id = normalize_id(user.get("courierId"))
