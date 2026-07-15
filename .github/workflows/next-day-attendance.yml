@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/next-day-attendance.yml"
+      - ".github/next-day-attendance.trigger"
       - "scripts/next_day_attendance_monitor.py"
   workflow_dispatch:
     inputs:
@@ -63,8 +64,12 @@ jobs:
           INPUT_MODE: ${{ github.event.inputs.mode || '' }}
           INPUT_DATE: ${{ github.event.inputs.target_date || '' }}
           INPUT_GRACE: ${{ github.event.inputs.grace_minutes || '30' }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
         run: |
           MODE="$INPUT_MODE"
+          if [ "${{ github.event_name }}" = "push" ] && [[ "$COMMIT_MESSAGE" == *"[attendance-trigger]"* ]]; then
+            IFS='|' read -r MODE INPUT_DATE INPUT_GRACE < .github/next-day-attendance.trigger
+          fi
           if [ -z "$MODE" ]; then
             if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event.schedule }}" = "5 20 * * *" ]; then
               MODE="snapshot"
