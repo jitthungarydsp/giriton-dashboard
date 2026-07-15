@@ -1,1174 +1,479 @@
-import hashlib
-import hmac
-import base64
-import json
-import os
-import secrets
-import time
-import unicodedata
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
-from urllib.parse import quote
-from zoneinfo import ZoneInfo
-
-import requests
-import tomllib
-from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-
-from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
-from resources.security import verify_password
-
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-PWA_ROOT = PROJECT_ROOT / "pwa"
-USERS_FILE = PROJECT_ROOT / "data" / "users.json"
-LOCAL_SESSION_SECRET_FILE = PROJECT_ROOT / ".pwa_session_secret"
-SESSION_COOKIE = "giriton_pwa_session"
-SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class WorkflowActionRequest(BaseModel):
-    month: str
-
-
-class ComplaintRequest(BaseModel):
-    month: str
-    action: str
-    message: str
-
-
-class BillingProfileUpdate(BaseModel):
-    company_name: str = ""
-    company_address: str = ""
-    tax_number: str = ""
-    bank_account_number: str = ""
-    billing_email: str = ""
-
-
-class PushSubscriptionKeys(BaseModel):
-    p256dh: str
-    auth: str
-
-
-class PushSubscriptionRequest(BaseModel):
-    endpoint: str
-    keys: PushSubscriptionKeys
-    user_agent: str = ""
-
-
-def load_setting(name: str) -> str:
-    value = os.getenv(name, "")
-    if value:
-        return value
-
-    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
-    if not secrets_path.exists():
-        return ""
-
-    try:
-        with secrets_path.open("rb") as file:
-            settings = tomllib.load(file)
-        value = settings.get(name) or settings.get("supabase", {}).get(name)
-        return str(value or "")
-    except Exception:
-        return ""
-
-
-def supabase_key_headers(key: str) -> dict[str, str]:
-    """Support both legacy JWT service-role keys and the new sb_secret_ keys."""
-    clean_key = str(key or "").strip()
-    headers = {"apikey": clean_key}
-    if clean_key and not clean_key.startswith(("sb_secret_", "sb_publishable_")):
-        headers["Authorization"] = f"Bearer {clean_key}"
-    return headers
-
-
-def session_secret() -> bytes:
-    value = load_setting("PWA_SESSION_SECRET") or load_setting("AUTH_TOKEN_SECRET")
-    if not value and LOCAL_SESSION_SECRET_FILE.exists():
-        value = LOCAL_SESSION_SECRET_FILE.read_text(encoding="utf-8").strip()
-    if not value:
-        value = secrets.token_urlsafe(48)
-        LOCAL_SESSION_SECRET_FILE.write_text(value, encoding="utf-8")
-    return value.encode("utf-8")
-
-
-def load_users() -> list[dict[str, Any]]:
-    with USERS_FILE.open("r", encoding="utf-8") as file:
-        return json.load(file).get("users", [])
-
-
-def public_user(user: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "username": str(user.get("username") or ""),
-        "courierId": str(user.get("courierId") or ""),
-        "role": str(user.get("role") or "user"),
-    }
-
-
-def authenticate(username: str, password: str) -> dict[str, Any] | None:
-    wanted = str(username or "").strip().casefold()
-    for user in load_users():
-        if not user.get("active", True):
-            continue
-        if str(user.get("username") or "").strip().casefold() != wanted:
-            continue
-
-        password_hash = str(user.get("passwordHash") or "")
-        if password_hash and verify_password(password, password_hash):
-            return user
-        if user.get("password") == password:
-            return user
-    return None
-
-
-def create_session(user: dict[str, Any]) -> str:
-    payload = "|".join(
-        [
-            str(user.get("username") or ""),
-            str(user.get("courierId") or ""),
-            str(int(time.time())),
-            secrets.token_urlsafe(10),
-        ]
-    )
-    signature = hmac.new(session_secret(), payload.encode("utf-8"), hashlib.sha256)
-    return f"{payload}.{signature.hexdigest()}"
-
-
-def read_session(token: str) -> dict[str, Any] | None:
-    try:
-        payload, signature = token.rsplit(".", 1)
-        expected = hmac.new(
-            session_secret(), payload.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            return None
-
-        username, courier_id, issued_at, _nonce = payload.split("|", 3)
-        if time.time() - int(issued_at) > SESSION_TTL_SECONDS:
-            return None
-    except (ValueError, TypeError):
-        return None
-
-    for user in load_users():
-        if not user.get("active", True):
-            continue
-        if str(user.get("username") or "") != username:
-            continue
-        if str(user.get("courierId") or "") != courier_id:
-            continue
-        return user
-    return None
-
-
-def require_user(token: str | None) -> dict[str, Any]:
-    user = read_session(token or "")
-    if not user:
-        raise HTTPException(status_code=401, detail="Bejelentkezés szükséges.")
-    return user
-
-
-def normalize_text(value: Any) -> str:
-    text = unicodedata.normalize("NFKD", str(value or "").strip().casefold())
-    return "".join(char for char in text if not unicodedata.combining(char))
-
-
-def normalize_time(value: Any) -> str:
-    text = str(value or "").strip().replace(".", ":")
-    if not text:
-        return ""
-    parts = text.split(":")
-    try:
-        return f"{int(parts[0]):02d}:{int(parts[1]) if len(parts) > 1 else 0:02d}"
-    except ValueError:
-        return text[:5]
-
-
-def shift_start(value: Any) -> str:
-    text = str(value or "").strip()
-    for separator in ("-", "–", "—"):
-        if separator in text:
-            text = text.split(separator, 1)[0]
-            break
-    return normalize_time(text)
-
-
-def normalize_warehouse(value: Any) -> str:
-    text = normalize_text(value).replace("_", "").replace(" ", "")
-    aliases = {
-        "budapest": "BUD",
-        "bud1": "BUD1",
-        "bud2": "BUD2",
-        "bud1jit": "BUD1",
-        "bud2jit": "BUD2",
-    }
-    return aliases.get(text, str(value or "").strip().upper())
-
-
-def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]:
-    url = load_setting("SUPABASE_URL").rstrip("/")
-    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
-    if not url or not key:
-        raise RuntimeError("Hiányzik a Supabase konfiguráció.")
-
-    response = requests.get(
-        f"{url}/rest/v1/{table}",
-        headers=supabase_key_headers(key),
-        params={
-            "select": select,
-            "work_date": f"gte.{start.isoformat()}",
-            "order": "work_date.asc",
-            "limit": "10000",
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
-    rows = response.json()
-    return [row for row in rows if str(row.get("work_date") or "") <= end.isoformat()]
-
-
-
-def read_giriton_future_shifts(
-    user: dict[str, Any],
-    start: date,
-    end: date,
-) -> list[dict[str, Any]]:
-    courier_id, courier_name = courier_identity(user)
-
-    print(
-        "Giriton shifts query:",
-        {
-            "courier_id": courier_id,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-        },
-    )
-
-    rows = supabase_rest(
-        "GET",
-        "giriton_future_shifts_latest",
-        params={
-            "select": (
-                "work_date,courier_id,courier_name,warehouse_name,"
-                "shift_id,shift_name,shift_start,shift_end,fetched_at"
-            ),
-            "courier_id": f"eq.{courier_id}",
-            "work_date": f"gte.{start.isoformat()}",
-            "order": "shift_start.asc",
-            "limit": "500",
-        },
-    )
-
-    print("Giriton shifts rows:", rows)
-
-    result: list[dict[str, Any]] = []
-    budapest_timezone = ZoneInfo("Europe/Budapest")
-
-    for row in rows:
-        work_date = str(row.get("work_date") or "").strip()
-        if not work_date or work_date > end.isoformat():
-            continue
-
-        shift_start_text = str(row.get("shift_start") or "").strip()
-        shift_end_text = str(row.get("shift_end") or "").strip()
-
-        if not shift_start_text:
-            continue
-
-        # A Supabase UTC időpontjait biztosan időzónás datetime-ként értelmezzük.
-        if shift_start_text.endswith("Z"):
-            shift_start_text = shift_start_text[:-1] + "+00:00"
-        if shift_end_text.endswith("Z"):
-            shift_end_text = shift_end_text[:-1] + "+00:00"
-
-        try:
-            shift_start_value = datetime.fromisoformat(shift_start_text)
-            shift_end_value = (
-                datetime.fromisoformat(shift_end_text)
-                if shift_end_text
-                else None
-            )
-        except ValueError as exc:
-            print(
-                "Invalid shift datetime:",
-                {
-                    "shift_start": shift_start_text,
-                    "shift_end": shift_end_text,
-                    "error": str(exc),
-                },
-            )
-            continue
-
-        if shift_start_value.tzinfo is None:
-            shift_start_value = shift_start_value.replace(tzinfo=timezone.utc)
-
-        if shift_end_value is not None and shift_end_value.tzinfo is None:
-            shift_end_value = shift_end_value.replace(tzinfo=timezone.utc)
-
-        local_start = shift_start_value.astimezone(budapest_timezone)
-        local_end = (
-            shift_end_value.astimezone(budapest_timezone)
-            if shift_end_value is not None
-            else None
-        )
-
-        print(
-            "Shift timezone debug:",
-            shift_start_text,
-            "=>",
-            local_start.isoformat(),
-        )
-
-        result.append(
-            {
-                "work_date": local_start.date().isoformat(),
-                "start_time": local_start.strftime("%H:%M"),
-                "end_time": local_end.strftime("%H:%M") if local_end else "",
-                "warehouse": str(row.get("warehouse_name") or ""),
-                "courier_name": str(row.get("courier_name") or courier_name),
-                "courier_id": str(row.get("courier_id") or courier_id),
-                "status": "ACTIVE",
-                "fetched_at": row.get("fetched_at"),
-                "shift_id": row.get("shift_id"),
-                "shift_name": str(row.get("shift_name") or ""),
-            }
-        )
-
-    print("Giriton converted shifts:", result)
-    return result
-
-
-def belongs_to_user(row: dict, user: dict) -> bool:
-    courier_id = str(user.get("courierId") or "").strip()
-    row_id = str(row.get("courier_id") or "").strip()
-    if courier_id and row_id:
-        return courier_id == row_id
-    return normalize_text(row.get("courier_name")) == normalize_text(user.get("username"))
-
-
-def canonical_key(row: dict, source: str) -> tuple[str, str]:
-    start = row.get("start_time") if source == "giriton" else shift_start(row.get("shift_text"))
-    return (
-        str(row.get("work_date") or ""),
-        normalize_time(start),
-    )
-
-
-def latest_by_key(rows: list[dict], user: dict, source: str) -> dict[tuple, dict]:
-    result: dict[tuple, dict] = {}
-    for row in rows:
-        if not belongs_to_user(row, user):
-            continue
-        if source == "giriton" and str(row.get("status") or "").upper() == "URES":
-            continue
-        if source == "muszakpro" and str(row.get("status") or "ACTIVE").upper() == "CANCELLED":
-            continue
-        key = canonical_key(row, source)
-        previous = result.get(key)
-        if not previous or str(row.get("fetched_at") or "") >= str(previous.get("fetched_at") or ""):
-            result[key] = row
-    return result
-
-
-def read_shifts(user: dict, days: int) -> dict[str, Any]:
-    start = date.today()
-    end = start + timedelta(days=days - 1)
-    source_errors: list[str] = []
-
-    try:
-        giriton_raw = read_giriton_future_shifts(user, start, end)
-    except Exception as exc:
-        print("Giriton future shifts error:", exc)
-        giriton_raw = []
-        source_errors.append("A Giriton adatok jelenleg nem érhetők el.")
-
-    try:
-        muszakpro_raw = supabase_rows(
-            "raw_muszakpro_bookings",
-            "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
-            start,
-            end,
-        )
-    except Exception:
-        try:
-            muszakpro_raw = supabase_rows(
-                "raw_muszakpro_bookings",
-                "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
-                start,
-                end,
-            )
-        except Exception:
-            try:
-                muszakpro_raw = supabase_rows(
-                    "foglalasok_raw",
-                    "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
-                    start,
-                    end,
-                )
-            except Exception:
-                muszakpro_raw = []
-                source_errors.append("A MűszakPro adatok jelenleg nem érhetők el.")
-
-    giriton = latest_by_key(giriton_raw, user, "giriton")
-    muszakpro = latest_by_key(muszakpro_raw, user, "muszakpro")
-    items = []
-    for key in sorted(set(giriton) | set(muszakpro)):
-        giriton_row = giriton.get(key)
-        booking_row = muszakpro.get(key)
-        source = booking_row or giriton_row or {}
-        if giriton_row and booking_row:
-            status = "confirmed"
-            status_label = "Giritonban is rögzítve"
-        elif booking_row:
-            status = "waiting"
-            status_label = "Giriton-feltöltésre vár"
-        else:
-            status = "review"
-            status_label = "Eltérés – ellenőrzés szükséges"
-
-        items.append(
-            {
-                "date": key[0],
-                "start": key[1],
-                "end": normalize_time((giriton_row or {}).get("end_time")),
-                "warehouse": str(source.get("warehouse") or ""),
-                "bookingCode": str((booking_row or {}).get("booking_code") or ""),
-                "status": status,
-                "statusLabel": status_label,
-                "giriton": bool(giriton_row),
-                "muszakpro": bool(booking_row),
-            }
-        )
-
-    return {
-        "from": start.isoformat(),
-        "to": end.isoformat(),
-        "days": days,
-        "items": items,
-        "warnings": source_errors,
-        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    }
-
-
-WORKFLOW_PREREQUISITES = {
-    "tig": "settlement",
-    "invoice_check": "tig",
-    "invoice_submit": "invoice_check",
+const state = {
+  user: null,
+  data: null,
+  selectedDate: null,
+  workflow: null,
+  billingProfile: null,
+  workflowMonth: new Date().toISOString().slice(0, 7),
+  section: "home",
+};
+const $ = (selector) => document.querySelector(selector);
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
-WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
+
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const response = await fetch(path, { credentials: "same-origin", ...options, headers });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message || "A kérés nem sikerült.");
+  }
+  return payload;
+}
+
+function localDate(offset = 0) {
+  const value = new Date();
+  value.setDate(value.getDate() + offset);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateLabel(value, short = false) {
+  const date = new Date(`${value}T12:00:00`);
+  return new Intl.DateTimeFormat("hu-HU", short
+    ? { weekday: "short" }
+    : { month: "long", day: "numeric", weekday: "long" }
+  ).format(date);
+}
+
+function showLogin() {
+  $("#login-view").classList.remove("hidden");
+  $("#app-view").classList.add("hidden");
+}
+
+function showApp() {
+  $("#login-view").classList.add("hidden");
+  $("#app-view").classList.remove("hidden");
+  $("#welcome").textContent = `Szia, ${state.user.username.split(" ")[0]}!`;
+}
+
+function showSection(section) {
+  state.section = section;
+  $("#home-content").classList.toggle("hidden", section !== "home");
+  $("#settlement-content").classList.toggle("hidden", section !== "settlement");
+  $("#profile-content").classList.toggle("hidden", section !== "profile");
+
+  $("#nav-home").classList.toggle("active", section === "home");
+  $("#nav-settlement").classList.toggle("active", section === "settlement");
+  $("#nav-profile").classList.toggle("active", section === "profile");
+
+  if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "profile") loadBillingProfile();
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderTabs() {
+  const tabs = $("#day-tabs");
+  tabs.innerHTML = "";
+  for (let offset = 0; offset < 5; offset += 1) {
+    const value = localDate(offset);
+    const date = new Date(`${value}T12:00:00`);
+    const button = document.createElement("button");
+    button.className = `day-tab${state.selectedDate === value ? " active" : ""}`;
+    const label = offset === 0 ? "Ma" : dateLabel(value, true).replace(".", "");
+    button.innerHTML = `<span>${label}</span><strong>${date.getDate()}</strong>`;
+    button.addEventListener("click", () => {
+      state.selectedDate = value;
+      renderTabs();
+      renderShifts();
+    });
+    tabs.appendChild(button);
+  }
+}
+
+function shiftCard(item) {
+  const end = item.end ? `–${escapeHtml(item.end)}` : "";
+  return `<article class="shift-card">
+    <div class="shift-top">
+      <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
+      <span class="shift-state ${escapeHtml(item.status)}">${escapeHtml(item.statusLabel)}</span>
+    </div>
+    <div class="source-row">
+      <span class="source ${item.muszakpro ? "ok" : ""}">MűszakPro ${item.muszakpro ? "✓" : "–"}</span>
+      <span class="source ${item.giriton ? "ok" : ""}">Giriton ${item.giriton ? "✓" : "–"}</span>
+      ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
+    </div>
+  </article>`;
+}
+
+function renderShifts() {
+  const items = (state.data?.items || []).filter((item) => item.date === state.selectedDate);
+  $("#shift-list").innerHTML = items.length
+    ? items.map(shiftCard).join("")
+    : `<div class="empty-card">Erre a napra nincs megjeleníthető műszak.</div>`;
+}
+
+function renderHero() {
+  const upcoming = (state.data?.items || []).find((item) => item.date >= localDate());
+  if (!upcoming) {
+    $("#next-shift").textContent = "Nincs közelgő műszak";
+    $("#next-shift-detail").textContent = "A következő öt napban nincs foglalás.";
+    $("#next-status").textContent = "Szabad";
+    return;
+  }
+  $("#next-shift").textContent = `${dateLabel(upcoming.date)} · ${upcoming.start}`;
+  $("#next-shift-detail").textContent = upcoming.warehouse || "Raktár nincs megadva";
+  $("#next-status").textContent = upcoming.statusLabel;
+}
+
+function renderWarnings() {
+  $("#warning-list").innerHTML = (state.data?.warnings || [])
+    .map((warning) => `<div class="warning-card">${escapeHtml(warning)}</div>`).join("");
+}
+
+async function loadShifts() {
+  $("#refresh").disabled = true;
+  try {
+    state.data = await api("/api/shifts?days=5");
+    state.selectedDate ||= localDate();
+    renderHero();
+    renderTabs();
+    renderWarnings();
+    renderShifts();
+    $("#updated-at").textContent = `Utolsó lekérés: ${new Date(state.data.updatedAt).toLocaleString("hu-HU")}`;
+  } catch (error) {
+    $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
+  } finally {
+    $("#refresh").disabled = false;
+  }
+}
+
+function workflowStep(key) {
+  return state.workflow?.steps?.find((step) => step.key === key) || {};
+}
+
+function renderWorkflowSteps() {
+  $("#workflow-steps").innerHTML = (state.workflow?.steps || []).map((step, index) => {
+    const waiting = step.key.endsWith("_document") && !step.done && !step.locked;
+    const status = step.done ? "Kész" : step.locked ? "Zárolva" : waiting ? "Várakozás" : "Aktív";
+    return `<li class="workflow-step ${step.done ? "done" : ""} ${step.locked ? "locked" : ""}">
+      <span class="workflow-step-index">${step.done ? "✓" : index + 1}</span>
+      <div><strong>${escapeHtml(step.title)}</strong><small>${status}</small></div>
+      <span class="workflow-step-state">${step.done ? "✓" : step.locked ? "🔒" : waiting ? "…" : "→"}</span>
+    </li>`;
+  }).join("");
+}
+
+function documentList(documents) {
+  if (!documents.length) return `<div class="empty-card">Ehhez a hónaphoz még nincs feltöltött dokumentum.</div>`;
+  return `<div class="document-list">${documents.map((document) => `
+    <div class="document-row">
+      <div><strong>${escapeHtml(document.title || document.file_name)}</strong><small>${escapeHtml(document.file_name)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
+      <a class="download-link" href="${escapeHtml(document.downloadUrl)}">Letöltés</a>
+    </div>`).join("")}</div>`;
+}
+
+function complaintList(complaints) {
+  if (!complaints.length) return "";
+  return `<div class="complaint-list">${complaints.map((complaint) => `
+    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}</div>` : ""}</div></div>
+  `).join("")}</div>`;
+}
+
+function renderDocumentPanel(action, title, stepNumber) {
+  const panel = $(`#${action}-panel`);
+  const documents = state.workflow?.documents?.[action] || [];
+  const complaints = state.workflow?.complaints?.[action] || [];
+  const accepted = state.workflow?.states?.[action]?.status === "done";
+  const documentStep = workflowStep(`${action}_document`);
+  const locked = Boolean(documentStep.locked);
+  const waitingTitle = action === "settlement"
+    ? "Várakozás az elszámolás elkészítésére"
+    : "Várakozás a TIG elkészítésére";
+  const visibleTitle = documents.length ? title : waitingTitle;
+  const description = locked
+    ? "Az előző lépés lezárása után válik aktívvá."
+    : documents.length
+      ? "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."
+      : "Amint az admin elkészíti és elküldi, itt automatikusan megjelenik.";
+  panel.classList.toggle("locked", locked);
+  panel.innerHTML = `
+    <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>${visibleTitle}</h3><p>${description}</p></div></div>
+    ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
+    ${accepted
+      ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
+      : documents.length && !locked
+        ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
+        : ""}
+    ${documents.length && !locked ? `<div class="complaint-box">
+      <strong>Reklamáció</strong>
+      ${complaintList(complaints)}
+      <form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>
+    </div>` : ""}`;
+
+  const acceptButton = $(`#accept-${action}`);
+  if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
+  const complaintForm = $(`#complaint-${action}`);
+  if (complaintForm) complaintForm.addEventListener("submit", (event) => submitComplaint(event, action));
+}
+
+function setPanelLocked(id, locked) {
+  const panel = $(id);
+  panel.classList.toggle("locked", locked);
+  panel.querySelectorAll("input, textarea, button").forEach((control) => { control.disabled = locked; });
+}
+
+function renderWorkflow() {
+  renderWorkflowSteps();
+  renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
+  renderDocumentPanel("tig", "TIG és elfogadás", 3);
+  setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
+  setPanelLocked("#invoice-submit-panel", Boolean(workflowStep("invoice_submit").locked));
+  $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
+    ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
+    : "";
+  $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")}`;
+}
+
+function showWorkflowMessage(message, isError = false) {
+  $("#workflow-message").innerHTML = message ? `<div class="notice ${isError ? "error" : ""}">${escapeHtml(message)}</div>` : "";
+}
+
+function waitingWorkflow() {
+  const titles = [
+    ["settlement_document", "Várakozás az elszámolás elkészítésére", false],
+    ["settlement", "Elszámolás elfogadása", true],
+    ["tig_document", "Várakozás a TIG elkészítésére", true],
+    ["tig", "TIG elfogadása", true],
+    ["invoice_check", "Számlaellenőrzés", true],
+    ["invoice_submit", "Számlafeltöltés", true],
+  ];
+  return {
+    month: state.workflowMonth,
+    steps: titles.map(([key, title, locked]) => ({ key, title, locked, done: false })),
+    states: {},
+    documents: { settlement: [], tig: [], invoice: [] },
+    complaints: { settlement: [], tig: [] },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function loadWorkflow() {
+  state.workflow = waitingWorkflow();
+  renderWorkflow();
+  showWorkflowMessage("Folyamat betöltése…");
+  try {
+    state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
+    renderWorkflow();
+    showWorkflowMessage("");
+  } catch (error) {
+    state.workflow = waitingWorkflow();
+    renderWorkflow();
+    showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
+  }
+}
+
+async function acceptDocument(action) {
+  showWorkflowMessage("Elfogadás mentése…");
+  try {
+    const payload = await api(`/api/workflow/${action}/accept`, {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("Az elfogadás rögzítve. A következő lépés aktívvá vált.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+async function submitComplaint(event, action) {
+  event.preventDefault();
+  const message = new FormData(event.currentTarget).get("message");
+  showWorkflowMessage("Reklamáció küldése…");
+  try {
+    const payload = await api("/api/workflow/complaints", {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth, action, message }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("A reklamáció megérkezett az admin elszámolási felületére.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
 
 
-def parse_month(value: str | date | None) -> date:
-    if isinstance(value, date):
-        return value.replace(day=1)
-    text = str(value or "").strip()
-    if not text:
-        return date.today().replace(day=1)
-    try:
-        return date.fromisoformat(text[:7] + "-01")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="A hónap formátuma YYYY-MM legyen.") from exc
+function setBillingMessage(message, isError = false) {
+  const target = $("#billing-profile-message");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
 
+function prepareReadonlyBillingProfile() {
+  const form = $("#billing-profile-form");
+  if (!form) return;
 
-def supabase_headers(*, prefer: str = "") -> dict[str, str]:
-    key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
-    if not load_setting("SUPABASE_URL") or not key:
-        raise HTTPException(status_code=503, detail="Hiányzik a Supabase konfiguráció.")
-    headers = supabase_key_headers(key)
-    if prefer:
-        headers["Content-Type"] = "application/json"
-        headers["Prefer"] = prefer
-    return headers
+  form.querySelectorAll("input").forEach((input) => {
+    input.readOnly = true;
+    input.setAttribute("aria-readonly", "true");
+  });
 
-def supabase_rest(
-    method: str,
-    table: str,
-    *,
-    params: dict[str, str] | None = None,
-    payload: dict[str, Any] | None = None,
-    prefer: str = "",
-    timeout: int = 30,
-) -> Any:
-    url = load_setting("SUPABASE_URL").rstrip("/")
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.hidden = true;
+}
 
-    response = requests.request(
-        method,
-        f"{url}/rest/v1/{table}",
-        headers=supabase_headers(prefer=prefer),
-        params=params,
-        json=payload,
-        timeout=timeout,
-    )
+function fillBillingProfile(data = {}) {
+  const values = {
+    "#billing-company-name": data.company_name || "",
+    "#billing-company-address": data.company_address || "",
+    "#billing-tax-number": data.tax_number || "",
+    "#billing-bank-account": data.bank_account_number || "",
+    "#billing-email": data.billing_email || "",
+  };
 
-    if not response.ok:
-        print("Supabase table:", table)
-        print("Supabase status:", response.status_code)
-        print("Supabase response:", response.text)
+  Object.entries(values).forEach(([selector, value]) => {
+    const input = $(selector);
+    if (input) input.value = value;
+  });
+}
 
-        raise HTTPException(
-            status_code=502,
-            detail=f"Adatbázis-hiba ({response.status_code}).",
-        )
+async function loadBillingProfile() {
+  prepareReadonlyBillingProfile();
+  setBillingMessage("Számlázási adatok betöltése…");
 
-    if not response.content:
-        return []
+  try {
+    const payload = await api("/api/profile/billing");
+    // Kezeli mindkét válaszformát: { billing: {...} } vagy közvetlen {...}.
+    const billing = payload.billing || payload || {};
+    state.billingProfile = billing;
+    fillBillingProfile(billing);
 
-    try:
-        return response.json()
-    except ValueError:
-        return []
+    const hasData = [
+      billing.company_name,
+      billing.company_address,
+      billing.tax_number,
+      billing.bank_account_number,
+      billing.billing_email,
+    ].some((value) => String(value || "").trim());
 
-
-def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
-    courier_id = str(user.get("courierId") or "").strip()
-    courier_name = str(user.get("username") or "").strip()
-    if not courier_id:
-        raise HTTPException(status_code=422, detail="A felhasználóhoz nincs futárazonosító rendelve.")
-    return courier_id, courier_name
-
-
-BILLING_PROFILE_FIELDS = (
-    "company_name,company_address,tax_number,"
-    "bank_account_number,billing_email,billing_data_updated_at"
-)
-
-
-def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
-    courier_id, _courier_name = courier_identity(user)
-    rows = supabase_rest(
-        "GET",
-        "courier_master",
-        params={
-            "select": BILLING_PROFILE_FIELDS,
-            "courier_id": f"eq.{courier_id}",
-            "limit": "1",
-        },
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="A futár profilja nem található.")
-    row = rows[0]
-    return {
-        "company_name": str(row.get("company_name") or ""),
-        "company_address": str(row.get("company_address") or ""),
-        "tax_number": str(row.get("tax_number") or ""),
-        "bank_account_number": str(row.get("bank_account_number") or ""),
-        "billing_email": str(row.get("billing_email") or ""),
-        "updated_at": row.get("billing_data_updated_at"),
+    if (!hasData) {
+      setBillingMessage("Ehhez a profilhoz még nincsenek rögzített számlázási adatok.", true);
+      return;
     }
 
-
-def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
-    company_name = payload.company_name.strip()
-    company_address = payload.company_address.strip()
-    tax_number = payload.tax_number.strip()
-    bank_account_number = payload.bank_account_number.strip()
-    billing_email = payload.billing_email.strip()
-
-    if not company_name:
-        raise HTTPException(status_code=422, detail="A vállalkozás neve kötelező.")
-    if not company_address:
-        raise HTTPException(status_code=422, detail="A vállalkozás székhelye kötelező.")
-    if not tax_number:
-        raise HTTPException(status_code=422, detail="Az adószám kötelező.")
-    if billing_email and ("@" not in billing_email or "." not in billing_email.rsplit("@", 1)[-1]):
-        raise HTTPException(status_code=422, detail="A számlázási e-mail formátuma hibás.")
-
-    return {
-        "company_name": company_name,
-        "company_address": company_address,
-        "tax_number": tax_number,
-        "bank_account_number": bank_account_number,
-        "billing_email": billing_email,
-    }
-
-
-def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
-    courier_id, _courier_name = courier_identity(user)
-    month_value = month.isoformat()
-    documents = supabase_rest(
-        "GET",
-        "peopleforce_documents",
-        params={
-            "select": "id,document_type,document_month,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month_value}",
-            "order": "uploaded_at.desc",
-            "limit": "200",
-        },
-    )
-    statuses = supabase_rest(
-        "GET",
-        "peopleforce_card_statuses",
-        params={
-            "select": "action_key,status,status_note,updated_by,updated_at",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month_value}",
-            "order": "updated_at.desc",
-            "limit": "100",
-        },
-    )
-    complaints = supabase_rest(
-        "GET",
-        "peopleforce_complaints",
-        params={
-            "select": "id,document_type,message,status,created_at",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month_value}",
-            "order": "created_at.desc",
-            "limit": "100",
-        },
-    )
-    return documents, statuses, complaints
-
-
-def status_map(rows: list[dict]) -> dict[str, dict]:
-    result: dict[str, dict] = {}
-    for row in rows:
-        key = str(row.get("action_key") or "")
-        if key and key not in result:
-            result[key] = row
-    return result
-
-
-def workflow_done(states: dict[str, dict], action: str) -> bool:
-    return str((states.get(action) or {}).get("status") or "").lower() == "done"
-
-
-def upsert_workflow_status(
-    user: dict[str, Any],
-    month: date,
-    action: str,
-    status: str,
-    note: str,
-) -> None:
-    courier_id, courier_name = courier_identity(user)
-    supabase_rest(
-        "POST",
-        "peopleforce_card_statuses",
-        params={"on_conflict": "courier_id,document_month,action_key"},
-        payload={
-            "courier_id": courier_id,
-            "courier_name": courier_name,
-            "action_key": action,
-            "document_month": month.isoformat(),
-            "status": "done" if status == "done" else "open",
-            "status_note": note,
-            "updated_by": courier_name,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        },
-        prefer="resolution=merge-duplicates,return=representation",
-    )
-
-
-def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
-    documents, status_rows, complaints = read_workflow_rows(user, month)
-    states = status_map(status_rows)
-    document_groups = {
-        document_type: [row for row in documents if row.get("document_type") == document_type]
-        for document_type in WORKFLOW_DOCUMENT_TYPES
-    }
-    for action in ("settlement", "tig"):
-        if document_groups[action] and action not in states:
-            states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
-
-    steps = [
-        {
-            "key": "settlement_document",
-            "title": (
-                "Elszámolás elkészült"
-                if document_groups["settlement"]
-                else "Várakozás az elszámolás elkészítésére"
-            ),
-            "done": bool(document_groups["settlement"]),
-            "locked": False,
-        },
-        {
-            "key": "settlement",
-            "title": "Elszámolás elfogadása",
-            "done": workflow_done(states, "settlement"),
-            "locked": not bool(document_groups["settlement"]),
-        },
-        {
-            "key": "tig_document",
-            "title": (
-                "TIG elkészült"
-                if document_groups["tig"]
-                else "Várakozás a TIG elkészítésére"
-            ),
-            "done": bool(document_groups["tig"]),
-            "locked": not workflow_done(states, "settlement"),
-        },
-        {
-            "key": "tig",
-            "title": "TIG elfogadása",
-            "done": workflow_done(states, "tig"),
-            "locked": not workflow_done(states, "settlement") or not bool(document_groups["tig"]),
-        },
-        {
-            "key": "invoice_check",
-            "title": "Számlaellenőrzés",
-            "done": workflow_done(states, "invoice_check"),
-            "locked": not workflow_done(states, "tig"),
-        },
-        {
-            "key": "invoice_submit",
-            "title": "Számlafeltöltés",
-            "done": workflow_done(states, "invoice_submit"),
-            "locked": not workflow_done(states, "invoice_check"),
-        },
-    ]
-    safe_documents: dict[str, list[dict[str, Any]]] = {}
-    for document_type, rows in document_groups.items():
-        safe_documents[document_type] = [
-            {
-                **row,
-                "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
-            }
-            for row in rows
-        ]
-    return {
-        "month": month.strftime("%Y-%m"),
-        "steps": steps,
-        "states": states,
-        "documents": safe_documents,
-        "complaints": {
-            action: [row for row in complaints if row.get("document_type") == action]
-            for action in ("settlement", "tig")
-        },
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def expected_tig_amount(user: dict[str, Any], month: date) -> int:
-    courier_id, _courier_name = courier_identity(user)
-    rows = supabase_rest(
-        "GET",
-        "peopleforce_documents",
-        params={
-            "select": "file_content_base64",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month.isoformat()}",
-            "document_type": "eq.tig",
-            "order": "uploaded_at.desc",
-            "limit": "5",
-        },
-        timeout=60,
-    )
-    for row in rows:
-        try:
-            amount = extract_expected_amount(base64.b64decode(row.get("file_content_base64") or ""))
-        except Exception:
-            amount = 0
-        if amount:
-            return amount
-    return 0
-
-
-def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None:
-    prerequisite = WORKFLOW_PREREQUISITES.get(action)
-    if not prerequisite:
-        return
-    _documents, status_rows, _complaints = read_workflow_rows(user, month)
-    if not workflow_done(status_map(status_rows), prerequisite):
-        labels = {
-            "settlement": "az elszámolás elfogadása",
-            "tig": "a TIG elfogadása",
-            "invoice_check": "a sikeres számlaellenőrzés",
-        }
-        raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
-
-
-
-def public_vapid_key() -> str:
-    key = load_setting("VAPID_PUBLIC_KEY").strip()
-    if not key:
-        raise HTTPException(
-            status_code=503,
-            detail="A push értesítések még nincsenek konfigurálva.",
-        )
-    return key
-
-
-def save_push_subscription(
-    user: dict[str, Any],
-    payload: PushSubscriptionRequest,
-) -> None:
-    courier_id, courier_name = courier_identity(user)
-    endpoint = payload.endpoint.strip()
-    p256dh = payload.keys.p256dh.strip()
-    auth = payload.keys.auth.strip()
-
-    if not endpoint or not p256dh or not auth:
-        raise HTTPException(
-            status_code=422,
-            detail="Hiányos push feliratkozási adatok.",
-        )
-
-    now = datetime.now(timezone.utc).isoformat()
-    supabase_rest(
-        "POST",
-        "pwa_push_subscriptions",
-        params={"on_conflict": "endpoint"},
-        payload={
-            "courier_id": int(courier_id),
-            "courier_name": courier_name,
-            "endpoint": endpoint,
-            "p256dh": p256dh,
-            "auth": auth,
-            "user_agent": payload.user_agent.strip(),
-            "active": True,
-            "last_seen_at": now,
-            "updated_at": now,
-        },
-        prefer="resolution=merge-duplicates,return=minimal",
-    )
-
-
-def disable_push_subscription(
-    user: dict[str, Any],
-    endpoint: str,
-) -> None:
-    courier_id, _courier_name = courier_identity(user)
-    clean_endpoint = endpoint.strip()
-    if not clean_endpoint:
-        return
-
-    supabase_rest(
-        "PATCH",
-        "pwa_push_subscriptions",
-        params={
-            "courier_id": f"eq.{courier_id}",
-            "endpoint": f"eq.{clean_endpoint}",
-        },
-        payload={
-            "active": False,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        },
-        prefer="return=minimal",
-    )
-
-
-app = FastAPI(title="Kifli Futár PWA", docs_url=None, redoc_url=None)
-
-
-@app.post("/api/login")
-def login(payload: LoginRequest, request: Request, response: Response):
-    user = authenticate(payload.username, payload.password)
-    if not user:
-        raise HTTPException(status_code=401, detail="Hibás felhasználónév vagy jelszó.")
-    token = create_session(user)
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0]
-    secure_cookie = request.url.scheme == "https" or forwarded_proto.strip() == "https"
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=SESSION_TTL_SECONDS,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
-        path="/",
-    )
-    return {"user": public_user(user)}
-
-
-@app.post("/api/logout")
-def logout(response: Response):
-    response.delete_cookie(SESSION_COOKIE, path="/")
-    return {"ok": True}
-
-
-@app.get("/api/me")
-def me(giriton_pwa_session: str | None = Cookie(default=None)):
-    return {"user": public_user(require_user(giriton_pwa_session))}
-
-
-@app.get("/api/push/public-key")
-def get_push_public_key(
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    require_user(giriton_pwa_session)
-    return {"publicKey": public_vapid_key()}
-
-
-@app.post("/api/push/subscribe")
-def subscribe_push(
-    payload: PushSubscriptionRequest,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    save_push_subscription(user, payload)
-    return {"ok": True}
-
-
-@app.post("/api/push/unsubscribe")
-def unsubscribe_push(
-    payload: PushSubscriptionRequest,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    disable_push_subscription(user, payload.endpoint)
-    return {"ok": True}
-
-
-@app.get("/api/profile/billing")
-def get_billing_profile(
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    return {"billing": read_billing_profile(user)}
-
-
-@app.put("/api/profile/billing")
-def update_billing_profile(
-    payload: BillingProfileUpdate,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
-    billing = validate_billing_profile(payload)
-    now = datetime.now(timezone.utc).isoformat()
-
-    supabase_rest(
-        "PATCH",
-        "courier_master",
-        params={"courier_id": f"eq.{courier_id}"},
-        payload={
-            **billing,
-            "billing_data_source": "pwa_profile",
-            "billing_data_updated_at": now,
-            "updated_at": now,
-        },
-        prefer="return=minimal",
-    )
-
-    return {
-        "ok": True,
-        "billing": {
-            **billing,
-            "updated_at": now,
-        },
-    }
-
-
-@app.get("/api/shifts")
-def shifts(
-    days: int = Query(default=5, ge=1, le=14),
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    return read_shifts(require_user(giriton_pwa_session), days)
-
-
-@app.get("/api/workflow")
-def workflow(
-    month: str = Query(default=""),
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    return build_workflow(require_user(giriton_pwa_session), parse_month(month))
-
-
-@app.post("/api/workflow/{action}/accept")
-def accept_workflow_document(
-    action: str,
-    payload: WorkflowActionRequest,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    if action not in {"settlement", "tig"}:
-        raise HTTPException(status_code=404, detail="Ismeretlen elfogadási lépés.")
-    user = require_user(giriton_pwa_session)
-    month = parse_month(payload.month)
-    if action == "tig":
-        require_prerequisite(user, month, "tig")
-    documents, _statuses, _complaints = read_workflow_rows(user, month)
-    if not any(row.get("document_type") == action for row in documents):
-        raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
-    upsert_workflow_status(
-        user,
-        month,
-        action,
-        "done",
-        "A futár elfogadta a dokumentumot.",
-    )
-    return {"ok": True, "workflow": build_workflow(user, month)}
-
-
-@app.post("/api/workflow/complaints")
-def create_workflow_complaint(
-    payload: ComplaintRequest,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    if payload.action not in {"settlement", "tig"}:
-        raise HTTPException(status_code=422, detail="Reklamáció csak elszámoláshoz vagy TIG-hez küldhető.")
-    message = payload.message.strip()
-    if not message:
-        raise HTTPException(status_code=422, detail="Írd le röviden a reklamációt.")
-    user = require_user(giriton_pwa_session)
-    month = parse_month(payload.month)
-    courier_id, courier_name = courier_identity(user)
-    supabase_rest(
-        "POST",
-        "peopleforce_complaints",
-        payload={
-            "courier_id": courier_id,
-            "courier_name": courier_name,
-            "document_type": payload.action,
-            "document_month": month.isoformat(),
-            "message": message,
-            "status": "new",
-            "created_by": courier_name,
-        },
-        prefer="return=representation",
-    )
-    upsert_workflow_status(user, month, payload.action, "open", "Új reklamáció érkezett.")
-    return {"ok": True, "workflow": build_workflow(user, month)}
-
-
-@app.get("/api/documents/{document_id}")
-def download_document(
-    document_id: str,
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
-    rows = supabase_rest(
-        "GET",
-        "peopleforce_documents",
-        params={
-            "select": "id,courier_id,file_name,mime_type,file_content_base64",
-            "id": f"eq.{document_id}",
-            "courier_id": f"eq.{courier_id}",
-            "limit": "1",
-        },
-        timeout=60,
-    )
-    if not rows:
-        raise HTTPException(status_code=404, detail="A dokumentum nem található.")
-    row = rows[0]
-    try:
-        content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="A dokumentum tartalma sérült.") from exc
-    file_name = str(row.get("file_name") or "dokumentum").replace('"', "")
-    return Response(
-        content=content,
-        media_type=str(row.get("mime_type") or "application/octet-stream"),
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(file_name)}"},
-    )
-
-
-@app.post("/api/invoices/check")
-async def check_invoice(
-    month: str = Form(...),
-    invoice_file: UploadFile = File(...),
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    month_value = parse_month(month)
-    require_prerequisite(user, month_value, "invoice_check")
-    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
-    courier_id, courier_name = courier_identity(user)
-    result = validate_invoice(
-        file_name=invoice_file.filename or "szamla",
-        content=content,
-        invoice_month=month_value,
-        courier_name=courier_name,
-        courier_id=courier_id,
-        expected_gross_amount=expected_tig_amount(user, month_value),
-        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
-        expected_seller_address=read_billing_profile(user)["company_address"],
-    )
-    if result["ok"]:
-        upsert_workflow_status(
-            user,
-            month_value,
-            "invoice_check",
-            "done",
-            "A számla automatikus ellenőrzése sikeres.",
-        )
-    return {"validation": result, "workflow": build_workflow(user, month_value)}
-
-
-@app.post("/api/invoices/submit")
-async def submit_invoice(
-    month: str = Form(...),
-    invoice_number: str = Form(...),
-    gross_amount: int = Form(...),
-    tig_reference: str = Form(default=""),
-    note: str = Form(default=""),
-    invoice_file: UploadFile = File(...),
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    month_value = parse_month(month)
-    require_prerequisite(user, month_value, "invoice_submit")
-    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
-    courier_id, courier_name = courier_identity(user)
-    result = validate_invoice(
-        file_name=invoice_file.filename or "szamla",
-        content=content,
-        invoice_month=month_value,
-        courier_name=courier_name,
-        courier_id=courier_id,
-        expected_gross_amount=expected_tig_amount(user, month_value),
-        invoice_number=invoice_number,
-        gross_amount=gross_amount,
-        require_submission_fields=True,
-        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
-        expected_seller_address=read_billing_profile(user)["company_address"],
-    )
-    if not result["ok"]:
-        return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
-
-    file_name = invoice_file.filename or f"szamla_{invoice_number}.pdf"
-    supabase_rest(
-        "POST",
-        "peopleforce_documents",
-        payload={
-            "courier_id": courier_id,
-            "courier_name": courier_name,
-            "document_type": "invoice",
-            "document_month": month_value.isoformat(),
-            "title": f"Számla {invoice_number}",
-            "file_name": file_name,
-            "mime_type": invoice_file.content_type or "application/octet-stream",
-            "file_size": len(content),
-            "file_content_base64": base64.b64encode(content).decode("ascii"),
-            "note": f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. {note}".strip(),
-            "uploaded_by": courier_name,
-        },
-        prefer="return=representation",
-        timeout=60,
-    )
-    for action in ("invoice_submit", "my_invoices"):
-        upsert_workflow_status(user, month_value, action, "done", "A számla ellenőrizve és eltárolva.")
-    return {"stored": True, "validation": result, "workflow": build_workflow(user, month_value)}
-
-
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
-
-
-app.mount("/assets", StaticFiles(directory=PWA_ROOT), name="pwa-assets")
-
-
-@app.get("/{path:path}")
-def pwa(path: str):
-    requested = (PWA_ROOT / path).resolve()
-    if path and requested.is_file() and PWA_ROOT.resolve() in requested.parents:
-        media_types = {
-            ".css": "text/css",
-            ".js": "application/javascript",
-            ".svg": "image/svg+xml",
-            ".webmanifest": "application/manifest+json",
-        }
-        return FileResponse(requested, media_type=media_types.get(requested.suffix))
-    return FileResponse(PWA_ROOT / "index.html")
+    setBillingMessage(
+      billing.updated_at
+        ? `Utolsó frissítés: ${new Date(billing.updated_at).toLocaleString("hu-HU")}`
+        : "A számlázási adatok központilag kezeltek, itt csak megtekinthetők."
+    );
+  } catch (error) {
+    state.billingProfile = null;
+    fillBillingProfile({});
+    setBillingMessage(`A számlázási adatok nem tölthetők be: ${error.message}`, true);
+  }
+}
+
+prepareReadonlyBillingProfile();
+
+
+function renderValidation(target, validation, stored = null) {
+  const summary = validation.ok
+    ? stored === true ? "A számla ellenőrizve és eltárolva." : "Az ellenőrzés sikeres. A számlafeltöltés aktív."
+    : `Javítandó számla (${validation.score}%).`;
+  target.innerHTML = `<div class="result-box">
+    <div class="result-summary ${validation.ok ? "ok" : "error"}">${escapeHtml(summary)}</div>
+    ${(validation.checks || []).map((check) => `<div class="check-row ${escapeHtml(check.status)}"><strong>${escapeHtml(check.title)}</strong><br>${escapeHtml(check.detail)}</div>`).join("")}
+  </div>`;
+}
+
+$("#invoice-check-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  form.append("month", state.workflowMonth);
+  showWorkflowMessage("A számla ellenőrzése folyamatban…");
+  try {
+    const payload = await api("/api/invoices/check", { method: "POST", body: form });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    renderValidation($("#invoice-check-result"), payload.validation);
+    showWorkflowMessage(payload.validation.ok ? "Sikeres ellenőrzés." : "A hibákat javítani kell a feltöltés előtt.", !payload.validation.ok);
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+});
+
+$("#invoice-submit-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  form.append("month", state.workflowMonth);
+  showWorkflowMessage("A számla végső ellenőrzése és tárolása folyamatban…");
+  try {
+    const payload = await api("/api/invoices/submit", { method: "POST", body: form });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    renderValidation($("#invoice-submit-result"), payload.validation, payload.stored);
+    showWorkflowMessage(payload.stored ? "A számla bekerült a dokumentumtárba." : "A számla nem került eltárolásra, mert hibát találtunk.", !payload.stored);
+    if (payload.stored) event.currentTarget.reset();
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+});
+
+$("#workflow-month").value = state.workflowMonth;
+$("#workflow-month").addEventListener("change", (event) => {
+  state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  state.workflow = null;
+  loadWorkflow();
+});
+
+$("#login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("#login-error").textContent = "";
+  try {
+    const payload = await api("/api/login", {
+      method: "POST",
+      body: JSON.stringify({ username: $("#username").value, password: $("#password").value }),
+    });
+    state.user = payload.user;
+    showApp();
+    showSection("home");
+    await loadShifts();
+  } catch (error) {
+    $("#login-error").textContent = error.message;
+  }
+});
+
+$("#logout").addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST" });
+  state.user = null;
+  state.workflow = null;
+  state.billingProfile = null;
+  showLogin();
+});
+$("#refresh").addEventListener("click", loadShifts);
+$("#nav-home").addEventListener("click", () => showSection("home"));
+$("#nav-settlement").addEventListener("click", () => showSection("settlement"));
+$("#nav-profile").addEventListener("click", () => showSection("profile"));
+
+async function start() {
+  try {
+    const payload = await api("/api/me");
+    state.user = payload.user;
+    showApp();
+    showSection("home");
+    await loadShifts();
+  } catch (_) {
+    showLogin();
+  }
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=7");
+}
+
+start();
