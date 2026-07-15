@@ -389,7 +389,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=3");
 }
 
 start();
