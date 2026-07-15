@@ -385,12 +385,24 @@ def supabase_rest(
         print("Supabase status:", response.status_code)
         print("Supabase response:", response.text)
 
-    raise HTTPException(
-        status_code=502,
-        detail=f"Adatbázis-hiba ({response.status_code}).",
-    )
+    response = requests.request(
+    method,
+    f"{url}/rest/v1/{table}",
+    headers=supabase_headers(prefer=prefer),
+    params=params,
+    json=payload,
+    timeout=timeout,
+)
+
+    if not response.ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Adatbázis-hiba ({response.status_code}).",
+        )
+
     if not response.content:
         return []
+
     try:
         return response.json()
     except ValueError:
