@@ -1,4 +1,4 @@
-const CACHE = "giriton-pwa-v1";
+const CACHE = "giriton-pwa-v2";
 const APP_SHELL = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
