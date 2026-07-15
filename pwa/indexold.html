@@ -99,58 +99,15 @@
         <p id="workflow-updated-at" class="updated-at"></p>
       </div>
 
-      <div id="profile-content" class="hidden">
-        <section class="workflow-header">
-          <div>
-            <p class="eyebrow">PROFIL</p>
-            <h2>Számlázási adatok</h2>
-            <p class="muted">Ezek az adatok kerülnek a TIG-re és a számlaellenőrzéshez is ezeket használjuk.</p>
-          </div>
-        </section>
-
-        <section class="process-card">
-          <form id="billing-profile-form" class="process-form two-column">
-            <label class="full-width">
-              Vállalkozás neve
-              <input id="billing-company-name" name="company_name" autocomplete="organization" required />
-            </label>
-
-            <label class="full-width">
-              Vállalkozás székhelye
-              <input id="billing-company-address" name="company_address" autocomplete="street-address" required />
-            </label>
-
-            <label>
-              Adószám
-              <input id="billing-tax-number" name="tax_number" inputmode="numeric" required />
-            </label>
-
-            <label>
-              Bankszámlaszám
-              <input id="billing-bank-account" name="bank_account_number" inputmode="numeric" />
-            </label>
-
-            <label class="full-width">
-              Számlázási e-mail
-              <input id="billing-email" name="billing_email" type="email" autocomplete="email" />
-            </label>
-
-            <button class="primary full-width" type="submit">Számlázási adatok mentése</button>
-          </form>
-
-          <p id="billing-profile-message" class="updated-at" aria-live="polite"></p>
-        </section>
-      </div>
-
       <nav class="bottom-nav" aria-label="Főmenü">
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolás</button>
         <button disabled><span>◇</span>Dokumentumok</button>
-        <button id="nav-profile"><span>☻</span>Profil</button>
+        <button disabled><span>☻</span>Profil</button>
         <button disabled><span>☻</span>Túráim</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=4" defer></script>
+    <script src="/app.js?v=3" defer></script>
   </body>
 </html>

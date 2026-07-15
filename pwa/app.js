@@ -3,6 +3,7 @@ const state = {
   data: null,
   selectedDate: null,
   workflow: null,
+  billingProfile: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -63,9 +64,15 @@ function showSection(section) {
   state.section = section;
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
+  $("#profile-content").classList.toggle("hidden", section !== "profile");
+
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
+  $("#nav-profile").classList.toggle("active", section === "profile");
+
   if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "profile" && !state.billingProfile) loadBillingProfile();
+
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -302,6 +309,78 @@ async function submitComplaint(event, action) {
   }
 }
 
+
+function setBillingMessage(message, isError = false) {
+  const target = $("#billing-profile-message");
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+function fillBillingProfile(data = {}) {
+  $("#billing-company-name").value = data.company_name || "";
+  $("#billing-company-address").value = data.company_address || "";
+  $("#billing-tax-number").value = data.tax_number || "";
+  $("#billing-bank-account").value = data.bank_account_number || "";
+  $("#billing-email").value = data.billing_email || "";
+}
+
+async function loadBillingProfile() {
+  const form = $("#billing-profile-form");
+  form.querySelectorAll("input, button").forEach((control) => {
+    control.disabled = true;
+  });
+  setBillingMessage("Számlázási adatok betöltése…");
+
+  try {
+    const payload = await api("/api/profile/billing");
+    state.billingProfile = payload.billing || {};
+    fillBillingProfile(state.billingProfile);
+    setBillingMessage(
+      state.billingProfile.updated_at
+        ? `Utolsó módosítás: ${new Date(state.billingProfile.updated_at).toLocaleString("hu-HU")}`
+        : ""
+    );
+  } catch (error) {
+    setBillingMessage(error.message, true);
+  } finally {
+    form.querySelectorAll("input, button").forEach((control) => {
+      control.disabled = false;
+    });
+  }
+}
+
+$("#billing-profile-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  setBillingMessage("Mentés folyamatban…");
+
+  const payload = {
+    company_name: $("#billing-company-name").value.trim(),
+    company_address: $("#billing-company-address").value.trim(),
+    tax_number: $("#billing-tax-number").value.trim(),
+    bank_account_number: $("#billing-bank-account").value.trim(),
+    billing_email: $("#billing-email").value.trim(),
+  };
+
+  try {
+    const result = await api("/api/profile/billing", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    state.billingProfile = result.billing || payload;
+    fillBillingProfile(state.billingProfile);
+    setBillingMessage("A számlázási adatok elmentve.");
+  } catch (error) {
+    setBillingMessage(error.message, true);
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+
 function renderValidation(target, validation, stored = null) {
   const summary = validation.ok
     ? stored === true ? "A számla ellenőrizve és eltárolva." : "Az ellenőrzés sikeres. A számlafeltöltés aktív."
@@ -373,11 +452,13 @@ $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   state.user = null;
   state.workflow = null;
+  state.billingProfile = null;
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
+$("#nav-profile").addEventListener("click", () => showSection("profile"));
 
 async function start() {
   try {
@@ -389,7 +470,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=3");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=4");
 }
 
 start();
