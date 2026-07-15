@@ -116,7 +116,13 @@ jobs:
 
       - name: Load JITT invoice workbook
         run: |
-          python scripts/load_jitt_invoice_workbook.py
+          SOURCE_URL="$(cat .github/jitt-invoice-import.trigger)"
+          if [[ "$SOURCE_URL" == https://* ]]; then
+            curl --fail --location "$SOURCE_URL" --output /tmp/jitt-invoice.xlsx
+            python scripts/load_jitt_invoice_workbook.py --source-path /tmp/jitt-invoice.xlsx
+          else
+            python scripts/load_jitt_invoice_workbook.py
+          fi
 
   folgaltsag:
     runs-on: ubuntu-latest
