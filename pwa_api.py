@@ -438,7 +438,7 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
         "GET",
         "peopleforce_complaints",
         params={
-            "select": "id,document_type,message,status,created_at,admin_response,responded_by,responded_at",
+            "select": "id,document_type,message,status,created_at,responded_by,responded_at",
             "courier_id": f"eq.{courier_id}",
             "document_month": f"eq.{month_value}",
             "order": "created_at.desc",
