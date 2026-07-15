@@ -719,11 +719,11 @@ def show_invoice_summary_page():
                 "email",
             )
             try:
-                default_transfer_amount = int(
-                    round(float(selected_row.get("payable_total_huf", 0) or 0))
-                )
-            except (TypeError, ValueError):
-                default_transfer_amount = 0
+                    default_transfer_amount = int(
+                        round(float(selected_row.get("payable_total_huf", 0) or 0))
+                    )
+                except (TypeError, ValueError):
+                    default_transfer_amount = 0
             
 
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
