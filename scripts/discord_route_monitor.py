@@ -1,4 +1,6 @@
 import argparse
+import json
+import os
 from collections import Counter
 import sys
 import time
@@ -7,6 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
+from pywebpush import WebPushException, webpush
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -30,6 +33,9 @@ from resources.supabase_raw import (
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 NOTIFICATION_TABLE = "discord_route_notifications"
+PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
+PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
+PUSH_NOTIFICATION_TYPE = "route_assigned"
 
 
 def normalize_id(value):
@@ -273,6 +279,254 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint, lice
     raise_for_supabase_error(response)
 
 
+
+def env_setting(name):
+    value = str(os.getenv(name) or "").strip()
+    if not value:
+        raise RuntimeError(f"Hiányzó környezeti változó: {name}")
+    return value
+
+
+def get_active_push_subscriptions(courier_id):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return []
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{PUSH_SUBSCRIPTION_TABLE}"
+        "?select=id,courier_id,endpoint,p256dh,auth"
+        f"&courier_id=eq.{courier_id}"
+        "&active=eq.true"
+        "&order=updated_at.desc"
+        "&limit=20"
+    )
+
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(service_role_key),
+        timeout=20,
+    )
+
+    if response.status_code in [404, 406]:
+        return []
+
+    raise_for_supabase_error(response)
+    return response.json() or []
+
+
+def push_already_logged(courier_id, route_id):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return False
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{PUSH_DELIVERY_TABLE}"
+        "?select=id"
+        f"&courier_id=eq.{courier_id}"
+        f"&notification_type=eq.{PUSH_NOTIFICATION_TYPE}"
+        f"&message=eq.route:{route_id}"
+        "&status=eq.sent"
+        "&limit=1"
+    )
+
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(service_role_key),
+        timeout=20,
+    )
+
+    if response.status_code in [404, 406]:
+        return False
+
+    raise_for_supabase_error(response)
+    return bool(response.json())
+
+
+def log_push_delivery(courier_id, route_id, status, detail):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return
+
+    payload = {
+        "courier_id": int(courier_id),
+        "work_date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+        "notification_type": PUSH_NOTIFICATION_TYPE,
+        "status": status,
+        "message": f"route:{route_id}",
+        "sent_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
+    }
+
+    endpoint = f"{supabase_url}/rest/v1/{PUSH_DELIVERY_TABLE}"
+    response = requests.post(
+        endpoint,
+        headers=supabase_headers(
+            service_role_key,
+            "return=minimal",
+        ),
+        json=payload,
+        timeout=20,
+    )
+
+    if response.status_code in [404, 406]:
+        return
+
+    raise_for_supabase_error(response)
+
+
+def deactivate_push_subscription(subscription_id):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{PUSH_SUBSCRIPTION_TABLE}"
+        f"?id=eq.{subscription_id}"
+    )
+
+    response = requests.patch(
+        endpoint,
+        headers=supabase_headers(
+            service_role_key,
+            "return=minimal",
+        ),
+        json={
+            "active": False,
+            "updated_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
+        },
+        timeout=20,
+    )
+
+    if response.status_code in [404, 406]:
+        return
+
+    raise_for_supabase_error(response)
+
+
+def build_route_push_body(
+    route_id,
+    address,
+    planned_departure,
+    planned_return,
+    licence_plate,
+    orders_in_route,
+):
+    lines = []
+
+    if planned_departure:
+        lines.append(f"Indulás: {planned_departure}")
+    if planned_return:
+        lines.append(f"Várható visszaérkezés: {planned_return}")
+    if orders_in_route:
+        lines.append(f"Rendelések: {orders_in_route}")
+    if licence_plate:
+        lines.append(f"Rendszám: {licence_plate}")
+    if address:
+        lines.append(f"Első cím: {address}")
+
+    if not lines:
+        lines.append(f"Túraazonosító: {route_id}")
+
+    return "\n".join(lines)
+
+
+def send_route_push(
+    courier_id,
+    courier_name,
+    route_id,
+    *,
+    address="",
+    planned_departure="",
+    planned_return="",
+    licence_plate="",
+    orders_in_route="",
+):
+    if push_already_logged(courier_id, route_id):
+        return "already_sent"
+
+    subscriptions = get_active_push_subscriptions(courier_id)
+    if not subscriptions:
+        return "no_subscription"
+
+    body = build_route_push_body(
+        route_id,
+        address,
+        planned_departure,
+        planned_return,
+        licence_plate,
+        orders_in_route,
+    )
+
+    payload = json.dumps(
+        {
+            "title": "Új túrát kaptál",
+            "body": body,
+            "tag": f"route-assigned-{courier_id}-{route_id}",
+            "url": "/",
+            "renotify": False,
+            "data": {
+                "section": "home",
+                "routeId": str(route_id),
+                "courierId": str(courier_id),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    sent = False
+    errors = []
+
+    for subscription in subscriptions:
+        subscription_info = {
+            "endpoint": subscription.get("endpoint"),
+            "keys": {
+                "p256dh": subscription.get("p256dh"),
+                "auth": subscription.get("auth"),
+            },
+        }
+
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=env_setting("VAPID_PRIVATE_KEY"),
+                vapid_claims={"sub": env_setting("VAPID_SUBJECT")},
+                ttl=60 * 60,
+            )
+            sent = True
+        except WebPushException as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            errors.append(f"id={subscription.get('id')} status={status_code} {exc}")
+
+            if status_code in [404, 410]:
+                deactivate_push_subscription(subscription.get("id"))
+
+    if sent:
+        log_push_delivery(
+            courier_id,
+            route_id,
+            "sent",
+            body,
+        )
+        return "sent"
+
+    log_push_delivery(
+        courier_id,
+        route_id,
+        "failed",
+        " | ".join(errors) or "Ismeretlen push hiba.",
+    )
+    print(
+        f"Push hiba #{courier_id} route {route_id}: "
+        + (" | ".join(errors) or "ismeretlen hiba"),
+        flush=True,
+    )
+    return "failed"
+
+
 def run_once(max_age_minutes, dry_run=False):
     discord_status = read_discord_status()
     counters = Counter()
@@ -417,6 +671,25 @@ def run_once(max_age_minutes, dry_run=False):
                 f"Discord route jelzes kihagyva: "
                 f"#{courier_id} route {route_id} ({result})"
             )
+
+        push_result = send_route_push(
+            courier_id,
+            courier_name,
+            route_id,
+            address=address,
+            planned_departure=format_time(route.get("plannedDeparture")),
+            planned_return=format_time(
+                route.get("realReturn") or route.get("plannedReturn")
+            ),
+            licence_plate=licence_plate,
+            orders_in_route=orders_in_route,
+        )
+        counters[f"push_{push_result}"] += 1
+        print(
+            f"Push route jelzes: #{courier_id} route {route_id} "
+            f"({push_result})",
+            flush=True,
+        )
 
     print(
         f"Monitor kor kesz: sent={sent_count}, skipped={skipped_count}, reasons={dict(counters)}",

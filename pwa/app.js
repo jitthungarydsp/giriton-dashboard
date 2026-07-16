@@ -71,7 +71,10 @@ function showSection(section) {
   $("#nav-profile").classList.toggle("active", section === "profile");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
-  if (section === "profile") loadBillingProfile();
+  if (section === "profile") {
+    loadBillingProfile();
+    refreshNotificationToggle();
+  }
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -313,152 +316,140 @@ async function submitComplaint(event, action) {
 
 function urlBase64ToUint8Array(value) {
   const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  const base64 = (value + padding)
-    .replaceAll("-", "+")
-    .replaceAll("_", "/");
+  const base64 = (value + padding).replaceAll("-", "+").replaceAll("_", "/");
   const raw = atob(base64);
-  return Uint8Array.from(
-    [...raw].map((character) => character.charCodeAt(0))
-  );
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
-function ensureNotificationCard() {
-  let card = $("#notification-card");
+function ensureNotificationToggle() {
+  let card = $("#notification-settings-card");
   if (card) return card;
 
-  const home = $("#home-content");
-  const hero = home?.querySelector(".hero-card");
-  if (!home || !hero) return null;
+  const profile = $("#profile-content");
+  if (!profile) return null;
 
   card = document.createElement("section");
-  card.id = "notification-card";
+  card.id = "notification-settings-card";
   card.className = "process-card";
   card.innerHTML = `
     <div class="process-title">
       <span class="step-code">🔔</span>
       <div>
         <h3>Műszakértesítések</h3>
-        <p id="notification-status">Ellenőrzés…</p>
+        <p id="notification-status">Kikapcsolva.</p>
       </div>
     </div>
-    <button
-      id="enable-notifications"
-      class="primary"
-      type="button"
-    >
-      Értesítések bekapcsolása
-    </button>
+    <label class="notification-toggle-row">
+      <span>Push értesítések</span>
+      <input id="notification-toggle" type="checkbox" role="switch" />
+    </label>
   `;
-
-  hero.insertAdjacentElement("afterend", card);
+  profile.appendChild(card);
   return card;
 }
 
 async function getPushSubscription() {
-  if (
-    !("serviceWorker" in navigator) ||
-    !("PushManager" in window)
-  ) {
-    return null;
-  }
-
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
   const registration = await navigator.serviceWorker.ready;
   return registration.pushManager.getSubscription();
 }
 
-async function refreshNotificationStatus() {
-  const card = ensureNotificationCard();
-  if (!card) return;
+function setNotificationStatus(message, isError = false) {
+  const target = $("#notification-status");
+  if (!target) return;
+  target.textContent = message;
+  target.classList.toggle("error", Boolean(isError));
+}
 
-  const status = $("#notification-status");
-  const button = $("#enable-notifications");
+async function refreshNotificationToggle() {
+  ensureNotificationToggle();
+  const toggle = $("#notification-toggle");
+  if (!toggle) return;
 
-  if (
-    !("Notification" in window) ||
-    !("serviceWorker" in navigator) ||
-    !("PushManager" in window)
-  ) {
-    status.textContent =
-      "Ezen az eszközön a push értesítés nem támogatott.";
-    button.hidden = true;
+  if (!("Notification" in window) || !("PushManager" in window)) {
+    toggle.checked = false;
+    toggle.disabled = true;
+    setNotificationStatus("A push értesítés nem támogatott.", true);
     return;
   }
 
   const subscription = await getPushSubscription();
-
-  if (Notification.permission === "granted" && subscription) {
-    status.textContent =
-      "Bekapcsolva. A holnapi műszakról értesítést kapsz.";
-    button.textContent = "Értesítések bekapcsolva";
-    button.disabled = true;
-    return;
-  }
+  toggle.checked = Notification.permission === "granted" && Boolean(subscription);
+  toggle.disabled = Notification.permission === "denied";
 
   if (Notification.permission === "denied") {
-    status.textContent =
-      "Az értesítések le vannak tiltva a böngészőben.";
-    button.textContent = "Értesítések letiltva";
-    button.disabled = true;
-    return;
+    setNotificationStatus("Az értesítések le vannak tiltva.", true);
+  } else if (toggle.checked) {
+    setNotificationStatus("Bekapcsolva. Értesítést kapsz a holnapi műszakodról.");
+  } else {
+    setNotificationStatus("Kikapcsolva.");
   }
-
-  status.textContent =
-    "Kapcsold be, hogy értesítést kapj a holnapi műszakodról.";
-  button.textContent = "Értesítések bekapcsolása";
-  button.disabled = false;
 }
 
-async function enablePushNotifications() {
-  const button = $("#enable-notifications");
-  const status = $("#notification-status");
+async function subscribeToPush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("Az értesítési engedély nem lett megadva.");
+  }
 
-  if (!button || !status) return;
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
 
-  button.disabled = true;
-  status.textContent = "Engedélykérés…";
+  if (!subscription) {
+    const keyPayload = await api("/api/push/public-key");
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(keyPayload.publicKey),
+    });
+  }
+
+  const serialized = subscription.toJSON();
+  await api("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({
+      endpoint: serialized.endpoint,
+      keys: serialized.keys,
+      user_agent: navigator.userAgent,
+    }),
+  });
+}
+
+async function unsubscribeFromPush() {
+  const subscription = await getPushSubscription();
+  if (!subscription) return;
+
+  const serialized = subscription.toJSON();
+  await api("/api/push/unsubscribe", {
+    method: "POST",
+    body: JSON.stringify({
+      endpoint: serialized.endpoint,
+      keys: serialized.keys,
+      user_agent: navigator.userAgent,
+    }),
+  });
+
+  await subscription.unsubscribe();
+}
+
+document.addEventListener("change", async (event) => {
+  if (event.target?.id !== "notification-toggle") return;
+
+  const toggle = event.target;
+  toggle.disabled = true;
+  setNotificationStatus(toggle.checked ? "Bekapcsolás…" : "Kikapcsolás…");
 
   try {
-    const permission = await Notification.requestPermission();
-
-    if (permission !== "granted") {
-      throw new Error("Az értesítési engedély nem lett megadva.");
+    if (toggle.checked) {
+      await subscribeToPush();
+    } else {
+      await unsubscribeFromPush();
     }
-
-    const registration = await navigator.serviceWorker.ready;
-    let subscription = await registration.pushManager.getSubscription();
-
-    if (!subscription) {
-      const keyPayload = await api("/api/push/public-key");
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(
-          keyPayload.publicKey
-        ),
-      });
-    }
-
-    const serialized = subscription.toJSON();
-
-    await api("/api/push/subscribe", {
-      method: "POST",
-      body: JSON.stringify({
-        endpoint: serialized.endpoint,
-        keys: serialized.keys,
-        user_agent: navigator.userAgent,
-      }),
-    });
-
-    await refreshNotificationStatus();
   } catch (error) {
-    status.textContent =
-      `Az értesítés nem kapcsolható be: ${error.message}`;
-    button.disabled = false;
-  }
-}
-
-document.addEventListener("click", (event) => {
-  if (event.target?.id === "enable-notifications") {
-    enablePushNotifications();
+    toggle.checked = !toggle.checked;
+    setNotificationStatus(error.message, true);
+  } finally {
+    toggle.disabled = false;
+    await refreshNotificationToggle();
   }
 });
 
@@ -599,7 +590,6 @@ $("#login-form").addEventListener("submit", async (event) => {
     showApp();
     showSection("home");
     await loadShifts();
-    await refreshNotificationStatus();
   } catch (error) {
     $("#login-error").textContent = error.message;
   }
@@ -624,11 +614,10 @@ async function start() {
     showApp();
     showSection("home");
     await loadShifts();
-    await refreshNotificationStatus();
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=9");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=10");
 }
 
 start();
