@@ -4,6 +4,7 @@ const state = {
   selectedDate: null,
   workflow: null,
   billingProfile: null,
+  currentRoute: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -79,6 +80,204 @@ function showSection(section) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+
+function ensureRouteCard() {
+  let container = $("#current-route-container");
+  if (container) return container;
+
+  const home = $("#home-content");
+  const hero = home?.querySelector(".hero-card");
+  if (!home || !hero) return null;
+
+  container = document.createElement("section");
+  container.id = "current-route-container";
+  container.className = "process-card";
+  hero.insertAdjacentElement("afterend", container);
+  return container;
+}
+
+function routeAddressBlock(title, checkpoint, cssClass = "") {
+  if (!checkpoint) return "";
+
+  const windowText = checkpoint.windowFrom || checkpoint.windowTo
+    ? `<small>Időkapu: ${escapeHtml(checkpoint.windowFrom || "?")}–${escapeHtml(checkpoint.windowTo || "?")}</small>`
+    : "";
+
+  return `
+    <div class="route-address ${cssClass}">
+      <span>${escapeHtml(title)}</span>
+      <strong>${escapeHtml(checkpoint.address || "Cím nincs megadva")}</strong>
+      ${windowText}
+    </div>
+  `;
+}
+
+function renderCurrentRoute() {
+  const container = ensureRouteCard();
+  if (!container) return;
+
+  const payload = state.currentRoute;
+  const route = payload?.route;
+
+  if (!payload?.found || !route) {
+    container.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">🚚</span>
+        <div>
+          <h3>Aktuális túra</h3>
+          <p>Jelenleg nincs aktív túra.</p>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const returnText = route.realReturn
+    ? `Valós visszaérkezés: ${escapeHtml(route.realReturn)}`
+    : `Tervezett visszaérkezés: ${escapeHtml(route.plannedReturn || "–")}`;
+
+  container.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">🚚</span>
+      <div>
+        <h3>Aktuális túra #${escapeHtml(route.routeId)}</h3>
+        <p>${escapeHtml(route.warehouse || "")} · ${escapeHtml(returnText)}</p>
+      </div>
+    </div>
+
+    <div class="route-summary">
+      <div><span>Rendelések</span><strong>${Number(route.totalOrders || 0)}</strong></div>
+      <div><span>Kiszállítva</span><strong>${Number(route.deliveredOrders || 0)}</strong></div>
+      <div><span>Mai túrák</span><strong>${Number(payload.totalRoutes || 0)}</strong></div>
+    </div>
+
+    ${routeAddressBlock("Előző cím", route.previous)}
+    ${routeAddressBlock("Mostani cím", route.current, "current")}
+    ${routeAddressBlock("Következő cím", route.next)}
+
+    <button id="delay-alert-button" class="primary" type="button">
+      Késés jelzése
+    </button>
+  `;
+
+  $("#delay-alert-button")?.addEventListener(
+    "click",
+    openDelayAlertDialog
+  );
+}
+
+async function loadCurrentRoute() {
+  try {
+    state.currentRoute = await api("/api/routes/current");
+    renderCurrentRoute();
+  } catch (error) {
+    const container = ensureRouteCard();
+    if (container) {
+      container.innerHTML = `
+        <div class="warning-card">
+          A túraadatok nem tölthetők be: ${escapeHtml(error.message)}
+        </div>
+      `;
+    }
+  }
+}
+
+function ensureDelayAlertDialog() {
+  let dialog = $("#delay-alert-dialog");
+  if (dialog) return dialog;
+
+  dialog = document.createElement("dialog");
+  dialog.id = "delay-alert-dialog";
+  dialog.innerHTML = `
+    <form id="delay-alert-form" method="dialog" class="process-form">
+      <h3>Késés jelzése</h3>
+
+      <label>
+        Mi okozza a késést?
+        <textarea
+          id="delay-alert-message"
+          rows="4"
+          required
+        ></textarea>
+      </label>
+
+      <label class="checkbox-row">
+        <input id="dispatcher-notified" type="checkbox" />
+        Diszpécsernek jeleztem a gondot
+      </label>
+
+      <p id="delay-alert-status" class="updated-at"></p>
+
+      <div class="dialog-actions">
+        <button id="delay-alert-cancel" class="secondary" type="button">
+          Mégse
+        </button>
+        <button class="primary" type="submit">
+          Küldés
+        </button>
+      </div>
+    </form>
+  `;
+
+  document.body.appendChild(dialog);
+
+  $("#delay-alert-cancel").addEventListener(
+    "click",
+    () => dialog.close()
+  );
+  $("#delay-alert-form").addEventListener(
+    "submit",
+    submitDelayAlert
+  );
+
+  return dialog;
+}
+
+function openDelayAlertDialog() {
+  const dialog = ensureDelayAlertDialog();
+  $("#delay-alert-message").value = "";
+  $("#dispatcher-notified").checked = false;
+  $("#delay-alert-status").textContent = "";
+  dialog.showModal();
+}
+
+async function submitDelayAlert(event) {
+  event.preventDefault();
+
+  const route = state.currentRoute?.route;
+  const current = route?.current;
+  const status = $("#delay-alert-status");
+  const submit = event.currentTarget.querySelector(
+    'button[type="submit"]'
+  );
+
+  submit.disabled = true;
+  status.textContent = "Küldés…";
+
+  try {
+    await api("/api/routes/delay-alert", {
+      method: "POST",
+      body: JSON.stringify({
+        route_id: route.routeId,
+        order_id: current?.orderId || "",
+        message: $("#delay-alert-message").value.trim(),
+        dispatcher_notified: $("#dispatcher-notified").checked,
+        current_address: current?.address || "",
+        current_checkpoint_position: current?.position ?? null,
+      }),
+    });
+
+    status.textContent = "A késésjelzés elküldve.";
+    setTimeout(() => $("#delay-alert-dialog").close(), 700);
+  } catch (error) {
+    status.textContent = error.message;
+    status.classList.add("error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+
 function renderTabs() {
   const tabs = $("#day-tabs");
   tabs.innerHTML = "";
@@ -142,6 +341,7 @@ async function loadShifts() {
   $("#refresh").disabled = true;
   try {
     state.data = await api("/api/shifts?days=5");
+    await loadCurrentRoute();
     state.selectedDate ||= localDate();
     renderHero();
     renderTabs();
@@ -345,6 +545,10 @@ function ensureNotificationToggle() {
     </label>
   `;
   profile.appendChild(card);
+
+  const toggle = card.querySelector("#notification-toggle");
+  toggle.addEventListener("change", handleNotificationToggleChange);
+
   return card;
 }
 
@@ -392,18 +596,37 @@ async function subscribeToPush() {
     throw new Error("Az értesítési engedély nem lett megadva.");
   }
 
-  const registration = await navigator.serviceWorker.ready;
-  let subscription = await registration.pushManager.getSubscription();
-
-  if (!subscription) {
-    const keyPayload = await api("/api/push/public-key");
-    subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(keyPayload.publicKey),
-    });
+  const keyPayload = await api("/api/push/public-key");
+  if (!keyPayload.publicKey) {
+    throw new Error("A VAPID publikus kulcs nem érhető el.");
   }
 
+  const registration = await navigator.serviceWorker.ready;
+  const existingSubscription =
+    await registration.pushManager.getSubscription();
+
+  // A korábbi VAPID kulccsal készült feliratkozást újra kell létrehozni.
+  if (existingSubscription) {
+    await existingSubscription.unsubscribe();
+  }
+
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(
+      keyPayload.publicKey
+    ),
+  });
+
   const serialized = subscription.toJSON();
+
+  if (
+    !serialized.endpoint ||
+    !serialized.keys?.p256dh ||
+    !serialized.keys?.auth
+  ) {
+    throw new Error("A böngésző hiányos feliratkozási adatot adott vissza.");
+  }
+
   await api("/api/push/subscribe", {
     method: "POST",
     body: JSON.stringify({
@@ -431,12 +654,13 @@ async function unsubscribeFromPush() {
   await subscription.unsubscribe();
 }
 
-document.addEventListener("change", async (event) => {
-  if (event.target?.id !== "notification-toggle") return;
-
-  const toggle = event.target;
+async function handleNotificationToggleChange(event) {
+  const toggle = event.currentTarget;
   toggle.disabled = true;
-  setNotificationStatus(toggle.checked ? "Bekapcsolás…" : "Kikapcsolás…");
+
+  setNotificationStatus(
+    toggle.checked ? "Bekapcsolás…" : "Kikapcsolás…"
+  );
 
   try {
     if (toggle.checked) {
@@ -446,12 +670,15 @@ document.addEventListener("change", async (event) => {
     }
   } catch (error) {
     toggle.checked = !toggle.checked;
-    setNotificationStatus(error.message, true);
+    setNotificationStatus(
+      `Hiba: ${error.message}`,
+      true
+    );
   } finally {
     toggle.disabled = false;
     await refreshNotificationToggle();
   }
-});
+}
 
 
 function setBillingMessage(message, isError = false) {
@@ -617,7 +844,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=10");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=12");
 }
 
 start();

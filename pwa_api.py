@@ -1,3 +1,8 @@
+Könyvtár
+/
+pwa_api_route_card.txt
+
+
 import hashlib
 import hmac
 import base64
@@ -30,6 +35,14 @@ LOCAL_SESSION_SECRET_FILE = PROJECT_ROOT / ".pwa_session_secret"
 SESSION_COOKIE = "giriton_pwa_session"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
+COURIER_DETAIL_API_BASE = (
+    "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
+)
+COURIER_DETAIL_ORGANIZATION_ID = (
+    "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+)
+LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -44,6 +57,15 @@ class ComplaintRequest(BaseModel):
     month: str
     action: str
     message: str
+
+
+class RouteDelayAlertRequest(BaseModel):
+    route_id: int
+    order_id: str = ""
+    message: str
+    dispatcher_notified: bool = False
+    current_address: str = ""
+    current_checkpoint_position: int | None = None
 
 
 class BillingProfileUpdate(BaseModel):
@@ -457,6 +479,205 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
         "warnings": source_errors,
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
+
+
+
+def local_iso_time(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(LOCAL_TIMEZONE).strftime("%H:%M")
+
+
+def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
+    courier_id, _courier_name = courier_identity(user)
+    today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+    url = (
+        f"{COURIER_DETAIL_API_BASE}/fetch-drivers-detail/"
+        f"{courier_id}/{today}"
+        f"?organizationId={COURIER_DETAIL_ORGANIZATION_ID}"
+    )
+    response = requests.get(url, timeout=45)
+    if not response.ok:
+        print("Driver detail status:", response.status_code)
+        print("Driver detail response:", response.text[:2000])
+        raise HTTPException(
+            status_code=502,
+            detail=f"A túraadatok nem érhetők el ({response.status_code}).",
+        )
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {}
+
+
+def checkpoint_is_completed(checkpoint: dict[str, Any]) -> bool:
+    return bool(
+        checkpoint.get("realDepartureTime")
+        or (
+            checkpoint.get("realArrivalTime")
+            and checkpoint.get("realDepartureTime")
+        )
+    )
+
+
+def current_checkpoint_index(checkpoints: list[dict[str, Any]]) -> int | None:
+    if not checkpoints:
+        return None
+
+    ordered = sorted(
+        checkpoints,
+        key=lambda row: int(row.get("position") or 999999),
+    )
+
+    # Ha megérkezett egy címre, de még nem indult tovább, az az aktuális cím.
+    for index, checkpoint in enumerate(ordered):
+        if checkpoint.get("realArrivalTime") and not checkpoint.get("realDepartureTime"):
+            return index
+
+    # Egyébként az első még nem teljesített cím az aktuális.
+    for index, checkpoint in enumerate(ordered):
+        if not checkpoint.get("realDepartureTime"):
+            return index
+
+    return len(ordered) - 1
+
+
+def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not routes:
+        return None
+
+    # Elsőként a még vissza nem érkezett túrát választjuk.
+    active = [
+        row for row in routes
+        if not row.get("realReturn")
+    ]
+    candidates = active or routes
+
+    def route_sort_key(row: dict[str, Any]) -> str:
+        return str(
+            row.get("realDeparture")
+            or row.get("plannedDeparture")
+            or row.get("assignedAt")
+            or row.get("createdAt")
+            or ""
+        )
+
+    return sorted(candidates, key=route_sort_key, reverse=True)[0]
+
+
+def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
+    payload = fetch_driver_detail(user)
+    routes = payload.get("routes") or []
+    route = active_route(routes)
+
+    if not route:
+        return {
+            "found": False,
+            "route": None,
+            "totalRoutes": len(routes),
+        }
+
+    checkpoints = sorted(
+        route.get("checkpoints") or [],
+        key=lambda row: int(row.get("position") or 999999),
+    )
+    index = current_checkpoint_index(checkpoints)
+
+    previous_checkpoint = (
+        checkpoints[index - 1]
+        if index is not None and index > 0
+        else None
+    )
+    current_checkpoint = (
+        checkpoints[index]
+        if index is not None and index < len(checkpoints)
+        else None
+    )
+    next_checkpoint = (
+        checkpoints[index + 1]
+        if index is not None and index + 1 < len(checkpoints)
+        else None
+    )
+
+    return {
+        "found": True,
+        "totalRoutes": len(routes),
+        "route": {
+            "routeId": route.get("id") or route.get("routeId"),
+            "warehouse": payload.get("warehouseName") or "",
+            "status": route.get("status"),
+            "totalOrders": int(route.get("numTotalOrders") or 0),
+            "deliveredOrders": int(route.get("numDeliveredOrders") or 0),
+            "plannedDeparture": local_iso_time(route.get("plannedDeparture")),
+            "realDeparture": local_iso_time(route.get("realDeparture")),
+            "plannedReturn": local_iso_time(route.get("plannedReturn")),
+            "realReturn": local_iso_time(route.get("realReturn")),
+            "previous": {
+                "orderId": str((previous_checkpoint or {}).get("orderId") or ""),
+                "position": (previous_checkpoint or {}).get("position"),
+                "address": str((previous_checkpoint or {}).get("address") or ""),
+            } if previous_checkpoint else None,
+            "current": {
+                "orderId": str((current_checkpoint or {}).get("orderId") or ""),
+                "position": (current_checkpoint or {}).get("position"),
+                "address": str((current_checkpoint or {}).get("address") or ""),
+                "windowFrom": local_iso_time((current_checkpoint or {}).get("deliverSince")),
+                "windowTo": local_iso_time((current_checkpoint or {}).get("deliverTill")),
+                "plannedArrival": local_iso_time((current_checkpoint or {}).get("plannedArrivalTime")),
+                "estimatedArrival": local_iso_time((current_checkpoint or {}).get("estimatedArrivalTime")),
+                "realArrival": local_iso_time((current_checkpoint or {}).get("realArrivalTime")),
+            } if current_checkpoint else None,
+            "next": {
+                "orderId": str((next_checkpoint or {}).get("orderId") or ""),
+                "position": (next_checkpoint or {}).get("position"),
+                "address": str((next_checkpoint or {}).get("address") or ""),
+                "windowFrom": local_iso_time((next_checkpoint or {}).get("deliverSince")),
+                "windowTo": local_iso_time((next_checkpoint or {}).get("deliverTill")),
+            } if next_checkpoint else None,
+        },
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def save_route_delay_alert(
+    user: dict[str, Any],
+    payload: RouteDelayAlertRequest,
+) -> None:
+    courier_id, courier_name = courier_identity(user)
+    message = payload.message.strip()
+
+    if not message:
+        raise HTTPException(
+            status_code=422,
+            detail="Írd le röviden a késés okát.",
+        )
+
+    supabase_rest(
+        "POST",
+        "courier_route_alerts",
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "route_id": payload.route_id,
+            "order_id": payload.order_id.strip(),
+            "alert_type": "delay",
+            "message": message,
+            "dispatcher_notified": payload.dispatcher_notified,
+            "current_address": payload.current_address.strip(),
+            "current_checkpoint_position": payload.current_checkpoint_position,
+            "status": "new",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
 
 
 WORKFLOW_PREREQUISITES = {
@@ -965,6 +1186,24 @@ def shifts(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     return read_shifts(require_user(giriton_pwa_session), days)
+
+
+@app.get("/api/routes/current")
+def current_route(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    return build_route_card(user)
+
+
+@app.post("/api/routes/delay-alert")
+def create_route_delay_alert(
+    payload: RouteDelayAlertRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    save_route_delay_alert(user, payload)
+    return {"ok": True}
 
 
 @app.get("/api/workflow")

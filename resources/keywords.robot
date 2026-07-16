@@ -12,8 +12,8 @@ Bejelentkezes
     Maximize Browser Window
     Wait Until Element Is Visible    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]
     SeleniumLibrary.Input Text    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]    text=jitthungary@gmail.com
-    SeleniumLibrary.Input Text        locator=//*[@id="CompanyLoginPanel-pfUserPassword"]           text=ujjelszo15
-    Click Element            locator=//*[@id="ROOT-2521314"]/div/div[2]/div/div/div/div[3]/div/div[3]/div/div[1]/div
+    SeleniumLibrary.Input Text        locator=//*[@id="CompanyLoginPanel-pfUserPassword"]           text=password0707..
+    Click Element            locator=//*[@id="ROOT-2521314"]/div/div/div/div/div/div/div/div[3]/div/div[3]/div/div[1]/div
 
 Slack login
     Open Browser    https://app.slack.com/client/E01R5ED1R0U/C0B6B3F5S31    chrome    executable_path=C:/Giriton/robots/Drivers/chromedriver
