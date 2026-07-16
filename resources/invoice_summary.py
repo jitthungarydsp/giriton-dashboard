@@ -271,46 +271,93 @@ def get_headers():
     }
 
 
-def read_first_existing_table(table_names, select, extra_filters=None, limit=10000):
+def read_first_existing_table(
+    table_names,
+    select,
+    extra_filters=None,
+    limit=10000,
+):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
         raise RuntimeError(
-            "Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beallitas."
+            "Hianyzik a SUPABASE_URL vagy "
+            "SUPABASE_SERVICE_ROLE_KEY beallitas."
         )
-
-    filters = [f"select={select}", f"limit={int(limit)}"]
-
-    if extra_filters:
-        filters.extend(extra_filters)
 
     headers = get_headers()
     last_error = None
 
+    # A Supabase alapértelmezett maximális válaszmérete
+    # gyakran 1000 sor, ezért oldalanként kérjük le az adatokat.
+    page_size = 1000
+
     for table_name in table_names:
-        endpoint = f"{supabase_url}/rest/v1/{table_name}?{'&'.join(filters)}"
-        response = requests.get(
-            endpoint,
-            headers=headers,
-            timeout=60,
-        )
+        all_rows = []
+        offset = 0
+        table_failed = False
 
-        if response.status_code in [404, 406]:
-            last_error = response.text
+        while offset < int(limit):
+            current_limit = min(
+                page_size,
+                int(limit) - offset,
+            )
+
+            filters = [
+                f"select={select}",
+                f"limit={current_limit}",
+                f"offset={offset}",
+            ]
+
+            if extra_filters:
+                filters.extend(extra_filters)
+
+            endpoint = (
+                f"{supabase_url.rstrip('/')}"
+                f"/rest/v1/{table_name}"
+                f"?{'&'.join(filters)}"
+            )
+
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                timeout=60,
+            )
+
+            if response.status_code in [404, 406]:
+                last_error = response.text
+                table_failed = True
+                break
+
+            if (
+                response.status_code == 400
+                and "PGRST205" in response.text
+            ):
+                last_error = response.text
+                table_failed = True
+                break
+
+            raise_for_supabase_error(response)
+
+            rows = response.json() or []
+            all_rows.extend(rows)
+
+            # Ha kevesebb érkezett, elfogyott a tábla.
+            if len(rows) < current_limit:
+                break
+
+            offset += current_limit
+
+        if table_failed:
             continue
 
-        if response.status_code == 400 and "PGRST205" in response.text:
-            last_error = response.text
-            continue
-
-        raise_for_supabase_error(response)
-        rows = response.json()
-        return table_name, pd.DataFrame(rows)
+        return table_name, pd.DataFrame(all_rows)
 
     raise RuntimeError(
-        f"Egyik invoice tabla sem olvashato: {', '.join(table_names)}. {last_error or ''}"
+        "Egyik invoice tabla sem olvashato: "
+        f"{', '.join(table_names)}. "
+        f"{last_error or ''}"
     )
-
 
 def read_optional_first_existing_table(table_names, select, extra_filters=None, limit=10000):
     try:
