@@ -1392,8 +1392,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             + loyalty_bonus
         )
         average_per_order = payable_total / orders if orders else 0
-        bonus_per_order = bonus_total / orders if orders else 0
-        base_per_order = fixed_total / orders if orders else 0
+        bonus_per_order = 0
+        base_per_order = 0
 
         if index:
             story.append(PageBreak())
