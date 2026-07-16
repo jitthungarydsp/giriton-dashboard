@@ -668,10 +668,28 @@ def show_invoice_summary_page():
 
     all_filtered_final_df = final_df.copy()
 
+    # A futárlista alapja kizárólag a route-adat.
+    # A külső forrásokból csak a teljesebb megjelenítési nevet vesszük át.
     driver_names_by_key = {}
 
+    if (
+        all_filtered_final_df is not None
+        and not all_filtered_final_df.empty
+        and "driver_name" in all_filtered_final_df.columns
+    ):
+        for value in (
+            all_filtered_final_df["driver_name"]
+            .dropna()
+            .astype(str)
+        ):
+            name = value.strip()
+            key = normalize_person_key(name)
 
-    def add_driver_names(frame):
+            if name and key:
+                driver_names_by_key[key] = name
+
+
+    def enrich_driver_names(frame):
         if (
             frame is None
             or frame.empty
@@ -685,32 +703,23 @@ def show_invoice_summary_page():
             .astype(str)
         ):
             name = value.strip()
-
-            if not name:
-                continue
-
             key = normalize_person_key(name)
 
-            if not key:
+            if not name or key not in driver_names_by_key:
                 continue
 
-            current_name = driver_names_by_key.get(key)
+            current_name = driver_names_by_key[key]
 
-            # A Courier ID-t is tartalmazó, teljesebb nevet mutatjuk.
-            if (
-                not current_name
-                or len(name) > len(current_name)
-            ):
+            if len(name) > len(current_name):
                 driver_names_by_key[key] = name
 
 
-    add_driver_names(all_filtered_final_df)
-    add_driver_names(bonus_df)
-    add_driver_names(penalty_df)
-    add_driver_names(manual_df)
-    add_driver_names(atm_balance_df)
-    add_driver_names(customer_rating_df)
-    add_driver_names(monthly_adjustment_df)
+    enrich_driver_names(bonus_df)
+    enrich_driver_names(penalty_df)
+    enrich_driver_names(manual_df)
+    enrich_driver_names(atm_balance_df)
+    enrich_driver_names(customer_rating_df)
+    enrich_driver_names(monthly_adjustment_df)
 
     drivers = sorted(
         driver_names_by_key.values(),
