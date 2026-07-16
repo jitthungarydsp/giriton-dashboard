@@ -722,7 +722,7 @@ def show_invoice_summary_page():
                     default_transfer_amount = int(
                         round(float(selected_row.get("payable_total_huf", 0) or 0))
                     )
-                except (TypeError, ValueError):
+            except (TypeError, ValueError):
                     default_transfer_amount = 0
             
 
