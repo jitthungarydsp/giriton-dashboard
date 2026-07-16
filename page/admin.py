@@ -10,9 +10,11 @@ from resources.courier_db_sheet import (
 from resources.courier_master_db import read_courier_master
 from resources.email_sender import send_login_credentials, validate_email
 from resources.users import (
+    build_courier_master_sync_preview,
     load_users,
     create_user,
     reset_password,
+    sync_users_from_courier_master,
     update_role,
     toggle_active,
     update_trainer,
@@ -92,22 +94,145 @@ def show_admin_page():
     users = data.get("users", [])
 
     st.subheader("👥 Felhasználók")
+
+    show_passwords = st.toggle(
+        "Jelszavak megjelenítése",
+        value=False,
+        help="Csak adminisztrációs célra használd.",
+    )
+
     display_users = []
     for user in users:
         display_user = user.copy()
-        if display_user.get("password"):
-            display_user["password"] = "beállítva"
-        if display_user.get("passwordHash"):
-            display_user["passwordHash"] = "beállítva"
+
+        if not show_passwords:
+            if display_user.get("password"):
+                display_user["password"] = "••••••••"
+            if display_user.get("passwordHash"):
+                display_user["passwordHash"] = "beállítva"
+
         if display_user.get("token"):
             display_user["token"] = "aktív"
+
         display_users.append(display_user)
 
     st.dataframe(
         pd.DataFrame(display_users),
         use_container_width=True,
         height=500,
+        hide_index=True,
     )
+
+    st.divider()
+    st.subheader("🔄 users.json frissítése a courier_master alapján")
+
+    st.caption(
+        "A courier_id alapján frissíti a users.json fájlt. "
+        "Az admin jogosultságú felhasználók és Bagoly Zoltán változatlanok maradnak. "
+        "A többi meglévő felhasználó új jelszót kap."
+    )
+
+    try:
+        courier_master_for_sync = read_courier_master()
+    except Exception as exc:
+        courier_master_for_sync = pd.DataFrame()
+        st.error(f"A courier_master nem olvasható: {exc}")
+
+    if not courier_master_for_sync.empty:
+        courier_rows = courier_master_for_sync.to_dict("records")
+        sync_preview = build_courier_master_sync_preview(courier_rows)
+        sync_preview_df = pd.DataFrame(sync_preview)
+
+        if not sync_preview_df.empty:
+            action_counts = sync_preview_df["action"].value_counts().to_dict()
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Új", action_counts.get("Új felhasználó", 0))
+            p2.metric(
+                "Reset + frissítés",
+                action_counts.get("Frissítés + jelszó reset", 0),
+            )
+            p3.metric(
+                "Védett",
+                action_counts.get("Védett – változatlan", 0),
+            )
+            p4.metric("Összes", len(sync_preview_df))
+
+            with st.expander("Szinkron előnézet", expanded=False):
+                st.dataframe(
+                    sync_preview_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        confirm_sync = st.checkbox(
+            "Megerősítem a users.json frissítését és a nem védett felhasználók jelszó-resetjét.",
+            key="confirm_users_json_sync",
+        )
+
+        if st.button(
+            "users.json frissítése",
+            type="primary",
+            disabled=not confirm_sync,
+        ):
+            try:
+                result = sync_users_from_courier_master(
+                    courier_rows,
+                    reset_existing=True,
+                )
+                st.session_state["last_users_sync_passwords"] = result.get(
+                    "passwords",
+                    [],
+                )
+                st.success(
+                    "Frissítés kész. "
+                    f"Új: {result['created']}, "
+                    f"frissített: {result['updated']}, "
+                    f"resetelt: {result['reset']}, "
+                    f"védett: {result['protected']}, "
+                    f"kihagyott: {result['skipped']}."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A users.json frissítése sikertelen: {exc}")
+
+    generated_passwords = st.session_state.get(
+        "last_users_sync_passwords",
+        [],
+    )
+
+    if generated_passwords:
+        with st.expander(
+            "Legutóbbi szinkronban generált jelszavak",
+            expanded=True,
+        ):
+            show_generated_passwords = st.toggle(
+                "Generált jelszavak megjelenítése",
+                value=False,
+                key="show_generated_passwords",
+            )
+            generated_df = pd.DataFrame(generated_passwords)
+
+            if (
+                not show_generated_passwords
+                and "password" in generated_df.columns
+            ):
+                generated_df["password"] = "••••••••"
+
+            st.dataframe(
+                generated_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            if st.button(
+                "Jelszólista elrejtése",
+                key="clear_generated_passwords",
+            ):
+                st.session_state.pop(
+                    "last_users_sync_passwords",
+                    None,
+                )
+                st.rerun()
 
     st.divider()
     st.subheader("🚚 CourierDB_JITT törzsadat")
@@ -326,6 +451,23 @@ def show_admin_page():
 
     with col2:
         st.markdown("**Belépési adatok küldése**")
+
+        selected_password = get_existing_password(selected_data)
+        show_selected_password = st.toggle(
+            "Jelszó megjelenítése",
+            value=False,
+            key=f"show_selected_password_{selected_user}",
+        )
+        st.text_input(
+            "Jelenlegi jelszó",
+            value=(
+                selected_password
+                if show_selected_password
+                else "••••••••"
+            ),
+            disabled=True,
+            key=f"selected_password_{selected_user}_{show_selected_password}",
+        )
 
         selected_courier_id = get_user_courier_id(selected_data)
         default_email = get_courier_email(selected_data, email_lookup)
