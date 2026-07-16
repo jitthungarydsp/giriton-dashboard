@@ -343,6 +343,15 @@
             "token": ""
         },
         {
+            "username": "Bagoly Zoltán",
+            "trainer": "admin",
+            "password": "Admin123!",
+            "role": "admin",
+            "courierId": 12345,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Gurzó Balázs",
             "trainer": "trainer_name",
             "password": "8gE9SmPj",
