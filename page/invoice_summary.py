@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+import requests
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
@@ -27,6 +28,11 @@ from resources.invoice_summary import (
     format_huf,
     read_invoice_data,
 )
+from resources.supabase_raw import (
+    get_supabase_config,
+    raise_for_supabase_error,
+)
+
 from resources.peopleforce_documents import (
     decode_document_content,
     delete_peopleforce_document,
@@ -396,6 +402,166 @@ def render_admin_document_manager(courier_id, courier_name):
             st.rerun()
 
 
+
+def _invoice_status_headers(service_role_key):
+    return {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        "Content-Type": "application/json",
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def read_sent_invoice_driver_names(document_month):
+    """
+    A peopleforce_documents táblából kiolvassa azoknak a futároknak a nevét,
+    akiknek az adott hónapra már invoice típusú dokumentum lett feltöltve.
+    """
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError(
+            "Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beállítás."
+        )
+
+    month_value = month_start_from_date(document_month).isoformat()
+    response = requests.get(
+        f"{supabase_url.rstrip('/')}/rest/v1/peopleforce_documents",
+        headers=_invoice_status_headers(service_role_key),
+        params={
+            "select": "courier_name,courier_id,document_month,document_type,uploaded_at",
+            "document_type": "eq.invoice",
+            "document_month": f"eq.{month_value}",
+            "order": "courier_name.asc,uploaded_at.desc",
+            "limit": "10000",
+        },
+        timeout=60,
+    )
+
+    raise_for_supabase_error(response)
+    rows = response.json() or []
+
+    result = {}
+    for row in rows:
+        name = str(row.get("courier_name") or "").strip()
+        if not name:
+            continue
+
+        key = normalize_name(name)
+        if key not in result:
+            result[key] = {
+                "courier_name": name,
+                "courier_id": row.get("courier_id"),
+                "uploaded_at": row.get("uploaded_at"),
+            }
+
+    return result
+
+
+def render_invoice_delivery_status(route_driver_names, document_month):
+    """
+    Megmutatja, hány egyedi futár szerepel az elszámolási route adatokban,
+    hányuknak lett számla kiküldve, és kik hiányoznak még.
+    """
+    clean_names = sorted(
+        {
+            str(name or "").strip()
+            for name in route_driver_names
+            if str(name or "").strip()
+        },
+        key=lambda value: value.casefold(),
+    )
+
+    route_name_lookup = {
+        normalize_name(name): name
+        for name in clean_names
+    }
+
+    try:
+        sent_lookup = read_sent_invoice_driver_names(document_month)
+    except Exception as exc:
+        st.warning(
+            f"A számlakiküldési állapot nem tölthető be: {exc}"
+        )
+        return
+
+    sent_names = sorted(
+        [
+            route_name_lookup[key]
+            for key in route_name_lookup
+            if key in sent_lookup
+        ],
+        key=lambda value: value.casefold(),
+    )
+
+    missing_names = sorted(
+        [
+            route_name_lookup[key]
+            for key in route_name_lookup
+            if key not in sent_lookup
+        ],
+        key=lambda value: value.casefold(),
+    )
+
+    total_count = len(clean_names)
+    sent_count = len(sent_names)
+    missing_count = len(missing_names)
+    completion = (sent_count / total_count * 100) if total_count else 0
+
+    st.subheader("Számlakiküldési visszajelző")
+
+    metric1, metric2, metric3, metric4 = st.columns(4)
+    metric1.metric("Route adatokban szereplő futárok", total_count)
+    metric2.metric("Számla kiküldve", sent_count)
+    metric3.metric("Még nincs kiküldve", missing_count)
+    metric4.metric("Készültség", f"{completion:.0f}%")
+
+    if total_count:
+        st.progress(min(max(completion / 100, 0), 1))
+
+    if missing_names:
+        st.warning(
+            f"{missing_count} futárnak még nincs invoice dokumentuma "
+            f"a(z) {month_start_from_date(document_month):%Y-%m} hónapra."
+        )
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "Még nincs számla kiküldve": missing_names,
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.success(
+            "Minden, az elszámolási route adatokban szereplő futárnak "
+            "ki lett küldve a számlája."
+        )
+
+    with st.expander("Kiküldött számlák listája", expanded=False):
+        if sent_names:
+            sent_rows = []
+            for name in sent_names:
+                details = sent_lookup.get(normalize_name(name), {})
+                sent_rows.append(
+                    {
+                        "Futár": name,
+                        "Courier ID": details.get("courier_id"),
+                        "Feltöltve": details.get("uploaded_at"),
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(sent_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("Ehhez a hónaphoz még nincs kiküldött számla.")
+
+
+
 def show_invoice_summary_page():
     st.title("Elszamolas")
     st.caption(
@@ -447,11 +613,22 @@ def show_invoice_summary_page():
         selected_sheet,
     )
 
+    all_filtered_final_df = final_df.copy()
+
     drivers = sorted(
         value
-        for value in final_df.get("driver_name", pd.Series(dtype=str)).dropna().astype(str).unique()
+        for value in all_filtered_final_df.get(
+            "driver_name",
+            pd.Series(dtype=str),
+        ).dropna().astype(str).unique()
         if value.strip()
     )
+
+    render_invoice_delivery_status(
+        drivers,
+        start_date,
+    )
+
     selected_driver = col4.selectbox(
         "Futar",
         ["Mind"] + drivers,
@@ -719,11 +896,11 @@ def show_invoice_summary_page():
                 "email",
             )
             try:
-                    default_transfer_amount = int(
-                        round(float(selected_row.get("payable_total_huf", 0) or 0))
-                    )
+                default_transfer_amount = int(
+                    round(float(selected_row.get("payable_total_huf", 0) or 0))
+                )
             except (TypeError, ValueError):
-                    default_transfer_amount = 0
+                default_transfer_amount = 0
             
 
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
