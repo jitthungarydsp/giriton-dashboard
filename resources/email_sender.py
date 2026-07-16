@@ -56,7 +56,7 @@ def smtp_config():
         "username": username,
         "password": password,
         "from_email": from_email,
-        "from_name": get_setting("SMTP_FROM_NAME", "Giriton"),
+        "from_name": get_setting("SMTP_FROM_NAME", "JITT"),
         "use_ssl": use_ssl,
         "use_starttls": parse_bool(
             get_setting("SMTP_USE_STARTTLS"),
@@ -74,13 +74,13 @@ def build_login_message(recipient, username, password):
     config = smtp_config()
 
     message = EmailMessage()
-    message["Subject"] = "Giriton belépési adatok"
+    message["Subject"] = "Jitt belépési adatok"
     message["From"] = formataddr((config["from_name"], config["from_email"]))
     message["To"] = recipient
 
     message.set_content(
         "Kedves Futár!\n\n"
-        "Az alábbiak a Giriton belépési adataid:\n\n"
+        "Az alábbiak a Jitt belépési adataid:\n\n"
         f"Felhasználónév: {username}\n"
         f"Jelszó: {password}\n"
         f"Belépési oldal: {login_url}\n\n"
@@ -107,7 +107,7 @@ def build_new_bill_message(recipient, username):
 
     message.set_content(
         "Kedves Futár!\n\n"
-        "Új elszámolásod érkezett a Giriton rendszerben.\n\n"
+        "Új elszámolásod érkezett a Jitt rendszerben.\n\n"
         f"Felhasználónév: {username}\n"
         f"Belépési oldal: {login_url}\n\n"
         "Üdvözlettel:\n"
