@@ -1,6 +1,8 @@
 from datetime import date
 from io import BytesIO
 from pathlib import Path
+import re
+import unicodedata
 
 import pandas as pd
 import requests
@@ -273,8 +275,44 @@ def build_tig_pdf_bytes(
     return buffer.getvalue()
 
 
+def normalize_person_key(value):
+    """
+    Futárnév-egyeztető kulcs.
+
+    Például:
+    - Papp Nikolett
+    - Papp 7486 Nikolett
+
+    ugyanahhoz a futárhoz fog tartozni.
+    """
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or "").strip().casefold(),
+    )
+
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+
+    tokens = re.findall(r"[a-z0-9]+", text)
+
+    # A névben szereplő Courier ID figyelmen kívül hagyása.
+    tokens = [
+        token
+        for token in tokens
+        if not (
+            token.isdigit()
+            and 3 <= len(token) <= 6
+        )
+    ]
+
+    return " ".join(sorted(tokens))
+
+
 def normalize_name(value):
-    return " ".join(str(value or "").strip().casefold().split())
+    return normalize_person_key(value)
 
 
 def resolve_courier_identity(selected_row, selected_driver):
@@ -318,11 +356,23 @@ def filter_by_worksheet(df, selected_sheet):
 
 
 def filter_by_driver(df, selected_driver):
-    if df.empty or selected_driver == "Mind":
+    if (
+        df is None
+        or df.empty
+        or selected_driver == "Mind"
+    ):
         return df
 
+    if "driver_name" not in df.columns:
+        return df.iloc[0:0].copy()
+
+    selected_key = normalize_person_key(selected_driver)
+
     return df[
-        df["driver_name"].astype(str) == selected_driver
+        df["driver_name"]
+        .astype(str)
+        .map(normalize_person_key)
+        == selected_key
     ].copy()
 
 
@@ -618,13 +668,53 @@ def show_invoice_summary_page():
 
     all_filtered_final_df = final_df.copy()
 
+    driver_names_by_key = {}
+
+
+    def add_driver_names(frame):
+        if (
+            frame is None
+            or frame.empty
+            or "driver_name" not in frame.columns
+        ):
+            return
+
+        for value in (
+            frame["driver_name"]
+            .dropna()
+            .astype(str)
+        ):
+            name = value.strip()
+
+            if not name:
+                continue
+
+            key = normalize_person_key(name)
+
+            if not key:
+                continue
+
+            current_name = driver_names_by_key.get(key)
+
+            # A Courier ID-t is tartalmazó, teljesebb nevet mutatjuk.
+            if (
+                not current_name
+                or len(name) > len(current_name)
+            ):
+                driver_names_by_key[key] = name
+
+
+    add_driver_names(all_filtered_final_df)
+    add_driver_names(bonus_df)
+    add_driver_names(penalty_df)
+    add_driver_names(manual_df)
+    add_driver_names(atm_balance_df)
+    add_driver_names(customer_rating_df)
+    add_driver_names(monthly_adjustment_df)
+
     drivers = sorted(
-        value
-        for value in all_filtered_final_df.get(
-            "driver_name",
-            pd.Series(dtype=str),
-        ).dropna().astype(str).unique()
-        if value.strip()
+        driver_names_by_key.values(),
+        key=normalize_person_key,
     )
 
     render_invoice_delivery_status(
@@ -637,8 +727,33 @@ def show_invoice_summary_page():
         ["Mind"] + drivers,
         key="invoice_driver_filter",
     )
+
     final_df = filter_by_driver(
         final_df,
+        selected_driver,
+    )
+    bonus_df = filter_by_driver(
+        bonus_df,
+        selected_driver,
+    )
+    penalty_df = filter_by_driver(
+        penalty_df,
+        selected_driver,
+    )
+    manual_df = filter_by_driver(
+        manual_df,
+        selected_driver,
+    )
+    atm_balance_df = filter_by_driver(
+        atm_balance_df,
+        selected_driver,
+    )
+    customer_rating_df = filter_by_driver(
+        customer_rating_df,
+        selected_driver,
+    )
+    monthly_adjustment_df = filter_by_driver(
+        monthly_adjustment_df,
         selected_driver,
     )
 

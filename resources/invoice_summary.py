@@ -101,11 +101,29 @@ def normalize_text(value):
 
 
 def normalize_person_key(value):
-    text = unicodedata.normalize("NFKD", normalize_text(value).casefold())
-    text = "".join(character for character in text if not unicodedata.combining(character))
-    tokens = re.findall(r"[a-z0-9]+", text)
-    return " ".join(sorted(tokens))
+    text = unicodedata.normalize(
+        "NFKD",
+        normalize_text(value).casefold(),
+    )
 
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+
+    tokens = re.findall(r"[a-z0-9]+", text)
+
+    tokens = [
+        token
+        for token in tokens
+        if not (
+            token.isdigit()
+            and 3 <= len(token) <= 6
+        )
+    ]
+
+    return " ".join(sorted(tokens))
 
 def normalize_bonus_worksheet(site):
     value = normalize_text(site).upper().replace("-", "_").replace(" ", "_")
@@ -1077,13 +1095,51 @@ def build_driver_invoice_summary(
         if "courier_id" in source.columns:
             ids = (
                 source[["driver_match_key", "courier_id"]]
-                .dropna()
-                .drop_duplicates()
-                .groupby("driver_match_key", dropna=False)["courier_id"]
-                .first()
-                .reset_index(name="external_courier_id")
+                .copy()
             )
-            grouped = grouped.merge(ids, on="driver_match_key", how="left")
+
+            ids["courier_id"] = (
+                ids["courier_id"]
+                .fillna("")
+                .map(normalize_text)
+            )
+
+            ids = (
+                ids[ids["courier_id"] != ""]
+                .drop_duplicates()
+                .groupby(
+                    "driver_match_key",
+                    dropna=False,
+                )["courier_id"]
+                .first()
+                .reset_index(name="_source_courier_id")
+            )
+
+            grouped = grouped.merge(
+                ids,
+                on="driver_match_key",
+                how="left",
+            )
+
+            if "courier_id" not in grouped.columns:
+                grouped["courier_id"] = ""
+
+            grouped["courier_id"] = (
+                grouped["courier_id"]
+                .fillna("")
+                .map(normalize_text)
+            )
+
+            grouped["courier_id"] = grouped["courier_id"].where(
+                grouped["courier_id"] != "",
+                grouped["_source_courier_id"]
+                .fillna("")
+                .map(normalize_text),
+            )
+
+            grouped = grouped.drop(
+                columns=["_source_courier_id"],
+            )
 
     merge_external_source(
         atm_balance_df,
@@ -1113,13 +1169,6 @@ def build_driver_invoice_summary(
     if "courier_id" not in grouped.columns:
         grouped["courier_id"] = ""
     grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_text)
-    if "external_courier_id" in grouped.columns:
-        grouped["courier_id"] = grouped["courier_id"].where(
-            grouped["courier_id"] != "",
-            grouped["external_courier_id"].fillna("").map(normalize_text),
-        )
-        grouped = grouped.drop(columns=["external_courier_id"])
-
     manual_summary = build_manual_item_summary(manual_df)
     if not manual_summary.empty:
         grouped = grouped.merge(
