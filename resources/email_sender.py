@@ -74,6 +74,7 @@ def build_login_message(recipient, username, temporary_password):
         f"Felhasználónév: {username}\n"
         f"Ideiglenes jelszó: {temporary_password}\n"
         f"{login_line}\n"
+        "https://giriton-courier-pwa.onrender.com/"
         "A jelszót ne továbbítsd másnak.\n\n"
         "Üdvözlettel:Jitt Hungary KFT\n"
     )
