@@ -21,11 +21,11 @@
         {
             "username": "Baranyai István",
             "trainer": "trainer_name",
+            "password": "3juAFaHC",
             "role": "user",
             "courierId": 7185,
             "active": true,
-            "token": "",
-            "passwordHash": "pbkdf2_sha256$260000$xHY71eitS3iCSPRW+8ycNw==$cEqOh5yfpiK/dmlsgeNYIfcB00urGo9zBykuCWuzt9o="
+            "token": ""
         },
         {
             "username": "Meleg Dominika",
