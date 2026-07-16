@@ -812,9 +812,6 @@ def build_driver_invoice_summary(
     final_df["delay_bonus_huf"] = final_df["delay_bonus_huf"].map(courier_bonus_amount)
     final_df["compliance_bonus_huf"] = final_df["compliance_bonus_huf"].map(courier_bonus_amount)
     final_df["bonus_total_huf"] = (
-        final_df["fuel_bonus_huf"]
-        + final_df["car_fridge_bonus_huf"]
-        + final_df["branding_huf"]
         + final_df["delay_bonus_huf"]
         + final_df["compliance_bonus_huf"]
     )
@@ -1051,10 +1048,7 @@ def build_driver_invoice_summary(
         grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
     )
     grouped["bonus_total_huf"] = (
-        grouped["fuel_bonus_huf"]
-        + grouped["car_fridge_bonus_huf"]
-        + grouped["branding_huf"]
-        + grouped["delay_bonus_huf"]
+        grouped["delay_bonus_huf"]
         + grouped["compliance_bonus_huf"]
     )
     grouped["route_total_without_tip_huf"] = (
@@ -1377,9 +1371,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         regular_base = money(driver_row.get("sima_base_huf"))
         delay_bonus = money(driver_row.get("delay_bonus_huf"))
         compliance_bonus = money(driver_row.get("compliance_bonus_huf"))
-        fuel_bonus = money(driver_row.get("fuel_bonus_huf"))
-        fridge_bonus = money(driver_row.get("car_fridge_bonus_huf"))
-        branding = money(driver_row.get("branding_huf"))
         tip = money(driver_row.get("tip_huf"))
         extra_bonus = money(driver_row.get("extra_bonus_huf"))
         adjustment = money(driver_row.get("adjustment_huf"))
@@ -1397,9 +1388,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         bonus_total = (
             delay_bonus
             + compliance_bonus
-            + fuel_bonus
-            + fridge_bonus
-            + branding
             + extra_bonus
             + loyalty_bonus
         )
@@ -1525,7 +1513,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             [
                 ["Kiszállított címek", orders, "Körök", routes],
                 ["Just in Time / késés", format_huf(delay_bonus), "Túramegfelelés", format_huf(compliance_bonus)],
-                ["Üzemanyag / hűtő / branding", format_huf(fuel_bonus + fridge_bonus + branding + fuel_manual), "Borravaló", format_huf(tip)],
                 ["Egyéb plusz", format_huf(extra_bonus + other_income), "Be nem fiz. KP", format_huf(abs(cash_missing))],
                 ["Lojalitási bónusz", format_huf(loyalty_bonus), "Oktatói Díj", format_huf(instructor_fee)],
             ],

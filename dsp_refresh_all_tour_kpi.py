@@ -669,10 +669,10 @@ UPSERT_DRIVER_MONTH_SQL = dedent(
                 where extract(isodow from work_date) = 7
             ) as vasarnap,
             count(distinct work_date) filter (
-                where extract(isodow from work_date) in (1,4,5,6)
+                where extract(isodow from work_date) in (1,5,6,7)
             ) as kiemelt_napok,
             count(distinct work_date) filter (
-                where extract(isodow from work_date) in (2,3,7)
+                where extract(isodow from work_date) in (2,3,4,7)
             ) as sima_napok,
             count(distinct route_id) as kor_db,
             count(order_id) as cim_db,
@@ -754,9 +754,9 @@ UPSERT_DRIVER_MONTH_SQL = dedent(
             when nem_idoben_szazalek <= 10 then 500
             else 0
         end,
-        kiemelt_napok * 13000,
-        sima_napok * 11000,
-        (kiemelt_napok * 13000) + (sima_napok * 11000),
+        kiemelt_napok * 6500,
+        sima_napok * 4500,
+        (kiemelt_napok * 6500) + (sima_napok * 4500),
         now()
     from calc
     on conflict (work_month, driver_id)
