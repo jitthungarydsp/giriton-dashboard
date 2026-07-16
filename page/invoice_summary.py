@@ -668,6 +668,23 @@ def show_invoice_summary_page():
             start_date,
             end_date,
         )
+
+        final_df_debug = data.get("final", pd.DataFrame())
+
+        st.warning(
+            f"""
+    DEBUG
+
+    Route sorok: {len(final_df_debug)}
+
+    Egyedi futárok: {final_df_debug['driver_name'].nunique() if not final_df_debug.empty else 0}
+
+    Munkalapok: {sorted(final_df_debug['worksheet_name'].dropna().unique().tolist()) if 'worksheet_name' in final_df_debug.columns else []}
+
+    Dátumok: {final_df_debug['work_date'].min() if 'work_date' in final_df_debug.columns and not final_df_debug.empty else '-'} → {final_df_debug['work_date'].max() if 'work_date' in final_df_debug.columns and not final_df_debug.empty else '-'}
+    """
+        )
+
     except Exception as exc:
         st.error(
             f"Elszamolas DB olvasasi hiba: {exc}"
