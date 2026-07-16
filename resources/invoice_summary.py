@@ -39,9 +39,22 @@ MANUAL_ITEM_TABLES = [
     "bill_jitt_invoice_manual_items",
     "jitt_invoice_manual_items",
 ]
+ATM_BALANCE_TABLES = [
+    "bill_jitt_invoice_atm_balance",
+]
+CUSTOMER_RATING_TABLES = [
+    "bill_jitt_invoice_customer_rating_bonus",
+]
+MONTHLY_ADJUSTMENT_TABLES = [
+    "bill_jitt_invoice_monthly_adjustments",
+]
 DAY_RATE_TABLES = [
     "dsp_day_rates",
 ]
+
+# Pozitív ATM-egyenleg levonásként jelenik meg az elszámolásban.
+# Ha üzletileg pluszként kell kezelni, állítsd 1-re.
+ATM_BALANCE_SIGN = -1
 
 BASE_RATE_MATRIX = [
     {"service_type": "EXPRESSZ", "day_type": "Kiemelt nap", "amount_huf": 3350},
@@ -441,6 +454,34 @@ def read_invoice_data(start_date, end_date):
         ],
         limit=10000,
     )
+    _atm_table, atm_balance_df = read_optional_first_existing_table(
+        ATM_BALANCE_TABLES,
+        "billing_month,worksheet_name,courier_id,driver_name,balance_huf,dsp,warehouse_name,source_row_number",
+        [
+            f"billing_month=eq.{start_text[:7]}-01",
+            "order=driver_name.asc",
+        ],
+        limit=10000,
+    )
+    _rating_table, customer_rating_df = read_optional_first_existing_table(
+        CUSTOMER_RATING_TABLES,
+        "billing_month,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number",
+        [
+            f"billing_month=eq.{start_text[:7]}-01",
+            "order=driver_name.asc",
+        ],
+        limit=10000,
+    )
+    _monthly_adjustment_table, monthly_adjustment_df = read_optional_first_existing_table(
+        MONTHLY_ADJUSTMENT_TABLES,
+        "billing_month,worksheet_name,courier_id,driver_name,bonus_huf,malus_huf,returned_route_huf,accepted_route_huf,source_total_huf,source_row_number",
+        [
+            f"billing_month=eq.{start_text[:7]}-01",
+            "order=driver_name.asc",
+        ],
+        limit=10000,
+    )
+
     _day_rate_table, day_rates_df = read_optional_first_existing_table(
         DAY_RATE_TABLES,
         "valid_from,valid_to,service_type,day_type,loyalty_bonus,amount",
@@ -490,6 +531,9 @@ def read_invoice_data(start_date, end_date):
         "bonus": bonus_df,
         "penalties": penalty_df,
         "manual": manual_df,
+        "atm_balance": atm_balance_df,
+        "customer_rating": customer_rating_df,
+        "monthly_adjustments": monthly_adjustment_df,
         "day_rates": day_rates_df,
         "previous_routes": previous_routes_df,
         "bookings": bookings_df,
@@ -777,6 +821,9 @@ def build_driver_invoice_summary(
     loyalty_profiles_df=None,
     bookings_df=None,
     loyalty_acceptance_df=None,
+    atm_balance_df=None,
+    customer_rating_df=None,
+    monthly_adjustment_df=None,
     period_start=None,
 ):
     if final_df.empty:
@@ -992,9 +1039,86 @@ def build_driver_invoice_summary(
     else:
         grouped["adjustment_huf"] = 0
 
+    def merge_external_source(source_df, value_map):
+        nonlocal grouped
+        if source_df is None or source_df.empty:
+            for output_column in value_map.values():
+                if output_column not in grouped.columns:
+                    grouped[output_column] = 0
+            return
+
+        source = source_df.copy()
+        source["driver_name"] = source.get(
+            "driver_name",
+            pd.Series("", index=source.index),
+        ).map(normalize_text)
+        source["driver_match_key"] = source["driver_name"].map(normalize_person_key)
+
+        for source_column in value_map:
+            if source_column not in source.columns:
+                source[source_column] = 0
+            source[source_column] = pd.to_numeric(
+                source[source_column],
+                errors="coerce",
+            ).fillna(0)
+
+        aggregated = (
+            source.groupby("driver_match_key", dropna=False)[list(value_map)]
+            .sum()
+            .reset_index()
+            .rename(columns=value_map)
+        )
+        grouped = grouped.merge(
+            aggregated,
+            on="driver_match_key",
+            how="left",
+        )
+
+        if "courier_id" in source.columns:
+            ids = (
+                source[["driver_match_key", "courier_id"]]
+                .dropna()
+                .drop_duplicates()
+                .groupby("driver_match_key", dropna=False)["courier_id"]
+                .first()
+                .reset_index(name="external_courier_id")
+            )
+            grouped = grouped.merge(ids, on="driver_match_key", how="left")
+
+    merge_external_source(
+        atm_balance_df,
+        {"balance_huf": "atm_balance_huf"},
+    )
+    merge_external_source(
+        customer_rating_df,
+        {
+            "rating_count": "customer_rating_count",
+            "average_rating": "customer_average_rating",
+            "bonus_per_route_huf": "customer_bonus_per_route_huf",
+            "completed_routes": "customer_completed_routes",
+            "bonus_total_huf": "customer_rating_bonus_huf",
+        },
+    )
+    merge_external_source(
+        monthly_adjustment_df,
+        {
+            "bonus_huf": "monthly_bonus_huf",
+            "malus_huf": "monthly_malus_huf",
+            "returned_route_huf": "monthly_returned_route_huf",
+            "accepted_route_huf": "monthly_accepted_route_huf",
+            "source_total_huf": "monthly_source_total_huf",
+        },
+    )
+
     if "courier_id" not in grouped.columns:
         grouped["courier_id"] = ""
     grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_text)
+    if "external_courier_id" in grouped.columns:
+        grouped["courier_id"] = grouped["courier_id"].where(
+            grouped["courier_id"] != "",
+            grouped["external_courier_id"].fillna("").map(normalize_text),
+        )
+        grouped = grouped.drop(columns=["external_courier_id"])
 
     manual_summary = build_manual_item_summary(manual_df)
     if not manual_summary.empty:
@@ -1071,11 +1195,54 @@ def build_driver_invoice_summary(
         + grouped["instructor_fee_huf"]
         + grouped["loyalty_bonus_huf"]
     )
+
+    for column in [
+        "atm_balance_huf",
+        "customer_rating_count",
+        "customer_average_rating",
+        "customer_bonus_per_route_huf",
+        "customer_completed_routes",
+        "customer_rating_bonus_huf",
+        "monthly_bonus_huf",
+        "monthly_malus_huf",
+        "monthly_returned_route_huf",
+        "monthly_accepted_route_huf",
+        "monthly_source_total_huf",
+    ]:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = pd.to_numeric(
+            grouped[column],
+            errors="coerce",
+        ).fillna(0)
+
+    grouped["atm_effect_huf"] = (
+        grouped["atm_balance_huf"].abs() * ATM_BALANCE_SIGN
+    )
+    grouped["monthly_adjustment_effect_huf"] = (
+        grouped["monthly_bonus_huf"]
+        - grouped["monthly_malus_huf"].abs()
+        - grouped["monthly_returned_route_huf"].abs()
+        + grouped["monthly_accepted_route_huf"]
+    )
+    grouped["external_bonus_total_huf"] = (
+        grouped["customer_rating_bonus_huf"]
+        + grouped["monthly_bonus_huf"]
+    )
+    grouped["external_deduction_total_huf"] = (
+        grouped["monthly_malus_huf"].abs()
+        + grouped["monthly_returned_route_huf"].abs()
+        + grouped["atm_balance_huf"].abs()
+    )
+
     grouped["payable_total_huf"] = (
         grouped["route_total_huf"]
         + grouped["extra_bonus_huf"]
         + grouped["adjustment_huf"]
         + grouped["manual_payable_huf"]
+        + grouped["customer_rating_bonus_huf"]
+        + grouped["monthly_adjustment_effect_huf"]
+        + grouped["atm_effect_huf"]
     )
 
     return grouped.sort_values(
@@ -1185,6 +1352,18 @@ def build_display_driver_summary(summary_df):
         "payable_total_huf",
         "loyalty_bonus_huf",
         "instructor_fee_huf",
+        "atm_balance_huf",
+        "atm_effect_huf",
+        "customer_bonus_per_route_huf",
+        "customer_rating_bonus_huf",
+        "monthly_bonus_huf",
+        "monthly_malus_huf",
+        "monthly_returned_route_huf",
+        "monthly_accepted_route_huf",
+        "monthly_source_total_huf",
+        "monthly_adjustment_effect_huf",
+        "external_bonus_total_huf",
+        "external_deduction_total_huf",
     ]:
         if column in visible.columns:
             visible[column] = visible[column].map(format_huf)
@@ -1227,6 +1406,21 @@ def build_display_driver_summary(summary_df):
             "loyalty_current_normal_routes": "Aktuális normál kör",
             "loyalty_rate_huf": "Lojalitás Ft / kör",
             "loyalty_status": "Lojalitás ellenőrzés",
+            "atm_balance_huf": "ATM egyenleg",
+            "atm_effect_huf": "ATM hatás",
+            "customer_rating_count": "Ügyfélértékelések",
+            "customer_average_rating": "Átlagos értékelés",
+            "customer_bonus_per_route_huf": "Értékelési bónusz / kör",
+            "customer_completed_routes": "Értékelt teljesített kör",
+            "customer_rating_bonus_huf": "Ügyfélértékelési bónusz",
+            "monthly_bonus_huf": "Havi bónusz",
+            "monthly_malus_huf": "Havi málusz",
+            "monthly_returned_route_huf": "Leadott kör",
+            "monthly_accepted_route_huf": "Felvett kör",
+            "monthly_source_total_huf": "Havizárás forrás összesen",
+            "monthly_adjustment_effect_huf": "Havizárás számított hatás",
+            "external_bonus_total_huf": "Külső bónusz összesen",
+            "external_deduction_total_huf": "Külső levonás összesen",
         }
     )
 
@@ -1385,11 +1579,26 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         other_deduction = money(driver_row.get("other_deduction_huf"))
         instructor_fee = money(driver_row.get("instructor_fee_huf"))
         loyalty_bonus = money(driver_row.get("loyalty_bonus_huf"))
+        atm_balance = money(driver_row.get("atm_balance_huf"))
+        atm_effect = money(driver_row.get("atm_effect_huf"))
+        customer_rating_count = int(money(driver_row.get("customer_rating_count")))
+        customer_average_rating = money(driver_row.get("customer_average_rating"))
+        customer_bonus_per_route = money(driver_row.get("customer_bonus_per_route_huf"))
+        customer_completed_routes = int(money(driver_row.get("customer_completed_routes")))
+        customer_rating_bonus = money(driver_row.get("customer_rating_bonus_huf"))
+        monthly_bonus = money(driver_row.get("monthly_bonus_huf"))
+        monthly_malus = money(driver_row.get("monthly_malus_huf"))
+        monthly_returned_route = money(driver_row.get("monthly_returned_route_huf"))
+        monthly_accepted_route = money(driver_row.get("monthly_accepted_route_huf"))
+        monthly_source_total = money(driver_row.get("monthly_source_total_huf"))
+        monthly_effect = money(driver_row.get("monthly_adjustment_effect_huf"))
         bonus_total = (
             delay_bonus
             + compliance_bonus
             + extra_bonus
             + loyalty_bonus
+            + customer_rating_bonus
+            + monthly_bonus
         )
         average_per_order = payable_total / orders if orders else 0
         bonus_per_order = 0
@@ -1522,27 +1731,118 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(bonus_table)
         story.append(Spacer(1, 0.28 * cm))
 
+        if any([
+            customer_rating_count,
+            customer_average_rating,
+            customer_bonus_per_route,
+            customer_completed_routes,
+            customer_rating_bonus,
+        ]):
+            story.append(Paragraph("ÜGYFÉLÉRTÉKELÉSI BÓNUSZ", section_style))
+            rating_table = Table(
+                [
+                    ["Értékelések száma", customer_rating_count],
+                    ["Átlagos rating", f"{customer_average_rating:.3f}".replace(".", ",")],
+                    ["Bónusz / kör", format_huf(customer_bonus_per_route)],
+                    ["Teljesített körök", customer_completed_routes],
+                    ["Összes ügyfélértékelési bónusz", format_huf(customer_rating_bonus)],
+                ],
+                colWidths=[11 * cm, 6 * cm],
+            )
+            apply_statement_table_style(
+                rating_table, font_name, bold_font_name, TableStyle, colors
+            )
+            story.append(rating_table)
+            story.append(Spacer(1, 0.28 * cm))
+
+        if any([
+            monthly_bonus,
+            monthly_malus,
+            monthly_returned_route,
+            monthly_accepted_route,
+            monthly_source_total,
+        ]):
+            story.append(Paragraph("HAVI BÓNUSZ / MÁLUSZ ÖSSZESÍTŐ", section_style))
+            monthly_table = Table(
+                [
+                    ["Tétel", "Összeg"],
+                    ["Bónusz", format_huf(monthly_bonus)],
+                    ["Málusz", format_huf(-abs(monthly_malus))],
+                    ["Kör leadott", format_huf(-abs(monthly_returned_route))],
+                    ["Kör felvett", format_huf(monthly_accepted_route)],
+                    ["Számított hatás", format_huf(monthly_effect)],
+                    ["Forrás szerinti összesen", format_huf(monthly_source_total)],
+                ],
+                colWidths=[11 * cm, 6 * cm],
+            )
+            apply_statement_table_style(
+                monthly_table, font_name, bold_font_name, TableStyle, colors
+            )
+            story.append(monthly_table)
+            story.append(Spacer(1, 0.28 * cm))
+
+        if atm_balance:
+            story.append(Paragraph("ATM EGYENLEG", section_style))
+            atm_table = Table(
+                [
+                    ["ATM balance", format_huf(atm_balance)],
+                    ["Elszámolási hatás", format_huf(atm_effect)],
+                ],
+                colWidths=[11 * cm, 6 * cm],
+            )
+            apply_statement_table_style(
+                atm_table, font_name, bold_font_name, TableStyle, colors
+            )
+            story.append(atm_table)
+            story.append(Spacer(1, 0.28 * cm))
+
         revenues = [
             ["Szállítási díj", format_huf(fixed_total)],
             ["Bónuszok / pótlékok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
+            ["Ügyfélértékelési bónusz", format_huf(customer_rating_bonus)],
+            ["Havi bónusz + felvett kör", format_huf(monthly_bonus + monthly_accepted_route)],
             ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income + instructor_fee)],
         ]
         expenses = [
             ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
+            ["Havi málusz + leadott kör", format_huf(abs(monthly_malus) + abs(monthly_returned_route))],
+            ["ATM egyenleg", format_huf(abs(atm_balance))],
             ["Károkozás", format_huf(abs(damage))],
             ["Be nem fiz. KP", format_huf(abs(cash_missing))],
             ["Egyéb levonás", format_huf(abs(other_deduction))],
         ]
+        while len(revenues) < len(expenses):
+            revenues.append(["", ""])
+        while len(expenses) < len(revenues):
+            expenses.append(["", ""])
+
         settlement_rows = [["Bevételek", "Ft", "Kiadások", "Ft"]]
         for left, right in zip(revenues, expenses):
             settlement_rows.append([left[0], left[1], right[0], right[1]])
         settlement_rows.append(
             [
                 "BEVÉTELEK ÖSSZESEN",
-                format_huf(fixed_total + bonus_total + tip + target_topup + fuel_manual + other_income + instructor_fee),
+                format_huf(
+                    fixed_total
+                    + bonus_total
+                    + tip
+                    + monthly_accepted_route
+                    + target_topup
+                    + fuel_manual
+                    + other_income
+                    + instructor_fee
+                ),
                 "KIADÁSOK ÖSSZESEN",
-                format_huf((abs(adjustment) if adjustment < 0 else 0) + abs(damage) + abs(cash_missing) + abs(other_deduction)),
+                format_huf(
+                    (abs(adjustment) if adjustment < 0 else 0)
+                    + abs(monthly_malus)
+                    + abs(monthly_returned_route)
+                    + abs(atm_balance)
+                    + abs(damage)
+                    + abs(cash_missing)
+                    + abs(other_deduction)
+                ),
             ]
         )
         settlement = Table(
