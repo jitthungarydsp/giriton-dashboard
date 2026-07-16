@@ -605,6 +605,9 @@ def show_invoice_summary_page():
     bonus_df = data["bonus"]
     penalty_df = data["penalties"]
     manual_df = data["manual"]
+    atm_balance_df = data.get("atm_balance", pd.DataFrame())
+    customer_rating_df = data.get("customer_rating", pd.DataFrame())
+    monthly_adjustment_df = data.get("monthly_adjustments", pd.DataFrame())
     day_rates_df = data.get("day_rates", pd.DataFrame())
     raw_route_df = data.get("routes", pd.DataFrame())
 
@@ -641,15 +644,18 @@ def show_invoice_summary_page():
 
     driver_summary = build_driver_invoice_summary(
         final_df,
-        bonus_df,
-        penalty_df,
-        manual_df,
-        day_rates_df,
-        raw_route_df,
+        bonus_df=bonus_df,
+        penalty_df=penalty_df,
+        manual_df=manual_df,
+        day_rates_df=day_rates_df,
+        raw_route_df=raw_route_df,
         previous_routes_df=data.get("previous_routes", pd.DataFrame()),
         loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
         bookings_df=data.get("bookings", pd.DataFrame()),
         loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
+        atm_balance_df=atm_balance_df,
+        customer_rating_df=customer_rating_df,
+        monthly_adjustment_df=monthly_adjustment_df,
         period_start=start_date,
     )
 
@@ -677,18 +683,35 @@ def show_invoice_summary_page():
     total_manual = pd.to_numeric(driver_summary.get("manual_payable_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_loyalty = pd.to_numeric(driver_summary.get("loyalty_bonus_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     total_instructor = pd.to_numeric(driver_summary.get("instructor_fee_huf", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    total_customer_rating = pd.to_numeric(
+        driver_summary.get("customer_rating_bonus_huf", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0).sum()
+    total_monthly_effect = pd.to_numeric(
+        driver_summary.get("monthly_adjustment_effect_huf", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0).sum()
+    total_atm_effect = pd.to_numeric(
+        driver_summary.get("atm_effect_huf", pd.Series(dtype=float)),
+        errors="coerce",
+    ).fillna(0).sum()
     total_payable = pd.to_numeric(driver_summary["payable_total_huf"], errors="coerce").fillna(0).sum()
 
-    m1, m2, m3, m4, m5, m6, m7, m8, m9 = st.columns(9)
-    m1.metric("Rendeles", total_orders)
-    m2.metric("Kor", total_routes)
-    m3.metric("Kesedelmi dij", format_huf(total_delay))
-    m4.metric("Turamegfeleles", format_huf(total_compliance))
-    m5.metric("Levonas / plusz", format_huf(total_adjustment))
-    m6.metric("Lojalitás", format_huf(total_loyalty))
-    m7.metric("Oktatói Díj", format_huf(total_instructor))
-    m8.metric("Manuális", format_huf(total_manual - total_loyalty - total_instructor))
-    m9.metric("Fizetendő", format_huf(total_payable))
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Rendelés", total_orders)
+    m2.metric("Kör", total_routes)
+    m3.metric("Késedelmi díj", format_huf(total_delay))
+    m4.metric("Túramegfelelés", format_huf(total_compliance))
+    m5.metric("Ügyfélértékelési bónusz", format_huf(total_customer_rating))
+    m6.metric("Fizetendő", format_huf(total_payable))
+
+    m7, m8, m9, m10, m11, m12 = st.columns(6)
+    m7.metric("Levonás / plusz", format_huf(total_adjustment))
+    m8.metric("Havi bónusz/málusz hatás", format_huf(total_monthly_effect))
+    m9.metric("ATM hatás", format_huf(total_atm_effect))
+    m10.metric("Lojalitás", format_huf(total_loyalty))
+    m11.metric("Oktatói díj", format_huf(total_instructor))
+    m12.metric("Manuális", format_huf(total_manual - total_loyalty - total_instructor))
 
     st.subheader("Futar osszesito")
     display_summary = build_display_driver_summary(driver_summary)
