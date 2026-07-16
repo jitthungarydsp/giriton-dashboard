@@ -1030,6 +1030,15 @@ def save_push_subscription(
         )
 
     now = datetime.now(timezone.utc).isoformat()
+
+    supabase_rest(
+        "PATCH",
+        "pwa_push_subscriptions",
+        params={"courier_id": f"eq.{courier_id}"},
+        payload={"active": False, "updated_at": now},
+        prefer="return=minimal",
+    )
+
     supabase_rest(
         "POST",
         "pwa_push_subscriptions",

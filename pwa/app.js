@@ -66,15 +66,20 @@ function showSection(section) {
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
+  $("#tours-content").classList.toggle("hidden", section !== "tours");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-profile").classList.toggle("active", section === "profile");
+  $("#nav-tours").classList.toggle("active", section === "tours");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "profile") {
     loadBillingProfile();
     refreshNotificationToggle();
+  }
+  if (section === "tours") {
+    loadCurrentRoute();
   }
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -85,14 +90,13 @@ function ensureRouteCard() {
   let container = $("#current-route-container");
   if (container) return container;
 
-  const home = $("#home-content");
-  const hero = home?.querySelector(".hero-card");
-  if (!home || !hero) return null;
+  const tours = $("#tours-content");
+  if (!tours) return null;
 
   container = document.createElement("section");
   container.id = "current-route-container";
   container.className = "process-card";
-  hero.insertAdjacentElement("afterend", container);
+  tours.appendChild(container);
   return container;
 }
 
@@ -341,7 +345,6 @@ async function loadShifts() {
   $("#refresh").disabled = true;
   try {
     state.data = await api("/api/shifts?days=5");
-    await loadCurrentRoute();
     state.selectedDate ||= localDate();
     renderHero();
     renderTabs();
@@ -833,6 +836,7 @@ $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
+$("#nav-tours").addEventListener("click", () => showSection("tours"));
 
 async function start() {
   try {
@@ -844,7 +848,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=12");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=13");
 }
 
 start();
