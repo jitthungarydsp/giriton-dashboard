@@ -346,14 +346,38 @@ def resolve_courier_identity(selected_row, selected_driver):
     return courier_id, courier_name
 
 
+def normalize_worksheet_key(value):
+    text = str(value or "").strip().upper()
+    text = text.replace("-", "_").replace(" ", "_")
+
+    if "BUD1" in text:
+        return "BUD1_JIT"
+
+    if "BUD2" in text:
+        return "BUD2_JIT"
+
+    return text
+
+
 def filter_by_worksheet(df, selected_sheet):
-    if df.empty or selected_sheet == "Mind":
+    if (
+        df is None
+        or df.empty
+        or selected_sheet == "Mind"
+    ):
         return df
 
-    return df[
-        df["worksheet_name"].astype(str) == selected_sheet
-    ].copy()
+    if "worksheet_name" not in df.columns:
+        return df.iloc[0:0].copy()
 
+    selected_key = normalize_worksheet_key(selected_sheet)
+
+    return df[
+        df["worksheet_name"]
+        .astype(str)
+        .map(normalize_worksheet_key)
+        == selected_key
+    ].copy()
 
 def filter_by_driver(df, selected_driver):
     if (
