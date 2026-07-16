@@ -1,8 +1,3 @@
-Könyvtár
-/
-pwa_api_route_card.txt
-
-
 import hashlib
 import hmac
 import base64

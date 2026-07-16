@@ -75,7 +75,28 @@ def build_login_message(recipient, username, temporary_password):
         f"Ideiglenes jelszó: {temporary_password}\n"
         f"{login_line}\n"
         "A jelszót ne továbbítsd másnak.\n\n"
-        "Üdvözlettel:\nGiriton"
+        "Üdvözlettel:Jitt Hungary KFT\n"
+    )
+    return message, config
+
+
+def new_bill(recipient, username):
+    recipient = validate_email(recipient)
+    login_url = get_setting("APP_LOGIN_URL")
+    config = smtp_config()
+    message = EmailMessage()
+    message["Subject"] = "Új elszámolásod érkezett !"
+    message["From"] = formataddr((config["from_name"], config["from_email"]))
+    message["To"] = recipient
+    login_line = f"Belépési oldal: {login_url}\n" if login_url else ""
+    message.set_content(
+        "Kedves Futár!\n\n"
+        "Elkészültek a Giriton belépési adataid.\n\n"
+        f"Felhasználónév: {username}\n"
+        f"Ideiglenes jelszó: {temporary_password}\n"
+        f"{login_line}\n"
+        "A jelszót ne továbbítsd másnak.\n\n"
+        "Üdvözlettel:Jitt Hungary KFT\n"
     )
     return message, config
 
