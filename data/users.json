@@ -208,6 +208,25 @@
             "token": ""
         },
         {
+            "username": "Lulaj 8001 Brendon",
+            "trainer": "trainer_name",
+            "password": "kdj4Fddd",
+            "role": "user",
+            "courierId": 8001,
+            "active": true,
+            "token": ""
+        },
+        Lulaj 8001 Brendon
+        {
+            "username": "Lulaj Brenddon",
+            "trainer": "trainer_name",
+            "password": "sr2TZCZd",
+            "role": "user",
+            "courierId": 7486,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Hervai Olivér",
             "trainer": "trainer_name",
             "password": "bPOffGE3",
