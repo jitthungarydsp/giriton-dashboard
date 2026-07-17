@@ -51,6 +51,7 @@ from resources.peopleforce_documents import (
     upload_peopleforce_document_bytes,
     upsert_peopleforce_card_status,
 )
+from resources.users import load_users as load_system_users
 
 
 def slugify_filename(value):
@@ -607,6 +608,53 @@ def _is_done(status_row):
     return str((status_row or {}).get("status") or "").strip().lower() == "done"
 
 
+def _current_username(default="admin"):
+    user = st.session_state.get("user") or {}
+    return str(
+        user.get("username")
+        or st.session_state.get("username")
+        or default
+    ).strip()
+
+
+def _current_role(default="user"):
+    user = st.session_state.get("user") or {}
+    return str(user.get("role") or default).strip().lower()
+
+
+def _feedback_assignee_options():
+    current_role = _current_role()
+    current_username = _current_username("")
+    options = []
+    try:
+        users = load_system_users().get("users", [])
+    except Exception:
+        users = []
+
+    allowed_roles = {"admin", "trainer"}
+    for user in users:
+        if not user.get("active", True):
+            continue
+        username = str(user.get("username") or "").strip()
+        role = str(user.get("role") or "").strip().lower()
+        if not username or role not in allowed_roles:
+            continue
+        if current_role == "trainer" and username != current_username:
+            continue
+        options.append(username)
+
+    if current_role == "admin" and current_username and current_username not in options:
+        options.append(current_username)
+    if current_role == "trainer" and current_username and current_username not in options:
+        options.append(current_username)
+
+    return ["Nincs kijelölve"] + sorted(set(options), key=lambda value: value.casefold())
+
+
+def _feedback_owner_from_status(status_row):
+    return str((status_row or {}).get("status_note") or "").strip()
+
+
 def _has_open_complaint(rows, document_type):
     for row in rows or []:
         if str(row.get("document_type") or "") != document_type:
@@ -653,6 +701,9 @@ def render_settlement_feedback_overview(driver_summary, document_month):
         tig_done = _is_done(latest_statuses.get((courier_id, "tig")))
         invoice_check_done = _is_done(latest_statuses.get((courier_id, "invoice_check")))
         invoice_submit_done = _is_done(latest_statuses.get((courier_id, "invoice_submit")))
+        feedback_owner = _feedback_owner_from_status(
+            latest_statuses.get((courier_id, "feedback_owner"))
+        )
         settlement_complaint = _has_open_complaint(courier_complaints, "settlement")
         tig_complaint = _has_open_complaint(courier_complaints, "tig")
 
@@ -701,9 +752,11 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                 "tig_doc": tig_doc,
                 "invoice_doc": invoice_doc,
                 "complaints": courier_complaints,
+                "feedback_owner": feedback_owner,
                 "display": {
                     "Futár": courier_name,
                     "Courier ID": courier_id,
+                    "Felelos": feedback_owner or "Nincs kijelolve",
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
                     "Számlafeltöltés": invoice_status,
@@ -749,6 +802,37 @@ def render_settlement_feedback_overview(driver_summary, document_month):
 
     with st.container(border=True):
         st.markdown(f"**{selected['courier_name']} #{selected['courier_id']}**")
+        assignee_options = _feedback_assignee_options()
+        current_owner = selected.get("feedback_owner") or "Nincs kijelolve"
+        if current_owner not in assignee_options:
+            assignee_options.append(current_owner)
+        current_owner_index = assignee_options.index(current_owner)
+        owner_col, save_owner_col = st.columns([3, 1])
+        selected_owner = owner_col.selectbox(
+            "Elszamolasi felelos",
+            assignee_options,
+            index=current_owner_index,
+            key=f"feedback_owner_{selected['courier_id']}_{document_month.isoformat()}",
+            disabled=_current_role() not in {"admin", "trainer"},
+        )
+        if save_owner_col.button(
+            "Felelos mentese",
+            key=f"save_feedback_owner_{selected['courier_id']}_{document_month.isoformat()}",
+            use_container_width=True,
+            disabled=_current_role() not in {"admin", "trainer"},
+        ):
+            owner_value = "" if selected_owner == "Nincs kijelolve" else selected_owner
+            upsert_peopleforce_card_status(
+                courier_id=selected["courier_id"],
+                courier_name=selected["courier_name"],
+                action_key="feedback_owner",
+                document_month=document_month,
+                status="open",
+                status_note=owner_value,
+                updated_by=_current_username(),
+            )
+            st.success("A felelos mentve.")
+            st.rerun()
         doc_cols = st.columns(3)
         for col, label, doc_key in [
             (doc_cols[0], "Elszámolás", "settlement_doc"),
