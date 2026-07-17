@@ -1347,7 +1347,7 @@ def build_driver_invoice_summary(
 
     # A hívó régebbi verziója nem feltétlenül adja át külön a táblát,
     # ezért ilyenkor itt is megpróbáljuk beolvasni.
-    if target_reserve_df is None:
+    if target_reserve_df is None or target_reserve_df.empty:
         _reserve_table, target_reserve_df = read_optional_first_existing_table(
             TARGET_RESERVE_TABLES,
             "*",
@@ -1388,9 +1388,23 @@ def build_driver_invoice_summary(
                     .tolist()
                 )
 
+        # A tábla oszlopnevei környezetenként eltérhetnek. Biztonsági
+        # tartalékként minden mező értékét megvizsgáljuk azonosítóként és
+        # névként is, így egy eltérően elnevezett oszlop miatt nem marad el
+        # a levonás.
+        for column in reserve_source.columns:
+            values = reserve_source[column].dropna()
+            reserve_courier_ids.update(
+                values.map(normalize_text).loc[lambda items: items != ""].tolist()
+            )
+            reserve_driver_keys.update(
+                values.map(normalize_person_key).loc[lambda items: items != ""].tolist()
+            )
+
     grouped["has_target_reserve"] = (
         grouped["courier_id"].map(normalize_text).isin(reserve_courier_ids)
         | grouped["driver_match_key"].isin(reserve_driver_keys)
+        | grouped["driver_name"].map(normalize_person_key).isin(reserve_driver_keys)
     )
 
     # A céltartalék nem fix 50 000 Ft: a levonás a levonások előtti
