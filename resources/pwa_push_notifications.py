@@ -226,13 +226,36 @@ def notify_new_peopleforce_document(
     clean_month = str(document_month or "")[:7]
     label = type_labels.get(clean_type, "dokumentum")
     visible_title = str(title or file_name or label).strip()
+    notification_title = "Új dokumentum érkezett"
+    notification_body = f"Új {label} érkezett ({clean_month}): {visible_title}"
+    notification_tag = f"new-document-{courier_id}-{clean_type}-{clean_month}"
+    notification_type = "new_document"
+    if clean_type == "complaint_response":
+        notification_title = "Válasz érkezett a reklamációdra"
+        notification_body = f"A reklamációdra válasz érkezett ({clean_month})."
+        notification_tag = f"complaint-response-{courier_id}-{clean_month}"
+        notification_type = "complaint_response"
+        return send_push_to_courier(
+            courier_id=courier_id,
+            title=notification_title,
+            body=notification_body,
+            tag=notification_tag,
+            url="/?tab=settlement",
+            notification_type=notification_type,
+            work_date=f"{clean_month}-01" if len(clean_month) == 7 else None,
+            data={
+                "section": "settlement",
+                "documentType": clean_type,
+                "documentMonth": clean_month,
+            },
+        )
     return send_push_to_courier(
         courier_id=courier_id,
         title="Új dokumentum érkezett",
         body=f"Új {label} érkezett ({clean_month}): {visible_title}",
-        tag=f"new-document-{courier_id}-{clean_type}-{clean_month}",
+        tag=notification_tag,
         url="/?tab=settlement",
-        notification_type="new_document",
+        notification_type=notification_type,
         work_date=f"{clean_month}-01" if len(clean_month) == 7 else None,
         data={
             "section": "settlement",
