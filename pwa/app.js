@@ -386,7 +386,7 @@ function documentList(documents) {
 function complaintList(complaints) {
   if (!complaints.length) return "";
   return `<div class="complaint-list">${complaints.map((complaint) => `
-    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}</div>` : ""}</div></div>
+    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}${complaint.responded_by || complaint.responded_at ? `<small>${escapeHtml(complaint.responded_by || "admin")} · ${complaint.responded_at ? new Date(complaint.responded_at).toLocaleString("hu-HU") : ""}</small>` : ""}</div>` : ""}</div></div>
   `).join("")}</div>`;
 }
 
@@ -848,7 +848,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=14");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=15");
 }
 
 start();

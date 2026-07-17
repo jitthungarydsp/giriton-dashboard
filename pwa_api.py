@@ -832,17 +832,28 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
             "limit": "100",
         },
     )
-    complaints = supabase_rest(
-        "GET",
-        "peopleforce_complaints",
-        params={
-            "select": "id,document_type,message,status,created_at",
-            "courier_id": f"eq.{courier_id}",
-            "document_month": f"eq.{month_value}",
-            "order": "created_at.desc",
-            "limit": "100",
-        },
-    )
+    complaint_params = {
+        "select": "id,document_type,message,status,created_at,admin_response,responded_by,responded_at",
+        "courier_id": f"eq.{courier_id}",
+        "document_month": f"eq.{month_value}",
+        "order": "created_at.desc",
+        "limit": "100",
+    }
+    try:
+        complaints = supabase_rest(
+            "GET",
+            "peopleforce_complaints",
+            params=complaint_params,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 502:
+            raise
+        complaint_params["select"] = "id,document_type,message,status,created_at"
+        complaints = supabase_rest(
+            "GET",
+            "peopleforce_complaints",
+            params=complaint_params,
+        )
     return documents, statuses, complaints
 
 
