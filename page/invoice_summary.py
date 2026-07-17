@@ -471,7 +471,8 @@ def previous_month_period(reference_date=None):
     return previous_month_start, previous_month_end
 
 
-def render_admin_document_manager(courier_id, courier_name):
+def render_admin_document_manager(courier_id, courier_name, key_prefix="admin_document_manager"):
+    clean_key_prefix = f"{key_prefix}_{normalize_courier_id(courier_id)}"
     with st.expander("A futárnak feltöltött dokumentumok kezelése", expanded=False):
         try:
             documents = read_peopleforce_documents_for_courier(courier_id)
@@ -509,6 +510,7 @@ def render_admin_document_manager(courier_id, courier_name):
                 f"{type_labels.get(str(rows_by_id[value].get('document_type', '')), str(rows_by_id[value].get('document_type', '')))} | "
                 f"{rows_by_id[value].get('title') or rows_by_id[value].get('file_name')}"
             ),
+            key=f"{clean_key_prefix}_selected_document",
         )
         document = rows_by_id[selected_id]
         file_name = str(document.get("file_name") or "dokumentum")
@@ -525,8 +527,9 @@ def render_admin_document_manager(courier_id, courier_name):
                 data=file_bytes,
                 file_name=file_name,
                 mime=str(document.get("mime_type") or "application/octet-stream"),
+                key=f"{clean_key_prefix}_download_{selected_id}",
             )
-        with st.form(f"admin_document_edit_{selected_id}"):
+        with st.form(f"{clean_key_prefix}_edit_{selected_id}"):
             edited_title = st.text_input("Megnevezés", value=title)
             edited_note = st.text_area("Megjegyzés", value=note, height=70)
             if st.form_submit_button("Adatok mentése"):
@@ -534,10 +537,14 @@ def render_admin_document_manager(courier_id, courier_name):
                 st.success("A dokumentum adatai frissültek.")
                 st.rerun()
         confirm_delete = st.checkbox(
-            "Törlés megerősítése",
-            key=f"admin_document_delete_confirm_{selected_id}",
+            "Torles megerositese",
+            key=f"{clean_key_prefix}_delete_confirm_{selected_id}",
         )
-        if st.button("Dokumentum törlése", disabled=not confirm_delete):
+        if st.button(
+            "Dokumentum torlese",
+            disabled=not confirm_delete,
+            key=f"{clean_key_prefix}_delete_{selected_id}",
+        ):
             delete_peopleforce_document(selected_id)
             st.success("A dokumentum törölve.")
             st.rerun()
@@ -1620,8 +1627,6 @@ def show_invoice_summary_page():
                             )
                             st.success("A reklamáció lezárva.")
                             st.rerun()
-            render_admin_document_manager(courier_id, courier_name)
-
     pdf_title = (
         f"JITT elszamolas {start_date.isoformat()} - {end_date.isoformat()}"
     )
