@@ -134,6 +134,38 @@ def parse_huf_amount(value):
         return 0.0
 
 
+def parse_bool_flag(value):
+    if isinstance(value, bool):
+        return value
+
+    if pd.isna(value):
+        return False
+
+    if isinstance(value, (int, float)):
+        return value != 0
+
+    text = str(value or "").strip().casefold()
+    if not text:
+        return False
+
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    text = text.replace("\u00a0", "").replace(" ", "")
+    if text in {"true", "t", "yes", "y", "igen", "i", "1", "x", "active", "aktiv"}:
+        return True
+    if text in {"false", "f", "no", "n", "nem", "0", "inactive", "inaktiv", "none", "null"}:
+        return False
+
+    try:
+        return float(text.replace(",", ".")) != 0
+    except (TypeError, ValueError):
+        return False
+
+
 def normalize_courier_id_text(value):
     text = normalize_text(value)
     text = text.replace("\u00a0", "").replace(" ", "")
@@ -174,6 +206,20 @@ def normalize_person_key(value):
     # A futárnevekben szereplő számozás az azonosító része is lehet
     # (például: "PAPP 777 Niki"), ezért a numerikus tokeneket megtartjuk.
     return " ".join(sorted(tokens))
+
+
+def normalize_column_key(value):
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or "").casefold(),
+    )
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    return re.sub(r"[^a-z0-9]+", "", text)
+
 
 def normalize_bonus_worksheet(site):
     value = normalize_text(site).upper().replace("-", "_").replace(" ", "_")
@@ -1445,6 +1491,8 @@ def build_driver_invoice_summary(
 
     reserve_courier_ct_zft = {}
     reserve_driver_ct_zft = {}
+    reserve_courier_active = {}
+    reserve_driver_active = {}
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
@@ -1467,7 +1515,7 @@ def build_driver_invoice_summary(
             "targetreservebalancehuf",
         }
         for column in reserve_source.columns:
-            column_key = re.sub(r"[^a-z0-9]+", "", str(column).casefold())
+            column_key = normalize_column_key(column)
             if column_key in ct_column_keys:
                 ct_column = column
                 break
@@ -1478,12 +1526,38 @@ def build_driver_invoice_summary(
                 parse_huf_amount
             )
 
+        active_column = None
+        active_column_keys = {
+            "insuranceactive",
+            "insurance",
+            "biztositasactive",
+            "biztositasaktiv",
+            "biztositas",
+            "targetreserveactive",
+            "celtartalekactive",
+            "celtartalekaktiv",
+        }
+        for column in reserve_source.columns:
+            column_key = normalize_column_key(column)
+            if column_key in active_column_keys:
+                active_column = column
+                break
+        if active_column is None:
+            reserve_source["_insurance_active"] = False
+        else:
+            reserve_source["_insurance_active"] = reserve_source[active_column].map(
+                parse_bool_flag
+            )
+
         for id_column in id_columns:
             if id_column in reserve_source.columns:
                 for _, reserve_row in reserve_source.iterrows():
                     courier_id = normalize_courier_id_text(reserve_row.get(id_column))
                     if courier_id:
                         reserve_courier_ct_zft[courier_id] = reserve_row.get("_ct_zft_huf", 0)
+                        reserve_courier_active[courier_id] = bool(
+                            reserve_row.get("_insurance_active", False)
+                        )
 
         for name_column in name_columns:
             if name_column in reserve_source.columns:
@@ -1491,9 +1565,12 @@ def build_driver_invoice_summary(
                     driver_key = normalize_person_key(reserve_row.get(name_column))
                     if driver_key:
                         reserve_driver_ct_zft[driver_key] = reserve_row.get("_ct_zft_huf", 0)
+                        reserve_driver_active[driver_key] = bool(
+                            reserve_row.get("_insurance_active", False)
+                        )
 
-        # Only explicit courier/name columns make a courier eligible.
-        # The CT_ZFT amount controls insurance, not reserve eligibility.
+        # The DB insurance_active flag is the single source of truth:
+        # True => target reserve + insurance deduction, False => no deduction.
 
     def target_reserve_ct_zft(row):
         courier_id = normalize_courier_id_text(row.get("courier_id"))
@@ -1507,11 +1584,27 @@ def build_driver_invoice_summary(
             return reserve_driver_ct_zft[match_key]
         return pd.NA
 
+    def target_reserve_active(row):
+        courier_id = normalize_courier_id_text(row.get("courier_id"))
+        if courier_id in reserve_courier_active:
+            return reserve_courier_active[courier_id]
+        driver_key = normalize_person_key(row.get("driver_name"))
+        if driver_key in reserve_driver_active:
+            return reserve_driver_active[driver_key]
+        match_key = row.get("driver_match_key")
+        if match_key in reserve_driver_active:
+            return reserve_driver_active[match_key]
+        return False
+
     grouped["target_reserve_ct_zft_huf"] = grouped.apply(
         target_reserve_ct_zft,
         axis=1,
     )
-    grouped["has_target_reserve"] = grouped["target_reserve_ct_zft_huf"].notna()
+    grouped["target_reserve_active"] = grouped.apply(
+        target_reserve_active,
+        axis=1,
+    ).map(parse_bool_flag)
+    grouped["has_target_reserve"] = grouped["target_reserve_active"]
     grouped["target_reserve_ct_zft_huf"] = grouped["target_reserve_ct_zft_huf"].map(
         parse_huf_amount
     )
@@ -1520,7 +1613,7 @@ def build_driver_invoice_summary(
     # fizetendő összeg 10%-a, de legfeljebb 50 000 Ft.
     eligible_base = grouped["payable_before_reserve_huf"].clip(lower=0)
     grouped["target_reserve_deduction_huf"] = 0.0
-    reserve_mask = grouped["has_target_reserve"]
+    reserve_mask = grouped["target_reserve_active"]
     grouped.loc[reserve_mask, "target_reserve_deduction_huf"] = (
         eligible_base.loc[reserve_mask]
         .map(lambda amount: min(amount * TARGET_RESERVE_RATE, TARGET_RESERVE_MAX_HUF))
@@ -1528,7 +1621,7 @@ def build_driver_invoice_summary(
     )
 
     grouped["insurance_deduction_huf"] = 0.0
-    insurance_mask = reserve_mask & grouped["target_reserve_ct_zft_huf"].ne(0)
+    insurance_mask = grouped["target_reserve_active"]
     grouped.loc[insurance_mask, "insurance_deduction_huf"] = INSURANCE_DEDUCTION_HUF
 
     grouped["payable_total_huf"] = (
