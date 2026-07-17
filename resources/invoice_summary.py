@@ -2050,8 +2050,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Szállítási díj", format_huf(fixed_total)],
             ["Bónuszok / pótlékok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
-            ["Ügyfélértékelési bónusz", format_huf(customer_rating_bonus)],
-            ["Havi bónusz + felvett kör", format_huf(monthly_bonus + monthly_accepted_route)],
             ["Manuális bevételek", format_huf(fuel_manual + other_income + instructor_fee)],
         ]
         expenses = [
