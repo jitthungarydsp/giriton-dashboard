@@ -402,7 +402,7 @@ function renderDocumentPanel(action, title, stepNumber) {
   const documents = state.workflow?.documents?.[action] || [];
   const complaints = state.workflow?.complaints?.[action] || [];
   const complaintResponses = state.workflow?.complaintResponses?.[action] || [];
-  const hasOpenComplaint = complaints.some((complaint) => String(complaint.status || "").toLowerCase() !== "resolved");
+  const hasOpenComplaint = complaints.some((complaint) => String(complaint.status || "").trim().toLowerCase() !== "resolved");
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);

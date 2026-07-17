@@ -22,11 +22,17 @@ from pydantic import BaseModel
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.security import verify_password
 
+try:
+    from cryptography.hazmat.primitives import serialization
+except Exception:  # pragma: no cover - optional local fallback
+    serialization = None
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PWA_ROOT = PROJECT_ROOT / "pwa"
 USERS_FILE = PROJECT_ROOT / "data" / "users.json"
 LOCAL_SESSION_SECRET_FILE = PROJECT_ROOT / ".pwa_session_secret"
+LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
 SESSION_COOKIE = "giriton_pwa_session"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
@@ -1068,6 +1074,19 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
 
 def public_vapid_key() -> str:
     key = load_setting("VAPID_PUBLIC_KEY").strip()
+    if not key and serialization is not None and LOCAL_VAPID_PRIVATE_FILE.exists():
+        try:
+            private_key = serialization.load_pem_private_key(
+                LOCAL_VAPID_PRIVATE_FILE.read_bytes(),
+                password=None,
+            )
+            public_bytes = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.X962,
+                format=serialization.PublicFormat.UncompressedPoint,
+            )
+            key = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode("ascii")
+        except Exception:
+            key = ""
     if not key:
         raise HTTPException(
             status_code=503,

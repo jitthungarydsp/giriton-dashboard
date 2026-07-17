@@ -2348,6 +2348,7 @@ def render_peopleforce_complaint_box(
 def render_peopleforce_acceptance_box(
     *,
     action_key,
+    config,
     courier_id,
     courier_name,
     selected_month,
@@ -2467,6 +2468,7 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
     )
     render_peopleforce_acceptance_box(
         action_key=action_key,
+        config=config,
         courier_id=courier_id,
         courier_name=courier_name,
         selected_month=selected_month,

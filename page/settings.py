@@ -8,7 +8,11 @@ from resources.app_settings import (
     save_app_settings,
 )
 from resources.discord_notifier import read_discord_status
-from resources.pwa_push_notifications import send_push_to_courier
+from resources.pwa_push_notifications import (
+    load_setting as load_push_setting,
+    load_vapid_private_key,
+    send_push_to_courier,
+)
 from resources.users import load_users
 
 
@@ -97,10 +101,22 @@ def show_settings_page():
             "Teszt futár ID szűrés: nincs megadva, webhook mellett minden futár engedélyezett."
         )
 
-    st.subheader("PWA kozponti ertesites")
+    st.markdown(
+        """
+        <div style="padding:18px 20px;border-radius:18px;background:#e5f3e1;border:1px solid #b8d5b4;margin:18px 0 10px;">
+          <div style="font-size:12px;font-weight:900;letter-spacing:.08em;color:#2e5b36;text-transform:uppercase;">PWA push</div>
+          <div style="font-size:24px;font-weight:850;color:#17231c;">Push küldése</div>
+          <div style="color:#315b37;margin-top:6px;">Központi üzenet azoknak a futároknak, akik az új mobil PWA-ban bekapcsolták az értesítéseket.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    vapid_private_ready = bool(load_vapid_private_key())
+    vapid_public_ready = bool(load_push_setting("VAPID_PUBLIC_KEY"))
     st.caption(
-        "Kozponti push uzenet azoknak a futaroknak, akik a mobil PWA-ban "
-        "bekapcsoltak az ertesiteseket."
+        "Push konfiguráció: "
+        f"privát kulcs {'rendben' if vapid_private_ready else 'hiányzik'}, "
+        f"publikus kulcs {'rendben' if vapid_public_ready else 'hiányzik vagy helyi PEM-ből számolódik'}."
     )
 
     notification_users = _active_courier_notification_users()

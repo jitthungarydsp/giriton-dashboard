@@ -68,8 +68,11 @@ def smtp_config():
 def build_login_message(recipient, username, password):
     recipient = validate_email(recipient)
     login_url = get_setting(
-        "APP_LOGIN_URL",
-        "https://giriton-courier-pwa.onrender.com/",
+        "PWA_LOGIN_URL",
+        get_setting(
+            "APP_LOGIN_URL",
+            "https://giriton-courier-pwa.onrender.com/",
+        ),
     )
     config = smtp_config()
 
@@ -110,6 +113,53 @@ def build_new_bill_message(recipient, username):
         "Új elszámolásod érkezett a Jitt rendszerben.\n\n"
         f"Felhasználónév: {username}\n"
         f"Belépési oldal: {login_url}\n\n"
+        "Üdvözlettel:\n"
+        "Jitt Hungary Kft.\n"
+    )
+
+    return message, config
+
+
+def build_new_document_message(
+    recipient,
+    courier_name="",
+    document_type="",
+    document_month="",
+    title="",
+):
+    recipient = validate_email(recipient)
+    login_url = get_setting(
+        "PWA_LOGIN_URL",
+        get_setting(
+            "APP_LOGIN_URL",
+            "https://giriton-courier-pwa.onrender.com/",
+        ),
+    )
+    config = smtp_config()
+
+    labels = {
+        "settlement": "elszámolás",
+        "tig": "TIG",
+        "invoice": "számla",
+        "complaint_response": "reklamációs válasz",
+    }
+    clean_type = str(document_type or "").strip()
+    label = labels.get(clean_type, "dokumentum")
+    clean_month = str(document_month or "").strip()[:7]
+    clean_title = str(title or label).strip()
+    clean_name = str(courier_name or "Futár").strip()
+
+    message = EmailMessage()
+    message["Subject"] = "Új dokumentumod érkezett"
+    message["From"] = formataddr((config["from_name"], config["from_email"]))
+    message["To"] = recipient
+
+    message.set_content(
+        f"Kedves {clean_name}!\n\n"
+        f"Új {label} dokumentumod érkezett a Jitt rendszerben.\n"
+        f"Hónap: {clean_month or '-'}\n"
+        f"Dokumentum: {clean_title}\n\n"
+        f"Az új felületen itt tudod megnézni:\n{login_url}\n\n"
         "Üdvözlettel:\n"
         "Jitt Hungary Kft.\n"
     )
@@ -161,6 +211,28 @@ def send_new_bill_notification(recipient, username):
     message, config = build_new_bill_message(
         recipient,
         username,
+    )
+    send_message(message, config)
+
+    return {
+        "recipient": validate_email(recipient),
+        "subject": str(message["Subject"]),
+    }
+
+
+def send_new_document_notification(
+    recipient,
+    courier_name="",
+    document_type="",
+    document_month="",
+    title="",
+):
+    message, config = build_new_document_message(
+        recipient,
+        courier_name=courier_name,
+        document_type=document_type,
+        document_month=document_month,
+        title=title,
     )
     send_message(message, config)
 

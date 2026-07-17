@@ -89,6 +89,30 @@ def prefixed_document_filename(prefix_kind, courier_id, courier_name, document_m
     return prefix + str(base_file_name or "").strip()
 
 
+def reopen_peopleforce_acceptance_after_complaint(
+    *,
+    courier_id,
+    courier_name,
+    document_type,
+    document_month,
+    updated_by,
+):
+    action_key = {"settlement": "settlement", "tig": "tig"}.get(
+        str(document_type or "").strip()
+    )
+    if not action_key:
+        return
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key=action_key,
+        document_month=document_month,
+        status="open",
+        status_note="Reklamacio lezarva, futar elfogadasara var.",
+        updated_by=updated_by,
+    )
+
+
 def _register_tig_font():
     """Magyar ékezeteket támogató betűtípus regisztrálása, ha elérhető."""
     font_candidates = [
@@ -1014,6 +1038,13 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                             document_type=document_type,
                             document_month=document_month,
                         )
+                        reopen_peopleforce_acceptance_after_complaint(
+                            courier_id=selected["courier_id"],
+                            courier_name=selected["courier_name"],
+                            document_type=document_type,
+                            document_month=document_month,
+                            updated_by=str(st.session_state.get("username", "admin")),
+                        )
                         st.success("A választ elküldtük, a reklamáció lezárva.")
                         st.rerun()
 
@@ -1508,7 +1539,7 @@ def show_invoice_summary_page():
             except Exception:
                 complaints = pd.DataFrame()
             open_complaints = complaints[
-                complaints.get("status", pd.Series(dtype=str)).astype(str).str.lower() != "resolved"
+                complaints.get("status", pd.Series(dtype=str)).astype(str).str.strip().str.lower() != "resolved"
             ] if not complaints.empty else complaints
             if not open_complaints.empty:
                 st.error("A futár reklamációt küldött ehhez az elszámoláshoz. Az elszámolás visszanyitva.")
@@ -1539,6 +1570,13 @@ def show_invoice_summary_page():
                                     document_type="settlement",
                                     document_month=month_start_from_date(start_date),
                                 )
+                                reopen_peopleforce_acceptance_after_complaint(
+                                    courier_id=courier_id,
+                                    courier_name=courier_name,
+                                    document_type="settlement",
+                                    document_month=month_start_from_date(start_date),
+                                    updated_by=str(st.session_state.get("username", "admin")),
+                                )
                                 st.success("A választ elküldtük a futárnak, a reklamáció lezárva.")
                                 st.rerun()
                         if st.button(
@@ -1546,6 +1584,13 @@ def show_invoice_summary_page():
                             key=f"resolve_invoice_complaint_{complaint_id}",
                         ):
                             update_peopleforce_complaint_status(complaint_id, "resolved")
+                            reopen_peopleforce_acceptance_after_complaint(
+                                courier_id=courier_id,
+                                courier_name=courier_name,
+                                document_type="settlement",
+                                document_month=month_start_from_date(start_date),
+                                updated_by=str(st.session_state.get("username", "admin")),
+                            )
                             st.success("A reklamáció lezárva.")
                             st.rerun()
             render_admin_document_manager(courier_id, courier_name)

@@ -11,6 +11,8 @@ from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
 )
+from resources.courier_master_db import read_courier_master_by_id
+from resources.email_sender import send_new_document_notification
 from resources.pwa_push_notifications import notify_new_peopleforce_document
 
 
@@ -74,6 +76,44 @@ def _notify_document_uploaded(payload):
         # A dokumentumfeltöltés fontosabb, mint az értesítés. Ha a push
         # konfiguráció vagy a feliratkozás hibás, a feltöltést nem állítjuk meg.
         return
+
+
+def _recipient_email_for_courier(courier_id):
+    try:
+        courier_df = read_courier_master_by_id(courier_id)
+    except Exception:
+        return ""
+
+    if courier_df.empty:
+        return ""
+
+    row = courier_df.iloc[0]
+    return str(row.get("billing_email") or row.get("email") or "").strip()
+
+
+def _email_document_uploaded(payload):
+    recipient = _recipient_email_for_courier(payload.get("courier_id"))
+
+    if not recipient:
+        return
+
+    try:
+        send_new_document_notification(
+            recipient=recipient,
+            courier_name=payload.get("courier_name"),
+            document_type=payload.get("document_type"),
+            document_month=payload.get("document_month"),
+            title=payload.get("title") or payload.get("file_name"),
+        )
+    except Exception:
+        # A dokumentum feltoltese fontosabb, mint az e-mail ertesites.
+        # Hibas SMTP/cimzett eseten nem akasztjuk meg az admin folyamatot.
+        return
+
+
+def _notify_document_channels(payload):
+    _notify_document_uploaded(payload)
+    _email_document_uploaded(payload)
 
 
 def format_month(value):
@@ -439,7 +479,7 @@ def upload_peopleforce_document(
     read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
-    _notify_document_uploaded(payload)
+    _notify_document_channels(payload)
 
     return response.json()
 
@@ -485,7 +525,7 @@ def upload_peopleforce_document_bytes(
     read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
-    _notify_document_uploaded(payload)
+    _notify_document_channels(payload)
 
     return response.json()
 

@@ -16,6 +16,7 @@ from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
 PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
+LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
 
 
 def load_setting(name: str) -> str:
@@ -33,6 +34,18 @@ def load_setting(name: str) -> str:
         return str(settings.get(name) or settings.get("supabase", {}).get(name) or "").strip()
     except Exception:
         return ""
+
+
+def load_vapid_private_key() -> str:
+    key = load_setting("VAPID_PRIVATE_KEY")
+    if key:
+        return key
+    if LOCAL_VAPID_PRIVATE_FILE.exists():
+        try:
+            return LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+    return ""
 
 
 def _supabase_headers(prefer: str = "") -> dict[str, str]:
@@ -141,7 +154,7 @@ def send_push_to_courier(
     work_date: date | str | None = None,
     data: dict[str, Any] | None = None,
 ) -> str:
-    vapid_private_key = load_setting("VAPID_PRIVATE_KEY")
+    vapid_private_key = load_vapid_private_key()
     vapid_subject = load_setting("VAPID_SUBJECT") or "mailto:admin@giriton.local"
     if not vapid_private_key:
         _log_delivery(

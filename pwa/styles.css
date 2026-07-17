@@ -92,6 +92,8 @@ textarea { min-height: 96px; resize: vertical; }
 .download-link { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 800; text-decoration: none; }
 .accept-row { display: grid; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .accept-row.done { padding: 13px; border: 0; border-radius: 13px; background: #e5f3e1; color: #275d31; font-weight: 800; }
+.accept-row .primary { background: linear-gradient(135deg, var(--green-dark), var(--green)); box-shadow: 0 10px 24px #2e5b3624; }
+.accept-row .primary:disabled { cursor: not-allowed; background: #dfe4dc; color: #718071; box-shadow: none; }
 .secondary { min-height: 46px; border: 1px solid var(--ink); border-radius: 14px; background: transparent; color: var(--ink); font-weight: 800; }
 .complaint-box { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .complaint-box form { margin-top: 10px; }
