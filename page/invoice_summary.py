@@ -1445,18 +1445,23 @@ def show_invoice_summary_page():
             filename_driver = (
                 f"{courier_id}_{driver_slug}" if courier_id else driver_slug
             )
-        pdf_bytes = build_invoice_pdf_bytes(
-            driver_summary,
-            final_df,
-            pdf_title,
-        )
-        st.download_button(
-            "PDF generalasa",
-            data=pdf_bytes,
-            file_name=f"jitt_elszamolas_{filename_driver}_{start_date.isoformat()}_{end_date.isoformat()}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        pdf_bytes = b""
+        try:
+            pdf_bytes = build_invoice_pdf_bytes(
+                driver_summary,
+                final_df,
+                pdf_title,
+            )
+        except Exception as exc:
+            st.warning(f"PDF generalas most nem elerheto: {exc}")
+        if pdf_bytes:
+            st.download_button(
+                "PDF generalasa",
+                data=pdf_bytes,
+                file_name=f"jitt_elszamolas_{filename_driver}_{start_date.isoformat()}_{end_date.isoformat()}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
         if selected_driver == "Mind":
             st.divider()
             st.subheader("Tömeges elszámolás-feltöltés raktár szerint")
@@ -1728,6 +1733,7 @@ def show_invoice_summary_page():
             if st.button(
                 "Elszámolás feltöltése a futár profiljába",
                 use_container_width=True,
+                disabled=not bool(pdf_bytes),
                 key="invoice_send_to_courier_card",
             ):
                 if not courier_id:
