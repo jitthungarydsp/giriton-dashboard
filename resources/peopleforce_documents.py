@@ -11,6 +11,7 @@ from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
 )
+from resources.pwa_push_notifications import notify_new_peopleforce_document
 
 
 DOCUMENT_COLUMNS = [
@@ -58,6 +59,21 @@ STATUS_COLUMNS = [
     "updated_by",
     "updated_at",
 ]
+
+
+def _notify_document_uploaded(payload):
+    try:
+        notify_new_peopleforce_document(
+            courier_id=payload.get("courier_id"),
+            document_type=payload.get("document_type"),
+            document_month=payload.get("document_month"),
+            title=payload.get("title"),
+            file_name=payload.get("file_name"),
+        )
+    except Exception:
+        # A dokumentumfeltöltés fontosabb, mint az értesítés. Ha a push
+        # konfiguráció vagy a feliratkozás hibás, a feltöltést nem állítjuk meg.
+        return
 
 
 def format_month(value):
@@ -423,6 +439,7 @@ def upload_peopleforce_document(
     read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
+    _notify_document_uploaded(payload)
 
     return response.json()
 
@@ -468,6 +485,7 @@ def upload_peopleforce_document_bytes(
     read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
+    _notify_document_uploaded(payload)
 
     return response.json()
 

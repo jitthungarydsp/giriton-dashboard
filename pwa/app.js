@@ -538,7 +538,7 @@ function ensureNotificationToggle() {
     <div class="process-title">
       <span class="step-code">🔔</span>
       <div>
-        <h3>Műszakértesítések</h3>
+        <h3>Értesítések</h3>
         <p id="notification-status">Kikapcsolva.</p>
       </div>
     </div>
@@ -587,7 +587,7 @@ async function refreshNotificationToggle() {
   if (Notification.permission === "denied") {
     setNotificationStatus("Az értesítések le vannak tiltva.", true);
   } else if (toggle.checked) {
-    setNotificationStatus("Bekapcsolva. Értesítést kapsz a holnapi műszakodról.");
+    setNotificationStatus("Bekapcsolva. Értesítést kapsz a holnapi műszakodról és az új dokumentumokról.");
   } else {
     setNotificationStatus("Kikapcsolva.");
   }
@@ -848,7 +848,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=13");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=14");
 }
 
 start();

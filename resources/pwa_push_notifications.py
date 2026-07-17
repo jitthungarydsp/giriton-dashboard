@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import json
+import os
+import tomllib
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+from pywebpush import WebPushException, webpush
+
+from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
+PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
+
+
+def load_setting(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+    if not secrets_path.exists():
+        return ""
+
+    try:
+        with secrets_path.open("rb") as file:
+            settings = tomllib.load(file)
+        return str(settings.get(name) or settings.get("supabase", {}).get(name) or "").strip()
+    except Exception:
+        return ""
+
+
+def _supabase_headers(prefer: str = "") -> dict[str, str]:
+    _supabase_url, service_role_key = get_supabase_config()
+    headers = {
+        "apikey": service_role_key,
+        "Content-Type": "application/json",
+    }
+    if service_role_key and not service_role_key.startswith(("sb_secret_", "sb_publishable_")):
+        headers["Authorization"] = f"Bearer {service_role_key}"
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def _supabase_request(
+    method: str,
+    table: str,
+    *,
+    params: dict[str, str] | None = None,
+    payload: Any = None,
+    prefer: str = "",
+) -> Any:
+    supabase_url, _service_role_key = get_supabase_config()
+    response = requests.request(
+        method,
+        f"{supabase_url.rstrip('/')}/rest/v1/{table}",
+        headers=_supabase_headers(prefer),
+        params=params,
+        json=payload,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    if not response.content:
+        return []
+    return response.json()
+
+
+def _load_subscriptions(courier_id: str | int) -> list[dict[str, Any]]:
+    clean_id = str(courier_id or "").strip()
+    if not clean_id:
+        return []
+    return _supabase_request(
+        "GET",
+        PUSH_SUBSCRIPTION_TABLE,
+        params={
+            "select": "id,courier_id,endpoint,p256dh,auth",
+            "courier_id": f"eq.{clean_id}",
+            "active": "eq.true",
+            "order": "updated_at.desc",
+            "limit": "100",
+        },
+    )
+
+
+def _deactivate_subscription(subscription_id: Any) -> None:
+    clean_id = str(subscription_id or "").strip()
+    if not clean_id:
+        return
+    _supabase_request(
+        "PATCH",
+        PUSH_SUBSCRIPTION_TABLE,
+        params={"id": f"eq.{clean_id}"},
+        payload={
+            "active": False,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def _log_delivery(
+    *,
+    courier_id: str | int,
+    notification_type: str,
+    status: str,
+    message: str,
+    work_date: date | str | None = None,
+) -> None:
+    log_date = work_date or datetime.now(timezone.utc).date()
+    if isinstance(log_date, date):
+        log_date = log_date.isoformat()
+    _supabase_request(
+        "POST",
+        PUSH_DELIVERY_TABLE,
+        payload={
+            "courier_id": int(courier_id),
+            "work_date": str(log_date)[:10],
+            "notification_type": notification_type,
+            "status": status,
+            "message": str(message or "")[:2000],
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def send_push_to_courier(
+    *,
+    courier_id: str | int,
+    title: str,
+    body: str,
+    tag: str,
+    url: str = "/",
+    notification_type: str = "generic",
+    work_date: date | str | None = None,
+    data: dict[str, Any] | None = None,
+) -> str:
+    vapid_private_key = load_setting("VAPID_PRIVATE_KEY")
+    vapid_subject = load_setting("VAPID_SUBJECT") or "mailto:admin@giriton.local"
+    if not vapid_private_key:
+        return "missing_vapid"
+
+    subscriptions = _load_subscriptions(courier_id)
+    if not subscriptions:
+        return "no_subscription"
+
+    payload = json.dumps(
+        {
+            "title": title,
+            "body": body,
+            "tag": tag,
+            "url": url,
+            "renotify": False,
+            "data": data or {},
+        },
+        ensure_ascii=False,
+    )
+
+    success = False
+    errors: list[str] = []
+    for subscription in subscriptions:
+        subscription_info = {
+            "endpoint": subscription.get("endpoint"),
+            "keys": {
+                "p256dh": subscription.get("p256dh"),
+                "auth": subscription.get("auth"),
+            },
+        }
+        try:
+            webpush(
+                subscription_info=subscription_info,
+                data=payload,
+                vapid_private_key=vapid_private_key,
+                vapid_claims={"sub": vapid_subject},
+                ttl=12 * 60 * 60,
+            )
+            success = True
+        except WebPushException as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            errors.append(f"subscription={subscription.get('id')} status={status_code} error={exc}")
+            if status_code in {404, 410}:
+                _deactivate_subscription(subscription.get("id"))
+
+    if success:
+        _log_delivery(
+            courier_id=courier_id,
+            notification_type=notification_type,
+            status="sent",
+            message=body,
+            work_date=work_date,
+        )
+        return "sent"
+
+    error_text = " | ".join(errors) or "Ismeretlen push hiba."
+    _log_delivery(
+        courier_id=courier_id,
+        notification_type=notification_type,
+        status="failed",
+        message=error_text,
+        work_date=work_date,
+    )
+    return "failed"
+
+
+def notify_new_peopleforce_document(
+    *,
+    courier_id: str | int,
+    document_type: str,
+    document_month: date | str,
+    title: str,
+    file_name: str,
+) -> str:
+    type_labels = {
+        "settlement": "elszámolás",
+        "tig": "TIG",
+        "invoice": "számla",
+        "complaint_response": "reklamációs válasz",
+    }
+    clean_type = str(document_type or "").strip()
+    clean_month = str(document_month or "")[:7]
+    label = type_labels.get(clean_type, "dokumentum")
+    visible_title = str(title or file_name or label).strip()
+    return send_push_to_courier(
+        courier_id=courier_id,
+        title="Új dokumentum érkezett",
+        body=f"Új {label} érkezett ({clean_month}): {visible_title}",
+        tag=f"new-document-{courier_id}-{clean_type}-{clean_month}",
+        url="/?tab=settlement",
+        notification_type="new_document",
+        work_date=f"{clean_month}-01" if len(clean_month) == 7 else None,
+        data={
+            "section": "settlement",
+            "documentType": clean_type,
+            "documentMonth": clean_month,
+        },
+    )

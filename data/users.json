@@ -506,6 +506,15 @@
             "token": ""
         },
         {
+            "username": "Nagy 7725 István",
+            "trainer": "trainer_name",
+            "password": "vRdhcttD",
+            "role": "user",
+            "courierId": 7725,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Mocsáry Attila",
             "trainer": "trainer_name",
             "password": "YTAGqsqp",
