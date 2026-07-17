@@ -709,8 +709,8 @@ def restore_raw_compliance_bonus(final_df, raw_route_df):
 
 def build_weekday_counts(final_df):
     columns = [
+        "driver_match_key",
         "driver_name",
-        "worksheet_name",
         "hetfo",
         "kedd",
         "szerda",
@@ -725,13 +725,13 @@ def build_weekday_counts(final_df):
         return pd.DataFrame(columns=columns)
 
     route_id_column = "route_unique_id" if "route_unique_id" in final_df.columns else None
-    required_columns = ["driver_name", "worksheet_name", "work_date"]
+    required_columns = ["driver_name", "work_date"]
     if route_id_column:
         required_columns.append(route_id_column)
 
     routes = final_df[required_columns].copy()
     routes["driver_name"] = routes["driver_name"].map(normalize_text)
-    routes["worksheet_name"] = routes["worksheet_name"].map(normalize_text)
+    routes["driver_match_key"] = routes["driver_name"].map(normalize_person_key)
     routes["work_date"] = pd.to_datetime(
         routes["work_date"],
         errors="coerce",
@@ -746,16 +746,17 @@ def build_weekday_counts(final_df):
         routes["_route_key"] = routes.index.astype(str)
 
     worked_dates = routes[
-        ["driver_name", "worksheet_name", "work_date"]
+        ["driver_match_key", "driver_name", "work_date"]
     ].drop_duplicates()
     routes = routes.drop_duplicates(
-        subset=["driver_name", "worksheet_name", "work_date", "_route_key"]
+        subset=["driver_match_key", "work_date", "_route_key"]
     )
     routes["weekday"] = routes["work_date"].dt.weekday
 
     grouped = (
-        routes.groupby(["driver_name", "worksheet_name"], dropna=False)
+        routes.groupby(["driver_match_key"], dropna=False)
         .agg(
+            driver_name=("driver_name", "first"),
             hetfo=("weekday", lambda value: int((value == 0).sum())),
             kedd=("weekday", lambda value: int((value == 1).sum())),
             szerda=("weekday", lambda value: int((value == 2).sum())),
@@ -767,13 +768,13 @@ def build_weekday_counts(final_df):
         .reset_index()
     )
     worked_days = (
-        worked_dates.groupby(["driver_name", "worksheet_name"], dropna=False)["work_date"]
+        worked_dates.groupby(["driver_match_key"], dropna=False)["work_date"]
         .nunique()
         .reset_index(name="worked_days")
     )
     grouped = grouped.merge(
         worked_days,
-        on=["driver_name", "worksheet_name"],
+        on="driver_match_key",
         how="left",
     )
 
@@ -786,14 +787,14 @@ def build_manual_item_summary(manual_df):
 
     manual_df = manual_df.copy()
     manual_df["driver_name"] = manual_df["driver_name"].map(normalize_text)
-    manual_df["worksheet_name"] = manual_df["worksheet_name"].map(normalize_text)
+    manual_df["driver_match_key"] = manual_df["driver_name"].map(normalize_person_key)
     manual_df = add_numeric_columns(
         manual_df,
         ["amount_huf"],
     )
     pivot = (
         manual_df.pivot_table(
-            index=["driver_name", "worksheet_name"],
+            index=["driver_match_key"],
             columns="item_type",
             values="amount_huf",
             aggfunc="sum",
@@ -806,20 +807,19 @@ def build_manual_item_summary(manual_df):
 
 
 def _normal_route_counts(routes_df, output_column):
-    columns = ["driver_match_key", "worksheet_name", output_column]
+    columns = ["driver_match_key", output_column]
     if routes_df is None or routes_df.empty:
         return pd.DataFrame(columns=columns)
     routes = routes_df.copy()
     routes["driver_match_key"] = routes.get("driver_name", pd.Series("", index=routes.index)).map(normalize_person_key)
-    routes["worksheet_name"] = routes.get("worksheet_name", pd.Series("", index=routes.index)).map(normalize_text)
     route_type = routes.get("route_type", pd.Series("", index=routes.index)).astype(str).str.upper()
     routes = routes[route_type.str.contains("NORMAL", na=False)].copy()
     if routes.empty:
         return pd.DataFrame(columns=columns)
     if "route_unique_id" in routes.columns:
-        counts = routes.groupby(["driver_match_key", "worksheet_name"])["route_unique_id"].nunique()
+        counts = routes.groupby("driver_match_key")["route_unique_id"].nunique()
     else:
-        counts = routes.groupby(["driver_match_key", "worksheet_name"]).size()
+        counts = routes.groupby("driver_match_key").size()
     return counts.reset_index(name=output_column)
 
 
@@ -828,7 +828,7 @@ def build_loyalty_bonus_summary(current_routes_df, previous_routes_df, profiles_
     if current.empty:
         return current
     previous = _normal_route_counts(previous_routes_df, "loyalty_previous_normal_routes")
-    result = current.merge(previous, on=["driver_match_key", "worksheet_name"], how="left")
+    result = current.merge(previous, on="driver_match_key", how="left")
     result["loyalty_previous_normal_routes"] = result["loyalty_previous_normal_routes"].fillna(0).astype(int)
 
     profiles = profiles_df.copy() if profiles_df is not None else pd.DataFrame()
@@ -941,26 +941,45 @@ def build_driver_invoice_summary(
         + final_df["tip_huf"]
     )
 
-    grouped = (
-        final_df.groupby(
-            ["driver_name", "driver_match_key", "worksheet_name"],
-            dropna=False,
-        )[numeric_columns]
-        .sum()
+    worksheet_summary = (
+        final_df.groupby("driver_match_key", dropna=False)["worksheet_name"]
+        .apply(
+            lambda values: " + ".join(
+                sorted(
+                    {
+                        normalize_text(value)
+                        for value in values
+                        if normalize_text(value)
+                    }
+                )
+            )
+        )
         .reset_index()
     )
+    driver_name_summary = (
+        final_df.groupby("driver_match_key", dropna=False)["driver_name"]
+        .apply(lambda values: max([normalize_text(value) for value in values if normalize_text(value)] or [""], key=len))
+        .reset_index()
+    )
+    grouped = (
+        final_df.groupby("driver_match_key", dropna=False)[numeric_columns]
+        .sum()
+        .reset_index()
+        .merge(driver_name_summary, on="driver_match_key", how="left")
+        .merge(worksheet_summary, on="driver_match_key", how="left")
+    )
     route_counts = (
-        final_df.groupby(["driver_name", "worksheet_name"], dropna=False)["route_unique_id"]
+        final_df.groupby("driver_match_key", dropna=False)["route_unique_id"]
         .nunique()
         .reset_index(name="route_count")
     )
     grouped = grouped.merge(
         route_counts,
-        on=["driver_name", "worksheet_name"],
+        on="driver_match_key",
         how="left",
     )
     day_type_summary = (
-        final_df.groupby(["driver_name", "worksheet_name", "calculated_day_type"], dropna=False)
+        final_df.groupby(["driver_match_key", "calculated_day_type"], dropna=False)
         .agg(
             day_type_routes=("route_unique_id", "nunique"),
             day_type_base_huf=("fixed_rate_huf", "sum"),
@@ -970,14 +989,14 @@ def build_driver_invoice_summary(
     day_type_pivot = pd.DataFrame()
     if not day_type_summary.empty:
         route_pivot = day_type_summary.pivot_table(
-            index=["driver_name", "worksheet_name"],
+            index="driver_match_key",
             columns="calculated_day_type",
             values="day_type_routes",
             aggfunc="sum",
             fill_value=0,
         )
         base_pivot = day_type_summary.pivot_table(
-            index=["driver_name", "worksheet_name"],
+            index="driver_match_key",
             columns="calculated_day_type",
             values="day_type_base_huf",
             aggfunc="sum",
@@ -992,7 +1011,7 @@ def build_driver_invoice_summary(
     if not day_type_pivot.empty:
         grouped = grouped.merge(
             day_type_pivot,
-            on=["driver_name", "worksheet_name"],
+            on="driver_match_key",
             how="left",
         )
     else:
@@ -1003,9 +1022,12 @@ def build_driver_invoice_summary(
     weekday_counts = build_weekday_counts(final_df)
     grouped = grouped.merge(
         weekday_counts,
-        on=["driver_name", "worksheet_name"],
+        on="driver_match_key",
         how="left",
+        suffixes=("", "_weekday"),
     )
+    if "driver_name_weekday" in grouped.columns:
+        grouped = grouped.drop(columns=["driver_name_weekday"])
     loyalty = build_loyalty_bonus_summary(
         final_df,
         previous_routes_df,
@@ -1016,13 +1038,13 @@ def build_driver_invoice_summary(
     )
     if not loyalty.empty:
         loyalty_columns = [
-            "driver_match_key", "worksheet_name", "loyalty_current_normal_routes",
+            "driver_match_key", "loyalty_current_normal_routes",
             "loyalty_previous_normal_routes", "loyalty_rate_huf", "loyalty_bonus_huf",
             "loyalty_eligible", "loyalty_status",
         ]
         grouped = grouped.merge(
             loyalty[loyalty_columns],
-            on=["driver_match_key", "worksheet_name"],
+            on="driver_match_key",
             how="left",
         )
 
@@ -1030,10 +1052,6 @@ def build_driver_invoice_summary(
         bonus_df = bonus_df.copy()
         bonus_df["driver_name"] = bonus_df["driver_name"].map(normalize_text)
         bonus_df["driver_match_key"] = bonus_df["driver_name"].map(normalize_person_key)
-        bonus_df["worksheet_name"] = bonus_df.get(
-            "site",
-            pd.Series("", index=bonus_df.index),
-        ).map(normalize_bonus_worksheet)
         if "courier_id" in bonus_df.columns:
             bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
@@ -1041,33 +1059,27 @@ def build_driver_invoice_summary(
             ["bonus_huf"],
         )
         bonus_grouped = (
-            bonus_df.groupby(
-                ["driver_match_key", "worksheet_name"],
-                dropna=False,
-            )["bonus_huf"]
+            bonus_df.groupby("driver_match_key", dropna=False)["bonus_huf"]
             .sum()
             .reset_index(name="compliance_extra_huf")
         )
         grouped = grouped.merge(
             bonus_grouped,
-            on=["driver_match_key", "worksheet_name"],
+            on="driver_match_key",
             how="left",
         )
         if "courier_id" in bonus_df.columns:
             bonus_ids = (
-                bonus_df[["driver_match_key", "worksheet_name", "courier_id"]]
+                bonus_df[["driver_match_key", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
-                .groupby(
-                    ["driver_match_key", "worksheet_name"],
-                    dropna=False,
-                )["courier_id"]
+                .groupby("driver_match_key", dropna=False)["courier_id"]
                 .first()
                 .reset_index()
             )
             grouped = grouped.merge(
                 bonus_ids,
-                on=["driver_match_key", "worksheet_name"],
+                on="driver_match_key",
                 how="left",
             )
     else:
@@ -1076,6 +1088,7 @@ def build_driver_invoice_summary(
     if penalty_df is not None and not penalty_df.empty:
         penalty_df = penalty_df.copy()
         penalty_df["driver_name"] = penalty_df["driver_name"].map(normalize_text)
+        penalty_df["driver_match_key"] = penalty_df["driver_name"].map(normalize_person_key)
         if "courier_id" in penalty_df.columns:
             penalty_df["courier_id"] = penalty_df["courier_id"].map(normalize_text)
         penalty_df = add_numeric_columns(
@@ -1083,13 +1096,13 @@ def build_driver_invoice_summary(
             ["amount_huf"],
         )
         penalty_grouped = (
-            penalty_df.groupby("driver_name", dropna=False)["amount_huf"]
+            penalty_df.groupby("driver_match_key", dropna=False)["amount_huf"]
             .sum()
             .reset_index(name="adjustment_huf")
         )
         grouped = grouped.merge(
             penalty_grouped,
-            on="driver_name",
+            on="driver_match_key",
             how="left",
         )
         if "courier_id" not in grouped.columns and "courier_id" in penalty_df.columns:
@@ -1097,13 +1110,14 @@ def build_driver_invoice_summary(
                 penalty_df[["driver_name", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
-                .groupby("driver_name", dropna=False)["courier_id"]
+                .assign(driver_match_key=lambda frame: frame["driver_name"].map(normalize_person_key))
+                .groupby("driver_match_key", dropna=False)["courier_id"]
                 .first()
                 .reset_index()
             )
             grouped = grouped.merge(
                 penalty_ids,
-                on="driver_name",
+                on="driver_match_key",
                 how="left",
             )
     else:
@@ -1225,7 +1239,7 @@ def build_driver_invoice_summary(
     if not manual_summary.empty:
         grouped = grouped.merge(
             manual_summary,
-            on=["driver_name", "worksheet_name"],
+            on="driver_match_key",
             how="left",
         )
 
@@ -1728,8 +1742,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
     for index, driver_row in summary_df.reset_index(drop=True).iterrows():
         driver_name = normalize_text(driver_row.get("driver_name")) or "Ismeretlen futar"
         sheet_name = normalize_text(driver_row.get("worksheet_name"))
+        driver_key = normalize_person_key(driver_name)
         route_driver_names = (
-            route_df["driver_name"].astype(str)
+            route_df["driver_name"].astype(str).map(normalize_person_key)
             if "driver_name" in route_df.columns
             else pd.Series("", index=route_df.index)
         )
@@ -1738,10 +1753,10 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             if "worksheet_name" in route_df.columns
             else pd.Series("", index=route_df.index)
         )
-        driver_routes = route_df[
-            (route_driver_names == driver_name)
-            & (route_sheet_names == sheet_name)
-        ].copy()
+        route_mask = route_driver_names == driver_key
+        if sheet_name and " + " not in sheet_name:
+            route_mask = route_mask & (route_sheet_names == sheet_name)
+        driver_routes = route_df[route_mask].copy()
 
         orders = int(money(driver_row.get("orders")))
         routes = int(money(driver_row.get("route_count") or driver_row.get("routes")))
