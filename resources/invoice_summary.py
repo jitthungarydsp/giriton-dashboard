@@ -96,6 +96,59 @@ def money(value):
         return 0.0
 
 
+def parse_huf_amount(value):
+    if pd.isna(value):
+        return 0.0
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+
+    text = (
+        text.replace("−", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("Ft", "")
+        .replace("HUF", "")
+        .replace("\u00a0", "")
+        .replace(" ", "")
+        .strip()
+    )
+
+    if not text or text.upper() in {"#VALUE!", "#N/A", "NAN", "NONE", "NULL"}:
+        return 0.0
+
+    if "," not in text and text.count(".") == 1:
+        before, after = text.split(".")
+        if len(after) == 3 and before.replace("-", "").isdigit() and after.isdigit():
+            text = before + after
+
+    text = text.replace(",", ".")
+
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def normalize_courier_id_text(value):
+    text = normalize_text(value)
+    text = text.replace("\u00a0", "").replace(" ", "")
+    text = text.replace(",", ".")
+    if text.endswith(".0"):
+        text = text[:-2]
+    try:
+        number = float(text)
+        if number.is_integer():
+            return str(int(number))
+    except (TypeError, ValueError):
+        pass
+    return text
+
+
 def format_huf(value):
     return f"{money(value):,.0f} Ft".replace(",", " ")
 
@@ -1421,15 +1474,14 @@ def build_driver_invoice_summary(
         if ct_column is None:
             reserve_source["_ct_zft_huf"] = 0
         else:
-            reserve_source["_ct_zft_huf"] = pd.to_numeric(
-                reserve_source[ct_column],
-                errors="coerce",
-            ).fillna(0)
+            reserve_source["_ct_zft_huf"] = reserve_source[ct_column].map(
+                parse_huf_amount
+            )
 
         for id_column in id_columns:
             if id_column in reserve_source.columns:
                 for _, reserve_row in reserve_source.iterrows():
-                    courier_id = normalize_text(reserve_row.get(id_column))
+                    courier_id = normalize_courier_id_text(reserve_row.get(id_column))
                     if courier_id:
                         reserve_courier_ct_zft[courier_id] = reserve_row.get("_ct_zft_huf", 0)
 
@@ -1444,7 +1496,7 @@ def build_driver_invoice_summary(
         # The CT_ZFT amount controls insurance, not reserve eligibility.
 
     def target_reserve_ct_zft(row):
-        courier_id = normalize_text(row.get("courier_id"))
+        courier_id = normalize_courier_id_text(row.get("courier_id"))
         if courier_id in reserve_courier_ct_zft:
             return reserve_courier_ct_zft[courier_id]
         driver_key = normalize_person_key(row.get("driver_name"))
@@ -1460,10 +1512,9 @@ def build_driver_invoice_summary(
         axis=1,
     )
     grouped["has_target_reserve"] = grouped["target_reserve_ct_zft_huf"].notna()
-    grouped["target_reserve_ct_zft_huf"] = pd.to_numeric(
-        grouped["target_reserve_ct_zft_huf"],
-        errors="coerce",
-    ).fillna(0)
+    grouped["target_reserve_ct_zft_huf"] = grouped["target_reserve_ct_zft_huf"].map(
+        parse_huf_amount
+    )
 
     # A céltartalék nem fix 50 000 Ft: a levonás a levonások előtti
     # fizetendő összeg 10%-a, de legfeljebb 50 000 Ft.
