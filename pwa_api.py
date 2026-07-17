@@ -870,6 +870,14 @@ def workflow_done(states: dict[str, dict], action: str) -> bool:
     return str((states.get(action) or {}).get("status") or "").lower() == "done"
 
 
+def has_open_complaint(complaints: list[dict], action: str) -> bool:
+    return any(
+        row.get("document_type") == action
+        and str(row.get("status") or "").strip().lower() != "resolved"
+        for row in complaints
+    )
+
+
 def upsert_workflow_status(
     user: dict[str, Any],
     month: date,
@@ -903,6 +911,10 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         document_type: [row for row in documents if row.get("document_type") == document_type]
         for document_type in WORKFLOW_DOCUMENT_TYPES
     }
+    response_documents = [
+        row for row in documents
+        if row.get("document_type") == "complaint_response"
+    ]
     for action in ("settlement", "tig"):
         if document_groups[action] and action not in states:
             states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
@@ -962,15 +974,54 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
             }
             for row in rows
         ]
+    safe_response_documents = [
+        {
+            **row,
+            "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
+        }
+        for row in response_documents
+    ]
+    complaints_by_action = {
+        action: [row for row in complaints if row.get("document_type") == action]
+        for action in ("settlement", "tig")
+    }
+    response_documents_by_action = {
+        action: [
+            row for row in safe_response_documents
+            if f"({action})" in str(row.get("title") or "")
+        ]
+        for action in ("settlement", "tig")
+    }
+    for action, rows in complaints_by_action.items():
+        action_responses = response_documents_by_action.get(action, [])
+        if not action_responses:
+            continue
+        for complaint in rows:
+            if complaint.get("admin_response"):
+                continue
+            complaint_id = str(complaint.get("id") or "")
+            matching_response = next(
+                (
+                    row for row in action_responses
+                    if complaint_id and complaint_id in str(row.get("title") or "")
+                ),
+                action_responses[0],
+            )
+            complaint["admin_response"] = (
+                matching_response.get("note")
+                or matching_response.get("title")
+                or ""
+            )
+            complaint["responded_by"] = matching_response.get("uploaded_by") or "admin"
+            complaint["responded_at"] = matching_response.get("uploaded_at")
+
     return {
         "month": month.strftime("%Y-%m"),
         "steps": steps,
         "states": states,
         "documents": safe_documents,
-        "complaints": {
-            action: [row for row in complaints if row.get("document_type") == action]
-            for action in ("settlement", "tig")
-        },
+        "complaints": complaints_by_action,
+        "complaintResponses": response_documents_by_action,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1241,9 +1292,14 @@ def accept_workflow_document(
     month = parse_month(payload.month)
     if action == "tig":
         require_prerequisite(user, month, "tig")
-    documents, _statuses, _complaints = read_workflow_rows(user, month)
+    documents, _statuses, complaints = read_workflow_rows(user, month)
     if not any(row.get("document_type") == action for row in documents):
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
+    if has_open_complaint(complaints, action):
+        raise HTTPException(
+            status_code=409,
+            detail="Nyitott reklamacio mellett nem fogadhato el a dokumentum.",
+        )
     upsert_workflow_status(
         user,
         month,

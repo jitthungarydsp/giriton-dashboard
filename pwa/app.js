@@ -390,10 +390,19 @@ function complaintList(complaints) {
   `).join("")}</div>`;
 }
 
+function complaintResponseList(responses) {
+  if (!responses.length) return "";
+  return `<div class="complaint-list"><strong>Admin valaszai</strong>${responses.map((response) => `
+    <div class="complaint-row"><div><strong>${escapeHtml(response.note || response.title || "Admin valasz")}</strong><small>${escapeHtml(response.uploaded_by || "admin")} · ${response.uploaded_at ? new Date(response.uploaded_at).toLocaleString("hu-HU") : ""}</small>${response.downloadUrl ? `<a class="download-link" href="${escapeHtml(response.downloadUrl)}">Valasz letoltese</a>` : ""}</div></div>
+  `).join("")}</div>`;
+}
+
 function renderDocumentPanel(action, title, stepNumber) {
   const panel = $(`#${action}-panel`);
   const documents = state.workflow?.documents?.[action] || [];
   const complaints = state.workflow?.complaints?.[action] || [];
+  const complaintResponses = state.workflow?.complaintResponses?.[action] || [];
+  const hasOpenComplaint = complaints.some((complaint) => String(complaint.status || "").toLowerCase() !== "resolved");
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);
@@ -412,12 +421,15 @@ function renderDocumentPanel(action, title, stepNumber) {
     ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
     ${accepted
       ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
-      : documents.length && !locked
+      : documents.length && !locked && !hasOpenComplaint
         ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
-        : ""}
+        : documents.length && !locked && hasOpenComplaint
+          ? `<div class="accept-row"><button class="primary" disabled>Reklamacio lezarasaig nem fogadhato el</button></div>`
+          : ""}
     ${documents.length && !locked ? `<div class="complaint-box">
       <strong>Reklamáció</strong>
       ${complaintList(complaints)}
+      ${complaintResponseList(complaintResponses)}
       <form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>
     </div>` : ""}`;
 
@@ -464,6 +476,7 @@ function waitingWorkflow() {
     states: {},
     documents: { settlement: [], tig: [], invoice: [] },
     complaints: { settlement: [], tig: [] },
+    complaintResponses: { settlement: [], tig: [] },
     updatedAt: new Date().toISOString(),
   };
 }
@@ -848,7 +861,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=15");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=17");
 }
 
 start();

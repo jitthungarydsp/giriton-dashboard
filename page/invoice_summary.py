@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import base64
 from io import BytesIO
 from pathlib import Path
@@ -76,6 +76,17 @@ def slugify_filename(value):
         elif char in [" ", "-", "_", "."]:
             safe.append("_")
     return "".join(safe).strip("_") or "osszes"
+
+
+def prefixed_document_filename(prefix_kind, courier_id, courier_name, document_month, base_file_name):
+    month_value = month_start_from_date(document_month)
+    prefix = (
+        f"{prefix_kind}_{datetime.now().strftime('%H%M%S')}_"
+        f"{normalize_courier_id(courier_id)}_"
+        f"{slugify_filename(courier_name)}_"
+        f"{month_value.strftime('%m')}_{month_value.strftime('%d')}_"
+    )
+    return prefix + str(base_file_name or "").strip()
 
 
 def _register_tig_font():
@@ -739,6 +750,12 @@ def render_settlement_feedback_overview(driver_summary, document_month):
         seen_couriers.add(courier_id)
 
         courier_complaints = complaint_lookup.get(courier_id, [])
+        courier_response_documents = [
+            document
+            for document in documents.to_dict("records")
+            if str(document.get("courier_id") or "").strip() == str(courier_id)
+            and str(document.get("document_type") or "").strip() == "complaint_response"
+        ] if documents is not None and not documents.empty else []
         settlement_doc = latest_docs.get((courier_id, "settlement"))
         tig_doc = latest_docs.get((courier_id, "tig"))
         invoice_doc = latest_docs.get((courier_id, "invoice"))
@@ -797,6 +814,7 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                 "tig_doc": tig_doc,
                 "invoice_doc": invoice_doc,
                 "complaints": courier_complaints,
+                "response_documents": courier_response_documents,
                 "feedback_owner": feedback_owner,
                 "display": {
                     "Futár": courier_name,
@@ -958,6 +976,11 @@ def render_settlement_feedback_overview(driver_summary, document_month):
             for item in selected.get("complaints", [])
             if str(item.get("status") or "").strip().lower() != "resolved"
         ]
+        resolved_complaints = [
+            item
+            for item in selected.get("complaints", [])
+            if str(item.get("status") or "").strip().lower() == "resolved"
+        ]
         if not active_complaints:
             st.success("Nincs nyitott reklamáció ennél a futárnál.")
         else:
@@ -993,6 +1016,64 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                         )
                         st.success("A választ elküldtük, a reklamáció lezárva.")
                         st.rerun()
+
+        response_documents = selected.get("response_documents", [])
+        if resolved_complaints or response_documents:
+            with st.expander("Lezart reklamaciok es admin valaszok", expanded=False):
+                type_labels = {"settlement": "Elszamolas", "tig": "TIG"}
+                shown_response_document_ids = set()
+                for complaint in resolved_complaints:
+                    complaint_id = str(complaint.get("id") or "")
+                    document_type = str(complaint.get("document_type") or "")
+                    matching_response = next(
+                        (
+                            document
+                            for document in response_documents
+                            if complaint_id
+                            and complaint_id in str(document.get("title") or "")
+                        ),
+                        {},
+                    )
+                    if matching_response.get("id"):
+                        shown_response_document_ids.add(str(matching_response.get("id")))
+                    admin_response = (
+                        complaint.get("admin_response")
+                        or matching_response.get("note")
+                        or ""
+                    )
+                    responded_by = (
+                        complaint.get("responded_by")
+                        or matching_response.get("uploaded_by")
+                        or "admin"
+                    )
+                    responded_at = (
+                        complaint.get("responded_at")
+                        or matching_response.get("uploaded_at")
+                        or ""
+                    )
+                    st.write(
+                        f"**{type_labels.get(document_type, document_type)} reklamacio:** "
+                        f"{complaint.get('message', '')}"
+                    )
+                    if admin_response:
+                        st.success(f"Admin valasza: {admin_response}")
+                    else:
+                        st.info("Ehhez a lezart reklamaciohoz nincs rogzitett valaszszoveg.")
+                    st.caption(f"Valaszolta: {responded_by} | {responded_at}")
+
+                extra_response_documents = [
+                    document
+                    for document in response_documents
+                    if str(document.get("id") or "") not in shown_response_document_ids
+                ]
+                for document in extra_response_documents:
+                    st.write(f"**Valasz dokumentum:** {document.get('title', '')}")
+                    if document.get("note"):
+                        st.success(f"Admin valasza: {document.get('note')}")
+                    st.caption(
+                        f"Valaszolta: {document.get('uploaded_by') or 'admin'} | "
+                        f"{document.get('uploaded_at') or ''}"
+                    )
 
 
 def render_invoice_delivery_status(route_driver_names, document_month):
@@ -1489,10 +1570,26 @@ def show_invoice_summary_page():
             final_df,
             pdf_title,
         )
+        download_file_name = (
+            f"jitt_elszamolas_{filename_driver}_{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+        )
+        if selected_driver != "Mind" and not driver_summary.empty:
+            selected_row = driver_summary.iloc[0]
+            download_courier_id, download_courier_name = resolve_courier_identity(
+                selected_row,
+                selected_driver,
+            )
+            download_file_name = prefixed_document_filename(
+                "e",
+                download_courier_id,
+                download_courier_name,
+                month_start_from_date(start_date),
+                download_file_name,
+            )
         st.download_button(
             "PDF generalasa",
             data=pdf_bytes,
-            file_name=f"jitt_elszamolas_{filename_driver}_{start_date.isoformat()}_{end_date.isoformat()}.pdf",
+            file_name=download_file_name,
             mime="application/pdf",
             use_container_width=True,
         )
@@ -1654,10 +1751,17 @@ def show_invoice_summary_page():
                                 f"{end_date.isoformat()}"
                             ),
                         )
-                        single_file_name = (
+                        base_single_file_name = (
                             f"jitt_elszamolas_{bulk_courier_id}_"
                             f"{slugify_filename(bulk_courier_name)}_"
                             f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+                        )
+                        single_file_name = prefixed_document_filename(
+                            "t",
+                            bulk_courier_id,
+                            bulk_courier_name,
+                            document_month,
+                            base_single_file_name,
                         )
 
                         upload_peopleforce_document_bytes(
@@ -1737,9 +1841,16 @@ def show_invoice_summary_page():
                     )
                 else:
                     document_month = month_start_from_date(start_date)
-                    file_name = (
+                    base_file_name = (
                         f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_"
                         f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+                    )
+                    file_name = prefixed_document_filename(
+                        "e",
+                        courier_id,
+                        courier_name,
+                        document_month,
+                        base_file_name,
                     )
                     upload_peopleforce_document_bytes(
                         courier_id=courier_id,
@@ -1903,9 +2014,16 @@ def show_invoice_summary_page():
             generated_tig = st.session_state.get(tig_state_key)
             if generated_tig:
                 document_month = generated_tig["month"]
-                tig_file_name = (
+                base_tig_file_name = (
                     f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
                     f"{document_month.strftime('%Y-%m')}.pdf"
+                )
+                tig_file_name = prefixed_document_filename(
+                    "e",
+                    courier_id,
+                    courier_name,
+                    document_month,
+                    base_tig_file_name,
                 )
                 st.download_button(
                     "TIG letöltése ellenőrzéshez",

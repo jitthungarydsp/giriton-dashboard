@@ -2282,6 +2282,8 @@ def render_peopleforce_complaint_box(
             .astype(str)
             .str.contains(document_type_token, regex=False, na=False)
         ]
+        if matching_responses.empty:
+            matching_responses = response_documents
         for _, response_document in matching_responses.iterrows():
             st.success(
                 "Admin válasza: "
@@ -2357,6 +2359,23 @@ def render_peopleforce_acceptance_box(
         return
 
     status = clean_display_text((state or {}).get("status"), "open").lower()
+    try:
+        complaints = read_peopleforce_complaints(
+            courier_id,
+            selected_month,
+            config["document_type"],
+        )
+    except Exception:
+        complaints = pd.DataFrame()
+    has_open_complaint = (
+        not complaints.empty
+        and complaints.get("status", pd.Series(dtype=str))
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .ne("resolved")
+        .any()
+    )
 
     st.divider()
     st.subheader("Elfogadás")
@@ -2375,6 +2394,7 @@ def render_peopleforce_acceptance_box(
         use_container_width=True,
         type="primary",
         key=f"peopleforce_accept_{action_key}_{courier_id}_{selected_month}",
+        disabled=has_open_complaint,
     ):
         upsert_peopleforce_card_status(
             courier_id=courier_id,
@@ -2387,6 +2407,8 @@ def render_peopleforce_acceptance_box(
         )
         st.success("Elfogadás rögzítve.")
         st.rerun()
+    if has_open_complaint:
+        st.warning("Nyitott reklamacio mellett a dokumentum nem fogadhato el.")
 
 
 def render_peopleforce_monthly_documents(action_key, row, user, selected_month=None):

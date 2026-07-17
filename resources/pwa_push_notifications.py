@@ -144,10 +144,24 @@ def send_push_to_courier(
     vapid_private_key = load_setting("VAPID_PRIVATE_KEY")
     vapid_subject = load_setting("VAPID_SUBJECT") or "mailto:admin@giriton.local"
     if not vapid_private_key:
+        _log_delivery(
+            courier_id=courier_id,
+            notification_type=notification_type,
+            status="failed",
+            message="Hianyzik a VAPID_PRIVATE_KEY beallitas.",
+            work_date=work_date,
+        )
         return "missing_vapid"
 
     subscriptions = _load_subscriptions(courier_id)
     if not subscriptions:
+        _log_delivery(
+            courier_id=courier_id,
+            notification_type=notification_type,
+            status="failed",
+            message="A futarnak nincs aktiv PWA push feliratkozasa.",
+            work_date=work_date,
+        )
         return "no_subscription"
 
     payload = json.dumps(
