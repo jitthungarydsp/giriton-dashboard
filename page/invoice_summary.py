@@ -655,6 +655,51 @@ def _feedback_owner_from_status(status_row):
     return str((status_row or {}).get("status_note") or "").strip()
 
 
+def _settlement_feedback_priority(row):
+    def first_value(candidates, default=""):
+        for column in candidates:
+            if column in row:
+                return row.get(column)
+        return default
+
+    values = [
+        str(first_value(["Elszámolás", "ElszĂˇmolĂˇs"]) or ""),
+        str(row.get("TIG") or ""),
+        str(first_value(["Számlafeltöltés", "SzĂˇmlafeltĂ¶ltĂ©s"]) or ""),
+    ]
+    open_complaints = int(
+        first_value(["Nyitott reklamáció", "Nyitott reklamĂˇciĂł"], 0)
+        or 0
+    )
+    if open_complaints > 0 or any("Reklam" in value for value in values):
+        return 0
+    if any("VĂˇr" in value or "ZĂˇrolva" in value for value in values):
+        return 1
+    return 2
+
+
+def _settlement_feedback_row_style(row):
+    priority = row.get("_priority")
+    if priority == 0:
+        return [
+            "background-color: #fde2e2; color: #7f1d1d; font-weight: 600"
+            for _ in row
+        ]
+    if priority == 1:
+        return [
+            "background-color: #fff1f2; color: #9f1239"
+            for _ in row
+        ]
+    return ["" for _ in row]
+
+
+def _first_existing_column(df, candidates):
+    for column in candidates:
+        if column in df.columns:
+            return column
+    return None
+
+
 def _has_open_complaint(rows, document_type):
     for row in rows or []:
         if str(row.get("document_type") or "") != document_type:
@@ -776,6 +821,31 @@ def render_settlement_feedback_overview(driver_summary, document_month):
     )
 
     display_df = pd.DataFrame([row["display"] for row in courier_rows])
+    display_df["_priority"] = display_df.apply(
+        _settlement_feedback_priority,
+        axis=1,
+    )
+    complaint_column = _first_existing_column(
+        display_df,
+        ["Nyitott reklamáció", "Nyitott reklamĂˇciĂł"],
+    )
+    courier_column = _first_existing_column(
+        display_df,
+        ["Futár", "FutĂˇr"],
+    )
+    sort_columns = ["_priority"]
+    sort_ascending = [True]
+    if complaint_column:
+        sort_columns.append(complaint_column)
+        sort_ascending.append(False)
+    if courier_column:
+        sort_columns.append(courier_column)
+        sort_ascending.append(True)
+    display_df = display_df.sort_values(
+        sort_columns,
+        ascending=sort_ascending,
+        kind="stable",
+    )
     metric1, metric2, metric3, metric4 = st.columns(4)
     metric1.metric("Futár", len(display_df))
     metric2.metric("Elszámolás elfogadva", int((display_df["Elszámolás"] == "Elfogadva").sum()))
@@ -783,9 +853,15 @@ def render_settlement_feedback_overview(driver_summary, document_month):
     metric4.metric("Számla feltöltve", int((display_df["Számlafeltöltés"] == "Feltöltve").sum()))
 
     st.dataframe(
-        display_df,
+        display_df.style.apply(
+            _settlement_feedback_row_style,
+            axis=1,
+        ),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "_priority": None,
+        },
     )
 
     rows_by_key = {
