@@ -1114,6 +1114,11 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                         f"{document.get('uploaded_at') or ''}"
                     )
 
+        render_admin_document_manager(
+            selected["courier_id"],
+            selected["courier_name"],
+        )
+
 
 def render_invoice_delivery_status(route_driver_names, document_month):
     """
@@ -1869,6 +1874,11 @@ def show_invoice_summary_page():
                 f"Megerositem {len(driver_summary)} futar TIG dokumentumanak tomeges feltolteset.",
                 key=f"tig_bulk_confirm_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
             )
+            tig_only_accepted_settlement = st.checkbox(
+                "Csak azoknak kuldje, akik elfogadtak az elszamolast",
+                value=True,
+                key=f"tig_bulk_only_accepted_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+            )
             if st.button(
                 "Tomeges TIG generalasa es feltoltese",
                 type="primary",
@@ -1885,8 +1895,15 @@ def show_invoice_summary_page():
                 if not master_df.empty and "courier_id" in master_df.columns:
                     for _, master_row in master_df.iterrows():
                         master_lookup[str(master_row.get("courier_id") or "").strip()] = master_row.to_dict()
+                try:
+                    settlement_status_lookup = _latest_status_by_courier_and_action(
+                        read_peopleforce_card_statuses_for_month(document_month, "settlement")
+                    )
+                except Exception:
+                    settlement_status_lookup = {}
 
                 uploaded_count = 0
+                skipped_count = 0
                 failed_rows = []
                 progress = st.progress(0)
                 status_box = st.empty()
@@ -1902,6 +1919,20 @@ def show_invoice_summary_page():
                     try:
                         if not courier_id:
                             raise ValueError("Nincs courier ID.")
+                        if (
+                            tig_only_accepted_settlement
+                            and not _is_done(settlement_status_lookup.get((courier_id, "settlement")))
+                        ):
+                            skipped_count += 1
+                            failed_rows.append(
+                                {
+                                    "Futar": courier_name or driver_name,
+                                    "Allapot": "Kihagyva",
+                                    "Hiba": "Az elszamolast meg nem fogadta el.",
+                                }
+                            )
+                            progress.progress((row_index + 1) / total_rows)
+                            continue
                         master_row = master_lookup.get(str(courier_id), {})
                         seller_name = str(master_row.get("company_name") or courier_name or driver_name).strip()
                         seller_address = str(master_row.get("company_address") or "").strip()
@@ -1965,7 +1996,9 @@ def show_invoice_summary_page():
                 status_box.empty()
                 st.cache_data.clear()
                 st.success(
-                    f"Tomeges TIG feltoltes kesz. Feltoltve: {uploaded_count}, hibas: {len(failed_rows)}."
+                    f"Tomeges TIG feltoltes kesz. Feltoltve: {uploaded_count}, "
+                    f"kihagyva: {skipped_count}, hibas: "
+                    f"{sum(1 for row in failed_rows if row.get('Allapot') == 'Hiba')}."
                 )
                 if failed_rows:
                     st.dataframe(pd.DataFrame(failed_rows), use_container_width=True, hide_index=True)

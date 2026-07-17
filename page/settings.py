@@ -212,6 +212,12 @@ def show_settings_page():
                     f"hibas: {results['failed']}, "
                     f"VAPID hianyzik: {results['missing_vapid']}."
                 )
+                if results["missing_vapid"]:
+                    st.error(
+                        "A push kulcs nincs beallitva ezen a kornyezeten. "
+                        "Renderben add meg a VAPID_PRIVATE_KEY es VAPID_SUBJECT env valtozokat. "
+                        "A VAPID_PRIVATE_KEY lehet tobb soros PEM, vagy \\n jelekkel egy sorban."
+                    )
                 if failed_rows:
                     st.dataframe(failed_rows, use_container_width=True, hide_index=True)
 

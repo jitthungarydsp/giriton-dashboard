@@ -877,11 +877,15 @@ def workflow_done(states: dict[str, dict], action: str) -> bool:
 
 
 def has_open_complaint(complaints: list[dict], action: str) -> bool:
-    return any(
-        row.get("document_type") == action
-        and str(row.get("status") or "").strip().lower() != "resolved"
-        for row in complaints
-    )
+    for row in complaints:
+        if row.get("document_type") != action:
+            continue
+        if str(row.get("status") or "").strip().lower() == "resolved":
+            continue
+        if str(row.get("admin_response") or "").strip() or str(row.get("responded_at") or "").strip():
+            continue
+        return True
+    return False
 
 
 def upsert_workflow_status(
@@ -1074,12 +1078,15 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
 
 def public_vapid_key() -> str:
     key = load_setting("VAPID_PUBLIC_KEY").strip()
-    if not key and serialization is not None and LOCAL_VAPID_PRIVATE_FILE.exists():
+    private_key_text = load_setting("VAPID_PRIVATE_KEY").strip().replace("\\n", "\n")
+    if not private_key_text and LOCAL_VAPID_PRIVATE_FILE.exists():
         try:
-            private_key = serialization.load_pem_private_key(
-                LOCAL_VAPID_PRIVATE_FILE.read_bytes(),
-                password=None,
-            )
+            private_key_text = LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            private_key_text = ""
+    if not key and serialization is not None and private_key_text:
+        try:
+            private_key = serialization.load_pem_private_key(private_key_text.encode("utf-8"), password=None)
             public_bytes = private_key.public_key().public_bytes(
                 encoding=serialization.Encoding.X962,
                 format=serialization.PublicFormat.UncompressedPoint,

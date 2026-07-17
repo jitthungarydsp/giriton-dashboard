@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+import streamlit as st
 from pywebpush import WebPushException, webpush
 
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
@@ -22,7 +23,19 @@ LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
 def load_setting(name: str) -> str:
     value = os.getenv(name, "").strip()
     if value:
-        return value
+        return value.replace("\\n", "\n")
+
+    try:
+        value = st.secrets.get(name, "")
+        if value:
+            return str(value).strip().replace("\\n", "\n")
+        supabase_section = st.secrets.get("supabase", {})
+        if isinstance(supabase_section, dict):
+            value = supabase_section.get(name, "")
+            if value:
+                return str(value).strip().replace("\\n", "\n")
+    except Exception:
+        pass
 
     secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
     if not secrets_path.exists():
@@ -31,7 +44,7 @@ def load_setting(name: str) -> str:
     try:
         with secrets_path.open("rb") as file:
             settings = tomllib.load(file)
-        return str(settings.get(name) or settings.get("supabase", {}).get(name) or "").strip()
+        return str(settings.get(name) or settings.get("supabase", {}).get(name) or "").strip().replace("\\n", "\n")
     except Exception:
         return ""
 
