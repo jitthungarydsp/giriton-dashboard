@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import streamlit as st
 
 from resources.app_settings import (
@@ -6,6 +8,34 @@ from resources.app_settings import (
     save_app_settings,
 )
 from resources.discord_notifier import read_discord_status
+from resources.pwa_push_notifications import send_push_to_courier
+from resources.users import load_users
+
+
+def _active_courier_notification_users():
+    try:
+        users = load_users().get("users", [])
+    except Exception:
+        return []
+
+    recipients = []
+    for user in users:
+        if not user.get("active", True):
+            continue
+        if str(user.get("role") or "").strip().lower() == "admin":
+            continue
+        courier_id = str(user.get("courierId") or user.get("courier_id") or "").strip()
+        username = str(user.get("username") or "").strip()
+        if not courier_id or not username:
+            continue
+        recipients.append(
+            {
+                "label": f"{username} #{courier_id}",
+                "username": username,
+                "courier_id": courier_id,
+            }
+        )
+    return sorted(recipients, key=lambda item: item["label"].casefold())
 
 
 def show_settings_page():
@@ -66,6 +96,108 @@ def show_settings_page():
         st.caption(
             "Teszt futár ID szűrés: nincs megadva, webhook mellett minden futár engedélyezett."
         )
+
+    st.subheader("PWA kozponti ertesites")
+    st.caption(
+        "Kozponti push uzenet azoknak a futaroknak, akik a mobil PWA-ban "
+        "bekapcsoltak az ertesiteseket."
+    )
+
+    notification_users = _active_courier_notification_users()
+    notification_labels = [item["label"] for item in notification_users]
+    notification_by_label = {item["label"]: item for item in notification_users}
+
+    with st.form("central_pwa_notification_form"):
+        target_mode = st.radio(
+            "Cimzettek",
+            ["Minden aktiv futar", "Kivalasztott futarok"],
+            horizontal=True,
+        )
+        selected_labels = []
+        if target_mode == "Kivalasztott futarok":
+            selected_labels = st.multiselect("Futarok", notification_labels)
+        notification_title = st.text_input(
+            "Ertesites cime",
+            value="Giriton ertesites",
+        )
+        notification_body = st.text_area(
+            "Uzenet",
+            placeholder="Ide ird a kozponti uzenetet.",
+            height=120,
+        )
+        confirm_central_notification = st.checkbox(
+            "Megerősitem a kozponti ertesites kikuldeset.",
+        )
+        send_central_notification = st.form_submit_button(
+            "Kozponti ertesites kikuldese",
+            type="primary",
+        )
+
+    if send_central_notification:
+        if not confirm_central_notification:
+            st.error("A kikuldest jovahagyas nelkul nem inditom el.")
+        elif not str(notification_title or "").strip():
+            st.error("Az ertesites cime kotelezo.")
+        elif not str(notification_body or "").strip():
+            st.error("Az uzenet szovege kotelezo.")
+        else:
+            if target_mode == "Minden aktiv futar":
+                recipients = notification_users
+            else:
+                recipients = [
+                    notification_by_label[label]
+                    for label in selected_labels
+                    if label in notification_by_label
+                ]
+
+            if not recipients:
+                st.error("Nincs kivalasztott cimzett.")
+            else:
+                tag = "central-message-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                results = {
+                    "sent": 0,
+                    "no_subscription": 0,
+                    "missing_vapid": 0,
+                    "failed": 0,
+                    "other": 0,
+                }
+                failed_rows = []
+                progress = st.progress(0)
+                for index, recipient in enumerate(recipients, start=1):
+                    try:
+                        status = send_push_to_courier(
+                            courier_id=recipient["courier_id"],
+                            title=str(notification_title).strip(),
+                            body=str(notification_body).strip(),
+                            tag=f"{tag}-{recipient['courier_id']}",
+                            url="/",
+                            notification_type="central_message",
+                            data={"section": "home", "source": "admin"},
+                        )
+                    except Exception as exc:
+                        status = "failed"
+                        failed_rows.append(
+                            {
+                                "Futar": recipient["label"],
+                                "Hiba": str(exc),
+                            }
+                        )
+
+                    if status in results:
+                        results[status] += 1
+                    else:
+                        results["other"] += 1
+                    progress.progress(index / len(recipients))
+
+                st.success(
+                    "Kozponti ertesites feldolgozva. "
+                    f"Elkuldve: {results['sent']}, "
+                    f"nincs feliratkozas: {results['no_subscription']}, "
+                    f"hibas: {results['failed']}, "
+                    f"VAPID hianyzik: {results['missing_vapid']}."
+                )
+                if failed_rows:
+                    st.dataframe(failed_rows, use_container_width=True, hide_index=True)
 
     col1, col2 = st.columns(2)
 
