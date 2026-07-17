@@ -208,6 +208,20 @@ def normalize_person_key(value):
     return " ".join(sorted(tokens))
 
 
+def normalize_person_name_key(value):
+    text = unicodedata.normalize(
+        "NFKD",
+        normalize_text(value).casefold(),
+    )
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
+    tokens = re.findall(r"[a-z]+", text)
+    return " ".join(sorted(tokens))
+
+
 def normalize_column_key(value):
     text = unicodedata.normalize(
         "NFKD",
@@ -1491,8 +1505,10 @@ def build_driver_invoice_summary(
 
     reserve_courier_ct_zft = {}
     reserve_driver_ct_zft = {}
+    reserve_driver_name_ct_zft = {}
     reserve_courier_active = {}
     reserve_driver_active = {}
+    reserve_driver_name_active = {}
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
@@ -1568,6 +1584,12 @@ def build_driver_invoice_summary(
                         reserve_driver_active[driver_key] = bool(
                             reserve_row.get("_insurance_active", False)
                         )
+                    driver_name_key = normalize_person_name_key(reserve_row.get(name_column))
+                    if driver_name_key:
+                        reserve_driver_name_ct_zft[driver_name_key] = reserve_row.get("_ct_zft_huf", 0)
+                        reserve_driver_name_active[driver_name_key] = bool(
+                            reserve_row.get("_insurance_active", False)
+                        )
 
         # The DB insurance_active flag is the single source of truth:
         # True => target reserve + insurance deduction, False => no deduction.
@@ -1579,6 +1601,9 @@ def build_driver_invoice_summary(
         driver_key = normalize_person_key(row.get("driver_name"))
         if driver_key in reserve_driver_ct_zft:
             return reserve_driver_ct_zft[driver_key]
+        driver_name_key = normalize_person_name_key(row.get("driver_name"))
+        if driver_name_key in reserve_driver_name_ct_zft:
+            return reserve_driver_name_ct_zft[driver_name_key]
         match_key = row.get("driver_match_key")
         if match_key in reserve_driver_ct_zft:
             return reserve_driver_ct_zft[match_key]
@@ -1591,6 +1616,9 @@ def build_driver_invoice_summary(
         driver_key = normalize_person_key(row.get("driver_name"))
         if driver_key in reserve_driver_active:
             return reserve_driver_active[driver_key]
+        driver_name_key = normalize_person_name_key(row.get("driver_name"))
+        if driver_name_key in reserve_driver_name_active:
+            return reserve_driver_name_active[driver_name_key]
         match_key = row.get("driver_match_key")
         if match_key in reserve_driver_active:
             return reserve_driver_active[match_key]
@@ -1789,6 +1817,7 @@ def build_display_driver_summary(summary_df):
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
             "payable_before_reserve_huf": "Levonasok elotti fizetendo",
+            "target_reserve_active": "Celtartalek/biztositas aktiv",
             "target_reserve_ct_zft_huf": "CT_ZFT",
             "target_reserve_deduction_huf": "Céltartalék levonás",
             "insurance_deduction_huf": "Biztosítás (10 000 Ft)",
