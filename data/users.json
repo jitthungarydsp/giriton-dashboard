@@ -138,11 +138,12 @@
         {
             "username": "Farkas Zsolt",
             "trainer": "trainer_name",
+            "password": "vnUKrryT",
             "role": "user",
             "courierId": 7814,
             "active": true,
-            "token": "0e593a2d5839cbfad3212581570d6a4758eda74535337ff18a1ae681272e6930",
-            "passwordHash": "pbkdf2_sha256$260000$QYzXULM9OFH4aia14DJjWg==$m+yqT5JcwPKH+P2HNHY+l9pvgfwm076o4n9un3hgbcg="
+            "token": "",
+            "passwordHash": ""
         },
         {
             "username": "Király Dániel Dávid",
@@ -358,6 +359,24 @@
             "role": "user",
             "courierId": 7072,
             "active": true,
+            "token": ""
+        },
+        {
+            "username": "Rácz Csaba",
+            "trainer": "trainer_name",
+            "password": "dfFDFdfd",
+            "role": "user",
+            "courierId": "2875",
+            "active": "true",
+            "token": ""
+        },
+        {
+            "username": "Nagy 7956 Gergely",
+            "trainer": "trainer_name",
+            "password": "kfhFifd",
+            "role": "",
+            "courierId":"7956" ,
+            "active": "true",
             "token": ""
         },
         {
