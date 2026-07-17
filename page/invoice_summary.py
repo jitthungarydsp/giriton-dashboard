@@ -1622,7 +1622,7 @@ def show_invoice_summary_page():
                     [
                         {
                             "Futar": debug_courier_name or selected_driver,
-                            "Courier ID az elszamolasban": debug_courier_id or "",
+                            "USERNUMBER / courier_id az elszamolasban": debug_courier_id or "",
                             "DB insurance_active a szamitasban": bool(
                                 selected_debug_row.get("target_reserve_active", False)
                             ),
@@ -1653,7 +1653,7 @@ def show_invoice_summary_page():
 
                 if reserve_debug_df.empty:
                     st.error(
-                        "Nincs talalat a courier_target_reserve tablaban erre a courier_id-ra."
+                        "Nincs talalat a courier_target_reserve tablaban erre a USERNUMBER-re."
                     )
                 else:
                     st.caption("DB sor a courier_target_reserve tablabol:")

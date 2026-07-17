@@ -544,7 +544,7 @@ def read_target_reserve_for_courier_ids(courier_ids):
             TARGET_RESERVE_TABLES,
             "*",
             [
-                f"courier_id=in.({filter_value})",
+                f"USERNUMBER=in.({filter_value})",
             ],
             limit=max(len(chunk_ids) + 10, 100),
         )
@@ -1660,7 +1660,8 @@ def build_driver_invoice_summary(
         reserve_source = target_reserve_df.copy()
 
         id_columns = [
-            "courier_id", "driver_id", "employee_id", "peopleforce_id",
+            "USERNUMBER", "usernumber", "user_number", "courier_id",
+            "driver_id", "employee_id", "peopleforce_id",
             "courier_uuid", "user_id", "id",
         ]
         ct_column = None
