@@ -150,6 +150,30 @@ def read_peopleforce_documents_for_courier(courier_id, limit=500):
 
 
 @st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_documents_for_month(document_month, document_type=None, limit=5000):
+    supabase_url = require_supabase()
+    params = {
+        "select": ",".join(DOCUMENT_METADATA_COLUMNS),
+        "document_month": f"eq.{format_month(document_month)}",
+        "order": "courier_name.asc,uploaded_at.desc",
+        "limit": str(int(limit)),
+    }
+    document_type = str(document_type or "").strip()
+    if document_type:
+        params["document_type"] = f"eq.{document_type}"
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_documents",
+        headers=supabase_headers(),
+        params=params,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=DOCUMENT_METADATA_COLUMNS)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
 def read_peopleforce_document_content(document_id):
     supabase_url = require_supabase()
     response = requests.get(
@@ -209,6 +233,39 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
         return pd.DataFrame(columns=COMPLAINT_COLUMNS)
 
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def read_peopleforce_complaints_for_month(document_month, document_type=None, limit=5000):
+    supabase_url = require_supabase()
+    params = {
+        "select": ",".join(COMPLAINT_COLUMNS),
+        "document_month": f"eq.{format_month(document_month)}",
+        "order": "created_at.desc",
+        "limit": str(int(limit)),
+    }
+    document_type = str(document_type or "").strip()
+    if document_type:
+        params["document_type"] = f"eq.{document_type}"
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_complaints",
+        headers=supabase_headers(),
+        params=params,
+        timeout=60,
+    )
+    if response.status_code == 400 and "admin_response" in response.text:
+        fallback_columns = COMPLAINT_COLUMNS[:9]
+        params["select"] = ",".join(fallback_columns)
+        response = requests.get(
+            f"{supabase_url}/rest/v1/peopleforce_complaints",
+            headers=supabase_headers(),
+            params=params,
+            timeout=60,
+        )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=COMPLAINT_COLUMNS)
 
 
 @st.cache_data(show_spinner=False, ttl=120)
@@ -363,6 +420,7 @@ def upload_peopleforce_document(
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
     read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
 
@@ -407,6 +465,7 @@ def upload_peopleforce_document_bytes(
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
     read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
 
@@ -425,6 +484,7 @@ def update_peopleforce_document(document_id, *, title, note):
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
     read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
     return response.json()
@@ -441,6 +501,7 @@ def delete_peopleforce_document(document_id):
     raise_for_supabase_error(response)
     read_peopleforce_documents.clear()
     read_peopleforce_documents_for_courier.clear()
+    read_peopleforce_documents_for_month.clear()
     read_peopleforce_document_content.clear()
     read_peopleforce_document_markers.clear()
     return response.json()
@@ -474,6 +535,7 @@ def create_peopleforce_complaint(
     )
     raise_for_supabase_error(response)
     read_peopleforce_complaints.clear()
+    read_peopleforce_complaints_for_month.clear()
     read_peopleforce_complaint_markers.clear()
 
     return response.json()
@@ -490,6 +552,7 @@ def update_peopleforce_complaint_status(complaint_id, status):
     )
     raise_for_supabase_error(response)
     read_peopleforce_complaints.clear()
+    read_peopleforce_complaints_for_month.clear()
     read_peopleforce_complaint_markers.clear()
     return response.json()
 
@@ -540,6 +603,7 @@ def respond_to_peopleforce_complaint(
         )
     raise_for_supabase_error(response)
     read_peopleforce_complaints.clear()
+    read_peopleforce_complaints_for_month.clear()
     read_peopleforce_complaint_markers.clear()
     return response.json()
 

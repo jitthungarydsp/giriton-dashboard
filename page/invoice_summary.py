@@ -1,4 +1,5 @@
 from datetime import date
+import base64
 from io import BytesIO
 from pathlib import Path
 import re
@@ -39,6 +40,9 @@ from resources.peopleforce_documents import (
     decode_document_content,
     delete_peopleforce_document,
     read_peopleforce_complaints,
+    read_peopleforce_complaints_for_month,
+    read_peopleforce_card_statuses_for_month,
+    read_peopleforce_documents_for_month,
     read_peopleforce_documents_for_courier,
     read_peopleforce_document_content,
     respond_to_peopleforce_complaint,
@@ -551,6 +555,286 @@ def read_sent_invoice_driver_names(document_month):
     return result
 
 
+def _latest_by_courier_and_type(documents):
+    latest = {}
+    if documents is None or documents.empty:
+        return latest
+
+    for _, row in documents.iterrows():
+        courier_id = normalize_courier_id(row.get("courier_id", ""))
+        document_type = str(row.get("document_type") or "").strip()
+        if not courier_id or not document_type:
+            continue
+        key = (courier_id, document_type)
+        if key not in latest:
+            latest[key] = row.to_dict()
+
+    return latest
+
+
+def _latest_status_by_courier_and_action(statuses):
+    latest = {}
+    if statuses is None or statuses.empty:
+        return latest
+
+    for _, row in statuses.iterrows():
+        courier_id = normalize_courier_id(row.get("courier_id", ""))
+        action_key = str(row.get("action_key") or "").strip()
+        if not courier_id or not action_key:
+            continue
+        key = (courier_id, action_key)
+        if key not in latest:
+            latest[key] = row.to_dict()
+
+    return latest
+
+
+def _complaints_by_courier(complaints):
+    grouped = {}
+    if complaints is None or complaints.empty:
+        return grouped
+
+    for _, row in complaints.iterrows():
+        courier_id = normalize_courier_id(row.get("courier_id", ""))
+        if not courier_id:
+            continue
+        grouped.setdefault(courier_id, []).append(row.to_dict())
+
+    return grouped
+
+
+def _is_done(status_row):
+    return str((status_row or {}).get("status") or "").strip().lower() == "done"
+
+
+def _has_open_complaint(rows, document_type):
+    for row in rows or []:
+        if str(row.get("document_type") or "") != document_type:
+            continue
+        if str(row.get("status") or "").strip().lower() != "resolved":
+            return True
+    return False
+
+
+def render_settlement_feedback_overview(driver_summary, document_month):
+    if driver_summary is None or driver_summary.empty:
+        return
+
+    document_month = month_start_from_date(document_month)
+
+    try:
+        documents = read_peopleforce_documents_for_month(document_month)
+        statuses = read_peopleforce_card_statuses_for_month(document_month)
+        complaints = read_peopleforce_complaints_for_month(document_month)
+    except Exception as exc:
+        st.warning(f"A havi elszámolási visszajelző nem tölthető be: {exc}")
+        return
+
+    latest_docs = _latest_by_courier_and_type(documents)
+    latest_statuses = _latest_status_by_courier_and_action(statuses)
+    complaint_lookup = _complaints_by_courier(complaints)
+
+    courier_rows = []
+    seen_couriers = set()
+    for _, row in driver_summary.iterrows():
+        fallback_name = str(row.get("driver_name") or "").strip()
+        courier_id, courier_name = resolve_courier_identity(row, fallback_name)
+        if not courier_id:
+            continue
+        if courier_id in seen_couriers:
+            continue
+        seen_couriers.add(courier_id)
+
+        courier_complaints = complaint_lookup.get(courier_id, [])
+        settlement_doc = latest_docs.get((courier_id, "settlement"))
+        tig_doc = latest_docs.get((courier_id, "tig"))
+        invoice_doc = latest_docs.get((courier_id, "invoice"))
+        settlement_done = _is_done(latest_statuses.get((courier_id, "settlement")))
+        tig_done = _is_done(latest_statuses.get((courier_id, "tig")))
+        invoice_check_done = _is_done(latest_statuses.get((courier_id, "invoice_check")))
+        invoice_submit_done = _is_done(latest_statuses.get((courier_id, "invoice_submit")))
+        settlement_complaint = _has_open_complaint(courier_complaints, "settlement")
+        tig_complaint = _has_open_complaint(courier_complaints, "tig")
+
+        if settlement_complaint:
+            settlement_status = "Reklamáció"
+        elif settlement_done:
+            settlement_status = "Elfogadva"
+        elif settlement_doc:
+            settlement_status = "Vár futárra"
+        else:
+            settlement_status = "Vár dokumentumra"
+
+        if tig_complaint:
+            tig_status = "Reklamáció"
+        elif tig_done:
+            tig_status = "Elfogadva"
+        elif tig_doc and settlement_done:
+            tig_status = "Vár futárra"
+        elif tig_doc:
+            tig_status = "TIG kész, elszámolásra vár"
+        elif settlement_done:
+            tig_status = "Vár TIG-re"
+        else:
+            tig_status = "Zárolva"
+
+        if invoice_submit_done or invoice_doc:
+            invoice_status = "Feltöltve"
+        elif invoice_check_done:
+            invoice_status = "Ellenőrizve"
+        elif tig_done:
+            invoice_status = "Vár számlára"
+        else:
+            invoice_status = "Zárolva"
+
+        open_complaint_count = sum(
+            1
+            for item in courier_complaints
+            if str(item.get("status") or "").strip().lower() != "resolved"
+        )
+
+        courier_rows.append(
+            {
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "settlement_doc": settlement_doc,
+                "tig_doc": tig_doc,
+                "invoice_doc": invoice_doc,
+                "complaints": courier_complaints,
+                "display": {
+                    "Futár": courier_name,
+                    "Courier ID": courier_id,
+                    "Elszámolás": settlement_status,
+                    "TIG": tig_status,
+                    "Számlafeltöltés": invoice_status,
+                    "Számla": (invoice_doc or {}).get("file_name", ""),
+                    "Nyitott reklamáció": open_complaint_count,
+                },
+            }
+        )
+
+    if not courier_rows:
+        st.info("A havi visszajelzőhöz nem találtam futár azonosítókat.")
+        return
+
+    st.subheader("Elszámolási visszajelző")
+    st.caption(
+        "Havi admin nézet: elszámolás elfogadás, TIG elfogadás és számlafeltöltés állapota futáronként."
+    )
+
+    display_df = pd.DataFrame([row["display"] for row in courier_rows])
+    metric1, metric2, metric3, metric4 = st.columns(4)
+    metric1.metric("Futár", len(display_df))
+    metric2.metric("Elszámolás elfogadva", int((display_df["Elszámolás"] == "Elfogadva").sum()))
+    metric3.metric("TIG elfogadva", int((display_df["TIG"] == "Elfogadva").sum()))
+    metric4.metric("Számla feltöltve", int((display_df["Számlafeltöltés"] == "Feltöltve").sum()))
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    rows_by_key = {
+        f"{row['courier_id']}|{row['courier_name']}": row
+        for row in courier_rows
+    }
+    selected_key = st.selectbox(
+        "Futár kezelése",
+        list(rows_by_key),
+        format_func=lambda key: rows_by_key[key]["courier_name"],
+        key=f"settlement_feedback_driver_{document_month.isoformat()}",
+    )
+    selected = rows_by_key[selected_key]
+
+    with st.container(border=True):
+        st.markdown(f"**{selected['courier_name']} #{selected['courier_id']}**")
+        doc_cols = st.columns(3)
+        for col, label, doc_key in [
+            (doc_cols[0], "Elszámolás", "settlement_doc"),
+            (doc_cols[1], "TIG", "tig_doc"),
+            (doc_cols[2], "Számla", "invoice_doc"),
+        ]:
+            document = selected.get(doc_key)
+            if not document:
+                col.info(f"Nincs {label.lower()} dokumentum.")
+                continue
+            try:
+                content = read_peopleforce_document_content(document.get("id"))
+                file_bytes = decode_document_content(content.get("file_content_base64"))
+            except Exception:
+                file_bytes = b""
+            col.caption(document.get("file_name") or label)
+            if file_bytes:
+                col.download_button(
+                    f"{label} megtekintése",
+                    data=file_bytes,
+                    file_name=str(document.get("file_name") or f"{label}.pdf"),
+                    mime=str(document.get("mime_type") or "application/octet-stream"),
+                    key=f"download_{doc_key}_{document.get('id')}",
+                    use_container_width=True,
+                )
+
+        invoice_document = selected.get("invoice_doc")
+        if invoice_document:
+            try:
+                invoice_content = read_peopleforce_document_content(invoice_document.get("id"))
+                invoice_bytes = decode_document_content(invoice_content.get("file_content_base64"))
+            except Exception:
+                invoice_bytes = b""
+            invoice_mime = str(invoice_document.get("mime_type") or "").lower()
+            if invoice_bytes and "pdf" in invoice_mime:
+                encoded_invoice = base64.b64encode(invoice_bytes).decode("ascii")
+                st.markdown(
+                    f'<iframe src="data:application/pdf;base64,{encoded_invoice}" '
+                    'width="100%" height="720" style="border:1px solid #ddd;border-radius:8px;"></iframe>',
+                    unsafe_allow_html=True,
+                )
+            elif invoice_bytes and invoice_mime.startswith("image/"):
+                st.image(invoice_bytes, caption=str(invoice_document.get("file_name") or "Számla"))
+
+        active_complaints = [
+            item
+            for item in selected.get("complaints", [])
+            if str(item.get("status") or "").strip().lower() != "resolved"
+        ]
+        if not active_complaints:
+            st.success("Nincs nyitott reklamáció ennél a futárnál.")
+        else:
+            st.warning(f"{len(active_complaints)} nyitott reklamáció vár válaszra.")
+            type_labels = {"settlement": "Elszámolás", "tig": "TIG"}
+            for complaint in active_complaints:
+                complaint_id = complaint.get("id")
+                document_type = str(complaint.get("document_type") or "")
+                with st.form(f"feedback_complaint_reply_{complaint_id}"):
+                    st.write(
+                        f"{type_labels.get(document_type, document_type)} reklamáció: "
+                        f"{complaint.get('message', '')}"
+                    )
+                    response_message = st.text_area(
+                        "Válasz a futárnak",
+                        placeholder="Írd le röviden a javítást vagy a döntést.",
+                        height=90,
+                        key=f"feedback_response_text_{complaint_id}",
+                    )
+                    send_response = st.form_submit_button("Válasz küldése és lezárás")
+                if send_response:
+                    if not str(response_message or "").strip():
+                        st.warning("A válasz szövege kötelező.")
+                    else:
+                        respond_to_peopleforce_complaint(
+                            complaint_id,
+                            response_message,
+                            str(st.session_state.get("username", "admin")),
+                            courier_id=selected["courier_id"],
+                            courier_name=selected["courier_name"],
+                            document_type=document_type,
+                            document_month=document_month,
+                        )
+                        st.success("A választ elküldtük, a reklamáció lezárva.")
+                        st.rerun()
+
+
 def render_invoice_delivery_status(route_driver_names, document_month):
     """
     Megmutatja, hány egyedi futár szerepel az elszámolási route adatokban,
@@ -795,6 +1079,27 @@ def show_invoice_summary_page():
         "Futar",
         ["Mind"] + drivers,
         key="invoice_driver_filter",
+    )
+
+    feedback_driver_summary = build_driver_invoice_summary(
+        final_df,
+        bonus_df=bonus_df,
+        penalty_df=penalty_df,
+        manual_df=manual_df,
+        day_rates_df=day_rates_df,
+        raw_route_df=raw_route_df,
+        previous_routes_df=data.get("previous_routes", pd.DataFrame()),
+        loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
+        bookings_df=data.get("bookings", pd.DataFrame()),
+        loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
+        atm_balance_df=atm_balance_df,
+        customer_rating_df=customer_rating_df,
+        monthly_adjustment_df=monthly_adjustment_df,
+        period_start=start_date,
+    )
+    render_settlement_feedback_overview(
+        feedback_driver_summary,
+        start_date,
     )
 
     final_df = filter_by_driver(
