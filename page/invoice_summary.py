@@ -30,6 +30,7 @@ from resources.invoice_summary import (
     create_manual_invoice_item,
     format_huf,
     read_invoice_data,
+    read_target_reserve_for_courier_ids,
 )
 from resources.supabase_raw import (
     get_supabase_config,
@@ -1546,6 +1547,69 @@ def show_invoice_summary_page():
         use_container_width=True,
         hide_index=True,
     )
+    if selected_driver != "Mind" and not driver_summary.empty:
+        selected_debug_row = driver_summary.iloc[0]
+        debug_courier_id, debug_courier_name = resolve_courier_identity(
+            selected_debug_row,
+            selected_driver,
+        )
+        with st.expander("Celtartalek / biztositas DB ellenorzes", expanded=True):
+            if st.button(
+                "Cache torlese es ujraszamolas",
+                key=f"clear_invoice_cache_{selected_driver}_{start_date.isoformat()}",
+            ):
+                st.cache_data.clear()
+                st.rerun()
+
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Futar": debug_courier_name or selected_driver,
+                            "Courier ID az elszamolasban": debug_courier_id or "",
+                            "DB insurance_active a szamitasban": bool(
+                                selected_debug_row.get("target_reserve_active", False)
+                            ),
+                            "Levonasok elotti fizetendo": format_huf(
+                                selected_debug_row.get("payable_before_reserve_huf", 0)
+                            ),
+                            "Celtartalek levonas": format_huf(
+                                selected_debug_row.get("target_reserve_deduction_huf", 0)
+                            ),
+                            "Biztositas levonas": format_huf(
+                                selected_debug_row.get("insurance_deduction_huf", 0)
+                            ),
+                        }
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            if debug_courier_id:
+                try:
+                    reserve_debug_df = read_target_reserve_for_courier_ids(
+                        [debug_courier_id]
+                    )
+                except Exception as exc:
+                    reserve_debug_df = pd.DataFrame()
+                    st.error(f"DB lekerdezes hiba: {exc}")
+
+                if reserve_debug_df.empty:
+                    st.error(
+                        "Nincs talalat a courier_target_reserve tablaban erre a courier_id-ra."
+                    )
+                else:
+                    st.caption("DB sor a courier_target_reserve tablabol:")
+                    st.dataframe(
+                        reserve_debug_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+            else:
+                st.error(
+                    "Az elszamolas sorban nincs courier_id, ezert ID alapjan nem tud DB sort keresni."
+                )
     if data.get("loyalty_error"):
         st.warning(
             "A lojalitási Google-törzsadat jelenleg nem olvasható. "
