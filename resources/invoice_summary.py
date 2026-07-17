@@ -499,6 +499,38 @@ def read_optional_first_nonempty_table(table_names, select, extra_filters=None, 
     return first_existing_name, first_existing_df
 
 
+def read_target_reserve_for_courier_ids(courier_ids):
+    normalized_ids = sorted(
+        {
+            normalize_courier_id_text(courier_id)
+            for courier_id in courier_ids
+            if normalize_courier_id_text(courier_id)
+        }
+    )
+    if not normalized_ids:
+        return pd.DataFrame()
+
+    chunks = []
+    for index in range(0, len(normalized_ids), 100):
+        chunk_ids = normalized_ids[index:index + 100]
+        filter_value = ",".join(chunk_ids)
+        _table_name, chunk = read_optional_first_existing_table(
+            TARGET_RESERVE_TABLES,
+            "*",
+            [
+                f"courier_id=in.({filter_value})",
+            ],
+            limit=max(len(chunk_ids) + 10, 100),
+        )
+        if chunk is not None and not chunk.empty:
+            chunks.append(chunk)
+
+    if not chunks:
+        return pd.DataFrame()
+
+    return pd.concat(chunks, ignore_index=True)
+
+
 def post_supabase_row(table_names, row):
     supabase_url, service_role_key = get_supabase_config()
 
@@ -550,38 +582,46 @@ def read_invoice_data(start_date, end_date):
         f"work_date=lte.{end_text}",
         "order=driver_name.asc,work_date.asc",
     ]
-    final_table, final_df = read_first_existing_table(
-        FINAL_TABLES,
-        ",".join(
-            [
-                "worksheet_name",
-                "row_number",
-                "location",
-                "driver_name",
-                "route_unique_id",
-                "route_type",
-                "dsp",
-                "work_date",
-                "orders",
-                "routes",
-                "license_plate",
-                "fixed_rate_huf",
-                "fuel_bonus_huf",
-                "car_fridge_bonus_huf",
-                "branding_huf",
-                "delay_bonus_huf",
-                "compliance_bonus_huf",
-                "fill_rate_bonus_huf",
-                "bonus_total_huf",
-                "tip_huf",
-                "route_total_without_tip_huf",
-                "route_total_huf",
-                "comment",
-            ]
-        ),
-        date_filters,
-        limit=50000,
-    )
+    final_columns = [
+        "worksheet_name",
+        "row_number",
+        "location",
+        "courier_id",
+        "driver_name",
+        "route_unique_id",
+        "route_type",
+        "dsp",
+        "work_date",
+        "orders",
+        "routes",
+        "license_plate",
+        "fixed_rate_huf",
+        "fuel_bonus_huf",
+        "car_fridge_bonus_huf",
+        "branding_huf",
+        "delay_bonus_huf",
+        "compliance_bonus_huf",
+        "fill_rate_bonus_huf",
+        "bonus_total_huf",
+        "tip_huf",
+        "route_total_without_tip_huf",
+        "route_total_huf",
+        "comment",
+    ]
+    try:
+        final_table, final_df = read_first_existing_table(
+            FINAL_TABLES,
+            ",".join(final_columns),
+            date_filters,
+            limit=50000,
+        )
+    except Exception:
+        final_table, final_df = read_first_existing_table(
+            FINAL_TABLES,
+            ",".join([column for column in final_columns if column != "courier_id"]),
+            date_filters,
+            limit=50000,
+        )
 
     _route_table, raw_route_df = read_optional_first_nonempty_table(
         ROUTE_TABLES,
@@ -1534,6 +1574,21 @@ def build_driver_invoice_summary(
             TARGET_RESERVE_TABLES,
             "*",
             limit=10000,
+        )
+
+    direct_target_reserve_df = pd.DataFrame()
+    if "courier_id" in grouped.columns:
+        direct_target_reserve_df = read_target_reserve_for_courier_ids(
+            grouped["courier_id"].dropna().tolist()
+        )
+    if direct_target_reserve_df is not None and not direct_target_reserve_df.empty:
+        target_reserve_df = pd.concat(
+            [
+                frame
+                for frame in [target_reserve_df, direct_target_reserve_df]
+                if frame is not None and not frame.empty
+            ],
+            ignore_index=True,
         )
 
     reserve_courier_ct_zft = {}
