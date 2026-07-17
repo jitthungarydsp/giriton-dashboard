@@ -1425,6 +1425,7 @@ def show_invoice_summary_page():
         atm_balance_df=atm_balance_df,
         customer_rating_df=customer_rating_df,
         monthly_adjustment_df=monthly_adjustment_df,
+        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
     render_settlement_feedback_overview(
@@ -1476,6 +1477,7 @@ def show_invoice_summary_page():
         atm_balance_df=atm_balance_df,
         customer_rating_df=customer_rating_df,
         monthly_adjustment_df=monthly_adjustment_df,
+        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
 

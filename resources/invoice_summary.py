@@ -1081,6 +1081,25 @@ def build_driver_invoice_summary(
         .merge(driver_name_summary, on="driver_match_key", how="left")
         .merge(worksheet_summary, on="driver_match_key", how="left")
     )
+    if "courier_id" in final_df.columns:
+        route_ids = final_df[["driver_match_key", "courier_id"]].copy()
+        route_ids["courier_id"] = (
+            route_ids["courier_id"]
+            .fillna("")
+            .map(normalize_courier_id_text)
+        )
+        route_ids = (
+            route_ids[route_ids["courier_id"] != ""]
+            .drop_duplicates()
+            .groupby("driver_match_key", dropna=False)["courier_id"]
+            .first()
+            .reset_index()
+        )
+        grouped = grouped.merge(
+            route_ids,
+            on="driver_match_key",
+            how="left",
+        )
     tip_source = final_df[["driver_match_key", "route_unique_id", "tip_huf"]].copy()
     tip_source["_tip_route_key"] = tip_source["route_unique_id"].map(normalize_text)
     empty_tip_route = tip_source["_tip_route_key"] == ""
@@ -1204,13 +1223,27 @@ def build_driver_invoice_summary(
                 .drop_duplicates()
                 .groupby("driver_match_key", dropna=False)["courier_id"]
                 .first()
-                .reset_index()
+                .reset_index(name="_bonus_courier_id")
             )
             grouped = grouped.merge(
                 bonus_ids,
                 on="driver_match_key",
                 how="left",
             )
+            if "courier_id" not in grouped.columns:
+                grouped["courier_id"] = ""
+            grouped["courier_id"] = (
+                grouped["courier_id"]
+                .fillna("")
+                .map(normalize_courier_id_text)
+            )
+            grouped["courier_id"] = grouped["courier_id"].where(
+                grouped["courier_id"] != "",
+                grouped["_bonus_courier_id"]
+                .fillna("")
+                .map(normalize_courier_id_text),
+            )
+            grouped = grouped.drop(columns=["_bonus_courier_id"])
     else:
         grouped["compliance_extra_huf"] = 0
 
