@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import base64
 from io import BytesIO
 from pathlib import Path
@@ -461,6 +461,14 @@ def filter_by_driver(df, selected_driver):
 
 def month_start_from_date(value):
     return value.replace(day=1)
+
+
+def previous_month_period(reference_date=None):
+    reference_date = reference_date or date.today()
+    current_month_start = reference_date.replace(day=1)
+    previous_month_end = current_month_start - timedelta(days=1)
+    previous_month_start = previous_month_end.replace(day=1)
+    return previous_month_start, previous_month_end
 
 
 def render_admin_document_manager(courier_id, courier_name):
@@ -1219,21 +1227,21 @@ def show_invoice_summary_page():
     )
 
     today = date.today()
-    default_start = today.replace(day=1)
+    default_start, default_end = previous_month_period(today)
 
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
     start_date = col1.date_input(
-        "Kezdo datum",
+        "Elszamolasi honap kezdete",
         value=default_start,
-        key="invoice_start_date",
+        key="invoice_billing_start_date_v2",
     )
     end_date = col2.date_input(
-        "Zaro datum",
-        value=today,
-        key="invoice_end_date",
+        "Elszamolasi honap vege",
+        value=default_end,
+        key="invoice_billing_end_date_v2",
     )
     selected_sheet = col3.selectbox(
-        "Raktar ful",
+        "Telephely",
         ["Mind", "BUD1_JIT", "BUD2_JIT"],
         key="invoice_sheet_filter",
     )
@@ -1242,22 +1250,6 @@ def show_invoice_summary_page():
         data = read_invoice_data(
             start_date,
             end_date,
-        )
-
-        final_df_debug = data.get("final", pd.DataFrame())
-
-        st.warning(
-            f"""
-    DEBUG
-
-    Route sorok: {len(final_df_debug)}
-
-    Egyedi futárok: {final_df_debug['driver_name'].nunique() if not final_df_debug.empty else 0}
-
-    Munkalapok: {sorted(final_df_debug['worksheet_name'].dropna().unique().tolist()) if 'worksheet_name' in final_df_debug.columns else []}
-
-    Dátumok: {final_df_debug['work_date'].min() if 'work_date' in final_df_debug.columns and not final_df_debug.empty else '-'} → {final_df_debug['work_date'].max() if 'work_date' in final_df_debug.columns and not final_df_debug.empty else '-'}
-    """
         )
 
     except Exception as exc:
@@ -1373,7 +1365,7 @@ def show_invoice_summary_page():
     )
 
     selected_driver = col4.selectbox(
-        "Futar",
+        "Futar / nev szuro",
         ["Mind"] + drivers,
         key="invoice_driver_filter",
     )
@@ -1868,7 +1860,119 @@ def show_invoice_summary_page():
                         hide_index=True,
                     )
 
+            st.divider()
+            st.subheader("Tomeges TIG feltoltes")
+            st.caption(
+                "A rendszer a szurt futarlistara TIG PDF-et general, majd feltolti a futar profiljaba."
+            )
+            tig_bulk_confirm = st.checkbox(
+                f"Megerositem {len(driver_summary)} futar TIG dokumentumanak tomeges feltolteset.",
+                key=f"tig_bulk_confirm_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+            )
+            if st.button(
+                "Tomeges TIG generalasa es feltoltese",
+                type="primary",
+                use_container_width=True,
+                disabled=(not tig_bulk_confirm or driver_summary.empty),
+                key=f"tig_bulk_upload_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+            ):
+                document_month = month_start_from_date(start_date)
+                try:
+                    master_df = read_courier_master()
+                except Exception:
+                    master_df = pd.DataFrame()
+                master_lookup = {}
+                if not master_df.empty and "courier_id" in master_df.columns:
+                    for _, master_row in master_df.iterrows():
+                        master_lookup[str(master_row.get("courier_id") or "").strip()] = master_row.to_dict()
+
+                uploaded_count = 0
+                failed_rows = []
+                progress = st.progress(0)
+                status_box = st.empty()
+                total_rows = len(driver_summary)
+                for row_index, bulk_row in driver_summary.reset_index(drop=True).iterrows():
+                    driver_name = str(bulk_row.get("driver_name") or "").strip()
+                    courier_id, courier_name = resolve_courier_identity(bulk_row, driver_name)
+                    courier_id = normalize_courier_id(courier_id)
+                    status_box.write(
+                        f"TIG keszites: {courier_name or driver_name or 'Ismeretlen futar'} "
+                        f"({row_index + 1}/{total_rows})"
+                    )
+                    try:
+                        if not courier_id:
+                            raise ValueError("Nincs courier ID.")
+                        master_row = master_lookup.get(str(courier_id), {})
+                        seller_name = str(master_row.get("company_name") or courier_name or driver_name).strip()
+                        seller_address = str(master_row.get("company_address") or "").strip()
+                        seller_tax_number = str(master_row.get("tax_number") or "").strip()
+                        if not seller_name or not seller_address or not seller_tax_number:
+                            raise ValueError("Hianyos torzsadat: cegnev/cim/adoszam szukseges.")
+                        transfer_amount = int(
+                            round(float(bulk_row.get("payable_total_huf", 0) or 0))
+                        )
+                        tig_bytes = build_tig_pdf_bytes(
+                            courier_name=seller_name,
+                            courier_address=seller_address,
+                            courier_tax_number=seller_tax_number,
+                            courier_id=courier_id,
+                            document_month=document_month,
+                            transfer_amount_huf=max(transfer_amount, 0),
+                            cash_amount_huf=0,
+                        )
+                        base_tig_file_name = (
+                            f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                            f"{document_month.strftime('%Y-%m')}.pdf"
+                        )
+                        tig_file_name = prefixed_document_filename(
+                            "t",
+                            courier_id,
+                            courier_name,
+                            document_month,
+                            base_tig_file_name,
+                        )
+                        upload_peopleforce_document_bytes(
+                            courier_id=courier_id,
+                            courier_name=courier_name,
+                            document_type="tig",
+                            document_month=document_month,
+                            title=f"TIG - {document_month.strftime('%Y-%m')}",
+                            note="Admin altal tomegesen generalt teljesitesi igazolas.",
+                            file_name=tig_file_name,
+                            mime_type="application/pdf",
+                            file_bytes=tig_bytes,
+                            uploaded_by=str(st.session_state.get("username", "admin")),
+                        )
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=courier_name,
+                            action_key="tig",
+                            document_month=document_month,
+                            status="open",
+                            status_note="TIG tomegesen feltoltve, futar elfogadasara var.",
+                            updated_by=str(st.session_state.get("username", "admin")),
+                        )
+                        uploaded_count += 1
+                    except Exception as exc:
+                        failed_rows.append(
+                            {
+                                "Futar": courier_name or driver_name,
+                                "Allapot": "Hiba",
+                                "Hiba": str(exc),
+                            }
+                        )
+                    progress.progress((row_index + 1) / total_rows)
+                status_box.empty()
+                st.cache_data.clear()
+                st.success(
+                    f"Tomeges TIG feltoltes kesz. Feltoltve: {uploaded_count}, hibas: {len(failed_rows)}."
+                )
+                if failed_rows:
+                    st.dataframe(pd.DataFrame(failed_rows), use_container_width=True, hide_index=True)
+
         if selected_driver != "Mind":
+            st.divider()
+            st.subheader("Egyedi elszamolas es TIG PDF")
             selected_row = driver_summary.iloc[0]
             courier_id, courier_name = resolve_courier_identity(
                 selected_row,
