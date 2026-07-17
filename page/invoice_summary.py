@@ -315,8 +315,27 @@ def normalize_name(value):
     return normalize_person_key(value)
 
 
+def normalize_courier_id(value):
+    """A Courier ID egységes szöveges alakja: pl. 7644.0 -> 7644."""
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null"}:
+        return ""
+
+    try:
+        numeric = float(text.replace(",", "."))
+        if numeric.is_integer():
+            return str(int(numeric))
+    except (TypeError, ValueError):
+        pass
+
+    return text
+
+
 def resolve_courier_identity(selected_row, selected_driver):
-    courier_id = str(selected_row.get("courier_id", "") or "").strip()
+    courier_id = normalize_courier_id(selected_row.get("courier_id", ""))
     courier_name = str(
         selected_row.get("driver_name", selected_driver) or selected_driver
     ).strip()
@@ -341,7 +360,7 @@ def resolve_courier_identity(selected_row, selected_driver):
         return courier_id, courier_name
 
     match = matches.iloc[0]
-    courier_id = str(match.get("courier_id", "") or "").strip()
+    courier_id = normalize_courier_id(match.get("courier_id", ""))
     courier_name = str(match.get("courier_name", courier_name) or courier_name).strip()
     return courier_id, courier_name
 
@@ -983,6 +1002,229 @@ def show_invoice_summary_page():
             mime="application/pdf",
             use_container_width=True,
         )
+        if selected_driver == "Mind":
+            st.divider()
+            st.subheader("Tömeges elszámolás-feltöltés raktár szerint")
+            st.caption(
+                "Válassz egy raktárt. A rendszer csak az adott raktár futárainak "
+                "készít külön PDF-et, majd feltölti azokat a profiljukba."
+            )
+
+            bulk_source_rows = driver_summary.reset_index(drop=True)
+            warehouse_options = sorted(
+                {
+                    str(value).strip()
+                    for value in bulk_source_rows.get(
+                        "worksheet_name",
+                        pd.Series(dtype=str),
+                    ).dropna()
+                    if str(value).strip()
+                }
+            )
+
+            if not warehouse_options:
+                st.info("A jelenlegi időszakban nincs tömegesen generálható raktár.")
+                bulk_rows = bulk_source_rows.iloc[0:0].copy()
+                bulk_sheet = ""
+            else:
+                default_bulk_sheet = (
+                    selected_sheet
+                    if selected_sheet in warehouse_options
+                    else warehouse_options[0]
+                )
+                bulk_sheet = st.selectbox(
+                    "Tömeges generálás raktára",
+                    warehouse_options,
+                    index=warehouse_options.index(default_bulk_sheet),
+                    key=(
+                        f"invoice_bulk_warehouse_{start_date.isoformat()}_"
+                        f"{end_date.isoformat()}"
+                    ),
+                )
+                bulk_rows = bulk_source_rows[
+                    bulk_source_rows["worksheet_name"].astype(str).str.strip()
+                    == str(bulk_sheet).strip()
+                ].reset_index(drop=True)
+
+            bulk_upload_count = len(bulk_rows)
+            st.info(
+                f"Kiválasztott raktár: {bulk_sheet or '-'} | "
+                f"Generálandó elszámolások: {bulk_upload_count}"
+            )
+
+            skip_existing = st.checkbox(
+                "A már feltöltött elszámolások kihagyása",
+                value=True,
+                key=(
+                    f"invoice_bulk_skip_existing_{start_date.isoformat()}_"
+                    f"{end_date.isoformat()}_{bulk_sheet}"
+                ),
+            )
+            bulk_confirm = st.checkbox(
+                (
+                    f"Megerősítem a(z) {bulk_sheet or '-'} raktár "
+                    f"{bulk_upload_count} futár elszámolásának feltöltését."
+                ),
+                key=(
+                    f"invoice_bulk_upload_confirm_{start_date.isoformat()}_"
+                    f"{end_date.isoformat()}_{bulk_sheet}"
+                ),
+            )
+
+            if st.button(
+                f"{bulk_sheet or 'Kiválasztott raktár'} elszámolásainak feltöltése",
+                type="primary",
+                use_container_width=True,
+                disabled=(not bulk_confirm or bulk_rows.empty),
+                key=(
+                    f"invoice_bulk_upload_{start_date.isoformat()}_"
+                    f"{end_date.isoformat()}_{bulk_sheet}"
+                ),
+            ):
+                document_month = month_start_from_date(start_date)
+                uploaded_count = 0
+                skipped_count = 0
+                failed_rows = []
+                progress = st.progress(0)
+                status_box = st.empty()
+
+                existing_lookup = {}
+                if skip_existing:
+                    try:
+                        existing_lookup = read_sent_invoice_driver_names(document_month)
+                    except Exception as exc:
+                        st.warning(
+                            "A már feltöltött dokumentumok ellenőrzése nem sikerült; "
+                            f"a feldolgozás folytatódik: {exc}"
+                        )
+
+                total_bulk_rows = len(bulk_rows)
+                for row_index, bulk_row in bulk_rows.iterrows():
+                    bulk_driver_name = str(
+                        bulk_row.get("driver_name") or ""
+                    ).strip()
+                    bulk_courier_id, bulk_courier_name = resolve_courier_identity(
+                        bulk_row,
+                        bulk_driver_name,
+                    )
+                    bulk_courier_id = normalize_courier_id(bulk_courier_id)
+
+                    status_box.write(
+                        f"Feldolgozás: {bulk_driver_name or 'Ismeretlen futár'} "
+                        f"({row_index + 1}/{total_bulk_rows})"
+                    )
+
+                    if not bulk_courier_id:
+                        skipped_count += 1
+                        failed_rows.append(
+                            {
+                                "Futár": bulk_driver_name,
+                                "Állapot": "Kihagyva",
+                                "Hiba": "Nincs courier ID.",
+                            }
+                        )
+                        progress.progress((row_index + 1) / total_bulk_rows)
+                        continue
+
+                    if (
+                        skip_existing
+                        and normalize_name(bulk_courier_name) in existing_lookup
+                    ):
+                        skipped_count += 1
+                        failed_rows.append(
+                            {
+                                "Futár": bulk_driver_name,
+                                "Állapot": "Kihagyva",
+                                "Hiba": "Erre a hónapra már van feltöltött elszámolás.",
+                            }
+                        )
+                        progress.progress((row_index + 1) / total_bulk_rows)
+                        continue
+
+                    try:
+                        single_summary = bulk_rows.iloc[[row_index]].copy()
+                        warehouse_routes = filter_by_worksheet(
+                            all_filtered_final_df,
+                            bulk_sheet,
+                        )
+                        single_routes = filter_by_driver(
+                            warehouse_routes,
+                            bulk_driver_name,
+                        )
+
+                        single_pdf_bytes = build_invoice_pdf_bytes(
+                            single_summary,
+                            single_routes,
+                            (
+                                f"JITT elszamolas {start_date.isoformat()} - "
+                                f"{end_date.isoformat()}"
+                            ),
+                        )
+                        single_file_name = (
+                            f"jitt_elszamolas_{bulk_courier_id}_"
+                            f"{slugify_filename(bulk_courier_name)}_"
+                            f"{start_date.isoformat()}_{end_date.isoformat()}.pdf"
+                        )
+
+                        upload_peopleforce_document_bytes(
+                            courier_id=bulk_courier_id,
+                            courier_name=bulk_courier_name,
+                            document_type="settlement",
+                            document_month=document_month,
+                            title=(
+                                f"Elszamolas - {start_date.isoformat()} - "
+                                f"{end_date.isoformat()}"
+                            ),
+                            note="Admin által tömegesen feltöltött elszámolás.",
+                            file_name=single_file_name,
+                            mime_type="application/pdf",
+                            file_bytes=single_pdf_bytes,
+                            uploaded_by=str(
+                                st.session_state.get("username", "admin")
+                            ),
+                        )
+                        upsert_peopleforce_card_status(
+                            courier_id=bulk_courier_id,
+                            courier_name=bulk_courier_name,
+                            action_key="settlement",
+                            document_month=document_month,
+                            status="open",
+                            status_note=(
+                                "Elszámolás tömegesen feltöltve, "
+                                "futár visszajelzésére vár."
+                            ),
+                            updated_by=str(
+                                st.session_state.get("username", "admin")
+                            ),
+                        )
+                        uploaded_count += 1
+                    except Exception as exc:
+                        failed_rows.append(
+                            {
+                                "Futár": bulk_driver_name,
+                                "Állapot": "Hiba",
+                                "Hiba": str(exc),
+                            }
+                        )
+
+                    progress.progress((row_index + 1) / total_bulk_rows)
+
+                status_box.empty()
+                st.cache_data.clear()
+                error_count = sum(
+                    row["Állapot"] == "Hiba" for row in failed_rows
+                )
+                st.success(
+                    f"Tömeges feltöltés kész. Feltöltve: {uploaded_count}, "
+                    f"kihagyva: {skipped_count}, hibás: {error_count}."
+                )
+                if failed_rows:
+                    st.dataframe(
+                        pd.DataFrame(failed_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
         if selected_driver != "Mind":
             selected_row = driver_summary.iloc[0]
             courier_id, courier_name = resolve_courier_identity(
