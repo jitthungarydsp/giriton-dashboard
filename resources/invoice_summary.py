@@ -1345,12 +1345,30 @@ def build_driver_invoice_summary(
         + grouped["atm_effect_huf"]
     )
 
+    # A hívó régebbi verziója nem feltétlenül adja át külön a táblát,
+    # ezért ilyenkor itt is megpróbáljuk beolvasni.
+    if target_reserve_df is None:
+        _reserve_table, target_reserve_df = read_optional_first_existing_table(
+            TARGET_RESERVE_TABLES,
+            "*",
+            limit=10000,
+        )
+
     reserve_courier_ids = set()
     reserve_driver_keys = set()
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
-        for id_column in ["courier_id", "driver_id", "employee_id", "id"]:
+        id_columns = [
+            "courier_id", "driver_id", "employee_id", "peopleforce_id",
+            "courier_uuid", "user_id", "id",
+        ]
+        name_columns = [
+            "driver_name", "courier_name", "employee_name", "name",
+            "full_name", "courier",
+        ]
+
+        for id_column in id_columns:
             if id_column in reserve_source.columns:
                 reserve_courier_ids.update(
                     reserve_source[id_column]
@@ -1360,7 +1378,7 @@ def build_driver_invoice_summary(
                     .tolist()
                 )
 
-        for name_column in ["driver_name", "courier_name", "name", "full_name"]:
+        for name_column in name_columns:
             if name_column in reserve_source.columns:
                 reserve_driver_keys.update(
                     reserve_source[name_column]
