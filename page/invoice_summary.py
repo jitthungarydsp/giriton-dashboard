@@ -1005,10 +1005,35 @@ def show_invoice_summary_page():
     day_rates_df = data.get("day_rates", pd.DataFrame())
     raw_route_df = data.get("routes", pd.DataFrame())
 
-    final_df = filter_by_worksheet(
-        final_df,
-        selected_sheet,
-    )
+    full_final_df = final_df.copy()
+    if selected_sheet != "Mind":
+        selected_warehouse_df = filter_by_worksheet(
+            full_final_df,
+            selected_sheet,
+        )
+        selected_driver_keys = set()
+        if (
+            selected_warehouse_df is not None
+            and not selected_warehouse_df.empty
+            and "driver_name" in selected_warehouse_df.columns
+        ):
+            selected_driver_keys = set(
+                selected_warehouse_df["driver_name"]
+                .dropna()
+                .astype(str)
+                .map(normalize_person_key)
+            )
+        if selected_driver_keys and "driver_name" in full_final_df.columns:
+            final_df = full_final_df[
+                full_final_df["driver_name"]
+                .astype(str)
+                .map(normalize_person_key)
+                .isin(selected_driver_keys)
+            ].copy()
+        else:
+            final_df = full_final_df.iloc[0:0].copy()
+    else:
+        final_df = full_final_df
 
     all_filtered_final_df = final_df.copy()
 
@@ -1203,6 +1228,10 @@ def show_invoice_summary_page():
     m12.metric("Manuális", format_huf(total_manual - total_loyalty - total_instructor))
 
     st.subheader("Futar osszesito")
+    st.caption(
+        "A futar havi osszesitoje egy sor: ha BUD1 es BUD2 raktarban is dolgozott, "
+        "a raktaras route ertekek osszeadva jelennek meg, a futar szintu tetelek pedig egyszer."
+    )
     display_summary = build_display_driver_summary(driver_summary)
     st.dataframe(
         display_summary,

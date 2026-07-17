@@ -968,6 +968,22 @@ def build_driver_invoice_summary(
         .merge(driver_name_summary, on="driver_match_key", how="left")
         .merge(worksheet_summary, on="driver_match_key", how="left")
     )
+    tip_source = final_df[["driver_match_key", "route_unique_id", "tip_huf"]].copy()
+    tip_source["_tip_route_key"] = tip_source["route_unique_id"].map(normalize_text)
+    empty_tip_route = tip_source["_tip_route_key"] == ""
+    tip_source.loc[empty_tip_route, "_tip_route_key"] = (
+        "__row_" + tip_source.index[empty_tip_route].astype(str)
+    )
+    deduped_tip = (
+        tip_source.groupby(["driver_match_key", "_tip_route_key"], dropna=False)["tip_huf"]
+        .max()
+        .groupby("driver_match_key", dropna=False)
+        .sum()
+        .reset_index(name="_deduped_tip_huf")
+    )
+    grouped = grouped.merge(deduped_tip, on="driver_match_key", how="left")
+    grouped["tip_huf"] = grouped["_deduped_tip_huf"].fillna(grouped["tip_huf"])
+    grouped = grouped.drop(columns=["_deduped_tip_huf"])
     route_counts = (
         final_df.groupby("driver_match_key", dropna=False)["route_unique_id"]
         .nunique()
@@ -1145,6 +1161,12 @@ def build_driver_invoice_summary(
                 source[source_column],
                 errors="coerce",
             ).fillna(0)
+
+        # These sources are courier-level monthly conditions. If a courier appears
+        # once under BUD1 and once under BUD2 with the same values, count it once.
+        source = source.drop_duplicates(
+            subset=["driver_match_key", *list(value_map)],
+        )
 
         aggregated = (
             source.groupby("driver_match_key", dropna=False)[list(value_map)]
@@ -1368,8 +1390,8 @@ def build_driver_invoice_summary(
             limit=10000,
         )
 
-    reserve_courier_ids = set()
-    reserve_driver_keys = set()
+    reserve_courier_ct_zft = {}
+    reserve_driver_ct_zft = {}
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
@@ -1381,45 +1403,67 @@ def build_driver_invoice_summary(
             "driver_name", "courier_name", "employee_name", "name",
             "full_name", "courier",
         ]
+        ct_column = None
+        ct_column_keys = {
+            "ctzft",
+            "ctz",
+            "currentbalancehuf",
+            "openingbalancehuf",
+            "balancehuf",
+            "targetreservehuf",
+            "targetreservebalancehuf",
+        }
+        for column in reserve_source.columns:
+            column_key = re.sub(r"[^a-z0-9]+", "", str(column).casefold())
+            if column_key in ct_column_keys:
+                ct_column = column
+                break
+        if ct_column is None:
+            reserve_source["_ct_zft_huf"] = 0
+        else:
+            reserve_source["_ct_zft_huf"] = pd.to_numeric(
+                reserve_source[ct_column],
+                errors="coerce",
+            ).fillna(0)
 
         for id_column in id_columns:
             if id_column in reserve_source.columns:
-                reserve_courier_ids.update(
-                    reserve_source[id_column]
-                    .dropna()
-                    .map(normalize_text)
-                    .loc[lambda values: values != ""]
-                    .tolist()
-                )
+                for _, reserve_row in reserve_source.iterrows():
+                    courier_id = normalize_text(reserve_row.get(id_column))
+                    if courier_id:
+                        reserve_courier_ct_zft[courier_id] = reserve_row.get("_ct_zft_huf", 0)
 
         for name_column in name_columns:
             if name_column in reserve_source.columns:
-                reserve_driver_keys.update(
-                    reserve_source[name_column]
-                    .dropna()
-                    .map(normalize_person_key)
-                    .loc[lambda values: values != ""]
-                    .tolist()
-                )
+                for _, reserve_row in reserve_source.iterrows():
+                    driver_key = normalize_person_key(reserve_row.get(name_column))
+                    if driver_key:
+                        reserve_driver_ct_zft[driver_key] = reserve_row.get("_ct_zft_huf", 0)
 
-        # A tábla oszlopnevei környezetenként eltérhetnek. Biztonsági
-        # tartalékként minden mező értékét megvizsgáljuk azonosítóként és
-        # névként is, így egy eltérően elnevezett oszlop miatt nem marad el
-        # a levonás.
-        for column in reserve_source.columns:
-            values = reserve_source[column].dropna()
-            reserve_courier_ids.update(
-                values.map(normalize_text).loc[lambda items: items != ""].tolist()
-            )
-            reserve_driver_keys.update(
-                values.map(normalize_person_key).loc[lambda items: items != ""].tolist()
-            )
+        # Only explicit courier/name columns make a courier eligible.
+        # The CT_ZFT amount controls insurance, not reserve eligibility.
 
-    grouped["has_target_reserve"] = (
-        grouped["courier_id"].map(normalize_text).isin(reserve_courier_ids)
-        | grouped["driver_match_key"].isin(reserve_driver_keys)
-        | grouped["driver_name"].map(normalize_person_key).isin(reserve_driver_keys)
+    def target_reserve_ct_zft(row):
+        courier_id = normalize_text(row.get("courier_id"))
+        if courier_id in reserve_courier_ct_zft:
+            return reserve_courier_ct_zft[courier_id]
+        driver_key = normalize_person_key(row.get("driver_name"))
+        if driver_key in reserve_driver_ct_zft:
+            return reserve_driver_ct_zft[driver_key]
+        match_key = row.get("driver_match_key")
+        if match_key in reserve_driver_ct_zft:
+            return reserve_driver_ct_zft[match_key]
+        return pd.NA
+
+    grouped["target_reserve_ct_zft_huf"] = grouped.apply(
+        target_reserve_ct_zft,
+        axis=1,
     )
+    grouped["has_target_reserve"] = grouped["target_reserve_ct_zft_huf"].notna()
+    grouped["target_reserve_ct_zft_huf"] = pd.to_numeric(
+        grouped["target_reserve_ct_zft_huf"],
+        errors="coerce",
+    ).fillna(0)
 
     # A céltartalék nem fix 50 000 Ft: a levonás a levonások előtti
     # fizetendő összeg 10%-a, de legfeljebb 50 000 Ft.
@@ -1433,7 +1477,8 @@ def build_driver_invoice_summary(
     )
 
     grouped["insurance_deduction_huf"] = 0.0
-    grouped.loc[reserve_mask, "insurance_deduction_huf"] = INSURANCE_DEDUCTION_HUF
+    insurance_mask = reserve_mask & grouped["target_reserve_ct_zft_huf"].ne(0)
+    grouped.loc[insurance_mask, "insurance_deduction_huf"] = INSURANCE_DEDUCTION_HUF
 
     grouped["payable_total_huf"] = (
         grouped["payable_before_reserve_huf"]
@@ -1546,6 +1591,7 @@ def build_display_driver_summary(summary_df):
         "cash_missing_huf",
         "manual_payable_huf",
         "payable_before_reserve_huf",
+        "target_reserve_ct_zft_huf",
         "target_reserve_deduction_huf",
         "insurance_deduction_huf",
         "payable_total_huf",
@@ -1599,6 +1645,7 @@ def build_display_driver_summary(summary_df):
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
             "payable_before_reserve_huf": "Levonasok elotti fizetendo",
+            "target_reserve_ct_zft_huf": "CT_ZFT",
             "target_reserve_deduction_huf": "Céltartalék levonás",
             "insurance_deduction_huf": "Biztosítás (10 000 Ft)",
             "payable_total_huf": "Fizetendo osszesen",
