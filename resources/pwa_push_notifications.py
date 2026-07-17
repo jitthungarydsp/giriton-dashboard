@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -21,19 +22,29 @@ LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
 
 
 def load_setting(name: str) -> str:
+    def clean(value: Any) -> str:
+        text = str(value or "").strip()
+        if (
+            len(text) >= 2
+            and text[0] == text[-1]
+            and text[0] in {"'", '"'}
+        ):
+            text = text[1:-1].strip()
+        return text.replace("\\n", "\n")
+
     value = os.getenv(name, "").strip()
     if value:
-        return value.replace("\\n", "\n")
+        return clean(value)
 
     try:
         value = st.secrets.get(name, "")
         if value:
-            return str(value).strip().replace("\\n", "\n")
+            return clean(value)
         supabase_section = st.secrets.get("supabase", {})
         if isinstance(supabase_section, dict):
             value = supabase_section.get(name, "")
             if value:
-                return str(value).strip().replace("\\n", "\n")
+                return clean(value)
     except Exception:
         pass
 
@@ -44,7 +55,7 @@ def load_setting(name: str) -> str:
     try:
         with secrets_path.open("rb") as file:
             settings = tomllib.load(file)
-        return str(settings.get(name) or settings.get("supabase", {}).get(name) or "").strip().replace("\\n", "\n")
+        return clean(settings.get(name) or settings.get("supabase", {}).get(name) or "")
     except Exception:
         return ""
 
@@ -52,13 +63,33 @@ def load_setting(name: str) -> str:
 def load_vapid_private_key() -> str:
     key = load_setting("VAPID_PRIVATE_KEY")
     if key:
-        return key
+        return normalize_pem_private_key(key)
     if LOCAL_VAPID_PRIVATE_FILE.exists():
         try:
-            return LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+            return normalize_pem_private_key(
+                LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+            )
         except Exception:
             return ""
     return ""
+
+
+def normalize_pem_private_key(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    text = text.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    begin = "-----BEGIN PRIVATE KEY-----"
+    end = "-----END PRIVATE KEY-----"
+
+    if begin not in text or end not in text:
+        return text
+
+    body = text.split(begin, 1)[1].split(end, 1)[0]
+    body = re.sub(r"\s+", "", body)
+    lines = [body[index:index + 64] for index in range(0, len(body), 64)]
+    return "\n".join([begin, *lines, end])
 
 
 def _supabase_headers(prefer: str = "") -> dict[str, str]:
@@ -141,19 +172,24 @@ def _log_delivery(
     log_date = work_date or datetime.now(timezone.utc).date()
     if isinstance(log_date, date):
         log_date = log_date.isoformat()
-    _supabase_request(
-        "POST",
-        PUSH_DELIVERY_TABLE,
-        payload={
-            "courier_id": int(courier_id),
-            "work_date": str(log_date)[:10],
-            "notification_type": notification_type,
-            "status": status,
-            "message": str(message or "")[:2000],
-            "sent_at": datetime.now(timezone.utc).isoformat(),
-        },
-        prefer="return=minimal",
-    )
+    try:
+        _supabase_request(
+            "POST",
+            PUSH_DELIVERY_TABLE,
+            payload={
+                "courier_id": int(courier_id),
+                "work_date": str(log_date)[:10],
+                "notification_type": notification_type,
+                "status": status,
+                "message": str(message or "")[:2000],
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+            },
+            prefer="return=minimal",
+        )
+    except Exception:
+        # A push kuldes fontosabb, mint a naplozas. Ha a courier_master FK
+        # miatt nem lehet logolni, attol meg a folyamat ne alljon meg.
+        return
 
 
 def send_push_to_courier(
@@ -226,6 +262,8 @@ def send_push_to_courier(
             errors.append(f"subscription={subscription.get('id')} status={status_code} error={exc}")
             if status_code in {404, 410}:
                 _deactivate_subscription(subscription.get("id"))
+        except Exception as exc:
+            errors.append(f"subscription={subscription.get('id')} error={exc}")
 
     if success:
         _log_delivery(

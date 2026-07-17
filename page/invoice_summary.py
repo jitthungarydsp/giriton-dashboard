@@ -752,7 +752,11 @@ def _has_open_complaint(rows, document_type):
     return False
 
 
-def render_settlement_feedback_overview(driver_summary, document_month):
+def render_settlement_feedback_overview(
+    driver_summary,
+    document_month,
+    selected_driver_filter="Mind",
+):
     if driver_summary is None or driver_summary.empty:
         return
 
@@ -918,16 +922,36 @@ def render_settlement_feedback_overview(driver_summary, document_month):
         f"{row['courier_id']}|{row['courier_name']}": row
         for row in courier_rows
     }
-    selected_key = st.selectbox(
-        "Futár kezelése",
-        list(rows_by_key),
-        format_func=lambda key: rows_by_key[key]["courier_name"],
-        key=f"settlement_feedback_driver_{document_month.isoformat()}",
-    )
+    selected_filter_key = normalize_person_key(selected_driver_filter)
+    matched_key = ""
+    if selected_driver_filter != "Mind" and selected_filter_key:
+        for key, row in rows_by_key.items():
+            if normalize_person_key(row["courier_name"]) == selected_filter_key:
+                matched_key = key
+                break
+
+    if matched_key:
+        selected_key = matched_key
+        st.info(f"Kivalasztott futar adatlapja: {rows_by_key[selected_key]['courier_name']}")
+    else:
+        selected_key = st.selectbox(
+            "Futar kezelese",
+            list(rows_by_key),
+            format_func=lambda key: rows_by_key[key]["courier_name"],
+            key=f"settlement_feedback_driver_{document_month.isoformat()}",
+        )
     selected = rows_by_key[selected_key]
 
     with st.container(border=True):
         st.markdown(f"**{selected['courier_name']} #{selected['courier_id']}**")
+        if selected_driver_filter == "Mind":
+            if st.button(
+                "Egyedi elszamolas, szamla es TIG muveletek megnyitasa ennel a futarnal",
+                key=f"open_invoice_tools_{selected['courier_id']}_{document_month.isoformat()}",
+                use_container_width=True,
+            ):
+                st.session_state["invoice_driver_filter_pending"] = selected["courier_name"]
+                st.rerun()
         assignee_options = _feedback_assignee_options()
         current_owner = selected.get("feedback_owner") or "Nincs kijelolve"
         if current_owner not in assignee_options:
@@ -1369,9 +1393,14 @@ def show_invoice_summary_page():
         start_date,
     )
 
+    driver_options = ["Mind"] + drivers
+    pending_driver_filter = st.session_state.pop("invoice_driver_filter_pending", "")
+    if pending_driver_filter in driver_options:
+        st.session_state["invoice_driver_filter"] = pending_driver_filter
+
     selected_driver = col4.selectbox(
         "Futar / nev szuro",
-        ["Mind"] + drivers,
+        driver_options,
         key="invoice_driver_filter",
     )
 
@@ -1394,6 +1423,7 @@ def show_invoice_summary_page():
     render_settlement_feedback_overview(
         feedback_driver_summary,
         start_date,
+        selected_driver,
     )
 
     final_df = filter_by_driver(
@@ -1628,13 +1658,14 @@ def show_invoice_summary_page():
                 month_start_from_date(start_date),
                 download_file_name,
             )
-        st.download_button(
-            "PDF generalasa",
-            data=pdf_bytes,
-            file_name=download_file_name,
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        if selected_driver == "Mind":
+            st.download_button(
+                "PDF generalasa",
+                data=pdf_bytes,
+                file_name=download_file_name,
+                mime="application/pdf",
+                use_container_width=True,
+            )
         if selected_driver == "Mind":
             st.divider()
             st.subheader("Tömeges elszámolás-feltöltés raktár szerint")
@@ -2006,6 +2037,14 @@ def show_invoice_summary_page():
         if selected_driver != "Mind":
             st.divider()
             st.subheader("Egyedi elszamolas es TIG PDF")
+            st.download_button(
+                "Egyedi elszamolas / szamla PDF letoltese",
+                data=pdf_bytes,
+                file_name=download_file_name,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"individual_invoice_pdf_{selected_driver}_{start_date.isoformat()}",
+            )
             selected_row = driver_summary.iloc[0]
             courier_id, courier_name = resolve_courier_identity(
                 selected_row,

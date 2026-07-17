@@ -3,6 +3,7 @@ import hmac
 import base64
 import json
 import os
+import re
 import secrets
 import time
 import unicodedata
@@ -89,9 +90,19 @@ class PushSubscriptionRequest(BaseModel):
 
 
 def load_setting(name: str) -> str:
+    def clean(value: Any) -> str:
+        text = str(value or "").strip()
+        if (
+            len(text) >= 2
+            and text[0] == text[-1]
+            and text[0] in {"'", '"'}
+        ):
+            text = text[1:-1].strip()
+        return text.replace("\\n", "\n")
+
     value = os.getenv(name, "")
     if value:
-        return value
+        return clean(value)
 
     secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
     if not secrets_path.exists():
@@ -101,7 +112,7 @@ def load_setting(name: str) -> str:
         with secrets_path.open("rb") as file:
             settings = tomllib.load(file)
         value = settings.get(name) or settings.get("supabase", {}).get(name)
-        return str(value or "")
+        return clean(value)
     except Exception:
         return ""
 
@@ -1074,14 +1085,29 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
         }
         raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
 
+def normalize_pem_private_key(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    begin = "-----BEGIN PRIVATE KEY-----"
+    end = "-----END PRIVATE KEY-----"
+    if begin not in text or end not in text:
+        return text
+    body = text.split(begin, 1)[1].split(end, 1)[0]
+    body = re.sub(r"\s+", "", body)
+    lines = [body[index:index + 64] for index in range(0, len(body), 64)]
+    return "\n".join([begin, *lines, end])
 
 
 def public_vapid_key() -> str:
     key = load_setting("VAPID_PUBLIC_KEY").strip()
-    private_key_text = load_setting("VAPID_PRIVATE_KEY").strip().replace("\\n", "\n")
+    private_key_text = normalize_pem_private_key(load_setting("VAPID_PRIVATE_KEY"))
     if not private_key_text and LOCAL_VAPID_PRIVATE_FILE.exists():
         try:
-            private_key_text = LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+            private_key_text = normalize_pem_private_key(
+                LOCAL_VAPID_PRIVATE_FILE.read_text(encoding="utf-8").strip()
+            )
         except Exception:
             private_key_text = ""
     if not key and serialization is not None and private_key_text:
