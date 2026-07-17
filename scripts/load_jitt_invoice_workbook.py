@@ -38,6 +38,9 @@ BILLING_SHEETS = {"BUD1_JIT", "BUD2_JIT"}
 
 ROUTE_COLUMNS = {
     "location": "location",
+    "usernumber": "courier_id",
+    "user_number": "courier_id",
+    "user_number_2": "courier_id",
     "driver": "driver_name",
     "route_unique_id": "route_unique_id",
     "route_type": "route_type",
@@ -433,6 +436,7 @@ def build_final_route_row(route_record):
         "worksheet_name": route_record["worksheet_name"],
         "row_number": route_record["row_number"],
         "location": route_record.get("location"),
+        "courier_id": route_record.get("courier_id"),
         "driver_name": route_record.get("driver_name"),
         "route_unique_id": route_record.get("route_unique_id"),
         "route_type": route_record.get("route_type"),

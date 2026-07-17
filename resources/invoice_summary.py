@@ -235,6 +235,32 @@ def normalize_column_key(value):
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
+def extract_usernumber_from_row(row):
+    row_data = row.get("row_data") if hasattr(row, "get") else None
+    if isinstance(row_data, str):
+        try:
+            row_data = json.loads(row_data)
+        except json.JSONDecodeError:
+            row_data = {}
+    if isinstance(row_data, dict):
+        for key, value in row_data.items():
+            if normalize_column_key(key) in {"usernumber", "userno", "userid", "courierid"}:
+                courier_id = normalize_courier_id_text(value)
+                if courier_id:
+                    return courier_id
+
+    row_values = row.get("row_values") if hasattr(row, "get") else None
+    if isinstance(row_values, str):
+        try:
+            row_values = json.loads(row_values)
+        except json.JSONDecodeError:
+            row_values = []
+    if isinstance(row_values, (list, tuple)) and len(row_values) > 2:
+        return normalize_courier_id_text(row_values[2])
+
+    return ""
+
+
 def normalize_bonus_worksheet(site):
     value = normalize_text(site).upper().replace("-", "_").replace(" ", "_")
     if "BUD1" in value:
@@ -1057,6 +1083,36 @@ def build_driver_invoice_summary(
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)
     final_df["driver_match_key"] = final_df["driver_name"].map(normalize_person_key)
+    if "courier_id" not in final_df.columns:
+        final_df["courier_id"] = ""
+    final_df["courier_id"] = final_df["courier_id"].fillna("").map(normalize_courier_id_text)
+    if raw_route_df is not None and not raw_route_df.empty:
+        raw_ids = raw_route_df.copy()
+        raw_ids["courier_id_from_usernumber"] = raw_ids.apply(
+            extract_usernumber_from_row,
+            axis=1,
+        )
+        raw_id_columns = [
+            column
+            for column in ["worksheet_name", "row_number", "courier_id_from_usernumber"]
+            if column in raw_ids.columns
+        ]
+        if set(["worksheet_name", "row_number", "courier_id_from_usernumber"]).issubset(raw_id_columns):
+            raw_ids = raw_ids[raw_id_columns].copy()
+            raw_ids["worksheet_name"] = raw_ids["worksheet_name"].map(normalize_text)
+            raw_ids = raw_ids[raw_ids["courier_id_from_usernumber"] != ""].drop_duplicates(
+                subset=["worksheet_name", "row_number"],
+            )
+            final_df = final_df.merge(
+                raw_ids,
+                on=["worksheet_name", "row_number"],
+                how="left",
+            )
+            final_df["courier_id"] = final_df["courier_id"].where(
+                final_df["courier_id"] != "",
+                final_df["courier_id_from_usernumber"].fillna("").map(normalize_courier_id_text),
+            )
+            final_df = final_df.drop(columns=["courier_id_from_usernumber"])
 
     numeric_columns = [
         "orders",
@@ -1140,6 +1196,13 @@ def build_driver_invoice_summary(
             on="driver_match_key",
             how="left",
         )
+    if "courier_id" not in grouped.columns:
+        grouped["courier_id"] = ""
+    grouped["courier_id"] = (
+        grouped["courier_id"]
+        .fillna("")
+        .map(normalize_courier_id_text)
+    )
     tip_source = final_df[["driver_match_key", "route_unique_id", "tip_huf"]].copy()
     tip_source["_tip_route_key"] = tip_source["route_unique_id"].map(normalize_text)
     empty_tip_route = tip_source["_tip_route_key"] == ""
@@ -1592,21 +1655,13 @@ def build_driver_invoice_summary(
         )
 
     reserve_courier_ct_zft = {}
-    reserve_driver_ct_zft = {}
-    reserve_driver_name_ct_zft = {}
     reserve_courier_active = {}
-    reserve_driver_active = {}
-    reserve_driver_name_active = {}
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
         id_columns = [
             "courier_id", "driver_id", "employee_id", "peopleforce_id",
             "courier_uuid", "user_id", "id",
-        ]
-        name_columns = [
-            "driver_name", "courier_name", "employee_name", "name",
-            "full_name", "courier",
         ]
         ct_column = None
         ct_column_keys = {
@@ -1663,22 +1718,6 @@ def build_driver_invoice_summary(
                             reserve_row.get("_insurance_active", False)
                         )
 
-        for name_column in name_columns:
-            if name_column in reserve_source.columns:
-                for _, reserve_row in reserve_source.iterrows():
-                    driver_key = normalize_person_key(reserve_row.get(name_column))
-                    if driver_key:
-                        reserve_driver_ct_zft[driver_key] = reserve_row.get("_ct_zft_huf", 0)
-                        reserve_driver_active[driver_key] = bool(
-                            reserve_row.get("_insurance_active", False)
-                        )
-                    driver_name_key = normalize_person_name_key(reserve_row.get(name_column))
-                    if driver_name_key:
-                        reserve_driver_name_ct_zft[driver_name_key] = reserve_row.get("_ct_zft_huf", 0)
-                        reserve_driver_name_active[driver_name_key] = bool(
-                            reserve_row.get("_insurance_active", False)
-                        )
-
         # The DB insurance_active flag is the single source of truth:
         # True => target reserve + insurance deduction, False => no deduction.
 
@@ -1686,30 +1725,12 @@ def build_driver_invoice_summary(
         courier_id = normalize_courier_id_text(row.get("courier_id"))
         if courier_id in reserve_courier_ct_zft:
             return reserve_courier_ct_zft[courier_id]
-        driver_key = normalize_person_key(row.get("driver_name"))
-        if driver_key in reserve_driver_ct_zft:
-            return reserve_driver_ct_zft[driver_key]
-        driver_name_key = normalize_person_name_key(row.get("driver_name"))
-        if driver_name_key in reserve_driver_name_ct_zft:
-            return reserve_driver_name_ct_zft[driver_name_key]
-        match_key = row.get("driver_match_key")
-        if match_key in reserve_driver_ct_zft:
-            return reserve_driver_ct_zft[match_key]
         return pd.NA
 
     def target_reserve_active(row):
         courier_id = normalize_courier_id_text(row.get("courier_id"))
         if courier_id in reserve_courier_active:
             return reserve_courier_active[courier_id]
-        driver_key = normalize_person_key(row.get("driver_name"))
-        if driver_key in reserve_driver_active:
-            return reserve_driver_active[driver_key]
-        driver_name_key = normalize_person_name_key(row.get("driver_name"))
-        if driver_name_key in reserve_driver_name_active:
-            return reserve_driver_name_active[driver_name_key]
-        match_key = row.get("driver_match_key")
-        if match_key in reserve_driver_active:
-            return reserve_driver_active[match_key]
         return False
 
     grouped["target_reserve_ct_zft_huf"] = grouped.apply(
