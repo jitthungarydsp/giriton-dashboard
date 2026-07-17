@@ -1,3 +1,4 @@
+import calendar
 from datetime import date
 import base64
 from io import BytesIO
@@ -427,6 +428,30 @@ def month_start_from_date(value):
     return value.replace(day=1)
 
 
+def month_end_from_date(value):
+    last_day = calendar.monthrange(value.year, value.month)[1]
+    return value.replace(day=last_day)
+
+
+def route_warehouse_parts(value):
+    return [
+        part.strip()
+        for part in str(value or "").split("+")
+        if part.strip()
+    ]
+
+
+def row_matches_warehouse(value, selected_warehouse):
+    selected_warehouse = str(selected_warehouse or "Mind").strip()
+    if selected_warehouse in {"", "Mind"}:
+        return True
+    return selected_warehouse in route_warehouse_parts(value)
+
+
+def is_multi_warehouse(value):
+    return len(set(route_warehouse_parts(value))) > 1
+
+
 def render_admin_document_manager(courier_id, courier_name):
     with st.expander("A futárnak feltöltött dokumentumok kezelése", expanded=False):
         try:
@@ -687,16 +712,21 @@ def render_settlement_feedback_overview(driver_summary, document_month):
         else:
             invoice_status = "Zárolva"
 
+        warehouse_value = str(row.get("worksheet_name") or "").strip()
+        double_warehouse = is_multi_warehouse(warehouse_value)
         open_complaint_count = sum(
             1
             for item in courier_complaints
             if str(item.get("status") or "").strip().lower() != "resolved"
         )
+        overall_status = "Reklamáció" if open_complaint_count else "Rendben"
 
         courier_rows.append(
             {
                 "courier_id": courier_id,
                 "courier_name": courier_name,
+                "warehouse_name": warehouse_value,
+                "is_multi_warehouse": double_warehouse,
                 "settlement_doc": settlement_doc,
                 "tig_doc": tig_doc,
                 "invoice_doc": invoice_doc,
@@ -704,6 +734,9 @@ def render_settlement_feedback_overview(driver_summary, document_month):
                 "display": {
                     "Futár": courier_name,
                     "Courier ID": courier_id,
+                    "Raktár": warehouse_value,
+                    "Dupla raktár": "Igen" if double_warehouse else "",
+                    "Állapot": overall_status,
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
                     "Számlafeltöltés": invoice_status,
@@ -717,23 +750,119 @@ def render_settlement_feedback_overview(driver_summary, document_month):
         st.info("A havi visszajelzőhöz nem találtam futár azonosítókat.")
         return
 
-    st.subheader("Elszámolási visszajelző")
+    st.markdown(
+        """
+        <style>
+        .settlement-feedback-card {
+            border: 1px solid #dfe7dd;
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin: 8px 0;
+            background: #ffffff;
+            box-shadow: 0 1px 8px rgba(20, 36, 28, 0.06);
+        }
+        .settlement-feedback-card.ok {
+            border-left: 7px solid #22a06b;
+            background: linear-gradient(90deg, #f0fff7 0%, #ffffff 44%);
+        }
+        .settlement-feedback-card.bad {
+            border-left: 7px solid #d92d20;
+            background: linear-gradient(90deg, #fff3f1 0%, #ffffff 44%);
+        }
+        .settlement-feedback-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        .settlement-feedback-name {
+            font-size: 17px;
+            font-weight: 800;
+            color: #14251c;
+        }
+        .settlement-feedback-sub {
+            color: #6a746d;
+            font-size: 13px;
+            margin-top: 2px;
+        }
+        .settlement-badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 12px;
+            font-weight: 800;
+            margin: 3px 4px 0 0;
+            border: 1px solid rgba(0,0,0,0.06);
+        }
+        .settlement-badge.ok { background: #dff8ea; color: #136b45; }
+        .settlement-badge.bad { background: #ffe0dc; color: #a32519; }
+        .settlement-badge.wait { background: #fff4cc; color: #816100; }
+        .settlement-badge.lock { background: #eef1ef; color: #69736c; }
+        .settlement-badge.info { background: #e6f0ff; color: #1f5fbf; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.subheader("Kolléga visszajelző panel")
     st.caption(
-        "Havi admin nézet: elszámolás elfogadás, TIG elfogadás és számlafeltöltés állapota futáronként."
+        "Piros: reklamáció vagy beavatkozás kell. Zöld: nincs nyitott reklamáció. A státuszok ugyanazokból a táblákból jönnek, mint a futár oldali folyamat."
     )
 
     display_df = pd.DataFrame([row["display"] for row in courier_rows])
     metric1, metric2, metric3, metric4 = st.columns(4)
     metric1.metric("Futár", len(display_df))
-    metric2.metric("Elszámolás elfogadva", int((display_df["Elszámolás"] == "Elfogadva").sum()))
-    metric3.metric("TIG elfogadva", int((display_df["TIG"] == "Elfogadva").sum()))
-    metric4.metric("Számla feltöltve", int((display_df["Számlafeltöltés"] == "Feltöltve").sum()))
+    metric2.metric("Rendben", int((display_df["Állapot"] == "Rendben").sum()))
+    metric3.metric("Reklamáció", int((display_df["Állapot"] == "Reklamáció").sum()))
+    metric4.metric("Dupla raktár", int((display_df["Dupla raktár"] == "Igen").sum()))
 
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-    )
+    def badge_class(value):
+        text = str(value or "")
+        if text in {"Elfogadva", "Feltöltve", "Ellenőrizve", "Rendben"}:
+            return "ok"
+        if "Reklam" in text:
+            return "bad"
+        if "Zárol" in text:
+            return "lock"
+        return "wait"
+
+    for row in courier_rows:
+        display = row["display"]
+        status_class = "bad" if display["Állapot"] == "Reklamáció" else "ok"
+        multi_badge = (
+            '<span class="settlement-badge info">Dupla raktár</span>'
+            if row["is_multi_warehouse"]
+            else ""
+        )
+        st.markdown(
+            f"""
+            <div class="settlement-feedback-card {status_class}">
+                <div class="settlement-feedback-top">
+                    <div>
+                        <div class="settlement-feedback-name">{display['Futár']}</div>
+                        <div class="settlement-feedback-sub">#{display['Courier ID']} · {display['Raktár']}</div>
+                    </div>
+                    <div>
+                        <span class="settlement-badge {badge_class(display['Állapot'])}">{display['Állapot']}</span>
+                        {multi_badge}
+                    </div>
+                </div>
+                <div style="margin-top:10px;">
+                    <span class="settlement-badge {badge_class(display['Elszámolás'])}">Elszámolás: {display['Elszámolás']}</span>
+                    <span class="settlement-badge {badge_class(display['TIG'])}">TIG: {display['TIG']}</span>
+                    <span class="settlement-badge {badge_class(display['Számlafeltöltés'])}">Számla: {display['Számlafeltöltés']}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("Táblázatos nézet", expanded=False):
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+        )
 
     rows_by_key = {
         f"{row['courier_id']}|{row['courier_name']}": row
@@ -940,31 +1069,40 @@ def render_invoice_delivery_status(route_driver_names, document_month):
 
 
 def show_invoice_summary_page():
-    st.title("Elszamolas")
-    st.caption(
-        "Forras: JITT invoice workbook. A BUD1_JIT es BUD2_JIT fulek 23. sortol indulnak, "
-        "ezekbol keszul a futar szintu osszesito."
-    )
-
     today = date.today()
     default_start = today.replace(day=1)
 
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1.5])
-    start_date = col1.date_input(
-        "Kezdo datum",
+    st.title("Elszámolások")
+    header_left, header_mid, header_right = st.columns([1.35, 1, 1])
+    selected_month = header_left.date_input(
+        "Elszámolási hónap",
         value=default_start,
-        key="invoice_start_date",
+        key="invoice_month_selector",
     )
-    end_date = col2.date_input(
-        "Zaro datum",
-        value=today,
-        key="invoice_end_date",
-    )
-    selected_sheet = col3.selectbox(
-        "Raktar ful",
+    selected_sheet = header_right.selectbox(
+        "Raktár",
         ["Mind", "BUD1_JIT", "BUD2_JIT"],
         key="invoice_sheet_filter",
     )
+    start_date = month_start_from_date(selected_month)
+    month_end = month_end_from_date(start_date)
+    end_date = min(month_end, today) if start_date.year == today.year and start_date.month == today.month else month_end
+    header_mid.metric("Időszak", f"{start_date:%Y.%m.%d} - {end_date:%Y.%m.%d}")
+    st.caption(
+        "Forrás: JITT invoice workbook. A havi nézet futárszinten összesít, így a BUD1+BUD2 futárok egy elszámolásba kerülnek."
+    )
+    with st.expander("Egyedi dátumtartomány", expanded=False):
+        custom_col1, custom_col2 = st.columns(2)
+        start_date = custom_col1.date_input(
+            "Kezdő dátum",
+            value=start_date,
+            key="invoice_start_date",
+        )
+        end_date = custom_col2.date_input(
+            "Záró dátum",
+            value=end_date,
+            key="invoice_end_date",
+        )
 
     try:
         data = read_invoice_data(
@@ -974,7 +1112,8 @@ def show_invoice_summary_page():
 
         final_df_debug = data.get("final", pd.DataFrame())
 
-        st.warning(
+        with st.expander("Adatbetoltesi ellenorzes", expanded=False):
+            st.text(
             f"""
     DEBUG
 
@@ -1005,10 +1144,20 @@ def show_invoice_summary_page():
     day_rates_df = data.get("day_rates", pd.DataFrame())
     raw_route_df = data.get("routes", pd.DataFrame())
 
-    final_df = filter_by_worksheet(
-        final_df,
-        selected_sheet,
-    )
+    if selected_sheet != "Mind" and final_df is not None and not final_df.empty:
+        selected_warehouse_routes = filter_by_worksheet(final_df, selected_sheet)
+        selected_driver_keys = set(
+            selected_warehouse_routes.get("driver_name", pd.Series(dtype=str))
+            .dropna()
+            .astype(str)
+            .map(normalize_person_key)
+        )
+        final_df = final_df[
+            final_df.get("driver_name", pd.Series("", index=final_df.index))
+            .astype(str)
+            .map(normalize_person_key)
+            .isin(selected_driver_keys)
+        ].copy()
 
     all_filtered_final_df = final_df.copy()
 
@@ -1075,8 +1224,9 @@ def show_invoice_summary_page():
         start_date,
     )
 
-    selected_driver = col4.selectbox(
-        "Futar",
+    driver_filter_col, _driver_filter_spacer = st.columns([1.5, 2])
+    selected_driver = driver_filter_col.selectbox(
+        "Futár",
         ["Mind"] + drivers,
         key="invoice_driver_filter",
     )
@@ -1316,6 +1466,10 @@ def show_invoice_summary_page():
             )
 
             bulk_source_rows = driver_summary.reset_index(drop=True)
+            bulk_source_rows["is_multi_warehouse"] = bulk_source_rows.get(
+                "worksheet_name",
+                pd.Series("", index=bulk_source_rows.index),
+            ).map(is_multi_warehouse)
             warehouse_options = sorted(
                 {
                     str(value).strip()
@@ -1326,6 +1480,7 @@ def show_invoice_summary_page():
                     if str(value).strip()
                 }
             )
+            warehouse_options = ["Mind", "BUD1_JIT", "BUD2_JIT", "Dupla raktar"]
 
             if not warehouse_options:
                 st.info("A jelenlegi időszakban nincs tömegesen generálható raktár.")
@@ -1350,12 +1505,49 @@ def show_invoice_summary_page():
                     bulk_source_rows["worksheet_name"].astype(str).str.strip()
                     == str(bulk_sheet).strip()
                 ].reset_index(drop=True)
+                if bulk_sheet == "Dupla raktar":
+                    bulk_rows = bulk_source_rows[bulk_source_rows["is_multi_warehouse"]].copy()
+                else:
+                    bulk_rows = bulk_source_rows[
+                        bulk_source_rows["worksheet_name"].map(
+                            lambda value: row_matches_warehouse(value, bulk_sheet)
+                        )
+                    ].copy()
+                bulk_driver_options = ["Mind"] + sorted(
+                    bulk_rows.get("driver_name", pd.Series(dtype=str))
+                    .dropna()
+                    .astype(str)
+                    .map(str.strip)
+                    .loc[lambda values: values != ""]
+                    .unique()
+                    .tolist(),
+                    key=normalize_person_key,
+                )
+                bulk_driver = st.selectbox(
+                    "Tomeges futar szuro",
+                    bulk_driver_options,
+                    key=(
+                        f"invoice_bulk_driver_{start_date.isoformat()}_"
+                        f"{end_date.isoformat()}_{bulk_sheet}"
+                    ),
+                )
+                if bulk_driver != "Mind":
+                    bulk_rows = filter_by_driver(bulk_rows, bulk_driver)
+                bulk_rows = bulk_rows.reset_index(drop=True)
 
             bulk_upload_count = len(bulk_rows)
+            double_bulk_count = int(
+                bulk_rows.get(
+                    "is_multi_warehouse",
+                    pd.Series(False, index=bulk_rows.index),
+                ).fillna(False).sum()
+            )
             st.info(
                 f"Kiválasztott raktár: {bulk_sheet or '-'} | "
                 f"Generálandó elszámolások: {bulk_upload_count}"
             )
+
+            st.caption(f"Dupla raktaros futar ebben a szuresben: {double_bulk_count}")
 
             skip_existing = st.checkbox(
                 "A már feltöltött elszámolások kihagyása",
@@ -1448,12 +1640,8 @@ def show_invoice_summary_page():
 
                     try:
                         single_summary = bulk_rows.iloc[[row_index]].copy()
-                        warehouse_routes = filter_by_worksheet(
-                            all_filtered_final_df,
-                            bulk_sheet,
-                        )
                         single_routes = filter_by_driver(
-                            warehouse_routes,
+                            all_filtered_final_df,
                             bulk_driver_name,
                         )
 
