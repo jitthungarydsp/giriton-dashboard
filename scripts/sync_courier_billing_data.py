@@ -71,6 +71,7 @@ FIELD_ALIASES: dict[str, list[str]] = {
         "USERNUMBER",
         "Usernumber",
         "ID",
+        "0",
     ],
     "courier_name": [
         "1. Az Ön teljes neve: (ahogy a személyi igazolványban szerepel)",
