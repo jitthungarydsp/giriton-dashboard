@@ -870,7 +870,7 @@ def render_settlement_feedback_overview(
                 "feedback_owner": feedback_owner,
                 "display": {
                     "Futár": courier_name,
-                    "USERNUMBER": courier_id,
+                    "courier_id": courier_id,
                     "Felelos": feedback_owner or "Nincs kijelolve",
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
@@ -1249,7 +1249,7 @@ def render_invoice_delivery_status(route_driver_names, document_month):
                 sent_rows.append(
                     {
                         "Futár": name,
-                        "USERNUMBER": details.get("courier_id"),
+                        "courier_id": details.get("courier_id"),
                         "Feltöltve": details.get("uploaded_at"),
                     }
                 )
@@ -1560,7 +1560,7 @@ def show_invoice_summary_page():
                     [
                         {
                             "Futar": debug_courier_name or selected_driver,
-                            "USERNUMBER / courier_id az elszamolasban": debug_courier_id or "",
+                            "courier_id az elszamolasban": debug_courier_id or "",
                             "DB insurance_active a szamitasban": bool(
                                 selected_debug_row.get("target_reserve_active", False)
                             ),
@@ -1591,7 +1591,7 @@ def show_invoice_summary_page():
 
                 if reserve_debug_df.empty:
                     st.error(
-                        "Nincs talalat a courier_target_reserve tablaban erre a USERNUMBER-re."
+                        "Nincs talalat a courier_target_reserve tablaban erre a courier_id-ra."
                     )
                 else:
                     st.caption("DB sor a courier_target_reserve tablabol:")
