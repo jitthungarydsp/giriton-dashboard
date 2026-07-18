@@ -56,6 +56,59 @@ def _extract_first_labeled_date(text: str, labels: list[str]) -> date | None:
     return None
 
 
+def _find_date_positions(text: str) -> list[tuple[int, date]]:
+    result: list[tuple[int, date]] = []
+    for match in re.finditer(r"20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}", text or ""):
+        value = _parse_date(match.group(0))
+        if value:
+            result.append((match.start(), value))
+    return result
+
+
+def _find_label_position(text: str, labels: list[str]) -> int | None:
+    for label in labels:
+        match = re.search(label, text, flags=re.IGNORECASE)
+        if match:
+            return match.start()
+    return None
+
+
+def _extract_invoice_dates(text: str) -> dict[str, date | None]:
+    folded = _fold(text)
+    dates = {
+        "issue_date": _extract_first_labeled_date(text, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"]),
+        "performance_date": _extract_first_labeled_date(text, [r"teljesites\s+kelte", r"teljesites"]),
+        "due_date": _extract_first_labeled_date(text, [r"fizetesi\s+hatarido"]),
+    }
+    if all(dates.values()):
+        return dates
+
+    label_positions = [
+        ("performance_date", _find_label_position(folded, [r"teljesites\s+kelte", r"teljesites"])),
+        ("issue_date", _find_label_position(folded, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"])),
+        ("due_date", _find_label_position(folded, [r"fizetesi\s+hatarido"])),
+    ]
+    label_positions = [(key, position) for key, position in label_positions if position is not None]
+    if not label_positions:
+        return dates
+
+    all_dates = _find_date_positions(folded)
+    if not all_dates:
+        return dates
+
+    label_positions.sort(key=lambda item: item[1])
+    min_label_position = min(position for _key, position in label_positions)
+    trailing_dates = [value for position, value in all_dates if position >= min_label_position]
+
+    # Egyes PDF-ekből a táblázatos sor így jön ki:
+    # "Teljesítés Keltezés Fizetési határidő" majd alatta a három dátum.
+    if len(trailing_dates) >= len(label_positions):
+        for index, (key, _position) in enumerate(label_positions):
+            dates[key] = dates[key] or trailing_dates[index]
+
+    return dates
+
+
 def _extract_invoice_number(text: str) -> str:
     original_match = re.search(
         r"\b(?:számlaszám|szamlaszam|sorszám|sorszam|e\s*[- ]?\s*számla\s*sorszám|e\s*[- ]?\s*szamla\s*sorszam)\s*:?\s*([A-Za-z0-9][A-Za-z0-9/_-]{3,})",
@@ -105,7 +158,15 @@ def _extract_gross_total(text: str) -> int:
     for pattern in patterns:
         amounts.extend(re.findall(pattern, folded, flags=re.IGNORECASE | re.DOTALL))
     parsed = [_parse_huf(amount) for amount in amounts]
-    return max(parsed, default=0)
+    if parsed:
+        return max(parsed)
+
+    fallback_amounts = re.findall(
+        r"([\d\s]+(?:[,.]\d{2})?)\s*(?:ft|huf)",
+        folded,
+        flags=re.IGNORECASE,
+    )
+    return max((_parse_huf(amount) for amount in fallback_amounts), default=0)
 
 
 def extract_pdf_text(content: bytes) -> str:
@@ -123,13 +184,14 @@ def extract_pdf_text(content: bytes) -> str:
 def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
     text = extract_pdf_text(content)
     tax_numbers = re.findall(r"\b\d{8}-\d-\d{2}\b", text)
+    invoice_dates = _extract_invoice_dates(text)
     return {
         "text": text,
         "seller_tax_number": tax_numbers[0] if tax_numbers else "",
         "buyer_tax_number": tax_numbers[1] if len(tax_numbers) > 1 else "",
-        "issue_date": _extract_first_labeled_date(text, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"]),
-        "performance_date": _extract_first_labeled_date(text, [r"teljesites\s+kelte", r"teljesites"]),
-        "due_date": _extract_first_labeled_date(text, [r"fizetesi\s+hatarido"]),
+        "issue_date": invoice_dates["issue_date"],
+        "performance_date": invoice_dates["performance_date"],
+        "due_date": invoice_dates["due_date"],
         "invoice_periods": _extract_invoice_periods(text),
         "gross_total": _extract_gross_total(text),
         "invoice_number": _extract_invoice_number(text),
