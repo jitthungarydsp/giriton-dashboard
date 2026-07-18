@@ -60,10 +60,26 @@ GOOGLE_SCOPES = [
 ]
 
 FIELD_ALIASES: dict[str, list[str]] = {
+    "courier_id": [
+        "courier_id",
+        "courier_ID",
+        "Courier ID",
+        "Futar ID",
+        "Futar azonosito",
+        "USERNUMBER",
+        "Usernumber",
+        "ID",
+    ],
     "courier_name": [
         "1. Az Ön teljes neve: (ahogy a személyi igazolványban szerepel)",
         "Aláíró személy teljes neve",
         "Aláíró teljes neve",
+    ],
+    "warehouse_name": [
+        "Raktar",
+        "Telephely",
+        "Depo",
+        "warehouse_name",
     ],
     "email": [
         "E-mail-cím",
@@ -146,6 +162,15 @@ def normalize_phone(value: Any) -> str:
     return digits
 
 
+def normalize_courier_id(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    if re.fullmatch(r"\d+(\.0+)?", text):
+        text = text.split(".", 1)[0]
+    return re.sub(r"\D+", "", text)
+
+
 def normalize_tax_number(value: Any) -> str:
     return re.sub(r"\s+", "", clean_text(value)).upper()
 
@@ -153,6 +178,16 @@ def normalize_tax_number(value: Any) -> str:
 def first_nonempty(row: dict[str, Any], aliases: Iterable[str]) -> str:
     for alias in aliases:
         value = clean_text(row.get(alias))
+        if value:
+            return value
+
+    normalized_row = {
+        normalize_name(header): value
+        for header, value in row.items()
+        if normalize_name(header)
+    }
+    for alias in aliases:
+        value = clean_text(normalized_row.get(normalize_name(alias)))
         if value:
             return value
     return ""
@@ -163,6 +198,7 @@ def extract_source_values(row: dict[str, Any]) -> dict[str, str]:
         field: first_nonempty(row, aliases)
         for field, aliases in FIELD_ALIASES.items()
     }
+    values["courier_id"] = normalize_courier_id(values.get("courier_id"))
     values["tax_number"] = normalize_tax_number(values.get("tax_number"))
     return values
 
@@ -255,6 +291,7 @@ class SupabaseRest:
             params={
                 "select": (
                     "courier_id,courier_name,phone_number,email,"
+                    "warehouse_name,source_name,organization_id,dsp_id,active,"
                     "company_name,company_address,tax_number,"
                     "bank_account_number,billing_email,"
                     "billing_data_source,billing_data_updated_at"
@@ -280,6 +317,22 @@ class SupabaseRest:
             params={"courier_id": f"eq.{courier_id}"},
             json=payload,
             timeout=30,
+        )
+        self._raise_for_error(response)
+
+    def upsert_couriers(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        headers = {
+            **self.headers,
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        }
+        response = requests.post(
+            f"{self.url}/rest/v1/courier_master",
+            headers=headers,
+            params={"on_conflict": "courier_id"},
+            json=rows,
+            timeout=60,
         )
         self._raise_for_error(response)
 
@@ -311,6 +364,7 @@ def unique_index(
 
 def build_courier_indexes(couriers: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
     return {
+        "id": unique_index(couriers, lambda row: normalize_courier_id(row.get("courier_id"))),
         "email": unique_index(couriers, lambda row: normalize_email(row.get("email"))),
         "phone": unique_index(couriers, lambda row: normalize_phone(row.get("phone_number"))),
         "name": unique_index(couriers, lambda row: normalize_name(row.get("courier_name"))),
@@ -321,6 +375,10 @@ def match_courier(
     source: SourceRow,
     indexes: dict[str, dict[str, dict[str, Any]]],
 ) -> tuple[dict[str, Any] | None, str]:
+    courier_id = normalize_courier_id(source.values.get("courier_id"))
+    if courier_id and courier_id in indexes["id"]:
+        return indexes["id"][courier_id], "courier_id"
+
     email = normalize_email(source.values.get("email"))
     if email and email in indexes["email"]:
         return indexes["email"][email], "email"
@@ -406,6 +464,66 @@ def merge_candidates(
     return result, unmatched
 
 
+def build_insert_candidates(
+    unmatched: list[SourceRow],
+    couriers: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[SourceRow]]:
+    existing_ids = {
+        normalize_courier_id(courier.get("courier_id"))
+        for courier in couriers
+        if normalize_courier_id(courier.get("courier_id"))
+    }
+    by_id: dict[str, SourceRow] = {}
+    skipped: list[SourceRow] = []
+
+    for source in unmatched:
+        courier_id = normalize_courier_id(source.values.get("courier_id"))
+        if not courier_id or courier_id in existing_ids:
+            skipped.append(source)
+            continue
+        current = by_id.get(courier_id)
+        if current is None or source.priority > current.priority:
+            by_id[courier_id] = source
+
+    now = datetime.now(timezone.utc).isoformat()
+    rows: list[dict[str, Any]] = []
+
+    for courier_id, source in sorted(by_id.items(), key=lambda item: int(item[0])):
+        values = source.values
+        courier_name = clean_text(values.get("courier_name"))
+        if not courier_name:
+            skipped.append(source)
+            continue
+
+        row: dict[str, Any] = {
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "phone_number": clean_text(values.get("phone_number")),
+            "email": clean_text(values.get("email")),
+            "warehouse_name": clean_text(values.get("warehouse_name")),
+            "source_name": source.source,
+            "dsp_id": "JIT",
+            "active": True,
+            "response_json": {
+                "imported_from": "sync_courier_billing_data",
+                "source": source.source,
+                "source_row": source.row_number,
+            },
+            "fetched_at": now,
+            "updated_at": now,
+            "billing_data_source": source.source,
+            "billing_data_updated_at": now,
+        }
+        for field in TARGET_BILLING_FIELDS:
+            value = clean_text(values.get(field))
+            if value:
+                row[field] = value
+
+        rows.append(row)
+
+    return rows, skipped
+
+
 def ensure_required_environment() -> None:
     missing = [
         name
@@ -421,6 +539,7 @@ def ensure_required_environment() -> None:
 def print_preview(
     updates: dict[int, dict[str, Any]],
     unmatched: list[SourceRow],
+    insert_candidates: list[dict[str, Any]],
 ) -> None:
     print(f"\nFrissítendő futárok száma: {len(updates)}")
     for courier_id, item in sorted(updates.items()):
@@ -428,10 +547,22 @@ def print_preview(
         fields = ", ".join(item["patch"].keys())
         print(f"  {courier_id} | {courier.get('courier_name')} | {fields}")
 
+    print(f"\nFelvetelre varo uj courier_master sorok: {len(insert_candidates)}")
+    for row in insert_candidates[:50]:
+        print(
+            f"  {row.get('courier_id')} | "
+            f"{row.get('courier_name')} | "
+            f"{row.get('email')} | "
+            f"{row.get('phone_number')}"
+        )
+    if len(insert_candidates) > 50:
+        print(f"  ... tovabbi {len(insert_candidates) - 50} sor")
+
     print(f"\nNem párosított forrássorok száma: {len(unmatched)}")
     for source in unmatched[:50]:
         print(
             f"  {source.source}:{source.row_number} | "
+            f"{source.values.get('courier_id')} | "
             f"{source.values.get('courier_name')} | "
             f"{source.values.get('email')} | "
             f"{source.values.get('phone_number')}"
@@ -447,6 +578,14 @@ def main() -> int:
         action="store_true",
         help="A frissítések tényleges mentése Supabase-be.",
     )
+    parser.add_argument(
+        "--insert-missing",
+        action="store_true",
+        help=(
+            "A courier_id-val rendelkezo, de courier_masterben meg nem levo "
+            "futarok felvetele. Nev alapjan nem hoz letre uj sort."
+        ),
+    )
     args = parser.parse_args()
 
     ensure_required_environment()
@@ -461,11 +600,16 @@ def main() -> int:
     print(f"Beolvasott futárok: {len(couriers)}")
 
     updates, unmatched = merge_candidates(source_rows, couriers)
-    print_preview(updates, unmatched)
+    insert_candidates, skipped_unmatched = build_insert_candidates(unmatched, couriers)
+    print_preview(updates, skipped_unmatched, insert_candidates)
 
     if not args.apply:
         print("\nDRY-RUN: nem történt adatbázis-módosítás.")
-        print("Tényleges futtatás: python sync_courier_billing_data.py --apply")
+        print("Meglevo adatok frissitese: python sync_courier_billing_data.py --apply")
+        print(
+            "Frissites + uj courier_id-s futarok felvetele: "
+            "python sync_courier_billing_data.py --apply --insert-missing"
+        )
         return 0
 
     success = 0
@@ -483,7 +627,25 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    print(f"\nKész. Sikeres: {success}, hibás: {failures}, nem párosított: {len(unmatched)}")
+    inserted = 0
+    if args.insert_missing and insert_candidates:
+        try:
+            supabase.upsert_couriers(insert_candidates)
+            inserted = len(insert_candidates)
+            print(f"OK: uj courier_master sorok felveve: {inserted}")
+        except Exception as exc:
+            failures += 1
+            print(f"HIBA: uj courier_master sorok felvetele sikertelen | {exc}", file=sys.stderr)
+    elif insert_candidates:
+        print(
+            "INFO: vannak uj felveheto futarok, de az --insert-missing nincs megadva, "
+            "ezert nem lettek beszurva."
+        )
+
+    print(
+        f"\nOsszesites: sikeres frissites: {success}, uj felvetel: {inserted}, "
+        f"hibas: {failures}, nem parositott: {len(skipped_unmatched)}"
+    )
     return 1 if failures else 0
 
 
