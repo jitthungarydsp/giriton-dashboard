@@ -273,12 +273,31 @@ def read_google_rows() -> list[SourceRow]:
     return all_rows
 
 
+def open_csv_dict_reader(path: Path):
+    last_error: Exception | None = None
+    for encoding in ("utf-8-sig", "cp1250", "iso-8859-2"):
+        try:
+            handle = path.open("r", encoding=encoding, newline="")
+            sample = handle.read(4096)
+            handle.seek(0)
+            if "Ă" in sample and encoding == "utf-8-sig":
+                handle.close()
+                continue
+            return handle, csv.DictReader(handle)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    handle = path.open("r", encoding="utf-8-sig", newline="")
+    return handle, csv.DictReader(handle)
+
+
 def read_csv_rows(paths: list[str]) -> list[SourceRow]:
     all_rows: list[SourceRow] = []
     for path_text in paths:
         path = Path(path_text).expanduser()
-        with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
+        handle, reader = open_csv_dict_reader(path)
+        with handle:
             for index, row in enumerate(reader, start=2):
                 values = extract_source_values(dict(row))
                 if not any(values.values()):
