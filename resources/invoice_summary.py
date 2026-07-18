@@ -618,6 +618,10 @@ def read_invoice_data(start_date, end_date):
         "location",
         "courier_id",
         "courierID",
+        "target_reserve_active",
+        "target_reserve_ct_z_ft",
+        "target_current_reserve_huf",
+        "target_reserve_deduction_huf",
         "driver_name",
         "route_unique_id",
         "route_type",
@@ -1206,6 +1210,44 @@ def build_driver_invoice_summary(
             on="driver_match_key",
             how="left",
         )
+    if "target_reserve_active" in final_df.columns:
+        route_target = final_df[[
+            column
+            for column in [
+                "driver_match_key",
+                "target_reserve_active",
+                "target_reserve_ct_z_ft",
+            ]
+            if column in final_df.columns
+        ]].copy()
+        route_target["target_reserve_active_from_routes"] = route_target[
+            "target_reserve_active"
+        ].map(parse_bool_flag)
+        if "target_reserve_ct_z_ft" in route_target.columns:
+            route_target["target_reserve_ct_z_ft_from_routes"] = route_target[
+                "target_reserve_ct_z_ft"
+            ].map(parse_huf_amount)
+        else:
+            route_target["target_reserve_ct_z_ft_from_routes"] = 0
+        route_target = (
+            route_target.groupby("driver_match_key", dropna=False)
+            .agg(
+                target_reserve_active_from_routes=(
+                    "target_reserve_active_from_routes",
+                    "max",
+                ),
+                target_reserve_ct_z_ft_from_routes=(
+                    "target_reserve_ct_z_ft_from_routes",
+                    "max",
+                ),
+            )
+            .reset_index()
+        )
+        grouped = grouped.merge(
+            route_target,
+            on="driver_match_key",
+            how="left",
+        )
     if "courier_id" not in grouped.columns:
         grouped["courier_id"] = ""
     grouped["courier_id"] = (
@@ -1733,12 +1775,18 @@ def build_driver_invoice_summary(
         # True => target reserve + insurance deduction, False => no deduction.
 
     def target_reserve_ct_zft(row):
+        route_ct = row.get("target_reserve_ct_z_ft_from_routes")
+        if pd.notna(route_ct) and parse_huf_amount(route_ct) != 0:
+            return parse_huf_amount(route_ct)
         courier_id = normalize_courier_id_text(row.get("courier_id"))
         if courier_id in reserve_courier_ct_zft:
             return reserve_courier_ct_zft[courier_id]
         return pd.NA
 
     def target_reserve_active(row):
+        route_active = row.get("target_reserve_active_from_routes")
+        if pd.notna(route_active):
+            return parse_bool_flag(route_active)
         courier_id = normalize_courier_id_text(row.get("courier_id"))
         if courier_id in reserve_courier_active:
             return reserve_courier_active[courier_id]
