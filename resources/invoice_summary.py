@@ -52,6 +52,9 @@ DAY_RATE_TABLES = [
     "dsp_day_rates",
 ]
 TARGET_RESERVE_TABLES = [
+    "courier_master_target_reserve",
+    "courier_master_target_reserved",
+    "courier_master_target_reservd",
     "courier_target_reserve",
 ]
 
