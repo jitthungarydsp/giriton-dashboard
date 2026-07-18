@@ -823,6 +823,18 @@ def _has_open_complaint(rows, document_type):
     return False
 
 
+def _courier_document_response_status(done, open_complaint, has_document):
+    if done and open_complaint:
+        return "Elfogadta + reklamalt"
+    if done:
+        return "Elfogadta"
+    if open_complaint:
+        return "Reklamalt"
+    if has_document:
+        return "Meg nem valaszolt"
+    return "Nincs dokumentum"
+
+
 def render_settlement_feedback_overview(
     driver_summary,
     document_month,
@@ -895,6 +907,16 @@ def render_settlement_feedback_overview(
         )
         settlement_complaint = _has_open_complaint(courier_complaints, "settlement")
         tig_complaint = _has_open_complaint(courier_complaints, "tig")
+        settlement_response_status = _courier_document_response_status(
+            settlement_done,
+            settlement_complaint,
+            bool(settlement_doc),
+        )
+        tig_response_status = _courier_document_response_status(
+            tig_done,
+            tig_complaint,
+            bool(tig_doc),
+        )
         blocking_settlement_complaint = settlement_complaint and not ignore_complaints_for_billing
         blocking_tig_complaint = tig_complaint and not ignore_complaints_for_billing
 
@@ -964,7 +986,9 @@ def render_settlement_feedback_overview(
                     "Felelos": feedback_owner or "Nincs kijelolve",
                     "Reklamáció blokkolás": "Nem blokkol" if ignore_complaints_for_billing else "Blokkol",
                     "Elszámolás": settlement_status,
+                    "Elszámolás visszajelzés": settlement_response_status,
                     "TIG": tig_status,
+                    "TIG visszajelzés": tig_response_status,
                     "Számlafeltöltés": invoice_status,
                     "Kifizetés": "Lezárva" if invoice_payment_done else ("Vár adminra" if invoice_doc else "Nincs számla"),
                     "Számla": (invoice_doc or {}).get("file_name", ""),
@@ -1010,8 +1034,14 @@ def render_settlement_feedback_overview(
     )
     metric1, metric2, metric3, metric4, metric5 = st.columns(5)
     metric1.metric("Futár", len(display_df))
-    metric2.metric("Elszámolás elfogadva", int((display_df["Elszámolás"] == "Elfogadva").sum()))
-    metric3.metric("TIG elfogadva", int((display_df["TIG"] == "Elfogadva").sum()))
+    metric2.metric(
+        "Elszámolás elfogadva",
+        int(display_df["Elszámolás visszajelzés"].astype(str).str.contains("Elfogadta").sum()),
+    )
+    metric3.metric(
+        "TIG elfogadva",
+        int(display_df["TIG visszajelzés"].astype(str).str.contains("Elfogadta").sum()),
+    )
     metric4.metric("Számla feltöltve", int(display_df["Számlafeltöltés"].isin(["Feltöltve", "Kifizetve"]).sum()))
     metric5.metric("Kifizetve / lezárva", int((display_df["Kifizetés"] == "Lezárva").sum()))
 
