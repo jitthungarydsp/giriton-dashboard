@@ -153,6 +153,23 @@ def _huf(value):
     return f"{amount:,}".replace(",", " ") + " Ft"
 
 
+def _tax_number_vat_code(tax_number):
+    match = re.search(r"\b\d{8}-(\d)-\d{2}\b", str(tax_number or ""))
+    return match.group(1) if match else ""
+
+
+def _is_standard_vat_tax_number(tax_number):
+    return _tax_number_vat_code(tax_number) == "2"
+
+
+def _vat_breakdown(net_amount_huf, tax_number):
+    net_amount_huf = int(round(float(net_amount_huf or 0)))
+    if _is_standard_vat_tax_number(tax_number):
+        vat_amount_huf = int(round(net_amount_huf * 0.27))
+        return net_amount_huf, vat_amount_huf, net_amount_huf + vat_amount_huf, "27%"
+    return net_amount_huf, 0, net_amount_huf, "AAM"
+
+
 def build_tig_pdf_bytes(
     *,
     courier_name: str,
@@ -161,6 +178,7 @@ def build_tig_pdf_bytes(
     courier_id: str,
     document_month: date,
     transfer_amount_huf: float,
+    tip_amount_huf: float = 0,
     cash_amount_huf: float = 0,
 ) -> bytes:
     """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
@@ -207,7 +225,15 @@ def build_tig_pdf_bytes(
     }
     period_label = f"{document_month.year}. {hu_months[document_month.month]}"
     transfer_amount_huf = int(round(float(transfer_amount_huf or 0)))
+    tip_amount_huf = int(round(float(tip_amount_huf or 0)))
     cash_amount_huf = int(round(float(cash_amount_huf or 0)))
+    transfer_service_net_huf = max(transfer_amount_huf - max(tip_amount_huf, 0), 0)
+    service_net_huf, service_vat_huf, service_gross_huf, service_vat_label = _vat_breakdown(
+        transfer_service_net_huf,
+        courier_tax_number,
+    )
+    tip_gross_huf = max(tip_amount_huf, 0)
+    transfer_gross_total_huf = service_gross_huf + tip_gross_huf
 
     story = [
         Paragraph("TELJESÍTÉSI IGAZOLÁS", title_style),
@@ -257,19 +283,33 @@ def build_tig_pdf_bytes(
     ]))
     story.extend([timing, Spacer(1, 5 * mm)])
 
-    amount_table = Table([
+    amount_rows = [
         [Paragraph("Tétel megnevezése", bold), Paragraph("Nettó (Ft)", bold), Paragraph("ÁFA (Ft)", bold), Paragraph("Bruttó (Ft)", bold)],
-        [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(transfer_amount_huf), right), Paragraph("AAM", center), Paragraph(_huf(transfer_amount_huf), right)],
-        [Paragraph("VÉGÖSSZEG:", bold), "", "", Paragraph(_huf(transfer_amount_huf), red_bold)],
-    ], colWidths=[76 * mm, 32 * mm, 28 * mm, 32 * mm])
+        [
+            Paragraph("Szállítási díj (494107)", normal),
+            Paragraph(_huf(service_net_huf), right),
+            Paragraph(f"{_huf(service_vat_huf)} ({service_vat_label})" if service_vat_huf else service_vat_label, center),
+            Paragraph(_huf(service_gross_huf), right),
+        ],
+    ]
+    if tip_gross_huf:
+        amount_rows.append([
+            Paragraph("Borravaló", normal),
+            Paragraph(_huf(tip_gross_huf), right),
+            Paragraph("0 Ft (0%)", center),
+            Paragraph(_huf(tip_gross_huf), right),
+        ])
+    total_row_index = len(amount_rows)
+    amount_rows.append([Paragraph("VÉGÖSSZEG:", bold), "", "", Paragraph(_huf(transfer_gross_total_huf), red_bold)])
+    amount_table = Table(amount_rows, colWidths=[76 * mm, 32 * mm, 28 * mm, 32 * mm])
     amount_table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, 1), 0.7, colors.HexColor("#444444")),
+        ("GRID", (0, 0), (-1, total_row_index - 1), 0.7, colors.HexColor("#444444")),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("SPAN", (0, 2), (2, 2)),
-        ("ALIGN", (0, 2), (2, 2), "RIGHT"),
-        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#f9f9f9")),
-        ("BOX", (0, 2), (-1, 2), 0.7, colors.HexColor("#444444")),
+        ("SPAN", (0, total_row_index), (2, total_row_index)),
+        ("ALIGN", (0, total_row_index), (2, total_row_index), "RIGHT"),
+        ("BACKGROUND", (0, total_row_index), (-1, total_row_index), colors.HexColor("#f9f9f9")),
+        ("BOX", (0, total_row_index), (-1, total_row_index), 0.7, colors.HexColor("#444444")),
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -293,10 +333,21 @@ def build_tig_pdf_bytes(
     ))
 
     if cash_amount_huf:
+        cash_net_huf, cash_vat_huf, cash_gross_huf, cash_vat_label = _vat_breakdown(
+            cash_amount_huf,
+            courier_tax_number,
+        )
+        cash_vat_display = f"{_huf(cash_vat_huf)} ({cash_vat_label})" if cash_vat_huf else "TA (0%)"
         story.extend([Spacer(1, 5 * mm), Paragraph("KÉSZPÉNZES SZÁMLA (Csak ha a levonás miatt szükséges!)", heading)])
         cash_table = Table([
             [Paragraph("Megnevezés", bold), Paragraph("Nettó", bold), Paragraph("ÁFA", bold), Paragraph("Bruttó", bold), Paragraph("Mód", bold)],
-            [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(cash_amount_huf), right), Paragraph("TA (0%)", center), Paragraph(_huf(cash_amount_huf), right), Paragraph("KP", bold)],
+            [
+                Paragraph("Szállítási díj (494107)", normal),
+                Paragraph(_huf(cash_net_huf), right),
+                Paragraph(cash_vat_display, center),
+                Paragraph(_huf(cash_gross_huf), right),
+                Paragraph("KP", bold),
+            ],
         ], colWidths=[68 * mm, 29 * mm, 25 * mm, 29 * mm, 17 * mm])
         cash_table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
@@ -2560,6 +2611,7 @@ def show_invoice_summary_page():
                             courier_id=courier_id,
                             document_month=document_month,
                             transfer_amount_huf=max(transfer_amount, 0),
+                            tip_amount_huf=max(int(round(float(bulk_row.get("tip_huf", 0) or 0))), 0),
                             cash_amount_huf=abs(int(round(float(bulk_row.get("atm_balance_huf", 0) or 0)))),
                         )
                         base_tig_file_name = (
@@ -2797,6 +2849,7 @@ def show_invoice_summary_page():
                         courier_id=courier_id,
                         document_month=document_month,
                         transfer_amount_huf=tig_transfer_amount,
+                        tip_amount_huf=max(int(round(float(selected_row.get("tip_huf", 0) or 0))), 0),
                         cash_amount_huf=tig_cash_amount,
                     )
                     st.session_state[tig_state_key] = {
