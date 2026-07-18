@@ -316,8 +316,15 @@ def find_route_header_row(worksheet, preferred_row):
     )
 
 
-def build_summary_rows(worksheet, source_spreadsheet_id, workbook_title, imported_at):
+def build_summary_rows(
+    worksheet,
+    source_spreadsheet_id,
+    workbook_title,
+    imported_at,
+    target_worksheet_name="",
+):
     rows = []
+    worksheet_name = target_worksheet_name or worksheet.title
 
     for row_number in range(5, 23):
         row = next(
@@ -340,7 +347,7 @@ def build_summary_rows(worksheet, source_spreadsheet_id, workbook_title, importe
             "source_name": SOURCE_NAME,
             "source_spreadsheet_id": source_spreadsheet_id,
             "workbook_title": workbook_title,
-            "worksheet_name": worksheet.title,
+            "worksheet_name": worksheet_name,
             "row_number": row_number,
             "metric_name": metric_name,
             "total_value": parse_number(row[1] if len(row) > 1 else None),
@@ -359,13 +366,23 @@ def build_summary_rows(worksheet, source_spreadsheet_id, workbook_title, importe
     return rows
 
 
-def build_route_rows(worksheet, source_spreadsheet_id, workbook_title, imported_at, preferred_header_row):
+def build_route_rows(
+    worksheet,
+    source_spreadsheet_id,
+    workbook_title,
+    imported_at,
+    preferred_header_row,
+    force_courier_id="",
+    target_worksheet_name="",
+):
     header_row_number, _header_row, headers = find_route_header_row(
         worksheet,
         preferred_header_row,
     )
     route_rows = []
     final_rows = []
+    worksheet_name = target_worksheet_name or worksheet.title
+    forced_courier_id = clean_text(force_courier_id)
 
     for row_number, row in enumerate(
         worksheet.iter_rows(
@@ -386,7 +403,7 @@ def build_route_rows(worksheet, source_spreadsheet_id, workbook_title, imported_
             "source_name": SOURCE_NAME,
             "source_spreadsheet_id": source_spreadsheet_id,
             "workbook_title": workbook_title,
-            "worksheet_name": worksheet.title,
+            "worksheet_name": worksheet_name,
             "row_number": row_number,
             "row_data": row_data,
             "row_values": trim_row(row),
@@ -403,6 +420,9 @@ def build_route_rows(worksheet, source_spreadsheet_id, workbook_title, imported_
                 record[target_key] = parse_number(value)
             else:
                 record[target_key] = clean_text(value)
+
+        if forced_courier_id:
+            record["courier_id"] = forced_courier_id
 
         route_rows.append(record)
         final_rows.append(build_final_route_row(record))
@@ -584,7 +604,13 @@ def build_contract_rule_rows(imported_at):
     return rows
 
 
-def build_rows(source_spreadsheet_id, xlsx_path, detail_header_row):
+def build_rows(
+    source_spreadsheet_id,
+    xlsx_path,
+    detail_header_row,
+    force_courier_id="",
+    target_worksheet_name="",
+):
     from openpyxl import load_workbook
 
     imported_at = datetime.now(timezone.utc).isoformat()
@@ -618,6 +644,7 @@ def build_rows(source_spreadsheet_id, xlsx_path, detail_header_row):
                         source_spreadsheet_id,
                         workbook_title,
                         imported_at,
+                        target_worksheet_name=target_worksheet_name,
                     )
                 )
                 worksheet_route_rows, worksheet_final_rows = build_route_rows(
@@ -626,6 +653,8 @@ def build_rows(source_spreadsheet_id, xlsx_path, detail_header_row):
                     workbook_title,
                     imported_at,
                     detail_header_row,
+                    force_courier_id=force_courier_id,
+                    target_worksheet_name=target_worksheet_name,
                 )
                 route_rows.extend(worksheet_route_rows)
                 final_rows.extend(worksheet_final_rows)
@@ -835,6 +864,17 @@ def main():
         help="Preferred route detail header row. Default: 23.",
     )
     parser.add_argument(
+        "--force-courier-id",
+        default="",
+        help="Optional courier_id to write on every imported route row.",
+    )
+    parser.add_argument(
+        "--target-worksheet-name",
+        default="",
+        choices=["", "BUD1_JIT", "BUD2_JIT", "BUD1_Dynamic", "BUD2_Dynamic"],
+        help="Optional worksheet_name to store in DB instead of the source sheet name.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Parse only; do not write to DB.",
@@ -855,6 +895,8 @@ def main():
             args.source_id,
             workbook_path,
             args.detail_header_row,
+            force_courier_id=args.force_courier_id,
+            target_worksheet_name=args.target_worksheet_name,
         )
         print_counts(rows)
 
