@@ -749,6 +749,76 @@ def _ignore_complaints_from_status(status_row):
     return _is_done(status_row)
 
 
+def build_driver_option_labels(drivers, document_month, driver_ids_by_name=None):
+    labels = {"Mind": "Mind"}
+    if not drivers:
+        return labels
+
+    driver_ids_by_name = driver_ids_by_name or {}
+    document_month = month_start_from_date(document_month)
+    try:
+        statuses = read_peopleforce_card_statuses_for_month(document_month)
+        documents = read_peopleforce_documents_for_month(document_month)
+        complaints = read_peopleforce_complaints_for_month(document_month)
+    except Exception:
+        return labels
+
+    latest_statuses = _latest_status_by_courier_and_action(statuses)
+    latest_docs = _latest_by_courier_and_type(documents)
+    complaint_lookup = _complaints_by_courier(complaints)
+
+    try:
+        master_df = read_courier_master()
+    except Exception:
+        master_df = pd.DataFrame()
+
+    master_by_name = {}
+    if master_df is not None and not master_df.empty:
+        for _, master_row in master_df.iterrows():
+            master_data = master_row.to_dict()
+            key = normalize_name(master_data.get("courier_name", ""))
+            courier_id = normalize_courier_id(master_data.get("courier_id", ""))
+            if key and courier_id:
+                master_by_name[key] = courier_id
+
+    for driver_name in drivers:
+        courier_id = normalize_courier_id(
+            driver_ids_by_name.get(driver_name)
+            or driver_ids_by_name.get(normalize_name(driver_name))
+        )
+        if not courier_id:
+            courier_id = master_by_name.get(normalize_name(driver_name))
+        if not courier_id:
+            labels[driver_name] = driver_name
+            continue
+
+        settlement_done = _is_done(latest_statuses.get((courier_id, "settlement")))
+        tig_done = _is_done(latest_statuses.get((courier_id, "tig")))
+        invoice_doc = latest_docs.get((courier_id, "invoice"))
+        invoice_payment_done = _is_done(latest_statuses.get((courier_id, "invoice_payment")))
+        courier_complaints = complaint_lookup.get(courier_id, [])
+        has_open_complaint = any(
+            str(item.get("status") or "").strip().lower() != "resolved"
+            for item in courier_complaints
+        )
+
+        suffix = ""
+        if invoice_payment_done:
+            suffix = "Lezárva"
+        elif invoice_doc:
+            suffix = "Számla"
+        elif tig_done:
+            suffix = "Számla"
+        elif settlement_done:
+            suffix = "TIG"
+        elif has_open_complaint:
+            suffix = "Reklamáció"
+
+        labels[driver_name] = f"{driver_name} ({suffix})" if suffix else driver_name
+
+    return labels
+
+
 def _settlement_feedback_priority(row):
     def first_value(candidates, default=""):
         for column in candidates:
@@ -1537,22 +1607,23 @@ def show_invoice_summary_page():
     # A futárlista alapja kizárólag a route-adat.
     # A külső forrásokból csak a teljesebb megjelenítési nevet vesszük át.
     driver_names_by_key = {}
+    driver_ids_by_name = {}
 
     if (
         all_filtered_final_df is not None
         and not all_filtered_final_df.empty
         and "driver_name" in all_filtered_final_df.columns
     ):
-        for value in (
-            all_filtered_final_df["driver_name"]
-            .dropna()
-            .astype(str)
-        ):
-            name = value.strip()
+        for _, driver_row in all_filtered_final_df.iterrows():
+            name = str(driver_row.get("driver_name") or "").strip()
             key = normalize_person_key(name)
 
             if name and key:
                 driver_names_by_key[key] = name
+                courier_id = normalize_courier_id(driver_row.get("courier_id", ""))
+                if courier_id:
+                    driver_ids_by_name[name] = courier_id
+                    driver_ids_by_name[key] = courier_id
 
 
     def enrich_driver_names(frame):
@@ -1602,9 +1673,15 @@ def show_invoice_summary_page():
     if pending_driver_filter in driver_options:
         st.session_state["invoice_driver_filter"] = pending_driver_filter
 
+    driver_option_labels = build_driver_option_labels(
+        drivers,
+        start_date,
+        driver_ids_by_name=driver_ids_by_name,
+    )
     selected_driver = col4.selectbox(
         "Futar / nev szuro",
         driver_options,
+        format_func=lambda value: driver_option_labels.get(value, value),
         key="invoice_driver_filter",
     )
 
