@@ -2262,11 +2262,18 @@ def show_invoice_summary_page():
             master_lookup_for_tig = build_courier_master_lookup(master_df_for_tig)
             try:
                 settlement_status_lookup_for_tig = _latest_status_by_courier_and_action(
-                    read_peopleforce_card_statuses_for_month(document_month, "settlement")
+                    read_peopleforce_card_statuses_for_month(document_month)
                 )
             except Exception as exc:
                 settlement_status_lookup_for_tig = {}
                 st.warning(f"Elszamolas elfogadasi statusz nem olvashato: {exc}")
+            try:
+                tig_docs_for_month = _latest_by_courier_and_type(
+                    read_peopleforce_documents_for_month(document_month)
+                )
+            except Exception as exc:
+                tig_docs_for_month = {}
+                st.warning(f"Havi dokumentum statusz nem olvashato: {exc}")
 
             tig_preview_rows = []
             tig_blocked_rows = []
@@ -2282,6 +2289,24 @@ def show_invoice_summary_page():
                 preview_accepted = _is_done(
                     settlement_status_lookup_for_tig.get((preview_courier_id, "settlement"))
                 )
+                preview_tig_done = _is_done(
+                    settlement_status_lookup_for_tig.get((preview_courier_id, "tig"))
+                )
+                preview_tig_doc_exists = bool(
+                    tig_docs_for_month.get((preview_courier_id, "tig"))
+                )
+                preview_invoice_started = bool(
+                    tig_docs_for_month.get((preview_courier_id, "invoice"))
+                    or _is_done(settlement_status_lookup_for_tig.get((preview_courier_id, "invoice_check")))
+                    or _is_done(settlement_status_lookup_for_tig.get((preview_courier_id, "invoice_submit")))
+                    or _is_done(settlement_status_lookup_for_tig.get((preview_courier_id, "invoice_payment")))
+                )
+                waits_for_tig = bool(
+                    preview_accepted
+                    and not preview_tig_doc_exists
+                    and not preview_tig_done
+                    and not preview_invoice_started
+                )
                 missing_billing_fields = [
                     label
                     for label, value in [
@@ -2296,6 +2321,7 @@ def show_invoice_summary_page():
                 )
                 sendable = bool(
                     preview_courier_id
+                    and waits_for_tig
                     and passes_acceptance_filter
                     and not missing_billing_fields
                 )
@@ -2304,6 +2330,7 @@ def show_invoice_summary_page():
                 preview_display_row = {
                     "Futar": preview_courier_name or preview_driver_name,
                     "courier_id": preview_courier_id or "Hianyzik",
+                    "Folyamat statusz": "Var TIG-re" if waits_for_tig else "Nem var TIG-re",
                     "Elszamolas elfogadva": "Igen" if preview_accepted else "Nem",
                     "Szamlazasi adatok": (
                         "OK" if not missing_billing_fields else "Hianyos"
@@ -2463,7 +2490,7 @@ def show_invoice_summary_page():
                 "Tomeges TIG generalasa es feltoltese",
                 type="primary",
                 use_container_width=True,
-                disabled=(not tig_bulk_confirm or driver_summary.empty),
+                disabled=(not tig_bulk_confirm or tig_sendable_count <= 0),
                 key=f"tig_bulk_upload_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
             ):
                 master_lookup = master_lookup_for_tig
@@ -2475,6 +2502,12 @@ def show_invoice_summary_page():
                 progress = st.progress(0)
                 status_box = st.empty()
                 total_rows = len(driver_summary)
+                sendable_tig_ids = {
+                    str(row.get("courier_id") or "").strip()
+                    for row in tig_preview_rows
+                    if str(row.get("courier_id") or "").strip()
+                    and str(row.get("courier_id") or "").strip() != "Hianyzik"
+                }
                 for row_index, bulk_row in driver_summary.reset_index(drop=True).iterrows():
                     driver_name = str(bulk_row.get("driver_name") or "").strip()
                     courier_id, courier_name = resolve_settlement_identity(bulk_row, driver_name)
@@ -2486,6 +2519,17 @@ def show_invoice_summary_page():
                     try:
                         if not courier_id:
                             raise ValueError("Nincs courier ID.")
+                        if courier_id not in sendable_tig_ids:
+                            skipped_count += 1
+                            failed_rows.append(
+                                {
+                                    "Futar": courier_name or driver_name,
+                                    "Allapot": "Kihagyva",
+                                    "Hiba": "Nem Var TIG-re statuszu vagy hianyzik a szamlazasi adata.",
+                                }
+                            )
+                            progress.progress((row_index + 1) / total_rows)
+                            continue
                         if (
                             tig_only_accepted_settlement
                             and not _is_done(settlement_status_lookup.get((courier_id, "settlement")))
