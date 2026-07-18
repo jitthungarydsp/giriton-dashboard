@@ -254,6 +254,24 @@
             "token": ""
         },
         {
+            "username": "Grózner 7977 Bálint",
+            "trainer": "trainer_name",
+            "password": "12345678",
+            "role": "user",
+            "courierId": 7977,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Grózner 7977 Bálint",
+            "trainer": "trainer_name",
+            "password": "12345678",
+            "role": "user",
+            "courierId": 7977,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Koncsik Zoltán",
             "trainer": "trainer_name",
             "password": "DT21EpYP",
