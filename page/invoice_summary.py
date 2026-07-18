@@ -741,6 +741,10 @@ def _feedback_owner_from_status(status_row):
     return str((status_row or {}).get("status_note") or "").strip()
 
 
+def _ignore_complaints_from_status(status_row):
+    return _is_done(status_row)
+
+
 def _settlement_feedback_priority(row):
     def first_value(candidates, default=""):
         for column in candidates:
@@ -757,6 +761,9 @@ def _settlement_feedback_priority(row):
         first_value(["Nyitott reklamáció", "Nyitott reklamĂˇciĂł"], 0)
         or 0
     )
+    ignore_complaints = str(first_value(["Reklamáció blokkolás", "Reklamacio blokkolas"]) or "") == "Nem blokkol"
+    if ignore_complaints:
+        open_complaints = 0
     if open_complaints > 0 or any("Reklam" in value for value in values):
         return 0
     if any("VĂˇr" in value or "ZĂˇrolva" in value for value in values):
@@ -879,10 +886,15 @@ def render_settlement_feedback_overview(
         feedback_owner = _feedback_owner_from_status(
             latest_statuses.get((courier_id, "feedback_owner"))
         )
+        ignore_complaints_for_billing = _ignore_complaints_from_status(
+            latest_statuses.get((courier_id, "ignore_complaints_for_billing"))
+        )
         settlement_complaint = _has_open_complaint(courier_complaints, "settlement")
         tig_complaint = _has_open_complaint(courier_complaints, "tig")
+        blocking_settlement_complaint = settlement_complaint and not ignore_complaints_for_billing
+        blocking_tig_complaint = tig_complaint and not ignore_complaints_for_billing
 
-        if settlement_complaint:
+        if blocking_settlement_complaint:
             settlement_status = "Reklamáció"
         elif settlement_done:
             settlement_status = "Elfogadva"
@@ -891,7 +903,7 @@ def render_settlement_feedback_overview(
         else:
             settlement_status = "Vár dokumentumra"
 
-        if tig_complaint:
+        if blocking_tig_complaint:
             tig_status = "Reklamáció"
         elif tig_done:
             tig_status = "Elfogadva"
@@ -940,11 +952,13 @@ def render_settlement_feedback_overview(
                 "complaints": courier_complaints,
                 "response_documents": courier_response_documents,
                 "feedback_owner": feedback_owner,
+                "ignore_complaints_for_billing": ignore_complaints_for_billing,
                 "display": {
                     "Futár": courier_name,
                     "courier_id": courier_id,
                     "ÁFA státusz": vat_status,
                     "Felelos": feedback_owner or "Nincs kijelolve",
+                    "Reklamáció blokkolás": "Nem blokkol" if ignore_complaints_for_billing else "Blokkol",
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
                     "Számlafeltöltés": invoice_status,
@@ -1073,6 +1087,30 @@ def render_settlement_feedback_overview(
                 updated_by=_current_username(),
             )
             st.success("A felelos mentve.")
+            st.rerun()
+
+        ignore_current = bool(selected.get("ignore_complaints_for_billing"))
+        ignore_value = st.checkbox(
+            "Számlázási folyamatnál a reklamáció ne blokkolja az elszámolás/TIG elfogadást",
+            value=ignore_current,
+            key=f"ignore_complaints_for_billing_{selected['courier_id']}_{document_month.isoformat()}",
+            disabled=_current_role() not in {"admin", "trainer"},
+        )
+        if ignore_value != ignore_current:
+            upsert_peopleforce_card_status(
+                courier_id=selected["courier_id"],
+                courier_name=selected["courier_name"],
+                action_key="ignore_complaints_for_billing",
+                document_month=document_month,
+                status="done" if ignore_value else "open",
+                status_note=(
+                    "A nyitott reklamáció nem blokkolja a számlázási folyamatot."
+                    if ignore_value
+                    else "A nyitott reklamáció blokkolja az elfogadási folyamatot."
+                ),
+                updated_by=_current_username(),
+            )
+            st.success("A reklamáció blokkolási beállítás mentve.")
             st.rerun()
         doc_cols = st.columns(3)
         for col, label, doc_key in [

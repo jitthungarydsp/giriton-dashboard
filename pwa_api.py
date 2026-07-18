@@ -888,6 +888,10 @@ def workflow_done(states: dict[str, dict], action: str) -> bool:
     return str((states.get(action) or {}).get("status") or "").lower() == "done"
 
 
+def complaints_ignored_for_billing(states: dict[str, dict]) -> bool:
+    return workflow_done(states, "ignore_complaints_for_billing")
+
+
 def has_open_complaint(complaints: list[dict], action: str) -> bool:
     for row in complaints:
         if row.get("document_type") != action:
@@ -1054,6 +1058,7 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         "documents": safe_documents,
         "complaints": complaints_by_action,
         "complaintResponses": response_documents_by_action,
+        "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1355,10 +1360,11 @@ def accept_workflow_document(
     month = parse_month(payload.month)
     if action == "tig":
         require_prerequisite(user, month, "tig")
-    documents, _statuses, complaints = read_workflow_rows(user, month)
+    documents, status_rows, complaints = read_workflow_rows(user, month)
+    states = status_map(status_rows)
     if not any(row.get("document_type") == action for row in documents):
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
-    if has_open_complaint(complaints, action):
+    if has_open_complaint(complaints, action) and not complaints_ignored_for_billing(states):
         raise HTTPException(
             status_code=409,
             detail="Nyitott reklamacio mellett nem fogadhato el a dokumentum.",
