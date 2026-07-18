@@ -19,6 +19,13 @@ public.courier_master_sheet_import
 ```
 
 Ide megy fel a Sheet/CSV teljes sora `raw_payload` JSON mezőbe.
+Emellett külön oszlopba is kiemeli a számlázáshoz fontos adatokat:
+
+- `company_name` — vállalkozás neve,
+- `tax_number` — vállalkozás adószáma,
+- `company_address` — vállalkozás székhelye,
+- `bank_account_number` — bankszámlaszám,
+- `billing_email` — számlázási e-mail.
 
 ## 2. Google Sheet letöltése CSV-be
 

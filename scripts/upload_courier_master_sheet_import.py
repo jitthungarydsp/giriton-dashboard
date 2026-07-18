@@ -61,6 +61,10 @@ def normalize_courier_id(value: Any) -> str:
     return re.sub(r"\D+", "", text)
 
 
+def normalize_tax_number(value: Any) -> str:
+    return re.sub(r"\s+", "", clean_text(value)).upper()
+
+
 def first_nonempty(row: dict[str, Any], aliases: list[str]) -> str:
     for alias in aliases:
         value = clean_text(row.get(alias))
@@ -168,6 +172,64 @@ def row_to_payload(
         ],
     )
     source_timestamp = first_nonempty(row, ["Időbélyeg", "Timestamp", "timestamp"])
+    company_name = first_nonempty(
+        row,
+        [
+            "company_name",
+            "Vallalkozas neve",
+            "Vállalkozás neve",
+            "Ceg neve",
+            "Cég neve",
+            "Cegnev",
+            "Cégnév",
+        ],
+    )
+    tax_number = normalize_tax_number(
+        first_nonempty(
+            row,
+            [
+                "tax_number",
+                "Vallalkozas adoszama",
+                "Vállalkozás adószáma:",
+                "Vállalkozás adószáma",
+                "Ceg adoszama",
+                "Cég adószáma",
+            ],
+        )
+    )
+    company_address = first_nonempty(
+        row,
+        [
+            "company_address",
+            "Vallalkozas szekhelye",
+            "Vállalkozás székhelye:",
+            "Vállalkozás székhelye",
+            "Ceg szekhelye",
+            "Cég székhelye",
+        ],
+    )
+    bank_account_number = first_nonempty(
+        row,
+        [
+            "bank_account_number",
+            "Vallalkozasa bankszamla szama",
+            "Vállalkozása bankszámla száma:",
+            "Bankszamlaszam",
+            "Bankszámlaszám",
+        ],
+    )
+    billing_email = first_nonempty(
+        row,
+        [
+            "billing_email",
+            "Szamlazasi email",
+            "Számlázási e-mail",
+            "Számlázási email",
+            "E-mail-cĂ­m",
+            "E-mail-cím",
+            "E-mail",
+        ],
+    )
     now = datetime.now(timezone.utc).isoformat()
 
     return {
@@ -179,6 +241,11 @@ def row_to_payload(
         "courier_name": courier_name or None,
         "email": email or None,
         "phone_number": phone_number or None,
+        "company_name": company_name or None,
+        "tax_number": tax_number or None,
+        "company_address": company_address or None,
+        "bank_account_number": bank_account_number or None,
+        "billing_email": billing_email or None,
         "source_timestamp": source_timestamp or None,
         "raw_payload": raw_payload,
         "updated_at": now,
@@ -277,10 +344,16 @@ def main() -> int:
 
     with_id = sum(1 for row in payloads if row.get("courier_id"))
     with_email = sum(1 for row in payloads if row.get("email"))
+    with_company = sum(1 for row in payloads if row.get("company_name"))
+    with_tax = sum(1 for row in payloads if row.get("tax_number"))
+    with_address = sum(1 for row in payloads if row.get("company_address"))
     print(f"CSV: {csv_path}")
     print(f"Beolvasott sorok: {len(payloads)}")
     print(f"Courier ID-val: {with_id}")
     print(f"E-maillel: {with_email}")
+    print(f"Vallalkozas nevvel: {with_company}")
+    print(f"Adoszammal: {with_tax}")
+    print(f"Szekhellyel: {with_address}")
     print(f"Import batch: {import_batch_id}")
 
     for row in payloads[:10]:

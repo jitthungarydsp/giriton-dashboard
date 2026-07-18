@@ -15,6 +15,11 @@ create table if not exists public.courier_master_sheet_import (
     courier_name text,
     email text,
     phone_number text,
+    company_name text,
+    tax_number text,
+    company_address text,
+    bank_account_number text,
+    billing_email text,
     source_timestamp text,
     raw_payload jsonb not null,
     imported_at timestamptz not null default now(),
@@ -34,3 +39,14 @@ create index if not exists idx_courier_master_sheet_import_email
 
 create index if not exists idx_courier_master_sheet_import_name
     on public.courier_master_sheet_import (courier_name);
+
+-- If the table already exists, run-safe schema extension.
+alter table public.courier_master_sheet_import
+    add column if not exists company_name text,
+    add column if not exists tax_number text,
+    add column if not exists company_address text,
+    add column if not exists bank_account_number text,
+    add column if not exists billing_email text;
+
+create index if not exists idx_courier_master_sheet_import_tax_number
+    on public.courier_master_sheet_import (tax_number);

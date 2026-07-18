@@ -177,7 +177,8 @@ class SupabaseRest:
             STAGING_TABLE,
             (
                 "id,source_file,source_row_number,courier_id,courier_name,"
-                "email,phone_number,raw_payload,imported_at"
+                "email,phone_number,company_name,tax_number,company_address,"
+                "bank_account_number,billing_email,raw_payload,imported_at"
             ),
             order="source_file.asc,source_row_number.asc",
         )
@@ -236,7 +237,7 @@ def build_master_patch(staging_row: dict[str, Any], master_row: dict[str, Any]) 
     provenance: list[str] = []
 
     for field, aliases in BILLING_ALIASES.items():
-        value = first_raw_value(raw_payload, aliases)
+        value = clean_text(staging_row.get(field)) or first_raw_value(raw_payload, aliases)
         if field == "tax_number":
             value = normalize_tax_number(value)
         current = clean_text(master_row.get(field))
