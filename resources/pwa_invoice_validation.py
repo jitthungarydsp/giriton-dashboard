@@ -19,6 +19,17 @@ def _tokens(value: Any) -> list[str]:
     return re.sub(r"[^a-z0-9]+", " ", _fold(value)).strip().split()
 
 
+def _address_tokens(value: Any) -> list[str]:
+    ignored = {
+        "magyarorszag",
+        "hungary",
+        "hu",
+        "cim",
+        "szekhely",
+    }
+    return [token for token in _tokens(value) if token not in ignored]
+
+
 def _parse_huf(value: Any) -> int:
     text = str(value or "").strip()
     text = re.sub(r"([,.])\d{2}\b", "", text)
@@ -285,7 +296,7 @@ def validate_invoice(
     buyer_tax = str(fields.get("buyer_tax_number") or "")
     add("ok" if buyer_tax == "32649460-2-43" else "error", "Vevő adószáma", f"Javítandó: a vevő adószáma legyen 32649460-2-43. Talált: {buyer_tax or 'nincs'}.")
 
-    expected_address_tokens = _tokens(expected_seller_address)
+    expected_address_tokens = _address_tokens(expected_seller_address)
     if expected_address_tokens:
         add("ok" if all(token in normalized_tokens for token in expected_address_tokens) else "error", "Eladó címe", f"Javítandó: az eladó címe egyezzen a profilban szereplő címmel: {expected_seller_address}.")
     else:
