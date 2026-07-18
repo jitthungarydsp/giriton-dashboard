@@ -121,19 +121,13 @@ def find_user_by_email(email):
         if user:
             return user, record_email(courier)
 
-        courier_name = normalize_text(courier.get("courier_name"))
-        if not courier_name:
-            courier_name = normalize_text(courier.get("name"))
-        for candidate in load_user_rows():
-            if normalize_text(candidate.get("username")) == courier_name:
-                return candidate, record_email(courier)
-
     return None, ""
 
 
 def registered_email_for_user(user):
     courier_id = user_courier_id(user)
-    username = normalize_text(user.get("username"))
+    if not courier_id:
+        return ""
 
     for courier in load_courier_rows():
         email = record_email(courier)
@@ -141,10 +135,6 @@ def registered_email_for_user(user):
             continue
 
         if courier_id and normalize_courier_id(courier.get("courier_id")) == courier_id:
-            return email
-
-        courier_name = normalize_text(courier.get("courier_name") or courier.get("name"))
-        if username and courier_name == username:
             return email
 
     return ""
