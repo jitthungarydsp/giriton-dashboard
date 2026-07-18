@@ -1604,7 +1604,7 @@ def show_invoice_summary_page():
 
                 if reserve_debug_df.empty:
                     st.error(
-                        "Nincs talalat a courier_target_reserve tablaban erre a courier_id-ra."
+                        "Nincs talalat a courier_target_reserve tablaban erre a courier_ID-ra."
                     )
                 else:
                     st.caption("DB sor a courier_target_reserve tablabol:")

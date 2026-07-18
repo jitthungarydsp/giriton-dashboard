@@ -55,6 +55,7 @@ DAY_RATE_TABLES = [
 TARGET_RESERVE_TABLES = [
     "courier_target_reserve",
 ]
+TARGET_RESERVE_ID_COLUMN = "courier_ID"
 
 TARGET_RESERVE_RATE = 0.10
 TARGET_RESERVE_MAX_HUF = 50000
@@ -537,31 +538,33 @@ def read_target_reserve_for_courier_ids(courier_ids):
     if not normalized_ids:
         return pd.DataFrame()
 
-    rows = []
+    chunks = []
     errors = []
-    for courier_id in normalized_ids:
+    for index in range(0, len(normalized_ids), 100):
+        chunk_ids = normalized_ids[index:index + 100]
+        filter_value = ",".join(chunk_ids)
         try:
             _table_name, chunk = read_first_existing_table(
                 TARGET_RESERVE_TABLES,
                 "*",
                 [
-                    f"courier_id=eq.{quote(courier_id, safe='')}",
+                    f"{TARGET_RESERVE_ID_COLUMN}=in.({quote(filter_value, safe='(),')})",
                 ],
-                limit=5,
+                limit=max(len(chunk_ids) + 10, 100),
             )
         except Exception as exc:
-            errors.append(f"{courier_id}: {exc}")
+            errors.append(f"{', '.join(chunk_ids[:5])}: {exc}")
             continue
         if chunk is not None and not chunk.empty:
-            rows.append(chunk)
+            chunks.append(chunk)
 
-    if not rows:
+    if not chunks:
         result = pd.DataFrame()
         if errors:
             result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
         return result
 
-    result = pd.concat(rows, ignore_index=True)
+    result = pd.concat(chunks, ignore_index=True)
     if errors:
         result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
     return result
@@ -1622,7 +1625,7 @@ def build_driver_invoice_summary(
     )
 
     # Céltartalék/biztosítás: csak az elszámolásban szereplő courier_id alapján
-    # kérdezünk rá a courier_target_reserve.courier_id mezőre.
+    # kérdezünk rá a courier_target_reserve.courier_ID mezőre.
     target_reserve_df = pd.DataFrame()
     if "courier_id" in grouped.columns:
         target_reserve_df = read_target_reserve_for_courier_ids(
@@ -1639,7 +1642,7 @@ def build_driver_invoice_summary(
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
-        id_column = "courier_id"
+        id_column = TARGET_RESERVE_ID_COLUMN
         ct_column = None
         ct_column_keys = {
             "ctzft",
