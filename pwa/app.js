@@ -814,6 +814,9 @@ function prepareReadonlyBillingProfile() {
 
 function fillBillingProfile(data = {}) {
   const values = {
+    "#profile-courier-id": data.courier_id || state.user?.courier_id || state.user?.id || "",
+    "#profile-courier-name": data.courier_name || state.user?.username || "",
+    "#profile-phone-number": data.phone_number || state.user?.phone || "",
     "#billing-company-name": data.company_name || "",
     "#billing-company-address": data.company_address || "",
     "#billing-tax-number": data.tax_number || "",

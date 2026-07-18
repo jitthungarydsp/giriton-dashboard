@@ -771,6 +771,7 @@ def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
 
 
 BILLING_PROFILE_FIELDS = (
+    "courier_id,courier_name,phone_number,"
     "company_name,company_address,tax_number,"
     "bank_account_number,billing_email,billing_data_updated_at"
 )
@@ -791,6 +792,9 @@ def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="A futár profilja nem található.")
     row = rows[0]
     return {
+        "courier_id": str(row.get("courier_id") or courier_id),
+        "courier_name": str(row.get("courier_name") or _courier_name),
+        "phone_number": str(row.get("phone_number") or ""),
         "company_name": str(row.get("company_name") or ""),
         "company_address": str(row.get("company_address") or ""),
         "tax_number": str(row.get("tax_number") or ""),
