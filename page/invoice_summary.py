@@ -20,9 +20,6 @@ import streamlit as st
 from resources.courier_master_db import read_courier_master
 from resources.invoice_summary import (
     MANUAL_ITEM_TYPES,
-    INSURANCE_DEDUCTION_HUF,
-    TARGET_RESERVE_MAX_HUF,
-    TARGET_RESERVE_RATE,
     build_display_base_rate_matrix,
     build_display_driver_summary,
     build_display_manual_items,
@@ -32,7 +29,6 @@ from resources.invoice_summary import (
     build_invoice_pdf_bytes,
     create_manual_invoice_item,
     format_huf,
-    parse_bool_flag,
     read_invoice_data,
     read_target_reserve_for_courier_ids,
 )
@@ -408,54 +404,6 @@ def resolve_courier_identity(selected_row, selected_driver):
     courier_id = normalize_courier_id(match.get("courier_id", ""))
     courier_name = str(match.get("courier_name", courier_name) or courier_name).strip()
     return courier_id, courier_name
-
-
-def force_target_reserve_by_courier_id(driver_summary):
-    if driver_summary is None or driver_summary.empty:
-        return driver_summary
-
-    result = driver_summary.copy()
-    if "courier_id" not in result.columns:
-        result["courier_id"] = ""
-
-    for row_index, row in result.iterrows():
-        courier_id = normalize_courier_id(row.get("courier_id", ""))
-        result.at[row_index, "courier_id"] = courier_id
-
-        if not courier_id:
-            result.at[row_index, "target_reserve_active"] = False
-            result.at[row_index, "target_reserve_deduction_huf"] = 0
-            result.at[row_index, "insurance_deduction_huf"] = 0
-            result.at[row_index, "payable_total_huf"] = (
-                float(row.get("payable_before_reserve_huf") or 0)
-            )
-            continue
-
-        reserve_df = read_target_reserve_for_courier_ids([courier_id])
-        if reserve_df.empty or "insurance_active" not in reserve_df.columns:
-            active = False
-        else:
-            reserve_row = reserve_df.iloc[0]
-            active = parse_bool_flag(reserve_row.get("insurance_active"))
-
-        payable_before_reserve = float(row.get("payable_before_reserve_huf") or 0)
-        target_reserve_deduction = (
-            round(min(max(payable_before_reserve, 0) * TARGET_RESERVE_RATE, TARGET_RESERVE_MAX_HUF))
-            if active
-            else 0
-        )
-        insurance_deduction = INSURANCE_DEDUCTION_HUF if active else 0
-
-        result.at[row_index, "target_reserve_active"] = active
-        result.at[row_index, "target_reserve_deduction_huf"] = target_reserve_deduction
-        result.at[row_index, "insurance_deduction_huf"] = insurance_deduction
-        result.at[row_index, "payable_total_huf"] = (
-            payable_before_reserve
-            - target_reserve_deduction
-            - insurance_deduction
-        )
-
-    return result
 
 
 def normalize_worksheet_key(value):
@@ -1481,9 +1429,6 @@ def show_invoice_summary_page():
         target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
-    feedback_driver_summary = force_target_reserve_by_courier_id(
-        feedback_driver_summary
-    )
     render_settlement_feedback_overview(
         feedback_driver_summary,
         start_date,
@@ -1519,25 +1464,10 @@ def show_invoice_summary_page():
         selected_driver,
     )
 
-    driver_summary = build_driver_invoice_summary(
-        final_df,
-        bonus_df=bonus_df,
-        penalty_df=penalty_df,
-        manual_df=manual_df,
-        day_rates_df=day_rates_df,
-        raw_route_df=raw_route_df,
-        previous_routes_df=data.get("previous_routes", pd.DataFrame()),
-        loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
-        bookings_df=data.get("bookings", pd.DataFrame()),
-        loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
-        atm_balance_df=atm_balance_df,
-        customer_rating_df=customer_rating_df,
-        monthly_adjustment_df=monthly_adjustment_df,
-        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
-        period_start=start_date,
+    driver_summary = filter_by_driver(
+        feedback_driver_summary,
+        selected_driver,
     )
-    driver_summary = force_target_reserve_by_courier_id(driver_summary)
-
     if driver_summary.empty:
         st.warning(
             "Nincs elszamolasi route adat erre a szuresre."

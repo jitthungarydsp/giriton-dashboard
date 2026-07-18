@@ -612,16 +612,10 @@ def read_invoice_data(start_date, end_date):
         f"work_date=lte.{end_text}",
         "order=driver_name.asc,work_date.asc",
     ]
-    final_columns = [
+    final_base_columns = [
         "worksheet_name",
         "row_number",
         "location",
-        "courier_id",
-        "courierID",
-        "target_reserve_active",
-        "target_reserve_ct_z_ft",
-        "target_current_reserve_huf",
-        "target_reserve_deduction_huf",
         "driver_name",
         "route_unique_id",
         "route_type",
@@ -643,20 +637,37 @@ def read_invoice_data(start_date, end_date):
         "route_total_huf",
         "comment",
     ]
-    try:
-        final_table, final_df = read_first_existing_table(
-            FINAL_TABLES,
-            ",".join(final_columns),
-            date_filters,
-            limit=50000,
-        )
-    except Exception:
-        final_table, final_df = read_first_existing_table(
-            FINAL_TABLES,
-            ",".join([column for column in final_columns if column != "courier_id"]),
-            date_filters,
-            limit=50000,
-        )
+    final_select_candidates = [
+        (
+            ["bill_jitt_invoice_final_routes_with_courier_id"],
+            final_base_columns + ["courierID"],
+        ),
+        (
+            ["bill_jitt_invoice_final_routes", "jitt_invoice_final_routes"],
+            final_base_columns + ["courier_id"],
+        ),
+        (
+            ["bill_jitt_invoice_final_routes", "jitt_invoice_final_routes"],
+            final_base_columns,
+        ),
+    ]
+    last_final_error = None
+    final_table = None
+    final_df = pd.DataFrame()
+    for table_names, final_columns in final_select_candidates:
+        try:
+            final_table, final_df = read_first_existing_table(
+                table_names,
+                ",".join(final_columns),
+                date_filters,
+                limit=50000,
+            )
+            break
+        except Exception as exc:
+            last_final_error = exc
+    else:
+        if last_final_error:
+            raise last_final_error
 
     _route_table, raw_route_df = read_optional_first_nonempty_table(
         ROUTE_TABLES,
@@ -1685,26 +1696,17 @@ def build_driver_invoice_summary(
     # A hívó régebbi verziója nem feltétlenül adja át külön a táblát,
     # ezért ilyenkor itt is megpróbáljuk beolvasni.
     if target_reserve_df is None or target_reserve_df.empty:
-        _reserve_table, target_reserve_df = read_optional_first_existing_table(
-            TARGET_RESERVE_TABLES,
-            "*",
-            limit=10000,
-        )
-
-    direct_target_reserve_df = pd.DataFrame()
-    if "courier_id" in grouped.columns:
-        direct_target_reserve_df = read_target_reserve_for_courier_ids(
-            grouped["courier_id"].dropna().tolist()
-        )
-    if direct_target_reserve_df is not None and not direct_target_reserve_df.empty:
-        target_reserve_df = pd.concat(
-            [
-                frame
-                for frame in [target_reserve_df, direct_target_reserve_df]
-                if frame is not None and not frame.empty
-            ],
-            ignore_index=True,
-        )
+        target_reserve_df = pd.DataFrame()
+        if "courier_id" in grouped.columns:
+            target_reserve_df = read_target_reserve_for_courier_ids(
+                grouped["courier_id"].dropna().tolist()
+            )
+        if target_reserve_df is None or target_reserve_df.empty:
+            _reserve_table, target_reserve_df = read_optional_first_existing_table(
+                TARGET_RESERVE_TABLES,
+                "*",
+                limit=10000,
+            )
 
     reserve_courier_ct_zft = {}
     reserve_courier_active = {}
