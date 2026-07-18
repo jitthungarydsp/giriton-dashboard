@@ -264,6 +264,45 @@ def _extract_gross_total(text: str) -> int:
     return max((_parse_huf(amount) for amount in fallback_amounts), default=0)
 
 
+def _extract_tax_numbers(text: str) -> tuple[str, str]:
+    tax_pattern = r"\b\d{8}-\d-\d{2}\b"
+    all_tax_numbers = re.findall(tax_pattern, text or "")
+    folded = _fold(text)
+    folded_tax_numbers = re.findall(tax_pattern, folded)
+
+    buyer_tax = ""
+    buyer_block_match = re.search(
+        rf"(?:vevo|vevonek|vasarlo).*?(32649460-2-43)",
+        folded,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if buyer_block_match:
+        buyer_tax = buyer_block_match.group(1)
+    elif "32649460-2-43" in folded_tax_numbers:
+        buyer_tax = "32649460-2-43"
+
+    seller_candidates = [value for value in all_tax_numbers if value != buyer_tax]
+    adoszam_matches = re.findall(
+        rf"adoszam\s*:?\s*({tax_pattern})",
+        folded,
+        flags=re.IGNORECASE,
+    )
+    seller_tax = ""
+    for value in reversed(adoszam_matches):
+        if value != buyer_tax:
+            seller_tax = value
+            break
+    if not seller_tax and seller_candidates:
+        seller_tax = seller_candidates[0]
+    if not buyer_tax:
+        for value in all_tax_numbers:
+            if value != seller_tax:
+                buyer_tax = value
+                break
+
+    return seller_tax, buyer_tax
+
+
 def extract_pdf_text(content: bytes) -> str:
     if not content:
         return ""
@@ -278,12 +317,12 @@ def extract_pdf_text(content: bytes) -> str:
 
 def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
     text = extract_pdf_text(content)
-    tax_numbers = re.findall(r"\b\d{8}-\d-\d{2}\b", text)
+    seller_tax_number, buyer_tax_number = _extract_tax_numbers(text)
     invoice_dates = _extract_invoice_dates(text)
     return {
         "text": text,
-        "seller_tax_number": tax_numbers[0] if tax_numbers else "",
-        "buyer_tax_number": tax_numbers[1] if len(tax_numbers) > 1 else "",
+        "seller_tax_number": seller_tax_number,
+        "buyer_tax_number": buyer_tax_number,
         "issue_date": invoice_dates["issue_date"],
         "performance_date": invoice_dates["performance_date"],
         "due_date": invoice_dates["due_date"],
@@ -364,7 +403,7 @@ def validate_invoice(
 
     seller_tax = str(fields.get("seller_tax_number") or "")
     if expected_seller_tax_number:
-        add("ok" if seller_tax == expected_seller_tax_number else "error", "Eladó adószáma", f"Javítandó: az eladó adószáma legyen {expected_seller_tax_number}. Talált: {seller_tax or 'nincs'}.")
+        add("ok" if seller_tax == expected_seller_tax_number else "warn", "Eladó adószáma", f"Figyelmeztetés: az eladó adószáma a profil szerint {expected_seller_tax_number}, a számlán {seller_tax or 'nincs'} szerepel.")
     else:
         add("warn" if re.fullmatch(r"\d{8}-\d-\d{2}", seller_tax) else "error", "Eladó adószáma", f"Talált: {seller_tax or 'nincs'}; a profilban még nincs összehasonlítási alapadat.")
 

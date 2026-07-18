@@ -1398,6 +1398,21 @@ def extract_labeled_date(text, label):
 def parse_invoice_pdf(content):
     text = extract_pdf_text(content)
     tax_numbers = re.findall(r"\b\d{8}-\d-\d{2}\b", text)
+    buyer_tax_number = "32649460-2-43" if "32649460-2-43" in tax_numbers else ""
+    seller_tax_number = ""
+    adoszam_matches = re.findall(
+        r"Ad[Ăło]sz[Ăˇa]m\s*:?\s*(\d{8}-\d-\d{2})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    for tax_number in reversed(adoszam_matches):
+        if tax_number != buyer_tax_number:
+            seller_tax_number = tax_number
+            break
+    if not seller_tax_number:
+        seller_tax_number = next((tax_number for tax_number in tax_numbers if tax_number != buyer_tax_number), "")
+    if not buyer_tax_number:
+        buyer_tax_number = next((tax_number for tax_number in tax_numbers if tax_number != seller_tax_number), "")
     totals = re.findall(
         r"FIZETEND[ŐO]\s+BRUTT[ÓO]\s+V[ÉE]G[ÖO]SSZEG\s*:\s*([\d\s]+)\s*Ft",
         text,
@@ -1411,8 +1426,8 @@ def parse_invoice_pdf(content):
     return {
         "text": text,
         "tax_numbers": tax_numbers,
-        "seller_tax_number": tax_numbers[0] if tax_numbers else "",
-        "buyer_tax_number": tax_numbers[1] if len(tax_numbers) > 1 else "",
+        "seller_tax_number": seller_tax_number,
+        "buyer_tax_number": buyer_tax_number,
         "issue_date": extract_labeled_date(text, r"SZ[ÁA]MLA\s+KELTE"),
         "performance_date": extract_labeled_date(text, r"TELJES[ÍI]T[ÉE]S\s+KELTE"),
         "due_date": extract_labeled_date(text, r"FIZET[ÉE]SI\s+HAT[ÁA]RID[ŐO]"),
@@ -1549,7 +1564,7 @@ def build_invoice_checks(
         if seller_tax == expected_seller_tax:
             add("ok", "Eladó adószáma", seller_tax)
         else:
-            add("error", "Eladó adószáma", f"A számlán {seller_tax or 'nem található'}, a nyilvántartásban {expected_seller_tax}.")
+            add("warn", "Eladó adószáma", f"A számlán {seller_tax or 'nem található'}, a nyilvántartásban {expected_seller_tax}.")
     elif re.fullmatch(r"\d{8}-\d-\d{2}", seller_tax):
         add("warn", "Eladó adószáma", f"Formailag megfelelő ({seller_tax}), de nincs profiladathoz összehasonlítva.")
     else:
