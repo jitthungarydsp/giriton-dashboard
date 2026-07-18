@@ -26,6 +26,7 @@ def _address_tokens(value: Any) -> list[str]:
         "hu",
         "cim",
         "szekhely",
+        "orszag",
     }
     return [token for token in _tokens(value) if token not in ignored]
 
@@ -67,6 +68,19 @@ def _extract_first_labeled_date(text: str, labels: list[str]) -> date | None:
     return None
 
 
+def _extract_near_labeled_date(text: str, labels: list[str], window: int = 220) -> date | None:
+    folded = _fold(text)
+    for label in labels:
+        for match in re.finditer(label, folded, flags=re.IGNORECASE):
+            snippet = folded[match.end() : match.end() + window]
+            date_match = re.search(r"20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}", snippet)
+            if date_match:
+                value = _parse_date(date_match.group(0))
+                if value:
+                    return value
+    return None
+
+
 def _find_date_positions(text: str) -> list[tuple[int, date]]:
     result: list[tuple[int, date]] = []
     for match in re.finditer(r"20\d{2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{1,2}", text or ""):
@@ -86,26 +100,69 @@ def _find_label_position(text: str, labels: list[str]) -> int | None:
 
 def _extract_invoice_dates(text: str) -> dict[str, date | None]:
     folded = _fold(text)
+    issue_labels = [
+        r"szamla\s+kelte",
+        r"keltezes",
+        r"kiallitas\s+datuma",
+        r"kiallitasi\s+datum",
+        r"kiallitas",
+    ]
+    performance_labels = [
+        r"teljesites\s+kelte",
+        r"teljesites\s+datuma",
+        r"teljesites",
+    ]
+    due_labels = [
+        r"fizetesi\s+hatarido",
+        r"fizetesi\s+hatar",
+    ]
     dates = {
-        "issue_date": _extract_first_labeled_date(text, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"]),
-        "performance_date": _extract_first_labeled_date(text, [r"teljesites\s+kelte", r"teljesites"]),
-        "due_date": _extract_first_labeled_date(text, [r"fizetesi\s+hatarido"]),
+        "issue_date": _extract_first_labeled_date(text, issue_labels) or _extract_near_labeled_date(text, issue_labels),
+        "performance_date": _extract_first_labeled_date(text, performance_labels) or _extract_near_labeled_date(text, performance_labels),
+        "due_date": _extract_first_labeled_date(text, due_labels) or _extract_near_labeled_date(text, due_labels),
     }
     if all(dates.values()):
         return dates
 
+    all_dates = _find_date_positions(folded)
+    unique_dates = sorted({value for _position, value in all_dates})
+    eight_day_pairs = [
+        (earlier_date, later_date)
+        for earlier_date in unique_dates
+        for later_date in unique_dates
+        if (later_date - earlier_date).days == 8
+    ]
+    if eight_day_pairs:
+        earlier_date, later_date = eight_day_pairs[-1]
+        if not dates["due_date"]:
+            dates["due_date"] = later_date
+        if not dates["issue_date"] or dates["issue_date"] == later_date:
+            dates["issue_date"] = earlier_date
+        if not dates["performance_date"] or dates["performance_date"] == earlier_date:
+            dates["performance_date"] = later_date
+
     label_positions = [
-        ("performance_date", _find_label_position(folded, [r"teljesites\s+kelte", r"teljesites"])),
-        ("issue_date", _find_label_position(folded, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"])),
-        ("due_date", _find_label_position(folded, [r"fizetesi\s+hatarido"])),
+        ("performance_date", _find_label_position(folded, performance_labels)),
+        ("issue_date", _find_label_position(folded, issue_labels)),
+        ("due_date", _find_label_position(folded, due_labels)),
     ]
     label_positions = [(key, position) for key, position in label_positions if position is not None]
     if not label_positions:
         return dates
 
-    all_dates = _find_date_positions(folded)
     if not all_dates:
         return dates
+
+    for key, label_position in label_positions:
+        if dates.get(key):
+            continue
+        nearby_dates = [
+            value
+            for position, value in all_dates
+            if label_position <= position <= label_position + 260
+        ]
+        if nearby_dates:
+            dates[key] = nearby_dates[0]
 
     label_positions.sort(key=lambda item: item[1])
     min_label_position = min(position for _key, position in label_positions)
@@ -117,9 +174,8 @@ def _extract_invoice_dates(text: str) -> dict[str, date | None]:
         for index, (key, _position) in enumerate(label_positions):
             dates[key] = dates[key] or trailing_dates[index]
 
-    unique_dates = sorted({value for _position, value in all_dates})
-    if len(unique_dates) == 2 and (unique_dates[1] - unique_dates[0]).days == 8:
-        earlier_date, later_date = unique_dates
+    if eight_day_pairs:
+        earlier_date, later_date = eight_day_pairs[-1]
         if not dates["due_date"]:
             dates["due_date"] = later_date
         if not dates["issue_date"] or dates["issue_date"] == later_date:
@@ -128,6 +184,24 @@ def _extract_invoice_dates(text: str) -> dict[str, date | None]:
             dates["performance_date"] = later_date
 
     return dates
+
+
+def _address_matches(expected_address: Any, normalized_tokens: set[str]) -> bool:
+    expected_tokens = _address_tokens(expected_address)
+    if not expected_tokens:
+        return False
+    if all(token in normalized_tokens for token in expected_tokens):
+        return True
+
+    numeric_tokens = [token for token in expected_tokens if token.isdigit()]
+    if numeric_tokens and not all(token in normalized_tokens for token in numeric_tokens):
+        return False
+
+    word_tokens = [token for token in expected_tokens if not token.isdigit()]
+    if not word_tokens:
+        return True
+    matched_words = sum(token in normalized_tokens for token in word_tokens)
+    return matched_words / max(len(word_tokens), 1) >= 0.7
 
 
 def _extract_invoice_number(text: str) -> str:
@@ -298,7 +372,7 @@ def validate_invoice(
 
     expected_address_tokens = _address_tokens(expected_seller_address)
     if expected_address_tokens:
-        add("ok" if all(token in normalized_tokens for token in expected_address_tokens) else "error", "Eladó címe", f"Javítandó: az eladó címe egyezzen a profilban szereplő címmel: {expected_seller_address}.")
+        add("ok" if _address_matches(expected_seller_address, normalized_tokens) else "error", "Eladó címe", f"Javítandó: az eladó címe egyezzen a profilban szereplő címmel: {expected_seller_address}.")
     else:
         add("warn", "Eladó címe", "A futárprofilban még nincs cím az összehasonlításhoz.")
 
