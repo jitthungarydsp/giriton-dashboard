@@ -239,6 +239,12 @@ class SupabaseRest:
     def raise_for_error(response: requests.Response) -> None:
         if response.ok:
             return
+        if response.status_code == 404 and "courier_master_sheet_import" in response.text:
+            raise RuntimeError(
+                "Hianyzik a public.courier_master_sheet_import tabla. "
+                "Futtasd le Supabase SQL Editorban: "
+                "docs/supabase_courier_master_sheet_import.sql"
+            )
         raise RuntimeError(
             f"Supabase hiba: HTTP {response.status_code}: {response.text[:2000]}"
         )
