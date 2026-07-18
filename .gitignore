@@ -4,3 +4,16 @@ venv/
 .pwa_session_secret
 muszakpro/Kod_gs_*.txt
 muszakpro/index_html_*.txt
+
+# Local imports / downloaded working files
+data/999tol.txt
+data/Letöltések/
+data/courier_master_import.csv
+scripts/*.bak
+scripts/target_reserve.csv
+
+# Local secret/key helper files
+show_vapid_public_key.py
+show_vapid_public_key.py.bak
+vapid_private.pem
+vapid_public.pem
