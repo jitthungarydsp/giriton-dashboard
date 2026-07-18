@@ -825,6 +825,16 @@ def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
     }
 
 
+def validate_bank_account_number(value: str) -> str:
+    bank_account_number = str(value or "").strip()
+    compact = re.sub(r"[\s-]+", "", bank_account_number)
+    if bank_account_number and not re.fullmatch(r"[0-9\s-]{8,40}", bank_account_number):
+        raise HTTPException(status_code=422, detail="A bankszámlaszám csak számot, szóközt és kötőjelet tartalmazhat.")
+    if compact and len(compact) not in {16, 24, 32}:
+        raise HTTPException(status_code=422, detail="A bankszámlaszám hossza nem megfelelő.")
+    return bank_account_number
+
+
 def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
     courier_id, _courier_name = courier_identity(user)
     month_value = month.isoformat()
@@ -1289,7 +1299,8 @@ def update_billing_profile(
 ):
     user = require_user(giriton_pwa_session)
     courier_id, _courier_name = courier_identity(user)
-    billing = validate_billing_profile(payload)
+    current_billing = read_billing_profile(user)
+    bank_account_number = validate_bank_account_number(payload.bank_account_number)
     now = datetime.now(timezone.utc).isoformat()
 
     supabase_rest(
@@ -1297,7 +1308,7 @@ def update_billing_profile(
         "courier_master",
         params={"courier_id": f"eq.{courier_id}"},
         payload={
-            **billing,
+            "bank_account_number": bank_account_number,
             "billing_data_source": "pwa_profile",
             "billing_data_updated_at": now,
             "updated_at": now,
@@ -1308,7 +1319,8 @@ def update_billing_profile(
     return {
         "ok": True,
         "billing": {
-            **billing,
+            **current_billing,
+            "bank_account_number": bank_account_number,
             "updated_at": now,
         },
     }

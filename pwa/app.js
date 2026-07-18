@@ -766,12 +766,13 @@ function prepareReadonlyBillingProfile() {
   if (!form) return;
 
   form.querySelectorAll("input").forEach((input) => {
-    input.readOnly = true;
-    input.setAttribute("aria-readonly", "true");
+    const editable = input.id === "billing-bank-account";
+    input.readOnly = !editable;
+    input.toggleAttribute("aria-readonly", !editable);
   });
 
   const submitButton = form.querySelector('button[type="submit"]');
-  if (submitButton) submitButton.hidden = true;
+  if (submitButton) submitButton.hidden = false;
 }
 
 function fillBillingProfile(data = {}) {
@@ -826,6 +827,43 @@ async function loadBillingProfile() {
 }
 
 prepareReadonlyBillingProfile();
+
+const billingProfileForm = $("#billing-profile-form");
+if (billingProfileForm) {
+  billingProfileForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = billingProfileForm.querySelector('button[type="submit"]');
+    const payload = {
+      company_name: $("#billing-company-name")?.value || "",
+      company_address: $("#billing-company-address")?.value || "",
+      tax_number: $("#billing-tax-number")?.value || "",
+      bank_account_number: $("#billing-bank-account")?.value || "",
+      billing_email: $("#billing-email")?.value || "",
+    };
+
+    setBillingMessage("Bankszámlaszám mentése folyamatban…");
+    if (button) button.disabled = true;
+    try {
+      const response = await api("/api/profile/billing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const billing = response.billing || response || {};
+      state.billingProfile = billing;
+      fillBillingProfile(billing);
+      setBillingMessage(
+        billing.updated_at
+          ? `Bankszámlaszám mentve. Utolsó frissítés: ${new Date(billing.updated_at).toLocaleString("hu-HU")}`
+          : "Bankszámlaszám mentve."
+      );
+    } catch (error) {
+      setBillingMessage(`A bankszámlaszám mentése sikertelen: ${error.message}`, true);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+}
 
 
 function renderValidation(target, validation, stored = null) {
