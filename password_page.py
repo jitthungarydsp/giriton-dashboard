@@ -1,3 +1,5 @@
+import re
+
 import streamlit as st
 
 from resources.courier_master_db import read_courier_master
@@ -26,6 +28,10 @@ def normalize_courier_id(value):
         return text
 
 
+def is_email(value):
+    return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", str(value or "").strip()))
+
+
 def user_courier_id(user):
     return normalize_courier_id(
         user.get("courierId")
@@ -34,72 +40,121 @@ def user_courier_id(user):
     )
 
 
-def find_user(username):
+@st.cache_data(show_spinner=False, ttl=300)
+def load_user_rows():
+    return load_users().get("users", [])
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_rows():
+    courier_master = read_courier_master()
+    if courier_master is None or courier_master.empty:
+        return []
+    return courier_master.to_dict("records")
+
+
+def find_user_by_username(username):
     clean_username = normalize_text(username)
     if not clean_username:
         return None
 
-    users = load_users().get("users", [])
-    for user in users:
+    for user in load_user_rows():
         if normalize_text(user.get("username")) == clean_username:
             return user
-
     return None
 
 
-@st.cache_data(show_spinner=False, ttl=300)
-def courier_email_lookup():
-    courier_master = read_courier_master()
-    if courier_master is None or courier_master.empty:
-        return {}, {}
+def find_user_by_courier_id(courier_id):
+    clean_id = normalize_courier_id(courier_id)
+    if not clean_id:
+        return None
 
-    by_id = {}
-    by_name = {}
-    for _, row in courier_master.iterrows():
-        row_data = row.to_dict()
-        email = str(
-            row_data.get("email")
-            or row_data.get("billing_email")
+    for user in load_user_rows():
+        if user_courier_id(user) == clean_id:
+            return user
+    return None
+
+
+def find_user_by_email(email):
+    clean_email = normalize_text(email)
+    if not clean_email:
+        return None, ""
+
+    for courier in load_courier_rows():
+        courier_email = normalize_text(
+            courier.get("email")
+            or courier.get("billing_email")
             or ""
-        ).strip()
+        )
+        if courier_email != clean_email:
+            continue
+
+        user = find_user_by_courier_id(courier.get("courier_id"))
+        if user:
+            return user, str(courier.get("email") or courier.get("billing_email") or "").strip()
+
+        courier_name = normalize_text(courier.get("courier_name"))
+        for candidate in load_user_rows():
+            if normalize_text(candidate.get("username")) == courier_name:
+                return candidate, str(courier.get("email") or courier.get("billing_email") or "").strip()
+
+    return None, ""
+
+
+def registered_email_for_user(user):
+    courier_id = user_courier_id(user)
+    username = normalize_text(user.get("username"))
+
+    for courier in load_courier_rows():
+        email = str(courier.get("email") or courier.get("billing_email") or "").strip()
         if not email:
             continue
 
-        courier_id = normalize_courier_id(row_data.get("courier_id"))
-        courier_name = normalize_text(row_data.get("courier_name"))
-        if courier_id:
-            by_id[courier_id] = email
-        if courier_name:
-            by_name[courier_name] = email
+        if courier_id and normalize_courier_id(courier.get("courier_id")) == courier_id:
+            return email
 
-    return by_id, by_name
+        if username and normalize_text(courier.get("courier_name")) == username:
+            return email
+
+    return ""
 
 
-def find_registered_email(user):
-    by_id, by_name = courier_email_lookup()
-    courier_id = user_courier_id(user)
-    if courier_id and by_id.get(courier_id):
-        return by_id[courier_id]
+def resolve_user_and_email(identifier):
+    text = str(identifier or "").strip()
+    if not text:
+        return None, ""
 
-    username = normalize_text(user.get("username"))
-    return by_name.get(username, "")
+    if is_email(text):
+        return find_user_by_email(text)
+
+    user = find_user_by_username(text)
+    if not user:
+        return None, ""
+
+    return user, registered_email_for_user(user)
 
 
 st.title("🔐 Jelszó emlékeztető")
-st.caption("A rendszer a regisztrált e-mail címre küldi ki a belépési adatokat.")
+st.caption("Add meg a felhasználónevedet vagy a regisztrált e-mail címedet.")
+
+st.info(
+    "Ha találunk aktív felhasználót, a belépési adatokat a rendszerben rögzített "
+    "saját e-mail címedre küldjük ki."
+)
 
 with st.form("password_reminder_form"):
-    username = st.text_input("Felhasználónév")
+    identifier = st.text_input("Felhasználónév vagy e-mail cím")
     submitted = st.form_submit_button(
-        "Jelszóemlékeztető küldése e-mailben",
+        "Belépési adatok elküldése",
         use_container_width=True,
     )
 
 
 if submitted:
-    user = find_user(username)
+    user, recipient = resolve_user_and_email(identifier)
+
     if not user:
-        st.error("Nem találtam ilyen felhasználónevet.")
+        st.error("Nem találtam aktív felhasználót ezzel az adattal.")
         st.stop()
 
     if not bool(user.get("active", True)):
@@ -114,12 +169,8 @@ if submitted:
         )
         st.stop()
 
-    recipient = find_registered_email(user)
     if not recipient:
-        st.error(
-            "Ehhez a felhasználóhoz nem találtam regisztrált e-mail címet "
-            "a courier_master táblában."
-        )
+        st.error("Nem találtam regisztrált e-mail címet ehhez a felhasználóhoz.")
         st.stop()
 
     try:
@@ -133,7 +184,7 @@ if submitted:
         st.stop()
 
     st.success(
-        "A jelszóemlékeztetőt elküldtük a regisztrált e-mail címre: "
+        "Elküldtük a belépési adatokat a regisztrált e-mail címre: "
         f"{result.get('recipient')}"
     )
 
