@@ -20,7 +20,9 @@ def _tokens(value: Any) -> list[str]:
 
 
 def _parse_huf(value: Any) -> int:
-    digits = re.sub(r"[^0-9-]", "", str(value or ""))
+    text = str(value or "").strip()
+    text = re.sub(r"([,.])\d{2}\b", "", text)
+    digits = re.sub(r"[^0-9-]", "", text)
     try:
         return int(digits)
     except (TypeError, ValueError):
@@ -46,7 +48,23 @@ def _extract_labeled_date(text: str, label: str) -> date | None:
     return _parse_date(match.group(1)) if match else None
 
 
+def _extract_first_labeled_date(text: str, labels: list[str]) -> date | None:
+    for label in labels:
+        value = _extract_labeled_date(text, label)
+        if value:
+            return value
+    return None
+
+
 def _extract_invoice_number(text: str) -> str:
+    original_match = re.search(
+        r"\b(?:számlaszám|szamlaszam|sorszám|sorszam|e\s*[- ]?\s*számla\s*sorszám|e\s*[- ]?\s*szamla\s*sorszam)\s*:?\s*([A-Za-z0-9][A-Za-z0-9/_-]{3,})",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    if original_match:
+        return original_match.group(1)
+
     folded = _fold(text)
     lines = [line.strip() for line in folded.splitlines() if line.strip()]
     for index, line in enumerate(lines[:-1]):
@@ -56,7 +74,7 @@ def _extract_invoice_number(text: str) -> str:
                 return candidate
 
     match = re.search(
-        r"(?:^|\n)\s*szamlaszam\s*:?\s*([a-z0-9][a-z0-9/_-]{3,})",
+        r"\b(?:szamlaszam|sorszam|e\s*szamla\s*sorszam)\s*:?\s*([a-z0-9][a-z0-9/_-]{3,})",
         folded,
         flags=re.IGNORECASE,
     )
@@ -75,6 +93,21 @@ def _extract_invoice_periods(text: str) -> set[tuple[int, int]]:
     return periods
 
 
+def _extract_gross_total(text: str) -> int:
+    folded = _fold(text)
+    patterns = [
+        r"fizetendo\s+brutto\s+vegosszeg\s*:?\s*([\d\s]+(?:[,.]\d{2})?)\s*(?:ft|huf)",
+        r"szamla\s+brutto\s+vegosszege\s*:?\s*([\d\s]+(?:[,.]\d{2})?)\s*(?:ft|huf)",
+        r"fizetendo\s+osszeg\s*:?\s*([\d\s]+(?:[,.]\d{2})?)\s*(?:ft|huf)",
+        r"ellen(?:ertek|ertek)\s*/\s*ellen(?:ertek|ertek)\s+afaval\s+egyutt.*?([\d\s]+(?:[,.]\d{2})?)",
+    ]
+    amounts = []
+    for pattern in patterns:
+        amounts.extend(re.findall(pattern, folded, flags=re.IGNORECASE | re.DOTALL))
+    parsed = [_parse_huf(amount) for amount in amounts]
+    return max(parsed, default=0)
+
+
 def extract_pdf_text(content: bytes) -> str:
     if not content:
         return ""
@@ -89,22 +122,16 @@ def extract_pdf_text(content: bytes) -> str:
 
 def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
     text = extract_pdf_text(content)
-    folded = _fold(text)
     tax_numbers = re.findall(r"\b\d{8}-\d-\d{2}\b", text)
-    totals = re.findall(
-        r"fizetendo\s+brutto\s+vegosszeg\s*:?\s*([\d\s]+)\s*ft",
-        folded,
-        flags=re.IGNORECASE,
-    )
     return {
         "text": text,
         "seller_tax_number": tax_numbers[0] if tax_numbers else "",
         "buyer_tax_number": tax_numbers[1] if len(tax_numbers) > 1 else "",
-        "issue_date": _extract_labeled_date(text, r"szamla\s+kelte"),
-        "performance_date": _extract_labeled_date(text, r"teljesites\s+kelte"),
-        "due_date": _extract_labeled_date(text, r"fizetesi\s+hatarido"),
+        "issue_date": _extract_first_labeled_date(text, [r"szamla\s+kelte", r"keltezes", r"kiallitas\s+datuma"]),
+        "performance_date": _extract_first_labeled_date(text, [r"teljesites\s+kelte", r"teljesites"]),
+        "due_date": _extract_first_labeled_date(text, [r"fizetesi\s+hatarido"]),
         "invoice_periods": _extract_invoice_periods(text),
-        "gross_total": _parse_huf(totals[-1]) if totals else 0,
+        "gross_total": _extract_gross_total(text),
         "invoice_number": _extract_invoice_number(text),
     }
 
