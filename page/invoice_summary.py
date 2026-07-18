@@ -759,6 +759,23 @@ def _first_existing_column(df, candidates):
     return None
 
 
+def vat_status_from_tax_number(tax_number):
+    text = str(tax_number or "").strip()
+    if not text:
+        return "Nincs adat"
+
+    match = re.search(r"\b\d{8}[-\s]?([0-9])[-\s]?\d{2}\b", text)
+    if not match:
+        return "Nincs adat"
+
+    vat_code = match.group(1)
+    if vat_code == "1":
+        return "Nem áfás"
+    if vat_code in {"2", "3", "4", "5"}:
+        return "Áfás"
+    return "Nincs adat"
+
+
 def _has_open_complaint(rows, document_type):
     for row in rows or []:
         if str(row.get("document_type") or "") != document_type:
@@ -789,6 +806,22 @@ def render_settlement_feedback_overview(
     latest_docs = _latest_by_courier_and_type(documents)
     latest_statuses = _latest_status_by_courier_and_action(statuses)
     complaint_lookup = _complaints_by_courier(complaints)
+    master_by_id = {}
+    master_by_name = {}
+    try:
+        master_df = read_courier_master()
+        if master_df is not None and not master_df.empty:
+            for _, master_row in master_df.iterrows():
+                master_data = master_row.to_dict()
+                master_id = normalize_courier_id(master_data.get("courier_id", ""))
+                master_name = normalize_name(master_data.get("courier_name", ""))
+                if master_id:
+                    master_by_id[master_id] = master_data
+                if master_name:
+                    master_by_name[master_name] = master_data
+    except Exception:
+        master_by_id = {}
+        master_by_name = {}
 
     courier_rows = []
     seen_couriers = set()
@@ -857,6 +890,15 @@ def render_settlement_feedback_overview(
             for item in courier_complaints
             if str(item.get("status") or "").strip().lower() != "resolved"
         )
+        master_row = master_by_id.get(courier_id) or master_by_name.get(
+            normalize_name(courier_name)
+        ) or {}
+        vat_status = vat_status_from_tax_number(
+            master_row.get("tax_number")
+            or row.get("tax_number", "")
+            or row.get("vat_number", "")
+            or row.get("adoszam", "")
+        )
 
         courier_rows.append(
             {
@@ -871,6 +913,7 @@ def render_settlement_feedback_overview(
                 "display": {
                     "Futár": courier_name,
                     "courier_id": courier_id,
+                    "ÁFA státusz": vat_status,
                     "Felelos": feedback_owner or "Nincs kijelolve",
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
