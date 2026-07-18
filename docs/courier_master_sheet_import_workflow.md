@@ -56,6 +56,20 @@ python scripts\upload_courier_master_sheet_import.py --csv-file data\courier_mas
 
 ## 4. Telefon alapján master összekötés
 
+Először érdemes megnézni, melyik forrásban van telefonszám és mennyi staging sor
+illeszthető:
+
+```powershell
+python scripts\audit_courier_phone_sources.py --export-csv data\phone_source_audit.csv
+```
+
+Ez ellenőrzi:
+
+- élő `fetch-drivers` API: `personal_info.contact_number`,
+- `courier_master.phone_number`,
+- `courier_master_sheet_import.phone_number`,
+- `dsp_drivers_live_raw` / `raw_dsp_live_drivers` JSON telefon mezői, ha vannak.
+
 Előnézet:
 
 ```powershell
