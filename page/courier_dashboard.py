@@ -27,6 +27,7 @@ from resources.courier_card_db import (
 from resources.courier_master_db import (
     read_courier_master,
     read_courier_master_by_id,
+    update_courier_master_profile,
 )
 from resources.courier_card_snapshot import read_snapshot
 from resources.app_settings import load_app_settings
@@ -1210,6 +1211,9 @@ def render_courier_profile_content(row, user):
     role = clean_display_text(user.get("role"), "-")
     email = clean_display_text(row.get("email") or user.get("email"), "-")
     phone = clean_display_text(row.get("phone") or row.get("contact_number"), "-")
+
+    render_personal_data_form(row, user)
+    st.divider()
 
     st.write(f"**Név:** {name}")
     st.write(f"**Futár ID:** #{courier_id}")
@@ -2635,6 +2639,101 @@ def render_peopleforce_placeholder_content(card):
     )
 
 
+def render_personal_data_form(row, user):
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+
+    if not courier_id:
+        st.warning("Nem talaltam futar ID-t a profil mentesehez.")
+        return
+
+    source_row = dict(row or {})
+    try:
+        master_df = read_courier_master_by_id(courier_id)
+        if not master_df.empty:
+            source_row.update(master_df.iloc[0].to_dict())
+    except Exception:
+        pass
+
+    current = {
+        "courier_name": clean_display_text(
+            source_row.get("courier_name")
+            or source_row.get("name")
+            or user.get("username")
+        ),
+        "email": clean_display_text(source_row.get("email") or user.get("email")),
+        "phone_number": clean_display_text(
+            source_row.get("phone_number")
+            or source_row.get("phone")
+            or source_row.get("contact_number")
+        ),
+        "warehouse_name": clean_display_text(
+            source_row.get("warehouse_name") or source_row.get("warehouse")
+        ),
+        "company_name": clean_display_text(source_row.get("company_name")),
+        "company_address": clean_display_text(source_row.get("company_address")),
+        "tax_number": clean_display_text(source_row.get("tax_number")),
+        "bank_account_number": clean_display_text(source_row.get("bank_account_number")),
+        "billing_email": clean_display_text(source_row.get("billing_email")),
+    }
+
+    st.subheader("Szemelyes adatok")
+    st.caption(
+        "Ezek a mezok mobilon is irhatok. Mentes utan a courier_master tabla frissul."
+    )
+    st.write(f"**Futar ID:** #{courier_id}")
+
+    with st.form(f"personal_data_form_{courier_id}"):
+        courier_name = st.text_input("Nev", value=current["courier_name"])
+        email = st.text_input("E-mail cim", value=current["email"])
+        phone_number = st.text_input("Telefonszam", value=current["phone_number"])
+        warehouse_name = st.text_input("Raktar", value=current["warehouse_name"])
+        company_name = st.text_input("Cegnev", value=current["company_name"])
+        company_address = st.text_area(
+            "Szamlazasi cim",
+            value=current["company_address"],
+            height=90,
+        )
+        tax_number = st.text_input("Adoszam", value=current["tax_number"])
+        bank_account_number = st.text_input(
+            "Bankszamlaszam",
+            value=current["bank_account_number"],
+        )
+        billing_email = st.text_input(
+            "Szamlazasi e-mail",
+            value=current["billing_email"],
+        )
+
+        submitted = st.form_submit_button(
+            "Adatok mentese",
+            use_container_width=True,
+        )
+
+    if not submitted:
+        return
+
+    try:
+        result = update_courier_master_profile(
+            courier_id,
+            {
+                "courier_name": courier_name,
+                "email": email,
+                "phone_number": phone_number,
+                "warehouse_name": warehouse_name,
+                "company_name": company_name,
+                "company_address": company_address,
+                "tax_number": tax_number,
+                "bank_account_number": bank_account_number,
+                "billing_email": billing_email,
+            },
+        )
+    except Exception as exc:
+        st.error(f"Profil adatok mentese sikertelen: {exc}")
+        return
+
+    st.success(result.get("message") or "Profil adatok mentve.")
+    st.rerun()
+
+
 def render_peopleforce_action_content(action_key, row, user, selected_month=None):
     card = get_peopleforce_card(action_key)
 
@@ -2695,6 +2794,10 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
 
     if action_key == "invoice_check":
         render_invoice_quick_check_panel(row, user, selected_month=selected_month)
+        return
+
+    if action_key == "personal_data":
+        render_personal_data_form(row, user)
         return
 
     render_peopleforce_placeholder_content(card)

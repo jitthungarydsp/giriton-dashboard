@@ -417,3 +417,56 @@ def apply_billing_staging_updates(updates, inserts=None):
     read_courier_master_by_id.clear()
     read_courier_master_sheet_import.clear()
     return {"success": success, "inserted": inserted, "failures": failures}
+
+
+def update_courier_master_profile(courier_id, profile_fields):
+    supabase_url, service_role_key = get_supabase_config()
+    courier_id = _normalize_courier_id(courier_id)
+
+    if not supabase_url or not service_role_key:
+        raise RuntimeError("Hianyzik a Supabase kapcsolat.")
+
+    if not courier_id:
+        raise RuntimeError("Hianyzik a futar ID.")
+
+    allowed_fields = {
+        "courier_name",
+        "email",
+        "phone_number",
+        "warehouse_name",
+        "company_name",
+        "company_address",
+        "tax_number",
+        "bank_account_number",
+        "billing_email",
+    }
+
+    patch = {}
+    for field, value in (profile_fields or {}).items():
+        if field not in allowed_fields:
+            continue
+
+        cleaned = _clean_text(value)
+        if field == "tax_number":
+            cleaned = _normalize_tax_number(cleaned)
+
+        patch[field] = cleaned
+
+    if not patch:
+        return {"updated": False, "message": "Nincs mentheto valtozas."}
+
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    response = requests.patch(
+        f"{supabase_url}/rest/v1/courier_master",
+        headers=_supabase_headers(service_role_key, prefer="return=minimal"),
+        params={"courier_id": f"eq.{courier_id}"},
+        json=patch,
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+
+    read_courier_master.clear()
+    read_courier_master_by_id.clear()
+
+    return {"updated": True, "message": "Profil adatok mentve."}
