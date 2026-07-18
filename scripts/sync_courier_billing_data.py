@@ -22,6 +22,7 @@ Függőségek:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -30,6 +31,7 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 
 import gspread
@@ -268,6 +270,27 @@ def read_google_rows() -> list[SourceRow]:
                 )
             )
 
+    return all_rows
+
+
+def read_csv_rows(paths: list[str]) -> list[SourceRow]:
+    all_rows: list[SourceRow] = []
+    for path_text in paths:
+        path = Path(path_text).expanduser()
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for index, row in enumerate(reader, start=2):
+                values = extract_source_values(dict(row))
+                if not any(values.values()):
+                    continue
+                all_rows.append(
+                    SourceRow(
+                        source=f"csv:{path.name}",
+                        priority=300,
+                        row_number=index,
+                        values=values,
+                    )
+                )
     return all_rows
 
 
@@ -586,12 +609,21 @@ def main() -> int:
             "futarok felvetele. Nev alapjan nem hoz letre uj sort."
         ),
     )
+    parser.add_argument(
+        "--csv-file",
+        action="append",
+        default=[],
+        help=(
+            "Google auth nelkuli import helyi CSV fajlbol. Tobbszor is megadhato. "
+            "Ha meg van adva, a Google Sheets olvasas kimarad."
+        ),
+    )
     args = parser.parse_args()
 
     ensure_required_environment()
 
     print("Google Sheets adatok olvasása...")
-    source_rows = read_google_rows()
+    source_rows = read_csv_rows(args.csv_file) if args.csv_file else read_google_rows()
     print(f"Beolvasott forrássorok: {len(source_rows)}")
 
     supabase = SupabaseRest()
