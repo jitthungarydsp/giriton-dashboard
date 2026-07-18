@@ -850,17 +850,47 @@ def build_driver_invoice_summary(
         "route_total_without_tip_huf",
         "route_total_huf",
         "calculated_base_huf",
+        "source_amount_logic_routes",
     ]
     final_df = add_numeric_columns(final_df, numeric_columns)
     final_df["source_fixed_rate_huf"] = final_df["fixed_rate_huf"]
     final_df["source_delay_bonus_huf"] = final_df["delay_bonus_huf"]
     final_df["source_compliance_bonus_huf"] = final_df["compliance_bonus_huf"]
-    final_df["fixed_rate_huf"] = final_df["calculated_base_huf"]
-    final_df["delay_bonus_huf"] = final_df["delay_bonus_huf"].map(courier_bonus_amount)
-    final_df["compliance_bonus_huf"] = final_df["compliance_bonus_huf"].map(courier_bonus_amount)
+    source_amount_mask = (
+        final_df.get("dsp", pd.Series("", index=final_df.index))
+        .astype(str)
+        .str.casefold()
+        .str.contains("dynamic", na=False)
+        | final_df["worksheet_name"]
+        .astype(str)
+        .str.casefold()
+        .str.contains("dynamic", na=False)
+    )
+    final_df["source_amount_logic_routes"] = source_amount_mask.astype(int)
+    standard_mask = ~source_amount_mask
+    final_df.loc[standard_mask, "fixed_rate_huf"] = final_df.loc[
+        standard_mask,
+        "calculated_base_huf",
+    ]
+    final_df.loc[standard_mask, "delay_bonus_huf"] = final_df.loc[
+        standard_mask,
+        "delay_bonus_huf",
+    ].map(courier_bonus_amount)
+    final_df.loc[standard_mask, "compliance_bonus_huf"] = final_df.loc[
+        standard_mask,
+        "compliance_bonus_huf",
+    ].map(courier_bonus_amount)
     final_df["bonus_total_huf"] = (
+        final_df["fuel_bonus_huf"]
+        + final_df["car_fridge_bonus_huf"]
+        + final_df["branding_huf"]
         + final_df["delay_bonus_huf"]
         + final_df["compliance_bonus_huf"]
+        + final_df["fill_rate_bonus_huf"]
+    )
+    final_df.loc[standard_mask, "bonus_total_huf"] = (
+        final_df.loc[standard_mask, "delay_bonus_huf"]
+        + final_df.loc[standard_mask, "compliance_bonus_huf"]
     )
     final_df["route_total_without_tip_huf"] = (
         final_df["fixed_rate_huf"]
@@ -1172,8 +1202,8 @@ def build_driver_invoice_summary(
         grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
     )
     grouped["bonus_total_huf"] = (
-        grouped["delay_bonus_huf"]
-        + grouped["compliance_bonus_huf"]
+        grouped["bonus_total_huf"].fillna(0)
+        + grouped["compliance_extra_huf"]
     )
     grouped["route_total_without_tip_huf"] = (
         grouped["fixed_rate_huf"] + grouped["bonus_total_huf"]
