@@ -2164,14 +2164,14 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(hero)
         story.append(Spacer(1, 0.28 * cm))
 
-        story.append(Paragraph("ALAPADATOK ÉS LEVONÁSOK", section_style))
+        story.append(Paragraph("ALAPADATOK", section_style))
         base = Table(
             [
-                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Levonások előtti fizetendő", format_huf(payable_before_reserve)],
-                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Céltartalék levonás", format_huf(-target_reserve_deduction)],
-                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Biztosítás (10 000 Ft)", format_huf(-insurance_deduction)],
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order)],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}"],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order)],
             ],
-            colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
+            colWidths=[11.0 * cm, 6.2 * cm],
         )
         apply_statement_table_style(base, font_name, bold_font_name, TableStyle, colors)
         story.append(base)
