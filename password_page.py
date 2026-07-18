@@ -3,6 +3,7 @@ import re
 import streamlit as st
 
 from resources.courier_master_db import read_courier_master
+from resources.courier_db_sheet import read_courier_db_records
 from resources.email_sender import send_login_credentials
 from resources.users import load_users
 
@@ -32,6 +33,22 @@ def is_email(value):
     return bool(re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", str(value or "").strip()))
 
 
+def record_email(record):
+    for key in [
+        "email",
+        "billing_email",
+        "credentialEmail",
+        "credential_email",
+        "contact_email",
+        "mail",
+        "e-mail",
+    ]:
+        value = str(record.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def user_courier_id(user):
     return normalize_courier_id(
         user.get("courierId")
@@ -47,10 +64,20 @@ def load_user_rows():
 
 @st.cache_data(show_spinner=False, ttl=300)
 def load_courier_rows():
-    courier_master = read_courier_master()
-    if courier_master is None or courier_master.empty:
-        return []
-    return courier_master.to_dict("records")
+    rows = []
+    try:
+        courier_master = read_courier_master()
+        if courier_master is not None and not courier_master.empty:
+            rows.extend(courier_master.to_dict("records"))
+    except Exception:
+        pass
+
+    try:
+        rows.extend(read_courier_db_records())
+    except Exception:
+        pass
+
+    return rows
 
 
 def find_user_by_username(username):
@@ -80,23 +107,26 @@ def find_user_by_email(email):
     if not clean_email:
         return None, ""
 
+    for user in load_user_rows():
+        user_email = normalize_text(record_email(user))
+        if user_email == clean_email:
+            return user, record_email(user)
+
     for courier in load_courier_rows():
-        courier_email = normalize_text(
-            courier.get("email")
-            or courier.get("billing_email")
-            or ""
-        )
+        courier_email = normalize_text(record_email(courier))
         if courier_email != clean_email:
             continue
 
         user = find_user_by_courier_id(courier.get("courier_id"))
         if user:
-            return user, str(courier.get("email") or courier.get("billing_email") or "").strip()
+            return user, record_email(courier)
 
         courier_name = normalize_text(courier.get("courier_name"))
+        if not courier_name:
+            courier_name = normalize_text(courier.get("name"))
         for candidate in load_user_rows():
             if normalize_text(candidate.get("username")) == courier_name:
-                return candidate, str(courier.get("email") or courier.get("billing_email") or "").strip()
+                return candidate, record_email(courier)
 
     return None, ""
 
@@ -106,14 +136,15 @@ def registered_email_for_user(user):
     username = normalize_text(user.get("username"))
 
     for courier in load_courier_rows():
-        email = str(courier.get("email") or courier.get("billing_email") or "").strip()
+        email = record_email(courier)
         if not email:
             continue
 
         if courier_id and normalize_courier_id(courier.get("courier_id")) == courier_id:
             return email
 
-        if username and normalize_text(courier.get("courier_name")) == username:
+        courier_name = normalize_text(courier.get("courier_name") or courier.get("name"))
+        if username and courier_name == username:
             return email
 
     return ""
@@ -154,7 +185,7 @@ if submitted:
     user, recipient = resolve_user_and_email(identifier)
 
     if not user:
-        st.error("Nem találtam aktív felhasználót ezzel az adattal.")
+        st.error("Nem találtam felhasználót ezzel az adattal.")
         st.stop()
 
     if not bool(user.get("active", True)):
@@ -187,4 +218,3 @@ if submitted:
         "Elküldtük a belépési adatokat a regisztrált e-mail címre: "
         f"{result.get('recipient')}"
     )
-
