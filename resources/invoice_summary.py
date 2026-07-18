@@ -637,7 +637,7 @@ def read_invoice_data(start_date, end_date):
     final_select_candidates = [
         (
             ["bill_jitt_invoice_final_routes_with_courier_id"],
-            final_base_columns + ["courier_id"],
+            final_base_columns + ["courierID"],
         ),
     ]
     last_final_error = None
@@ -1091,6 +1091,10 @@ def build_driver_invoice_summary(
     if "courier_id" not in final_df.columns:
         final_df["courier_id"] = ""
     final_df["courier_id"] = final_df["courier_id"].fillna("").map(normalize_courier_id_text)
+    if "courierID" in final_df.columns:
+        final_df["courier_id"] = final_df["courierID"].fillna("").map(
+            normalize_courier_id_text
+        )
 
     numeric_columns = [
         "orders",
