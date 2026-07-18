@@ -16,6 +16,7 @@ from resources.supabase_raw import (
 
 
 FINAL_TABLES = [
+    "bill_jitt_invoice_final_routes_with_courier_id",
     "bill_jitt_invoice_final_routes",
     "jitt_invoice_final_routes",
 ]
@@ -616,6 +617,7 @@ def read_invoice_data(start_date, end_date):
         "row_number",
         "location",
         "courier_id",
+        "courierID",
         "driver_name",
         "route_unique_id",
         "route_type",
@@ -1089,6 +1091,11 @@ def build_driver_invoice_summary(
     if "courier_id" not in final_df.columns:
         final_df["courier_id"] = ""
     final_df["courier_id"] = final_df["courier_id"].fillna("").map(normalize_courier_id_text)
+    if "courierID" in final_df.columns:
+        final_df["courier_id"] = final_df["courier_id"].where(
+            final_df["courier_id"] != "",
+            final_df["courierID"].fillna("").map(normalize_courier_id_text),
+        )
     if raw_route_df is not None and not raw_route_df.empty:
         raw_ids = raw_route_df.copy()
         raw_ids["courier_id_from_usernumber"] = raw_ids.apply(
