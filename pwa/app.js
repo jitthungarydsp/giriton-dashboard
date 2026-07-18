@@ -4,6 +4,8 @@ const state = {
   selectedDate: null,
   workflow: null,
   billingProfile: null,
+  checkedInvoiceFile: null,
+  checkedInvoiceMonth: null,
   currentRoute: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
@@ -836,9 +838,30 @@ function renderValidation(target, validation, stored = null) {
   </div>`;
 }
 
+function fillInvoiceSubmitFromValidation(validation) {
+  const parsed = validation?.parsed || {};
+  const invoiceNumber = $("#invoice-number");
+  const grossAmount = $("#gross-amount");
+  const tigReference = $("#tig-reference");
+
+  if (invoiceNumber && parsed.invoiceNumber) {
+    invoiceNumber.value = parsed.invoiceNumber;
+  }
+  if (grossAmount && Number(parsed.grossTotal || 0) > 0) {
+    grossAmount.value = String(parsed.grossTotal);
+  }
+  if (tigReference && !tigReference.value.trim()) {
+    const courierId = state.user?.courier_id || state.user?.id || "";
+    tigReference.value = courierId
+      ? `${courierId} - ${state.workflowMonth}`
+      : state.workflowMonth;
+  }
+}
+
 $("#invoice-check-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const checkedFile = form.get("invoice_file");
   form.append("month", state.workflowMonth);
   showWorkflowMessage("A számla ellenőrzése folyamatban…");
   try {
@@ -846,7 +869,12 @@ $("#invoice-check-form").addEventListener("submit", async (event) => {
     state.workflow = payload.workflow;
     renderWorkflow();
     renderValidation($("#invoice-check-result"), payload.validation);
-    showWorkflowMessage(payload.validation.ok ? "Sikeres ellenőrzés." : "A hibákat javítani kell a feltöltés előtt.", !payload.validation.ok);
+    if (payload.validation?.ok) {
+      state.checkedInvoiceFile = checkedFile instanceof File && checkedFile.name ? checkedFile : null;
+      state.checkedInvoiceMonth = state.workflowMonth;
+      fillInvoiceSubmitFromValidation(payload.validation);
+    }
+    showWorkflowMessage(payload.validation.ok ? "Sikeres ellenőrzés. A 6. lépés számlaadatait automatikusan kitöltöttem." : "A hibákat javítani kell a feltöltés előtt.", !payload.validation.ok);
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }
@@ -855,6 +883,15 @@ $("#invoice-check-form").addEventListener("submit", async (event) => {
 $("#invoice-submit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const selectedInvoiceFile = form.get("invoice_file");
+  const hasSelectedInvoiceFile =
+    selectedInvoiceFile instanceof File && Boolean(selectedInvoiceFile.name);
+  if (!hasSelectedInvoiceFile && state.checkedInvoiceFile && state.checkedInvoiceMonth === state.workflowMonth) {
+    form.set("invoice_file", state.checkedInvoiceFile);
+  } else if (!hasSelectedInvoiceFile) {
+    showWorkflowMessage("Előbb ellenőrizd a számlát az 5. lépésben, vagy válassz PDF-et a 6. lépésnél.", true);
+    return;
+  }
   form.append("month", state.workflowMonth);
   showWorkflowMessage("A számla végső ellenőrzése és tárolása folyamatban…");
   try {
@@ -863,7 +900,11 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     renderWorkflow();
     renderValidation($("#invoice-submit-result"), payload.validation, payload.stored);
     showWorkflowMessage(payload.stored ? "A számla bekerült a dokumentumtárba." : "A számla nem került eltárolásra, mert hibát találtunk.", !payload.stored);
-    if (payload.stored) event.currentTarget.reset();
+    if (payload.stored) {
+      event.currentTarget.reset();
+      state.checkedInvoiceFile = null;
+      state.checkedInvoiceMonth = null;
+    }
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }
@@ -873,6 +914,8 @@ $("#workflow-month").value = state.workflowMonth;
 $("#workflow-month").addEventListener("change", (event) => {
   state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
   state.workflow = null;
+  state.checkedInvoiceFile = null;
+  state.checkedInvoiceMonth = null;
   loadWorkflow();
 });
 
@@ -898,6 +941,8 @@ $("#logout").addEventListener("click", async () => {
   state.user = null;
   state.workflow = null;
   state.billingProfile = null;
+  state.checkedInvoiceFile = null;
+  state.checkedInvoiceMonth = null;
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
