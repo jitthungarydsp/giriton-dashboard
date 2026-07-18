@@ -56,6 +56,7 @@ from resources.peopleforce_documents import (
     upload_peopleforce_document_bytes,
     upsert_peopleforce_card_status,
 )
+from resources.pwa_invoice_validation import parse_invoice_pdf
 from resources.users import load_users as load_system_users
 
 
@@ -968,8 +969,20 @@ def _parse_invoice_document_details(invoice_doc):
     file_name = str(invoice_doc.get("file_name") or "").strip()
 
     invoice_number = ""
+    pdf_gross_total = 0
+    if invoice_doc.get("id"):
+        try:
+            content = read_peopleforce_document_content(invoice_doc.get("id"))
+            file_bytes = decode_document_content(content.get("file_content_base64"))
+            parsed_invoice = parse_invoice_pdf(file_bytes)
+            invoice_number = str(parsed_invoice.get("invoice_number") or "").strip()
+            pdf_gross_total = int(parsed_invoice.get("gross_total") or 0)
+        except Exception:
+            invoice_number = ""
+            pdf_gross_total = 0
+
     title_match = re.search(r"sz[aá]mla\s+(.+)$", title, flags=re.IGNORECASE)
-    if title_match:
+    if not invoice_number and title_match:
         invoice_number = title_match.group(1).strip()
     if not invoice_number:
         file_match = re.search(r"([A-Za-z]{1,6}[-_/]?\d{4}[-_/]?\d+)", file_name)
@@ -977,12 +990,14 @@ def _parse_invoice_document_details(invoice_doc):
             invoice_number = file_match.group(1).strip()
 
     amount_huf = ""
+    if pdf_gross_total:
+        amount_huf = _huf(pdf_gross_total)
     amount_match = re.search(
         r"brutt[óo]\s*:\s*([\d\s]+)\s*ft",
         note,
         flags=re.IGNORECASE,
     )
-    if amount_match:
+    if not amount_huf and amount_match:
         amount_huf = _huf(re.sub(r"\D+", "", amount_match.group(1)))
 
     reference = ""
