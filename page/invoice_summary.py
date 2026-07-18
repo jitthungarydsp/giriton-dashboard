@@ -2241,6 +2241,11 @@ def show_invoice_summary_page():
                     "cegnev, cim, adoszam. Csak a kuldheto sorokra indul a tomeges TIG."
                 )
                 st.metric("Kuldheto TIG dokumentum", tig_sendable_count)
+                if tig_preview_rows and tig_sendable_count <= 0:
+                    st.warning(
+                        "A TIG keszites elindithato, de jelenleg nincs teljesen kuldheto sor. "
+                        "A futas hibajegyzekben mutatja majd, kinel hianyzik cegnev, cim vagy adoszam."
+                    )
                 if tig_preview_rows:
                     st.dataframe(
                         pd.DataFrame(tig_preview_rows),
@@ -2373,7 +2378,7 @@ def show_invoice_summary_page():
                 "Tomeges TIG generalasa es feltoltese",
                 type="primary",
                 use_container_width=True,
-                disabled=(not tig_bulk_confirm or tig_sendable_count <= 0),
+                disabled=(not tig_bulk_confirm or driver_summary.empty),
                 key=f"tig_bulk_upload_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
             ):
                 master_lookup = master_lookup_for_tig
