@@ -18,6 +18,8 @@ SELECT_FIELDS = (
     "active,fetched_at,updated_at"
 )
 
+DEFAULT_ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
+
 STAGING_SELECT_FIELDS = (
     "id,source_file,source_row_number,courier_id,courier_name,email,phone_number,"
     "company_name,company_address,tax_number,bank_account_number,billing_email"
@@ -221,6 +223,58 @@ def _build_billing_patch(staging_row, master_row):
     return patch
 
 
+def _build_master_insert(staging_row):
+    courier_id = _normalize_courier_id(staging_row.get("courier_id"))
+    courier_name = _clean_text(staging_row.get("courier_name"))
+    if not courier_id or not courier_name:
+        return {}
+
+    try:
+        courier_id_value = int(courier_id)
+    except (TypeError, ValueError):
+        return {}
+
+    now = datetime.now(timezone.utc).isoformat()
+    row = {
+        "courier_id": courier_id_value,
+        "courier_name": courier_name,
+        "phone_number": _clean_text(staging_row.get("phone_number")),
+        "email": _clean_text(staging_row.get("email")),
+        "warehouse_name": _clean_text(staging_row.get("warehouse_name")),
+        "source_name": "courier_master_sheet_import",
+        "organization_id": DEFAULT_ORGANIZATION_ID,
+        "dsp_id": "JIT",
+        "active": True,
+        "response_json": {
+            "imported_from": "courier_master_sheet_import",
+            "source_file": staging_row.get("source_file"),
+            "source_row_number": staging_row.get("source_row_number"),
+        },
+        "fetched_at": now,
+        "updated_at": now,
+        "billing_data_source": (
+            f"courier_master_sheet_import:{staging_row.get('source_file')}:"
+            f"{staging_row.get('source_row_number')}"
+        ),
+        "billing_data_updated_at": now,
+    }
+
+    for field in (
+        "company_name",
+        "company_address",
+        "tax_number",
+        "bank_account_number",
+        "billing_email",
+    ):
+        value = _clean_text(staging_row.get(field))
+        if field == "tax_number":
+            value = _normalize_tax_number(value)
+        if value:
+            row[field] = value
+
+    return row
+
+
 def build_billing_staging_update_preview(courier_ids=None):
     courier_filter = {
         _normalize_courier_id(courier_id)
@@ -248,13 +302,32 @@ def build_billing_staging_update_preview(courier_ids=None):
 
     updates = []
     no_match = []
+    inserts = []
     seen_master_ids = set()
+    seen_insert_ids = set()
     for staging_row in staging_df.to_dict("records"):
         staging_id = _normalize_courier_id(staging_row.get("courier_id"))
         master_row = master_by_id.get(staging_id) if staging_id else None
         if not master_row:
             master_row = master_by_phone.get(_normalize_phone(staging_row.get("phone_number")))
         if not master_row:
+            if (
+                staging_id
+                and staging_id not in master_by_id
+                and staging_id not in seen_insert_ids
+                and (not courier_filter or staging_id in courier_filter)
+            ):
+                insert_row = _build_master_insert(staging_row)
+                if insert_row:
+                    seen_insert_ids.add(staging_id)
+                    inserts.append(
+                        {
+                            "courier_id": staging_id,
+                            "courier_name": staging_row.get("courier_name"),
+                            "row": insert_row,
+                        }
+                    )
+                    continue
             no_match.append(staging_row)
             continue
 
@@ -278,18 +351,20 @@ def build_billing_staging_update_preview(courier_ids=None):
 
     return {
         "updates": updates,
+        "inserts": inserts,
         "no_match": no_match,
         "master_count": len(master_df),
         "staging_count": len(staging_df),
     }
 
 
-def apply_billing_staging_updates(updates):
+def apply_billing_staging_updates(updates, inserts=None):
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hiányzik a Supabase kapcsolat.")
 
     success = 0
+    inserted = 0
     failures = []
     for update in updates:
         courier_id = _normalize_courier_id(update.get("courier_id"))
@@ -314,7 +389,31 @@ def apply_billing_staging_updates(updates):
                 }
             )
 
+    insert_rows = [dict(row.get("row") or {}) for row in (inserts or []) if row.get("row")]
+    if insert_rows:
+        response = requests.post(
+            f"{supabase_url}/rest/v1/courier_master",
+            headers=_supabase_headers(
+                service_role_key,
+                prefer="resolution=merge-duplicates,return=minimal",
+            ),
+            params={"on_conflict": "courier_id"},
+            json=insert_rows,
+            timeout=60,
+        )
+        if response.ok:
+            inserted = len(insert_rows)
+        else:
+            for row in insert_rows:
+                failures.append(
+                    {
+                        "courier_id": row.get("courier_id"),
+                        "courier_name": row.get("courier_name"),
+                        "error": response.text[:1000],
+                    }
+                )
+
     read_courier_master.clear()
     read_courier_master_by_id.clear()
     read_courier_master_sheet_import.clear()
-    return {"success": success, "failures": failures}
+    return {"success": success, "inserted": inserted, "failures": failures}

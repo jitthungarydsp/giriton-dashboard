@@ -2283,8 +2283,12 @@ def show_invoice_summary_page():
                 billing_sync_preview = st.session_state.get(billing_sync_key)
                 if billing_sync_preview:
                     sync_updates = billing_sync_preview.get("updates", [])
-                    st.metric("Frissitheto futar", len(sync_updates))
+                    sync_inserts = billing_sync_preview.get("inserts", [])
+                    sync_metric1, sync_metric2 = st.columns(2)
+                    sync_metric1.metric("Frissitheto futar", len(sync_updates))
+                    sync_metric2.metric("Ujkent felveheto futar", len(sync_inserts))
                     if sync_updates:
+                        st.markdown("**Meglevo courier_master sorok frissitese**")
                         st.dataframe(
                             pd.DataFrame(
                                 [
@@ -2308,8 +2312,27 @@ def show_invoice_summary_page():
                             use_container_width=True,
                             hide_index=True,
                         )
-                    else:
-                        st.info("Nincs frissitendo szamlazasi adat a jelenlegi szuresben.")
+                    if sync_inserts:
+                        st.markdown("**Uj courier_master sorok felvetele**")
+                        st.dataframe(
+                            pd.DataFrame(
+                                [
+                                    {
+                                        "courier_id": row.get("courier_id"),
+                                        "Futar": row.get("courier_name"),
+                                        "Telefon": (row.get("row") or {}).get("phone_number"),
+                                        "Email": (row.get("row") or {}).get("email"),
+                                        "Cegnev": (row.get("row") or {}).get("company_name"),
+                                        "Adoszam": (row.get("row") or {}).get("tax_number"),
+                                    }
+                                    for row in sync_inserts
+                                ]
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    if not sync_updates and not sync_inserts:
+                        st.info("Nincs frissitendo vagy ujkent felveheto adat a jelenlegi szuresben.")
                     billing_sync_confirm = st.checkbox(
                         "Megerősitem a tomeges courier_master szamlazasi adatfrissitest.",
                         key=f"billing_sync_confirm_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
@@ -2318,16 +2341,17 @@ def show_invoice_summary_page():
                         "Tomeges szamlazasi adatok kitoltese",
                         type="primary",
                         use_container_width=True,
-                        disabled=(not billing_sync_confirm or not sync_updates),
+                        disabled=(not billing_sync_confirm or (not sync_updates and not sync_inserts)),
                         key=f"billing_sync_apply_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
                     ):
                         try:
-                            result = apply_billing_staging_updates(sync_updates)
+                            result = apply_billing_staging_updates(sync_updates, sync_inserts)
                             st.session_state.pop(billing_sync_key, None)
                             st.cache_data.clear()
                             if result["failures"]:
                                 st.warning(
                                     f"Frissitve: {result['success']}, "
+                                    f"uj felvetel: {result.get('inserted', 0)}, "
                                     f"hibas: {len(result['failures'])}."
                                 )
                                 st.dataframe(
@@ -2338,7 +2362,8 @@ def show_invoice_summary_page():
                             else:
                                 st.success(
                                     f"Tomeges szamlazasi adatkitoltes kesz. "
-                                    f"Frissitve: {result['success']} futar."
+                                    f"Frissitve: {result['success']} futar, "
+                                    f"uj felvetel: {result.get('inserted', 0)}."
                                 )
                             st.rerun()
                         except Exception as exc:
