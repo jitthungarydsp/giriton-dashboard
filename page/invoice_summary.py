@@ -1437,6 +1437,15 @@ def show_invoice_summary_page():
         target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
+    target_reserve_errors = []
+    if "target_reserve_lookup_error" in feedback_driver_summary.columns:
+        target_reserve_errors = [
+            str(value)
+            for value in feedback_driver_summary["target_reserve_lookup_error"].dropna().unique()
+            if str(value).strip()
+        ]
+    if target_reserve_errors:
+        st.error(f"Celtartalek DB lookup hiba: {target_reserve_errors[0]}")
     render_settlement_feedback_overview(
         feedback_driver_summary,
         start_date,
@@ -1572,6 +1581,10 @@ def show_invoice_summary_page():
                             ),
                             "Biztositas levonas": format_huf(
                                 selected_debug_row.get("insurance_deduction_huf", 0)
+                            ),
+                            "Celtartalek DB lookup hiba": str(
+                                selected_debug_row.get("target_reserve_lookup_error", "")
+                                or ""
                             ),
                         }
                     ]

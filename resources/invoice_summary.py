@@ -538,22 +538,33 @@ def read_target_reserve_for_courier_ids(courier_ids):
         return pd.DataFrame()
 
     rows = []
+    errors = []
     for courier_id in normalized_ids:
-        _table_name, chunk = read_first_existing_table(
-            TARGET_RESERVE_TABLES,
-            "*",
-            [
-                f"courier_id=eq.{quote(courier_id, safe='')}",
-            ],
-            limit=5,
-        )
+        try:
+            _table_name, chunk = read_first_existing_table(
+                TARGET_RESERVE_TABLES,
+                "*",
+                [
+                    f"courier_id=eq.{quote(courier_id, safe='')}",
+                ],
+                limit=5,
+            )
+        except Exception as exc:
+            errors.append(f"{courier_id}: {exc}")
+            continue
         if chunk is not None and not chunk.empty:
             rows.append(chunk)
 
     if not rows:
-        return pd.DataFrame()
+        result = pd.DataFrame()
+        if errors:
+            result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
+        return result
 
-    return pd.concat(rows, ignore_index=True)
+    result = pd.concat(rows, ignore_index=True)
+    if errors:
+        result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
+    return result
 
 
 def post_supabase_row(table_names, row):
@@ -1617,6 +1628,11 @@ def build_driver_invoice_summary(
         target_reserve_df = read_target_reserve_for_courier_ids(
             grouped["courier_id"].dropna().tolist()
         )
+    target_reserve_lookup_error = ""
+    if target_reserve_df is not None:
+        target_reserve_lookup_error = str(
+            target_reserve_df.attrs.get("target_reserve_lookup_error") or ""
+        )
 
     reserve_courier_ct_zft = {}
     reserve_courier_active = {}
@@ -1701,6 +1717,7 @@ def build_driver_invoice_summary(
         target_reserve_active,
         axis=1,
     ).map(parse_bool_flag)
+    grouped["target_reserve_lookup_error"] = target_reserve_lookup_error
     grouped["has_target_reserve"] = grouped["target_reserve_active"]
     grouped["target_reserve_ct_zft_huf"] = grouped["target_reserve_ct_zft_huf"].map(
         parse_huf_amount
