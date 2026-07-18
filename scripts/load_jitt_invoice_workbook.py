@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 import sys
@@ -421,11 +422,18 @@ def build_route_rows(
             else:
                 record[target_key] = clean_text(value)
 
-        if forced_courier_id:
-            record["courier_id"] = forced_courier_id
-
+        route_courier_id = forced_courier_id or clean_text(record.get("courier_id"))
+        if route_courier_id:
+            row_data["usernumber"] = route_courier_id
+            row_data["courier_id"] = route_courier_id
+            record["courier_id"] = route_courier_id
+            final_record = build_final_route_row(record)
+            final_record["courier_id"] = route_courier_id
+        else:
+            final_record = build_final_route_row(record)
+        record.pop("courier_id", None)
         route_rows.append(record)
-        final_rows.append(build_final_route_row(record))
+        final_rows.append(final_record)
 
     return route_rows, final_rows
 
@@ -721,6 +729,30 @@ def raise_for_supabase_error(response):
         raise
 
 
+def missing_column_from_response(response):
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        return ""
+
+    if payload.get("code") != "PGRST204":
+        return ""
+
+    message = str(payload.get("message") or "")
+    match = re.search(r"Could not find the '([^']+)' column", message)
+    if not match:
+        return ""
+
+    return match.group(1)
+
+
+def without_column(rows, column):
+    return [
+        {key: value for key, value in row.items() if key != column}
+        for row in rows
+    ]
+
+
 def post_supabase_rows(table_names, rows, on_conflict):
     if not rows:
         return 0
@@ -762,6 +794,16 @@ def post_supabase_rows(table_names, rows, on_conflict):
 
             if response.status_code in [404, 406]:
                 continue
+
+            missing_column = missing_column_from_response(response)
+            if missing_column:
+                batch = without_column(batch, missing_column)
+                response = requests.post(
+                    endpoint,
+                    headers=headers,
+                    json=batch,
+                    timeout=90,
+                )
 
             raise_for_supabase_error(response)
             selected_table = table_name
