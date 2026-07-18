@@ -455,13 +455,29 @@ def update_courier_master_profile(courier_id, profile_fields):
     if not patch:
         return {"updated": False, "message": "Nincs mentheto valtozas."}
 
-    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    patch["updated_at"] = now
 
-    response = requests.patch(
+    upsert_row = dict(patch)
+    try:
+        upsert_row["courier_id"] = int(courier_id)
+    except (TypeError, ValueError):
+        upsert_row["courier_id"] = courier_id
+
+    upsert_row.setdefault("source_name", "profile_form")
+    upsert_row.setdefault("organization_id", DEFAULT_ORGANIZATION_ID)
+    upsert_row.setdefault("dsp_id", "JIT")
+    upsert_row.setdefault("active", True)
+    upsert_row.setdefault("fetched_at", now)
+
+    response = requests.post(
         f"{supabase_url}/rest/v1/courier_master",
-        headers=_supabase_headers(service_role_key, prefer="return=minimal"),
-        params={"courier_id": f"eq.{courier_id}"},
-        json=patch,
+        headers=_supabase_headers(
+            service_role_key,
+            prefer="resolution=merge-duplicates,return=minimal",
+        ),
+        params={"on_conflict": "courier_id"},
+        json=upsert_row,
         timeout=30,
     )
     raise_for_supabase_error(response)

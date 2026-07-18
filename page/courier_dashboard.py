@@ -2642,17 +2642,14 @@ def render_peopleforce_placeholder_content(card):
 def render_personal_data_form(row, user):
     courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
 
-    if not courier_id:
-        st.warning("Nem talaltam futar ID-t a profil mentesehez.")
-        return
-
     source_row = dict(row or {})
-    try:
-        master_df = read_courier_master_by_id(courier_id)
-        if not master_df.empty:
-            source_row.update(master_df.iloc[0].to_dict())
-    except Exception:
-        pass
+    if courier_id:
+        try:
+            master_df = read_courier_master_by_id(courier_id)
+            if not master_df.empty:
+                source_row.update(master_df.iloc[0].to_dict())
+        except Exception:
+            pass
 
     current = {
         "courier_name": clean_display_text(
@@ -2680,9 +2677,17 @@ def render_personal_data_form(row, user):
     st.caption(
         "Ezek a mezok mobilon is irhatok. Mentes utan a courier_master tabla frissul."
     )
-    st.write(f"**Futar ID:** #{courier_id}")
+    if courier_id:
+        st.caption("A Courier ID mar rogzitve van, ezert nem modosithato.")
+    else:
+        st.warning("Ehhez a profilhoz meg nincs Courier ID. Itt most megadhato.")
 
-    with st.form(f"personal_data_form_{courier_id}"):
+    with st.form(f"personal_data_form_{courier_id or 'missing'}"):
+        entered_courier_id = st.text_input(
+            "Courier ID",
+            value=courier_id,
+            disabled=bool(courier_id),
+        )
         courier_name = st.text_input("Nev", value=current["courier_name"])
         email = st.text_input("E-mail cim", value=current["email"])
         phone_number = st.text_input("Telefonszam", value=current["phone_number"])
@@ -2711,9 +2716,15 @@ def render_personal_data_form(row, user):
     if not submitted:
         return
 
+    target_courier_id = normalize_id(courier_id or entered_courier_id)
+
+    if not target_courier_id:
+        st.error("Courier ID nelkul nem mentheto a profil.")
+        return
+
     try:
         result = update_courier_master_profile(
-            courier_id,
+            target_courier_id,
             {
                 "courier_name": courier_name,
                 "email": email,
