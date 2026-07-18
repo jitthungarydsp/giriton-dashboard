@@ -1290,6 +1290,117 @@ def render_settlement_feedback_overview(
         f"{row['courier_id']}|{row['courier_name']}": row
         for row in courier_rows
     }
+
+    with st.container(border=True):
+        st.markdown("**Lista gyors műveletek**")
+        st.caption("Számlakép megnyitása és hónap lezárása közvetlenül a visszajelző listából.")
+        quick_key = st.selectbox(
+            "Futár a gyors műveletekhez",
+            list(rows_by_key),
+            format_func=lambda key: (
+                f"{rows_by_key[key]['courier_name']} "
+                f"#{rows_by_key[key]['courier_id']} - "
+                f"{rows_by_key[key].get('display', {}).get('Folyamat lezárása', '')}"
+            ),
+            key=f"settlement_feedback_quick_driver_{document_month.isoformat()}",
+        )
+        quick_selected = rows_by_key[quick_key]
+        quick_invoice_document = quick_selected.get("invoice_doc")
+        quick_payment_done = (
+            str(quick_selected.get("display", {}).get("Folyamat lezárása") or "") == "Lezárva"
+        )
+        quick_cols = st.columns([1, 1, 1])
+        quick_invoice_bytes = b""
+        quick_invoice_mime = ""
+        if quick_invoice_document:
+            try:
+                quick_invoice_content = read_peopleforce_document_content(
+                    quick_invoice_document.get("id")
+                )
+                quick_invoice_bytes = decode_document_content(
+                    quick_invoice_content.get("file_content_base64")
+                )
+                quick_invoice_mime = str(
+                    quick_invoice_document.get("mime_type") or "application/pdf"
+                )
+            except Exception as exc:
+                st.warning(f"A számlakép nem olvasható: {exc}")
+
+        if quick_invoice_bytes:
+            quick_cols[0].download_button(
+                "Számlakép megnyitása / letöltése",
+                data=quick_invoice_bytes,
+                file_name=str(quick_invoice_document.get("file_name") or "szamla.pdf"),
+                mime=quick_invoice_mime,
+                key=f"quick_invoice_download_{quick_invoice_document.get('id')}",
+                use_container_width=True,
+            )
+            show_quick_invoice = quick_cols[1].checkbox(
+                "Számlakép mutatása",
+                key=f"quick_invoice_preview_{quick_invoice_document.get('id')}",
+            )
+        else:
+            quick_cols[0].button(
+                "Nincs számlakép",
+                key=f"quick_invoice_missing_{quick_selected['courier_id']}_{document_month.isoformat()}",
+                use_container_width=True,
+                disabled=True,
+            )
+            show_quick_invoice = False
+
+        if quick_payment_done:
+            quick_cols[2].button(
+                "Hónap lezárva",
+                key=f"quick_invoice_paid_done_{quick_selected['courier_id']}_{document_month.isoformat()}",
+                use_container_width=True,
+                disabled=True,
+            )
+        else:
+            if quick_cols[2].button(
+                "Hónap lezárása",
+                key=f"quick_invoice_paid_{quick_selected['courier_id']}_{document_month.isoformat()}",
+                use_container_width=True,
+                disabled=(
+                    _current_role() not in {"admin", "trainer"}
+                    or not quick_selected.get("invoice_doc")
+                ),
+            ):
+                close_note = "Számla elfogadva, kifizetés megtörtént. Hónap lezárva."
+                upsert_peopleforce_card_status(
+                    courier_id=quick_selected["courier_id"],
+                    courier_name=quick_selected["courier_name"],
+                    action_key="invoice_payment",
+                    document_month=document_month,
+                    status="done",
+                    status_note=close_note,
+                    updated_by=_current_username(),
+                )
+                upsert_peopleforce_card_status(
+                    courier_id=quick_selected["courier_id"],
+                    courier_name=quick_selected["courier_name"],
+                    action_key="my_invoices",
+                    document_month=document_month,
+                    status="done",
+                    status_note=close_note,
+                    updated_by=_current_username(),
+                )
+                st.success("A hónap lezárva ennél a futárnál.")
+                st.rerun()
+
+        if show_quick_invoice and quick_invoice_bytes:
+            if "pdf" in quick_invoice_mime.lower():
+                encoded_quick_invoice = base64.b64encode(quick_invoice_bytes).decode("ascii")
+                st.markdown(
+                    f'<iframe src="data:application/pdf;base64,{encoded_quick_invoice}" '
+                    'width="100%" height="720" style="border:1px solid #ddd;border-radius:8px;"></iframe>',
+                    unsafe_allow_html=True,
+                )
+            elif quick_invoice_mime.lower().startswith("image/"):
+                st.image(
+                    quick_invoice_bytes,
+                    caption=str(quick_invoice_document.get("file_name") or "Számla"),
+                )
+
     selected_filter_key = normalize_person_key(selected_driver_filter)
     matched_key = ""
     if selected_driver_filter != "Mind" and selected_filter_key:
