@@ -506,6 +506,13 @@ function renderWorkflow() {
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
   setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
   setPanelLocked("#invoice-submit-panel", Boolean(workflowStep("invoice_submit").locked));
+  const overrideNotice = state.workflow?.invoiceValidationOverride
+    ? `<div class="notice">Admin továbbengedés aktív: a számlaellenőrzési hibák figyelmeztetésként kezelődnek.</div>`
+    : "";
+  const checkInfo = $("#invoice-check-info");
+  if (checkInfo) checkInfo.innerHTML = `${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
+  const submitInfo = $("#invoice-submit-info");
+  if (submitInfo) submitInfo.innerHTML = `${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
   $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
@@ -532,8 +539,8 @@ function waitingWorkflow() {
     steps: titles.map(([key, title, locked]) => ({ key, title, locked, done: false })),
     states: {},
     documents: { settlement: [], tig: [], invoice: [] },
-    complaints: { settlement: [], tig: [] },
-    complaintResponses: { settlement: [], tig: [] },
+    complaints: { settlement: [], tig: [], invoice_check: [], invoice_submit: [] },
+    complaintResponses: { settlement: [], tig: [], invoice_check: [], invoice_submit: [] },
     updatedAt: new Date().toISOString(),
   };
 }
@@ -583,6 +590,36 @@ async function submitComplaint(event, action) {
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }
+}
+
+async function requestInvoiceHelp(action) {
+  const labels = {
+    invoice_check: "számlaellenőrzés",
+    invoice_submit: "számlafeltöltés",
+  };
+  const message = `Elakadtam a(z) ${labels[action] || action} lépésnél, segítséget kérek.`;
+  showWorkflowMessage("Segítségkérés küldése…");
+  try {
+    const payload = await api("/api/workflow/complaints", {
+      method: "POST",
+      body: JSON.stringify({ month: state.workflowMonth, action, message }),
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("A segítségkérés megérkezett az admin elszámolási felületére.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+const invoiceCheckHelpButton = $("#invoice-check-help");
+if (invoiceCheckHelpButton) {
+  invoiceCheckHelpButton.addEventListener("click", () => requestInvoiceHelp("invoice_check"));
+}
+
+const invoiceSubmitHelpButton = $("#invoice-submit-help");
+if (invoiceSubmitHelpButton) {
+  invoiceSubmitHelpButton.addEventListener("click", () => requestInvoiceHelp("invoice_submit"));
 }
 
 

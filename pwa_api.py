@@ -902,6 +902,29 @@ def complaints_ignored_for_billing(states: dict[str, dict]) -> bool:
     return workflow_done(states, "ignore_complaints_for_billing")
 
 
+def invoice_validation_override_enabled(states: dict[str, dict]) -> bool:
+    return workflow_done(states, "invoice_validation_override")
+
+
+def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> dict[str, Any]:
+    if not enabled or not result or result.get("ok"):
+        return result
+    checks = []
+    for check in result.get("checks") or []:
+        updated = dict(check)
+        if updated.get("status") == "error":
+            updated["status"] = "warn"
+            updated["detail"] = f"Továbbengedve admin engedéllyel. {updated.get('detail') or ''}".strip()
+        checks.append(updated)
+    result = dict(result)
+    result["checks"] = checks
+    result["errors"] = 0
+    result["warnings"] = sum(check.get("status") == "warn" for check in checks)
+    result["ok"] = True
+    result["override"] = True
+    return result
+
+
 def has_open_complaint(complaints: list[dict], action: str) -> bool:
     for row in complaints:
         if row.get("document_type") != action:
@@ -1027,16 +1050,17 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         }
         for row in response_documents
     ]
+    complaint_actions = ("settlement", "tig", "invoice_check", "invoice_submit")
     complaints_by_action = {
         action: [row for row in complaints if row.get("document_type") == action]
-        for action in ("settlement", "tig")
+        for action in complaint_actions
     }
     response_documents_by_action = {
         action: [
             row for row in safe_response_documents
             if f"({action})" in str(row.get("title") or "")
         ]
-        for action in ("settlement", "tig")
+        for action in complaint_actions
     }
     for action, rows in complaints_by_action.items():
         action_responses = response_documents_by_action.get(action, [])
@@ -1069,6 +1093,7 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         "complaints": complaints_by_action,
         "complaintResponses": response_documents_by_action,
         "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
+        "invoiceValidationOverride": invoice_validation_override_enabled(states),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1396,7 +1421,7 @@ def create_workflow_complaint(
     payload: ComplaintRequest,
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    if payload.action not in {"settlement", "tig"}:
+    if payload.action not in {"settlement", "tig", "invoice_check", "invoice_submit"}:
         raise HTTPException(status_code=422, detail="Reklamáció csak elszámoláshoz vagy TIG-hez küldhető.")
     message = payload.message.strip()
     if not message:
@@ -1466,6 +1491,8 @@ async def check_invoice(
     require_prerequisite(user, month_value, "invoice_check")
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
+    _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
+    override_enabled = invoice_validation_override_enabled(status_map(status_rows))
     result = validate_invoice(
         file_name=invoice_file.filename or "szamla",
         content=content,
@@ -1476,6 +1503,7 @@ async def check_invoice(
         expected_seller_tax_number=read_billing_profile(user)["tax_number"],
         expected_seller_address=read_billing_profile(user)["company_address"],
     )
+    result = apply_invoice_validation_override(result, override_enabled)
     if result["ok"]:
         upsert_workflow_status(
             user,
@@ -1503,6 +1531,8 @@ async def submit_invoice(
     require_prerequisite(user, month_value, "invoice_submit")
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
+    _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
+    override_enabled = invoice_validation_override_enabled(status_map(status_rows))
     result = validate_invoice(
         file_name=invoice_file.filename or "szamla",
         content=content,
@@ -1517,6 +1547,7 @@ async def submit_invoice(
         expected_seller_tax_number=read_billing_profile(user)["tax_number"],
         expected_seller_address=read_billing_profile(user)["company_address"],
     )
+    result = apply_invoice_validation_override(result, override_enabled)
     if not result["ok"]:
         return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
 

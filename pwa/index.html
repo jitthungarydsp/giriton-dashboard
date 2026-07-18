@@ -79,6 +79,8 @@
             <label>PDF számla<input id="invoice-check-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
             <button class="primary" type="submit">Számla ellenőrzése</button>
           </form>
+          <button id="invoice-check-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>
+          <div id="invoice-check-info"></div>
           <div id="invoice-check-result"></div>
         </section>
 
@@ -93,6 +95,8 @@
             <label class="full-width">Végleges PDF számla (üresen az 5. lépésben ellenőrzött fájlt küldi be)<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
             <button class="primary full-width" type="submit">Ellenőrzés és számlafeltöltés</button>
           </form>
+          <button id="invoice-submit-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>
+          <div id="invoice-submit-info"></div>
           <div id="invoice-submit-result"></div>
           <div id="invoice-document-list"></div>
         </section>

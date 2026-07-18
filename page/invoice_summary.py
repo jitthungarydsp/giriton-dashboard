@@ -1088,6 +1088,9 @@ def render_settlement_feedback_overview(
         ignore_complaints_for_billing = _ignore_complaints_from_status(
             latest_statuses.get((courier_id, "ignore_complaints_for_billing"))
         )
+        invoice_validation_override = _is_done(
+            latest_statuses.get((courier_id, "invoice_validation_override"))
+        )
         settlement_complaint = _has_open_complaint(courier_complaints, "settlement")
         tig_complaint = _has_open_complaint(courier_complaints, "tig")
         settlement_response_status = _courier_document_response_status(
@@ -1163,6 +1166,7 @@ def render_settlement_feedback_overview(
                 "response_documents": courier_response_documents,
                 "feedback_owner": feedback_owner,
                 "ignore_complaints_for_billing": ignore_complaints_for_billing,
+                "invoice_validation_override": invoice_validation_override,
                 "display": {
                     "Futár": courier_name,
                     "courier_id": courier_id,
@@ -1174,6 +1178,7 @@ def render_settlement_feedback_overview(
                     "TIG": tig_status,
                     "TIG visszajelzés": tig_response_status,
                     "Számlafeltöltés": invoice_status,
+                    "Számla override": "Engedélyezve" if invoice_validation_override else "",
                     "Számla visszajelzés": "Rendben" if invoice_details.get("invoice_number") else ("Hiányzik a számlaszám" if invoice_doc else "Nincs számla"),
                     "Számlázó név": courier_name,
                     "Bankszámlaszám": master_row.get("bank_account_number", ""),
@@ -1233,6 +1238,7 @@ def render_settlement_feedback_overview(
         "TIG",
         "TIG visszajelzés",
         "Számlafeltöltés",
+        "Számla override",
         "Számla visszajelzés",
         "Számlázó név",
         "Számlaszám",
@@ -1369,6 +1375,66 @@ def render_settlement_feedback_overview(
             )
             st.success("A reklamáció blokkolási beállítás mentve.")
             st.rerun()
+        override_current = bool(selected.get("invoice_validation_override"))
+        override_value = st.checkbox(
+            "Számlaellenőrzési hibák csak figyelmeztetésként kezelése ennél a futárnál",
+            value=override_current,
+            key=f"invoice_validation_override_{selected['courier_id']}_{document_month.isoformat()}",
+            disabled=_current_role() not in {"admin", "trainer"},
+        )
+        if override_value != override_current:
+            upsert_peopleforce_card_status(
+                courier_id=selected["courier_id"],
+                courier_name=selected["courier_name"],
+                action_key="invoice_validation_override",
+                document_month=document_month,
+                status="done" if override_value else "open",
+                status_note=(
+                    "Admin engedélyezte, hogy a számlaellenőrzési hibák figyelmeztetéssel továbbengedjenek."
+                    if override_value
+                    else "Számlaellenőrzési override kikapcsolva."
+                ),
+                updated_by=_current_username(),
+            )
+            st.success("A számlaellenőrzési továbbengedés beállítása mentve.")
+            st.rerun()
+
+        push_cols = st.columns(2)
+        if push_cols[0].button(
+            "Számlaellenőrzés továbbengedése",
+            key=f"push_invoice_check_{selected['courier_id']}_{document_month.isoformat()}",
+            use_container_width=True,
+            disabled=_current_role() not in {"admin", "trainer"},
+        ):
+            upsert_peopleforce_card_status(
+                courier_id=selected["courier_id"],
+                courier_name=selected["courier_name"],
+                action_key="invoice_check",
+                document_month=document_month,
+                status="done",
+                status_note="Admin kézzel továbbengedte a számlaellenőrzést.",
+                updated_by=_current_username(),
+            )
+            st.success("A számlaellenőrzés készre állítva.")
+            st.rerun()
+        if push_cols[1].button(
+            "Számlafeltöltés továbbengedése",
+            key=f"push_invoice_submit_{selected['courier_id']}_{document_month.isoformat()}",
+            use_container_width=True,
+            disabled=_current_role() not in {"admin", "trainer"} or not selected.get("invoice_doc"),
+        ):
+            upsert_peopleforce_card_status(
+                courier_id=selected["courier_id"],
+                courier_name=selected["courier_name"],
+                action_key="invoice_submit",
+                document_month=document_month,
+                status="done",
+                status_note="Admin kézzel továbbengedte a számlafeltöltést.",
+                updated_by=_current_username(),
+            )
+            st.success("A számlafeltöltés készre állítva.")
+            st.rerun()
+
         doc_cols = st.columns(3)
         for col, label, doc_key in [
             (doc_cols[0], "Elszámolás", "settlement_doc"),
@@ -1475,7 +1541,12 @@ def render_settlement_feedback_overview(
             st.success("Nincs nyitott reklamáció ennél a futárnál.")
         else:
             st.warning(f"{len(active_complaints)} nyitott reklamáció vár válaszra.")
-            type_labels = {"settlement": "Elszámolás", "tig": "TIG"}
+            type_labels = {
+                "settlement": "Elszámolás",
+                "tig": "TIG",
+                "invoice_check": "Számlaellenőrzés",
+                "invoice_submit": "Számlafeltöltés",
+            }
             for complaint in active_complaints:
                 complaint_id = complaint.get("id")
                 document_type = str(complaint.get("document_type") or "")
@@ -1517,7 +1588,12 @@ def render_settlement_feedback_overview(
         response_documents = selected.get("response_documents", [])
         if resolved_complaints or response_documents:
             with st.expander("Lezart reklamaciok es admin valaszok", expanded=False):
-                type_labels = {"settlement": "Elszamolas", "tig": "TIG"}
+                type_labels = {
+                    "settlement": "Elszamolas",
+                    "tig": "TIG",
+                    "invoice_check": "Szamlaellenorzes",
+                    "invoice_submit": "Szamlafeltoltes",
+                }
                 shown_response_document_ids = set()
                 for complaint in resolved_complaints:
                     complaint_id = str(complaint.get("id") or "")
