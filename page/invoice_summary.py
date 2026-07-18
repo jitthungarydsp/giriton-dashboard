@@ -2142,25 +2142,89 @@ def show_invoice_summary_page():
                 value=True,
                 key=f"tig_bulk_only_accepted_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
             )
+            document_month = month_start_from_date(start_date)
+            try:
+                master_df_for_tig = read_courier_master()
+            except Exception as exc:
+                master_df_for_tig = pd.DataFrame()
+                st.warning(f"Szamlazasi torzsadat nem olvashato: {exc}")
+            master_lookup_for_tig = build_courier_master_lookup(master_df_for_tig)
+            try:
+                settlement_status_lookup_for_tig = _latest_status_by_courier_and_action(
+                    read_peopleforce_card_statuses_for_month(document_month, "settlement")
+                )
+            except Exception as exc:
+                settlement_status_lookup_for_tig = {}
+                st.warning(f"Elszamolas elfogadasi statusz nem olvashato: {exc}")
+
+            tig_preview_rows = []
+            tig_sendable_count = 0
+            for _, preview_row in driver_summary.reset_index(drop=True).iterrows():
+                preview_driver_name = str(preview_row.get("driver_name") or "").strip()
+                preview_courier_id, preview_courier_name = resolve_settlement_identity(
+                    preview_row,
+                    preview_driver_name,
+                )
+                preview_courier_id = normalize_courier_id(preview_courier_id)
+                preview_master_row = master_lookup_for_tig.get(preview_courier_id, {})
+                preview_accepted = _is_done(
+                    settlement_status_lookup_for_tig.get((preview_courier_id, "settlement"))
+                )
+                missing_billing_fields = [
+                    label
+                    for label, value in [
+                        ("cegnev", preview_master_row.get("company_name")),
+                        ("cim", preview_master_row.get("company_address")),
+                        ("adoszam", preview_master_row.get("tax_number")),
+                    ]
+                    if not str(value or "").strip()
+                ]
+                passes_acceptance_filter = (
+                    preview_accepted or not tig_only_accepted_settlement
+                )
+                sendable = bool(
+                    preview_courier_id
+                    and passes_acceptance_filter
+                    and not missing_billing_fields
+                )
+                if sendable:
+                    tig_sendable_count += 1
+                tig_preview_rows.append(
+                    {
+                        "Futar": preview_courier_name or preview_driver_name,
+                        "courier_id": preview_courier_id or "Hianyzik",
+                        "Elszamolas elfogadva": "Igen" if preview_accepted else "Nem",
+                        "Szamlazasi adatok": (
+                            "OK" if not missing_billing_fields else "Hianyos"
+                        ),
+                        "Hianyzo adat": ", ".join(missing_billing_fields),
+                        "Kuldheto TIG": "Igen" if sendable else "Nem",
+                    }
+                )
+            with st.expander("TIG kuldesi elokeszites es szamlazasi adatok", expanded=False):
+                st.caption(
+                    "A TIG a courier_master szamlazasi adataibol toltodik automatikusan: "
+                    "cegnev, cim, adoszam. Csak a kuldheto sorokra indul a tomeges TIG."
+                )
+                st.metric("Kuldheto TIG dokumentum", tig_sendable_count)
+                if tig_preview_rows:
+                    st.dataframe(
+                        pd.DataFrame(tig_preview_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                else:
+                    st.info("Nincs futar a jelenlegi szuresben.")
+
             if st.button(
                 "Tomeges TIG generalasa es feltoltese",
                 type="primary",
                 use_container_width=True,
-                disabled=(not tig_bulk_confirm or driver_summary.empty),
+                disabled=(not tig_bulk_confirm or tig_sendable_count <= 0),
                 key=f"tig_bulk_upload_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
             ):
-                document_month = month_start_from_date(start_date)
-                try:
-                    master_df = read_courier_master()
-                except Exception:
-                    master_df = pd.DataFrame()
-                master_lookup = build_courier_master_lookup(master_df)
-                try:
-                    settlement_status_lookup = _latest_status_by_courier_and_action(
-                        read_peopleforce_card_statuses_for_month(document_month, "settlement")
-                    )
-                except Exception:
-                    settlement_status_lookup = {}
+                master_lookup = master_lookup_for_tig
+                settlement_status_lookup = settlement_status_lookup_for_tig
 
                 uploaded_count = 0
                 skipped_count = 0
