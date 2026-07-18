@@ -1176,6 +1176,7 @@ def render_settlement_feedback_overview(
                     "Számlafeltöltés": invoice_status,
                     "Számla visszajelzés": "Rendben" if invoice_details.get("invoice_number") else ("Hiányzik a számlaszám" if invoice_doc else "Nincs számla"),
                     "Számlázó név": courier_name,
+                    "Bankszámlaszám": master_row.get("bank_account_number", ""),
                     "Számlaszám": invoice_details.get("invoice_number", ""),
                     "Számla összeg": invoice_details.get("amount_huf", ""),
                     "Közlemény": invoice_details.get("reference", ""),
@@ -1364,10 +1365,12 @@ def render_settlement_feedback_overview(
         invoice_document = selected.get("invoice_doc")
         if invoice_document:
             invoice_details = selected.get("invoice_details") or {}
-            detail_cols = st.columns(3)
+            selected_display = selected.get("display", {})
+            detail_cols = st.columns(4)
             detail_cols[0].metric("Számlaszám", invoice_details.get("invoice_number") or "Nincs adat")
             detail_cols[1].metric("Számla összeg", invoice_details.get("amount_huf") or "Nincs adat")
-            detail_cols[2].metric("Közlemény", invoice_details.get("reference") or "Nincs adat")
+            detail_cols[2].metric("Bankszámlaszám", selected_display.get("Bankszámlaszám") or "Nincs adat")
+            detail_cols[3].metric("Közlemény", invoice_details.get("reference") or "Nincs adat")
             try:
                 invoice_content = read_peopleforce_document_content(invoice_document.get("id"))
                 invoice_bytes = decode_document_content(invoice_content.get("file_content_base64"))
