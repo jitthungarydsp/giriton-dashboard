@@ -406,6 +406,14 @@ def resolve_courier_identity(selected_row, selected_driver):
     return courier_id, courier_name
 
 
+def resolve_settlement_identity(selected_row, selected_driver):
+    courier_id = normalize_courier_id(selected_row.get("courier_id", ""))
+    courier_name = str(
+        selected_row.get("driver_name", selected_driver) or selected_driver
+    ).strip()
+    return courier_id, courier_name
+
+
 def normalize_worksheet_key(value):
     text = str(value or "").strip().upper()
     text = text.replace("-", "_").replace(" ", "_")
@@ -786,7 +794,7 @@ def render_settlement_feedback_overview(
     seen_couriers = set()
     for _, row in driver_summary.iterrows():
         fallback_name = str(row.get("driver_name") or "").strip()
-        courier_id, courier_name = resolve_courier_identity(row, fallback_name)
+        courier_id, courier_name = resolve_settlement_identity(row, fallback_name)
         if not courier_id:
             continue
         if courier_id in seen_couriers:
@@ -862,7 +870,7 @@ def render_settlement_feedback_overview(
                 "feedback_owner": feedback_owner,
                 "display": {
                     "Futár": courier_name,
-                    "Courier ID": courier_id,
+                    "USERNUMBER": courier_id,
                     "Felelos": feedback_owner or "Nincs kijelolve",
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
@@ -1241,7 +1249,7 @@ def render_invoice_delivery_status(route_driver_names, document_month):
                 sent_rows.append(
                     {
                         "Futár": name,
-                        "Courier ID": details.get("courier_id"),
+                        "USERNUMBER": details.get("courier_id"),
                         "Feltöltve": details.get("uploaded_at"),
                     }
                 )
@@ -1535,7 +1543,7 @@ def show_invoice_summary_page():
     )
     if selected_driver != "Mind" and not driver_summary.empty:
         selected_debug_row = driver_summary.iloc[0]
-        debug_courier_id, debug_courier_name = resolve_courier_identity(
+        debug_courier_id, debug_courier_name = resolve_settlement_identity(
             selected_debug_row,
             selected_driver,
         )
@@ -1614,7 +1622,7 @@ def show_invoice_summary_page():
 
     if selected_driver != "Mind" and not driver_summary.empty:
         selected_row = driver_summary.iloc[0]
-        courier_id, courier_name = resolve_courier_identity(selected_row, selected_driver)
+        courier_id, courier_name = resolve_settlement_identity(selected_row, selected_driver)
         if courier_id:
             try:
                 complaints = read_peopleforce_complaints(
@@ -1686,7 +1694,7 @@ def show_invoice_summary_page():
         filename_driver = "osszes"
         if selected_driver != "Mind" and not driver_summary.empty:
             selected_row = driver_summary.iloc[0]
-            courier_id, _courier_name = resolve_courier_identity(
+            courier_id, _courier_name = resolve_settlement_identity(
                 selected_row,
                 selected_driver,
             )
@@ -1704,7 +1712,7 @@ def show_invoice_summary_page():
         )
         if selected_driver != "Mind" and not driver_summary.empty:
             selected_row = driver_summary.iloc[0]
-            download_courier_id, download_courier_name = resolve_courier_identity(
+            download_courier_id, download_courier_name = resolve_settlement_identity(
                 selected_row,
                 selected_driver,
             )
@@ -1824,7 +1832,7 @@ def show_invoice_summary_page():
                     bulk_driver_name = str(
                         bulk_row.get("driver_name") or ""
                     ).strip()
-                    bulk_courier_id, bulk_courier_name = resolve_courier_identity(
+                    bulk_courier_id, bulk_courier_name = resolve_settlement_identity(
                         bulk_row,
                         bulk_driver_name,
                     )
@@ -1998,7 +2006,7 @@ def show_invoice_summary_page():
                 total_rows = len(driver_summary)
                 for row_index, bulk_row in driver_summary.reset_index(drop=True).iterrows():
                     driver_name = str(bulk_row.get("driver_name") or "").strip()
-                    courier_id, courier_name = resolve_courier_identity(bulk_row, driver_name)
+                    courier_id, courier_name = resolve_settlement_identity(bulk_row, driver_name)
                     courier_id = normalize_courier_id(courier_id)
                     status_box.write(
                         f"TIG keszites: {courier_name or driver_name or 'Ismeretlen futar'} "
@@ -2103,7 +2111,7 @@ def show_invoice_summary_page():
                 key=f"individual_invoice_pdf_{selected_driver}_{start_date.isoformat()}",
             )
             selected_row = driver_summary.iloc[0]
-            courier_id, courier_name = resolve_courier_identity(
+            courier_id, courier_name = resolve_settlement_identity(
                 selected_row,
                 selected_driver,
             )
