@@ -100,6 +100,8 @@ textarea { min-height: 96px; resize: vertical; }
 .process-form { margin-top: 18px; }
 .process-form.two-column { grid-template-columns: 1fr; }
 .full-width { grid-column: 1 / -1; }
+.checkbox-line { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: #f9faf8; color: var(--ink); }
+.checkbox-line input[type="checkbox"] { width: 20px; height: 20px; padding: 0; flex: 0 0 auto; accent-color: var(--green-dark); }
 .result-box { display: grid; gap: 8px; margin-top: 16px; }
 .result-summary { padding: 13px; border-radius: 13px; font-weight: 850; }
 .result-summary.ok { background: #e5f3e1; color: #275d31; }

@@ -89,6 +89,7 @@
             <label>Bruttó összeg (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
             <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
+            <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true" /> Számlaszám egyezés ellenőrzés kihagyása</label>
             <label class="full-width">Végleges PDF számla (üresen az 5. lépésben ellenőrzött fájlt küldi be)<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
             <button class="primary full-width" type="submit">Ellenőrzés és számlafeltöltés</button>
           </form>

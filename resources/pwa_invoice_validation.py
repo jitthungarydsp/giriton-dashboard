@@ -322,6 +322,7 @@ def validate_invoice(
     invoice_number: str = "",
     gross_amount: int = 0,
     require_submission_fields: bool = False,
+    skip_invoice_number_match: bool = False,
     expected_seller_tax_number: str = "",
     expected_seller_address: str = "",
 ) -> dict[str, Any]:
@@ -415,7 +416,10 @@ def validate_invoice(
         add("ok" if invoice_number.strip() else "error", "Számlaszám", invoice_number.strip() or "Kötelező mező.")
         pdf_number = str(fields.get("invoice_number") or "")
         if invoice_number.strip() and pdf_number:
-            add("ok" if _tokens(invoice_number) == _tokens(pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
+            if skip_invoice_number_match:
+                add("warn", "Számlaszám egyezése", f"Kihagyva admin/futár jelölés alapján. Megadva: {invoice_number}; PDF: {pdf_number}.")
+            else:
+                add("ok" if _tokens(invoice_number) == _tokens(pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
         add("ok" if gross_amount > 0 else "error", "Bruttó összeg", _format_huf(gross_amount) if gross_amount > 0 else "0 Ft fölötti összeg szükséges.")
         if gross_amount > 0 and pdf_gross:
             add("ok" if gross_amount == pdf_gross else "error", "Megadott bruttó összeg", f"Megadva: {_format_huf(gross_amount)}; PDF: {_format_huf(pdf_gross)}.")

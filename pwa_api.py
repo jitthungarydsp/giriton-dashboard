@@ -1482,6 +1482,7 @@ async def submit_invoice(
     gross_amount: int = Form(...),
     tig_reference: str = Form(default=""),
     note: str = Form(default=""),
+    skip_invoice_number_match: bool = Form(default=False),
     invoice_file: UploadFile = File(...),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
@@ -1500,6 +1501,7 @@ async def submit_invoice(
         invoice_number=invoice_number,
         gross_amount=gross_amount,
         require_submission_fields=True,
+        skip_invoice_number_match=skip_invoice_number_match,
         expected_seller_tax_number=read_billing_profile(user)["tax_number"],
         expected_seller_address=read_billing_profile(user)["company_address"],
     )
