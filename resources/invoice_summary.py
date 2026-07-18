@@ -537,25 +537,23 @@ def read_target_reserve_for_courier_ids(courier_ids):
     if not normalized_ids:
         return pd.DataFrame()
 
-    chunks = []
-    for index in range(0, len(normalized_ids), 100):
-        chunk_ids = normalized_ids[index:index + 100]
-        filter_value = ",".join(chunk_ids)
-        _table_name, chunk = read_optional_first_existing_table(
+    rows = []
+    for courier_id in normalized_ids:
+        _table_name, chunk = read_first_existing_table(
             TARGET_RESERVE_TABLES,
             "*",
             [
-                f"courier_id=in.({filter_value})",
+                f"courier_id=eq.{quote(courier_id, safe='')}",
             ],
-            limit=max(len(chunk_ids) + 10, 100),
+            limit=5,
         )
         if chunk is not None and not chunk.empty:
-            chunks.append(chunk)
+            rows.append(chunk)
 
-    if not chunks:
+    if not rows:
         return pd.DataFrame()
 
-    return pd.concat(chunks, ignore_index=True)
+    return pd.concat(rows, ignore_index=True)
 
 
 def post_supabase_row(table_names, row):
