@@ -639,14 +639,6 @@ def read_invoice_data(start_date, end_date):
             ["bill_jitt_invoice_final_routes_with_courier_id"],
             final_base_columns + ["courier_id"],
         ),
-        (
-            ["bill_jitt_invoice_final_routes", "jitt_invoice_final_routes"],
-            final_base_columns + ["courier_id"],
-        ),
-        (
-            ["bill_jitt_invoice_final_routes", "jitt_invoice_final_routes"],
-            final_base_columns,
-        ),
     ]
     last_final_error = None
     final_table = None
@@ -749,11 +741,7 @@ def read_invoice_data(start_date, end_date):
         limit=1000,
     )
 
-    _target_reserve_table, target_reserve_df = read_optional_first_existing_table(
-        TARGET_RESERVE_TABLES,
-        "*",
-        limit=10000,
-    )
+    target_reserve_df = pd.DataFrame()
 
     previous_start, previous_end = previous_month_bounds(start_date)
     _previous_table, previous_routes_df = read_optional_first_existing_table(
@@ -1620,20 +1608,13 @@ def build_driver_invoice_summary(
         + grouped["atm_effect_huf"]
     )
 
-    # A hívó régebbi verziója nem feltétlenül adja át külön a táblát,
-    # ezért ilyenkor itt is megpróbáljuk beolvasni.
-    if target_reserve_df is None or target_reserve_df.empty:
-        target_reserve_df = pd.DataFrame()
-        if "courier_id" in grouped.columns:
-            target_reserve_df = read_target_reserve_for_courier_ids(
-                grouped["courier_id"].dropna().tolist()
-            )
-        if target_reserve_df is None or target_reserve_df.empty:
-            _reserve_table, target_reserve_df = read_optional_first_existing_table(
-                TARGET_RESERVE_TABLES,
-                "*",
-                limit=10000,
-            )
+    # Céltartalék/biztosítás: csak az elszámolásban szereplő courier_id alapján
+    # kérdezünk rá a courier_target_reserve.courier_id mezőre.
+    target_reserve_df = pd.DataFrame()
+    if "courier_id" in grouped.columns:
+        target_reserve_df = read_target_reserve_for_courier_ids(
+            grouped["courier_id"].dropna().tolist()
+        )
 
     reserve_courier_ct_zft = {}
     reserve_courier_active = {}
