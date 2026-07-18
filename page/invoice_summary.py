@@ -57,6 +57,7 @@ from resources.peopleforce_documents import (
     upsert_peopleforce_card_status,
 )
 from resources.pwa_invoice_validation import parse_invoice_pdf
+from resources.email_sender import send_invoice_payment_notification
 from resources.users import load_users as load_system_users
 
 
@@ -1017,6 +1018,26 @@ def _parse_invoice_document_details(invoice_doc):
     }
 
 
+def _notify_invoice_payment_to_courier(selected, document_month):
+    recipient = str(selected.get("courier_email") or "").strip()
+    if not recipient:
+        return "missing_email"
+
+    invoice_details = selected.get("invoice_details") or {}
+    try:
+        send_invoice_payment_notification(
+            recipient=recipient,
+            courier_name=selected.get("courier_name"),
+            document_month=document_month,
+            invoice_number=invoice_details.get("invoice_number", ""),
+            amount_huf=invoice_details.get("amount_huf", ""),
+        )
+    except Exception as exc:
+        return f"error: {exc}"
+
+    return "sent"
+
+
 def render_settlement_feedback_overview(
     driver_summary,
     document_month,
@@ -1167,6 +1188,12 @@ def render_settlement_feedback_overview(
                 "feedback_owner": feedback_owner,
                 "ignore_complaints_for_billing": ignore_complaints_for_billing,
                 "invoice_validation_override": invoice_validation_override,
+                "courier_email": str(
+                    master_row.get("billing_email")
+                    or master_row.get("email")
+                    or master_row.get("email_address")
+                    or ""
+                ).strip(),
                 "display": {
                     "Futár": courier_name,
                     "courier_id": courier_id,
@@ -1384,7 +1411,16 @@ def render_settlement_feedback_overview(
                     status_note=close_note,
                     updated_by=_current_username(),
                 )
-                st.success("A hónap lezárva ennél a futárnál.")
+                email_result = _notify_invoice_payment_to_courier(
+                    quick_selected,
+                    document_month,
+                )
+                if email_result == "sent":
+                    st.success("A hónap lezárva, a kifizetési értesítő e-mail elküldve.")
+                elif email_result == "missing_email":
+                    st.warning("A hónap lezárva, de nincs e-mail cím a futár törzsadatában.")
+                else:
+                    st.warning(f"A hónap lezárva, de az e-mail küldés nem sikerült: {email_result}")
                 st.rerun()
 
         if show_quick_invoice and quick_invoice_bytes:
@@ -1546,6 +1582,65 @@ def render_settlement_feedback_overview(
             st.success("A számlafeltöltés készre állítva.")
             st.rerun()
 
+        with st.expander("Admin manuális számlafeltöltés", expanded=False):
+            st.caption(
+                "Ha a futárnál elakad a számlaellenőrzés vagy a feltöltés, itt adminból fel tudod tölteni a beadott számlát."
+            )
+            manual_invoice_file = st.file_uploader(
+                "Beadott számla PDF / kép",
+                type=["pdf", "png", "jpg", "jpeg"],
+                key=f"manual_invoice_upload_{selected['courier_id']}_{document_month.isoformat()}",
+            )
+            manual_invoice_note = st.text_input(
+                "Megjegyzés a manuális feltöltéshez",
+                value="Admin manuális számlafeltöltés.",
+                key=f"manual_invoice_note_{selected['courier_id']}_{document_month.isoformat()}",
+            )
+            if st.button(
+                "Manuális számla feltöltése és továbbengedése",
+                key=f"manual_invoice_save_{selected['courier_id']}_{document_month.isoformat()}",
+                use_container_width=True,
+                disabled=(
+                    _current_role() not in {"admin", "trainer"}
+                    or manual_invoice_file is None
+                ),
+            ):
+                file_bytes = manual_invoice_file.getvalue()
+                upload_peopleforce_document_bytes(
+                    courier_id=selected["courier_id"],
+                    courier_name=selected["courier_name"],
+                    document_type="invoice",
+                    document_month=document_month,
+                    title=f"Admin manuális számla - {selected['courier_name']}",
+                    note=manual_invoice_note,
+                    file_name=str(manual_invoice_file.name or "szamla.pdf"),
+                    mime_type=str(manual_invoice_file.type or "application/octet-stream"),
+                    file_bytes=file_bytes,
+                    uploaded_by=_current_username(),
+                )
+                status_note = "Admin manuálisan feltöltötte a beadott számlát."
+                for action_key in ("invoice_check", "invoice_submit"):
+                    upsert_peopleforce_card_status(
+                        courier_id=selected["courier_id"],
+                        courier_name=selected["courier_name"],
+                        action_key=action_key,
+                        document_month=document_month,
+                        status="done",
+                        status_note=status_note,
+                        updated_by=_current_username(),
+                    )
+                upsert_peopleforce_card_status(
+                    courier_id=selected["courier_id"],
+                    courier_name=selected["courier_name"],
+                    action_key="my_invoices",
+                    document_month=document_month,
+                    status="open",
+                    status_note="Admin manuális számlafeltöltés után kifizetésre vár.",
+                    updated_by=_current_username(),
+                )
+                st.success("A számla adminból feltöltve, a számlaellenőrzés és számlafeltöltés továbbengedve.")
+                st.rerun()
+
         doc_cols = st.columns(3)
         for col, label, doc_key in [
             (doc_cols[0], "Elszámolás", "settlement_doc"),
@@ -1635,7 +1730,16 @@ def render_settlement_feedback_overview(
                         status_note=close_note,
                         updated_by=_current_username(),
                     )
-                    st.success("A számla kifizetése rögzítve, a hónap lezárva.")
+                    email_result = _notify_invoice_payment_to_courier(
+                        selected,
+                        document_month,
+                    )
+                    if email_result == "sent":
+                        st.success("A számla kifizetése rögzítve, a hónap lezárva, az e-mail elküldve.")
+                    elif email_result == "missing_email":
+                        st.warning("A számla kifizetése rögzítve, de nincs e-mail cím a futár törzsadatában.")
+                    else:
+                        st.warning(f"A számla kifizetése rögzítve, de az e-mail küldés nem sikerült: {email_result}")
                     st.rerun()
 
         active_complaints = [

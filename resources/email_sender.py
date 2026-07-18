@@ -167,6 +167,58 @@ def build_new_document_message(
     return message, config
 
 
+def build_invoice_payment_message(
+    recipient,
+    courier_name="",
+    document_month="",
+    invoice_number="",
+    amount_huf="",
+):
+    recipient = validate_email(recipient)
+    login_url = get_setting(
+        "PWA_LOGIN_URL",
+        get_setting(
+            "APP_LOGIN_URL",
+            "https://giriton-courier-pwa.onrender.com/",
+        ),
+    )
+    config = smtp_config()
+
+    clean_name = str(courier_name or "Futár").strip()
+    clean_month = str(document_month or "").strip()[:7]
+    clean_invoice_number = str(invoice_number or "").strip()
+    clean_amount = str(amount_huf or "").strip()
+
+    message = EmailMessage()
+    message["Subject"] = "Számlád kifizetésre kerül"
+    message["From"] = formataddr((config["from_name"], config["from_email"]))
+    message["To"] = recipient
+
+    details = []
+    if clean_month:
+        details.append(f"Hónap: {clean_month}")
+    if clean_invoice_number:
+        details.append(f"Számlaszám: {clean_invoice_number}")
+    if clean_amount:
+        details.append(f"Összeg: {clean_amount}")
+
+    detail_text = "\n".join(details)
+    if detail_text:
+        detail_text = f"\n{detail_text}\n"
+
+    message.set_content(
+        f"Kedves {clean_name}!\n\n"
+        "A beküldött számládat admin oldalon elfogadtuk, "
+        "a számla kifizetésre kerül.\n"
+        f"{detail_text}\n"
+        f"A folyamatot az új felületen itt tudod megnézni:\n{login_url}\n\n"
+        "Üdvözlettel:\n"
+        "Jitt Hungary Kft.\n"
+    )
+
+    return message, config
+
+
 def send_message(message, config):
     context = ssl.create_default_context()
 
@@ -233,6 +285,28 @@ def send_new_document_notification(
         document_type=document_type,
         document_month=document_month,
         title=title,
+    )
+    send_message(message, config)
+
+    return {
+        "recipient": validate_email(recipient),
+        "subject": str(message["Subject"]),
+    }
+
+
+def send_invoice_payment_notification(
+    recipient,
+    courier_name="",
+    document_month="",
+    invoice_number="",
+    amount_huf="",
+):
+    message, config = build_invoice_payment_message(
+        recipient,
+        courier_name=courier_name,
+        document_month=document_month,
+        invoice_number=invoice_number,
+        amount_huf=amount_huf,
     )
     send_message(message, config)
 
