@@ -159,7 +159,7 @@ def build_new_document_message(
         f"Új {label} dokumentumod érkezett a Jitt rendszerben.\n"
         f"Hónap: {clean_month or '-'}\n"
         f"Dokumentum: {clean_title}\n\n"
-        f"Az új felületen itt tudod megnézni:\n{login_url}\n\n"
+        f"Az új felületen itt tudod megnézni:\nhttps://giriton-courier-pwa.onrender.com/\n\n"
         "Üdvözlettel:\n"
         "Jitt Hungary Kft.\n"
     )
