@@ -372,7 +372,7 @@ def validate_invoice(
 
     expected_address_tokens = _address_tokens(expected_seller_address)
     if expected_address_tokens:
-        add("ok" if _address_matches(expected_seller_address, normalized_tokens) else "error", "Eladó címe", f"Javítandó: az eladó címe egyezzen a profilban szereplő címmel: {expected_seller_address}.")
+        add("ok" if _address_matches(expected_seller_address, normalized_tokens) else "warn", "Eladó címe", f"Figyelmeztetés: az eladó címe nem egyezik pontosan a profilban szereplő címmel: {expected_seller_address}.")
     else:
         add("warn", "Eladó címe", "A futárprofilban még nincs cím az összehasonlításhoz.")
 

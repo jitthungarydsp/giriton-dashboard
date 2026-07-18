@@ -1566,7 +1566,7 @@ def build_invoice_checks(
         if all(token in normalized_text for token in expected_address.split()):
             add("ok", "Eladó címe", expected_seller_address)
         else:
-            add("error", "Eladó címe", f"Nem egyezik a nyilvántartott címmel: {expected_seller_address}.")
+            add("warn", "Eladó címe", f"Nem egyezik a nyilvántartott címmel: {expected_seller_address}.")
     else:
         add("warn", "Eladó címe", "A cím szerepelhet a számlán, de a futárprofilban nincs ellenőrzési alapadat.")
 
