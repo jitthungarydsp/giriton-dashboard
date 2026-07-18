@@ -289,7 +289,7 @@ def build_tig_pdf_bytes(
     ))
 
     if cash_amount_huf:
-        story.extend([Spacer(1, 5 * mm), Paragraph("KÉSZPÉNZES SZÁMLA (csak ha a levonás miatt szükséges)", heading)])
+        story.extend([Spacer(1, 5 * mm), Paragraph("KÉSZPÉNZES SZÁMLA (Csak ha a levonás miatt szükséges!)", heading)])
         cash_table = Table([
             [Paragraph("Megnevezés", bold), Paragraph("Nettó", bold), Paragraph("ÁFA", bold), Paragraph("Bruttó", bold), Paragraph("Mód", bold)],
             [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(cash_amount_huf), right), Paragraph("TA (0%)", center), Paragraph(_huf(cash_amount_huf), right), Paragraph("KP", bold)],
@@ -2058,7 +2058,7 @@ def show_invoice_summary_page():
                             courier_id=courier_id,
                             document_month=document_month,
                             transfer_amount_huf=max(transfer_amount, 0),
-                            cash_amount_huf=0,
+                            cash_amount_huf=abs(int(round(float(bulk_row.get("atm_balance_huf", 0) or 0)))),
                         )
                         base_tig_file_name = (
                             f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
@@ -2235,7 +2235,13 @@ def show_invoice_summary_page():
                 )
             except (TypeError, ValueError):
                 default_transfer_amount = 0
-            
+            try:
+                default_cash_amount = abs(
+                    int(round(float(selected_row.get("atm_balance_huf", 0) or 0)))
+                )
+            except (TypeError, ValueError):
+                default_cash_amount = 0
+
 
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
                 tig_col1, tig_col2 = st.columns(2)
@@ -2270,9 +2276,9 @@ def show_invoice_summary_page():
                     step=100,
                 )
                 tig_cash_amount = amount_col2.number_input(
-                    "Készpénzes számla összege (Ft, ha szükséges)",
+                    "Készpénzes számla összege (Ft, ATM egyenleg alapján)",
                     min_value=0,
-                    value=0,
+                    value=default_cash_amount,
                     step=100,
                 )
                 generate_tig = st.form_submit_button(
