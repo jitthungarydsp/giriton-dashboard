@@ -2269,6 +2269,7 @@ def show_invoice_summary_page():
                 st.warning(f"Elszamolas elfogadasi statusz nem olvashato: {exc}")
 
             tig_preview_rows = []
+            tig_blocked_rows = []
             tig_sendable_count = 0
             for _, preview_row in driver_summary.reset_index(drop=True).iterrows():
                 preview_driver_name = str(preview_row.get("driver_name") or "").strip()
@@ -2300,24 +2301,31 @@ def show_invoice_summary_page():
                 )
                 if sendable:
                     tig_sendable_count += 1
-                tig_preview_rows.append(
-                    {
-                        "Futar": preview_courier_name or preview_driver_name,
-                        "courier_id": preview_courier_id or "Hianyzik",
-                        "Elszamolas elfogadva": "Igen" if preview_accepted else "Nem",
-                        "Szamlazasi adatok": (
-                            "OK" if not missing_billing_fields else "Hianyos"
-                        ),
-                        "Hianyzo adat": ", ".join(missing_billing_fields),
-                        "Kuldheto TIG": "Igen" if sendable else "Nem",
-                    }
-                )
+                preview_display_row = {
+                    "Futar": preview_courier_name or preview_driver_name,
+                    "courier_id": preview_courier_id or "Hianyzik",
+                    "Elszamolas elfogadva": "Igen" if preview_accepted else "Nem",
+                    "Szamlazasi adatok": (
+                        "OK" if not missing_billing_fields else "Hianyos"
+                    ),
+                    "Hianyzo adat": ", ".join(missing_billing_fields),
+                    "Kuldheto TIG": "Igen" if sendable else "Nem",
+                }
+                if sendable:
+                    tig_preview_rows.append(preview_display_row)
+                else:
+                    tig_blocked_rows.append(preview_display_row)
             with st.expander("TIG kuldesi elokeszites es szamlazasi adatok", expanded=False):
                 st.caption(
                     "A TIG a courier_master szamlazasi adataibol toltodik automatikusan: "
                     "cegnev, cim, adoszam. Csak a kuldheto sorokra indul a tomeges TIG."
                 )
                 st.metric("Kuldheto TIG dokumentum", tig_sendable_count)
+                if tig_blocked_rows:
+                    st.caption(
+                        f"Kihagyva a listabol: {len(tig_blocked_rows)} futar "
+                        "nem TIG-re var vagy hianyzik a szamlazasi adata."
+                    )
                 if tig_preview_rows and tig_sendable_count <= 0:
                     st.warning(
                         "A TIG keszites elindithato, de jelenleg nincs teljesen kuldheto sor. "
@@ -2330,7 +2338,7 @@ def show_invoice_summary_page():
                         hide_index=True,
                     )
                 else:
-                    st.info("Nincs futar a jelenlegi szuresben.")
+                    st.info("Nincs TIG-re kuldheto futar a jelenlegi szuresben.")
 
             with st.expander("Tomeges szamlazasi adatkitoltes", expanded=False):
                 st.caption(
@@ -2345,7 +2353,7 @@ def show_invoice_summary_page():
                 )
                 current_courier_ids = [
                     str(row.get("courier_id") or "").strip()
-                    for row in tig_preview_rows
+                    for row in (tig_preview_rows + tig_blocked_rows)
                     if str(row.get("courier_id") or "").strip()
                     and str(row.get("courier_id") or "").strip() != "Hianyzik"
                 ]
