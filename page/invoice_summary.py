@@ -414,6 +414,33 @@ def resolve_settlement_identity(selected_row, selected_driver):
     return courier_id, courier_name
 
 
+def build_courier_master_lookup(master_df):
+    lookup = {}
+    if master_df is None or master_df.empty or "courier_id" not in master_df.columns:
+        return lookup
+
+    for _, master_row in master_df.iterrows():
+        master_data = master_row.to_dict()
+        master_id = normalize_courier_id(master_data.get("courier_id", ""))
+        if master_id:
+            lookup[master_id] = master_data
+
+    return lookup
+
+
+def read_courier_master_row_by_id(courier_id):
+    clean_id = normalize_courier_id(courier_id)
+    if not clean_id:
+        return {}
+
+    try:
+        master_df = read_courier_master()
+    except Exception:
+        return {}
+
+    return build_courier_master_lookup(master_df).get(clean_id, {})
+
+
 def normalize_worksheet_key(value):
     text = str(value or "").strip().upper()
     text = text.replace("-", "_").replace(" ", "_")
@@ -2043,10 +2070,7 @@ def show_invoice_summary_page():
                     master_df = read_courier_master()
                 except Exception:
                     master_df = pd.DataFrame()
-                master_lookup = {}
-                if not master_df.empty and "courier_id" in master_df.columns:
-                    for _, master_row in master_df.iterrows():
-                        master_lookup[str(master_row.get("courier_id") or "").strip()] = master_row.to_dict()
+                master_lookup = build_courier_master_lookup(master_df)
                 try:
                     settlement_status_lookup = _latest_status_by_courier_and_action(
                         read_peopleforce_card_statuses_for_month(document_month, "settlement")
@@ -2085,7 +2109,7 @@ def show_invoice_summary_page():
                             )
                             progress.progress((row_index + 1) / total_rows)
                             continue
-                        master_row = master_lookup.get(str(courier_id), {})
+                        master_row = master_lookup.get(normalize_courier_id(courier_id), {})
                         seller_name = str(master_row.get("company_name") or courier_name or driver_name).strip()
                         seller_address = str(master_row.get("company_address") or "").strip()
                         seller_tax_number = str(master_row.get("tax_number") or "").strip()
@@ -2225,17 +2249,7 @@ def show_invoice_summary_page():
                 "Az admin itt állítja elő a teljesítési igazolást, majd közvetlenül a futár profiljába töltheti."
             )
 
-            master_row = {}
-            try:
-                master_df = read_courier_master()
-                if not master_df.empty and "courier_id" in master_df.columns:
-                    matches = master_df[
-                        master_df["courier_id"].astype(str).str.strip() == str(courier_id).strip()
-                    ]
-                    if not matches.empty:
-                        master_row = matches.iloc[0].to_dict()
-            except Exception:
-                master_row = {}
+            master_row = read_courier_master_row_by_id(courier_id)
 
             def first_value(*names, default=""):
                 for name in names:
