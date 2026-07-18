@@ -908,6 +908,11 @@ def _settlement_feedback_row_style(row):
             "background-color: #fff1f2; color: #9f1239"
             for _ in row
         ]
+    if str(row.get("Számlaszám") or "").strip():
+        return [
+            "background-color: #e7f6ec; color: #14532d; font-weight: 600"
+            for _ in row
+        ]
     return ["" for _ in row]
 
 
@@ -954,6 +959,47 @@ def _courier_document_response_status(done, open_complaint, has_document):
     if has_document:
         return "Meg nem valaszolt"
     return "Nincs dokumentum"
+
+
+def _parse_invoice_document_details(invoice_doc):
+    invoice_doc = invoice_doc or {}
+    title = str(invoice_doc.get("title") or "").strip()
+    note = str(invoice_doc.get("note") or "").strip()
+    file_name = str(invoice_doc.get("file_name") or "").strip()
+
+    invoice_number = ""
+    title_match = re.search(r"sz[aá]mla\s+(.+)$", title, flags=re.IGNORECASE)
+    if title_match:
+        invoice_number = title_match.group(1).strip()
+    if not invoice_number:
+        file_match = re.search(r"([A-Za-z]{1,6}[-_/]?\d{4}[-_/]?\d+)", file_name)
+        if file_match:
+            invoice_number = file_match.group(1).strip()
+
+    amount_huf = ""
+    amount_match = re.search(
+        r"brutt[óo]\s*:\s*([\d\s]+)\s*ft",
+        note,
+        flags=re.IGNORECASE,
+    )
+    if amount_match:
+        amount_huf = _huf(re.sub(r"\D+", "", amount_match.group(1)))
+
+    reference = ""
+    reference_match = re.search(
+        r"tig\s*/\s*elsz[aá]mol[aá]s\s*:\s*([^.;]+)",
+        note,
+        flags=re.IGNORECASE,
+    )
+    if reference_match:
+        reference = reference_match.group(1).strip()
+
+    return {
+        "invoice_number": invoice_number,
+        "amount_huf": amount_huf,
+        "reference": reference,
+        "note": note,
+    }
 
 
 def render_settlement_feedback_overview(
@@ -1015,6 +1061,7 @@ def render_settlement_feedback_overview(
         settlement_doc = latest_docs.get((courier_id, "settlement"))
         tig_doc = latest_docs.get((courier_id, "tig"))
         invoice_doc = latest_docs.get((courier_id, "invoice"))
+        invoice_details = _parse_invoice_document_details(invoice_doc)
         settlement_done = _is_done(latest_statuses.get((courier_id, "settlement")))
         tig_done = _is_done(latest_statuses.get((courier_id, "tig")))
         invoice_check_done = _is_done(latest_statuses.get((courier_id, "invoice_check")))
@@ -1096,6 +1143,7 @@ def render_settlement_feedback_overview(
                 "settlement_doc": settlement_doc,
                 "tig_doc": tig_doc,
                 "invoice_doc": invoice_doc,
+                "invoice_details": invoice_details,
                 "complaints": courier_complaints,
                 "response_documents": courier_response_documents,
                 "feedback_owner": feedback_owner,
@@ -1111,8 +1159,13 @@ def render_settlement_feedback_overview(
                     "TIG": tig_status,
                     "TIG visszajelzés": tig_response_status,
                     "Számlafeltöltés": invoice_status,
-                    "Kifizetés": "Lezárva" if invoice_payment_done else ("Vár adminra" if invoice_doc else "Nincs számla"),
-                    "Számla": (invoice_doc or {}).get("file_name", ""),
+                    "Számla visszajelzés": "Rendben" if invoice_details.get("invoice_number") else ("Hiányzik a számlaszám" if invoice_doc else "Nincs számla"),
+                    "Számlázó név": courier_name,
+                    "Számlaszám": invoice_details.get("invoice_number", ""),
+                    "Számla összeg": invoice_details.get("amount_huf", ""),
+                    "Közlemény": invoice_details.get("reference", ""),
+                    "Folyamat lezárása": "Lezárva" if invoice_payment_done else ("Vár adminra" if invoice_doc else "Nincs számla"),
+                    "Számla fájl": (invoice_doc or {}).get("file_name", ""),
                     "Nyitott reklamáció": open_complaint_count,
                 },
             }
@@ -1164,7 +1217,7 @@ def render_settlement_feedback_overview(
         int(display_df["TIG visszajelzés"].astype(str).str.contains("Elfogadta").sum()),
     )
     metric4.metric("Számla feltöltve", int(display_df["Számlafeltöltés"].isin(["Feltöltve", "Kifizetve"]).sum()))
-    metric5.metric("Kifizetve / lezárva", int((display_df["Kifizetés"] == "Lezárva").sum()))
+    metric5.metric("Kifizetve / lezárva", int((display_df["Folyamat lezárása"] == "Lezárva").sum()))
 
     st.dataframe(
         display_df.style.apply(
@@ -1295,6 +1348,11 @@ def render_settlement_feedback_overview(
 
         invoice_document = selected.get("invoice_doc")
         if invoice_document:
+            invoice_details = selected.get("invoice_details") or {}
+            detail_cols = st.columns(3)
+            detail_cols[0].metric("Számlaszám", invoice_details.get("invoice_number") or "Nincs adat")
+            detail_cols[1].metric("Számla összeg", invoice_details.get("amount_huf") or "Nincs adat")
+            detail_cols[2].metric("Közlemény", invoice_details.get("reference") or "Nincs adat")
             try:
                 invoice_content = read_peopleforce_document_content(invoice_document.get("id"))
                 invoice_bytes = decode_document_content(invoice_content.get("file_content_base64"))
@@ -1311,9 +1369,9 @@ def render_settlement_feedback_overview(
             elif invoice_bytes and invoice_mime.startswith("image/"):
                 st.image(invoice_bytes, caption=str(invoice_document.get("file_name") or "Számla"))
 
-        payment_done = str(selected.get("display", {}).get("Kifizetés") or "") == "Lezárva"
+        payment_done = str(selected.get("display", {}).get("Folyamat lezárása") or "") == "Lezárva"
         with st.container(border=True):
-            st.markdown("**Számla admin elfogadás / kifizetés**")
+            st.markdown("**Folyamat lezárása - számla admin elfogadás / kifizetés**")
             if payment_done:
                 st.success("A számla elfogadva, a kifizetés megtörtént. A hónap lezárva.")
             elif not selected.get("invoice_doc"):
