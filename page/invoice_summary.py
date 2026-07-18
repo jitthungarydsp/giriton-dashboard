@@ -17,7 +17,11 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
-from resources.courier_master_db import read_courier_master
+from resources.courier_master_db import (
+    apply_billing_staging_updates,
+    build_billing_staging_update_preview,
+    read_courier_master,
+)
 from resources.invoice_summary import (
     MANUAL_ITEM_TYPES,
     build_display_base_rate_matrix,
@@ -2215,6 +2219,100 @@ def show_invoice_summary_page():
                     )
                 else:
                     st.info("Nincs futar a jelenlegi szuresben.")
+
+            with st.expander("Tomeges szamlazasi adatkitoltes", expanded=False):
+                st.caption(
+                    "A jelenlegi szurt futarlistahoz megprobalja a "
+                    "courier_master_sheet_import staging tabla alapjan kitolteni a "
+                    "courier_master szamlazasi adatait. Elsodlegesen courier_id, "
+                    "masodlagosan egyedi telefonszam alapjan parosit."
+                )
+                billing_sync_key = (
+                    f"billing_sync_preview_{start_date.isoformat()}_"
+                    f"{end_date.isoformat()}_{selected_sheet}"
+                )
+                current_courier_ids = [
+                    str(row.get("courier_id") or "").strip()
+                    for row in tig_preview_rows
+                    if str(row.get("courier_id") or "").strip()
+                    and str(row.get("courier_id") or "").strip() != "Hianyzik"
+                ]
+                if st.button(
+                    "Tomeges kitoltes elonezetenek frissitese",
+                    use_container_width=True,
+                    key=f"billing_sync_preview_button_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+                ):
+                    try:
+                        st.session_state[billing_sync_key] = build_billing_staging_update_preview(
+                            current_courier_ids
+                        )
+                    except Exception as exc:
+                        st.session_state.pop(billing_sync_key, None)
+                        st.error(f"Szamlazasi adat elonezet hiba: {exc}")
+
+                billing_sync_preview = st.session_state.get(billing_sync_key)
+                if billing_sync_preview:
+                    sync_updates = billing_sync_preview.get("updates", [])
+                    st.metric("Frissitheto futar", len(sync_updates))
+                    if sync_updates:
+                        st.dataframe(
+                            pd.DataFrame(
+                                [
+                                    {
+                                        "courier_id": row.get("courier_id"),
+                                        "Futar": row.get("courier_name"),
+                                        "Forras nev": row.get("source_name"),
+                                        "Frissulo mezok": ", ".join(
+                                            key
+                                            for key in (row.get("patch") or {}).keys()
+                                            if key not in {
+                                                "billing_data_source",
+                                                "billing_data_updated_at",
+                                                "updated_at",
+                                            }
+                                        ),
+                                    }
+                                    for row in sync_updates
+                                ]
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.info("Nincs frissitendo szamlazasi adat a jelenlegi szuresben.")
+                    billing_sync_confirm = st.checkbox(
+                        "Megerősitem a tomeges courier_master szamlazasi adatfrissitest.",
+                        key=f"billing_sync_confirm_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+                    )
+                    if st.button(
+                        "Tomeges szamlazasi adatok kitoltese",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=(not billing_sync_confirm or not sync_updates),
+                        key=f"billing_sync_apply_{start_date.isoformat()}_{end_date.isoformat()}_{selected_sheet}",
+                    ):
+                        try:
+                            result = apply_billing_staging_updates(sync_updates)
+                            st.session_state.pop(billing_sync_key, None)
+                            st.cache_data.clear()
+                            if result["failures"]:
+                                st.warning(
+                                    f"Frissitve: {result['success']}, "
+                                    f"hibas: {len(result['failures'])}."
+                                )
+                                st.dataframe(
+                                    pd.DataFrame(result["failures"]),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                            else:
+                                st.success(
+                                    f"Tomeges szamlazasi adatkitoltes kesz. "
+                                    f"Frissitve: {result['success']} futar."
+                                )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Tomeges szamlazasi adatkitoltes hiba: {exc}")
 
             if st.button(
                 "Tomeges TIG generalasa es feltoltese",
