@@ -1222,6 +1222,35 @@ def render_settlement_feedback_overview(
         ascending=sort_ascending,
         kind="stable",
     )
+    preferred_feedback_columns = [
+        "Futár",
+        "courier_id",
+        "ÁFA státusz",
+        "Felelos",
+        "Reklamáció blokkolás",
+        "Elszámolás",
+        "Elszámolás visszajelzés",
+        "TIG",
+        "TIG visszajelzés",
+        "Számlafeltöltés",
+        "Számla visszajelzés",
+        "Számlázó név",
+        "Számlaszám",
+        "Bankszámlaszám",
+        "Számla összeg",
+        "Közlemény",
+        "Folyamat lezárása",
+        "Számla fájl",
+        "Nyitott reklamáció",
+        "_priority",
+    ]
+    existing_feedback_columns = [
+        column for column in preferred_feedback_columns if column in display_df.columns
+    ]
+    extra_feedback_columns = [
+        column for column in display_df.columns if column not in existing_feedback_columns
+    ]
+    display_df = display_df[existing_feedback_columns + extra_feedback_columns]
     metric1, metric2, metric3, metric4, metric5 = st.columns(5)
     metric1.metric("Futár", len(display_df))
     metric2.metric(
@@ -1244,6 +1273,10 @@ def render_settlement_feedback_overview(
         hide_index=True,
         column_config={
             "_priority": None,
+            "Bankszámlaszám": st.column_config.TextColumn(
+                "Bankszámlaszám",
+                width="medium",
+            ),
         },
     )
 
