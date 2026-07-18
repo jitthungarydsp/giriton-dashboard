@@ -46,6 +46,35 @@ def _extract_labeled_date(text: str, label: str) -> date | None:
     return _parse_date(match.group(1)) if match else None
 
 
+def _extract_invoice_number(text: str) -> str:
+    folded = _fold(text)
+    lines = [line.strip() for line in folded.splitlines() if line.strip()]
+    for index, line in enumerate(lines[:-1]):
+        if line == "szamla":
+            candidate = lines[index + 1].strip()
+            if re.fullmatch(r"[a-z0-9][a-z0-9/_-]{3,}", candidate):
+                return candidate
+
+    match = re.search(
+        r"(?:^|\n)\s*szamlaszam\s*:?\s*([a-z0-9][a-z0-9/_-]{3,})",
+        folded,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
+
+
+def _extract_invoice_periods(text: str) -> set[tuple[int, int]]:
+    periods = set()
+    for year, month in re.findall(r"\b(20\d{2})\s*[-/.]\s*(\d{1,2})\b", text or ""):
+        try:
+            month_int = int(month)
+            if 1 <= month_int <= 12:
+                periods.add((int(year), month_int))
+        except ValueError:
+            continue
+    return periods
+
+
 def extract_pdf_text(content: bytes) -> str:
     if not content:
         return ""
@@ -67,11 +96,6 @@ def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
         folded,
         flags=re.IGNORECASE,
     )
-    invoice_number_match = re.search(
-        r"(?:szamlaszam\s*:?|szamla\s*\n)\s*([a-z0-9][a-z0-9/_-]{3,})",
-        folded,
-        flags=re.IGNORECASE,
-    )
     return {
         "text": text,
         "seller_tax_number": tax_numbers[0] if tax_numbers else "",
@@ -79,8 +103,9 @@ def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
         "issue_date": _extract_labeled_date(text, r"szamla\s+kelte"),
         "performance_date": _extract_labeled_date(text, r"teljesites\s+kelte"),
         "due_date": _extract_labeled_date(text, r"fizetesi\s+hatarido"),
+        "invoice_periods": _extract_invoice_periods(text),
         "gross_total": _parse_huf(totals[-1]) if totals else 0,
-        "invoice_number": invoice_number_match.group(1) if invoice_number_match else "",
+        "invoice_number": _extract_invoice_number(text),
     }
 
 
@@ -144,7 +169,7 @@ def validate_invoice(
     add(
         "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else "error",
         "Eladó neve",
-        f"A várt név: {courier_name}.",
+        f"Javítandó: az eladó neve egyezzen a profilban szereplő névvel: {courier_name}.",
     )
 
     buyer_name_tokens = _tokens("Just in Time Transport Hungary Kft.")
@@ -154,16 +179,16 @@ def validate_invoice(
 
     seller_tax = str(fields.get("seller_tax_number") or "")
     if expected_seller_tax_number:
-        add("ok" if seller_tax == expected_seller_tax_number else "error", "Eladó adószáma", f"Talált: {seller_tax or 'nincs'}; várt: {expected_seller_tax_number}.")
+        add("ok" if seller_tax == expected_seller_tax_number else "error", "Eladó adószáma", f"Javítandó: az eladó adószáma legyen {expected_seller_tax_number}. Talált: {seller_tax or 'nincs'}.")
     else:
         add("warn" if re.fullmatch(r"\d{8}-\d-\d{2}", seller_tax) else "error", "Eladó adószáma", f"Talált: {seller_tax or 'nincs'}; a profilban még nincs összehasonlítási alapadat.")
 
     buyer_tax = str(fields.get("buyer_tax_number") or "")
-    add("ok" if buyer_tax == "32649460-2-43" else "error", "Vevő adószáma", f"Talált: {buyer_tax or 'nincs'}; várt: 32649460-2-43.")
+    add("ok" if buyer_tax == "32649460-2-43" else "error", "Vevő adószáma", f"Javítandó: a vevő adószáma legyen 32649460-2-43. Talált: {buyer_tax or 'nincs'}.")
 
     expected_address_tokens = _tokens(expected_seller_address)
     if expected_address_tokens:
-        add("ok" if all(token in normalized_tokens for token in expected_address_tokens) else "error", "Eladó címe", expected_seller_address)
+        add("ok" if all(token in normalized_tokens for token in expected_address_tokens) else "error", "Eladó címe", f"Javítandó: az eladó címe egyezzen a profilban szereplő címmel: {expected_seller_address}.")
     else:
         add("warn", "Eladó címe", "A futárprofilban még nincs cím az összehasonlításhoz.")
 
@@ -175,14 +200,27 @@ def validate_invoice(
 
     if issue_date and due_date:
         days = (due_date - issue_date).days
-        add("ok" if days == 8 else "error", "8 napos fizetési szabály", f"A két dátum között {days} nap van.")
+        add("ok" if days == 8 else "error", "8 napos fizetési szabály", f"Javítandó: a fizetési határidő a számla keltétől számított 8. nap legyen. Most {days} nap.")
     if issue_date and performance_date:
-        days = (issue_date - performance_date).days
-        add("ok" if 0 <= days <= 8 else "error", "8 napos kiállítási szabály", f"A számla a teljesítéshez képest {days} nap eltéréssel készült.")
+        if performance_date >= issue_date:
+            days = (performance_date - issue_date).days
+            add("ok" if days <= 8 else "error", "8 napos teljesítési szabály", f"Javítandó: a teljesítés kelte legfeljebb 8 nappal lehet a számla kelte után. Most {days} nap.")
+        else:
+            days = (issue_date - performance_date).days
+            add("ok" if days <= 8 else "error", "8 napos kiállítási szabály", f"Javítandó: a számlát a teljesítéshez képest 8 napon belül kell kiállítani. Most {days} nap.")
     if performance_date:
         same_month = (performance_date.year, performance_date.month) == (invoice_month.year, invoice_month.month)
-        add("ok" if same_month else "error", "TIG időszaka", f"Teljesítés: {performance_date:%Y-%m}; TIG: {invoice_month:%Y-%m}.")
-
+        invoice_periods = fields.get("invoice_periods") or set()
+        note_matches_month = (invoice_month.year, invoice_month.month) in invoice_periods
+        add(
+            "ok" if same_month or note_matches_month else "error",
+            "TIG időszaka",
+            (
+                f"Rendben: a számla megjegyzése tartalmazza a TIG hónapot ({invoice_month:%Y-%m})."
+                if note_matches_month and not same_month
+                else f"Javítandó: a számlán szerepeljen a TIG hónapja ({invoice_month:%Y-%m}) a teljesítésben vagy a megjegyzésben. Teljesítés: {performance_date:%Y-%m}."
+            ),
+        )
     pdf_gross = int(fields.get("gross_total") or 0)
     if expected_gross_amount:
         add("ok" if pdf_gross == expected_gross_amount else "error", "TIG szerinti végösszeg", f"Számla: {_format_huf(pdf_gross)}; TIG: {_format_huf(expected_gross_amount)}.")
@@ -193,7 +231,7 @@ def validate_invoice(
         add("ok" if invoice_number.strip() else "error", "Számlaszám", invoice_number.strip() or "Kötelező mező.")
         pdf_number = str(fields.get("invoice_number") or "")
         if invoice_number.strip() and pdf_number:
-            add("ok" if _tokens(invoice_number) == _tokens(pdf_number) else "error", "Számlaszám egyezése", f"Megadva: {invoice_number}; PDF: {pdf_number}.")
+            add("ok" if _tokens(invoice_number) == _tokens(pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
         add("ok" if gross_amount > 0 else "error", "Bruttó összeg", _format_huf(gross_amount) if gross_amount > 0 else "0 Ft fölötti összeg szükséges.")
         if gross_amount > 0 and pdf_gross:
             add("ok" if gross_amount == pdf_gross else "error", "Megadott bruttó összeg", f"Megadva: {_format_huf(gross_amount)}; PDF: {_format_huf(pdf_gross)}.")

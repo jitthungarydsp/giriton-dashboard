@@ -58,6 +58,7 @@ from resources.peopleforce_documents import (
     upload_peopleforce_document,
     upsert_peopleforce_card_status,
 )
+from resources.pwa_invoice_validation import validate_invoice as validate_uploaded_invoice
 
 EXPRESS_MAX_FEE = 6516
 NORMAL_CITY_MAX_FEE = 13000
@@ -1472,6 +1473,20 @@ def build_invoice_checks(
 
     file_name = clean_display_text(uploaded_file.name, "ismeretlen_fajl")
     content = uploaded_file.getvalue()
+    return validate_uploaded_invoice(
+        file_name=file_name,
+        content=content,
+        invoice_month=invoice_month,
+        courier_name=courier_name,
+        courier_id=courier_id,
+        expected_gross_amount=int(float(expected_gross_amount or 0)),
+        invoice_number=invoice_number,
+        gross_amount=int(float(gross_amount or 0)),
+        require_submission_fields=require_invoice_fields,
+        expected_seller_tax_number=expected_seller_tax_number,
+        expected_seller_address=expected_seller_address,
+    )["checks"]
+
     extension = Path(file_name).suffix.lower().lstrip(".")
     allowed_extensions = ["pdf", "jpg", "jpeg", "png"]
 
