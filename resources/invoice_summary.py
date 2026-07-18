@@ -1133,9 +1133,12 @@ def build_driver_invoice_summary(
                 on=["worksheet_name", "row_number"],
                 how="left",
             )
+            usernumber_id = final_df["courier_id_from_usernumber"].fillna("").map(
+                normalize_courier_id_text
+            )
             final_df["courier_id"] = final_df["courier_id"].where(
-                final_df["courier_id"] != "",
-                final_df["courier_id_from_usernumber"].fillna("").map(normalize_courier_id_text),
+                usernumber_id == "",
+                usernumber_id,
             )
             final_df = final_df.drop(columns=["courier_id_from_usernumber"])
 
