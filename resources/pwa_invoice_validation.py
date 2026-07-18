@@ -106,6 +106,16 @@ def _extract_invoice_dates(text: str) -> dict[str, date | None]:
         for index, (key, _position) in enumerate(label_positions):
             dates[key] = dates[key] or trailing_dates[index]
 
+    unique_dates = sorted({value for _position, value in all_dates})
+    if len(unique_dates) == 2 and (unique_dates[1] - unique_dates[0]).days == 8:
+        earlier_date, later_date = unique_dates
+        if not dates["due_date"]:
+            dates["due_date"] = later_date
+        if not dates["issue_date"] or dates["issue_date"] == later_date:
+            dates["issue_date"] = earlier_date
+        if not dates["performance_date"] or dates["performance_date"] == earlier_date:
+            dates["performance_date"] = later_date
+
     return dates
 
 
@@ -302,12 +312,12 @@ def validate_invoice(
         invoice_periods = fields.get("invoice_periods") or set()
         note_matches_month = (invoice_month.year, invoice_month.month) in invoice_periods
         add(
-            "ok" if same_month or note_matches_month else "error",
+            "ok" if same_month or note_matches_month else "warn",
             "TIG időszaka",
             (
                 f"Rendben: a számla megjegyzése tartalmazza a TIG hónapot ({invoice_month:%Y-%m})."
                 if note_matches_month and not same_month
-                else f"Javítandó: a számlán szerepeljen a TIG hónapja ({invoice_month:%Y-%m}) a teljesítésben vagy a megjegyzésben. Teljesítés: {performance_date:%Y-%m}."
+                else f"Figyelem: a számlán nem szerepel egyértelműen a TIG hónapja ({invoice_month:%Y-%m}); a teljesítés hónapja {performance_date:%Y-%m}. Ez nem blokkolja a beküldést, ha az összeg és az adatok egyeznek."
             ),
         )
     pdf_gross = int(fields.get("gross_total") or 0)
