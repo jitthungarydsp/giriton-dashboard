@@ -696,6 +696,7 @@ WORKFLOW_PREREQUISITES = {
     "tig": "settlement",
     "invoice_check": "tig",
     "invoice_submit": "invoice_check",
+    "invoice_payment": "invoice_submit",
 }
 WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
 
@@ -984,6 +985,16 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
             "title": "Számlafeltöltés",
             "done": workflow_done(states, "invoice_submit"),
             "locked": not workflow_done(states, "invoice_check"),
+        },
+        {
+            "key": "invoice_payment",
+            "title": (
+                "Havi folyamat lezĂˇrva"
+                if workflow_done(states, "invoice_payment")
+                else "Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s"
+            ),
+            "done": workflow_done(states, "invoice_payment"),
+            "locked": not workflow_done(states, "invoice_submit"),
         },
     ]
     safe_documents: dict[str, list[dict[str, Any]]] = {}
@@ -1509,8 +1520,15 @@ async def submit_invoice(
         prefer="return=representation",
         timeout=60,
     )
-    for action in ("invoice_submit", "my_invoices"):
-        upsert_workflow_status(user, month_value, action, "done", "A számla ellenőrizve és eltárolva.")
+    upsert_workflow_status(user, month_value, "invoice_submit", "done", "A számla ellenőrizve és eltárolva.")
+    upsert_workflow_status(user, month_value, "my_invoices", "open", "A számla admin ellenőrzésre és kifizetésre vár.")
+    upsert_workflow_status(
+        user,
+        month_value,
+        "invoice_payment",
+        "open",
+        "Admin szamlaelfogadasra es kifizetesre var.",
+    )
     return {"stored": True, "validation": result, "workflow": build_workflow(user, month_value)}
 
 

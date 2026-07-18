@@ -65,15 +65,18 @@ function showSection(section) {
   state.section = section;
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
+  $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
+  $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-tours").classList.toggle("active", section === "tours");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
     refreshNotificationToggle();
@@ -383,6 +386,48 @@ function documentList(documents) {
     </div>`).join("")}</div>`;
 }
 
+function allWorkflowDocuments() {
+  const docs = state.workflow?.documents || {};
+  const responses = state.workflow?.complaintResponses || {};
+  return [
+    ...(docs.settlement || []),
+    ...(docs.tig || []),
+    ...(docs.invoice || []),
+    ...(responses.settlement || []),
+    ...(responses.tig || []),
+  ].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")));
+}
+
+function renderDocumentsSection() {
+  const target = $("#documents-list");
+  if (!target) return;
+  const paymentDone = state.workflow?.states?.invoice_payment?.status === "done";
+  target.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">${paymentDone ? "✓" : "…"}</span>
+      <div>
+        <h3>${paymentDone ? "A hónap lezárva" : "A hónap még nincs lezárva"}</h3>
+        <p>${paymentDone ? "A számlát admin oldalon elfogadták és a kifizetés megtörtént." : "A lezárás a számla admin elfogadása és kifizetése után történik meg."}</p>
+      </div>
+    </div>
+    ${documentList(allWorkflowDocuments())}
+  `;
+}
+
+async function loadDocuments() {
+  if (!state.workflow) {
+    state.workflow = waitingWorkflow();
+    renderDocumentsSection();
+    try {
+      state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
+    } catch (error) {
+      $("#documents-list").innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+      return;
+    }
+  }
+  renderDocumentsSection();
+}
+
 function complaintList(complaints) {
   if (!complaints.length) return "";
   return `<div class="complaint-list">${complaints.map((complaint) => `
@@ -461,6 +506,7 @@ function renderWorkflow() {
   $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
+  renderDocumentsSection();
   $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")}`;
 }
 
@@ -476,6 +522,7 @@ function waitingWorkflow() {
     ["tig", "TIG elfogadása", true],
     ["invoice_check", "Számlaellenőrzés", true],
     ["invoice_submit", "Számlafeltöltés", true],
+    ["invoice_payment", "Admin számlaelfogadás és kifizetés", true],
   ];
   return {
     month: state.workflowMonth,
@@ -855,6 +902,7 @@ $("#logout").addEventListener("click", async () => {
 $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
+$("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 

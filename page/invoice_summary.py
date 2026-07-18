@@ -875,6 +875,7 @@ def render_settlement_feedback_overview(
         tig_done = _is_done(latest_statuses.get((courier_id, "tig")))
         invoice_check_done = _is_done(latest_statuses.get((courier_id, "invoice_check")))
         invoice_submit_done = _is_done(latest_statuses.get((courier_id, "invoice_submit")))
+        invoice_payment_done = _is_done(latest_statuses.get((courier_id, "invoice_payment")))
         feedback_owner = _feedback_owner_from_status(
             latest_statuses.get((courier_id, "feedback_owner"))
         )
@@ -903,7 +904,9 @@ def render_settlement_feedback_overview(
         else:
             tig_status = "Zárolva"
 
-        if invoice_submit_done or invoice_doc:
+        if invoice_payment_done:
+            invoice_status = "Kifizetve"
+        elif invoice_submit_done or invoice_doc:
             invoice_status = "Feltöltve"
         elif invoice_check_done:
             invoice_status = "Ellenőrizve"
@@ -945,6 +948,7 @@ def render_settlement_feedback_overview(
                     "Elszámolás": settlement_status,
                     "TIG": tig_status,
                     "Számlafeltöltés": invoice_status,
+                    "Kifizetés": "Lezárva" if invoice_payment_done else ("Vár adminra" if invoice_doc else "Nincs számla"),
                     "Számla": (invoice_doc or {}).get("file_name", ""),
                     "Nyitott reklamáció": open_complaint_count,
                 },
@@ -986,11 +990,12 @@ def render_settlement_feedback_overview(
         ascending=sort_ascending,
         kind="stable",
     )
-    metric1, metric2, metric3, metric4 = st.columns(4)
+    metric1, metric2, metric3, metric4, metric5 = st.columns(5)
     metric1.metric("Futár", len(display_df))
     metric2.metric("Elszámolás elfogadva", int((display_df["Elszámolás"] == "Elfogadva").sum()))
     metric3.metric("TIG elfogadva", int((display_df["TIG"] == "Elfogadva").sum()))
-    metric4.metric("Számla feltöltve", int((display_df["Számlafeltöltés"] == "Feltöltve").sum()))
+    metric4.metric("Számla feltöltve", int(display_df["Számlafeltöltés"].isin(["Feltöltve", "Kifizetve"]).sum()))
+    metric5.metric("Kifizetve / lezárva", int((display_df["Kifizetés"] == "Lezárva").sum()))
 
     st.dataframe(
         display_df.style.apply(
@@ -1112,6 +1117,47 @@ def render_settlement_feedback_overview(
                 )
             elif invoice_bytes and invoice_mime.startswith("image/"):
                 st.image(invoice_bytes, caption=str(invoice_document.get("file_name") or "Számla"))
+
+        payment_done = str(selected.get("display", {}).get("Kifizetés") or "") == "Lezárva"
+        with st.container(border=True):
+            st.markdown("**Számla admin elfogadás / kifizetés**")
+            if payment_done:
+                st.success("A számla elfogadva, a kifizetés megtörtént. A hónap lezárva.")
+            elif not selected.get("invoice_doc"):
+                st.info("A kifizetés csak feltöltött számla után zárható le.")
+            else:
+                st.warning("A számla feltöltve, admin elfogadásra és kifizetésre vár.")
+                payment_note = st.text_input(
+                    "Kifizetés megjegyzés / tranzakció",
+                    key=f"invoice_payment_note_{selected['courier_id']}_{document_month.isoformat()}",
+                )
+                if st.button(
+                    "Számla elfogadva, kifizetés megtörtént - hónap lezárása",
+                    key=f"mark_invoice_paid_{selected['courier_id']}_{document_month.isoformat()}",
+                    use_container_width=True,
+                    disabled=_current_role() not in {"admin", "trainer"},
+                ):
+                    close_note = payment_note or "Számla elfogadva, kifizetés megtörtént."
+                    upsert_peopleforce_card_status(
+                        courier_id=selected["courier_id"],
+                        courier_name=selected["courier_name"],
+                        action_key="invoice_payment",
+                        document_month=document_month,
+                        status="done",
+                        status_note=close_note,
+                        updated_by=_current_username(),
+                    )
+                    upsert_peopleforce_card_status(
+                        courier_id=selected["courier_id"],
+                        courier_name=selected["courier_name"],
+                        action_key="my_invoices",
+                        document_month=document_month,
+                        status="done",
+                        status_note=close_note,
+                        updated_by=_current_username(),
+                    )
+                    st.success("A számla kifizetése rögzítve, a hónap lezárva.")
+                    st.rerun()
 
         active_complaints = [
             item
