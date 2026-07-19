@@ -1551,6 +1551,7 @@ async def check_invoice(
     require_prerequisite(user, month_value, "invoice_check")
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
+    billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     override_enabled = invoice_validation_override_enabled(status_map(status_rows))
     result = validate_invoice(
@@ -1560,8 +1561,9 @@ async def check_invoice(
         courier_name=courier_name,
         courier_id=courier_id,
         expected_gross_amount=expected_tig_amount(user, month_value),
-        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
-        expected_seller_address=read_billing_profile(user)["company_address"],
+        expected_seller_name=billing_profile["company_name"],
+        expected_seller_tax_number=billing_profile["tax_number"],
+        expected_seller_address=billing_profile["company_address"],
     )
     result = apply_invoice_validation_override(result, override_enabled)
     if result["ok"]:
@@ -1591,6 +1593,7 @@ async def submit_invoice(
     require_prerequisite(user, month_value, "invoice_submit")
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
+    billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     override_enabled = invoice_validation_override_enabled(status_map(status_rows))
     result = validate_invoice(
@@ -1604,8 +1607,9 @@ async def submit_invoice(
         gross_amount=gross_amount,
         require_submission_fields=True,
         skip_invoice_number_match=skip_invoice_number_match,
-        expected_seller_tax_number=read_billing_profile(user)["tax_number"],
-        expected_seller_address=read_billing_profile(user)["company_address"],
+        expected_seller_name=billing_profile["company_name"],
+        expected_seller_tax_number=billing_profile["tax_number"],
+        expected_seller_address=billing_profile["company_address"],
     )
     result = apply_invoice_validation_override(result, override_enabled)
     if not result["ok"]:

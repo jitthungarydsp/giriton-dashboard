@@ -362,6 +362,7 @@ def validate_invoice(
     gross_amount: int = 0,
     require_submission_fields: bool = False,
     skip_invoice_number_match: bool = False,
+    expected_seller_name: str = "",
     expected_seller_tax_number: str = "",
     expected_seller_address: str = "",
 ) -> dict[str, Any]:
@@ -389,6 +390,9 @@ def validate_invoice(
     else:
         add("error", "Képfájl szövegfelismerése", "Első körben szöveges PDF számla szükséges az automatikus ellenőrzéshez.")
 
+    expected_seller_name = str(expected_seller_name or "").strip()
+    if expected_seller_name:
+        courier_name = expected_seller_name
     expected_name_tokens = _tokens(courier_name)
     add(
         "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else "error",
