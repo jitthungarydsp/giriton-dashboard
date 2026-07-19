@@ -71,6 +71,9 @@ class RouteDelayAlertRequest(BaseModel):
 
 
 class BillingProfileUpdate(BaseModel):
+    courier_id: str = ""
+    courier_name: str = ""
+    phone_number: str = ""
     company_name: str = ""
     company_address: str = ""
     tax_number: str = ""
@@ -770,6 +773,23 @@ def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
     return courier_id, courier_name
 
 
+def profile_identity(user: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(user.get("courierId") or "").strip(),
+        str(user.get("username") or "").strip(),
+    )
+
+
+def normalize_profile_courier_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    compact = re.sub(r"\s+", "", text)
+    if not re.fullmatch(r"\d{3,10}", compact):
+        raise HTTPException(status_code=422, detail="A futár ID csak szám lehet.")
+    return compact
+
+
 BILLING_PROFILE_FIELDS = (
     "courier_id,courier_name,phone_number,"
     "company_name,company_address,tax_number,"
@@ -778,18 +798,29 @@ BILLING_PROFILE_FIELDS = (
 
 
 def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
-    courier_id, _courier_name = courier_identity(user)
-    rows = supabase_rest(
-        "GET",
-        "courier_master",
-        params={
-            "select": BILLING_PROFILE_FIELDS,
-            "courier_id": f"eq.{courier_id}",
-            "limit": "1",
-        },
-    )
+    courier_id, _courier_name = profile_identity(user)
+    params = {
+        "select": BILLING_PROFILE_FIELDS,
+        "limit": "1",
+    }
+    if courier_id:
+        params["courier_id"] = f"eq.{courier_id}"
+    else:
+        params["courier_name"] = f"eq.{_courier_name}"
+
+    rows = supabase_rest("GET", "courier_master", params=params)
     if not rows:
-        raise HTTPException(status_code=404, detail="A futár profilja nem található.")
+        return {
+            "courier_id": courier_id,
+            "courier_name": _courier_name,
+            "phone_number": str(user.get("phone") or ""),
+            "company_name": "",
+            "company_address": "",
+            "tax_number": "",
+            "bank_account_number": "",
+            "billing_email": "",
+            "updated_at": None,
+        }
     row = rows[0]
     return {
         "courier_id": str(row.get("courier_id") or courier_id),
@@ -805,6 +836,9 @@ def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
+    courier_id = normalize_profile_courier_id(payload.courier_id)
+    courier_name = payload.courier_name.strip()
+    phone_number = payload.phone_number.strip()
     company_name = payload.company_name.strip()
     company_address = payload.company_address.strip()
     tax_number = payload.tax_number.strip()
@@ -821,6 +855,9 @@ def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
         raise HTTPException(status_code=422, detail="A számlázási e-mail formátuma hibás.")
 
     return {
+        "courier_id": courier_id,
+        "courier_name": courier_name,
+        "phone_number": phone_number,
         "company_name": company_name,
         "company_address": company_address,
         "tax_number": tax_number,
@@ -1327,29 +1364,48 @@ def update_billing_profile(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
+    session_courier_id, session_courier_name = profile_identity(user)
     current_billing = read_billing_profile(user)
-    bank_account_number = validate_bank_account_number(payload.bank_account_number)
+    profile = validate_billing_profile(payload)
+    bank_account_number = validate_bank_account_number(profile["bank_account_number"])
+    profile["bank_account_number"] = bank_account_number
+    target_courier_id = session_courier_id or profile["courier_id"]
+
+    if not target_courier_id:
+        raise HTTPException(status_code=422, detail="A futár ID megadása kötelező.")
+    if session_courier_id and profile["courier_id"] and profile["courier_id"] != session_courier_id:
+        raise HTTPException(status_code=422, detail="A már rögzített futár ID nem módosítható.")
+
     now = datetime.now(timezone.utc).isoformat()
+    profile["courier_id"] = target_courier_id
+    if not profile["courier_name"]:
+        profile["courier_name"] = current_billing.get("courier_name") or session_courier_name
+
+    update_payload = {
+        **profile,
+        "source_name": "pwa_profile",
+        "organization_id": COURIER_DETAIL_ORGANIZATION_ID,
+        "dsp_id": "JIT",
+        "active": True,
+        "fetched_at": now,
+        "billing_data_source": "pwa_profile",
+        "billing_data_updated_at": now,
+        "updated_at": now,
+    }
 
     supabase_rest(
-        "PATCH",
+        "POST",
         "courier_master",
-        params={"courier_id": f"eq.{courier_id}"},
-        payload={
-            "bank_account_number": bank_account_number,
-            "billing_data_source": "pwa_profile",
-            "billing_data_updated_at": now,
-            "updated_at": now,
-        },
-        prefer="return=minimal",
+        params={"on_conflict": "courier_id"},
+        payload=update_payload,
+        prefer="resolution=merge-duplicates,return=minimal",
     )
 
     return {
         "ok": True,
         "billing": {
             **current_billing,
-            "bank_account_number": bank_account_number,
+            **profile,
             "updated_at": now,
         },
     }

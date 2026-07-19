@@ -798,14 +798,26 @@ function setBillingMessage(message, isError = false) {
   target.classList.toggle("error", Boolean(isError));
 }
 
-function prepareReadonlyBillingProfile() {
+function updateBillingProfileEditState() {
   const form = $("#billing-profile-form");
   if (!form) return;
 
+  const courierIdInput = $("#profile-courier-id");
+  const courierId = String(courierIdInput?.value || "").trim();
+  if (courierIdInput) {
+    courierIdInput.readOnly = Boolean(courierId);
+    courierIdInput.toggleAttribute("aria-readonly", Boolean(courierId));
+    courierIdInput.classList.toggle("locked", Boolean(courierId));
+    courierIdInput.title = courierId
+      ? "A futár ID már rögzítve van, ezért nem módosítható."
+      : "A futár ID csak addig írható, amíg üres.";
+  }
+
   form.querySelectorAll("input").forEach((input) => {
-    const editable = input.id === "billing-bank-account";
-    input.readOnly = !editable;
-    input.toggleAttribute("aria-readonly", !editable);
+    if (input.id === "profile-courier-id") return;
+    input.readOnly = false;
+    input.toggleAttribute("aria-readonly", false);
+    input.classList.remove("locked");
   });
 
   const submitButton = form.querySelector('button[type="submit"]');
@@ -828,10 +840,12 @@ function fillBillingProfile(data = {}) {
     const input = $(selector);
     if (input) input.value = value;
   });
+
+  updateBillingProfileEditState();
 }
 
 async function loadBillingProfile() {
-  prepareReadonlyBillingProfile();
+  updateBillingProfileEditState();
   setBillingMessage("Számlázási adatok betöltése…");
 
   try {
@@ -866,7 +880,7 @@ async function loadBillingProfile() {
   }
 }
 
-prepareReadonlyBillingProfile();
+updateBillingProfileEditState();
 
 const billingProfileForm = $("#billing-profile-form");
 if (billingProfileForm) {
@@ -874,6 +888,9 @@ if (billingProfileForm) {
     event.preventDefault();
     const button = billingProfileForm.querySelector('button[type="submit"]');
     const payload = {
+      courier_id: $("#profile-courier-id")?.value || "",
+      courier_name: $("#profile-courier-name")?.value || "",
+      phone_number: $("#profile-phone-number")?.value || "",
       company_name: $("#billing-company-name")?.value || "",
       company_address: $("#billing-company-address")?.value || "",
       tax_number: $("#billing-tax-number")?.value || "",
@@ -881,7 +898,7 @@ if (billingProfileForm) {
       billing_email: $("#billing-email")?.value || "",
     };
 
-    setBillingMessage("Bankszámlaszám mentése folyamatban…");
+    setBillingMessage("Profiladatok mentése folyamatban…");
     if (button) button.disabled = true;
     try {
       const response = await api("/api/profile/billing", {
@@ -894,11 +911,11 @@ if (billingProfileForm) {
       fillBillingProfile(billing);
       setBillingMessage(
         billing.updated_at
-          ? `Bankszámlaszám mentve. Utolsó frissítés: ${new Date(billing.updated_at).toLocaleString("hu-HU")}`
-          : "Bankszámlaszám mentve."
+          ? `Profiladatok mentve. Utolsó frissítés: ${new Date(billing.updated_at).toLocaleString("hu-HU")}`
+          : "Profiladatok mentve."
       );
     } catch (error) {
-      setBillingMessage(`A bankszámlaszám mentése sikertelen: ${error.message}`, true);
+      setBillingMessage(`A profiladatok mentése sikertelen: ${error.message}`, true);
     } finally {
       if (button) button.disabled = false;
     }
