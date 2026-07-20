@@ -193,6 +193,51 @@ def build_default_invoice_lines(summary_row):
     return pd.DataFrame(non_zero_lines or lines)
 
 
+def build_default_tig_lines(summary_row):
+    payable_total = int(round(to_number(summary_row.get("payable_total_huf"))))
+    tip_amount = max(int(round(to_number(summary_row.get("tip_huf")))), 0)
+    service_amount = max(payable_total - tip_amount, 0)
+    cash_amount = abs(int(round(to_number(summary_row.get("atm_balance_huf")))))
+
+    rows = [
+        {
+            **line_row(
+                "service_fee",
+                "Szallitasi dij",
+                "A TIG fo szolgaltatasi sora. A borravalo nelkuli atutalando resz.",
+                service_amount,
+                "Elszamolas fizetendo osszeg",
+            ),
+            "TIG-be szamit": True,
+        },
+        {
+            **line_row(
+                "tip",
+                "Borravalo",
+                "Borravalo, ha a havi elszamolasban szerepel.",
+                tip_amount,
+                "Elszamolas tip",
+            ),
+            "TIG-be szamit": True,
+        },
+        {
+            **line_row(
+                "cash_info",
+                "KP tajekoztato",
+                "KP / ATM informacios sor. Alapesetben nem novel TIG vegosszeget.",
+                cash_amount,
+                "ATM / KP",
+            ),
+            "TIG-be szamit": False,
+        },
+    ]
+    non_zero_rows = [
+        row for row in rows
+        if int(row["Osszeg (Ft)"]) != 0 or row["Kod"] == "service_fee"
+    ]
+    return pd.DataFrame(non_zero_rows or rows)
+
+
 def normalize_editor_df(df):
     if df is None or df.empty:
         df = pd.DataFrame(
@@ -241,41 +286,32 @@ def normalize_editor_df(df):
     ]
 
 
-def show_monthly_invoice_editor_page():
-    st.title("Havi szamla")
-    st.caption(
-        "A PDF-ben szereplo elszamolasi tetelek szerkesztheto munkanezete. "
-        "Itt egyelore kezzel tudsz sort hozzaadni, osszeget modositani vagy sort kivenni."
-    )
+def normalize_tig_editor_df(df):
+    df = normalize_editor_df(df)
+    if "TIG-be szamit" not in df.columns:
+        df["TIG-be szamit"] = True
+    df["TIG-be szamit"] = df["TIG-be szamit"].fillna(True).astype(bool)
+    return df[
+        [
+            "Aktiv",
+            "TIG-be szamit",
+            "Kod",
+            "Megnevezes",
+            "Szoveg",
+            "Mennyiseg",
+            "Egysegar (Ft)",
+            "Osszeg (Ft)",
+            "Forras",
+            "Torles",
+        ]
+    ]
 
-    default_start, default_end = previous_month_period()
-    col1, col2, col3 = st.columns([1, 1, 1])
-    start_date = col1.date_input(
-        "Honap kezdete",
-        value=default_start,
-        key="monthly_invoice_editor_start",
-    )
-    end_date = col2.date_input(
-        "Honap vege",
-        value=default_end,
-        key="monthly_invoice_editor_end",
-    )
-    selected_sheet = col3.selectbox(
-        "Telephely",
-        ["Mind", "BUD1_JIT", "BUD2_JIT"],
-        key="monthly_invoice_editor_sheet",
-    )
 
-    try:
-        data = read_invoice_data(start_date, end_date)
-    except Exception as exc:
-        st.error(f"Elszamolasi adatok betoltese sikertelen: {exc}")
-        return
-
+def load_driver_summary_for_editor(start_date, end_date, selected_sheet):
+    data = read_invoice_data(start_date, end_date)
     final_df = filter_by_worksheet(data.get("final", pd.DataFrame()), selected_sheet)
     if final_df is None or final_df.empty:
-        st.warning("Nincs elszamolasi route adat erre a szuresre.")
-        return
+        return data, final_df, pd.DataFrame()
 
     driver_summary = build_driver_invoice_summary(
         final_df,
@@ -294,10 +330,31 @@ def show_monthly_invoice_editor_page():
         target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
-    if driver_summary.empty:
-        st.warning("A futar szintu osszesito ures erre a szuresre.")
-        return
+    return data, final_df, driver_summary
 
+
+def render_month_filters(prefix):
+    default_start, default_end = previous_month_period()
+    col1, col2, col3 = st.columns([1, 1, 1])
+    start_date = col1.date_input(
+        "Honap kezdete",
+        value=default_start,
+        key=f"{prefix}_start",
+    )
+    end_date = col2.date_input(
+        "Honap vege",
+        value=default_end,
+        key=f"{prefix}_end",
+    )
+    selected_sheet = col3.selectbox(
+        "Telephely",
+        ["Mind", "BUD1_JIT", "BUD2_JIT"],
+        key=f"{prefix}_sheet",
+    )
+    return start_date, end_date, selected_sheet
+
+
+def render_driver_selector(driver_summary, key):
     driver_summary = driver_summary.reset_index(drop=True)
     options = list(driver_summary.index)
     labels = {
@@ -308,9 +365,44 @@ def show_monthly_invoice_editor_page():
         "Futar",
         options,
         format_func=lambda index: labels.get(index, str(index)),
-        key="monthly_invoice_editor_driver",
+        key=key,
     )
-    summary_row = driver_summary.loc[selected_index]
+    return driver_summary, selected_index, driver_summary.loc[selected_index]
+
+
+def show_monthly_invoice_editor_page():
+    st.title("Havi szamla")
+    st.caption(
+        "A PDF-ben szereplo elszamolasi tetelek szerkesztheto munkanezete. "
+        "Itt egyelore kezzel tudsz sort hozzaadni, osszeget modositani vagy sort kivenni."
+    )
+
+    start_date, end_date, selected_sheet = render_month_filters(
+        "monthly_invoice_editor"
+    )
+
+    try:
+        _data, final_df, driver_summary = load_driver_summary_for_editor(
+            start_date,
+            end_date,
+            selected_sheet,
+        )
+    except Exception as exc:
+        st.error(f"Elszamolasi adatok betoltese sikertelen: {exc}")
+        return
+
+    if final_df is None or final_df.empty:
+        st.warning("Nincs elszamolasi route adat erre a szuresre.")
+        return
+
+    if driver_summary.empty:
+        st.warning("A futar szintu osszesito ures erre a szuresre.")
+        return
+
+    driver_summary, selected_index, summary_row = render_driver_selector(
+        driver_summary,
+        "monthly_invoice_editor_driver",
+    )
 
     courier_id = normalize_courier_id(summary_row.get("courier_id"))
     state_key = (
@@ -404,4 +496,155 @@ def show_monthly_invoice_editor_page():
     st.info(
         "Ez a nezet most szerkeszto munkalap. A kovetkezo lepesben ugyanennek tudunk "
         "DB mentest es PDF generalast adni, ha a sorlogika igy rendben van."
+    )
+
+
+def show_monthly_tig_editor_page():
+    st.title("Havi TIG")
+    st.caption(
+        "A TIG-ben szereplo osszegek es szoveges sorok szerkesztheto nezete. "
+        "A 'TIG-be szamit' kapcsoloval dontheto el, hogy egy sor beleszamoljon-e a vegosszegbe."
+    )
+
+    start_date, end_date, selected_sheet = render_month_filters("monthly_tig_editor")
+
+    try:
+        _data, final_df, driver_summary = load_driver_summary_for_editor(
+            start_date,
+            end_date,
+            selected_sheet,
+        )
+    except Exception as exc:
+        st.error(f"TIG adatok betoltese sikertelen: {exc}")
+        return
+
+    if final_df is None or final_df.empty:
+        st.warning("Nincs elszamolasi route adat erre a szuresre.")
+        return
+    if driver_summary.empty:
+        st.warning("A futar szintu osszesito ures erre a szuresre.")
+        return
+
+    driver_summary, selected_index, summary_row = render_driver_selector(
+        driver_summary,
+        "monthly_tig_editor_driver",
+    )
+    courier_id = normalize_courier_id(summary_row.get("courier_id"))
+    state_key = (
+        f"monthly_tig_lines_"
+        f"{start_date:%Y%m%d}_{end_date:%Y%m%d}_"
+        f"{courier_id or selected_index}_"
+        f"{summary_row.get('worksheet_name', '')}"
+    )
+    default_lines = normalize_tig_editor_df(build_default_tig_lines(summary_row))
+
+    top_cols = st.columns([1, 1, 1, 1])
+    top_cols[0].metric("PDF/TIG alap", format_huf(summary_row.get("payable_total_huf")))
+    top_cols[1].metric("Szolgaltatasi resz", format_huf(max(to_number(summary_row.get("payable_total_huf")) - max(to_number(summary_row.get("tip_huf")), 0), 0)))
+    top_cols[2].metric("Borravalo", format_huf(summary_row.get("tip_huf")))
+    top_cols[3].metric("KP info", format_huf(abs(to_number(summary_row.get("atm_balance_huf")))))
+
+    info_cols = st.columns(3)
+    info_cols[0].text_input(
+        "Szolgaltato / elado neve",
+        value=str(summary_row.get("driver_name") or ""),
+        key=f"{state_key}_seller_name",
+    )
+    info_cols[1].text_input(
+        "Courier ID",
+        value=courier_id,
+        key=f"{state_key}_courier_id",
+    )
+    info_cols[2].text_input(
+        "Elszamolasi idoszak",
+        value=f"{start_date} - {end_date}",
+        key=f"{state_key}_period",
+    )
+
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_lines
+
+    action_cols = st.columns([1, 1, 4])
+    if action_cols[0].button("Alaphelyzet", key=f"{state_key}_reset"):
+        st.session_state[state_key] = default_lines
+        st.rerun()
+    if action_cols[1].button("Ures TIG sor hozzaadasa", key=f"{state_key}_add"):
+        current = normalize_tig_editor_df(st.session_state[state_key])
+        new_row = pd.DataFrame(
+            [
+                {
+                    **line_row(
+                        "manual",
+                        "Uj TIG tetel",
+                        "Kezzel rogzitett TIG sor.",
+                        0,
+                        "Manualis",
+                    ),
+                    "TIG-be szamit": True,
+                }
+            ]
+        )
+        st.session_state[state_key] = pd.concat(
+            [current, new_row],
+            ignore_index=True,
+        )
+        st.rerun()
+
+    edited = st.data_editor(
+        normalize_tig_editor_df(st.session_state[state_key]),
+        key=f"{state_key}_editor",
+        hide_index=True,
+        use_container_width=True,
+        num_rows="dynamic",
+        column_config={
+            "Aktiv": st.column_config.CheckboxColumn("Aktiv"),
+            "TIG-be szamit": st.column_config.CheckboxColumn("TIG-be szamit"),
+            "Kod": st.column_config.TextColumn("Kod"),
+            "Megnevezes": st.column_config.TextColumn("Megnevezes"),
+            "Szoveg": st.column_config.TextColumn("Szoveg", width="large"),
+            "Mennyiseg": st.column_config.NumberColumn("Mennyiseg", step=1),
+            "Egysegar (Ft)": st.column_config.NumberColumn("Egysegar (Ft)", step=100),
+            "Osszeg (Ft)": st.column_config.NumberColumn("Osszeg (Ft)", step=100),
+            "Forras": st.column_config.TextColumn("Forras"),
+            "Torles": st.column_config.CheckboxColumn("Torles"),
+        },
+    )
+    edited = normalize_tig_editor_df(edited)
+    st.session_state[state_key] = edited
+
+    if st.button("Torlesre jelolt TIG sorok kivetele", key=f"{state_key}_delete"):
+        st.session_state[state_key] = edited[~edited["Torles"]].reset_index(drop=True)
+        st.rerun()
+
+    tig_rows = edited[
+        (edited["Aktiv"])
+        & (~edited["Torles"])
+        & (edited["TIG-be szamit"])
+    ].copy()
+    tig_total = int(round(tig_rows["Osszeg (Ft)"].sum())) if not tig_rows.empty else 0
+    source_total = int(round(to_number(summary_row.get("payable_total_huf"))))
+    delta = tig_total - source_total
+
+    st.divider()
+    result_cols = st.columns([1, 1, 1])
+    result_cols[0].metric("Szerkesztett TIG vegosszeg", format_huf(tig_total))
+    result_cols[1].metric("TIG-be szamito sorok", len(tig_rows))
+    result_cols[2].metric("Elteres a TIG alaphoz kepest", format_huf(delta))
+
+    export_df = edited[(edited["Aktiv"]) & (~edited["Torles"])].copy()
+    export_df.insert(0, "Courier ID", courier_id)
+    export_df.insert(1, "Futar", summary_row.get("driver_name", ""))
+    export_df.insert(2, "Honap kezdete", str(start_date))
+    export_df.insert(3, "Honap vege", str(end_date))
+
+    st.download_button(
+        "Szerkesztett TIG letoltese CSV-ben",
+        data=export_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"havi_tig_{courier_id or 'futar'}_{start_date:%Y_%m}.csv",
+        mime="text/csv",
+    )
+
+    st.info(
+        "Ez most TIG munkalap. Ha a sorlogika rendben van, a kovetkezo korben "
+        "osszekotjuk DB mentessel es TIG PDF generalassal."
     )
