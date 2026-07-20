@@ -400,7 +400,7 @@ def build_default_invoice_lines(summary_row):
 def build_default_tig_lines(summary_row):
     payable_total = int(round(to_number(summary_row.get("payable_total_huf"))))
     tip_amount = max(int(round(to_number(summary_row.get("tip_huf")))), 0)
-    service_amount = max(payable_total - tip_amount, 0)
+    service_amount = payable_total - tip_amount
     cash_amount = abs(int(round(to_number(summary_row.get("atm_balance_huf")))))
 
     rows = [

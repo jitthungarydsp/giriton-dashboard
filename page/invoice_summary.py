@@ -229,7 +229,7 @@ def build_tig_pdf_bytes(
     transfer_amount_huf = int(round(float(transfer_amount_huf or 0)))
     tip_amount_huf = int(round(float(tip_amount_huf or 0)))
     cash_amount_huf = int(round(float(cash_amount_huf or 0)))
-    transfer_service_net_huf = max(transfer_amount_huf - max(tip_amount_huf, 0), 0)
+    transfer_service_net_huf = transfer_amount_huf - max(tip_amount_huf, 0)
     service_net_huf, service_vat_huf, service_gross_huf, service_vat_label = _vat_breakdown(
         transfer_service_net_huf,
         courier_tax_number,
@@ -3010,7 +3010,7 @@ def show_invoice_summary_page():
                             courier_tax_number=seller_tax_number,
                             courier_id=courier_id,
                             document_month=document_month,
-                            transfer_amount_huf=max(transfer_amount, 0),
+                            transfer_amount_huf=transfer_amount,
                             tip_amount_huf=max(int(round(float(bulk_row.get("tip_huf", 0) or 0))), 0),
                             cash_amount_huf=abs(int(round(float(bulk_row.get("atm_balance_huf", 0) or 0)))),
                         )
@@ -3215,8 +3215,7 @@ def show_invoice_summary_page():
                 amount_col1, amount_col2 = st.columns(2)
                 tig_transfer_amount = amount_col1.number_input(
                     "Átutalásos számla összege (Ft)",
-                    min_value=0,
-                    value=max(default_transfer_amount, 0),
+                    value=default_transfer_amount,
                     step=100,
                 )
                 tig_cash_amount = amount_col2.number_input(
