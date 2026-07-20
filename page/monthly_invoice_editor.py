@@ -1,12 +1,27 @@
 from datetime import date, timedelta
+from io import BytesIO
+from pathlib import Path
+import re
 
 import pandas as pd
 import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from resources.invoice_summary import (
     build_driver_invoice_summary,
     format_huf,
     read_invoice_data,
+)
+from resources.peopleforce_documents import (
+    upload_peopleforce_document_bytes,
+    upsert_peopleforce_card_status,
 )
 
 
@@ -32,6 +47,36 @@ def to_number(value):
         return 0.0
 
 
+def current_username():
+    user = st.session_state.get("user", {})
+    if isinstance(user, dict):
+        return str(user.get("username") or user.get("name") or "admin")
+    return str(st.session_state.get("username") or "admin")
+
+
+def month_start(value):
+    return value.replace(day=1)
+
+
+def slugify_filename(value):
+    text = str(value or "").strip().lower()
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ö": "o",
+        "ő": "o",
+        "ú": "u",
+        "ü": "u",
+        "ű": "u",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "dokumentum"
+
+
 def filter_by_worksheet(df, selected_sheet):
     if df is None or df.empty or selected_sheet == "Mind":
         return df
@@ -43,6 +88,165 @@ def filter_by_worksheet(df, selected_sheet):
         .str.strip()
         .eq(str(selected_sheet).strip())
     ].copy()
+
+
+def register_pdf_font():
+    regular_candidates = [
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/calibri.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    bold_candidates = [
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    ]
+    try:
+        for path in regular_candidates:
+            if Path(path).exists():
+                pdfmetrics.registerFont(TTFont("JittEditorFont", path))
+                break
+        else:
+            return "Helvetica", "Helvetica-Bold"
+
+        for path in bold_candidates:
+            if Path(path).exists():
+                pdfmetrics.registerFont(TTFont("JittEditorFont-Bold", path))
+                return "JittEditorFont", "JittEditorFont-Bold"
+        return "JittEditorFont", "JittEditorFont"
+    except Exception:
+        return "Helvetica", "Helvetica-Bold"
+
+
+def build_editor_pdf_bytes(
+    *,
+    title,
+    subtitle,
+    courier_id,
+    courier_name,
+    period_label,
+    rows,
+    total_huf,
+):
+    regular_font, bold_font = register_pdf_font()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=14 * mm,
+        leftMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=title,
+    )
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle(
+        "JittNormal",
+        parent=styles["Normal"],
+        fontName=regular_font,
+        fontSize=8.5,
+        leading=10.5,
+    )
+    title_style = ParagraphStyle(
+        "JittTitle",
+        parent=normal,
+        fontName=bold_font,
+        fontSize=18,
+        leading=22,
+        spaceAfter=5,
+    )
+    bold = ParagraphStyle("JittBold", parent=normal, fontName=bold_font)
+    right = ParagraphStyle("JittRight", parent=normal, alignment=TA_RIGHT)
+
+    story = [
+        Paragraph(title, title_style),
+        Paragraph(subtitle, normal),
+        Spacer(1, 4 * mm),
+        Paragraph(f"Futár: <b>{courier_name}</b> | Courier ID: <b>{courier_id}</b>", normal),
+        Paragraph(f"Időszak: <b>{period_label}</b>", normal),
+        Spacer(1, 5 * mm),
+    ]
+
+    table_data = [
+        [
+            Paragraph("Tétel", bold),
+            Paragraph("Szöveg", bold),
+            Paragraph("Összeg", bold),
+        ]
+    ]
+    for _, row in rows.iterrows():
+        table_data.append(
+            [
+                Paragraph(str(row.get("Megnevezes") or ""), normal),
+                Paragraph(str(row.get("Szoveg") or ""), normal),
+                Paragraph(format_huf(row.get("Osszeg (Ft)")), right),
+            ]
+        )
+    table_data.append(
+        [
+            Paragraph("VÉGÖSSZEG", bold),
+            "",
+            Paragraph(format_huf(total_huf), right),
+        ]
+    )
+
+    table = Table(table_data, colWidths=[45 * mm, 100 * mm, 35 * mm])
+    total_row = len(table_data) - 1
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -2), 0.4, colors.HexColor("#cccccc")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#233018")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BACKGROUND", (0, total_row), (-1, total_row), colors.HexColor("#eef9e8")),
+                ("BOX", (0, total_row), (-1, total_row), 0.7, colors.HexColor("#6ab82f")),
+                ("SPAN", (0, total_row), (1, total_row)),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.append(table)
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def upload_editor_pdf_to_profile(
+    *,
+    courier_id,
+    courier_name,
+    document_type,
+    action_key,
+    document_month,
+    title,
+    note,
+    file_name,
+    pdf_bytes,
+):
+    upload_peopleforce_document_bytes(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        document_type=document_type,
+        document_month=document_month,
+        title=title,
+        note=note,
+        file_name=file_name,
+        mime_type="application/pdf",
+        file_bytes=pdf_bytes,
+        uploaded_by=current_username(),
+    )
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key=action_key,
+        document_month=document_month,
+        status="open",
+        status_note=f"{title} feltöltve, futár elfogadására vár.",
+        updated_by=current_username(),
+    )
 
 
 def build_driver_label(row):
@@ -480,18 +684,63 @@ def show_monthly_invoice_editor_page():
     result_cols[1].metric("Aktiv sorok", len(payable_rows))
     result_cols[2].metric("Elteres a PDF alaphoz kepest", format_huf(delta))
 
+    courier_name = str(summary_row.get("driver_name") or "").strip()
+    period_label = f"{start_date} - {end_date}"
+    pdf_bytes = build_editor_pdf_bytes(
+        title="JITT havi elszámolás előnézet",
+        subtitle="Szerkesztett elszámolási sorok az admin munkanézet alapján.",
+        courier_id=courier_id,
+        courier_name=courier_name,
+        period_label=period_label,
+        rows=payable_rows,
+        total_huf=payable_total,
+    )
+    settlement_file_name = (
+        f"jitt_elszamolas_elonezet_"
+        f"{courier_id or 'futar'}_"
+        f"{slugify_filename(courier_name)}_"
+        f"{start_date:%Y_%m}.pdf"
+    )
+
     export_df = payable_rows.copy()
     export_df.insert(0, "Courier ID", courier_id)
     export_df.insert(1, "Futar", summary_row.get("driver_name", ""))
     export_df.insert(2, "Honap kezdete", str(start_date))
     export_df.insert(3, "Honap vege", str(end_date))
 
-    st.download_button(
-        "Szerkesztett havi szamla letoltese CSV-ben",
+    download_cols = st.columns([1, 1, 1])
+    download_cols[0].download_button(
+        "Elonezet PDF letoltese",
+        data=pdf_bytes,
+        file_name=settlement_file_name,
+        mime="application/pdf",
+    )
+    download_cols[1].download_button(
+        "Szerkesztett havi szamla CSV",
         data=export_df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"havi_szamla_{courier_id or 'futar'}_{start_date:%Y_%m}.csv",
         mime="text/csv",
     )
+    if download_cols[2].button(
+        "Feltoltes a profilba",
+        key=f"{state_key}_upload_profile",
+        disabled=not bool(courier_id),
+    ):
+        try:
+            upload_editor_pdf_to_profile(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                document_type="settlement",
+                action_key="settlement",
+                document_month=month_start(start_date),
+                title=f"Elszámolás - {start_date:%Y-%m}",
+                note="Havi számla szerkesztőből feltöltött előnézeti elszámolás.",
+                file_name=settlement_file_name,
+                pdf_bytes=pdf_bytes,
+            )
+            st.success("Az elszámolás felkerült a futár profiljába.")
+        except Exception as exc:
+            st.error(f"Profil feltoltes sikertelen: {exc}")
 
     st.info(
         "Ez a nezet most szerkeszto munkalap. A kovetkezo lepesben ugyanennek tudunk "
@@ -631,18 +880,64 @@ def show_monthly_tig_editor_page():
     result_cols[1].metric("TIG-be szamito sorok", len(tig_rows))
     result_cols[2].metric("Elteres a TIG alaphoz kepest", format_huf(delta))
 
+    courier_name = str(st.session_state.get(f"{state_key}_seller_name") or summary_row.get("driver_name") or "").strip()
+    period_label = f"{start_date} - {end_date}"
+    pdf_rows = edited[(edited["Aktiv"]) & (~edited["Torles"])].copy()
+    pdf_bytes = build_editor_pdf_bytes(
+        title="JITT TIG előnézet",
+        subtitle="Szerkesztett teljesítési igazolás sorok az admin munkanézet alapján.",
+        courier_id=courier_id,
+        courier_name=courier_name,
+        period_label=period_label,
+        rows=pdf_rows,
+        total_huf=tig_total,
+    )
+    tig_file_name = (
+        f"jitt_tig_elonezet_"
+        f"{courier_id or 'futar'}_"
+        f"{slugify_filename(courier_name)}_"
+        f"{start_date:%Y_%m}.pdf"
+    )
+
     export_df = edited[(edited["Aktiv"]) & (~edited["Torles"])].copy()
     export_df.insert(0, "Courier ID", courier_id)
     export_df.insert(1, "Futar", summary_row.get("driver_name", ""))
     export_df.insert(2, "Honap kezdete", str(start_date))
     export_df.insert(3, "Honap vege", str(end_date))
 
-    st.download_button(
-        "Szerkesztett TIG letoltese CSV-ben",
+    download_cols = st.columns([1, 1, 1])
+    download_cols[0].download_button(
+        "TIG elonezet PDF letoltese",
+        data=pdf_bytes,
+        file_name=tig_file_name,
+        mime="application/pdf",
+    )
+    download_cols[1].download_button(
+        "Szerkesztett TIG CSV",
         data=export_df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"havi_tig_{courier_id or 'futar'}_{start_date:%Y_%m}.csv",
         mime="text/csv",
     )
+    if download_cols[2].button(
+        "TIG feltoltes a profilba",
+        key=f"{state_key}_upload_profile",
+        disabled=not bool(courier_id),
+    ):
+        try:
+            upload_editor_pdf_to_profile(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                document_type="tig",
+                action_key="tig",
+                document_month=month_start(start_date),
+                title=f"TIG - {start_date:%Y-%m}",
+                note="Havi TIG szerkesztőből feltöltött előnézeti TIG.",
+                file_name=tig_file_name,
+                pdf_bytes=pdf_bytes,
+            )
+            st.success("A TIG felkerült a futár profiljába.")
+        except Exception as exc:
+            st.error(f"TIG profil feltoltes sikertelen: {exc}")
 
     st.info(
         "Ez most TIG munkalap. Ha a sorlogika rendben van, a kovetkezo korben "
