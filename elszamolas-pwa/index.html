@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#101913" />
+    <meta name="description" content="JITT elszámolási PWA admin és koordinátori felülethez." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
+    <title>JITT Elszámolás</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">JITT ELSZÁMOLÁS</p>
+          <h1>Bagoly Zoli és admin felület</h1>
+          <p class="muted">
+            Havi elszámolás, TIG, számlázás és reklamációk egy gyors mobilos munkafelületen.
+          </p>
+        </div>
+        <div class="hero-card">
+          <label for="month-select">Aktuális hónap</label>
+          <select id="month-select" class="month-select" aria-label="Aktuális hónap választása"></select>
+          <small id="month-helper">A havi adatok ehhez a hónaphoz töltődnek majd.</small>
+        </div>
+      </header>
+
+      <nav class="top-nav" aria-label="Elszámolási menü">
+        <button class="active" data-view="home">
+          <span>Főoldal</span>
+          <span class="nav-badge hidden" data-badge="home">0</span>
+        </button>
+        <button data-view="settlement">
+          <span class="nav-index">1</span>
+          <span>Elszámolás</span>
+          <span class="nav-badge hidden" data-badge="settlement">0</span>
+        </button>
+        <button data-view="tig">
+          <span class="nav-index">2</span>
+          <span>TIG</span>
+          <span class="nav-badge hidden" data-badge="tig">0</span>
+        </button>
+        <button data-view="billing">
+          <span class="nav-index">3</span>
+          <span>Számlázás</span>
+          <span class="nav-badge hidden" data-badge="billing">0</span>
+        </button>
+        <button data-view="complaints">
+          <span class="nav-index">4</span>
+          <span>Reklamáció</span>
+          <span class="nav-badge hidden" data-badge="complaints">0</span>
+        </button>
+      </nav>
+
+      <section id="home" class="view">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">GYORS ÁTTEKINTÉS</p>
+            <h2>Főoldal</h2>
+          </div>
+          <button class="soft-button" id="refresh-couriers">Futárok frissítése</button>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span>Futár törzs</span>
+            <strong id="courier-count">0</strong>
+            <small>Settlement DB alapján</small>
+          </article>
+          <article class="metric-card">
+            <span>Aktív futár</span>
+            <strong id="active-courier-count">0</strong>
+            <small>fetch-drivers állapot</small>
+          </article>
+          <article class="metric-card">
+            <span>Figyelmeztetés</span>
+            <strong id="home-warning-count">0</strong>
+            <small>TIG, számla, reklamáció</small>
+          </article>
+        </div>
+
+        <article class="work-card">
+          <div class="card-heading">
+            <div>
+              <h3>Futárok</h3>
+              <p>Gyors törzslista, hogy Zoli és admin azonnal követni tudja, ki hol tart.</p>
+            </div>
+            <input
+              id="courier-search"
+              class="search-input"
+              type="search"
+              placeholder="Keresés név, ID, rendszám alapján"
+            />
+          </div>
+          <div id="courier-list" class="courier-list">
+            <div class="empty-state">Még nincs betöltött futár adat.</div>
+          </div>
+        </article>
+      </section>
+
+      <section id="settlement" class="view hidden">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">HAVI ZÁRÁS</p>
+            <h2>Elszámolás</h2>
+          </div>
+          <button class="soft-button" id="load-financial-overview">Courier Hub adatok lekérése</button>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span>Courier Hub sor</span>
+            <strong id="financial-row-count">0</strong>
+            <small id="financial-payload-type">Még nincs lekérés</small>
+          </article>
+          <article class="metric-card">
+            <span>Raktár</span>
+            <strong id="financial-warehouse-label">BUD1</strong>
+            <small>warehouseId alapján</small>
+          </article>
+          <article class="metric-card">
+            <span>Mentés</span>
+            <strong id="financial-save-status">-</strong>
+            <small>raw DB mentés</small>
+          </article>
+        </div>
+
+        <article class="work-card">
+          <div class="card-heading compact">
+            <div>
+              <h3>Courier Hub financial overview</h3>
+              <p>
+                A token a backendben marad. A lekérés menti a nyers választ a
+                <strong>settlement_financial_overview_raw</strong> táblába.
+              </p>
+            </div>
+            <label class="field-stack">
+              Raktár
+              <select id="financial-warehouse" class="month-select">
+                <option value="1">BUD1</option>
+                <option value="2">BUD2</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="financial-status" class="notice muted">
+            Válassz hónapot és raktárt, majd indítsd a lekérést.
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead id="financial-preview-head"></thead>
+              <tbody id="financial-preview-body">
+                <tr><td>Még nincs betöltött Courier Hub adat.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p>
+            Első körben itt csak a hívás tiszta megjelenítése és raw mentése a cél.
+            Erre fogjuk majd ráépíteni a futárnak szánt és JITT-es elszámolási nézetet.
+          </p>
+        </article>
+      </section>
+
+      <section id="tig" class="view hidden">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">TELJESÍTÉSI IGAZOLÁS</p>
+            <h2>TIG</h2>
+          </div>
+          <button class="soft-button">TIG generálás</button>
+        </div>
+
+        <article class="work-card">
+          <h3>TIG munkalista</h3>
+          <p>
+            Itt látszik majd, melyik futárnak készült el a TIG, ki fogadta el,
+            és hol van reklamáció vagy hiányzó adat.
+          </p>
+        </article>
+      </section>
+
+      <section id="billing" class="view hidden">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">SZÁMLÁZÁS</p>
+            <h2>Számlázás</h2>
+          </div>
+          <button class="soft-button">Számla ellenőrzés</button>
+        </div>
+
+        <article class="work-card">
+          <h3>Számlák kezelése</h3>
+          <p>
+            Ide kerül majd a feltöltött számla ellenőrzése, elfogadása,
+            javításra küldése és fizetési státusza.
+          </p>
+        </article>
+      </section>
+
+      <section id="complaints" class="view hidden">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">VISSZAJELZÉSEK</p>
+            <h2>Reklamáció</h2>
+          </div>
+          <button class="soft-button">Új reklamáció</button>
+        </div>
+
+        <article class="work-card alert">
+          <h3>Nyitott reklamációk</h3>
+          <p>
+            Itt kap majd Zoli és admin gyors listát minden elszámolási,
+            TIG-es vagy számlázási problémáról.
+          </p>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js?v=5" defer></script>
+  </body>
+</html>
