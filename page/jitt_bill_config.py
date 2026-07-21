@@ -5,7 +5,6 @@ import psycopg2
 import pandas as pd
 import streamlit as st
 
-
 # ==========================================================
 # ADATBÁZIS-KAPCSOLAT
 # ==========================================================
@@ -242,270 +241,143 @@ def load_bill_configs(
 # ==========================================================
 
 def show_bill_config_page():
-    st.title("Elszámolási konfiguráció")
+    st.title("JITT Bill konfiguráció")
 
     st.caption(
-        "Új díjtételek és konfigurációs értékek felvétele "
-        "a jitt_bill_config táblába."
+        "A jitt_bill_config tábla adatainak kézi feltöltése."
     )
 
-    user = st.session_state.get(
-        "user",
-        {
-            "username": "unknown",
-        },
-    )
+    with st.form("jitt_bill_config_form"):
 
-    username = user.get("username", "unknown")
+        st.subheader("Alapadatok")
 
-    new_tab, list_tab = st.tabs(
-        [
-            "Új konfiguráció",
-            "Meglévő konfigurációk",
-        ]
-    )
-
-    # ======================================================
-    # ÚJ KONFIGURÁCIÓ
-    # ======================================================
-
-    with new_tab:
-        with st.form(
-            "jitt_bill_config_form",
-            clear_on_submit=True,
-        ):
-            st.subheader("Új érték felvétele")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                config_category = st.selectbox(
-                    "Kategória",
-                    [
-                        "ROUTE",
-                        "BONUS",
-                        "MALUS",
-                        "INSURANCE",
-                        "RESERVE",
-                        "OTHER",
-                    ],
-                )
-
-                config_key = st.text_input(
-                    "Konfigurációs kulcs",
-                    placeholder="Például: PEAK_DAY_CITY",
-                    help=(
-                        "Egy technikai azonosító. "
-                        "Azonos kulcs módosításakor új verzió jön létre."
-                    ),
-                )
-
-                config_name = st.text_input(
-                    "Megnevezés",
-                    placeholder="Például: Kiemelt nap – City",
-                )
-
-            with col2:
-                calculation_type = st.selectbox(
-                    "Számítás típusa",
-                    [
-                        "fixed",
-                        "per_route",
-                        "per_order",
-                        "per_day",
-                        "per_month",
-                        "percentage",
-                        "manual",
-                    ],
-                    index=1,
-                )
-
-                unit = st.selectbox(
-                    "Mértékegység",
-                    [
-                        "HUF",
-                        "%",
-                        "DB",
-                    ],
-                )
-
-                valid_from = st.date_input(
-                    "Érvényesség kezdete",
-                    value=date.today(),
-                )
-
-            st.markdown("#### Értékek")
-
-            value_col1, value_col2 = st.columns(2)
-
-            with value_col1:
-                company_value = st.number_input(
-                    "Vállalkozói érték",
-                    min_value=0.0,
-                    value=0.0,
-                    step=100.0,
-                    format="%.2f",
-                )
-
-            with value_col2:
-                courier_value = st.number_input(
-                    "Futár értéke",
-                    min_value=0.0,
-                    value=0.0,
-                    step=100.0,
-                    format="%.2f",
-                )
-
-            description = st.text_area(
-                "Megjegyzés",
-                placeholder=(
-                    "Például: kiemelt napi City kör díja, "
-                    "lojalitási bónusszal."
-                ),
-            )
-
-            submitted = st.form_submit_button(
-                "Mentés az adatbázisba",
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            normalized_key = config_key.strip().upper().replace(" ", "_")
-            normalized_name = config_name.strip()
-
-            errors = []
-
-            if not normalized_key:
-                errors.append(
-                    "A konfigurációs kulcs megadása kötelező."
-                )
-
-            if not normalized_name:
-                errors.append(
-                    "A megnevezés megadása kötelező."
-                )
-
-            if company_value == 0 and courier_value == 0:
-                errors.append(
-                    "Legalább a vállalkozói vagy a futár értékét meg kell adni."
-                )
-
-            if errors:
-                for error in errors:
-                    st.error(error)
-
-            else:
-                try:
-                    insert_bill_config(
-                        config_key=normalized_key,
-                        config_name=normalized_name,
-                        config_category=config_category,
-                        company_value=company_value,
-                        courier_value=courier_value,
-                        calculation_type=calculation_type,
-                        unit=unit,
-                        valid_from=valid_from,
-                        description=description.strip(),
-                        created_by=username,
-                    )
-
-                    st.success(
-                        f"A(z) „{normalized_name}” konfiguráció "
-                        "sikeresen bekerült az adatbázisba."
-                    )
-
-                    st.rerun()
-
-                except Exception as error:
-                    st.error(
-                        "Nem sikerült elmenteni a konfigurációt."
-                    )
-
-                    st.exception(error)
-
-    # ======================================================
-    # MEGLÉVŐ KONFIGURÁCIÓK
-    # ======================================================
-
-    with list_tab:
-        st.subheader("jitt_bill_config tartalma")
-
-        filter_col1, filter_col2, filter_col3 = st.columns(
-            [
-                2,
-                1,
-                1,
-            ]
+        id_value = st.number_input(
+            "id",
+            min_value=0,
+            step=1,
+            value=0,
+            help="Ha az adatbázis automatikusan generálja, később ezt kivesszük.",
         )
 
-        with filter_col1:
-            category_filter = st.selectbox(
-                "Kategória szűrése",
-                [
-                    "Összes",
-                    "ROUTE",
-                    "BONUS",
-                    "MALUS",
-                    "INSURANCE",
-                    "RESERVE",
-                    "OTHER",
-                ],
-                key="bill_config_category_filter",
+        config_key = st.text_input(
+            "config_key"
+        )
+
+        config_name = st.text_input(
+            "config_name"
+        )
+
+        config_category = st.text_input(
+            "config_category"
+        )
+
+        st.divider()
+
+        st.subheader("Értékek")
+
+        company_value = st.number_input(
+            "company_value",
+            value=0.0,
+            step=100.0,
+            format="%.2f",
+        )
+
+        courier_value = st.number_input(
+            "courier_value",
+            value=0.0,
+            step=100.0,
+            format="%.2f",
+        )
+
+        calculation_type = st.text_input(
+            "calculation_type"
+        )
+
+        unit = st.text_input(
+            "unit"
+        )
+
+        st.divider()
+
+        st.subheader("Verzió és érvényesség")
+
+        version = st.number_input(
+            "version",
+            min_value=1,
+            step=1,
+            value=1,
+        )
+
+        valid_from = st.date_input(
+            "valid_from",
+            value=date.today(),
+        )
+
+        use_valid_to = st.checkbox(
+            "valid_to megadása"
+        )
+
+        if use_valid_to:
+            valid_to = st.date_input(
+                "valid_to",
+                value=date.today(),
             )
+        else:
+            valid_to = None
 
-        with filter_col2:
-            active_only = st.checkbox(
-                "Csak aktív",
-                value=True,
-            )
+        is_active = st.checkbox(
+            "is_active",
+            value=True,
+        )
 
-        with filter_col3:
-            refresh = st.button(
-                "Frissítés",
-                use_container_width=True,
-            )
+        st.divider()
 
-        try:
-            configs = load_bill_configs(
-                category=category_filter,
-                active_only=active_only,
-            )
+        st.subheader("Megjegyzés és naplózás")
 
-            if configs.empty:
-                st.info(
-                    "A kiválasztott feltételekkel nincs konfiguráció."
-                )
-            else:
-                display_columns = {
-                    "id": "ID",
-                    "config_key": "Kulcs",
-                    "config_name": "Megnevezés",
-                    "config_category": "Kategória",
-                    "company_value": "Vállalkozó",
-                    "courier_value": "Futár",
-                    "calculation_type": "Számítás",
-                    "unit": "Egység",
-                    "version": "Verzió",
-                    "valid_from": "Érvényes ettől",
-                    "valid_to": "Érvényes eddig",
-                    "is_active": "Aktív",
-                    "description": "Megjegyzés",
-                    "created_by": "Létrehozta",
-                    "created_at": "Létrehozva",
-                }
+        description = st.text_area(
+            "description"
+        )
 
-                st.dataframe(
-                    configs[list(display_columns.keys())].rename(
-                        columns=display_columns
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+        created_by = st.text_input(
+            "created_by"
+        )
 
-        except Exception as error:
-            st.error(
-                "Nem sikerült lekérni a jitt_bill_config adatokat."
-            )
+        updated_by = st.text_input(
+            "updated_by"
+        )
 
-            st.exception(error)
+        submitted = st.form_submit_button(
+            "Adatok ellenőrzése",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        form_data = {
+            "id": id_value,
+            "config_key": config_key,
+            "config_name": config_name,
+            "config_category": config_category,
+            "company_value": company_value,
+            "courier_value": courier_value,
+            "calculation_type": calculation_type,
+            "unit": unit,
+            "version": version,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "is_active": is_active,
+            "description": description,
+            "created_by": created_by,
+            "updated_by": updated_by,
+        }
+
+        st.success("Az adatok kitöltésre kerültek.")
+
+        st.subheader("Rögzítendő adatok")
+
+        st.json(
+            {
+                key: str(value) if value is not None else None
+                for key, value in form_data.items()
+            }
+        )
