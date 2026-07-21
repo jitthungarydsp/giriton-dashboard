@@ -16,7 +16,6 @@ from resources.supabase_raw import (
 
 
 FINAL_TABLES = [
-    "bill_jitt_invoice_final_routes_with_courier_id",
     "bill_jitt_invoice_final_routes",
     "jitt_invoice_final_routes",
 ]
@@ -52,13 +51,6 @@ MONTHLY_ADJUSTMENT_TABLES = [
 DAY_RATE_TABLES = [
     "dsp_day_rates",
 ]
-TARGET_RESERVE_TABLES = [
-    "courier_target_reserve",
-]
-
-TARGET_RESERVE_RATE = 0.10
-TARGET_RESERVE_MAX_HUF = 50000
-INSURANCE_DEDUCTION_HUF = 10000
 
 # Pozitív ATM-egyenleg levonásként jelenik meg az elszámolásban.
 # Ha üzletileg pluszként kell kezelni, állítsd 1-re.
@@ -79,6 +71,9 @@ COURIER_BONUS_AMOUNT_OVERRIDES = {
 
 MANUAL_ITEM_TYPES = {
     "instructor_fee_huf": "Oktatói Díj",
+    "target_reserve_open_huf": "Nyitó céltartalék",
+    "target_reserve_topup_huf": "Céltartalék feltöltés",
+    "target_reserve_close_huf": "Céltartalék záró egyenleg",
     "fuel_huf": "Üzemanyag",
     "damage_huf": "Károkozás",
     "cash_missing_huf": "Be nem fizetett KP",
@@ -95,91 +90,6 @@ def money(value):
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def parse_huf_amount(value):
-    if pd.isna(value):
-        return 0.0
-
-    if isinstance(value, (int, float)):
-        return float(value)
-
-    text = str(value or "").strip()
-    if not text:
-        return 0.0
-
-    text = (
-        text.replace("−", "-")
-        .replace("–", "-")
-        .replace("—", "-")
-        .replace("Ft", "")
-        .replace("HUF", "")
-        .replace("\u00a0", "")
-        .replace(" ", "")
-        .strip()
-    )
-
-    if not text or text.upper() in {"#VALUE!", "#N/A", "NAN", "NONE", "NULL"}:
-        return 0.0
-
-    if "," not in text and text.count(".") == 1:
-        before, after = text.split(".")
-        if len(after) == 3 and before.replace("-", "").isdigit() and after.isdigit():
-            text = before + after
-
-    text = text.replace(",", ".")
-
-    try:
-        return float(text)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def parse_bool_flag(value):
-    if isinstance(value, bool):
-        return value
-
-    if pd.isna(value):
-        return False
-
-    if isinstance(value, (int, float)):
-        return value != 0
-
-    text = str(value or "").strip().casefold()
-    if not text:
-        return False
-
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(
-        character
-        for character in text
-        if not unicodedata.combining(character)
-    )
-    text = text.replace("\u00a0", "").replace(" ", "")
-    if text in {"true", "t", "yes", "y", "igen", "i", "1", "x", "active", "aktiv"}:
-        return True
-    if text in {"false", "f", "no", "n", "nem", "0", "inactive", "inaktiv", "none", "null"}:
-        return False
-
-    try:
-        return float(text.replace(",", ".")) != 0
-    except (TypeError, ValueError):
-        return False
-
-
-def normalize_courier_id_text(value):
-    text = normalize_text(value)
-    text = text.replace("\u00a0", "").replace(" ", "")
-    text = text.replace(",", ".")
-    if text.endswith(".0"):
-        text = text[:-2]
-    try:
-        number = float(text)
-        if number.is_integer():
-            return str(int(number))
-    except (TypeError, ValueError):
-        pass
-    return text
 
 
 def format_huf(value):
@@ -204,63 +114,16 @@ def normalize_person_key(value):
 
     tokens = re.findall(r"[a-z0-9]+", text)
 
-    # A futárnevekben szereplő számozás az azonosító része is lehet
-    # (például: "PAPP 777 Niki"), ezért a numerikus tokeneket megtartjuk.
+    tokens = [
+        token
+        for token in tokens
+        if not (
+            token.isdigit()
+            and 3 <= len(token) <= 6
+        )
+    ]
+
     return " ".join(sorted(tokens))
-
-
-def normalize_person_name_key(value):
-    text = unicodedata.normalize(
-        "NFKD",
-        normalize_text(value).casefold(),
-    )
-    text = "".join(
-        character
-        for character in text
-        if not unicodedata.combining(character)
-    )
-    tokens = re.findall(r"[a-z]+", text)
-    return " ".join(sorted(tokens))
-
-
-def normalize_column_key(value):
-    text = unicodedata.normalize(
-        "NFKD",
-        str(value or "").casefold(),
-    )
-    text = "".join(
-        character
-        for character in text
-        if not unicodedata.combining(character)
-    )
-    return re.sub(r"[^a-z0-9]+", "", text)
-
-
-def extract_usernumber_from_row(row):
-    row_data = row.get("row_data") if hasattr(row, "get") else None
-    if isinstance(row_data, str):
-        try:
-            row_data = json.loads(row_data)
-        except json.JSONDecodeError:
-            row_data = {}
-    if isinstance(row_data, dict):
-        for key, value in row_data.items():
-            if normalize_column_key(key) in {"usernumber", "userno", "userid", "courierid"}:
-                courier_id = normalize_courier_id_text(value)
-                if courier_id:
-                    return courier_id
-
-    row_values = row.get("row_values") if hasattr(row, "get") else None
-    if isinstance(row_values, str):
-        try:
-            row_values = json.loads(row_values)
-        except json.JSONDecodeError:
-            row_values = []
-    if isinstance(row_values, (list, tuple)) and len(row_values) > 2:
-        return normalize_courier_id_text(row_values[2])
-
-    return ""
-
 
 def normalize_bonus_worksheet(site):
     value = normalize_text(site).upper().replace("-", "_").replace(" ", "_")
@@ -526,36 +389,6 @@ def read_optional_first_nonempty_table(table_names, select, extra_filters=None, 
     return first_existing_name, first_existing_df
 
 
-def read_target_reserve_for_courier_ids(courier_ids):
-    normalized_ids = sorted(
-        {
-            normalize_courier_id_text(courier_id)
-            for courier_id in courier_ids
-            if normalize_courier_id_text(courier_id)
-        }
-    )
-    if not normalized_ids:
-        return pd.DataFrame()
-
-    rows = []
-    for courier_id in normalized_ids:
-        _table_name, chunk = read_first_existing_table(
-            TARGET_RESERVE_TABLES,
-            "*",
-            [
-                f"courier_id=eq.{quote(courier_id, safe='')}",
-            ],
-            limit=5,
-        )
-        if chunk is not None and not chunk.empty:
-            rows.append(chunk)
-
-    if not rows:
-        return pd.DataFrame()
-
-    return pd.concat(rows, ignore_index=True)
-
-
 def post_supabase_row(table_names, row):
     supabase_url, service_role_key = get_supabase_config()
 
@@ -607,54 +440,38 @@ def read_invoice_data(start_date, end_date):
         f"work_date=lte.{end_text}",
         "order=driver_name.asc,work_date.asc",
     ]
-    final_base_columns = [
-        "worksheet_name",
-        "row_number",
-        "location",
-        "driver_name",
-        "route_unique_id",
-        "route_type",
-        "dsp",
-        "work_date",
-        "orders",
-        "routes",
-        "license_plate",
-        "fixed_rate_huf",
-        "fuel_bonus_huf",
-        "car_fridge_bonus_huf",
-        "branding_huf",
-        "delay_bonus_huf",
-        "compliance_bonus_huf",
-        "fill_rate_bonus_huf",
-        "bonus_total_huf",
-        "tip_huf",
-        "route_total_without_tip_huf",
-        "route_total_huf",
-        "comment",
-    ]
-    final_select_candidates = [
-        (
-            ["bill_jitt_invoice_final_routes_with_courier_id"],
-            final_base_columns + ["courierID"],
+    final_table, final_df = read_first_existing_table(
+        FINAL_TABLES,
+        ",".join(
+            [
+                "worksheet_name",
+                "row_number",
+                "location",
+                "driver_name",
+                "route_unique_id",
+                "route_type",
+                "dsp",
+                "work_date",
+                "orders",
+                "routes",
+                "license_plate",
+                "fixed_rate_huf",
+                "fuel_bonus_huf",
+                "car_fridge_bonus_huf",
+                "branding_huf",
+                "delay_bonus_huf",
+                "compliance_bonus_huf",
+                "fill_rate_bonus_huf",
+                "bonus_total_huf",
+                "tip_huf",
+                "route_total_without_tip_huf",
+                "route_total_huf",
+                "comment",
+            ]
         ),
-    ]
-    last_final_error = None
-    final_table = None
-    final_df = pd.DataFrame()
-    for table_names, final_columns in final_select_candidates:
-        try:
-            final_table, final_df = read_first_existing_table(
-                table_names,
-                ",".join(final_columns),
-                date_filters,
-                limit=50000,
-            )
-            break
-        except Exception as exc:
-            last_final_error = exc
-    else:
-        if last_final_error:
-            raise last_final_error
+        date_filters,
+        limit=50000,
+    )
 
     _route_table, raw_route_df = read_optional_first_nonempty_table(
         ROUTE_TABLES,
@@ -739,8 +556,6 @@ def read_invoice_data(start_date, end_date):
         limit=1000,
     )
 
-    target_reserve_df = pd.DataFrame()
-
     previous_start, previous_end = previous_month_bounds(start_date)
     _previous_table, previous_routes_df = read_optional_first_existing_table(
         FINAL_TABLES,
@@ -785,7 +600,6 @@ def read_invoice_data(start_date, end_date):
         "customer_rating": customer_rating_df,
         "monthly_adjustments": monthly_adjustment_df,
         "day_rates": day_rates_df,
-        "target_reserve": target_reserve_df,
         "previous_routes": previous_routes_df,
         "bookings": bookings_df,
         "loyalty_acceptance": acceptance_df,
@@ -891,8 +705,8 @@ def restore_raw_compliance_bonus(final_df, raw_route_df):
 
 def build_weekday_counts(final_df):
     columns = [
-        "driver_match_key",
         "driver_name",
+        "worksheet_name",
         "hetfo",
         "kedd",
         "szerda",
@@ -907,13 +721,13 @@ def build_weekday_counts(final_df):
         return pd.DataFrame(columns=columns)
 
     route_id_column = "route_unique_id" if "route_unique_id" in final_df.columns else None
-    required_columns = ["driver_name", "work_date"]
+    required_columns = ["driver_name", "worksheet_name", "work_date"]
     if route_id_column:
         required_columns.append(route_id_column)
 
     routes = final_df[required_columns].copy()
     routes["driver_name"] = routes["driver_name"].map(normalize_text)
-    routes["driver_match_key"] = routes["driver_name"].map(normalize_person_key)
+    routes["worksheet_name"] = routes["worksheet_name"].map(normalize_text)
     routes["work_date"] = pd.to_datetime(
         routes["work_date"],
         errors="coerce",
@@ -928,17 +742,16 @@ def build_weekday_counts(final_df):
         routes["_route_key"] = routes.index.astype(str)
 
     worked_dates = routes[
-        ["driver_match_key", "driver_name", "work_date"]
+        ["driver_name", "worksheet_name", "work_date"]
     ].drop_duplicates()
     routes = routes.drop_duplicates(
-        subset=["driver_match_key", "work_date", "_route_key"]
+        subset=["driver_name", "worksheet_name", "work_date", "_route_key"]
     )
     routes["weekday"] = routes["work_date"].dt.weekday
 
     grouped = (
-        routes.groupby(["driver_match_key"], dropna=False)
+        routes.groupby(["driver_name", "worksheet_name"], dropna=False)
         .agg(
-            driver_name=("driver_name", "first"),
             hetfo=("weekday", lambda value: int((value == 0).sum())),
             kedd=("weekday", lambda value: int((value == 1).sum())),
             szerda=("weekday", lambda value: int((value == 2).sum())),
@@ -950,13 +763,13 @@ def build_weekday_counts(final_df):
         .reset_index()
     )
     worked_days = (
-        worked_dates.groupby(["driver_match_key"], dropna=False)["work_date"]
+        worked_dates.groupby(["driver_name", "worksheet_name"], dropna=False)["work_date"]
         .nunique()
         .reset_index(name="worked_days")
     )
     grouped = grouped.merge(
         worked_days,
-        on="driver_match_key",
+        on=["driver_name", "worksheet_name"],
         how="left",
     )
 
@@ -969,14 +782,14 @@ def build_manual_item_summary(manual_df):
 
     manual_df = manual_df.copy()
     manual_df["driver_name"] = manual_df["driver_name"].map(normalize_text)
-    manual_df["driver_match_key"] = manual_df["driver_name"].map(normalize_person_key)
+    manual_df["worksheet_name"] = manual_df["worksheet_name"].map(normalize_text)
     manual_df = add_numeric_columns(
         manual_df,
         ["amount_huf"],
     )
     pivot = (
         manual_df.pivot_table(
-            index=["driver_match_key"],
+            index=["driver_name", "worksheet_name"],
             columns="item_type",
             values="amount_huf",
             aggfunc="sum",
@@ -989,19 +802,20 @@ def build_manual_item_summary(manual_df):
 
 
 def _normal_route_counts(routes_df, output_column):
-    columns = ["driver_match_key", output_column]
+    columns = ["driver_match_key", "worksheet_name", output_column]
     if routes_df is None or routes_df.empty:
         return pd.DataFrame(columns=columns)
     routes = routes_df.copy()
     routes["driver_match_key"] = routes.get("driver_name", pd.Series("", index=routes.index)).map(normalize_person_key)
+    routes["worksheet_name"] = routes.get("worksheet_name", pd.Series("", index=routes.index)).map(normalize_text)
     route_type = routes.get("route_type", pd.Series("", index=routes.index)).astype(str).str.upper()
     routes = routes[route_type.str.contains("NORMAL", na=False)].copy()
     if routes.empty:
         return pd.DataFrame(columns=columns)
     if "route_unique_id" in routes.columns:
-        counts = routes.groupby("driver_match_key")["route_unique_id"].nunique()
+        counts = routes.groupby(["driver_match_key", "worksheet_name"])["route_unique_id"].nunique()
     else:
-        counts = routes.groupby("driver_match_key").size()
+        counts = routes.groupby(["driver_match_key", "worksheet_name"]).size()
     return counts.reset_index(name=output_column)
 
 
@@ -1010,7 +824,7 @@ def build_loyalty_bonus_summary(current_routes_df, previous_routes_df, profiles_
     if current.empty:
         return current
     previous = _normal_route_counts(previous_routes_df, "loyalty_previous_normal_routes")
-    result = current.merge(previous, on="driver_match_key", how="left")
+    result = current.merge(previous, on=["driver_match_key", "worksheet_name"], how="left")
     result["loyalty_previous_normal_routes"] = result["loyalty_previous_normal_routes"].fillna(0).astype(int)
 
     profiles = profiles_df.copy() if profiles_df is not None else pd.DataFrame()
@@ -1075,7 +889,6 @@ def build_driver_invoice_summary(
     atm_balance_df=None,
     customer_rating_df=None,
     monthly_adjustment_df=None,
-    target_reserve_df=None,
     period_start=None,
 ):
     if final_df.empty:
@@ -1086,13 +899,6 @@ def build_driver_invoice_summary(
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)
     final_df["driver_match_key"] = final_df["driver_name"].map(normalize_person_key)
-    if "courier_id" not in final_df.columns:
-        final_df["courier_id"] = ""
-    final_df["courier_id"] = final_df["courier_id"].fillna("").map(normalize_courier_id_text)
-    if "courierID" in final_df.columns:
-        final_df["courier_id"] = final_df["courierID"].fillna("").map(
-            normalize_courier_id_text
-        )
 
     numeric_columns = [
         "orders",
@@ -1130,87 +936,26 @@ def build_driver_invoice_summary(
         + final_df["tip_huf"]
     )
 
-    worksheet_summary = (
-        final_df.groupby("driver_match_key", dropna=False)["worksheet_name"]
-        .apply(
-            lambda values: " + ".join(
-                sorted(
-                    {
-                        normalize_text(value)
-                        for value in values
-                        if normalize_text(value)
-                    }
-                )
-            )
-        )
-        .reset_index()
-    )
-    driver_name_summary = (
-        final_df.groupby("driver_match_key", dropna=False)["driver_name"]
-        .apply(lambda values: max([normalize_text(value) for value in values if normalize_text(value)] or [""], key=len))
-        .reset_index()
-    )
     grouped = (
-        final_df.groupby("driver_match_key", dropna=False)[numeric_columns]
+        final_df.groupby(
+            ["driver_name", "driver_match_key", "worksheet_name"],
+            dropna=False,
+        )[numeric_columns]
         .sum()
         .reset_index()
-        .merge(driver_name_summary, on="driver_match_key", how="left")
-        .merge(worksheet_summary, on="driver_match_key", how="left")
     )
-    if "courier_id" in final_df.columns:
-        route_ids = final_df[["driver_match_key", "courier_id"]].copy()
-        route_ids["courier_id"] = (
-            route_ids["courier_id"]
-            .fillna("")
-            .map(normalize_courier_id_text)
-        )
-        route_ids = (
-            route_ids[route_ids["courier_id"] != ""]
-            .drop_duplicates()
-            .groupby("driver_match_key", dropna=False)["courier_id"]
-            .first()
-            .reset_index()
-        )
-        grouped = grouped.merge(
-            route_ids,
-            on="driver_match_key",
-            how="left",
-        )
-    if "courier_id" not in grouped.columns:
-        grouped["courier_id"] = ""
-    grouped["courier_id"] = (
-        grouped["courier_id"]
-        .fillna("")
-        .map(normalize_courier_id_text)
-    )
-    tip_source = final_df[["driver_match_key", "route_unique_id", "tip_huf"]].copy()
-    tip_source["_tip_route_key"] = tip_source["route_unique_id"].map(normalize_text)
-    empty_tip_route = tip_source["_tip_route_key"] == ""
-    tip_source.loc[empty_tip_route, "_tip_route_key"] = (
-        "__row_" + tip_source.index[empty_tip_route].astype(str)
-    )
-    deduped_tip = (
-        tip_source.groupby(["driver_match_key", "_tip_route_key"], dropna=False)["tip_huf"]
-        .max()
-        .groupby("driver_match_key", dropna=False)
-        .sum()
-        .reset_index(name="_deduped_tip_huf")
-    )
-    grouped = grouped.merge(deduped_tip, on="driver_match_key", how="left")
-    grouped["tip_huf"] = grouped["_deduped_tip_huf"].fillna(grouped["tip_huf"])
-    grouped = grouped.drop(columns=["_deduped_tip_huf"])
     route_counts = (
-        final_df.groupby("driver_match_key", dropna=False)["route_unique_id"]
+        final_df.groupby(["driver_name", "worksheet_name"], dropna=False)["route_unique_id"]
         .nunique()
         .reset_index(name="route_count")
     )
     grouped = grouped.merge(
         route_counts,
-        on="driver_match_key",
+        on=["driver_name", "worksheet_name"],
         how="left",
     )
     day_type_summary = (
-        final_df.groupby(["driver_match_key", "calculated_day_type"], dropna=False)
+        final_df.groupby(["driver_name", "worksheet_name", "calculated_day_type"], dropna=False)
         .agg(
             day_type_routes=("route_unique_id", "nunique"),
             day_type_base_huf=("fixed_rate_huf", "sum"),
@@ -1220,14 +965,14 @@ def build_driver_invoice_summary(
     day_type_pivot = pd.DataFrame()
     if not day_type_summary.empty:
         route_pivot = day_type_summary.pivot_table(
-            index="driver_match_key",
+            index=["driver_name", "worksheet_name"],
             columns="calculated_day_type",
             values="day_type_routes",
             aggfunc="sum",
             fill_value=0,
         )
         base_pivot = day_type_summary.pivot_table(
-            index="driver_match_key",
+            index=["driver_name", "worksheet_name"],
             columns="calculated_day_type",
             values="day_type_base_huf",
             aggfunc="sum",
@@ -1242,7 +987,7 @@ def build_driver_invoice_summary(
     if not day_type_pivot.empty:
         grouped = grouped.merge(
             day_type_pivot,
-            on="driver_match_key",
+            on=["driver_name", "worksheet_name"],
             how="left",
         )
     else:
@@ -1253,12 +998,9 @@ def build_driver_invoice_summary(
     weekday_counts = build_weekday_counts(final_df)
     grouped = grouped.merge(
         weekday_counts,
-        on="driver_match_key",
+        on=["driver_name", "worksheet_name"],
         how="left",
-        suffixes=("", "_weekday"),
     )
-    if "driver_name_weekday" in grouped.columns:
-        grouped = grouped.drop(columns=["driver_name_weekday"])
     loyalty = build_loyalty_bonus_summary(
         final_df,
         previous_routes_df,
@@ -1269,13 +1011,13 @@ def build_driver_invoice_summary(
     )
     if not loyalty.empty:
         loyalty_columns = [
-            "driver_match_key", "loyalty_current_normal_routes",
+            "driver_match_key", "worksheet_name", "loyalty_current_normal_routes",
             "loyalty_previous_normal_routes", "loyalty_rate_huf", "loyalty_bonus_huf",
             "loyalty_eligible", "loyalty_status",
         ]
         grouped = grouped.merge(
             loyalty[loyalty_columns],
-            on="driver_match_key",
+            on=["driver_match_key", "worksheet_name"],
             how="left",
         )
 
@@ -1283,6 +1025,10 @@ def build_driver_invoice_summary(
         bonus_df = bonus_df.copy()
         bonus_df["driver_name"] = bonus_df["driver_name"].map(normalize_text)
         bonus_df["driver_match_key"] = bonus_df["driver_name"].map(normalize_person_key)
+        bonus_df["worksheet_name"] = bonus_df.get(
+            "site",
+            pd.Series("", index=bonus_df.index),
+        ).map(normalize_bonus_worksheet)
         if "courier_id" in bonus_df.columns:
             bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
@@ -1290,50 +1036,41 @@ def build_driver_invoice_summary(
             ["bonus_huf"],
         )
         bonus_grouped = (
-            bonus_df.groupby("driver_match_key", dropna=False)["bonus_huf"]
+            bonus_df.groupby(
+                ["driver_match_key", "worksheet_name"],
+                dropna=False,
+            )["bonus_huf"]
             .sum()
             .reset_index(name="compliance_extra_huf")
         )
         grouped = grouped.merge(
             bonus_grouped,
-            on="driver_match_key",
+            on=["driver_match_key", "worksheet_name"],
             how="left",
         )
         if "courier_id" in bonus_df.columns:
             bonus_ids = (
-                bonus_df[["driver_match_key", "courier_id"]]
+                bonus_df[["driver_match_key", "worksheet_name", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
-                .groupby("driver_match_key", dropna=False)["courier_id"]
+                .groupby(
+                    ["driver_match_key", "worksheet_name"],
+                    dropna=False,
+                )["courier_id"]
                 .first()
-                .reset_index(name="_bonus_courier_id")
+                .reset_index()
             )
             grouped = grouped.merge(
                 bonus_ids,
-                on="driver_match_key",
+                on=["driver_match_key", "worksheet_name"],
                 how="left",
             )
-            if "courier_id" not in grouped.columns:
-                grouped["courier_id"] = ""
-            grouped["courier_id"] = (
-                grouped["courier_id"]
-                .fillna("")
-                .map(normalize_courier_id_text)
-            )
-            grouped["courier_id"] = grouped["courier_id"].where(
-                grouped["courier_id"] != "",
-                grouped["_bonus_courier_id"]
-                .fillna("")
-                .map(normalize_courier_id_text),
-            )
-            grouped = grouped.drop(columns=["_bonus_courier_id"])
     else:
         grouped["compliance_extra_huf"] = 0
 
     if penalty_df is not None and not penalty_df.empty:
         penalty_df = penalty_df.copy()
         penalty_df["driver_name"] = penalty_df["driver_name"].map(normalize_text)
-        penalty_df["driver_match_key"] = penalty_df["driver_name"].map(normalize_person_key)
         if "courier_id" in penalty_df.columns:
             penalty_df["courier_id"] = penalty_df["courier_id"].map(normalize_text)
         penalty_df = add_numeric_columns(
@@ -1341,13 +1078,13 @@ def build_driver_invoice_summary(
             ["amount_huf"],
         )
         penalty_grouped = (
-            penalty_df.groupby("driver_match_key", dropna=False)["amount_huf"]
+            penalty_df.groupby("driver_name", dropna=False)["amount_huf"]
             .sum()
             .reset_index(name="adjustment_huf")
         )
         grouped = grouped.merge(
             penalty_grouped,
-            on="driver_match_key",
+            on="driver_name",
             how="left",
         )
         if "courier_id" not in grouped.columns and "courier_id" in penalty_df.columns:
@@ -1355,14 +1092,13 @@ def build_driver_invoice_summary(
                 penalty_df[["driver_name", "courier_id"]]
                 .dropna()
                 .drop_duplicates()
-                .assign(driver_match_key=lambda frame: frame["driver_name"].map(normalize_person_key))
-                .groupby("driver_match_key", dropna=False)["courier_id"]
+                .groupby("driver_name", dropna=False)["courier_id"]
                 .first()
                 .reset_index()
             )
             grouped = grouped.merge(
                 penalty_ids,
-                on="driver_match_key",
+                on="driver_name",
                 how="left",
             )
     else:
@@ -1390,12 +1126,6 @@ def build_driver_invoice_summary(
                 source[source_column],
                 errors="coerce",
             ).fillna(0)
-
-        # These sources are courier-level monthly conditions. If a courier appears
-        # once under BUD1 and once under BUD2 with the same values, count it once.
-        source = source.drop_duplicates(
-            subset=["driver_match_key", *list(value_map)],
-        )
 
         aggregated = (
             source.groupby("driver_match_key", dropna=False)[list(value_map)]
@@ -1490,7 +1220,7 @@ def build_driver_invoice_summary(
     if not manual_summary.empty:
         grouped = grouped.merge(
             manual_summary,
-            on="driver_match_key",
+            on=["driver_name", "worksheet_name"],
             how="left",
         )
 
@@ -1552,7 +1282,8 @@ def build_driver_invoice_summary(
     grouped["adjustment_huf"] = grouped["adjustment_huf"].fillna(0)
     grouped["manual_total_huf"] = grouped[list(MANUAL_ITEM_TYPES.keys())].sum(axis=1)
     grouped["manual_payable_huf"] = (
-        grouped["fuel_huf"]
+        grouped["target_reserve_topup_huf"]
+        + grouped["fuel_huf"]
         + grouped["damage_huf"]
         + grouped["cash_missing_huf"]
         + grouped["other_income_huf"]
@@ -1600,7 +1331,7 @@ def build_driver_invoice_summary(
         + grouped["atm_balance_huf"].abs()
     )
 
-    grouped["payable_before_reserve_huf"] = (
+    grouped["payable_total_huf"] = (
         grouped["route_total_huf"]
         + grouped["extra_bonus_huf"]
         + grouped["adjustment_huf"]
@@ -1608,123 +1339,6 @@ def build_driver_invoice_summary(
         + grouped["customer_rating_bonus_huf"]
         + grouped["monthly_adjustment_effect_huf"]
         + grouped["atm_effect_huf"]
-    )
-
-    # Céltartalék/biztosítás: csak az elszámolásban szereplő courier_id alapján
-    # kérdezünk rá a courier_target_reserve.courier_id mezőre.
-    target_reserve_df = pd.DataFrame()
-    if "courier_id" in grouped.columns:
-        target_reserve_df = read_target_reserve_for_courier_ids(
-            grouped["courier_id"].dropna().tolist()
-        )
-
-    reserve_courier_ct_zft = {}
-    reserve_courier_active = {}
-    if target_reserve_df is not None and not target_reserve_df.empty:
-        reserve_source = target_reserve_df.copy()
-
-        id_column = "courier_id"
-        ct_column = None
-        ct_column_keys = {
-            "ctzft",
-            "ctz",
-            "currentbalancehuf",
-            "openingbalancehuf",
-            "balancehuf",
-            "targetreservehuf",
-            "targetreservebalancehuf",
-        }
-        for column in reserve_source.columns:
-            column_key = normalize_column_key(column)
-            if column_key in ct_column_keys:
-                ct_column = column
-                break
-        if ct_column is None:
-            reserve_source["_ct_zft_huf"] = 0
-        else:
-            reserve_source["_ct_zft_huf"] = reserve_source[ct_column].map(
-                parse_huf_amount
-            )
-
-        active_column = None
-        active_column_keys = {
-            "insuranceactive",
-            "insurance",
-            "biztositasactive",
-            "biztositasaktiv",
-            "biztositas",
-            "targetreserveactive",
-            "celtartalekactive",
-            "celtartalekaktiv",
-        }
-        for column in reserve_source.columns:
-            column_key = normalize_column_key(column)
-            if column_key in active_column_keys:
-                active_column = column
-                break
-        if active_column is None:
-            reserve_source["_insurance_active"] = False
-        else:
-            reserve_source["_insurance_active"] = reserve_source[active_column].map(
-                parse_bool_flag
-            )
-
-        if id_column in reserve_source.columns:
-            for _, reserve_row in reserve_source.iterrows():
-                courier_id = normalize_courier_id_text(reserve_row.get(id_column))
-                if courier_id:
-                    reserve_courier_ct_zft[courier_id] = reserve_row.get("_ct_zft_huf", 0)
-                    reserve_courier_active[courier_id] = bool(
-                        reserve_row.get("_insurance_active", False)
-                    )
-
-        # The DB insurance_active flag is the single source of truth:
-        # True => target reserve + insurance deduction, False => no deduction.
-
-    def target_reserve_ct_zft(row):
-        courier_id = normalize_courier_id_text(row.get("courier_id"))
-        if courier_id in reserve_courier_ct_zft:
-            return reserve_courier_ct_zft[courier_id]
-        return pd.NA
-
-    def target_reserve_active(row):
-        courier_id = normalize_courier_id_text(row.get("courier_id"))
-        if courier_id in reserve_courier_active:
-            return reserve_courier_active[courier_id]
-        return False
-
-    grouped["target_reserve_ct_zft_huf"] = grouped.apply(
-        target_reserve_ct_zft,
-        axis=1,
-    )
-    grouped["target_reserve_active"] = grouped.apply(
-        target_reserve_active,
-        axis=1,
-    ).map(parse_bool_flag)
-    grouped["has_target_reserve"] = grouped["target_reserve_active"]
-    grouped["target_reserve_ct_zft_huf"] = grouped["target_reserve_ct_zft_huf"].map(
-        parse_huf_amount
-    )
-
-    # A céltartalék nem fix 50 000 Ft: a levonás a levonások előtti
-    # fizetendő összeg 10%-a, de legfeljebb 50 000 Ft.
-    eligible_base = grouped["payable_before_reserve_huf"].clip(lower=0)
-    grouped["target_reserve_deduction_huf"] = 0.0
-    reserve_mask = grouped["target_reserve_active"]
-    grouped.loc[reserve_mask, "target_reserve_deduction_huf"] = (
-        eligible_base.loc[reserve_mask]
-        .map(lambda amount: min(amount * TARGET_RESERVE_RATE, TARGET_RESERVE_MAX_HUF))
-        .round(0)
-    )
-
-    grouped["insurance_deduction_huf"] = 0.0
-    insurance_mask = grouped["target_reserve_active"]
-    grouped.loc[insurance_mask, "insurance_deduction_huf"] = INSURANCE_DEDUCTION_HUF
-
-    grouped["payable_total_huf"] = (
-        grouped["payable_before_reserve_huf"]
-        - grouped["target_reserve_deduction_huf"]
-        - grouped["insurance_deduction_huf"]
     )
 
     return grouped.sort_values(
@@ -1831,10 +1445,6 @@ def build_display_driver_summary(summary_df):
         "manual_total_huf",
         "cash_missing_huf",
         "manual_payable_huf",
-        "payable_before_reserve_huf",
-        "target_reserve_ct_zft_huf",
-        "target_reserve_deduction_huf",
-        "insurance_deduction_huf",
         "payable_total_huf",
         "loyalty_bonus_huf",
         "instructor_fee_huf",
@@ -1885,11 +1495,6 @@ def build_display_driver_summary(summary_df):
             "cash_missing_huf": "Be nem fizetett KP",
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
-            "payable_before_reserve_huf": "Levonasok elotti fizetendo",
-            "target_reserve_active": "Celtartalek/biztositas aktiv",
-            "target_reserve_ct_zft_huf": "CT_ZFT",
-            "target_reserve_deduction_huf": "Céltartalék levonás",
-            "insurance_deduction_huf": "Biztosítás (10 000 Ft)",
             "payable_total_huf": "Fizetendo osszesen",
             "loyalty_bonus_huf": "Lojalitási bónusz",
             "instructor_fee_huf": "Oktatói Díj",
@@ -2031,9 +1636,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
     for index, driver_row in summary_df.reset_index(drop=True).iterrows():
         driver_name = normalize_text(driver_row.get("driver_name")) or "Ismeretlen futar"
         sheet_name = normalize_text(driver_row.get("worksheet_name"))
-        driver_key = normalize_person_key(driver_name)
         route_driver_names = (
-            route_df["driver_name"].astype(str).map(normalize_person_key)
+            route_df["driver_name"].astype(str)
             if "driver_name" in route_df.columns
             else pd.Series("", index=route_df.index)
         )
@@ -2042,10 +1646,10 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             if "worksheet_name" in route_df.columns
             else pd.Series("", index=route_df.index)
         )
-        route_mask = route_driver_names == driver_key
-        if sheet_name and " + " not in sheet_name:
-            route_mask = route_mask & (route_sheet_names == sheet_name)
-        driver_routes = route_df[route_mask].copy()
+        driver_routes = route_df[
+            (route_driver_names == driver_name)
+            & (route_sheet_names == sheet_name)
+        ].copy()
 
         orders = int(money(driver_row.get("orders")))
         routes = int(money(driver_row.get("route_count") or driver_row.get("routes")))
@@ -2061,9 +1665,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         extra_bonus = money(driver_row.get("extra_bonus_huf"))
         adjustment = money(driver_row.get("adjustment_huf"))
         manual_total = money(driver_row.get("manual_total_huf"))
-        payable_before_reserve = money(driver_row.get("payable_before_reserve_huf"))
-        target_reserve_deduction = money(driver_row.get("target_reserve_deduction_huf"))
-        insurance_deduction = money(driver_row.get("insurance_deduction_huf"))
+        target_open = money(driver_row.get("target_reserve_open_huf"))
+        target_topup = money(driver_row.get("target_reserve_topup_huf"))
+        target_close = money(driver_row.get("target_reserve_close_huf"))
         fuel_manual = money(driver_row.get("fuel_huf"))
         damage = money(driver_row.get("damage_huf"))
         cash_missing = money(driver_row.get("cash_missing_huf"))
@@ -2144,12 +1748,12 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(hero)
         story.append(Spacer(1, 0.28 * cm))
 
-        story.append(Paragraph("ALAPADATOK ÉS LEVONÁSOK", section_style))
+        story.append(Paragraph("ALAPADATOK ÉS CÉLTARTALÉK", section_style))
         base = Table(
             [
-                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Levonások előtti fizetendő", format_huf(payable_before_reserve)],
-                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Céltartalék levonás", format_huf(-target_reserve_deduction)],
-                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Biztosítás (10 000 Ft)", format_huf(-insurance_deduction)],
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Nyitó céltartalék", format_huf(target_open)],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Célt. feltöltés (+)", format_huf(target_topup)],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Célt. záró egyenleg", format_huf(target_close)],
             ],
             colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
@@ -2292,7 +1896,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Szállítási díj", format_huf(fixed_total)],
             ["Bónuszok / pótlékok", format_huf(bonus_total)],
             ["Borravaló", format_huf(tip)],
-            ["Manuális bevételek", format_huf(fuel_manual + other_income + instructor_fee)],
+            ["Ügyfélértékelési bónusz", format_huf(customer_rating_bonus)],
+            ["Havi bónusz + felvett kör", format_huf(monthly_bonus + monthly_accepted_route)],
+            ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income + instructor_fee)],
         ]
         expenses = [
             ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
@@ -2301,8 +1907,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Károkozás", format_huf(abs(damage))],
             ["Be nem fiz. KP", format_huf(abs(cash_missing))],
             ["Egyéb levonás", format_huf(abs(other_deduction))],
-            ["Céltartalék levonás", format_huf(target_reserve_deduction)],
-            ["Biztosítás (10 000 Ft)", format_huf(insurance_deduction)],
         ]
         while len(revenues) < len(expenses):
             revenues.append(["", ""])
@@ -2320,6 +1924,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
                     + bonus_total
                     + tip
                     + monthly_accepted_route
+                    + target_topup
                     + fuel_manual
                     + other_income
                     + instructor_fee
@@ -2333,8 +1938,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
                     + abs(damage)
                     + abs(cash_missing)
                     + abs(other_deduction)
-                    + target_reserve_deduction
-                    + insurance_deduction
                 ),
             ]
         )
@@ -2376,6 +1979,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(final_table)
 
         manual_rows = [
+            ["Nyitó céltartalék", format_huf(target_open)],
+            ["Céltartalék feltöltés", format_huf(target_topup)],
+            ["Céltartalék záró egyenleg", format_huf(target_close)],
             ["Üzemanyag / egyéb bevétel", format_huf(fuel_manual + other_income)],
             ["Oktatói Díj", format_huf(instructor_fee)],
             ["Károkozás / KP / egyéb levonás", format_huf(abs(damage) + abs(cash_missing) + abs(other_deduction))],
