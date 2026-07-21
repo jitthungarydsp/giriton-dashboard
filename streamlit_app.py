@@ -5,7 +5,6 @@ from page.monthly_invoice_editor import (
     show_monthly_invoice_editor_page,
     show_monthly_tig_editor_page,
 )
-from page.bill_config import show_bill_config_page
 from page.bill_bonus_malus import show_bonus_malus_page
 from page.bill_insurance_reserve import show_insurance_reserve_page
 from resources.auth import login_screen, logout_button
