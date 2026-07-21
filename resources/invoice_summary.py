@@ -55,7 +55,6 @@ DAY_RATE_TABLES = [
 TARGET_RESERVE_TABLES = [
     "courier_target_reserve",
 ]
-TARGET_RESERVE_ID_COLUMN = "courier_ID"
 
 TARGET_RESERVE_RATE = 0.10
 TARGET_RESERVE_MAX_HUF = 50000
@@ -538,36 +537,23 @@ def read_target_reserve_for_courier_ids(courier_ids):
     if not normalized_ids:
         return pd.DataFrame()
 
-    chunks = []
-    errors = []
-    for index in range(0, len(normalized_ids), 100):
-        chunk_ids = normalized_ids[index:index + 100]
-        filter_value = ",".join(chunk_ids)
-        try:
-            _table_name, chunk = read_first_existing_table(
-                TARGET_RESERVE_TABLES,
-                "*",
-                [
-                    f"{TARGET_RESERVE_ID_COLUMN}=in.({quote(filter_value, safe='(),')})",
-                ],
-                limit=max(len(chunk_ids) + 10, 100),
-            )
-        except Exception as exc:
-            errors.append(f"{', '.join(chunk_ids[:5])}: {exc}")
-            continue
+    rows = []
+    for courier_id in normalized_ids:
+        _table_name, chunk = read_first_existing_table(
+            TARGET_RESERVE_TABLES,
+            "*",
+            [
+                f"courier_id=eq.{quote(courier_id, safe='')}",
+            ],
+            limit=5,
+        )
         if chunk is not None and not chunk.empty:
-            chunks.append(chunk)
+            rows.append(chunk)
 
-    if not chunks:
-        result = pd.DataFrame()
-        if errors:
-            result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
-        return result
+    if not rows:
+        return pd.DataFrame()
 
-    result = pd.concat(chunks, ignore_index=True)
-    if errors:
-        result.attrs["target_reserve_lookup_error"] = "; ".join(errors[:5])
-    return result
+    return pd.concat(rows, ignore_index=True)
 
 
 def post_supabase_row(table_names, row):
@@ -1123,47 +1109,17 @@ def build_driver_invoice_summary(
         "route_total_without_tip_huf",
         "route_total_huf",
         "calculated_base_huf",
-        "source_amount_logic_routes",
     ]
     final_df = add_numeric_columns(final_df, numeric_columns)
     final_df["source_fixed_rate_huf"] = final_df["fixed_rate_huf"]
     final_df["source_delay_bonus_huf"] = final_df["delay_bonus_huf"]
     final_df["source_compliance_bonus_huf"] = final_df["compliance_bonus_huf"]
-    source_amount_mask = (
-        final_df.get("dsp", pd.Series("", index=final_df.index))
-        .astype(str)
-        .str.casefold()
-        .str.contains("dynamic", na=False)
-        | final_df["worksheet_name"]
-        .astype(str)
-        .str.casefold()
-        .str.contains("dynamic", na=False)
-    )
-    final_df["source_amount_logic_routes"] = source_amount_mask.astype(int)
-    standard_mask = ~source_amount_mask
-    final_df.loc[standard_mask, "fixed_rate_huf"] = final_df.loc[
-        standard_mask,
-        "calculated_base_huf",
-    ]
-    final_df.loc[standard_mask, "delay_bonus_huf"] = final_df.loc[
-        standard_mask,
-        "delay_bonus_huf",
-    ].map(courier_bonus_amount)
-    final_df.loc[standard_mask, "compliance_bonus_huf"] = final_df.loc[
-        standard_mask,
-        "compliance_bonus_huf",
-    ].map(courier_bonus_amount)
+    final_df["fixed_rate_huf"] = final_df["calculated_base_huf"]
+    final_df["delay_bonus_huf"] = final_df["delay_bonus_huf"].map(courier_bonus_amount)
+    final_df["compliance_bonus_huf"] = final_df["compliance_bonus_huf"].map(courier_bonus_amount)
     final_df["bonus_total_huf"] = (
-        final_df["fuel_bonus_huf"]
-        + final_df["car_fridge_bonus_huf"]
-        + final_df["branding_huf"]
         + final_df["delay_bonus_huf"]
         + final_df["compliance_bonus_huf"]
-        + final_df["fill_rate_bonus_huf"]
-    )
-    final_df.loc[standard_mask, "bonus_total_huf"] = (
-        final_df.loc[standard_mask, "delay_bonus_huf"]
-        + final_df.loc[standard_mask, "compliance_bonus_huf"]
     )
     final_df["route_total_without_tip_huf"] = (
         final_df["fixed_rate_huf"]
@@ -1582,8 +1538,8 @@ def build_driver_invoice_summary(
         grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
     )
     grouped["bonus_total_huf"] = (
-        grouped["bonus_total_huf"].fillna(0)
-        + grouped["compliance_extra_huf"]
+        grouped["delay_bonus_huf"]
+        + grouped["compliance_bonus_huf"]
     )
     grouped["route_total_without_tip_huf"] = (
         grouped["fixed_rate_huf"] + grouped["bonus_total_huf"]
@@ -1655,16 +1611,11 @@ def build_driver_invoice_summary(
     )
 
     # Céltartalék/biztosítás: csak az elszámolásban szereplő courier_id alapján
-    # kérdezünk rá a courier_target_reserve.courier_ID mezőre.
+    # kérdezünk rá a courier_target_reserve.courier_id mezőre.
     target_reserve_df = pd.DataFrame()
     if "courier_id" in grouped.columns:
         target_reserve_df = read_target_reserve_for_courier_ids(
             grouped["courier_id"].dropna().tolist()
-        )
-    target_reserve_lookup_error = ""
-    if target_reserve_df is not None:
-        target_reserve_lookup_error = str(
-            target_reserve_df.attrs.get("target_reserve_lookup_error") or ""
         )
 
     reserve_courier_ct_zft = {}
@@ -1672,7 +1623,7 @@ def build_driver_invoice_summary(
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
 
-        id_column = TARGET_RESERVE_ID_COLUMN
+        id_column = "courier_id"
         ct_column = None
         ct_column_keys = {
             "ctzft",
@@ -1750,7 +1701,6 @@ def build_driver_invoice_summary(
         target_reserve_active,
         axis=1,
     ).map(parse_bool_flag)
-    grouped["target_reserve_lookup_error"] = target_reserve_lookup_error
     grouped["has_target_reserve"] = grouped["target_reserve_active"]
     grouped["target_reserve_ct_zft_huf"] = grouped["target_reserve_ct_zft_huf"].map(
         parse_huf_amount
@@ -2194,14 +2144,14 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(hero)
         story.append(Spacer(1, 0.28 * cm))
 
-        story.append(Paragraph("ALAPADATOK", section_style))
+        story.append(Paragraph("ALAPADATOK ÉS LEVONÁSOK", section_style))
         base = Table(
             [
-                ["Alap címpénz (Ft/db)", format_huf(base_per_order)],
-                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}"],
-                ["Összes címpénz", format_huf(base_per_order + bonus_per_order)],
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Levonások előtti fizetendő", format_huf(payable_before_reserve)],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Céltartalék levonás", format_huf(-target_reserve_deduction)],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Biztosítás (10 000 Ft)", format_huf(-insurance_deduction)],
             ],
-            colWidths=[11.0 * cm, 6.2 * cm],
+            colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
         )
         apply_statement_table_style(base, font_name, bold_font_name, TableStyle, colors)
         story.append(base)
