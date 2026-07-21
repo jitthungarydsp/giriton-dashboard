@@ -867,19 +867,11 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
     Piros sor: segitseget ker / nyitott reklamacio.
     Zold sor: elfogadta / lezart allapotban van.
     """
-    clean_names = sorted(
-        {
-            str(name or "").strip()
-            for name in route_driver_names
-            if str(name or "").strip()
-        },
-        key=lambda value: value.casefold(),
-    )
-
-    route_name_lookup = {
-        normalize_name(name): name
-        for name in clean_names
-    }
+    # A nyitott feladatlista futárköre kizárólag a havi
+    # peopleforce_card_statuses rekordokból épül. A route-, dokumentum- és
+    # reklamációs adatok csak a státuszban már szereplő futár részleteit
+    # egészítik ki, önállóan nem hoznak létre új listás sort.
+    route_name_lookup = {}
     month_start = month_start_from_date(document_month)
     master_by_name, master_by_id, users_by_name, users_by_id = build_invoice_feedback_context()
 
@@ -944,23 +936,9 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             if id_key:
                 open_complaints_by_id.setdefault(id_key, []).append(complaint_row)
 
-    for details in sent_lookup.values():
-        name = str(details.get("courier_name") or "").strip()
-        if name:
-            route_name_lookup.setdefault(normalize_name(name), name)
     if not status_df.empty:
         for _, status_row in status_df.iterrows():
             name = str(status_row.get("courier_name") or "").strip()
-            if name:
-                route_name_lookup.setdefault(normalize_name(name), name)
-    if not documents_df.empty:
-        for _, document_row in documents_df.iterrows():
-            name = str(document_row.get("courier_name") or "").strip()
-            if name:
-                route_name_lookup.setdefault(normalize_name(name), name)
-    if not complaints_df.empty:
-        for _, complaint_row in complaints_df.iterrows():
-            name = str(complaint_row.get("courier_name") or "").strip()
             if name:
                 route_name_lookup.setdefault(normalize_name(name), name)
 
