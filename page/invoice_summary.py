@@ -642,6 +642,22 @@ def _invoice_amount_by_name(driver_summary):
     return result
 
 
+def _invoice_summary_rows_by_name(driver_summary):
+    result = {}
+    if driver_summary is None or driver_summary.empty:
+        return result
+    for _, row in driver_summary.iterrows():
+        name = str(row.get("driver_name") or "").strip()
+        if name:
+            result[normalize_name(name)] = row.to_dict()
+    return result
+
+
+def _short_task_text(value, limit=110):
+    text = " ".join(str(value or "-").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def _latest_rows_by_action(status_df):
     by_id = {}
     by_name = {}
@@ -739,22 +755,224 @@ def _render_amount_check(courier_id, document_month, fallback_tig_amount=0):
         st.caption("Nem olvasható automatikusan: " + ", ".join(unreadable_files))
 
 
+def _render_open_complaints(courier_id, courier_name, document_month):
+    try:
+        complaints = read_peopleforce_complaints_for_month(document_month)
+    except Exception as exc:
+        st.error(f"A reklamációk nem tölthetők be: {exc}")
+        return
+    if complaints.empty:
+        st.caption("Nincs nyitott reklamáció.")
+        return
+    courier_id = str(courier_id or "").strip()
+    name_key = normalize_name(courier_name)
+    complaint_ids = complaints.get("courier_id", pd.Series(dtype=str)).astype(str).str.strip()
+    complaint_names = complaints.get("courier_name", pd.Series(dtype=str)).astype(str).map(normalize_name)
+    statuses = complaints.get("status", pd.Series(dtype=str)).astype(str).str.strip().str.lower()
+    open_complaints = complaints[
+        ((complaint_ids == courier_id) | (complaint_names == name_key))
+        & (~statuses.isin(["resolved", "closed", "done"]))
+    ].copy()
+    if open_complaints.empty:
+        st.caption("Nincs nyitott reklamáció.")
+        return
+    if "created_at" in open_complaints.columns:
+        open_complaints = open_complaints.sort_values("created_at", ascending=False)
+    type_labels = {"settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla"}
+    for _, complaint in open_complaints.iterrows():
+        complaint_type = str(complaint.get("document_type") or "folyamat")
+        st.error(
+            f"{type_labels.get(complaint_type, complaint_type)} · "
+            f"{str(complaint.get('created_at') or '')[:16]}\n\n"
+            f"{complaint.get('message') or 'Nincs megadott indok.'}"
+        )
+
+
+def _task_master_row(courier_id):
+    try:
+        master_df = read_courier_master()
+    except Exception:
+        return {}
+    if master_df.empty or "courier_id" not in master_df.columns:
+        return {}
+    matches = master_df[
+        master_df["courier_id"].astype(str).str.strip() == str(courier_id or "").strip()
+    ]
+    return matches.iloc[0].to_dict() if not matches.empty else {}
+
+
+def _render_task_tig_generator(task_row, document_month):
+    courier_id = str(task_row.get("_courier_id") or "").strip()
+    courier_name = str(task_row.get("Futár") or "").strip()
+    master_row = _task_master_row(courier_id)
+
+    def first_value(*names, default=""):
+        for name in names:
+            value = master_row.get(name)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return default
+
+    with st.expander("TIG generálása", expanded="TIG elkészítésére" in str(task_row.get("Mire vár?"))):
+        with st.form(f"task_tig_generator_{courier_id}_{document_month}"):
+            col1, col2 = st.columns(2)
+            seller_name = col1.text_input(
+                "Szolgáltató / vállalkozás neve",
+                value=first_value("company_name", default=courier_name),
+            )
+            tax_number = col2.text_input(
+                "Adószám",
+                value=first_value("tax_number", "tax_id", "vat_number", "adoszam"),
+            )
+            address = st.text_input(
+                "Vállalkozás székhelye",
+                value=first_value(
+                    "company_address", "courier_address", "address", "billing_address", "invoice_address"
+                ),
+            )
+            amount1, amount2 = st.columns(2)
+            transfer_amount = amount1.number_input(
+                "Átutalásos összeg (Ft)",
+                min_value=0,
+                value=max(int(task_row.get("_tig_amount") or 0), 0),
+                step=100,
+            )
+            cash_amount = amount2.number_input(
+                "Készpénzes összeg (Ft)", min_value=0, value=0, step=100
+            )
+            generate = st.form_submit_button("TIG előállítása", use_container_width=True)
+
+        state_key = f"task_generated_tig_{courier_id}_{document_month}"
+        if generate:
+            if not seller_name.strip() or not tax_number.strip() or not address.strip():
+                st.warning("A szolgáltató neve, adószáma és címe kötelező.")
+            else:
+                try:
+                    st.session_state[state_key] = build_tig_pdf_bytes(
+                        courier_name=seller_name.strip(),
+                        courier_address=address.strip(),
+                        courier_tax_number=tax_number.strip(),
+                        courier_id=courier_id,
+                        document_month=month_start_from_date(document_month),
+                        transfer_amount_huf=transfer_amount,
+                        cash_amount_huf=cash_amount,
+                    )
+                    st.success("A TIG elkészült.")
+                except Exception as exc:
+                    st.error(f"A TIG előállítása sikertelen: {exc}")
+
+        generated = st.session_state.get(state_key)
+        if generated:
+            file_name = (
+                f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_"
+                f"{month_start_from_date(document_month):%Y-%m}.pdf"
+            )
+            action1, action2 = st.columns(2)
+            action1.download_button(
+                "TIG letöltése",
+                data=generated,
+                file_name=file_name,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"task_tig_download_{courier_id}_{document_month}",
+            )
+            if action2.button(
+                "Feltöltés a futár profiljába",
+                use_container_width=True,
+                key=f"task_tig_upload_{courier_id}_{document_month}",
+            ):
+                try:
+                    upload_peopleforce_document_bytes(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        document_type="tig",
+                        document_month=document_month,
+                        title=f"TIG - {month_start_from_date(document_month):%Y-%m}",
+                        note="Admin által generált teljesítési igazolás.",
+                        file_name=file_name,
+                        mime_type="application/pdf",
+                        file_bytes=generated,
+                        uploaded_by=str(st.session_state.get("username", "admin")),
+                    )
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        action_key="tig",
+                        document_month=document_month,
+                        status="open",
+                        status_note="TIG elkészült, futár elfogadására vár.",
+                        updated_by=str(st.session_state.get("username", "admin")),
+                    )
+                    st.session_state.pop(state_key, None)
+                    st.cache_data.clear()
+                    st.success("A TIG bekerült a futár profiljába.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A TIG feltöltése sikertelen: {exc}")
+
+
+def _render_task_manual_item_form(task_row, document_month):
+    courier_name = str(task_row.get("Futár") or "").strip()
+    default_sheet = str(task_row.get("_worksheet_name") or "BUD1_JIT")
+    if default_sheet not in ["BUD1_JIT", "BUD2_JIT"]:
+        default_sheet = "BUD1_JIT"
+    with st.expander("Manuális tétel hozzáadása", expanded=False):
+        with st.form(f"task_manual_item_{task_row.get('_courier_id')}_{document_month}"):
+            col1, col2 = st.columns(2)
+            item_date = col1.date_input("Tétel dátuma", value=month_start_from_date(document_month))
+            worksheet_name = col2.selectbox(
+                "Raktár fül",
+                ["BUD1_JIT", "BUD2_JIT"],
+                index=["BUD1_JIT", "BUD2_JIT"].index(default_sheet),
+            )
+            col3, col4 = st.columns(2)
+            item_type = col3.selectbox(
+                "Tétel típusa",
+                list(MANUAL_ITEM_TYPES),
+                format_func=lambda value: MANUAL_ITEM_TYPES[value],
+            )
+            amount_huf = col4.number_input("Összeg (Ft)", value=0, step=500)
+            item_note = st.text_input("Megjegyzés")
+            save_item = st.form_submit_button("Manuális tétel mentése", use_container_width=True)
+        if save_item:
+            try:
+                table_name = create_manual_invoice_item(
+                    item_date,
+                    worksheet_name,
+                    courier_name,
+                    item_type,
+                    amount_huf,
+                    item_note,
+                    created_by=str(st.session_state.get("username", "admin")),
+                )
+                st.cache_data.clear()
+                st.success(f"Manuális tétel elmentve: {table_name}")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A manuális tétel mentése sikertelen: {exc}")
+
+
 @st.dialog("Futár havi feladata", width="large")
 def render_invoice_task_dialog(task_row, document_month):
     courier_id = str(task_row.get("_courier_id") or "").strip()
     courier_name = str(task_row.get("Futár") or "").strip()
     st.subheader(courier_name)
-    info1, info2, info3 = st.columns(3)
-    info1.metric("Utalandó összeg", task_row.get("Utalandó összeg", "-"))
-    info2.metric("Bankszámlaszám", task_row.get("Bankszámlaszám", "-"))
-    info3.metric("Aktuális feladat", task_row.get("Mire vár?", "-"))
+    info1, info2, info3 = st.columns([1, 1.2, 1.6])
+    info1.markdown(f"**Utalandó**  \n{task_row.get('Utalandó összeg', '-')}")
+    info2.markdown(f"**Bankszámlaszám**  \n{task_row.get('Bankszámlaszám', '-')}")
+    info3.markdown(f"**Aktuális feladat**  \n{task_row.get('Mire vár?', '-')}")
 
     help_reason = str(task_row.get("Segítségkérés oka") or "-")
-    if help_reason != "-":
-        st.error(f"Segítségkérés oka: {help_reason}")
     note = str(task_row.get("Megjegyzés") or "-")
-    if note != "-" and note != help_reason:
-        st.info(note)
+    if help_reason != "-" or note != "-":
+        with st.expander("Állapot részletei", expanded=help_reason != "-"):
+            if help_reason != "-":
+                st.error(help_reason)
+            if note != "-" and note != help_reason:
+                st.info(note)
+
+    st.markdown("#### Nyitott reklamációk")
+    _render_open_complaints(courier_id, courier_name, document_month)
 
     try:
         documents = read_peopleforce_documents_for_courier(courier_id)
@@ -763,44 +981,66 @@ def render_invoice_task_dialog(task_row, document_month):
                 documents["document_month"].astype(str).str[:7]
                 == month_start_from_date(document_month).strftime("%Y-%m")
             ].copy()
+            documents = documents[
+                documents["document_type"].astype(str).str.lower() != "complaint_response"
+            ].copy()
+            if "uploaded_at" in documents.columns:
+                documents = documents.sort_values("uploaded_at", ascending=False)
     except Exception as exc:
         st.error(f"A dokumentumlista nem tölthető be: {exc}")
         documents = pd.DataFrame()
 
-    st.markdown("#### Feltöltött dokumentumok")
+    st.markdown("#### Havi dokumentumok")
     if documents.empty:
         st.info("Ehhez a hónaphoz még nincs feltöltött dokumentum.")
     else:
         type_labels = {"settlement": "Elszámolás", "tig": "TIG", "invoice": "Számla", "complaint_response": "Válasz"}
         document_rows = documents.to_dict("records")
-        for document in document_rows:
-            document_id = str(document.get("id") or "")
-            document_type = str(document.get("document_type") or "")
-            label = type_labels.get(document_type, document_type)
-            with st.expander(f"{label} – {document.get('file_name') or document.get('title')}"):
-                st.caption(str(document.get("note") or "Nincs megjegyzés."))
-                try:
-                    content_row = read_peopleforce_document_content(document_id)
-                    file_bytes = decode_document_content(content_row.get("file_content_base64"))
-                except Exception:
-                    file_bytes = b""
-                if file_bytes:
-                    mime_type = str(document.get("mime_type") or "application/octet-stream")
-                    file_name = str(document.get("file_name") or "dokumentum")
-                    if mime_type.startswith("image/"):
-                        st.image(file_bytes, caption=file_name, use_container_width=True)
-                    elif mime_type == "application/pdf" or file_name.lower().endswith(".pdf"):
-                        st.caption("PDF dokumentum – az alábbi gombbal megnyitható vagy letölthető.")
-                    st.download_button(
-                        "Dokumentum letöltése",
-                        data=file_bytes,
-                        file_name=file_name,
-                        mime=mime_type,
-                        key=f"task_document_download_{document_id}",
-                    )
+        overview = pd.DataFrame(
+            [
+                {
+                    "Időpont": str(row.get("uploaded_at") or "")[:16].replace("T", " "),
+                    "Típus": type_labels.get(str(row.get("document_type") or ""), str(row.get("document_type") or "")),
+                    "Fájl": row.get("file_name") or row.get("title") or "dokumentum",
+                }
+                for row in document_rows
+            ]
+        )
+        st.dataframe(overview, use_container_width=True, hide_index=True, height=min(230, 36 + len(overview) * 35))
+        rows_by_id = {str(row.get("id")): row for row in document_rows}
+        selected_document_id = st.selectbox(
+            "Dokumentum megnyitása",
+            list(rows_by_id),
+            format_func=lambda value: (
+                f"{type_labels.get(str(rows_by_id[value].get('document_type') or ''), str(rows_by_id[value].get('document_type') or ''))} · "
+                f"{rows_by_id[value].get('file_name') or rows_by_id[value].get('title')}"
+            ),
+            key=f"task_document_select_{courier_id}_{document_month}",
+        )
+        document = rows_by_id[selected_document_id]
+        try:
+            content_row = read_peopleforce_document_content(selected_document_id)
+            file_bytes = decode_document_content(content_row.get("file_content_base64"))
+        except Exception:
+            file_bytes = b""
+        if file_bytes:
+            file_name = str(document.get("file_name") or "dokumentum")
+            mime_type = str(document.get("mime_type") or "application/octet-stream")
+            preview_col, download_col = st.columns([2, 1])
+            preview_col.caption(str(document.get("note") or "Nincs megjegyzés."))
+            download_col.download_button(
+                "Letöltés",
+                data=file_bytes,
+                file_name=file_name,
+                mime=mime_type,
+                use_container_width=True,
+                key=f"task_document_download_{selected_document_id}",
+            )
 
     st.divider()
-    if st.button("Számla és TIG összegének ellenőrzése", type="primary", use_container_width=True):
+    _render_task_tig_generator(task_row, document_month)
+    _render_task_manual_item_form(task_row, document_month)
+    if st.button("Számla és TIG összegének ellenőrzése", use_container_width=True):
         _render_amount_check(courier_id, document_month, task_row.get("_tig_amount", 0))
 
 
@@ -809,8 +1049,15 @@ def _render_invoice_task_rows(task_rows, document_month):
         st.success("Nincs nyitott havi feladat.")
         return
 
-    st.caption("A futár nevére kattintva megnyílnak a havi dokumentumok és az összegellenőrzés.")
-    header = st.columns([1.7, 1.45, 1.05, 2.4, 1.8, 0.9])
+    task_rows = sorted(
+        task_rows,
+        key=lambda row: str(row.get("_updated_at") or ""),
+        reverse=True,
+    )
+    st.caption(
+        "Legutóbb frissített felül. A futár nevére kattintva megnyílnak a részletek és a műveletek."
+    )
+    header = st.columns([1.55, 1.4, 0.9, 2.15, 1.65, 0.75])
     for column, label in zip(
         header,
         ["Futár", "Bankszámlaszám", "Utalandó", "Mire vár?", "Segítség / megjegyzés", "Művelet"],
@@ -818,17 +1065,18 @@ def _render_invoice_task_rows(task_rows, document_month):
         column.markdown(f"**{label}**")
 
     for index, row in enumerate(task_rows):
-        columns = st.columns([1.7, 1.45, 1.05, 2.4, 1.8, 0.9], vertical_alignment="center")
+        columns = st.columns([1.55, 1.4, 0.9, 2.15, 1.65, 0.75], vertical_alignment="center")
         if columns[0].button(
             str(row.get("Futár") or "Ismeretlen futár"),
             key=f"invoice_task_open_{document_month}_{row.get('_courier_id')}_{index}",
             use_container_width=True,
         ):
             render_invoice_task_dialog(row, document_month)
-        columns[1].write(row.get("Bankszámlaszám", "-"))
-        columns[2].write(row.get("Utalandó összeg", "-"))
-        columns[3].write(row.get("Mire vár?", "-"))
-        columns[4].write(row.get("Segítségkérés oka", "-") if row.get("Segítségkérés oka") != "-" else row.get("Megjegyzés", "-"))
+        columns[1].caption(row.get("Bankszámlaszám", "-"))
+        columns[2].caption(row.get("Utalandó összeg", "-"))
+        columns[3].caption(row.get("Mire vár?", "-"))
+        detail = row.get("Segítségkérés oka", "-") if row.get("Segítségkérés oka") != "-" else row.get("Megjegyzés", "-")
+        columns[4].caption(_short_task_text(detail, 90))
         if columns[5].button(
             "Havi zárás",
             key=f"invoice_month_close_{document_month}_{row.get('_courier_id')}_{index}",
@@ -926,7 +1174,9 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
     if not complaints_df.empty:
         status_series = complaints_df.get("status", pd.Series(dtype=str))
         open_complaints = complaints_df[
-            status_series.astype(str).str.strip().str.lower().ne("resolved")
+            ~status_series.astype(str).str.strip().str.lower().isin(
+                ["resolved", "closed", "done"]
+            )
         ].copy()
         for _, complaint_row in open_complaints.iterrows():
             name_key = row_name_key(complaint_row)
@@ -964,6 +1214,7 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
     sent_count = len(sent_names)
     missing_count = len(missing_names)
     amount_by_name = _invoice_amount_by_name(driver_summary)
+    summary_rows_by_name = _invoice_summary_rows_by_name(driver_summary)
     feedback_rows = []
     closed_count = 0
     for name_key, name in sorted(route_name_lookup.items(), key=lambda item: item[1].casefold()):
@@ -1130,6 +1381,18 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
 
         bank_account = first_invoice_contact_value(master_row, "bank_account_number")
         transfer_amount = amount_by_name.get(name_key, 0)
+        summary_row = summary_rows_by_name.get(name_key, {})
+        workflow_statuses = [
+            settlement_status,
+            tig_status,
+            invoice_check_status,
+            invoice_submit_status,
+            invoice_payment_status,
+        ]
+        latest_update = max(
+            [str(status.get("updated_at") or "") for status in workflow_statuses if status is not None]
+            + [uploaded_at or ""]
+        )
         help_reason = note if complaint_rows else "-"
 
         feedback_rows.append(
@@ -1153,6 +1416,8 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 "_has_logged_in": has_logged_in,
                 "_courier_id": courier_id,
                 "_tig_amount": transfer_amount,
+                "_worksheet_name": str(summary_row.get("worksheet_name") or ""),
+                "_updated_at": latest_update,
             }
         )
 
