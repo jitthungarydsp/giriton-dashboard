@@ -53,6 +53,9 @@ from page.order_statistics import (
 from page.invoice_summary import (
     show_invoice_summary_page,
 )
+from page.monthly_invoice_tasks import (
+    show_monthly_invoice_tasks_page,
+)
 from page.dsp_route_explanations import (
     show_dsp_route_explanations_page,
 )
@@ -133,6 +136,7 @@ if user["role"] == "admin":
         "Giriton Attendance DB",
         "Performance magyarazat",
         "Elszamolas",
+        "Havi feladatok",
         "Futárok",
         "Mai futárok",
         "Kifli kártya",
@@ -233,6 +237,8 @@ elif page == "Megrendeles statisztika":
     show_order_statistics_page()
 elif page == "Elszamolas":
     show_invoice_summary_page()
+elif page == "Havi feladatok":
+    show_monthly_invoice_tasks_page()
 elif page == "Performance magyarazat":
     show_dsp_route_explanations_page()
 elif page == "Trainer":

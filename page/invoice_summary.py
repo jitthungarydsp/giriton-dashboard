@@ -779,7 +779,7 @@ def render_invoice_task_dialog(task_row, document_month):
                     if mime_type.startswith("image/"):
                         st.image(file_bytes, caption=file_name, use_container_width=True)
                     elif mime_type == "application/pdf" or file_name.lower().endswith(".pdf"):
-                        st.pdf(file_bytes, height=520)
+                        st.caption("PDF dokumentum – az alábbi gombbal megnyitható vagy letölthető.")
                     st.download_button(
                         "Dokumentum letöltése",
                         data=file_bytes,
@@ -850,7 +850,7 @@ def user_has_logged_in(user_row):
     return bool(str(user_row.get("token") or "").strip())
 
 
-def render_invoice_delivery_status(route_driver_names, document_month, driver_summary=None):
+def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summary=None):
     """
     Admin visszajelzo: hol tart a futar az elszamolasi folyamatban.
     Piros sor: segitseget ker / nyitott reklamacio.
@@ -1332,27 +1332,9 @@ def show_invoice_summary_page():
         key=normalize_person_key,
     )
 
-    feedback_driver_summary = build_driver_invoice_summary(
-        final_df,
-        bonus_df=bonus_df,
-        penalty_df=penalty_df,
-        manual_df=manual_df,
-        day_rates_df=day_rates_df,
-        raw_route_df=raw_route_df,
-        previous_routes_df=data.get("previous_routes", pd.DataFrame()),
-        loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
-        bookings_df=data.get("bookings", pd.DataFrame()),
-        loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
-        atm_balance_df=atm_balance_df,
-        customer_rating_df=customer_rating_df,
-        monthly_adjustment_df=monthly_adjustment_df,
-        period_start=start_date,
-    )
-    render_invoice_delivery_status(
-        drivers,
-        start_date,
-        feedback_driver_summary,
-    )
+    from page.invoice_feedback_legacy import render_legacy_invoice_delivery_status
+
+    render_legacy_invoice_delivery_status(drivers, start_date)
 
     selected_driver = col4.selectbox(
         "Futar",
