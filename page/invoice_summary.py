@@ -964,12 +964,15 @@ def render_invoice_task_dialog(task_row, document_month):
 
     help_reason = str(task_row.get("Segítségkérés oka") or "-")
     note = str(task_row.get("Megjegyzés") or "-")
-    if help_reason != "-" or note != "-":
+    override_note = str(task_row.get("_invoice_override_note") or "-")
+    if help_reason != "-" or note != "-" or override_note != "-":
         with st.expander("Állapot részletei", expanded=help_reason != "-"):
             if help_reason != "-":
                 st.error(help_reason)
             if note != "-" and note != help_reason:
                 st.info(note)
+            if override_note != "-":
+                st.warning(override_note)
 
     st.markdown("#### Nyitott reklamációk")
     _render_open_complaints(courier_id, courier_name, document_month)
@@ -1057,15 +1060,26 @@ def _render_invoice_task_rows(task_rows, document_month):
     st.caption(
         "Legutóbb frissített felül. A futár nevére kattintva megnyílnak a részletek és a műveletek."
     )
-    header = st.columns([1.55, 1.4, 0.9, 2.15, 1.65, 0.75])
+    header = st.columns([1.35, 1.25, 0.8, 1.7, 1.4, 1.0, 0.65])
     for column, label in zip(
         header,
-        ["Futár", "Bankszámlaszám", "Utalandó", "Mire vár?", "Segítség / megjegyzés", "Művelet"],
+        [
+            "Futár",
+            "Bankszámlaszám",
+            "Utalandó",
+            "Mire vár?",
+            "Segítség / megjegyzés",
+            "Számla",
+            "Zárás",
+        ],
     ):
         column.markdown(f"**{label}**")
 
     for index, row in enumerate(task_rows):
-        columns = st.columns([1.55, 1.4, 0.9, 2.15, 1.65, 0.75], vertical_alignment="center")
+        columns = st.columns(
+            [1.35, 1.25, 0.8, 1.7, 1.4, 1.0, 0.65],
+            vertical_alignment="center",
+        )
         if columns[0].button(
             str(row.get("Futár") or "Ismeretlen futár"),
             key=f"invoice_task_open_{document_month}_{row.get('_courier_id')}_{index}",
@@ -1077,7 +1091,45 @@ def _render_invoice_task_rows(task_rows, document_month):
         columns[3].caption(row.get("Mire vár?", "-"))
         detail = row.get("Segítségkérés oka", "-") if row.get("Segítségkérés oka") != "-" else row.get("Megjegyzés", "-")
         columns[4].caption(_short_task_text(detail, 90))
-        if columns[5].button(
+
+        if row.get("_invoice_override_available"):
+            if columns[5].button(
+                "Számla továbbengedése",
+                key=f"invoice_validation_override_{document_month}_{row.get('_courier_id')}_{index}",
+                use_container_width=True,
+                help=(
+                    "Az eredeti ellenőrzési hibák megmaradnak, de a következő "
+                    "számlaellenőrzésnél már nem blokkolják a futárt."
+                ),
+            ):
+                try:
+                    original_error = _short_task_text(row.get("_invoice_error_note"), 1200)
+                    upsert_peopleforce_card_status(
+                        courier_id=row.get("_courier_id"),
+                        courier_name=row.get("Futár"),
+                        action_key="invoice_validation_override",
+                        document_month=document_month,
+                        status="done",
+                        status_note=(
+                            "Admin által továbbengedve. Az eredeti ellenőrzési hibák: "
+                            f"{original_error}"
+                        )[:1500],
+                        updated_by=str(st.session_state.get("username", "admin")),
+                    )
+                    st.cache_data.clear()
+                    st.success(
+                        f"{row.get('Futár')} számlája továbbengedve. "
+                        "A futár most újra elindíthatja az ellenőrzést."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A számla továbbengedése nem menthető: {exc}")
+        elif row.get("_invoice_override_enabled"):
+            columns[5].caption("Továbbengedve")
+        else:
+            columns[5].caption("–")
+
+        if columns[6].button(
             "Havi zárás",
             key=f"invoice_month_close_{document_month}_{row.get('_courier_id')}_{index}",
             use_container_width=True,
@@ -1255,8 +1307,19 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
         invoice_payment_status = _status_for_action(
             status_by_id, status_by_name, courier_id, name_key, "invoice_payment"
         )
+        invoice_override_status = _status_for_action(
+            status_by_id,
+            status_by_name,
+            courier_id,
+            name_key,
+            "invoice_validation_override",
+        )
         monthly_close_status = _status_for_action(
             status_by_id, status_by_name, courier_id, name_key, "monthly_close"
+        )
+        invoice_override_enabled = (
+            invoice_override_status is not None
+            and str(invoice_override_status.get("status") or "").strip().lower() == "done"
         )
         process_is_done = any(
             status is not None and str(status.get("status") or "").strip().lower() == "done"
@@ -1338,8 +1401,12 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 else ""
             )
             if check_note:
-                step = "Számlahiba javítására vár"
-                note = check_note
+                if invoice_override_enabled:
+                    step = "Számla továbbengedve; új ellenőrzésre vár"
+                    note = f"{check_note} | Admin engedéllyel továbbengedve."
+                else:
+                    step = "Számlahiba javítására vár"
+                    note = check_note
             else:
                 step = "A futár számlaellenőrzésére vár"
                 note = "A TIG-et a futár elfogadta, a számla ellenőrzése még nem készült el."
@@ -1353,8 +1420,12 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 else ""
             )
             if submit_note:
-                step = "Számlafeltöltési hiba javítására vár"
-                note = submit_note
+                if invoice_override_enabled:
+                    step = "Számla továbbengedve; új feltöltésre vár"
+                    note = f"{submit_note} | Admin engedéllyel továbbengedve."
+                else:
+                    step = "Számlafeltöltési hiba javítására vár"
+                    note = submit_note
             else:
                 step = "A futár számlafeltöltésére vár"
                 note = "A számlaellenőrzés kész, a feltöltés még nincs befejezve."
@@ -1388,12 +1459,22 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             invoice_check_status,
             invoice_submit_status,
             invoice_payment_status,
+            invoice_override_status,
         ]
         latest_update = max(
             [str(status.get("updated_at") or "") for status in workflow_statuses if status is not None]
             + [uploaded_at or ""]
         )
         help_reason = note if complaint_rows else "-"
+        invoice_error_note = ""
+        if invoice_check_status is not None and str(invoice_check_status.get("status") or "").lower() != "done":
+            candidate = str(invoice_check_status.get("status_note") or "").strip()
+            if "hiba" in candidate.lower():
+                invoice_error_note = candidate
+        if not invoice_error_note and invoice_submit_status is not None and str(invoice_submit_status.get("status") or "").lower() != "done":
+            candidate = str(invoice_submit_status.get("status_note") or "").strip()
+            if "hiba" in candidate.lower():
+                invoice_error_note = candidate
 
         feedback_rows.append(
             {
@@ -1418,6 +1499,14 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 "_tig_amount": transfer_amount,
                 "_worksheet_name": str(summary_row.get("worksheet_name") or ""),
                 "_updated_at": latest_update,
+                "_invoice_error_note": invoice_error_note,
+                "_invoice_override_available": bool(invoice_error_note) and not invoice_override_enabled,
+                "_invoice_override_enabled": invoice_override_enabled,
+                "_invoice_override_note": (
+                    str(invoice_override_status.get("status_note") or "").strip()
+                    if invoice_override_status is not None
+                    else ""
+                ),
             }
         )
 
