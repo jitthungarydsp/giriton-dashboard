@@ -1293,6 +1293,23 @@ def build_driver_invoice_summary(
     grouped["extra_bonus_huf"] = 0
     grouped["adjustment_huf"] = grouped["adjustment_huf"].fillna(0)
     grouped["manual_total_huf"] = grouped[list(MANUAL_ITEM_TYPES.keys())].sum(axis=1)
+    manual_payable_columns = [
+        "target_reserve_topup_huf",
+        "fuel_huf",
+        "damage_huf",
+        "cash_missing_huf",
+        "other_income_huf",
+        "other_deduction_huf",
+        "instructor_fee_huf",
+        "loyalty_bonus_huf",
+    ]
+    for column in manual_payable_columns:
+        if column not in grouped.columns:
+            grouped[column] = 0
+        grouped[column] = pd.to_numeric(
+            grouped[column],
+            errors="coerce",
+        ).fillna(0)
     grouped["manual_payable_huf"] = (
         grouped["target_reserve_topup_huf"]
         + grouped["fuel_huf"]
