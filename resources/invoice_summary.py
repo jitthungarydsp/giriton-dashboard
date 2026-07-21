@@ -51,6 +51,13 @@ MONTHLY_ADJUSTMENT_TABLES = [
 DAY_RATE_TABLES = [
     "dsp_day_rates",
 ]
+TARGET_RESERVE_TABLES = [
+    "courier_target_reserve",
+]
+
+TARGET_RESERVE_RATE = 0.10
+TARGET_RESERVE_MAX_HUF = 50_000
+INSURANCE_DEDUCTION_HUF = 10_000
 
 # Pozitív ATM-egyenleg levonásként jelenik meg az elszámolásban.
 # Ha üzletileg pluszként kell kezelni, állítsd 1-re.
@@ -71,9 +78,6 @@ COURIER_BONUS_AMOUNT_OVERRIDES = {
 
 MANUAL_ITEM_TYPES = {
     "instructor_fee_huf": "Oktatói Díj",
-    "target_reserve_open_huf": "Nyitó céltartalék",
-    "target_reserve_topup_huf": "Céltartalék feltöltés",
-    "target_reserve_close_huf": "Céltartalék záró egyenleg",
     "fuel_huf": "Üzemanyag",
     "damage_huf": "Károkozás",
     "cash_missing_huf": "Be nem fizetett KP",
@@ -556,6 +560,12 @@ def read_invoice_data(start_date, end_date):
         limit=1000,
     )
 
+    _target_reserve_table, target_reserve_df = read_optional_first_existing_table(
+        TARGET_RESERVE_TABLES,
+        "*",
+        limit=10000,
+    )
+
     previous_start, previous_end = previous_month_bounds(start_date)
     _previous_table, previous_routes_df = read_optional_first_existing_table(
         FINAL_TABLES,
@@ -600,6 +610,7 @@ def read_invoice_data(start_date, end_date):
         "customer_rating": customer_rating_df,
         "monthly_adjustments": monthly_adjustment_df,
         "day_rates": day_rates_df,
+        "target_reserve": target_reserve_df,
         "previous_routes": previous_routes_df,
         "bookings": bookings_df,
         "loyalty_acceptance": acceptance_df,
@@ -889,6 +900,7 @@ def build_driver_invoice_summary(
     atm_balance_df=None,
     customer_rating_df=None,
     monthly_adjustment_df=None,
+    target_reserve_df=None,
     period_start=None,
 ):
     if final_df.empty:
@@ -1331,7 +1343,7 @@ def build_driver_invoice_summary(
         + grouped["atm_balance_huf"].abs()
     )
 
-    grouped["payable_total_huf"] = (
+    grouped["payable_before_reserve_huf"] = (
         grouped["route_total_huf"]
         + grouped["extra_bonus_huf"]
         + grouped["adjustment_huf"]
@@ -1339,6 +1351,49 @@ def build_driver_invoice_summary(
         + grouped["customer_rating_bonus_huf"]
         + grouped["monthly_adjustment_effect_huf"]
         + grouped["atm_effect_huf"]
+    )
+
+    reserve_ids = set()
+    reserve_names = set()
+    if target_reserve_df is not None and not target_reserve_df.empty:
+        reserve_source = target_reserve_df.copy()
+        for column in ["USERNUMBER", "usernumber", "courier_id", "courier_number"]:
+            if column in reserve_source.columns:
+                reserve_ids.update(
+                    reserve_source[column]
+                    .fillna("")
+                    .map(normalize_text)
+                    .loc[lambda values: values != ""]
+                    .tolist()
+                )
+        for column in ["USERNAME", "username", "driver_name", "courier_name", "name"]:
+            if column in reserve_source.columns:
+                reserve_names.update(
+                    reserve_source[column]
+                    .fillna("")
+                    .map(normalize_person_key)
+                    .loc[lambda values: values != ""]
+                    .tolist()
+                )
+
+    grouped["target_reserve_member"] = grouped.apply(
+        lambda row: (
+            normalize_text(row.get("courier_id")) in reserve_ids
+            or row.get("driver_match_key") in reserve_names
+        ),
+        axis=1,
+    )
+    grouped["reserve_deduction_huf"] = grouped["payable_before_reserve_huf"].where(
+        grouped["target_reserve_member"],
+        0,
+    ).clip(lower=0).mul(TARGET_RESERVE_RATE).clip(upper=TARGET_RESERVE_MAX_HUF)
+    grouped["insurance_deduction_huf"] = grouped["target_reserve_member"].map(
+        lambda is_member: INSURANCE_DEDUCTION_HUF if is_member else 0
+    )
+    grouped["payable_total_huf"] = (
+        grouped["payable_before_reserve_huf"]
+        - grouped["reserve_deduction_huf"]
+        - grouped["insurance_deduction_huf"]
     )
 
     return grouped.sort_values(
@@ -1445,6 +1500,9 @@ def build_display_driver_summary(summary_df):
         "manual_total_huf",
         "cash_missing_huf",
         "manual_payable_huf",
+        "payable_before_reserve_huf",
+        "reserve_deduction_huf",
+        "insurance_deduction_huf",
         "payable_total_huf",
         "loyalty_bonus_huf",
         "instructor_fee_huf",
@@ -1495,6 +1553,9 @@ def build_display_driver_summary(summary_df):
             "cash_missing_huf": "Be nem fizetett KP",
             "manual_total_huf": "Manualis tetelek",
             "manual_payable_huf": "Manualis fizetendo hatas",
+            "payable_before_reserve_huf": "Fizetendő levonások előtt",
+            "reserve_deduction_huf": "Céltartalék levonás",
+            "insurance_deduction_huf": "Biztosítás (10 000 Ft)",
             "payable_total_huf": "Fizetendo osszesen",
             "loyalty_bonus_huf": "Lojalitási bónusz",
             "instructor_fee_huf": "Oktatói Díj",
@@ -1665,9 +1726,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         extra_bonus = money(driver_row.get("extra_bonus_huf"))
         adjustment = money(driver_row.get("adjustment_huf"))
         manual_total = money(driver_row.get("manual_total_huf"))
-        target_open = money(driver_row.get("target_reserve_open_huf"))
-        target_topup = money(driver_row.get("target_reserve_topup_huf"))
-        target_close = money(driver_row.get("target_reserve_close_huf"))
+        reserve_deduction = money(driver_row.get("reserve_deduction_huf"))
+        insurance_deduction = money(driver_row.get("insurance_deduction_huf"))
         fuel_manual = money(driver_row.get("fuel_huf"))
         damage = money(driver_row.get("damage_huf"))
         cash_missing = money(driver_row.get("cash_missing_huf"))
@@ -1748,14 +1808,14 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(hero)
         story.append(Spacer(1, 0.28 * cm))
 
-        story.append(Paragraph("ALAPADATOK ÉS CÉLTARTALÉK", section_style))
+        story.append(Paragraph("ALAPADATOK", section_style))
         base = Table(
             [
-                ["Alap címpénz (Ft/db)", format_huf(base_per_order), "Nyitó céltartalék", format_huf(target_open)],
-                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}", "Célt. feltöltés (+)", format_huf(target_topup)],
-                ["Összes címpénz", format_huf(base_per_order + bonus_per_order), "Célt. záró egyenleg", format_huf(target_close)],
+                ["Alap címpénz (Ft/db)", format_huf(base_per_order)],
+                ["Kiflis bónuszok Ft/cím", f"+{format_huf(bonus_per_order)}"],
+                ["Összes címpénz", format_huf(base_per_order + bonus_per_order)],
             ],
-            colWidths=[5.4 * cm, 3.1 * cm, 5.4 * cm, 3.1 * cm],
+            colWidths=[11 * cm, 6 * cm],
         )
         apply_statement_table_style(base, font_name, bold_font_name, TableStyle, colors)
         story.append(base)
@@ -1898,7 +1958,7 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Borravaló", format_huf(tip)],
             ["Ügyfélértékelési bónusz", format_huf(customer_rating_bonus)],
             ["Havi bónusz + felvett kör", format_huf(monthly_bonus + monthly_accepted_route)],
-            ["Manuális bevételek", format_huf(target_topup + fuel_manual + other_income + instructor_fee)],
+            ["Manuális bevételek", format_huf(fuel_manual + other_income + instructor_fee)],
         ]
         expenses = [
             ["Maluszok / levonások", format_huf(abs(adjustment)) if adjustment < 0 else "0 Ft"],
@@ -1907,6 +1967,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             ["Károkozás", format_huf(abs(damage))],
             ["Be nem fiz. KP", format_huf(abs(cash_missing))],
             ["Egyéb levonás", format_huf(abs(other_deduction))],
+            ["Céltartalék levonás", format_huf(abs(reserve_deduction))],
+            ["Biztosítás (10 000 Ft)", format_huf(abs(insurance_deduction))],
         ]
         while len(revenues) < len(expenses):
             revenues.append(["", ""])
@@ -1924,7 +1986,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
                     + bonus_total
                     + tip
                     + monthly_accepted_route
-                    + target_topup
                     + fuel_manual
                     + other_income
                     + instructor_fee
@@ -1938,6 +1999,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
                     + abs(damage)
                     + abs(cash_missing)
                     + abs(other_deduction)
+                    + abs(reserve_deduction)
+                    + abs(insurance_deduction)
                 ),
             ]
         )
@@ -1979,9 +2042,6 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
         story.append(final_table)
 
         manual_rows = [
-            ["Nyitó céltartalék", format_huf(target_open)],
-            ["Céltartalék feltöltés", format_huf(target_topup)],
-            ["Céltartalék záró egyenleg", format_huf(target_close)],
             ["Üzemanyag / egyéb bevétel", format_huf(fuel_manual + other_income)],
             ["Oktatói Díj", format_huf(instructor_fee)],
             ["Károkozás / KP / egyéb levonás", format_huf(abs(damage) + abs(cash_missing) + abs(other_deduction))],
