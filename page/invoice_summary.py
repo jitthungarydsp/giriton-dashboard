@@ -6,15 +6,21 @@ import unicodedata
 
 import pandas as pd
 import requests
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 from resources.courier_master_db import read_courier_master
 from resources.email_sender import send_login_credentials
@@ -126,6 +132,11 @@ def build_tig_pdf_bytes(
     cash_amount_huf: float = 0,
 ) -> bytes:
     """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError(
+            "A TIG PDF előállításához hiányzik a reportlab csomag. "
+            "Telepítsd a requirements.txt függőségeit."
+        )
     regular_font, bold_font = _register_tig_font()
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -1006,10 +1017,23 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
         tig_status = _status_for_action(
             status_by_id, status_by_name, courier_id, name_key, "tig"
         )
+        invoice_check_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_check"
+        )
+        invoice_submit_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_submit"
+        )
+        invoice_payment_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_payment"
+        )
         monthly_close_status = _status_for_action(
             status_by_id, status_by_name, courier_id, name_key, "monthly_close"
         )
-        if monthly_close_status is not None and str(monthly_close_status.get("status") or "").lower() == "done":
+        process_is_done = any(
+            status is not None and str(status.get("status") or "").strip().lower() == "done"
+            for status in (invoice_payment_status, monthly_close_status)
+        )
+        if process_is_done:
             closed_count += 1
             continue
         status_row = settlement_status
@@ -1076,18 +1100,55 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             step = "A futár TIG-elfogadására vár"
             courier_feedback = "Futárnál"
             note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
+        elif invoice_check_status is None or str(invoice_check_status.get("status") or "").lower() != "done":
+            row_state = "waiting"
+            lamp = "Sárga"
+            check_note = (
+                str(invoice_check_status.get("status_note") or "").strip()
+                if invoice_check_status is not None
+                else ""
+            )
+            if check_note:
+                step = "Számlahiba javítására vár"
+                note = check_note
+            else:
+                step = "A futár számlaellenőrzésére vár"
+                note = "A TIG-et a futár elfogadta, a számla ellenőrzése még nem készült el."
+            courier_feedback = "Futárnál"
+        elif invoice_submit_status is None or str(invoice_submit_status.get("status") or "").lower() != "done":
+            row_state = "waiting"
+            lamp = "Sárga"
+            submit_note = (
+                str(invoice_submit_status.get("status_note") or "").strip()
+                if invoice_submit_status is not None
+                else ""
+            )
+            if submit_note:
+                step = "Számlafeltöltési hiba javítására vár"
+                note = submit_note
+            else:
+                step = "A futár számlafeltöltésére vár"
+                note = "A számlaellenőrzés kész, a feltöltés még nincs befejezve."
+            courier_feedback = "Futárnál"
         elif "invoice" not in document_types:
             row_state = "waiting"
             lamp = "Sárga"
-            step = "A futár számlafeltöltésére vár"
-            courier_feedback = "Futárnál"
-            note = "A TIG-et a futár elfogadta."
-        else:
+            step = "A számladokumentum eltárolására vár"
+            courier_feedback = "Rendszerfeladat"
+            note = "A feltöltési státusz kész, de a számladokumentum nem található."
+        elif invoice_payment_status is None or str(invoice_payment_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Kék"
-            step = "Számlaellenőrzésre és havi zárásra vár"
+            step = "Admin számlaelfogadására és kifizetésre vár"
             courier_feedback = "Admin feladat"
-            note = "A számla feltöltve; ellenőrzés és zárás szükséges."
+            note = (
+                str(invoice_payment_status.get("status_note") or "").strip()
+                if invoice_payment_status is not None
+                else "A számla feltöltve; admin elfogadás és kifizetés szükséges."
+            )
+        else:
+            closed_count += 1
+            continue
 
         bank_account = first_invoice_contact_value(master_row, "bank_account_number")
         transfer_amount = amount_by_name.get(name_key, 0)

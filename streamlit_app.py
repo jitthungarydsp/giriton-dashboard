@@ -1,6 +1,7 @@
 import streamlit as st
 
 from page.invoice_summary import show_invoice_summary_page
+from page.monthly_invoice_tasks import show_monthly_invoice_tasks_page
 from page.monthly_invoice_editor import (
     show_monthly_invoice_editor_page,
     show_monthly_tig_editor_page,
@@ -48,6 +49,7 @@ selected_page = st.sidebar.radio(
     "Menü",
     [
         "Elszámolás",
+        "Havi feladatok",
         "Havi számla",
         "Havi TIG",
         "Konfiguráció",
@@ -63,6 +65,9 @@ selected_page = st.sidebar.radio(
 
 if selected_page == "Elszámolás":
     show_invoice_summary_page()
+
+elif selected_page == "Havi feladatok":
+    show_monthly_invoice_tasks_page()
 
 elif selected_page == "Havi számla":
     show_monthly_invoice_editor_page()

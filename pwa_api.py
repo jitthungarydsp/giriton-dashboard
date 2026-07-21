@@ -1574,6 +1574,22 @@ async def check_invoice(
             "done",
             "A számla automatikus ellenőrzése sikeres.",
         )
+    else:
+        error_details = [
+            f"{check.get('title')}: {check.get('detail')}"
+            for check in result.get("checks", [])
+            if check.get("status") == "error"
+        ]
+        failure_note = "Számlaellenőrzési hiba: " + (
+            " | ".join(error_details) if error_details else "Ismeretlen ellenőrzési hiba."
+        )
+        upsert_workflow_status(
+            user,
+            month_value,
+            "invoice_check",
+            "open",
+            failure_note[:1500],
+        )
     return {"validation": result, "workflow": build_workflow(user, month_value)}
 
 
@@ -1613,6 +1629,21 @@ async def submit_invoice(
     )
     result = apply_invoice_validation_override(result, override_enabled)
     if not result["ok"]:
+        error_details = [
+            f"{check.get('title')}: {check.get('detail')}"
+            for check in result.get("checks", [])
+            if check.get("status") == "error"
+        ]
+        failure_note = "Számlafeltöltési hiba: " + (
+            " | ".join(error_details) if error_details else "Ismeretlen feltöltési hiba."
+        )
+        upsert_workflow_status(
+            user,
+            month_value,
+            "invoice_submit",
+            "open",
+            failure_note[:1500],
+        )
         return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
 
     file_name = invoice_file.filename or f"szamla_{invoice_number}.pdf"

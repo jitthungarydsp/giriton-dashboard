@@ -3,11 +3,10 @@
         {
             "username": "admin",
             "role": "admin",
-            "password": "Admin123!",
             "courierId": 1234,
             "active": true,
             "token": "",
-            "passwordHash": ""
+            "passwordHash": "pbkdf2_sha256$260000$xcG0Nm2XdnDTK3WpIpqozw==$EUBLb66ktY2PWt+y2YOumNpoovmSqCdhIaJ7Yf4/Fa4="
         },
         {
             "username": "Ádám Erik",
@@ -393,7 +392,7 @@
             "trainer": "trainer_name",
             "password": "kfhFifd",
             "role": "",
-            "courierId":"7956" ,
+            "courierId": "7956",
             "active": "true",
             "token": ""
         },
