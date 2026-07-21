@@ -1757,50 +1757,123 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                 height=88,
             )
 
-        uploaded_invoice = st.file_uploader(
-            "Számla feltöltése",
+        uploaded_invoices = st.file_uploader(
+            "Sz?mla felt?lt?se (maximum 2 f?jl)",
             type=["pdf", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
             key="peopleforce_invoice_upload",
         )
-        submitted = st.form_submit_button("Számla ellenőrzése")
+        submitted = st.form_submit_button("Sz?mla ellen?rz?se")
 
     if submitted:
+        selected_invoices = uploaded_invoices or []
+        if len(selected_invoices) > 2:
+            st.error("Maximum 2 db sz?ml?t lehet felt?lteni ehhez az elsz?mol?shoz.")
+            return
+
+        if not selected_invoices:
+            checks = build_invoice_checks(
+                None,
+                invoice_month=invoice_month,
+                invoice_number=invoice_number,
+                gross_amount=gross_amount,
+                courier_id=courier_id,
+                courier_name=name,
+                require_invoice_fields=True,
+            )
+            render_invoice_check_result(checks)
+            return
+
         expected_tig_amount = read_tig_expected_amount(
             courier_id,
             invoice_month.replace(day=1),
         )
-        checks = build_invoice_checks(
-            uploaded_invoice,
-            invoice_month=invoice_month,
-            invoice_number=invoice_number,
-            gross_amount=gross_amount,
-            courier_id=courier_id,
-            courier_name=name,
-            expected_gross_amount=expected_tig_amount,
-            expected_seller_tax_number=(
-                row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
-            ),
-            expected_seller_address=(
-                row.get("billing_address") or row.get("address") or row.get("cim") or ""
-            ),
-            require_invoice_fields=True,
-        )
-        render_invoice_check_result(checks)
+        multi_invoice = len(selected_invoices) > 1
+        validation_results = []
+        has_error = False
+        parsed_gross_total = 0
 
-        if not any(check["status"] == "error" for check in checks):
-            upload_peopleforce_document(
-                courier_id=courier_id,
-                courier_name=name,
-                document_type="invoice",
-                document_month=invoice_month.replace(day=1),
-                title=f"Számla {invoice_number}",
-                note=(
-                    f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. "
-                    f"{note}"
-                ).strip(),
-                uploaded_file=uploaded_invoice,
-                uploaded_by=user.get("username") or name,
-            )
+        for file_index, uploaded_invoice in enumerate(selected_invoices, start=1):
+            st.markdown(f"**{file_index}. sz?mla:** `{uploaded_invoice.name}`")
+            if multi_invoice:
+                content = uploaded_invoice.getvalue()
+                result = validate_uploaded_invoice(
+                    file_name=clean_display_text(uploaded_invoice.name, "ismeretlen_fajl"),
+                    content=content,
+                    invoice_month=invoice_month,
+                    invoice_number="",
+                    gross_amount=0,
+                    courier_id=courier_id,
+                    courier_name=name,
+                    expected_gross_amount=0,
+                    expected_seller_tax_number=(
+                        row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
+                    ),
+                    expected_seller_address=(
+                        row.get("billing_address") or row.get("address") or row.get("cim") or ""
+                    ),
+                    require_submission_fields=False,
+                )
+                checks = result["checks"]
+                parsed_gross_total += int((result.get("parsed") or {}).get("grossTotal") or 0)
+            else:
+                checks = build_invoice_checks(
+                    uploaded_invoice,
+                    invoice_month=invoice_month,
+                    invoice_number=invoice_number,
+                    gross_amount=gross_amount,
+                    courier_id=courier_id,
+                    courier_name=name,
+                    expected_gross_amount=expected_tig_amount,
+                    expected_seller_tax_number=(
+                        row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
+                    ),
+                    expected_seller_address=(
+                        row.get("billing_address") or row.get("address") or row.get("cim") or ""
+                    ),
+                    require_invoice_fields=True,
+                )
+            render_invoice_check_result(checks)
+            has_error = has_error or any(check["status"] == "error" for check in checks)
+            validation_results.append((uploaded_invoice, checks))
+
+        if multi_invoice:
+            expected_total = int(float(expected_tig_amount or gross_amount or 0))
+            if expected_total:
+                if parsed_gross_total == expected_total:
+                    st.success(f"A k?t sz?mla ?sszege egy?tt egyezik a TIG ?sszeg?vel: {format_currency(parsed_gross_total)}.")
+                else:
+                    st.error(
+                        "A k?t sz?mla ?sszege egy?tt nem egyezik a TIG/megadott ?sszeggel: "
+                        f"sz?ml?k ?sszesen {format_currency(parsed_gross_total)}, "
+                        f"v?rt {format_currency(expected_total)}."
+                    )
+                    has_error = True
+            else:
+                st.warning(
+                    f"A k?t sz?mla kiolvasott ?sszege ?sszesen {format_currency(parsed_gross_total)}, "
+                    "de nincs TIG/megadott ?sszeg az ?sszevet?shez."
+                )
+
+        if not has_error:
+            base_title = f"Sz?mla {invoice_number}" if clean_display_text(invoice_number) else "Sz?mla"
+            for file_index, (uploaded_invoice, _checks) in enumerate(validation_results, start=1):
+                upload_title = base_title
+                if multi_invoice:
+                    upload_title = f"{base_title} ({file_index}. sz?mla)"
+                upload_peopleforce_document(
+                    courier_id=courier_id,
+                    courier_name=name,
+                    document_type="invoice",
+                    document_month=invoice_month.replace(day=1),
+                    title=upload_title,
+                    note=(
+                        f"Brutt?: {gross_amount} Ft; TIG/elsz?mol?s: {tig_reference}. "
+                        f"{note}"
+                    ).strip(),
+                    uploaded_file=uploaded_invoice,
+                    uploaded_by=user.get("username") or name,
+                )
             for action_key in ["invoice_submit", "my_invoices"]:
                 upsert_peopleforce_card_status(
                     courier_id=courier_id,
@@ -1808,10 +1881,10 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                     action_key=action_key,
                     document_month=invoice_month.replace(day=1),
                     status="done",
-                    status_note="A számla ellenőrizve és eltárolva.",
+                    status_note="A sz?mla ellen?rizve ?s elt?rolva.",
                     updated_by=user.get("username") or name,
                 )
-            st.success("A számla PDF eltárolva és beküldve.")
+            st.success("A sz?mla PDF(ek) elt?rolva ?s bek?ldve.")
             st.rerun()
 
 
@@ -2207,34 +2280,44 @@ def render_peopleforce_admin_upload(
                 height=90,
             )
             uploaded_file = st.file_uploader(
-                "Fájl",
+                "F?jl",
                 type=["pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv"],
                 key=f"peopleforce_file_{action_key}_{courier_id}_{selected_month}",
             )
-            submitted = st.form_submit_button("Feltöltés")
+            submitted = st.form_submit_button("Felt?lt?s")
 
         if not submitted:
             return
 
-        if uploaded_file is None:
-            st.error("Válassz ki egy fájlt a feltöltéshez.")
+        selected_files = [uploaded_file] if uploaded_file is not None else []
+
+        if not selected_files:
+            st.error("V?lassz ki egy f?jlt a felt?lt?shez.")
             return
 
-        if uploaded_file.size > MAX_PEOPLEFORCE_UPLOAD_BYTES:
-            st.error("A fájl túl nagy. Első körben maximum 10 MB-ot engedünk.")
+        too_large_files = [file.name for file in selected_files if file.size > MAX_PEOPLEFORCE_UPLOAD_BYTES]
+        if too_large_files:
+            st.error(
+                "Van t?l nagy f?jl. Els? k?rben maximum 10 MB-ot enged?nk: "
+                + ", ".join(too_large_files)
+            )
             return
 
         try:
-            upload_peopleforce_document(
-                courier_id=courier_id,
-                courier_name=courier_name,
-                document_type=config["document_type"],
-                document_month=selected_month,
-                title=title,
-                note=note,
-                uploaded_file=uploaded_file,
-                uploaded_by=user.get("username"),
-            )
+            for file_index, selected_file in enumerate(selected_files, start=1):
+                upload_title = title
+                if len(selected_files) > 1:
+                    upload_title = f"{title} ({file_index}. f?jl)"
+                upload_peopleforce_document(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    document_type=config["document_type"],
+                    document_month=selected_month,
+                    title=upload_title,
+                    note=note,
+                    uploaded_file=selected_file,
+                    uploaded_by=user.get("username"),
+                )
         except Exception as exc:
             st.error(
                 "A feltöltés nem sikerült. Ellenőrizd, hogy a peopleforce_documents tábla létrejött-e Supabase-ben."
@@ -2286,6 +2369,10 @@ def render_peopleforce_complaint_box(
     except Exception:
         complaints = pd.DataFrame()
 
+    has_open_complaint = False
+    if not complaints.empty and "status" in complaints.columns:
+        has_open_complaint = complaints["status"].astype(str).str.strip().str.lower().ne("resolved").any()
+
     if not complaints.empty:
         st.caption("Korábbi reklamációk ebben a hónapban")
         for _, complaint in complaints.head(5).iterrows():
@@ -2327,6 +2414,10 @@ def render_peopleforce_complaint_box(
                 f"Válaszolta: {clean_display_text(response_document.get('uploaded_by'), 'admin')} | "
                 f"{clean_display_text(response_document.get('uploaded_at'))}"
             )
+
+    if has_open_complaint:
+        st.warning("M?r van nyitott reklam?ci?d erre a dokumentumra. ?jat akkor tudsz k?ldeni, ha az admin lez?rta az el?z?t.")
+        return
 
     with st.form(f"peopleforce_complaint_{action_key}_{courier_id}_{selected_month}"):
         message = st.text_area(
