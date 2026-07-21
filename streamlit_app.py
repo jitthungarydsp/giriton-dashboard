@@ -9,7 +9,7 @@ from page.bill_config import show_bill_config_page
 from page.bill_bonus_malus import show_bonus_malus_page
 from page.bill_insurance_reserve import show_insurance_reserve_page
 from resources.auth import login_screen, logout_button
-from page.bill_config import show_bill_config_page
+from page.jitt_bill_config import show_bill_config_page
 
 
 st.set_page_config(
