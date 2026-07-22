@@ -14,6 +14,10 @@ from resources.pwa_push_notifications import (
     send_push_to_courier,
 )
 from resources.users import load_users
+from page.compensation_settings import (
+    render_adjustment_item_settings,
+    render_compensation_rule_settings,
+)
 
 
 def _active_courier_notification_users():
@@ -246,3 +250,7 @@ def show_settings_page():
             st.cache_resource.clear()
             st.success("Alapértelmezett beállítások visszaállítva.")
             st.rerun()
+
+    st.divider()
+    render_adjustment_item_settings()
+    render_compensation_rule_settings()

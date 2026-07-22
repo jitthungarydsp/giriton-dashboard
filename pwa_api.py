@@ -92,6 +92,19 @@ class PushSubscriptionRequest(BaseModel):
     user_agent: str = ""
 
 
+class CoordinatorAdjustmentRequest(BaseModel):
+    kind: str
+    courier_id: str
+    item_id: str
+    amount_huf: int
+    note: str = ""
+    effective_date: str
+
+
+class CoordinatorAdjustmentDeleteRequest(BaseModel):
+    reason: str
+
+
 def load_setting(name: str) -> str:
     def clean(value: Any) -> str:
         text = str(value or "").strip()
@@ -212,6 +225,33 @@ def require_user(token: str | None) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="Bejelentkezés szükséges.")
     return user
+
+
+def require_coordinator(user: dict[str, Any]) -> dict[str, Any]:
+    role = str(user.get("role") or "").strip().lower()
+    if role not in {"admin", "coordinator"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Ehhez a funkcióhoz koordinátori vagy admin jogosultság szükséges.",
+        )
+    return user
+
+
+COORDINATOR_ITEM_TABLES = {
+    "bonus": "cfg_coordinator_bonus_items",
+    "malus": "cfg_coordinator_malus_items",
+}
+COORDINATOR_ENTRY_TABLES = {
+    "bonus": "ops_coordinator_bonus_entries",
+    "malus": "ops_coordinator_malus_entries",
+}
+
+
+def coordinator_table(mapping: dict[str, str], kind: str) -> str:
+    kind = str(kind or "").strip().lower()
+    if kind not in mapping:
+        raise HTTPException(status_code=422, detail="A típus csak bonus vagy malus lehet.")
+    return mapping[kind]
 
 
 def normalize_text(value: Any) -> str:
@@ -966,6 +1006,78 @@ def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> 
     return result
 
 
+def combine_invoice_validation_results(
+    results: list[tuple[str, dict[str, Any]]],
+    expected_gross_amount: int,
+    declared_gross_amount: int,
+    invoice_number: str,
+    skip_invoice_number_match: bool = False,
+) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    parsed_documents = []
+    gross_total = 0
+    for label, result in results:
+        parsed = dict(result.get("parsed") or {})
+        parsed_documents.append({"type": label, **parsed})
+        gross_total += int(parsed.get("grossTotal") or 0)
+        for check in result.get("checks") or []:
+            checks.append({**check, "title": f"{label} – {check.get('title') or 'ellenőrzés'}"})
+
+    main_invoice_number = str((results[0][1].get("parsed") or {}).get("invoiceNumber") or "").strip()
+    requested_invoice_number = str(invoice_number or "").strip()
+    if skip_invoice_number_match:
+        checks.append(
+            {
+                "status": "warn",
+                "title": "Átutalásos számla számlaszáma",
+                "detail": "A számlaszám-egyezés ellenőrzése ki lett hagyva.",
+            }
+        )
+    else:
+        requested_number_key = re.sub(r"[^A-Z0-9]", "", requested_invoice_number.upper())
+        document_number_key = re.sub(r"[^A-Z0-9]", "", main_invoice_number.upper())
+        checks.append(
+            {
+                "status": "ok" if requested_number_key and requested_number_key == document_number_key else "error",
+                "title": "Átutalásos számla számlaszáma",
+                "detail": f"Megadva: {requested_invoice_number or '-'}; dokumentum: {main_invoice_number or '-'}.",
+            }
+        )
+
+    if declared_gross_amount:
+        checks.append(
+            {
+                "status": "ok" if gross_total == declared_gross_amount else "error",
+                "title": "Két számla megadott bruttó összege",
+                "detail": f"Számlák összesen: {gross_total:,} Ft; megadva: {declared_gross_amount:,} Ft.".replace(",", " "),
+            }
+        )
+    if expected_gross_amount:
+        checks.append(
+            {
+                "status": "ok" if gross_total == expected_gross_amount else "error",
+                "title": "Két számla TIG szerinti végösszege",
+                "detail": f"Számlák összesen: {gross_total:,} Ft; TIG: {expected_gross_amount:,} Ft.".replace(",", " "),
+            }
+        )
+
+    errors = sum(check.get("status") == "error" for check in checks)
+    warnings = sum(check.get("status") == "warn" for check in checks)
+    passed = sum(check.get("status") == "ok" for check in checks)
+    return {
+        "ok": errors == 0,
+        "score": round((passed / (len(checks) or 1)) * 100),
+        "errors": errors,
+        "warnings": warnings,
+        "checks": checks,
+        "parsed": {
+            "invoiceNumber": main_invoice_number,
+            "grossTotal": gross_total,
+            "documents": parsed_documents,
+        },
+    }
+
+
 def has_open_complaint(complaints: list[dict], action: str) -> bool:
     for row in complaints:
         if row.get("document_type") != action:
@@ -1602,31 +1714,65 @@ async def submit_invoice(
     note: str = Form(default=""),
     skip_invoice_number_match: bool = Form(default=False),
     invoice_file: UploadFile = File(...),
+    cash_invoice_file: UploadFile | None = File(default=None),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     month_value = parse_month(month)
     require_prerequisite(user, month_value, "invoice_submit")
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
+    cash_content = b""
+    if cash_invoice_file is not None and cash_invoice_file.filename:
+        cash_content = await cash_invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     override_enabled = invoice_validation_override_enabled(status_map(status_rows))
-    result = validate_invoice(
-        file_name=invoice_file.filename or "szamla",
-        content=content,
-        invoice_month=month_value,
-        courier_name=courier_name,
-        courier_id=courier_id,
-        expected_gross_amount=expected_tig_amount(user, month_value),
-        invoice_number=invoice_number,
-        gross_amount=gross_amount,
-        require_submission_fields=True,
-        skip_invoice_number_match=skip_invoice_number_match,
-        expected_seller_name=billing_profile["company_name"],
-        expected_seller_tax_number=billing_profile["tax_number"],
-        expected_seller_address=billing_profile["company_address"],
-    )
+    expected_amount = expected_tig_amount(user, month_value)
+    if cash_content:
+        shared_validation = {
+            "invoice_month": month_value,
+            "courier_name": courier_name,
+            "courier_id": courier_id,
+            "expected_gross_amount": 0,
+            "require_submission_fields": False,
+            "expected_seller_name": billing_profile["company_name"],
+            "expected_seller_tax_number": billing_profile["tax_number"],
+            "expected_seller_address": billing_profile["company_address"],
+        }
+        main_result = validate_invoice(
+            file_name=invoice_file.filename or "szamla",
+            content=content,
+            **shared_validation,
+        )
+        cash_result = validate_invoice(
+            file_name=cash_invoice_file.filename or "kp_szamla",
+            content=cash_content,
+            **shared_validation,
+        )
+        result = combine_invoice_validation_results(
+            [("Átutalásos számla", main_result), ("KP számla", cash_result)],
+            expected_gross_amount=expected_amount,
+            declared_gross_amount=gross_amount,
+            invoice_number=invoice_number,
+            skip_invoice_number_match=skip_invoice_number_match,
+        )
+    else:
+        result = validate_invoice(
+            file_name=invoice_file.filename or "szamla",
+            content=content,
+            invoice_month=month_value,
+            courier_name=courier_name,
+            courier_id=courier_id,
+            expected_gross_amount=expected_amount,
+            invoice_number=invoice_number,
+            gross_amount=gross_amount,
+            require_submission_fields=True,
+            skip_invoice_number_match=skip_invoice_number_match,
+            expected_seller_name=billing_profile["company_name"],
+            expected_seller_tax_number=billing_profile["tax_number"],
+            expected_seller_address=billing_profile["company_address"],
+        )
     result = apply_invoice_validation_override(result, override_enabled)
     if not result["ok"]:
         error_details = [
@@ -1646,28 +1792,55 @@ async def submit_invoice(
         )
         return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
 
-    file_name = invoice_file.filename or f"szamla_{invoice_number}.pdf"
-    supabase_rest(
-        "POST",
-        "peopleforce_documents",
-        payload={
+    upload_documents = [
+        {
+            "file_name": invoice_file.filename or f"szamla_{invoice_number}.pdf",
+            "content_type": invoice_file.content_type or "application/octet-stream",
+            "content": content,
+            "title": f"Számla {invoice_number}",
+            "payment_type": "Átutalás",
+        }
+    ]
+    if cash_content and cash_invoice_file is not None:
+        upload_documents.append(
+            {
+                "file_name": cash_invoice_file.filename or f"kp_szamla_{invoice_number}.pdf",
+                "content_type": cash_invoice_file.content_type or "application/octet-stream",
+                "content": cash_content,
+                "title": f"KP számla {invoice_number}",
+                "payment_type": "KP",
+            }
+        )
+    document_payloads = [
+        {
             "courier_id": courier_id,
             "courier_name": courier_name,
             "document_type": "invoice",
             "document_month": month_value.isoformat(),
-            "title": f"Számla {invoice_number}",
-            "file_name": file_name,
-            "mime_type": invoice_file.content_type or "application/octet-stream",
-            "file_size": len(content),
-            "file_content_base64": base64.b64encode(content).decode("ascii"),
-            "note": f"Bruttó: {gross_amount} Ft; TIG/elszámolás: {tig_reference}. {note}".strip(),
+            "title": document["title"],
+            "file_name": document["file_name"],
+            "mime_type": document["content_type"],
+            "file_size": len(document["content"]),
+            "file_content_base64": base64.b64encode(document["content"]).decode("ascii"),
+            "note": (
+                f"Fizetési mód: {document['payment_type']}; bruttó összesen: {gross_amount} Ft; "
+                f"TIG/elszámolás: {tig_reference}. {note}"
+            ).strip(),
             "uploaded_by": courier_name,
-        },
+        }
+        for document in upload_documents
+    ]
+    supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload=document_payloads if len(document_payloads) > 1 else document_payloads[0],
         prefer="return=representation",
         timeout=60,
     )
-    upsert_workflow_status(user, month_value, "invoice_submit", "done", "A számla ellenőrizve és eltárolva.")
-    upsert_workflow_status(user, month_value, "my_invoices", "open", "A számla admin ellenőrzésre és kifizetésre vár.")
+    stored_count = len(document_payloads)
+    stored_label = "A két számla" if stored_count == 2 else "A számla"
+    upsert_workflow_status(user, month_value, "invoice_submit", "done", f"{stored_label} ellenőrizve és eltárolva.")
+    upsert_workflow_status(user, month_value, "my_invoices", "open", f"{stored_label} admin ellenőrzésre és kifizetésre vár.")
     upsert_workflow_status(
         user,
         month_value,
@@ -1675,7 +1848,150 @@ async def submit_invoice(
         "open",
         "Admin szamlaelfogadasra es kifizetesre var.",
     )
-    return {"stored": True, "validation": result, "workflow": build_workflow(user, month_value)}
+    return {
+        "stored": True,
+        "storedCount": stored_count,
+        "validation": result,
+        "workflow": build_workflow(user, month_value),
+    }
+
+
+def coordinator_adjustment_setup() -> dict[str, Any]:
+    couriers = supabase_rest(
+        "GET",
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name,active",
+            "order": "courier_name.asc,courier_id.asc",
+            "limit": "5000",
+        },
+    )
+    couriers = [
+        row for row in couriers
+        if str(row.get("courier_id") or "").strip()
+        and str(row.get("courier_name") or "").strip()
+        and row.get("active") is not False
+    ]
+    result: dict[str, Any] = {"couriers": couriers, "items": {}, "entries": {}}
+    for kind in ("bonus", "malus"):
+        result["items"][kind] = supabase_rest(
+            "GET",
+            COORDINATOR_ITEM_TABLES[kind],
+            params={
+                "select": "id,item_name,default_amount_huf,description",
+                "is_active": "eq.true",
+                "order": "item_name.asc",
+            },
+        )
+        result["entries"][kind] = supabase_rest(
+            "GET",
+            COORDINATOR_ENTRY_TABLES[kind],
+            params={
+                "select": (
+                    "id,courier_id,courier_name,item_name,amount_huf,note,effective_date,"
+                    "recorded_by,recorded_at"
+                ),
+                "deleted_at": "is.null",
+                "order": "recorded_at.desc",
+                "limit": "150",
+            },
+        )
+    return result
+
+
+@app.get("/api/coordinator-adjustments")
+def get_coordinator_adjustments(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_coordinator(require_user(giriton_pwa_session))
+    return coordinator_adjustment_setup()
+
+
+@app.post("/api/coordinator-adjustments")
+def add_coordinator_adjustment(
+    payload: CoordinatorAdjustmentRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    kind = str(payload.kind or "").strip().lower()
+    item_table = coordinator_table(COORDINATOR_ITEM_TABLES, kind)
+    entry_table = coordinator_table(COORDINATOR_ENTRY_TABLES, kind)
+    amount = abs(int(payload.amount_huf or 0))
+    if amount <= 0:
+        raise HTTPException(status_code=422, detail="Az összegnek nagyobbnak kell lennie nullánál.")
+    try:
+        effective_date = date.fromisoformat(payload.effective_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Hibás dátum.") from exc
+
+    courier_rows = supabase_rest(
+        "GET",
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name",
+            "courier_id": f"eq.{str(payload.courier_id).strip()}",
+            "limit": "1",
+        },
+    )
+    if not courier_rows:
+        raise HTTPException(status_code=404, detail="A kiválasztott futár nem található.")
+    item_rows = supabase_rest(
+        "GET",
+        item_table,
+        params={
+            "select": "id,item_name",
+            "id": f"eq.{str(payload.item_id).strip()}",
+            "is_active": "eq.true",
+            "limit": "1",
+        },
+    )
+    if not item_rows:
+        raise HTTPException(status_code=404, detail="A kiválasztott tétel már nem aktív.")
+    courier = courier_rows[0]
+    item = item_rows[0]
+    actor = str(user.get("username") or "unknown").strip()
+    rows = supabase_rest(
+        "POST",
+        entry_table,
+        payload={
+            "courier_id": str(courier.get("courier_id") or "").strip(),
+            "courier_name": str(courier.get("courier_name") or "").strip(),
+            "item_id": item.get("id"),
+            "item_name": str(item.get("item_name") or "").strip(),
+            "amount_huf": amount,
+            "note": str(payload.note or "").strip(),
+            "effective_date": effective_date.isoformat(),
+            "recorded_by": actor,
+        },
+        prefer="return=representation",
+    )
+    return {"entry": rows[0] if rows else {}, "setup": coordinator_adjustment_setup()}
+
+
+@app.post("/api/coordinator-adjustments/{kind}/{entry_id}/delete")
+def delete_coordinator_adjustment(
+    kind: str,
+    entry_id: str,
+    payload: CoordinatorAdjustmentDeleteRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    reason = str(payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="A visszavonás indoklása kötelező.")
+    entry_table = coordinator_table(COORDINATOR_ENTRY_TABLES, kind)
+    supabase_rest(
+        "PATCH",
+        entry_table,
+        params={"id": f"eq.{entry_id}", "deleted_at": "is.null"},
+        payload={
+            "deleted_at": datetime.now(timezone.utc).isoformat(),
+            "deleted_by": str(user.get("username") or "unknown").strip(),
+            "delete_reason": reason,
+        },
+        prefer="return=minimal",
+    )
+    return {"ok": True, "setup": coordinator_adjustment_setup()}
 
 
 @app.get("/api/health")

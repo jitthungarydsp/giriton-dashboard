@@ -260,7 +260,7 @@ def show_admin_page():
         courier_id = st.number_input("Courier ID", step=1)
         email = st.text_input("E-mail cím")
         phone = st.text_input("Telefonszám")
-        role = st.selectbox("Jogosultság", ["user", "trainer", "admin"])
+        role = st.selectbox("Jogosultság", ["user", "trainer", "coordinator", "admin"])
         trainer = st.text_input("Trainer")
         submitted = st.form_submit_button("Létrehozás")
 
@@ -423,7 +423,7 @@ def show_admin_page():
     col1, col2 = st.columns(2)
 
     with col1:
-        roles = ["user", "trainer", "admin"]
+        roles = ["user", "trainer", "coordinator", "admin"]
         current_role = selected_data.get("role", "user")
         if current_role not in roles:
             current_role = "user"

@@ -83,6 +83,7 @@ from page.foglalasok_db import (
 from page.settings import (
     show_settings_page,
 )
+from page.bonus_malus import show_bonus_malus_page
 
 
 login_screen()
@@ -137,6 +138,7 @@ if user["role"] == "admin":
         "Performance magyarazat",
         "Elszamolas",
         "Havi feladatok",
+        "Bónusz / Málusz",
         "Futárok",
         "Mai futárok",
         "Kifli kártya",
@@ -145,6 +147,8 @@ if user["role"] == "admin":
         "Live Map",
         "Profil",
     ]
+elif user["role"] == "coordinator":
+    menu = ["Bónusz / Málusz"]
 else:
     menu = [
         "Mai futárok",
@@ -155,13 +159,13 @@ else:
         "Profil",
     ]
 
-if "Statisztika" not in menu:
+if user["role"] != "coordinator" and "Statisztika" not in menu:
     menu.insert(
         max(len(menu) - 1, 0),
         "Statisztika",
     )
 
-if "Megrendeles statisztika" not in menu:
+if user["role"] != "coordinator" and "Megrendeles statisztika" not in menu:
     menu.insert(
         max(len(menu) - 1, 0),
         "Megrendeles statisztika",
@@ -239,6 +243,8 @@ elif page == "Elszamolas":
     show_invoice_summary_page()
 elif page == "Havi feladatok":
     show_monthly_invoice_tasks_page()
+elif page == "Bónusz / Málusz":
+    show_bonus_malus_page()
 elif page == "Performance magyarazat":
     show_dsp_route_explanations_page()
 elif page == "Trainer":

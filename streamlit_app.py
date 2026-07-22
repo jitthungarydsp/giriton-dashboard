@@ -7,7 +7,8 @@ from page.monthly_invoice_editor import (
     show_monthly_tig_editor_page,
 )
 from resources.auth import login_screen, logout_button
-from page.jitt_bill_config import show_bill_config_page
+from page.bonus_malus import show_bonus_malus_page
+from page.compensation_settings import show_compensation_configuration_page
 
 
 st.set_page_config(
@@ -45,9 +46,10 @@ logout_button()
 
 st.sidebar.divider()
 
-selected_page = st.sidebar.radio(
-    "Menü",
-    [
+if user.get("role") == "coordinator":
+    settlement_menu = ["Bónusz / Málusz"]
+else:
+    settlement_menu = [
         "Elszámolás",
         "Havi feladatok",
         "Havi számla",
@@ -55,7 +57,11 @@ selected_page = st.sidebar.radio(
         "Konfiguráció",
         "Bónusz / Málusz",
         "Biztosítás / Céltartalék",
-    ],
+    ]
+
+selected_page = st.sidebar.radio(
+    "Menü",
+    settlement_menu,
 )
 
 
@@ -76,7 +82,7 @@ elif selected_page == "Havi TIG":
     show_monthly_tig_editor_page()
 
 elif selected_page == "Konfiguráció":
-    show_bill_config_page()
+    show_compensation_configuration_page()
 
 elif selected_page == "Bónusz / Málusz":
     show_bonus_malus_page()

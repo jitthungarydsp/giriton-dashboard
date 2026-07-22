@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=19" />
+    <link rel="stylesheet" href="/styles.css?v=22" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -64,7 +64,10 @@
             <h2>Elszámolás és számla</h2>
             <p class="muted">Minden lépés csak az előző sikeres lezárása után válik aktívvá.</p>
           </div>
-          <label class="month-picker">Hónap<input id="workflow-month" type="month" /></label>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="workflow-month" type="month" /></label>
+            <button id="workflow-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
         </section>
 
         <section id="workflow-message" aria-live="polite"></section>
@@ -88,12 +91,13 @@
           <div class="process-title"><span class="step-code">6</span><div><h3>Számlafeltöltés</h3><p>Csak sikeres ellenőrzés után küldhető be.</p></div></div>
           <form id="invoice-submit-form" class="process-form two-column">
             <label>Számlaszám<input id="invoice-number" name="invoice_number" required /></label>
-            <label>Bruttó összeg (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
+            <label>Számlák bruttó összege összesen (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
             <label>TIG / elszámolás azonosító<input id="tig-reference" name="tig_reference" /></label>
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
             <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true" /> Számlaszám egyezés ellenőrzés kihagyása</label>
-            <label class="full-width">Végleges PDF számla (üresen az 5. lépésben ellenőrzött fájlt küldi be)<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
-            <button class="primary full-width" type="submit">Ellenőrzés és számlafeltöltés</button>
+            <label class="full-width">Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
+            <label class="full-width">KP számla feltöltése (opcionális)<input id="cash-invoice-submit-file" name="cash_invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
+            <button class="primary full-width" type="submit">Számlák ellenőrzése és feltöltése</button>
           </form>
           <button id="invoice-submit-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>
           <div id="invoice-submit-info"></div>
@@ -181,16 +185,41 @@
           </div>
         </section>
       </div>
+
+      <div id="coordinator-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">KOORDINÁTOR</p>
+            <h2>Bónusz / Málusz</h2>
+            <p class="muted">Gyors, naplózott rögzítés. Ezek a tételek még nem részei az elszámolásnak.</p>
+          </div>
+          <button id="coordinator-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section class="process-card">
+          <form id="coordinator-adjustment-form" class="process-form">
+            <label>Futár<select id="coordinator-courier" required></select></label>
+            <label>Típus<select id="coordinator-kind"><option value="bonus">Bónusz (+)</option><option value="malus">Málusz (-)</option></select></label>
+            <label>Tétel<select id="coordinator-item" required></select></label>
+            <label>Összeg (Ft)<input id="coordinator-amount" type="number" min="1" step="500" required /></label>
+            <label>Dátum<input id="coordinator-date" type="date" required /></label>
+            <label>Megjegyzés<textarea id="coordinator-note" rows="3" placeholder="A rögzítés oka"></textarea></label>
+            <button class="primary" type="submit">Tétel hozzáadása</button>
+          </form>
+          <p id="coordinator-message" class="updated-at" aria-live="polite"></p>
+        </section>
+        <section id="coordinator-entry-list" class="process-card"></section>
+      </div>
+
       <nav class="bottom-nav" aria-label="Főmenü">
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
-        <button id="nav-tours"><span>🚚</span>Tegnapi napod</button>
+        <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=25" defer></script>
+    <script src="/app.js?v=28" defer></script>
   </body>
 </html>

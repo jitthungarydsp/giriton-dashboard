@@ -69,6 +69,8 @@ textarea { min-height: 96px; resize: vertical; }
 .workflow-header { display: grid; gap: 18px; padding: 22px; border-radius: 26px; background: linear-gradient(145deg, #fff, #edf3e9); border: 1px solid var(--line); }
 .workflow-header h2 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
 .workflow-header .muted { margin-bottom: 0; }
+.workflow-controls { display: grid; gap: 8px; align-self: end; }
+.workflow-controls button { width: 100%; }
 .month-picker { align-self: end; min-width: 180px; }
 .workflow-steps { display: grid; gap: 8px; margin: 18px 0; padding: 0; list-style: none; }
 .workflow-step { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 11px; min-height: 62px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
@@ -112,10 +114,15 @@ textarea { min-height: 96px; resize: vertical; }
 .check-row.error { border-left-color: var(--danger); }
 .notice { margin: 12px 0; padding: 14px; border-radius: 14px; background: #e8f2e3; color: #315b37; font-size: 13px; font-weight: 750; }
 .notice.error { background: #f9dfdd; color: var(--danger); }
-.bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: repeat(4, 1fr); padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
-.bottom-nav button { display: grid; gap: 3px; place-items: center; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
+.bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
+.bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }
 .bottom-nav button.active { color: var(--green-dark); }
+.adjustment-entry { display: grid; gap: 8px; margin-top: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 15px; background: #fff; }
+.adjustment-entry-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.adjustment-amount { font-weight: 900; white-space: nowrap; }
+.adjustment-amount.bonus { color: #23823a; }
+.adjustment-amount.malus { color: var(--danger); }
 
 @media (min-width: 760px) {
   .workflow-header { grid-template-columns: 1fr auto; }

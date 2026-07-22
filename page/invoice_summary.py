@@ -954,6 +954,18 @@ def _render_task_manual_item_form(task_row, document_month):
 
 @st.dialog("Futár havi feladata", width="large")
 def render_invoice_task_dialog(task_row, document_month):
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stDialog"] div[role="dialog"] {
+            max-height: 92vh !important;
+            overflow-y: auto !important;
+            overscroll-behavior: contain;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     courier_id = str(task_row.get("_courier_id") or "").strip()
     courier_name = str(task_row.get("Futár") or "").strip()
     st.subheader(courier_name)
@@ -1054,11 +1066,15 @@ def _render_invoice_task_rows(task_rows, document_month):
 
     task_rows = sorted(
         task_rows,
-        key=lambda row: str(row.get("_updated_at") or ""),
+        key=lambda row: (
+            int(row.get("_workflow_priority") or 0),
+            str(row.get("_updated_at") or ""),
+        ),
         reverse=True,
     )
     st.caption(
-        "Legutóbb frissített felül. A futár nevére kattintva megnyílnak a részletek és a műveletek."
+        "A kifizetéshez legközelebbi feladatok vannak felül; azonos lépésen belül a frissebb az első. "
+        "A futár nevére kattintva megnyílnak a részletek és a műveletek."
     )
     header = st.columns([1.35, 1.25, 0.8, 1.7, 1.4, 1.0, 0.65])
     for column, label in zip(
@@ -1363,6 +1379,11 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             lamp = "Piros"
             complaint = complaint_rows[0]
             complaint_type = str(complaint.get("document_type") or "").lower()
+            workflow_priority = {
+                "invoice": 55,
+                "tig": 35,
+                "settlement": 15,
+            }.get(complaint_type, 0)
             complaint_labels = {"invoice": "számlafeltöltés", "tig": "TIG", "settlement": "elszámolás"}
             reason = str(complaint.get("message") or status_note or "Nincs megadott indok.").strip()
             step = f"Admin segítségére vár ({complaint_labels.get(complaint_type, complaint_type or 'folyamat')})"
@@ -1371,30 +1392,35 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
         elif "settlement" not in document_types and not has_uploaded_document:
             row_state = "missing"
             lamp = "Szürke"
+            workflow_priority = 10
             step = "Elszámolás elkészítésére és kiküldésére vár"
             courier_feedback = "Admin feladat"
             note = "Még nincs elszámolás feltöltve."
         elif status_value != "done":
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 20
             step = "A futár elszámolás-elfogadására vár"
             courier_feedback = "Futárnál"
             note = status_note or "Az elszámolás feltöltve."
         elif "tig" not in document_types:
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 30
             step = "TIG elkészítésére és feltöltésére vár"
             courier_feedback = "Admin feladat"
             note = "Az elszámolást a futár elfogadta."
         elif tig_status is None or str(tig_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 35
             step = "A futár TIG-elfogadására vár"
             courier_feedback = "Futárnál"
             note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
         elif invoice_check_status is None or str(invoice_check_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 40
             check_note = (
                 str(invoice_check_status.get("status_note") or "").strip()
                 if invoice_check_status is not None
@@ -1414,6 +1440,7 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
         elif invoice_submit_status is None or str(invoice_submit_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 50
             submit_note = (
                 str(invoice_submit_status.get("status_note") or "").strip()
                 if invoice_submit_status is not None
@@ -1433,12 +1460,14 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
         elif "invoice" not in document_types:
             row_state = "waiting"
             lamp = "Sárga"
+            workflow_priority = 55
             step = "A számladokumentum eltárolására vár"
             courier_feedback = "Rendszerfeladat"
             note = "A feltöltési státusz kész, de a számladokumentum nem található."
         elif invoice_payment_status is None or str(invoice_payment_status.get("status") or "").lower() != "done":
             row_state = "waiting"
             lamp = "Kék"
+            workflow_priority = 60
             step = "Admin számlaelfogadására és kifizetésre vár"
             courier_feedback = "Admin feladat"
             note = (
@@ -1499,6 +1528,7 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 "_tig_amount": transfer_amount,
                 "_worksheet_name": str(summary_row.get("worksheet_name") or ""),
                 "_updated_at": latest_update,
+                "_workflow_priority": workflow_priority,
                 "_invoice_error_note": invoice_error_note,
                 "_invoice_override_available": bool(invoice_error_note) and not invoice_override_enabled,
                 "_invoice_override_enabled": invoice_override_enabled,

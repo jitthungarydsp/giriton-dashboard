@@ -7,6 +7,7 @@ const state = {
   checkedInvoiceFile: null,
   checkedInvoiceMonth: null,
   currentRoute: null,
+  coordinatorSetup: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -61,6 +62,12 @@ function showApp() {
   $("#login-view").classList.add("hidden");
   $("#app-view").classList.remove("hidden");
   $("#welcome").textContent = `Szia, ${state.user.username.split(" ")[0]}!`;
+  const role = String(state.user.role || "").toLowerCase();
+  const canCoordinate = ["admin", "coordinator"].includes(role);
+  $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
+  const coordinatorOnly = role === "coordinator";
+  ["#nav-home", "#nav-settlement", "#nav-documents", "#nav-profile", "#nav-tours"]
+    .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
 }
 
 function showSection(section) {
@@ -70,12 +77,14 @@ function showSection(section) {
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
+  $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-tours").classList.toggle("active", section === "tours");
+  $("#nav-coordinator").classList.toggle("active", section === "coordinator");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "documents") loadDocuments();
@@ -86,6 +95,7 @@ function showSection(section) {
   if (section === "tours") {
     loadCurrentRoute();
   }
+  if (section === "coordinator") loadCoordinatorAdjustments();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -546,6 +556,11 @@ function waitingWorkflow() {
 }
 
 async function loadWorkflow() {
+  const refreshButton = $("#workflow-refresh");
+  if (refreshButton) {
+    refreshButton.disabled = true;
+    refreshButton.textContent = "Frissítés…";
+  }
   state.workflow = waitingWorkflow();
   renderWorkflow();
   showWorkflowMessage("Folyamat betöltése…");
@@ -557,6 +572,11 @@ async function loadWorkflow() {
     state.workflow = waitingWorkflow();
     renderWorkflow();
     showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
+  } finally {
+    if (refreshButton) {
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Frissítés";
+    }
   }
 }
 
@@ -988,13 +1008,25 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     return;
   }
   form.append("month", state.workflowMonth);
-  showWorkflowMessage("A számla végső ellenőrzése és tárolása folyamatban…");
+  const selectedCashInvoiceFile = form.get("cash_invoice_file");
+  const hasCashInvoiceFile =
+    selectedCashInvoiceFile instanceof File && Boolean(selectedCashInvoiceFile.name);
+  showWorkflowMessage(
+    hasCashInvoiceFile
+      ? "A normál és a KP számla ellenőrzése és tárolása folyamatban…"
+      : "A számla végső ellenőrzése és tárolása folyamatban…"
+  );
   try {
     const payload = await api("/api/invoices/submit", { method: "POST", body: form });
     state.workflow = payload.workflow;
     renderWorkflow();
     renderValidation($("#invoice-submit-result"), payload.validation, payload.stored);
-    showWorkflowMessage(payload.stored ? "A számla bekerült a dokumentumtárba." : "A számla nem került eltárolásra, mert hibát találtunk.", !payload.stored);
+    showWorkflowMessage(
+      payload.stored
+        ? `${payload.storedCount || 1} számla bekerült a dokumentumtárba.`
+        : "A számla nem került eltárolásra, mert hibát találtunk.",
+      !payload.stored
+    );
     if (payload.stored) {
       event.currentTarget.reset();
       state.checkedInvoiceFile = null;
@@ -1005,12 +1037,126 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   }
 });
 
+function coordinatorItems(kind) {
+  return state.coordinatorSetup?.items?.[kind] || [];
+}
+
+function renderCoordinatorItems() {
+  const kind = $("#coordinator-kind").value || "bonus";
+  const items = coordinatorItems(kind);
+  $("#coordinator-item").innerHTML = items.length
+    ? items.map((item) => `<option value="${escapeHtml(item.id)}" data-amount="${Number(item.default_amount_huf || 0)}">${escapeHtml(item.item_name)}</option>`).join("")
+    : `<option value="">Nincs aktív tétel</option>`;
+  const firstAmount = Number(items[0]?.default_amount_huf || 0);
+  if (firstAmount > 0) $("#coordinator-amount").value = String(firstAmount);
+}
+
+function renderCoordinatorAdjustments() {
+  const setup = state.coordinatorSetup || { couriers: [], items: {}, entries: {} };
+  $("#coordinator-courier").innerHTML = (setup.couriers || [])
+    .map((courier) => `<option value="${escapeHtml(courier.courier_id)}">${escapeHtml(courier.courier_name)} · #${escapeHtml(courier.courier_id)}</option>`)
+    .join("");
+  renderCoordinatorItems();
+
+  const entries = [
+    ...(setup.entries?.bonus || []).map((entry) => ({ ...entry, kind: "bonus" })),
+    ...(setup.entries?.malus || []).map((entry) => ({ ...entry, kind: "malus" })),
+  ].sort((a, b) => String(b.recorded_at || "").localeCompare(String(a.recorded_at || "")));
+  const container = $("#coordinator-entry-list");
+  if (!entries.length) {
+    container.innerHTML = `<h3>Legutóbbi rögzítések</h3><p class="muted">Még nincs aktív bónusz vagy málusz.</p>`;
+    return;
+  }
+  container.innerHTML = `<h3>Legutóbbi rögzítések</h3>${entries.map((entry) => {
+    const sign = entry.kind === "bonus" ? "+" : "-";
+    const amount = new Intl.NumberFormat("hu-HU").format(Number(entry.amount_huf || 0));
+    const recordedAt = entry.recorded_at ? new Date(entry.recorded_at).toLocaleString("hu-HU") : "";
+    return `<article class="adjustment-entry">
+      <div class="adjustment-entry-head">
+        <div><strong>${escapeHtml(entry.courier_name)}</strong><small>${escapeHtml(entry.item_name)} · ${escapeHtml(entry.effective_date || "")}</small></div>
+        <span class="adjustment-amount ${entry.kind}">${sign}${amount} Ft</span>
+      </div>
+      ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ""}
+      <small>Rögzítette: ${escapeHtml(entry.recorded_by || "-")} · ${escapeHtml(recordedAt)}</small>
+      <button class="secondary coordinator-delete" type="button" data-kind="${entry.kind}" data-id="${escapeHtml(entry.id)}">Visszavonás</button>
+    </article>`;
+  }).join("")}`;
+}
+
+async function loadCoordinatorAdjustments() {
+  const message = $("#coordinator-message");
+  message.textContent = "Adatok frissítése…";
+  try {
+    state.coordinatorSetup = await api("/api/coordinator-adjustments");
+    renderCoordinatorAdjustments();
+    message.textContent = "Frissítve.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+$("#coordinator-kind").addEventListener("change", renderCoordinatorItems);
+$("#coordinator-item").addEventListener("change", (event) => {
+  const option = event.currentTarget.selectedOptions[0];
+  const amount = Number(option?.dataset?.amount || 0);
+  if (amount > 0) $("#coordinator-amount").value = String(amount);
+});
+$("#coordinator-refresh").addEventListener("click", loadCoordinatorAdjustments);
+$("#coordinator-adjustment-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = $("#coordinator-message");
+  message.textContent = "Rögzítés…";
+  try {
+    const payload = await api("/api/coordinator-adjustments", {
+      method: "POST",
+      body: JSON.stringify({
+        kind: $("#coordinator-kind").value,
+        courier_id: $("#coordinator-courier").value,
+        item_id: $("#coordinator-item").value,
+        amount_huf: Number($("#coordinator-amount").value || 0),
+        note: $("#coordinator-note").value,
+        effective_date: $("#coordinator-date").value,
+      }),
+    });
+    state.coordinatorSetup = payload.setup;
+    renderCoordinatorAdjustments();
+    $("#coordinator-note").value = "";
+    message.textContent = "A tétel naplózva és rögzítve.";
+  } catch (error) {
+    message.textContent = error.message;
+  }
+});
+$("#coordinator-entry-list").addEventListener("click", async (event) => {
+  const button = event.target.closest(".coordinator-delete");
+  if (!button) return;
+  const reason = window.prompt("Miért vonod vissza ezt a tételt?");
+  if (!reason?.trim()) return;
+  button.disabled = true;
+  try {
+    const payload = await api(`/api/coordinator-adjustments/${encodeURIComponent(button.dataset.kind)}/${encodeURIComponent(button.dataset.id)}/delete`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason.trim() }),
+    });
+    state.coordinatorSetup = payload.setup;
+    renderCoordinatorAdjustments();
+    $("#coordinator-message").textContent = "A tétel visszavonva; az auditnaplóban megmaradt.";
+  } catch (error) {
+    button.disabled = false;
+    $("#coordinator-message").textContent = error.message;
+  }
+});
+
 $("#workflow-month").value = state.workflowMonth;
+$("#coordinator-date").value = localDate();
 $("#workflow-month").addEventListener("change", (event) => {
   state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
   state.workflow = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
+  loadWorkflow();
+});
+
+$("#workflow-refresh").addEventListener("click", () => {
   loadWorkflow();
 });
 
@@ -1038,6 +1184,7 @@ $("#logout").addEventListener("click", async () => {
   state.billingProfile = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
+  state.coordinatorSetup = null;
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
@@ -1046,18 +1193,23 @@ $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
+$("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 
 async function start() {
   try {
     const payload = await api("/api/me");
     state.user = payload.user;
     showApp();
-    showSection("home");
-    await loadShifts();
+    if (String(state.user.role || "").toLowerCase() === "coordinator") {
+      showSection("coordinator");
+    } else {
+      showSection("home");
+      await loadShifts();
+    }
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=17");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=18");
 }
 
 start();
