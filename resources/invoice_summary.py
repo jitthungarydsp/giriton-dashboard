@@ -1841,6 +1841,116 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
     story = []
     summary_df = driver_summary_df.copy()
     route_df = route_df.copy()
+    
+        # Ugyanazon futár több raktári sorának összevonása egy PDF-be.
+    # A PDF-ben nem jelennek meg külön a raktárak, minden pénzügyi
+    # és teljesítményadat összegezve kerül megjelenítésre.
+
+    if not summary_df.empty:
+        summary_df = summary_df.reset_index(drop=True).copy()
+
+        if "driver_name" not in summary_df.columns:
+            summary_df["driver_name"] = "Ismeretlen futár"
+
+        # Elsődlegesen courier_id alapján csoportosítunk.
+        # Ha nincs courier_id, a futár neve lesz a kulcs.
+        if "courier_id" in summary_df.columns:
+            courier_ids = (
+                summary_df["courier_id"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+        else:
+            courier_ids = pd.Series("", index=summary_df.index)
+
+        driver_names = (
+            summary_df["driver_name"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        summary_df["_pdf_courier_key"] = courier_ids.where(
+            courier_ids.ne(""),
+            driver_names.str.casefold(),
+        )
+
+        # Ezeket az oszlopokat össze kell adni a raktári sorok között.
+        sum_columns = [
+            "orders",
+            "route_count",
+            "routes",
+            "payable_total_huf",
+            "fixed_rate_huf",
+            "kiemelt_routes",
+            "sima_routes",
+            "kiemelt_base_huf",
+            "sima_base_huf",
+            "delay_bonus_huf",
+            "compliance_bonus_huf",
+            "tip_huf",
+            "extra_bonus_huf",
+            "adjustment_huf",
+            "manual_total_huf",
+            "reserve_deduction_huf",
+            "insurance_deduction_huf",
+            "fuel_huf",
+            "damage_huf",
+            "cash_missing_huf",
+            "other_income_huf",
+            "other_deduction_huf",
+            "instructor_fee_huf",
+            "loyalty_bonus_huf",
+            "atm_balance_huf",
+            "atm_effect_huf",
+            "customer_rating_count",
+            "customer_completed_routes",
+            "customer_rating_bonus_huf",
+            "monthly_bonus_huf",
+            "monthly_malus_huf",
+            "monthly_returned_route_huf",
+            "monthly_accepted_route_huf",
+            "monthly_source_total_huf",
+            "monthly_adjustment_effect_huf",
+        ]
+
+        existing_sum_columns = [
+            column
+            for column in sum_columns
+            if column in summary_df.columns
+        ]
+
+        for column in existing_sum_columns:
+            summary_df[column] = pd.to_numeric(
+                summary_df[column],
+                errors="coerce",
+            ).fillna(0)
+
+        aggregation = {}
+
+        for column in summary_df.columns:
+            if column == "_pdf_courier_key":
+                continue
+
+            if column in existing_sum_columns:
+                aggregation[column] = "sum"
+            else:
+                aggregation[column] = "first"
+
+        summary_df = (
+            summary_df
+            .groupby(
+                "_pdf_courier_key",
+                as_index=False,
+                sort=False,
+                dropna=False,
+            )
+            .agg(aggregation)
+        )
+
+        # A PDF már nem raktáranként készül.
+        summary_df["worksheet_name"] = "Összesített"
 
     for index, driver_row in summary_df.reset_index(drop=True).iterrows():
         driver_name = normalize_text(driver_row.get("driver_name")) or "Ismeretlen futar"
@@ -1912,7 +2022,12 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             story.append(PageBreak())
 
         story.append(Paragraph(f"{driver_name} elszámoló", title_style))
-        story.append(Paragraph(f"Időszak: {title} | Raktár fül: {sheet_name}", center_style))
+        story.append(
+            Paragraph(
+                f"Időszak: {title}",
+                center_style,
+            )
+        )
         story.append(Spacer(1, 0.22 * cm))
 
         hero = Table(
