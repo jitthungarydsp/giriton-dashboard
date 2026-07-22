@@ -620,6 +620,15 @@
             "courierId": 6403,
             "active": true,
             "token": ""
+        },
+        {
+            "username": "Nagy Zoltán",
+            "trainer": "trainer_name",
+            "password": "opLC9Jsa",
+            "role": "user",
+            "courierId": 8013,
+            "active": true,
+            "token": ""
         }
     ]
 }
