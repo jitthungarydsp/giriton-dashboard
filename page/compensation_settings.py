@@ -49,17 +49,22 @@ def _actor() -> str:
 
 
 def render_adjustment_item_settings() -> None:
-    st.subheader("Koordinátori bónusz/málusz tételek")
+    st.subheader("Bónusz / Málusz")
     st.caption(
         "Ezt a dinamikus listát csak az admin kezeli. A koordinátor kizárólag az aktív tételeket látja."
     )
-    bonus_tab, malus_tab = st.tabs(["Bónusz-tételtörzs", "Málusz-tételtörzs"])
+    bonus_tab, malus_tab = st.tabs(["Bónusz tételek", "Málusz tételek"])
     for tab, kind, label in (
         (bonus_tab, "bonus", "Bónusz"),
         (malus_tab, "malus", "Málusz"),
     ):
         with tab:
             with st.form(f"new_{kind}_item", clear_on_submit=True):
+                st.text_input(
+                    "Tétel típusa",
+                    value=f"{label} tétel",
+                    disabled=True,
+                )
                 col1, col2 = st.columns([1.6, 0.8])
                 item_name = col1.text_input("Tétel neve")
                 default_amount = col2.number_input(
@@ -100,8 +105,9 @@ def render_adjustment_item_settings() -> None:
                     "created_at": "Létrehozva",
                 }
             )
+            view.insert(0, "Típus", f"{label} tétel")
             st.dataframe(
-                view[["Tétel", "Alapösszeg", "Leírás", "Aktív", "Létrehozta", "Létrehozva"]],
+                view[["Típus", "Tétel", "Alapösszeg", "Leírás", "Aktív", "Létrehozta", "Létrehozva"]],
                 use_container_width=True,
                 hide_index=True,
             )

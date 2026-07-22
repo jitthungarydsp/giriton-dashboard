@@ -1209,7 +1209,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=18");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=19");
 }
 
 start();

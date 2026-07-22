@@ -53,17 +53,41 @@ def _render_entry_form(kind: str, couriers: list[dict], items: pd.DataFrame) -> 
     item_rows = items.to_dict("records") if not items.empty else []
     item_labels = [str(row.get("item_name") or "") for row in item_rows]
     item_by_label = {str(row.get("item_name") or ""): row for row in item_rows}
+    show_form_key = f"show_new_{kind}_entry"
 
     if not item_labels:
+        st.button(
+            "Új felvétel",
+            key=f"new_{kind}_entry_disabled",
+            use_container_width=True,
+            disabled=True,
+        )
         st.warning(
             f"Nincs aktív {KIND_LABELS[kind].lower()} tétel. "
             "Az admin a Beállítások oldalon tud létrehozni egyet."
         )
         return
 
+    if not st.session_state.get(show_form_key, False):
+        if st.button(
+            "Új felvétel",
+            key=f"open_new_{kind}_entry",
+            type="primary",
+            use_container_width=True,
+        ):
+            st.session_state[show_form_key] = True
+            st.rerun()
+        return
+
     selected_item_state = st.session_state.get(f"adjustment_item_{kind}", item_labels[0])
     default_item = item_by_label.get(selected_item_state, item_rows[0])
+    st.markdown(f"#### Új {KIND_LABELS[kind].lower()} felvétele")
     with st.form(f"coordinator_{kind}_entry", clear_on_submit=True):
+        st.text_input(
+            "Tétel típusa",
+            value=f"{KIND_LABELS[kind]} tétel",
+            disabled=True,
+        )
         selected_courier = st.selectbox("Futár", labels, key=f"adjustment_courier_{kind}")
         selected_item = st.selectbox("Tétel", item_labels, key=f"adjustment_item_{kind}")
         current_item = item_by_label.get(selected_item, default_item)
@@ -80,11 +104,17 @@ def _render_entry_form(kind: str, couriers: list[dict], items: pd.DataFrame) -> 
             placeholder="A rögzítés oka vagy rövid háttérinformáció.",
             height=90,
         )
-        submitted = st.form_submit_button(
-            f"{KIND_LABELS[kind]} hozzáadása",
+        action1, action2 = st.columns(2)
+        submitted = action1.form_submit_button(
+            f"{KIND_LABELS[kind]} rögzítése",
             type="primary",
             use_container_width=True,
         )
+        cancelled = action2.form_submit_button("Mégse", use_container_width=True)
+
+    if cancelled:
+        st.session_state[show_form_key] = False
+        st.rerun()
 
     if submitted:
         courier = courier_by_label[selected_courier]
@@ -105,6 +135,7 @@ def _render_entry_form(kind: str, couriers: list[dict], items: pd.DataFrame) -> 
                 f"{KIND_LABELS[kind]} rögzítve: {courier['courier_name']} · "
                 f"{'+' if kind == 'bonus' else '-'}{int(amount):,} Ft".replace(",", " ")
             )
+            st.session_state[show_form_key] = False
             st.rerun()
         except Exception as exc:
             st.error(f"A rögzítés nem sikerült: {exc}")
