@@ -1697,81 +1697,80 @@ def build_driver_invoice_summary(
         + grouped["atm_effect_huf"]
     )
 
-    def parse_ct_z_ft(value):
-        """CT_Z_FT mező biztonságos számmá alakítása."""
-        if value is None:
-            return 0
+def parse_ct_z_ft(value):
+    """CT_Z_FT mező biztonságos számmá alakítása."""
+    if value is None:
+        return 0
 
-        text = str(value).strip()
-        if not text:
-            return 0
+    text = str(value).strip()
+    if not text:
+        return 0
 
-        text = (
-            text.replace("Ft", "")
-                .replace("ft", "")
-                .replace(" ", "")
-                .replace(".", "")
-                .replace(",", "")
-        )
-
-        try:
-            return int(text)
-        except ValueError:
-            return 0
-
-
-    reserve_lookup = {}
-
-    if target_reserve_df is not None and not target_reserve_df.empty:
-        reserve_source = target_reserve_df.copy()
-
-        for _, r in reserve_source.iterrows():
-            key = normalize_text(r.get("courier_ID"))
-            if key:
-                reserve_lookup[key] = {
-                    "insurance_active": bool(r.get("insurance_active")),
-                    "ct_z_ft": parse_ct_z_ft(r.get("CT_Z_FT")),
-                }
-
-
-    def calculate_deductions(row):
-        info = reserve_lookup.get(
-            normalize_text(row.get("courier_id")),
-            None,
-        )
-
-        insurance = 0
-        reserve = 0
-
-        if info and info["insurance_active"]:
-            insurance = INSURANCE_DEDUCTION_HUF
-
-            if info["ct_z_ft"] < 350_000:
-                reserve = min(
-                    max(row["payable_before_reserve_huf"], 0)
-                    * TARGET_RESERVE_RATE,
-                    TARGET_RESERVE_MAX_HUF,
-                )
-
-        return pd.Series(
-            {
-                "insurance_deduction_huf": insurance,
-                "reserve_deduction_huf": reserve,
-            }
-        )
-
-
-    grouped[
-        ["insurance_deduction_huf", "reserve_deduction_huf"]
-    ] = grouped.apply(calculate_deductions, axis=1)
-
-    grouped["payable_total_huf"] = (
-        grouped["payable_before_reserve_huf"]
-        - grouped["insurance_deduction_huf"]
-        - grouped["reserve_deduction_huf"]
+    text = (
+        text.replace("Ft", "")
+            .replace("ft", "")
+            .replace(" ", "")
+            .replace(".", "")
+            .replace(",", "")
     )
 
-    return grouped
+    try:
+        return int(text)
+    except ValueError:
+        return 0
+
+
+reserve_lookup = {}
+
+if target_reserve_df is not None and not target_reserve_df.empty:
+    reserve_source = target_reserve_df.copy()
+
+    for _, r in reserve_source.iterrows():
+        key = normalize_text(r.get("courier_ID"))
+        if key:
+            reserve_lookup[key] = {
+                "insurance_active": bool(r.get("insurance_active")),
+                "ct_z_ft": parse_ct_z_ft(r.get("CT_Z_FT")),
+            }
+
+
+def calculate_deductions(row):
+    info = reserve_lookup.get(
+        normalize_text(row.get("courier_id")),
+        None,
+    )
+
+    insurance = 0
+    reserve = 0
+
+    if info and info["insurance_active"]:
+        insurance = INSURANCE_DEDUCTION_HUF
+
+        if info["ct_z_ft"] < 350_000:
+            reserve = min(
+                max(row["payable_before_reserve_huf"], 0)
+                * TARGET_RESERVE_RATE,
+                TARGET_RESERVE_MAX_HUF,
+            )
+
+    return pd.Series(
+        {
+            "insurance_deduction_huf": insurance,
+            "reserve_deduction_huf": reserve,
+        }
+    )
+
+
+grouped[
+    ["insurance_deduction_huf", "reserve_deduction_huf"]
+] = grouped.apply(calculate_deductions, axis=1)
+
+grouped["payable_total_huf"] = (
+    grouped["payable_before_reserve_huf"]
+    - grouped["insurance_deduction_huf"]
+    - grouped["reserve_deduction_huf"]
+)
+
 
 def build_display_summary(summary_df):
     if summary_df.empty:
