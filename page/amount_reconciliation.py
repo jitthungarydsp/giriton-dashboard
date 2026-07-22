@@ -31,6 +31,7 @@ def build_current_invoice_summary(data, selected_sheet, month_start):
         atm_balance_df=data.get("atm_balance", pd.DataFrame()),
         customer_rating_df=data.get("customer_rating", pd.DataFrame()),
         monthly_adjustment_df=data.get("monthly_adjustments", pd.DataFrame()),
+        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=month_start,
     )
 

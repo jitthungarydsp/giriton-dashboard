@@ -32,6 +32,7 @@ from resources.invoice_summary import (
     build_display_routes,
     build_display_summary,
     build_driver_invoice_summary,
+    build_invoice_regeneration_candidates,
     build_invoice_pdf_bytes,
     create_manual_invoice_item,
     format_huf,
@@ -1679,7 +1680,40 @@ def show_invoice_summary_page():
         )
         return
 
-    final_df = data["final"]
+    try:
+        current_invoice_documents = read_peopleforce_documents_for_month(
+            start_date.replace(day=1),
+            document_type="settlement",
+        )
+    except Exception as exc:
+        current_invoice_documents = pd.DataFrame()
+        st.warning(f"A jelenlegi elszámolások darabszáma nem olvasható: {exc}")
+
+    invoice_regeneration_candidates = build_invoice_regeneration_candidates(
+        data.get("final", pd.DataFrame()),
+        current_invoice_documents,
+    )
+    st.subheader("Újragenerálandó számlák")
+    if invoice_regeneration_candidates.empty:
+        st.success("Nincs több raktárban szereplő, újragenerálandó futár.")
+    st.dataframe(
+        invoice_regeneration_candidates,
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.download_button(
+        "Újragenerálandó számlák CSV export",
+        data=invoice_regeneration_candidates.to_csv(index=False).encode("utf-8-sig"),
+        file_name=(
+            f"invoice_regeneration_candidates_{start_date.isoformat()}_"
+            f"{end_date.isoformat()}.csv"
+        ),
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+    all_period_final_df = data["final"].copy()
+    final_df = all_period_final_df.copy()
     summary_df = data["summary"]
     bonus_df = data["bonus"]
     penalty_df = data["penalties"]
@@ -1808,6 +1842,28 @@ def show_invoice_summary_page():
         atm_balance_df=atm_balance_df,
         customer_rating_df=customer_rating_df,
         monthly_adjustment_df=monthly_adjustment_df,
+        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
+        period_start=start_date,
+    )
+
+    # PDFs and Peopleforce uploads always use the complete period across every
+    # warehouse, independently from the warehouse filter used by the screen.
+    pdf_final_df = filter_by_driver(all_period_final_df, selected_driver)
+    pdf_driver_summary = build_driver_invoice_summary(
+        pdf_final_df,
+        bonus_df=bonus_df,
+        penalty_df=penalty_df,
+        manual_df=manual_df,
+        day_rates_df=day_rates_df,
+        raw_route_df=raw_route_df,
+        previous_routes_df=data.get("previous_routes", pd.DataFrame()),
+        loyalty_profiles_df=data.get("loyalty_profiles", pd.DataFrame()),
+        bookings_df=data.get("bookings", pd.DataFrame()),
+        loyalty_acceptance_df=data.get("loyalty_acceptance", pd.DataFrame()),
+        atm_balance_df=atm_balance_df,
+        customer_rating_df=customer_rating_df,
+        monthly_adjustment_df=monthly_adjustment_df,
+        target_reserve_df=data.get("target_reserve", pd.DataFrame()),
         period_start=start_date,
     )
 
@@ -1963,8 +2019,8 @@ def show_invoice_summary_page():
                 f"{courier_id}_{driver_slug}" if courier_id else driver_slug
             )
         pdf_bytes = build_invoice_pdf_bytes(
-            driver_summary,
-            final_df,
+            pdf_driver_summary,
+            pdf_final_df,
             pdf_title,
         )
         st.download_button(
@@ -1976,51 +2032,22 @@ def show_invoice_summary_page():
         )
         if selected_driver == "Mind":
             st.divider()
-            st.subheader("Tömeges elszámolás-feltöltés raktár szerint")
+            st.subheader("Tömeges elszámolás-feltöltés")
             st.caption(
-                "Válassz egy raktárt. A rendszer csak az adott raktár futárainak "
-                "készít külön PDF-et, majd feltölti azokat a profiljukba."
+                "A rendszer futáronként egy PDF-et készít az időszak összes "
+                "raktári adatából, majd ezt tölti fel a Peopleforce profilba."
             )
 
-            bulk_source_rows = driver_summary.reset_index(drop=True)
-            warehouse_options = sorted(
-                {
-                    str(value).strip()
-                    for value in bulk_source_rows.get(
-                        "worksheet_name",
-                        pd.Series(dtype=str),
-                    ).dropna()
-                    if str(value).strip()
-                }
-            )
-
-            if not warehouse_options:
-                st.info("A jelenlegi időszakban nincs tömegesen generálható raktár.")
-                bulk_rows = bulk_source_rows.iloc[0:0].copy()
-                bulk_sheet = ""
-            else:
-                default_bulk_sheet = (
-                    selected_sheet
-                    if selected_sheet in warehouse_options
-                    else warehouse_options[0]
-                )
-                bulk_sheet = st.selectbox(
-                    "Tömeges generálás raktára",
-                    warehouse_options,
-                    index=warehouse_options.index(default_bulk_sheet),
-                    key=(
-                        f"invoice_bulk_warehouse_{start_date.isoformat()}_"
-                        f"{end_date.isoformat()}"
-                    ),
-                )
-                bulk_rows = bulk_source_rows[
-                    bulk_source_rows["worksheet_name"].astype(str).str.strip()
-                    == str(bulk_sheet).strip()
-                ].reset_index(drop=True)
-
+            # Bulk upload is period-wide and uses one already consolidated row
+            # per courier.
+            bulk_rows = pdf_driver_summary.reset_index(drop=True)
+            bulk_sheet = "Minden raktár – futáronként összevonva"
             bulk_upload_count = len(bulk_rows)
+            st.caption(
+                "A feltöltés minden raktár adatát egyetlen futár-PDF-ben használja."
+            )
             st.info(
-                f"Kiválasztott raktár: {bulk_sheet or '-'} | "
+                "Hatókör: minden raktár, futáronként összevonva | "
                 f"Generálandó elszámolások: {bulk_upload_count}"
             )
 
@@ -2034,8 +2061,8 @@ def show_invoice_summary_page():
             )
             bulk_confirm = st.checkbox(
                 (
-                    f"Megerősítem a(z) {bulk_sheet or '-'} raktár "
-                    f"{bulk_upload_count} futár elszámolásának feltöltését."
+                    f"Megerősítem {bulk_upload_count} futár egyesített "
+                    "elszámolásának feltöltését."
                 ),
                 key=(
                     f"invoice_bulk_upload_confirm_{start_date.isoformat()}_"
@@ -2044,7 +2071,7 @@ def show_invoice_summary_page():
             )
 
             if st.button(
-                f"{bulk_sheet or 'Kiválasztott raktár'} elszámolásainak feltöltése",
+                "Egyesített elszámolások feltöltése",
                 type="primary",
                 use_container_width=True,
                 disabled=(not bulk_confirm or bulk_rows.empty),
@@ -2115,12 +2142,8 @@ def show_invoice_summary_page():
 
                     try:
                         single_summary = bulk_rows.iloc[[row_index]].copy()
-                        warehouse_routes = filter_by_worksheet(
-                            all_filtered_final_df,
-                            bulk_sheet,
-                        )
                         single_routes = filter_by_driver(
-                            warehouse_routes,
+                            all_period_final_df,
                             bulk_driver_name,
                         )
 
@@ -2200,7 +2223,7 @@ def show_invoice_summary_page():
 
             with st.expander("Tomeges TIG generalas es feltoltes", expanded=False):
                 st.caption("A jelenlegi szuresben szereplo futaroknak keszit TIG-et, majd feltolti a Kiflis kartyara.")
-                tig_source_rows = driver_summary.reset_index(drop=True)
+                tig_source_rows = pdf_driver_summary.reset_index(drop=True)
                 tig_skip_existing = st.checkbox(
                     "A mar feltoltott TIG-ek kihagyasa",
                     value=True,
@@ -2309,7 +2332,7 @@ def show_invoice_summary_page():
                     st.dataframe(pd.DataFrame(result_rows), use_container_width=True, hide_index=True)
 
         if selected_driver != "Mind":
-            selected_row = driver_summary.iloc[0]
+            selected_row = pdf_driver_summary.iloc[0]
             courier_id, courier_name = resolve_courier_identity(
                 selected_row,
                 selected_driver,
