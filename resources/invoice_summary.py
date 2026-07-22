@@ -276,15 +276,9 @@ def deduplicate_invoice_routes(final_df):
     return pd.concat([identified, unidentified], ignore_index=True)
 
 
-def reconcile_compliance_bonus(route_amount, bonus_table_amount):
-    """Use the route calculation once; the bonus sheet is only a fallback.
-
-    Both invoice sources contain the same tour-compliance result for some
-    couriers.  Adding them caused the Express double count.
-    """
-    route_value = money(route_amount)
-    bonus_value = money(bonus_table_amount)
-    return route_value if route_value != 0 else bonus_value
+def combine_compliance_bonus(route_amount, bonus_table_amount):
+    """Combine the route and monthly bonus-table compliance amounts."""
+    return money(route_amount) + money(bonus_table_amount)
 
 
 def format_date_filter(value):
@@ -1367,7 +1361,7 @@ def build_driver_invoice_summary(
     grouped["route_compliance_huf"] = grouped["compliance_bonus_huf"]
     grouped["bonus_table_compliance_huf"] = grouped["compliance_extra_huf"]
     grouped["compliance_bonus_huf"] = grouped.apply(
-        lambda row: reconcile_compliance_bonus(
+        lambda row: combine_compliance_bonus(
             row.get("route_compliance_huf"),
             row.get("bonus_table_compliance_huf"),
         ),
@@ -1375,7 +1369,7 @@ def build_driver_invoice_summary(
     )
     grouped["compliance_source"] = grouped.apply(
         lambda row: (
-            "Route sorok (a bónusz tábla nem adódik hozzá újra)"
+            "Route sorok + bónusz tábla"
             if money(row.get("route_compliance_huf"))
             and money(row.get("bonus_table_compliance_huf"))
             else "Route sorok"

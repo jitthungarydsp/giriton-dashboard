@@ -1868,8 +1868,7 @@ def show_invoice_summary_page():
     st.subheader("Futár összesítő")
     st.caption(
         "Az Express, City és Régió darabszám route ID alapján készül. "
-        "A túramegfelelési díj egyszer szerepel: a route-számítás az elsődleges, "
-        "a bónusz tábla csak akkor lép életbe, ha a route-oknál nincs érték."
+        "A túramegfelelési díj a route-számítás és a havi bónusz tábla összege."
     )
     display_summary = build_display_driver_summary(driver_summary)
     st.dataframe(
