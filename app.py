@@ -56,6 +56,7 @@ from page.invoice_summary import (
 from page.monthly_invoice_tasks import (
     show_monthly_invoice_tasks_page,
 )
+from page.amount_reconciliation import show_amount_reconciliation_page
 from page.dsp_route_explanations import (
     show_dsp_route_explanations_page,
 )
@@ -138,6 +139,7 @@ if user["role"] == "admin":
         "Performance magyarazat",
         "Elszamolas",
         "Havi feladatok",
+        "Összeg ellenőrzés",
         "Bónusz / Málusz",
         "Futárok",
         "Mai futárok",
@@ -243,6 +245,8 @@ elif page == "Elszamolas":
     show_invoice_summary_page()
 elif page == "Havi feladatok":
     show_monthly_invoice_tasks_page()
+elif page == "Összeg ellenőrzés":
+    show_amount_reconciliation_page()
 elif page == "Bónusz / Málusz":
     show_bonus_malus_page()
 elif page == "Performance magyarazat":

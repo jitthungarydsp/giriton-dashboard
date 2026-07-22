@@ -9,6 +9,7 @@ from page.monthly_invoice_editor import (
 from resources.auth import login_screen, logout_button
 from page.bonus_malus import show_bonus_malus_page
 from page.compensation_settings import show_compensation_configuration_page
+from page.amount_reconciliation import show_amount_reconciliation_page
 
 
 st.set_page_config(
@@ -54,6 +55,7 @@ else:
         "Havi feladatok",
         "Havi számla",
         "Havi TIG",
+        "Összeg ellenőrzés",
         "Konfiguráció",
         "Bónusz / Málusz",
         "Biztosítás / Céltartalék",
@@ -80,6 +82,9 @@ elif selected_page == "Havi számla":
 
 elif selected_page == "Havi TIG":
     show_monthly_tig_editor_page()
+
+elif selected_page == "Összeg ellenőrzés":
+    show_amount_reconciliation_page()
 
 elif selected_page == "Konfiguráció":
     show_compensation_configuration_page()
