@@ -1761,15 +1761,15 @@ def calculate_deductions(row):
     )
 
 
-    grouped[
-        ["insurance_deduction_huf", "reserve_deduction_huf"]
-    ] = grouped.apply(calculate_deductions, axis=1)
+        grouped[
+            ["insurance_deduction_huf", "reserve_deduction_huf"]
+        ] = grouped.apply(calculate_deductions, axis=1)
 
-    grouped["payable_total_huf"] = (
-        grouped["payable_before_reserve_huf"]
-        - grouped["insurance_deduction_huf"]
-        - grouped["reserve_deduction_huf"]
-    )
+        grouped["payable_total_huf"] = (
+            grouped["payable_before_reserve_huf"]
+            - grouped["insurance_deduction_huf"]
+            - grouped["reserve_deduction_huf"]
+        )
 
 
 def build_display_summary(summary_df):
