@@ -1865,7 +1865,12 @@ def show_invoice_summary_page():
     m11.metric("Oktatói díj", format_huf(total_instructor))
     m12.metric("Manuális", format_huf(total_manual - total_loyalty - total_instructor))
 
-    st.subheader("Futar osszesito")
+    st.subheader("Futár összesítő")
+    st.caption(
+        "Az Express, City és Régió darabszám route ID alapján készül. "
+        "A túramegfelelési díj egyszer szerepel: a route-számítás az elsődleges, "
+        "a bónusz tábla csak akkor lép életbe, ha a route-oknál nincs érték."
+    )
     display_summary = build_display_driver_summary(driver_summary)
     st.dataframe(
         display_summary,

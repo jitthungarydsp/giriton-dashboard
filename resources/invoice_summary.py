@@ -240,6 +240,45 @@ def enrich_invoice_routes(final_df, day_rates_df=None):
     return enriched
 
 
+def deduplicate_invoice_routes(final_df):
+    """Keep one payable row for each real route.
+
+    The imported workbook can contain the same route more than once (this was
+    most visible for Express routes).  A route fee and its quality bonuses are
+    route-level amounts, so summing duplicate rows would pay them twice.
+    Rows without a route id are retained because they cannot be matched safely.
+    """
+    if final_df is None or final_df.empty or "route_unique_id" not in final_df.columns:
+        return final_df.copy()
+
+    routes = final_df.copy()
+    route_id = routes["route_unique_id"].map(normalize_text)
+    identified = routes[route_id.ne("")].copy()
+    unidentified = routes[route_id.eq("")].copy()
+
+    if identified.empty:
+        return routes
+
+    dedupe_columns = [
+        column
+        for column in ["worksheet_name", "driver_name", "route_unique_id"]
+        if column in identified.columns
+    ]
+    identified = identified.drop_duplicates(subset=dedupe_columns, keep="first")
+    return pd.concat([identified, unidentified], ignore_index=True)
+
+
+def reconcile_compliance_bonus(route_amount, bonus_table_amount):
+    """Use the route calculation once; the bonus sheet is only a fallback.
+
+    Both invoice sources contain the same tour-compliance result for some
+    couriers.  Adding them caused the Express double count.
+    """
+    route_value = money(route_amount)
+    bonus_value = money(bonus_table_amount)
+    return route_value if route_value != 0 else bonus_value
+
+
 def format_date_filter(value):
     if isinstance(value, (date, datetime)):
         return value.isoformat()[:10]
@@ -907,6 +946,7 @@ def build_driver_invoice_summary(
         return pd.DataFrame()
 
     final_df = restore_raw_compliance_bonus(final_df, raw_route_df)
+    final_df = deduplicate_invoice_routes(final_df)
     final_df = enrich_invoice_routes(final_df, day_rates_df)
     final_df["driver_name"] = final_df["driver_name"].map(normalize_text)
     final_df["worksheet_name"] = final_df["worksheet_name"].map(normalize_text)
@@ -1007,6 +1047,28 @@ def build_driver_invoice_summary(
         grouped["sima_routes"] = 0
         grouped["kiemelt_base_huf"] = 0
         grouped["sima_base_huf"] = 0
+
+    service_type_summary = (
+        final_df.groupby(
+            ["driver_name", "worksheet_name", "calculated_service_type"],
+            dropna=False,
+        )["route_unique_id"]
+        .nunique()
+        .unstack(fill_value=0)
+        .reset_index()
+    )
+    service_type_summary = service_type_summary.rename(
+        columns={
+            "EXPRESSZ": "express_routes",
+            "City": "city_routes",
+            "Regio": "region_routes",
+        }
+    )
+    grouped = grouped.merge(
+        service_type_summary,
+        on=["driver_name", "worksheet_name"],
+        how="left",
+    )
     weekday_counts = build_weekday_counts(final_df)
     grouped = grouped.merge(
         weekday_counts,
@@ -1046,6 +1108,20 @@ def build_driver_invoice_summary(
         bonus_df = add_numeric_columns(
             bonus_df,
             ["bonus_huf"],
+        )
+        bonus_df = bonus_df.drop_duplicates(
+            subset=[
+                column
+                for column in [
+                    "driver_match_key",
+                    "worksheet_name",
+                    "courier_id",
+                    "routes",
+                    "bonus_huf",
+                ]
+                if column in bonus_df.columns
+            ],
+            keep="first",
         )
         bonus_grouped = (
             bonus_df.groupby(
@@ -1247,6 +1323,9 @@ def build_driver_invoice_summary(
         "vasarnap",
         "kiemelt_routes",
         "sima_routes",
+        "express_routes",
+        "city_routes",
+        "region_routes",
     ]:
         if column not in grouped.columns:
             grouped[column] = 0
@@ -1276,8 +1355,27 @@ def build_driver_invoice_summary(
         grouped["loyalty_status"] = "Nincs normál kör"
 
     grouped["compliance_extra_huf"] = grouped["compliance_extra_huf"].fillna(0)
-    grouped["compliance_bonus_huf"] = (
-        grouped["compliance_bonus_huf"] + grouped["compliance_extra_huf"]
+    grouped["route_compliance_huf"] = grouped["compliance_bonus_huf"]
+    grouped["bonus_table_compliance_huf"] = grouped["compliance_extra_huf"]
+    grouped["compliance_bonus_huf"] = grouped.apply(
+        lambda row: reconcile_compliance_bonus(
+            row.get("route_compliance_huf"),
+            row.get("bonus_table_compliance_huf"),
+        ),
+        axis=1,
+    )
+    grouped["compliance_source"] = grouped.apply(
+        lambda row: (
+            "Route sorok (a bónusz tábla nem adódik hozzá újra)"
+            if money(row.get("route_compliance_huf"))
+            and money(row.get("bonus_table_compliance_huf"))
+            else "Route sorok"
+            if money(row.get("route_compliance_huf"))
+            else "Bónusz tábla"
+            if money(row.get("bonus_table_compliance_huf"))
+            else "Nincs díj"
+        ),
+        axis=1,
     )
     grouped["bonus_total_huf"] = (
         grouped["delay_bonus_huf"]
@@ -1507,6 +1605,8 @@ def build_display_driver_summary(summary_df):
         "branding_huf",
         "delay_bonus_huf",
         "compliance_bonus_huf",
+        "route_compliance_huf",
+        "bonus_table_compliance_huf",
         "bonus_total_huf",
         "tip_huf",
         "route_total_huf",
@@ -1539,7 +1639,7 @@ def build_display_driver_summary(summary_df):
         if column in visible.columns:
             visible[column] = visible[column].map(format_huf)
 
-    return visible.rename(
+    visible = visible.rename(
         columns={
             "courier_id": "Futar ID",
             "driver_name": "Futar",
@@ -1559,9 +1659,15 @@ def build_display_driver_summary(summary_df):
             "kiemelt_base_huf": "Kiemelt alapdij",
             "sima_base_huf": "Sima alapdij",
             "route_count": "Route db",
+            "express_routes": "Express db",
+            "city_routes": "City db",
+            "region_routes": "Régió db",
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
             "compliance_bonus_huf": "Turamegfeleles",
+            "route_compliance_huf": "Túramegfelelés (route)",
+            "bonus_table_compliance_huf": "Túramegfelelés (bónusz tábla)",
+            "compliance_source": "Túramegfelelés forrása",
             "bonus_total_huf": "Bonusz osszesen",
             "tip_huf": "Tip",
             "route_total_huf": "Route osszesen",
@@ -1597,6 +1703,25 @@ def build_display_driver_summary(summary_df):
             "external_deduction_total_huf": "Külső levonás összesen",
         }
     )
+
+    summary_columns = [
+        "Futar ID",
+        "Futar",
+        "Raktar ful",
+        "Route db",
+        "Express db",
+        "City db",
+        "Régió db",
+        "Alapdij",
+        "Kesedelmi dij",
+        "Túramegfelelés (route)",
+        "Túramegfelelés (bónusz tábla)",
+        "Turamegfeleles",
+        "Túramegfelelés forrása",
+        "Tip",
+        "Fizetendo osszesen",
+    ]
+    return visible[[column for column in summary_columns if column in visible.columns]]
 
 
 def build_display_manual_items(manual_df):
