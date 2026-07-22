@@ -72,8 +72,16 @@ BASE_RATE_MATRIX = [
     {"service_type": "Régió", "day_type": "Nem kiemelt nap", "amount_huf": 6300},
 ]
 
+# Vallalkozoi bonusz -> futarnak elszamolando bonusz.
+# A kesedelmi es a turamegfelelesi dijra ugyanaz a tabla ervenyes.
 COURIER_BONUS_AMOUNT_OVERRIDES = {
+    0: 0,
+    333: 250,
+    666: 500,
     750: 500,
+    1333: 1333,
+    1500: 1000,
+    3000: 3000,
 }
 
 MANUAL_ITEM_TYPES = {
@@ -972,6 +980,7 @@ def build_driver_invoice_summary(
     final_df["source_fixed_rate_huf"] = final_df["fixed_rate_huf"]
     final_df["source_delay_bonus_huf"] = final_df["delay_bonus_huf"]
     final_df["source_compliance_bonus_huf"] = final_df["compliance_bonus_huf"]
+    numeric_columns.append("source_delay_bonus_huf")
     final_df["fixed_rate_huf"] = final_df["calculated_base_huf"]
     final_df["delay_bonus_huf"] = final_df["delay_bonus_huf"].map(courier_bonus_amount)
     final_df["compliance_bonus_huf"] = final_df["compliance_bonus_huf"].map(courier_bonus_amount)
@@ -1604,6 +1613,7 @@ def build_display_driver_summary(summary_df):
         "car_fridge_bonus_huf",
         "branding_huf",
         "delay_bonus_huf",
+        "source_delay_bonus_huf",
         "compliance_bonus_huf",
         "route_compliance_huf",
         "bonus_table_compliance_huf",
@@ -1664,6 +1674,7 @@ def build_display_driver_summary(summary_df):
             "region_routes": "Régió db",
             "fixed_rate_huf": "Alapdij",
             "delay_bonus_huf": "Kesedelmi dij",
+            "source_delay_bonus_huf": "Késedelmi díj (vállalkozói forrás)",
             "compliance_bonus_huf": "Turamegfeleles",
             "route_compliance_huf": "Túramegfelelés (route)",
             "bonus_table_compliance_huf": "Túramegfelelés (bónusz tábla)",
@@ -1713,6 +1724,7 @@ def build_display_driver_summary(summary_df):
         "City db",
         "Régió db",
         "Alapdij",
+        "Késedelmi díj (vállalkozói forrás)",
         "Kesedelmi dij",
         "Túramegfelelés (route)",
         "Túramegfelelés (bónusz tábla)",

@@ -2,6 +2,9 @@ import pandas as pd
 import streamlit as st
 
 from page.invoice_summary import (
+    _document_types_for_courier,
+    _latest_rows_by_action,
+    _status_for_action,
     build_invoice_feedback_context,
     first_invoice_contact_value,
     month_start_from_date,
@@ -14,6 +17,7 @@ from resources.email_sender import send_login_credentials
 from resources.peopleforce_documents import (
     read_peopleforce_card_statuses_for_month,
     read_peopleforce_complaints_for_month,
+    read_peopleforce_documents_for_month,
 )
 from resources.users import reset_password_and_send
 
@@ -51,7 +55,6 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
     try:
         status_df = read_peopleforce_card_statuses_for_month(
             month_start,
-            action_key="settlement",
         )
     except Exception as exc:
         st.warning(f"A futar visszajelzo statuszai nem tolthet?k be: {exc}")
@@ -73,23 +76,33 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
         courier_id = str(row.get("courier_id") or "").strip()
         return courier_id if courier_id and courier_id.lower() != "nan" else ""
 
-    status_by_name = {}
-    status_by_id = {}
-    if not status_df.empty:
-        for _, status_row in status_df.iterrows():
-            name_key = row_name_key(status_row)
-            id_key = row_id_key(status_row)
-            if name_key and name_key not in status_by_name:
-                status_by_name[name_key] = status_row
-            if id_key and id_key not in status_by_id:
-                status_by_id[id_key] = status_row
+    status_by_id, status_by_name = _latest_rows_by_action(status_df)
+
+    try:
+        documents_df = read_peopleforce_documents_for_month(month_start)
+    except Exception as exc:
+        st.warning(f"A havi dokumentumlista nem tölthető be: {exc}")
+        documents_df = pd.DataFrame()
+
+    documents_by_name = {}
+    documents_by_id = {}
+    if not documents_df.empty:
+        for _, document_row in documents_df.iterrows():
+            name_key = row_name_key(document_row)
+            id_key = row_id_key(document_row)
+            if name_key:
+                documents_by_name.setdefault(name_key, []).append(document_row)
+            if id_key:
+                documents_by_id.setdefault(id_key, []).append(document_row)
 
     open_complaints_by_name = {}
     open_complaints_by_id = {}
     if not complaints_df.empty:
         status_series = complaints_df.get("status", pd.Series(dtype=str))
         open_complaints = complaints_df[
-            status_series.astype(str).str.strip().str.lower().ne("resolved")
+            ~status_series.astype(str).str.strip().str.lower().isin(
+                ["resolved", "closed", "done"]
+            )
         ].copy()
         for _, complaint_row in open_complaints.iterrows():
             name_key = row_name_key(complaint_row)
@@ -161,15 +174,41 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
         username = first_invoice_contact_value(user_row, "username", "name")
         has_logged_in = user_has_logged_in(user_row)
 
-        status_row = status_by_id.get(courier_id) if courier_id else None
-        if status_row is None:
-            status_row = status_by_name.get(name_key)
+        settlement_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "settlement"
+        )
+        tig_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "tig"
+        )
+        invoice_check_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_check"
+        )
+        invoice_submit_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_submit"
+        )
+        invoice_payment_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "invoice_payment"
+        )
+        monthly_close_status = _status_for_action(
+            status_by_id, status_by_name, courier_id, name_key, "monthly_close"
+        )
+        status_row = settlement_status
         if status_row is not None and not courier_id:
             courier_id = row_id_key(status_row)
 
         complaint_rows = open_complaints_by_id.get(courier_id, []) if courier_id else []
         if not complaint_rows:
             complaint_rows = open_complaints_by_name.get(name_key, [])
+
+        process_is_done = any(
+            status is not None
+            and str(status.get("status") or "").strip().lower() == "done"
+            for status in (invoice_payment_status, monthly_close_status)
+        )
+        # A lezárt folyamat nem feladat. Nyitott segítségkérés viszont mindig
+        # maradjon látható, még hibásan lezárt státusz mellett is.
+        if process_is_done and not complaint_rows:
+            continue
 
         status_value = ""
         status_note = ""
@@ -181,42 +220,72 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
 
         uploaded_at = str(sent_details.get("uploaded_at") or "").strip()
         has_uploaded_document = bool(uploaded_at)
+        document_types, _courier_documents = _document_types_for_courier(
+            documents_by_id, documents_by_name, courier_id, name_key
+        )
+
+        def is_done(status):
+            return (
+                status is not None
+                and str(status.get("status") or "").strip().lower() == "done"
+            )
 
         if complaint_rows:
             row_state = "help"
             lamp = "Piros"
-            step = "Segitseget ker"
-            courier_feedback = "Nyitott reklamacio"
+            step = "Admin segítségére vár"
+            courier_feedback = "Segítséget kér"
             note = str(complaint_rows[0].get("message") or status_note or "").strip()
-        elif status_value == "done":
-            row_state = "done"
-            lamp = "Zold"
-            if "utal" in status_note.lower():
-                step = "Sikeres elutalas"
-            else:
-                step = "Elfogadva"
-            courier_feedback = "Rendben"
-            note = status_note
-        elif has_uploaded_document or status_value == "open":
-            row_state = "waiting"
-            lamp = "Sarga"
-            step = "Futarnal"
-            courier_feedback = "Visszajelzesre var"
-            note = status_note or "Elszamolas feltoltve."
-        else:
+        elif "settlement" not in document_types and not has_uploaded_document:
             row_state = "missing"
-            lamp = "Szurke"
-            step = "Meg nincs kikuldve"
-            courier_feedback = "-"
-            note = ""
+            lamp = "Szürke"
+            step = "Elszámolás elkészítésére és kiküldésére vár"
+            courier_feedback = "Admin feladat"
+            note = "Még nincs elszámolás feltöltve."
+        elif not is_done(settlement_status):
+            row_state = "waiting"
+            lamp = "Sárga"
+            step = "A futár elszámolás-elfogadására vár"
+            courier_feedback = "Futárnál"
+            note = status_note or "Az elszámolás feltöltve."
+        elif "tig" not in document_types:
+            row_state = "waiting"
+            lamp = "Sárga"
+            step = "TIG elkészítésére és feltöltésére vár"
+            courier_feedback = "Admin feladat"
+            note = "Az elszámolást a futár elfogadta."
+        elif not is_done(tig_status):
+            row_state = "waiting"
+            lamp = "Sárga"
+            step = "A futár TIG-elfogadására vár"
+            courier_feedback = "Futárnál"
+            note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
+        elif not is_done(invoice_check_status):
+            row_state = "waiting"
+            lamp = "Sárga"
+            step = "Számlaellenőrzésre vagy hibajavításra vár"
+            courier_feedback = "Futárnál"
+            note = str(invoice_check_status.get("status_note") or "A számla ellenőrzése még nincs kész.") if invoice_check_status is not None else "A számla ellenőrzése még nincs kész."
+        elif not is_done(invoice_submit_status):
+            row_state = "waiting"
+            lamp = "Sárga"
+            step = "Számlafeltöltésre vagy hibajavításra vár"
+            courier_feedback = "Futárnál"
+            note = str(invoice_submit_status.get("status_note") or "A számla feltöltése még nincs kész.") if invoice_submit_status is not None else "A számla feltöltése még nincs kész."
+        else:
+            row_state = "payment"
+            lamp = "Kék"
+            step = "Admin elfogadására és kifizetésre vár"
+            courier_feedback = "Admin feladat"
+            note = str(invoice_payment_status.get("status_note") or "A számla kifizetésre vár.") if invoice_payment_status is not None else "A számla kifizetésre vár."
 
         feedback_rows.append(
             {
                 "Lampa": lamp,
                 "Futar": name,
                 "Courier ID": courier_id or "-",
-                "Hol tart": step,
-                "Futar visszajelzes": courier_feedback,
+                "Állapot": courier_feedback,
+                "Mire vár?": step,
                 "Feltoltve": uploaded_at or "-",
                 "Utolso frissites": updated_at or uploaded_at or "-",
                 "E-mail": contact_email or "-",
@@ -231,21 +300,28 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
 
     feedback_df = pd.DataFrame(feedback_rows)
     state_series = feedback_df.get("_state", pd.Series(dtype=str))
-    done_count = int((state_series == "done").sum()) if not feedback_df.empty else 0
     help_count = int((state_series == "help").sum()) if not feedback_df.empty else 0
     waiting_count = int((state_series == "waiting").sum()) if not feedback_df.empty else 0
+    payment_count = int((state_series == "payment").sum()) if not feedback_df.empty else 0
+    missing_count = int((state_series == "missing").sum()) if not feedback_df.empty else 0
+    missing_names = (
+        feedback_df.loc[state_series == "missing", "Futar"].tolist()
+        if not feedback_df.empty
+        else []
+    )
+    open_count = len(feedback_df)
 
     st.subheader("Futar visszajelzo")
 
     metric1, metric2, metric3, metric4 = st.columns(4)
-    metric1.metric("Futar osszesen", total_count)
-    metric2.metric("Kikuldve", sent_count)
-    metric3.metric("Segitseget ker", help_count)
-    metric4.metric("Elfogadva / zold", done_count)
+    metric1.metric("Nyitott folyamat", open_count)
+    metric2.metric("Kiküldve", sent_count)
+    metric3.metric("Segítséget kér", help_count)
+    metric4.metric("Kifizetésre vár", payment_count)
 
     sub1, sub2 = st.columns(2)
-    sub1.metric("Visszajelzesre var", waiting_count)
-    sub2.metric("Meg nincs kikuldve", missing_count)
+    sub1.metric("Folyamatban", waiting_count)
+    sub2.metric("Még nincs kiküldve", missing_count)
 
     if total_count:
         st.progress(min(max(completion / 100, 0), 1))
@@ -258,6 +334,8 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
             return ["background-color: #dcfce7; color: #14532d; font-weight: 700;"] * len(row)
         if state == "waiting":
             return ["background-color: #fef9c3; color: #713f12;"] * len(row)
+        if state == "payment":
+            return ["background-color: #dbeafe; color: #1e3a8a;"] * len(row)
         return ["background-color: #f8fafc; color: #475569;"] * len(row)
 
     if not feedback_df.empty:
@@ -274,6 +352,8 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
                 return ["background-color: #dcfce7; color: #14532d; font-weight: 700;"] * len(row)
             if state == "waiting":
                 return ["background-color: #fef9c3; color: #713f12;"] * len(row)
+            if state == "payment":
+                return ["background-color: #dbeafe; color: #1e3a8a;"] * len(row)
             return ["background-color: #f8fafc; color: #475569;"] * len(row)
 
         st.dataframe(
@@ -315,7 +395,7 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
             else:
                 st.caption("Uj jelszot generalunk, es elkuldjuk a felhasznalonevet, jelszot, valamint hogy elkeszult az elszamolasa.")
                 st.dataframe(
-                    resend_candidates[["Futar", "Courier ID", "E-mail", "Hol tart"]],
+                    resend_candidates[["Futar", "Courier ID", "E-mail", "Mire vár?"]],
                     use_container_width=True,
                     hide_index=True,
                 )
@@ -362,4 +442,3 @@ def render_legacy_invoice_delivery_status(route_driver_names, document_month):
             )
         else:
             st.info("Ehhez a honaphoz meg nincs kikuldott elszamolas.")
-
