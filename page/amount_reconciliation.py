@@ -24,11 +24,17 @@ def extract_payment_amount(status_note):
         return 0
     labelled = re.findall(
         r"(?:kifizet(?:ett|es|és)?|elutal(?:t|as|ás)?|utal(?:t|as|ás)?|osszeg|összeg)"
-        r"[^0-9]{0,30}([0-9][0-9 .\u00a0]*)(?:\s*(?:ft|huf))?",
+        r"[^0-9]{0,30}([0-9][0-9 .\u00a0]*)\s*(?:ft|huf)",
         text,
         flags=re.IGNORECASE,
     )
-    candidates = labelled or re.findall(
+    explicit_amount = re.findall(
+        r"(?:osszeg|összeg)\s*[:=]?\s*([0-9][0-9 \u00a0]*)"
+        r"(?:\s*(?:ft|huf))?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    candidates = labelled or explicit_amount or re.findall(
         r"([0-9][0-9 .\u00a0]*)\s*(?:ft|huf)", text, flags=re.IGNORECASE
     )
     amounts = []
