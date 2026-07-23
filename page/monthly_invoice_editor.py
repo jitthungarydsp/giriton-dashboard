@@ -47,6 +47,50 @@ def to_number(value):
         return 0.0
 
 
+def normalize_tax_number(value):
+    """Egységes, szóközmentes magyar adószám szöveg."""
+    return str(value or "").strip().replace(" ", "")
+
+
+def get_tax_number(summary_row):
+    """Adószám kiolvasása több, a projektben előforduló mezőnévből."""
+    candidate_keys = (
+        "tax_number",
+        "tax_id",
+        "taxnumber",
+        "adoszam",
+        "adóazonosító",
+        "adóazonosito",
+        "vat_number",
+        "vat_id",
+    )
+    for key in candidate_keys:
+        value = normalize_tax_number(summary_row.get(key))
+        if value:
+            return value
+    return ""
+
+
+def is_vat_tax_number(value):
+    """A magyar adószám középső, 2-es ÁFA-kódját ellenőrzi.
+
+    Példa: 12345678-2-42 -> True.
+    """
+    tax_number = normalize_tax_number(value)
+    match = re.fullmatch(r"\d{8}-([1-5])-\d{2}", tax_number)
+    return bool(match and match.group(1) == "2")
+
+
+def split_gross_vat(gross_amount, vat_rate=0.27):
+    """Bruttó összegből egész forintra bontott nettó és ÁFA."""
+    gross = int(round(to_number(gross_amount)))
+    if gross <= 0:
+        return gross, 0
+    net = int(round(gross / (1 + vat_rate)))
+    vat = gross - net
+    return net, vat
+
+
 def current_username():
     user = st.session_state.get("user", {})
     if isinstance(user, dict):
@@ -400,44 +444,83 @@ def build_default_invoice_lines(summary_row):
 def build_default_tig_lines(summary_row):
     payable_total = int(round(to_number(summary_row.get("payable_total_huf"))))
     tip_amount = max(int(round(to_number(summary_row.get("tip_huf")))), 0)
-    service_amount = payable_total - tip_amount
+    service_gross = payable_total - tip_amount
     cash_amount = abs(int(round(to_number(summary_row.get("atm_balance_huf")))))
 
-    rows = [
-        {
-            **line_row(
-                "service_fee",
-                "Szallitasi dij",
-                "A TIG fo szolgaltatasi sora. A borravalo nelkuli atutalando resz.",
-                service_amount,
-                "Elszamolas fizetendo osszeg",
-            ),
-            "TIG-be szamit": True,
-        },
-        {
-            **line_row(
-                "tip",
-                "Borravalo",
-                "Borravalo, ha a havi elszamolasban szerepel.",
-                tip_amount,
-                "Elszamolas tip",
-            ),
-            "TIG-be szamit": True,
-        },
-        {
-            **line_row(
-                "cash_info",
-                "KP tajekoztato",
-                "KP / ATM informacios sor. Alapesetben nem novel TIG vegosszeget.",
-                cash_amount,
-                "ATM / KP",
-            ),
-            "TIG-be szamit": False,
-        },
-    ]
+    tax_number = get_tax_number(summary_row)
+    vat_applicable = is_vat_tax_number(tax_number)
+
+    rows = []
+    if vat_applicable:
+        service_net, vat_amount = split_gross_vat(service_gross, vat_rate=0.27)
+        rows.extend(
+            [
+                {
+                    **line_row(
+                        "service_fee_net",
+                        "Szállítási díj – nettó",
+                        "A TIG fő szolgáltatási sora, borravaló nélkül. 27%-os ÁFA alapja.",
+                        service_net,
+                        "Elszámolás fizetendő összeg",
+                    ),
+                    "TIG-be szamit": True,
+                },
+                {
+                    **line_row(
+                        "vat_27",
+                        "ÁFA 27%",
+                        "A szállítási díj 27%-os általános forgalmi adója.",
+                        vat_amount,
+                        "Adószám ÁFA-kód: 2",
+                    ),
+                    "TIG-be szamit": True,
+                },
+            ]
+        )
+    else:
+        rows.append(
+            {
+                **line_row(
+                    "service_fee",
+                    "Szállítási díj",
+                    "A TIG fő szolgáltatási sora, borravaló nélkül.",
+                    service_gross,
+                    "Elszámolás fizetendő összeg",
+                ),
+                "TIG-be szamit": True,
+            }
+        )
+
+    rows.extend(
+        [
+            {
+                **line_row(
+                    "tip",
+                    "Borravaló – adómentes",
+                    "A futár részére változatlan összegben továbbadott borravaló; az ÁFA alapjába nem számít bele.",
+                    tip_amount,
+                    "Elszámolás tip",
+                ),
+                "TIG-be szamit": True,
+            },
+            {
+                **line_row(
+                    "cash_info",
+                    "KP tájékoztató",
+                    "KP / ATM információs sor. Alapesetben nem növeli a TIG végösszegét.",
+                    cash_amount,
+                    "ATM / KP",
+                ),
+                "TIG-be szamit": False,
+            },
+        ]
+    )
+
     non_zero_rows = [
-        row for row in rows
-        if int(row["Osszeg (Ft)"]) != 0 or row["Kod"] == "service_fee"
+        row
+        for row in rows
+        if int(row["Osszeg (Ft)"]) != 0
+        or row["Kod"] in {"service_fee", "service_fee_net"}
     ]
     return pd.DataFrame(non_zero_rows or rows)
 
@@ -787,11 +870,28 @@ def show_monthly_tig_editor_page():
     )
     default_lines = normalize_tig_editor_df(build_default_tig_lines(summary_row))
 
+    payable_total = int(round(to_number(summary_row.get("payable_total_huf"))))
+    tip_amount = max(int(round(to_number(summary_row.get("tip_huf")))), 0)
+    service_gross = payable_total - tip_amount
+    tax_number = get_tax_number(summary_row)
+    vat_applicable = is_vat_tax_number(tax_number)
+    vat_status = "Áfás (27%)" if vat_applicable else "Nem áfás / AAM"
+
     top_cols = st.columns([1, 1, 1, 1])
-    top_cols[0].metric("PDF/TIG alap", format_huf(summary_row.get("payable_total_huf")))
-    top_cols[1].metric("Szolgaltatasi resz", format_huf(max(to_number(summary_row.get("payable_total_huf")) - max(to_number(summary_row.get("tip_huf")), 0), 0)))
-    top_cols[2].metric("Borravalo", format_huf(summary_row.get("tip_huf")))
+    top_cols[0].metric("PDF/TIG alap", format_huf(payable_total))
+    top_cols[1].metric("Szolgáltatási rész", format_huf(service_gross))
+    top_cols[2].metric("Borravaló – adómentes", format_huf(tip_amount))
     top_cols[3].metric("KP info", format_huf(abs(to_number(summary_row.get("atm_balance_huf")))))
+
+    st.caption(
+        f"Adószám: {tax_number or 'nincs az összesítőben'} · Adózási mód: {vat_status}. "
+        "A borravaló külön adómentes sor, ezért arra nem kerül ÁFA."
+    )
+    if not tax_number:
+        st.warning(
+            "Ehhez a futárhoz az összesítő nem adott át adószámot. "
+            "Az ÁFA-logika csak akkor tud automatikusan működni, ha az adószám mező szerepel a summary_row adataiban."
+        )
 
     info_cols = st.columns(3)
     info_cols[0].text_input(
@@ -904,6 +1004,8 @@ def show_monthly_tig_editor_page():
     export_df.insert(1, "Futar", summary_row.get("driver_name", ""))
     export_df.insert(2, "Honap kezdete", str(start_date))
     export_df.insert(3, "Honap vege", str(end_date))
+    export_df.insert(4, "Adoszam", tax_number)
+    export_df.insert(5, "Adozasi mod", vat_status)
 
     download_cols = st.columns([1, 1, 1])
     download_cols[0].download_button(
