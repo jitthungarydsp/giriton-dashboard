@@ -2659,26 +2659,6 @@ def show_invoice_summary_page():
                 )
             except (TypeError, ValueError):
                 default_transfer_amount = 0
-
-            default_cash_amount = max(
-                int(round(abs(_row_amount(
-                    selected_row,
-                    "atm_balance_huf",
-                    "atm_effect_huf",
-                )))),
-                0,
-            )
-            default_tip_amount = max(
-                int(round(_row_amount(
-                    selected_row,
-                    "tip_huf",
-                    "tips_huf",
-                    "gratuity_huf",
-                    "borravalo_huf",
-                ))),
-                0,
-            )
-
             
 
             with st.form(f"tig_generator_{courier_id}_{start_date.isoformat()}"):
