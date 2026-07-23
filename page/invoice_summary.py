@@ -175,9 +175,11 @@ def build_tig_pdf_bytes(
         parts = re.sub(r"\s+", "", str(value or "")).split("-")
         return len(parts) >= 2 and parts[1] == "2"
 
-    def split_gross(gross):
-        net = int(round(gross / 1.27))
-        return net, gross - net
+    def add_vat(net):
+        net = int(round(net))
+        vat = int(round(net * 0.27))
+        gross = net + vat
+        return net, vat, gross
 
     total = max(to_int(transfer_amount_huf), 0)
     cash = max(to_int(cash_amount_huf), 0)
@@ -335,13 +337,13 @@ def build_tig_pdf_bytes(
             return
 
         if vat_payer:
-            net, vat = split_gross(gross)
+            net, vat, gross_total = add_vat(gross)
             rows.append(
                 [
                     Paragraph(label, normal),
                     Paragraph(_huf(net), right),
                     Paragraph(_huf(vat), right),
-                    Paragraph(_huf(gross), right),
+                    Paragraph(_huf(gross_total), right),
                 ]
             )
         else:
