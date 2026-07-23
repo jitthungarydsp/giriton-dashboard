@@ -5,6 +5,8 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 from resources.settlement_excel_import import (
+    delete_excel_import,
+    get_import_preview,
     get_supabase_client,
     save_excel_to_supabase,
 )
@@ -1203,15 +1205,16 @@ def show_new_settlement_page() -> None:
         if uploaded_excel is not None:
             st.success(f"Kiválasztva: {uploaded_excel.name}")
 
-        excel_action1, excel_action2 = st.columns(2)
+        import_session_id = st.session_state.get("settlement_import_session_id")
+        excel_action1, excel_action_check, excel_action2 = st.columns(3)
 
         if excel_action1.button(
-            "Számítás betöltése",
+            "Sz?m?t?s bet?lt?se",
             type="primary",
             use_container_width=True,
             disabled=uploaded_excel is None,
             key="load_excel_calculation",
-            help="Csak designer gomb, nincs mögötte számítási logika.",
+            help="Az Excel ?sszes munkalapj?t nyersen menti a settlement s?m?ba.",
         ):
             try:
                 result = save_excel_to_supabase(
@@ -1220,33 +1223,89 @@ def show_new_settlement_page() -> None:
                 )
                 st.session_state["excel_calculation_loaded"] = True
                 st.session_state["settlement_import_session_id"] = result["session_id"]
+                st.session_state["settlement_import_result"] = result
+                st.session_state.pop("settlement_import_preview", None)
 
                 st.success(
-                    f"Excel import kesz: {result['sheet_count']} sheet, "
+                    f"Excel import k?sz: {result['sheet_count']} sheet, "
                     f"{result['inserted_rows']} sor."
                 )
-
-                for sheet_name, row_count in result["sheet_row_counts"].items():
-                    st.write(f"- {sheet_name}: {row_count} sor")
 
             except Exception as exc:
                 st.session_state["excel_calculation_loaded"] = False
                 st.error(f"Excel import sikertelen: {exc}")
 
+        import_session_id = st.session_state.get("settlement_import_session_id")
+
+        if excel_action_check.button(
+            "SQL ellen?rz?s",
+            use_container_width=True,
+            disabled=not import_session_id,
+            key="check_excel_import_sql",
+            help="A settlement.vw_excel_preview n?zetb?l olvassa vissza az importot.",
+        ):
+            try:
+                preview_df = get_import_preview(
+                    get_db(),
+                    import_session_id,
+                    limit=200,
+                )
+                st.session_state["settlement_import_preview"] = preview_df
+
+                if preview_df.empty:
+                    st.warning("A SQL ellen?rz?s lefutott, de nincs visszaolvasott sor.")
+                else:
+                    st.success(f"SQL ellen?rz?s OK: {len(preview_df)} sor visszaolvasva.")
+
+            except Exception as exc:
+                st.error(f"SQL ellen?rz?s sikertelen: {exc}")
+
         if excel_action2.button(
-            "Törlés",
+            "T?rl?s",
             use_container_width=True,
             disabled=uploaded_excel is None
+            and not import_session_id
             and not st.session_state.get("excel_calculation_loaded", False),
             key="delete_excel_calculation",
-            help="A kiválasztott designer Excel állapot törlése.",
+            help="T?rli az aktu?lis Excel import session sorait ?s ?r?ti a felt?lt?t.",
         ):
-            st.session_state["excel_upload_version"] += 1
-            st.session_state["excel_calculation_loaded"] = False
-            st.rerun()
+            try:
+                if import_session_id:
+                    deleted_rows = delete_excel_import(
+                        get_db(),
+                        import_session_id,
+                    )
+                    st.toast(f"Excel import t?r?lve: {deleted_rows} sor.")
 
-        if st.session_state.get("excel_calculation_loaded", False):
-            st.info("A számítás designer állapotban betöltve.")
+                st.session_state["excel_upload_version"] += 1
+                st.session_state["excel_calculation_loaded"] = False
+                st.session_state.pop("settlement_import_session_id", None)
+                st.session_state.pop("settlement_import_result", None)
+                st.session_state.pop("settlement_import_preview", None)
+                st.rerun()
+
+            except Exception as exc:
+                st.error(f"Excel import t?rl?se sikertelen: {exc}")
+
+        import_result = st.session_state.get("settlement_import_result")
+        if import_result:
+            st.info(
+                f"Utols? import: {import_result['sheet_count']} sheet, "
+                f"{import_result['inserted_rows']} sor. Session: "
+                f"{import_result['session_id']}"
+            )
+            for sheet_name, row_count in import_result["sheet_row_counts"].items():
+                st.write(f"- {sheet_name}: {row_count} sor")
+
+        preview_df = st.session_state.get("settlement_import_preview")
+        if isinstance(preview_df, pd.DataFrame) and not preview_df.empty:
+            st.dataframe(
+                preview_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+        elif st.session_state.get("excel_calculation_loaded", False):
+            st.info("A sz?m?t?s bet?ltve. Futtasd az SQL ellen?rz?st a visszaolvas?shoz.")
 
         st.markdown('<p class="side-note">Könnyű, külső UI-csomag nélküli felület. A régi elszámolási oldalt nem módosítja.</p>',unsafe_allow_html=True)
 
