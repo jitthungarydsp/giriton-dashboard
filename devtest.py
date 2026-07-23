@@ -28,7 +28,7 @@ login_screen()
 @st.cache_resource
 def get_db():
     return get_supabase_client(
-        st.secrets["URL"],
+        st.secrets["SUPABASE_URL"],
         st.secrets["SERVICE_ROLE_KEY"],
     )
 
