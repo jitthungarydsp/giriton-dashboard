@@ -14,7 +14,7 @@ from supabase.client import ClientOptions
 
 
 SUPABASE_SCHEMA = "settlement"
-IMPORT_TABLE = "excel_import"
+IMPORT_TABLE = "settlement_excel_import"
 PREVIEW_VIEW = "vw_excel_preview"
 
 
@@ -253,6 +253,8 @@ def save_excel_to_supabase(
             inserted_rows += len(batch)
 
     except Exception as exc:
+        cleanup_error = None
+
         try:
             (
                 supabase
@@ -261,13 +263,22 @@ def save_excel_to_supabase(
                 .eq("session_id", session_id)
                 .execute()
             )
-        except Exception:
-            pass
+        except Exception as delete_exc:
+            cleanup_error = delete_exc
 
-        raise RuntimeError(
-            "Az Excel mentése közben hiba történt. "
-            "Az ehhez az importhoz korábban elmentett sorokat megpróbáltuk törölni."
-        ) from exc
+        message = (
+            "Az Excel ment?se k?zben hiba t?rt?nt. "
+            "Az ehhez az importhoz kor?bban elmentett sorokat megpr?b?ltuk t?r?lni. "
+            f"Eredeti hiba: {type(exc).__name__}: {exc}"
+        )
+
+        if cleanup_error is not None:
+            message += (
+                " | T?rl?si pr?ba hib?ja: "
+                f"{type(cleanup_error).__name__}: {cleanup_error}"
+            )
+
+        raise RuntimeError(message) from exc
 
     sheet_names = list(
         dict.fromkeys(row["sheet_name"] for row in raw_rows)
