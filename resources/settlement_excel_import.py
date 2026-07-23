@@ -14,7 +14,7 @@ from supabase.client import ClientOptions
 
 
 SUPABASE_SCHEMA = "settlement"
-IMPORT_TABLE = "settlement_excel_import"
+IMPORT_TABLE = "excel_import"
 PREVIEW_VIEW = "vw_excel_preview"
 
 
