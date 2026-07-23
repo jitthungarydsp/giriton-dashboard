@@ -121,10 +121,10 @@ def apply_design() -> None:
 @st.cache_data(show_spinner=False)
 def get_demo_data() -> pd.DataFrame:
     return pd.DataFrame([
-        {"Courier ID":"7486","Futár":"Kiss Péter","Raktár":"Budapest","Branch":"Kifli","Számítás módja":"API","Bruttó bevétel":482500,"Bónusz":38000,"Levonás":52000,"Kifizetendő":468500,"Előző havi összeg":441200,"KPI":94.2,"Státusz":"Előkészítve"},
-        {"Courier ID":"7612","Futár":"Nagy Ádám","Raktár":"Budapest","Branch":"Kifli","Számítás módja":"Excel","Bruttó bevétel":421900,"Bónusz":29500,"Levonás":43200,"Kifizetendő":408200,"Előző havi összeg":399800,"KPI":91.7,"Státusz":"Ellenőrzés alatt"},
-        {"Courier ID":"7740","Futár":"Tóth Bence","Raktár":"Győr","Branch":"Kifli","Számítás módja":"Egyéni","Bruttó bevétel":389600,"Bónusz":25000,"Levonás":31000,"Kifizetendő":383600,"Előző havi összeg":376100,"KPI":96.1,"Státusz":"Jóváhagyva"},
-        {"Courier ID":"7821","Futár":"Szabó Márk","Raktár":"Debrecen","Branch":"Kifli","Számítás módja":"API","Bruttó bevétel":511300,"Bónusz":42500,"Levonás":64000,"Kifizetendő":489800,"Előző havi összeg":472400,"KPI":89.4,"Státusz":"Előkészítve"},
+        {"Futár":"Kiss Péter","Raktár":"Budapest","Bruttó bevétel":482500,"Bónusz":38000,"Levonás":52000,"Kifizetendő":468500,"Státusz":"Előkészítve"},
+        {"Futár":"Nagy Ádám","Raktár":"Budapest","Bruttó bevétel":421900,"Bónusz":29500,"Levonás":43200,"Kifizetendő":408200,"Státusz":"Ellenőrzés alatt"},
+        {"Futár":"Tóth Bence","Raktár":"Győr","Bruttó bevétel":389600,"Bónusz":25000,"Levonás":31000,"Kifizetendő":383600,"Státusz":"Jóváhagyva"},
+        {"Futár":"Szabó Márk","Raktár":"Debrecen","Bruttó bevétel":511300,"Bónusz":42500,"Levonás":64000,"Kifizetendő":489800,"Státusz":"Előkészítve"},
     ])
 
 
@@ -155,156 +155,37 @@ def status_meta(status: str) -> tuple[str,str]:
     return mapping.get(status,("status-yellow","led-yellow"))
 
 
-def get_demo_documents() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
-        {"Courier ID":"7486","Típus":"TIG","Fájl":"tig_2026_06.pdf","Feltöltve":"2026-07-04 10:35"},
-        {"Courier ID":"7612","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:30"},
-    ])
-
-
-def get_demo_complaints() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Courier ID":"7486","Típus":"Elszámolás","Státusz":"Nyitott","Dátum":"2026-07-05","Üzenet":"A bónusz összege eltér."},
-        {"Courier ID":"7612","Típus":"TIG","Státusz":"Lezárt","Dátum":"2026-07-02","Üzenet":"A vállalkozási cím javítva lett."},
-    ])
-
-
 def render_table(df: pd.DataFrame) -> None:
+    rows=[]
+    for _,r in df.iterrows():
+        badge,led=status_meta(str(r["Státusz"]))
+        rows.append(
+            f"""<tr>
+            <td><div class="courier-name">{html.escape(str(r['Futár']))}</div><div class="courier-sub">{html.escape(str(r['Raktár']))}</div></td>
+            <td class="money">{format_huf(r['Bruttó bevétel'])}</td>
+            <td class="money">{format_huf(r['Bónusz'])}</td>
+            <td class="money">{format_huf(r['Levonás'])}</td>
+            <td class="money payable">{format_huf(r['Kifizetendő'])}</td>
+            <td><span class="status-badge {badge}">{html.escape(str(r['Státusz']))}</span></td>
+            <td style="text-align:center"><span class="led {led}" title="{html.escape(str(r['Státusz']))}"></span></td>
+            </tr>"""
+        )
+    empty='<tr><td colspan="7" style="text-align:center;color:#667085;padding:30px">Nincs találat a megadott szűrőkkel.</td></tr>'
+    body=''.join(rows) if rows else empty
     st.markdown(
         f"""
         <div class="table-card">
-          <div class="table-card-head">
-            <div><h3>Futárok elszámolásai</h3><span>Kattints a futár nevére a részletekhez</span></div>
-            <span>{len(df)} találat</span>
-          </div>
+          <div class="table-card-head"><div><h3>Futárok elszámolásai</h3><span>Részletes havi összesítés</span></div><span>{len(df)} találat</span></div>
+          <table class="premium-table">
+            <thead><tr><th>Futár</th><th>Bruttó bevétel</th><th>Bónusz</th><th>Levonás</th><th>Kifizetendő</th><th>Státusz</th><th style="text-align:center">Állapot</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>
+          <div class="table-footer"><span>Megjelenítve: {len(df)} sor</span><div class="pager"><span>‹</span><span class="active">1</span><span>›</span></div></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    if df.empty:
-        st.info("Nincs találat a megadott szűrőkkel.")
-        return
 
-    header = st.columns([1.45,0.75,0.85,1,1,1,0.9])
-    for col,label in zip(header,["Futár","Branch","Számítás","Bruttó","Levonás","Kifizetendő","Státusz"]):
-        col.markdown(f"**{label}**")
-
-    for i,row in df.reset_index(drop=True).iterrows():
-        cols = st.columns([1.45,0.75,0.85,1,1,1,0.9], vertical_alignment="center")
-        if cols[0].button(f"{row['Futár']} · {row['Courier ID']}", key=f"courier_{row['Courier ID']}_{i}", use_container_width=True):
-            st.session_state["selected_courier_id"] = str(row["Courier ID"])
-            show_courier_dialog()
-        cols[1].caption(str(row["Branch"]))
-        cols[2].caption(str(row["Számítás módja"]))
-        cols[3].caption(format_huf(row["Bruttó bevétel"]))
-        cols[4].caption(format_huf(row["Levonás"]))
-        cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
-        badge,_ = status_meta(str(row["Státusz"]))
-        cols[6].markdown(f'<span class="status-badge {badge}">{html.escape(str(row["Státusz"]))}</span>', unsafe_allow_html=True)
-
-
-@st.dialog("Futár részletei", width="large")
-def show_courier_dialog() -> None:
-    courier_id = str(st.session_state.get("selected_courier_id") or "")
-    data = get_demo_data()
-    match = data[data["Courier ID"].astype(str) == courier_id]
-    if match.empty:
-        st.warning("A futár nem található.")
-        return
-    row = match.iloc[0]
-
-    st.subheader(f"{row['Futár']} · {courier_id}")
-    st.caption(f"{row['Branch']} · {row['Raktár']} · {row['Számítás módja']}")
-
-    k1,k2,k3,k4 = st.columns(4)
-    k1.metric("KPI", f"{row['KPI']:.1f}%")
-    k2.metric("Aktuális havi összeg", format_huf(row["Kifizetendő"]))
-    k3.metric("Előző havi összeg", format_huf(row["Előző havi összeg"]))
-    k4.metric("Havi változás", format_huf(row["Kifizetendő"]-row["Előző havi összeg"]))
-
-    tab1,tab2,tab3 = st.tabs(["Aktuális hónap","Dokumentumok","Reklamációk"])
-    with tab1:
-        st.dataframe(pd.DataFrame([{
-            "Bruttó bevétel":format_huf(row["Bruttó bevétel"]),
-            "Bónusz":format_huf(row["Bónusz"]),
-            "Levonás":format_huf(row["Levonás"]),
-            "Kifizetendő":format_huf(row["Kifizetendő"]),
-            "Státusz":row["Státusz"],
-        }]), use_container_width=True, hide_index=True)
-    with tab2:
-        docs = get_demo_documents()
-        docs = docs[docs["Courier ID"].astype(str)==courier_id]
-        if docs.empty:
-            st.info("Nincs aktuális havi dokumentum.")
-        else:
-            st.dataframe(docs[["Típus","Fájl","Feltöltve"]], use_container_width=True, hide_index=True)
-    with tab3:
-        complaints = get_demo_complaints()
-        complaints = complaints[complaints["Courier ID"].astype(str)==courier_id]
-        if complaints.empty:
-            st.success("Nincs reklamáció.")
-        else:
-            st.dataframe(complaints[["Típus","Státusz","Dátum","Üzenet"]], use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.markdown("#### Műveletek")
-    a,b = st.columns(2)
-    if a.button("Elszámolás generálása", type="primary", use_container_width=True, key=f"settlement_gen_{courier_id}"):
-        st.toast("Az elszámolás generálása elindult.", icon="🧾")
-    if b.button("TIG generálása", type="primary", use_container_width=True, key=f"tig_gen_{courier_id}"):
-        st.toast("A TIG generálása elindult.", icon="📄")
-
-    c,d = st.columns(2)
-    settlement_file = c.file_uploader("Elszámolás feltöltése", type=["pdf"], key=f"settlement_upload_{courier_id}")
-    tig_file = d.file_uploader("TIG feltöltése", type=["pdf"], key=f"tig_upload_{courier_id}")
-    if settlement_file:
-        st.success(f"Elszámolás kiválasztva: {settlement_file.name}")
-    if tig_file:
-        st.success(f"TIG kiválasztva: {tig_file.name}")
-
-
-@st.dialog("Tömeges elszámolás", width="large")
-def show_bulk_settlement_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
-    st.caption("Az aktuális szűrés alapján.")
-    st.dataframe(df[["Courier ID","Futár","Branch","Számítás módja","Kifizetendő","Státusz"]], use_container_width=True, hide_index=True)
-    st.checkbox("Összes kijelölése", value=True, key="bulk_settlement_all")
-    st.checkbox("Már feltöltött elszámolások kihagyása", value=True)
-    if st.button("Tömeges elszámolások generálása", type="primary", use_container_width=True):
-        st.success(f"{len(df)} elszámolás generálása elindult.")
-
-
-@st.dialog("Tömeges TIG", width="large")
-def show_bulk_tig_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
-    st.caption("Az aktuális szűrés alapján.")
-    st.dataframe(df[["Courier ID","Futár","Branch","Számítás módja","Kifizetendő"]], use_container_width=True, hide_index=True)
-    st.checkbox("Összes kijelölése", value=True, key="bulk_tig_all")
-    st.checkbox("Már feltöltött TIG-ek kihagyása", value=True)
-    if st.button("Tömeges TIG-ek generálása", type="primary", use_container_width=True):
-        st.success(f"{len(df)} TIG generálása elindult.")
-
-
-@st.dialog("Bejelentések", width="large")
-def show_reports_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
-    ids = set(df["Courier ID"].astype(str))
-    complaints = get_demo_complaints()
-    complaints = complaints[complaints["Courier ID"].astype(str).isin(ids)]
-    if complaints.empty:
-        st.success("Nincs bejelentés a szűrésben.")
-        return
-    merged = complaints.merge(df[["Courier ID","Futár","Branch"]], on="Courier ID", how="left")
-    st.dataframe(merged[["Futár","Branch","Típus","Státusz","Dátum","Üzenet"]], use_container_width=True, hide_index=True)
-
-
-def build_excel_export(df: pd.DataFrame) -> bytes:
-    from io import BytesIO
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Elszámolások")
-    return output.getvalue()
 
 def show_new_settlement_page() -> None:
     apply_design()
@@ -314,8 +195,6 @@ def show_new_settlement_page() -> None:
         st.markdown("## Elszámolás")
         st.caption("Szűrés és műveletek")
         selected_month=st.selectbox("Elszámolási hónap",month_options(),key="new_month")
-        branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
-        calculation_mode=st.selectbox("Számítás módja",["Összes","Excel","API","Egyéni"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
         status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
@@ -323,8 +202,6 @@ def show_new_settlement_page() -> None:
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             st.toast(f"Betöltve: {selected_month}",icon="✅")
         if st.button("Szűrők törlése",use_container_width=True):
-            st.session_state["new_branch"]="Összes"
-            st.session_state["new_calculation_mode"]="Összes"
             st.session_state["new_warehouse"]="Összes"
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
@@ -332,21 +209,12 @@ def show_new_settlement_page() -> None:
         st.markdown('<p class="side-note">Könnyű, külső UI-csomag nélküli felület. A régi elszámolási oldalt nem módosítja.</p>',unsafe_allow_html=True)
 
     filtered=data.copy()
-    if branch!="Összes":
-        filtered=filtered[filtered["Branch"]==branch]
-    if calculation_mode!="Összes":
-        filtered=filtered[filtered["Számítás módja"]==calculation_mode]
     if warehouse!="Összes":
         filtered=filtered[filtered["Raktár"]==warehouse]
     if status!="Összes":
         filtered=filtered[filtered["Státusz"]==status]
     if search.strip():
-        query=search.strip()
-        filtered=filtered[
-            filtered["Futár"].str.contains(query,case=False,na=False)
-            | filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
-        ]
-    st.session_state["current_filtered_data"]=filtered.copy()
+        filtered=filtered[filtered["Futár"].str.contains(search.strip(),case=False,na=False)]
 
     total_gross=int(filtered["Bruttó bevétel"].sum()) if not filtered.empty else 0
     total_deduction=int(filtered["Levonás"].sum()) if not filtered.empty else 0
@@ -379,19 +247,10 @@ def show_new_settlement_page() -> None:
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d=st.columns(4)
-    if a.button("Tömeges elszámolás",use_container_width=True):
-        show_bulk_settlement_dialog()
-    if b.button("Tömeges TIG",use_container_width=True):
-        show_bulk_tig_dialog()
-    if c.button("Bejelentések",use_container_width=True):
-        show_reports_dialog()
-    d.download_button(
-        "Export Excel",
-        data=build_excel_export(filtered),
-        file_name="elszamolas_export.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+    a.button("Részletek megnyitása",use_container_width=True)
+    b.button("PDF előnézet",use_container_width=True)
+    c.button("PDF generálása",type="primary",use_container_width=True)
+    d.button("Export Excelbe",use_container_width=True)
 
 
 if __name__ == "__main__":
