@@ -18,7 +18,7 @@ def apply_design() -> None:
         """
         <style>
         :root {
-            --bg:#f5f7fb; --surface:#ffffff; --text:#172033; --muted:#667085;
+            --bg:#f5f7fb; --surface:#ffffff; --text:#17351F; --muted:#5E7464;
             --border:#e4e9f2; --primary:#2f6fed; --primary-dark:#2459bf;
             --green:#1f9d74; --yellow:#f0b429; --red:#e05260;
             --shadow:0 10px 30px rgba(20,40,80,.07);
@@ -71,7 +71,7 @@ def apply_design() -> None:
             letter-spacing:.035em; text-align:left; padding:13px 16px; border-bottom:1px solid var(--border);
         }
         .premium-table td {
-            padding:15px 16px; border-bottom:1px solid #edf1f6; color:#253047; font-size:14px;
+            padding:15px 16px; border-bottom:1px solid #edf1f6; color:#274630; font-size:14px;
             vertical-align:middle;
         }
         .premium-table tbody tr:hover { background:#fbfdff; }
@@ -112,7 +112,63 @@ def apply_design() -> None:
             .table-card { overflow-x:auto; }
             .premium-table { min-width:950px; }
         }
-        </style>
+        
+/* --- Egységes zöld arculat --- */
+div.stButton > button[kind="primary"],
+div.stDownloadButton > button {
+    background: #1FA64A !important;
+    border-color: #1FA64A !important;
+    color: white !important;
+}
+
+div.stButton > button[kind="primary"]:hover,
+div.stDownloadButton > button:hover {
+    background: #17853B !important;
+    border-color: #17853B !important;
+}
+
+div.stButton > button:not([kind="primary"]) {
+    border-color: #BDE9C9 !important;
+}
+
+div.stButton > button:not([kind="primary"]):hover {
+    border-color: #1FA64A !important;
+    color: #17853B !important;
+    background: #F4FBF5 !important;
+}
+
+div[data-baseweb="tab-list"] button[aria-selected="true"] {
+    color: #17853B !important;
+    border-bottom-color: #1FA64A !important;
+}
+
+div[data-baseweb="tab-highlight"] {
+    background-color: #1FA64A !important;
+}
+
+div[data-testid="stCheckbox"] svg,
+div[data-testid="stRadio"] svg {
+    color: #1FA64A !important;
+}
+
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="input"] > div:focus-within,
+textarea:focus {
+    border-color: #1FA64A !important;
+    box-shadow: 0 0 0 1px #1FA64A !important;
+}
+
+div[data-testid="stMetricValue"] {
+    color: #17351F !important;
+}
+
+.green-accent-card {
+    background: linear-gradient(135deg, #F4FBF5 0%, #FFFFFF 100%);
+    border: 1px solid #DDF5E4;
+    border-left: 5px solid #1FA64A;
+}
+
+</style>
         """,
         unsafe_allow_html=True,
     )
@@ -210,8 +266,8 @@ def show_courier_dialog() -> None:
         <div class="detail-card" style="padding:20px 22px;margin-bottom:16px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;">
             <div>
-              <div style="font-size:24px;font-weight:850;color:#172033;">{html.escape(str(row['Futár']))}</div>
-              <div style="color:#667085;margin-top:4px;">
+              <div style="font-size:24px;font-weight:850;color:#17351F;">{html.escape(str(row['Futár']))}</div>
+              <div style="color:#5E7464;margin-top:4px;">
                 Courier ID: {html.escape(courier_id)} · {html.escape(str(row['Branch']))} · {html.escape(str(row['Raktár']))}
               </div>
             </div>
@@ -400,8 +456,8 @@ def show_courier_dialog() -> None:
                 """
                 <div class="detail-card">
                   <h4>Aktuális céltartalék</h4>
-                  <div style="font-size:28px;font-weight:850;color:#172033;">65 000 Ft</div>
-                  <div style="color:#667085;margin-top:6px;">Dizájnadat</div>
+                  <div style="font-size:28px;font-weight:850;color:#17351F;">65 000 Ft</div>
+                  <div style="color:#5E7464;margin-top:6px;">Dizájnadat</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -665,6 +721,171 @@ def show_bulk_tig_dialog() -> None:
             st.success("A tömeges TIG-ek profilba feltöltése indulna.")
 
 
+
+@st.dialog("Paraméterértékek", width="large")
+def show_parameter_catalog_dialog() -> None:
+    st.subheader("Paraméterértékek katalógusa")
+    st.caption(
+        "Vállalkozói díjak, futárdíjak és időszakos bónuszok "
+        "érvényességi idővel. Ez továbbra is designer nézet."
+    )
+
+    catalog = pd.DataFrame(
+        [
+            {
+                "Kategória": "Vállalkozói díj",
+                "Level": "",
+                "Megnevezés": "Alap vállalkozói díj",
+                "Érték": "1 250 Ft / óra",
+                "Érvényes ettől": "2026-01-01",
+                "Érvényes eddig": "2026-06-30",
+                "Státusz": "Lejárt",
+            },
+            {
+                "Kategória": "Vállalkozói díj",
+                "Level": "",
+                "Megnevezés": "Alap vállalkozói díj",
+                "Érték": "1 350 Ft / óra",
+                "Érvényes ettől": "2026-07-01",
+                "Érvényes eddig": "2026-12-31",
+                "Státusz": "Aktív",
+            },
+            {
+                "Kategória": "Futárdíj",
+                "Level": "",
+                "Megnevezés": "Alap futárdíj",
+                "Érték": "950 Ft / cím",
+                "Érvényes ettől": "2026-07-01",
+                "Érvényes eddig": "2026-12-31",
+                "Státusz": "Aktív",
+            },
+            {
+                "Kategória": "Időszakos bónusz",
+                "Level": "",
+                "Megnevezés": "Nyári teljesítménybónusz",
+                "Érték": "15 000 Ft",
+                "Érvényes ettől": "2026-07-01",
+                "Érvényes eddig": "2026-08-31",
+                "Státusz": "Aktív",
+            },
+        ]
+    )
+
+    filter1, filter2 = st.columns([1, 1])
+    category_filter = filter1.selectbox(
+        "Kategória",
+        ["Összes", "Vállalkozói díj", "Futárdíj", "Időszakos bónusz"],
+        key="ui_parameter_category_filter",
+    )
+    status_filter = filter2.selectbox(
+        "Státusz",
+        ["Összes", "Aktív", "Jövőbeni", "Lejárt"],
+        key="ui_parameter_status_filter",
+    )
+
+    shown = catalog.copy()
+    if category_filter != "Összes":
+        shown = shown[shown["Kategória"] == category_filter]
+    if status_filter != "Összes":
+        shown = shown[shown["Státusz"] == status_filter]
+
+    shown = shown[["Kategória","Level","Megnevezés","Érték","Érvényes ettől","Érvényes eddig","Státusz"]]
+    st.dataframe(shown, use_container_width=True, hide_index=True)
+
+    row_action1, row_action2 = st.columns(2)
+    if row_action1.button(
+        "Kiválasztott szerkesztése",
+        use_container_width=True,
+        key="ui_parameter_edit",
+        help="Designer gomb, még nem módosít adatot.",
+    ):
+        st.info("A kiválasztott katalóguselem szerkesztőnézete nyílna meg.")
+
+    if row_action2.button(
+        "Kiválasztott törlése",
+        use_container_width=True,
+        key="ui_parameter_delete",
+        help="Designer gomb, még nem töröl adatot.",
+    ):
+        st.warning("A kiválasztott katalóguselem törlésre kerülne.")
+
+    st.divider()
+    st.markdown("#### Új paraméter felvétele")
+
+    form_left, form_right = st.columns(2)
+
+    with form_left:
+        parameter_type = st.selectbox(
+            "Paraméter típusa",
+            ["Vállalkozói díj", "Futárdíj", "Időszakos bónusz"],
+            key="ui_parameter_type",
+        )
+        st.text_input("Level", key="ui_parameter_level")
+        st.text_input(
+            "Megnevezés",
+            placeholder="Például: Alap futárdíj",
+            key="ui_parameter_name",
+        )
+        value_col1, value_col2 = st.columns([1.35, 0.65])
+        value_col1.number_input(
+            "Érték",
+            min_value=0,
+            step=100,
+            key="ui_parameter_value",
+        )
+        value_col2.selectbox(
+            "Egység",
+            ["Ft", "Ft / óra", "Ft / cím", "%"],
+            key="ui_parameter_unit",
+        )
+
+    with form_right:
+        st.date_input(
+            "Érvényes ettől",
+            key="ui_parameter_start_date",
+        )
+        st.date_input(
+            "Érvényes eddig",
+            key="ui_parameter_end_date",
+        )
+        st.text_area(
+            "Megjegyzés",
+            placeholder="Belső megjegyzés vagy feltétel.",
+            key="ui_parameter_note",
+        )
+
+    if parameter_type == "Időszakos bónusz":
+        st.markdown("##### Bónusz beállítások")
+        bonus1, bonus2 = st.columns(2)
+        bonus1.selectbox(
+            "Bónusz alkalmazása",
+            ["Minden futárra", "Csak vállalkozókra", "Csak alkalmazott futárokra"],
+            key="ui_bonus_scope",
+        )
+        bonus2.selectbox(
+            "Bónusz gyakorisága",
+            ["Egyszeri", "Napi", "Heti", "Havi"],
+            key="ui_bonus_frequency",
+        )
+
+    save1, save2 = st.columns([1, 1])
+    if save1.button(
+        "Paraméter mentése",
+        type="primary",
+        use_container_width=True,
+        key="ui_parameter_save",
+        help="Csak designer gomb, még nincs mögötte mentési logika.",
+    ):
+        st.success("Az új paraméter bekerülne a katalógusba.")
+
+    if save2.button(
+        "Űrlap törlése",
+        use_container_width=True,
+        key="ui_parameter_form_clear",
+        help="Csak designer gomb.",
+    ):
+        st.info("Az űrlap mezői törlődnének.")
+
 @st.dialog("Bejelentések", width="large")
 def show_reports_dialog() -> None:
     df = st.session_state.get("current_filtered_data", get_demo_data())
@@ -742,7 +963,7 @@ def show_report_detail_dialog() -> None:
     st.markdown(
         f"""
         <div class="detail-card">
-          <div style="font-size:15px;line-height:1.6;color:#253047;">
+          <div style="font-size:15px;line-height:1.6;color:#274630;">
             {html.escape(report_message)}
           </div>
         </div>
@@ -852,6 +1073,52 @@ def show_new_settlement_page() -> None:
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
             st.rerun()
+
+        st.divider()
+        st.markdown("### Excel számítás")
+        st.caption("A szűrőktől független feltöltési terület.")
+
+        if "excel_upload_version" not in st.session_state:
+            st.session_state["excel_upload_version"] = 0
+
+        uploaded_excel = st.file_uploader(
+            "Excel feltöltése",
+            type=["xlsx", "xls"],
+            key=f"calculation_excel_upload_{st.session_state['excel_upload_version']}",
+            help="Designer elem, az Excel tartalma még nem kerül feldolgozásra.",
+        )
+
+        if uploaded_excel is not None:
+            st.success(f"Kiválasztva: {uploaded_excel.name}")
+
+        excel_action1, excel_action2 = st.columns(2)
+
+        if excel_action1.button(
+            "Számítás betöltése",
+            type="primary",
+            use_container_width=True,
+            disabled=uploaded_excel is None,
+            key="load_excel_calculation",
+            help="Csak designer gomb, nincs mögötte számítási logika.",
+        ):
+            st.session_state["excel_calculation_loaded"] = True
+            st.toast("Az Excel számítás betöltött állapotot kapna.", icon="✅")
+
+        if excel_action2.button(
+            "Törlés",
+            use_container_width=True,
+            disabled=uploaded_excel is None
+            and not st.session_state.get("excel_calculation_loaded", False),
+            key="delete_excel_calculation",
+            help="A kiválasztott designer Excel állapot törlése.",
+        ):
+            st.session_state["excel_upload_version"] += 1
+            st.session_state["excel_calculation_loaded"] = False
+            st.rerun()
+
+        if st.session_state.get("excel_calculation_loaded", False):
+            st.info("A számítás designer állapotban betöltve.")
+
         st.markdown('<p class="side-note">Könnyű, külső UI-csomag nélküli felület. A régi elszámolási oldalt nem módosítja.</p>',unsafe_allow_html=True)
 
     filtered=data.copy()
@@ -901,14 +1168,16 @@ def show_new_settlement_page() -> None:
     render_table(filtered)
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
-    a,b,c,d=st.columns(4)
+    a,b,c,d,e=st.columns(5)
     if a.button("Tömeges elszámolás",use_container_width=True):
         show_bulk_settlement_dialog()
     if b.button("Tömeges TIG",use_container_width=True):
         show_bulk_tig_dialog()
     if c.button("Bejelentések",use_container_width=True):
         show_reports_dialog()
-    d.download_button(
+    if d.button("Paraméterértékek",use_container_width=True):
+        show_parameter_catalog_dialog()
+    e.download_button(
         "Export Excel",
         data=build_excel_export(filtered),
         file_name="elszamolas_export.xlsx",
