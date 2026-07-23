@@ -131,6 +131,7 @@ def build_tig_pdf_bytes(
     document_month: date,
     transfer_amount_huf: float,
     cash_amount_huf: float = 0,
+    tip_amount_huf: float = 0,
 ) -> bytes:
     """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
     if not REPORTLAB_AVAILABLE:
@@ -807,7 +808,7 @@ def _render_task_tig_generator(task_row, document_month):
     courier_name = str(task_row.get("Futár") or "").strip()
     master_row = _task_master_row(courier_id)
 
-    def first_value(*names, default=""):
+    def first_value(*names, default=""):    
         for name in names:
             value = master_row.get(name)
             if value is not None and str(value).strip():
@@ -850,13 +851,16 @@ def _render_task_tig_generator(task_row, document_month):
             else:
                 try:
                     st.session_state[state_key] = build_tig_pdf_bytes(
-                        courier_name=seller_name.strip(),
-                        courier_address=address.strip(),
-                        courier_tax_number=tax_number.strip(),
+                    generated_tig_bytes = build_tig_pdf_bytes(
+                        courier_name=str(tig_seller_name).strip(),
+                        courier_address=str(tig_address).strip(),
+                        courier_tax_number=str(tig_tax_number).strip(),
                         courier_id=courier_id,
-                        document_month=month_start_from_date(document_month),
-                        transfer_amount_huf=transfer_amount,
-                        cash_amount_huf=cash_amount,
+                        document_month=document_month,
+                        transfer_amount_huf=tig_transfer_amount,
+                        cash_amount_huf=abs(float(selected_row.get("atm_balance_huf", 0) or 0)),
+                        tip_amount_huf=float(selected_row.get("tip_huf", 0) or 0),
+                    )
                     )
                     st.success("A TIG elkészült.")
                 except Exception as exc:
@@ -2291,14 +2295,15 @@ def show_invoice_summary_page():
                         try:
                             transfer_amount = int(round(float(tig_row.get("payable_total_huf", 0) or 0)))
                             tig_pdf_bytes = build_tig_pdf_bytes(
-                                courier_name=seller_name,
-                                courier_address=seller_address,
-                                courier_tax_number=tax_number,
-                                courier_id=tig_courier_id,
-                                document_month=document_month,
-                                transfer_amount_huf=transfer_amount,
-                                cash_amount_huf=0,
-                            )
+                            courier_name=seller_name,
+                            courier_address=seller_address,
+                            courier_tax_number=tax_number,
+                            courier_id=tig_courier_id,
+                            document_month=document_month,
+                            transfer_amount_huf=transfer_amount,
+                            cash_amount_huf=abs(float(tig_row.get("atm_balance_huf", 0) or 0)),
+                            tip_amount_huf=float(tig_row.get("tip_huf", 0) or 0),
+                        )
                             tig_file_name = f"jitt_tig_{tig_courier_id}_{slugify_filename(tig_courier_name)}_{document_month.strftime('%Y-%m')}.pdf"
                             upload_peopleforce_document_bytes(
                                 courier_id=tig_courier_id,
