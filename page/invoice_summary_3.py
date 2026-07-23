@@ -379,20 +379,13 @@ def build_tig_pdf_bytes(
             ]
         )
 
-    if vat_payer:
-        service_vat = int(round(service * 0.27))
-        cash_vat = int(round(cash * 0.27))
-        final_total = total + service_vat + cash_vat
-    else:
-        final_total = total
-
     total_row = len(rows)
     rows.append(
         [
             Paragraph("VÉGÖSSZEG:", bold),
             "",
             "",
-            Paragraph(_huf(final_total), red_bold),
+            Paragraph(_huf(total), red_bold),
         ]
     )
 
