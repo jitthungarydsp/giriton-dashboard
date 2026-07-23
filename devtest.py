@@ -518,23 +518,151 @@ def show_courier_dialog() -> None:
 @st.dialog("Tömeges elszámolás", width="large")
 def show_bulk_settlement_dialog() -> None:
     df = st.session_state.get("current_filtered_data", get_demo_data())
-    st.caption("Az aktuális szűrés alapján.")
-    st.dataframe(df[["Courier ID","Futár","Branch","Számítás módja","Kifizetendő","Státusz"]], use_container_width=True, hide_index=True)
-    st.checkbox("Összes kijelölése", value=True, key="bulk_settlement_all")
-    st.checkbox("Már feltöltött elszámolások kihagyása", value=True)
-    if st.button("Tömeges elszámolások generálása", type="primary", use_container_width=True):
-        st.success(f"{len(df)} elszámolás generálása elindult.")
+
+    st.subheader("Tömeges elszámolás")
+    st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
+
+    if df.empty:
+        st.info("Nincs feldolgozható futár.")
+        return
+
+    preview_df = df[
+        ["Courier ID", "Futár", "Branch", "Számítás módja", "Kifizetendő", "Státusz"]
+    ].copy()
+    preview_df["Kifizetendő"] = preview_df["Kifizetendő"].map(format_huf)
+
+    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+    precheck = st.checkbox(
+        "Előellenőrzés megtörtént",
+        key="bulk_settlement_precheck",
+        help="A tömeges gyártás csak ennek bepipálása után indítható.",
+    )
+
+    generate_key = "bulk_settlement_preview_ready"
+
+    if st.button(
+        "Tömeges elszámolás gyártása",
+        type="primary",
+        use_container_width=True,
+        disabled=not precheck,
+        key="bulk_settlement_generate",
+    ):
+        st.session_state[generate_key] = True
+
+    if st.session_state.get(generate_key):
+        st.success("A tömeges gyártás designer állapota elkészült.")
+        st.markdown("#### 1 darab minta PDF")
+
+        pdf_bytes = build_demo_preview_pdf(
+            "Tömeges elszámolás – minta",
+            f"Szűrésben szereplő futárok: {len(df)}",
+        )
+
+        st.download_button(
+            "Minta elszámolás PDF megnyitása / letöltése",
+            data=pdf_bytes,
+            file_name="tomeges_elszamolas_minta.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key="bulk_settlement_preview_pdf",
+        )
+
+        action1, action2 = st.columns(2)
+
+        if action1.button(
+            "Elfogadás",
+            type="primary",
+            use_container_width=True,
+            key="bulk_settlement_accept",
+            help="Csak designer gomb.",
+        ):
+            st.session_state["bulk_settlement_accepted"] = True
+            st.success("A minta elszámolás elfogadott állapotot kapna.")
+
+        if action2.button(
+            "Feltöltés profilba",
+            use_container_width=True,
+            disabled=not st.session_state.get("bulk_settlement_accepted", False),
+            key="bulk_settlement_upload",
+            help="Csak designer gomb.",
+        ):
+            st.success("A tömeges elszámolások profilba feltöltése indulna.")
 
 
 @st.dialog("Tömeges TIG", width="large")
 def show_bulk_tig_dialog() -> None:
     df = st.session_state.get("current_filtered_data", get_demo_data())
-    st.caption("Az aktuális szűrés alapján.")
-    st.dataframe(df[["Courier ID","Futár","Branch","Számítás módja","Kifizetendő"]], use_container_width=True, hide_index=True)
-    st.checkbox("Összes kijelölése", value=True, key="bulk_tig_all")
-    st.checkbox("Már feltöltött TIG-ek kihagyása", value=True)
-    if st.button("Tömeges TIG-ek generálása", type="primary", use_container_width=True):
-        st.success(f"{len(df)} TIG generálása elindult.")
+
+    st.subheader("Tömeges TIG")
+    st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
+
+    if df.empty:
+        st.info("Nincs feldolgozható futár.")
+        return
+
+    preview_df = df[
+        ["Courier ID", "Futár", "Branch", "Számítás módja", "Kifizetendő"]
+    ].copy()
+    preview_df["Kifizetendő"] = preview_df["Kifizetendő"].map(format_huf)
+
+    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+    precheck = st.checkbox(
+        "Előellenőrzés megtörtént",
+        key="bulk_tig_precheck",
+        help="A tömeges gyártás csak ennek bepipálása után indítható.",
+    )
+
+    generate_key = "bulk_tig_preview_ready"
+
+    if st.button(
+        "Tömeges TIG gyártása",
+        type="primary",
+        use_container_width=True,
+        disabled=not precheck,
+        key="bulk_tig_generate",
+    ):
+        st.session_state[generate_key] = True
+
+    if st.session_state.get(generate_key):
+        st.success("A tömeges TIG gyártás designer állapota elkészült.")
+        st.markdown("#### 1 darab minta PDF")
+
+        pdf_bytes = build_demo_preview_pdf(
+            "Tömeges TIG – minta",
+            f"Szűrésben szereplő futárok: {len(df)}",
+        )
+
+        st.download_button(
+            "Minta TIG PDF megnyitása / letöltése",
+            data=pdf_bytes,
+            file_name="tomeges_tig_minta.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key="bulk_tig_preview_pdf",
+        )
+
+        action1, action2 = st.columns(2)
+
+        if action1.button(
+            "Elfogadás",
+            type="primary",
+            use_container_width=True,
+            key="bulk_tig_accept",
+            help="Csak designer gomb.",
+        ):
+            st.session_state["bulk_tig_accepted"] = True
+            st.success("A minta TIG elfogadott állapotot kapna.")
+
+        if action2.button(
+            "Feltöltés profilba",
+            use_container_width=True,
+            disabled=not st.session_state.get("bulk_tig_accepted", False),
+            key="bulk_tig_upload",
+            help="Csak designer gomb.",
+        ):
+            st.success("A tömeges TIG-ek profilba feltöltése indulna.")
 
 
 @st.dialog("Bejelentések", width="large")
@@ -652,6 +780,46 @@ def show_report_detail_dialog() -> None:
         if not response_text.strip():
             st.info("A designer nézetben a válasz mező üresen is hagyható.")
         st.success("A bejelentés lezárt állapotot kapna.")
+
+
+def build_demo_preview_pdf(title: str, subtitle: str) -> bytes:
+    """
+    Csak designer előnézeti PDF.
+    Nincs mögötte üzleti logika vagy valódi elszámolási számítás.
+    """
+    from io import BytesIO
+
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        return (
+            f"{title}\n\n{subtitle}\n\nDesigner előnézet."
+        ).encode("utf-8")
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(50, height - 70, title)
+
+    pdf.setFont("Helvetica", 11)
+    pdf.drawString(50, height - 100, subtitle)
+    pdf.drawString(50, height - 130, "Designer előnézet – nincs mögötte üzleti logika.")
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(50, height - 180, "Minta dokumentum")
+
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(50, height - 210, "Futár: Kiss Péter")
+    pdf.drawString(50, height - 230, "Courier ID: 7486")
+    pdf.drawString(50, height - 250, "Branch: Kifli")
+    pdf.drawString(50, height - 270, "Összeg: 468 500 Ft")
+
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
 
 
 def build_excel_export(df: pd.DataFrame) -> bytes:
