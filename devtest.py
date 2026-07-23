@@ -168,6 +168,88 @@ div[data-testid="stMetricValue"] {
     border-left: 5px solid #1FA64A;
 }
 
+
+.summary-donut-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin: 18px 0 22px 0;
+}
+.summary-donut-card {
+    background: #ffffff;
+    border: 1px solid #DDF5E4;
+    border-radius: 20px;
+    padding: 18px 22px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 165px;
+    box-shadow: 0 10px 28px rgba(23, 133, 59, 0.08);
+}
+.summary-donut-title {
+    color: #5E7464;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.summary-donut-value {
+    color: #17351F;
+    font-size: 28px;
+    line-height: 1.1;
+    font-weight: 850;
+}
+.summary-donut-note {
+    color: #7A8F7F;
+    font-size: 12px;
+    margin-top: 8px;
+}
+.summary-donut {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    position: relative;
+    flex: 0 0 120px;
+    display: grid;
+    place-items: center;
+}
+.summary-donut-primary {
+    background: conic-gradient(#1FA64A 0 72%, #DDF5E4 72% 100%);
+}
+.summary-donut-secondary {
+    background: conic-gradient(#17853B 0 66%, #DDF5E4 66% 100%);
+}
+.summary-donut::after {
+    content: "";
+    position: absolute;
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: #ffffff;
+}
+.summary-donut-center {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    color: #17351F;
+    line-height: 1.05;
+}
+.summary-donut-center strong {
+    display: block;
+    font-size: 16px;
+    font-weight: 850;
+}
+.summary-donut-center span {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #5E7464;
+}
+@media (max-width: 900px) {
+    .summary-donut-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 </style>
         """,
         unsafe_allow_html=True,
@@ -1147,6 +1229,41 @@ def show_new_settlement_page() -> None:
         <div class="premium-hero">
           <div class="hero-left"><div class="badge">ÚJ MODUL</div><h1>Új Elszámolási oldal</h1><p>Gyors, átlátható és biztonságos futárelszámolási felület.</p></div>
           <div class="month-pill"><div class="label">Elszámolási hónap</div><div class="value">{html.escape(selected_month)}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="summary-donut-grid">
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Futárdíj összesen</div>
+              <div class="summary-donut-value">103,2 M Ft</div>
+              <div class="summary-donut-note">2026. július</div>
+            </div>
+            <div class="summary-donut summary-donut-primary">
+              <div class="summary-donut-center">
+                <strong>103,2 M</strong>
+                <span>Ft</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Vállalkozói díj összesen</div>
+              <div class="summary-donut-value">15,3 M Ft</div>
+              <div class="summary-donut-note">2026. július</div>
+            </div>
+            <div class="summary-donut summary-donut-secondary">
+              <div class="summary-donut-center">
+                <strong>15,3 M</strong>
+                <span>Ft</span>
+              </div>
+            </div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
