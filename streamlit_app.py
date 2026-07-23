@@ -1,5 +1,7 @@
 import streamlit as st
 
+
+from page.new_invoice_summary_page import show_new_invoice_summary_page
 from page.invoice_summary import show_invoice_summary_page
 from page.monthly_invoice_tasks import show_monthly_invoice_tasks_page
 from page.monthly_invoice_editor import (
@@ -59,12 +61,15 @@ else:
         "Konfiguráció",
         "Bónusz / Málusz",
         "Biztosítás / Céltartalék",
+        "Új Elszámolási oldal"
     ]
 
 selected_page = st.sidebar.radio(
     "Menü",
     settlement_menu,
 )
+
+
 
 
 # ==========================================================
@@ -94,6 +99,9 @@ elif selected_page == "Bónusz / Málusz":
 
 elif selected_page == "Biztosítás / Céltartalék":
     show_insurance_reserve_page()
+
+elif selected_page == "Új Elszámolási oldal":
+    show_new_invoice_summary_page()
 
 else:
     st.error("A kiválasztott oldal nem található.")
