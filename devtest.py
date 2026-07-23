@@ -1,4 +1,5 @@
 import html
+import traceback
 from datetime import date
 from streamlit_autorefresh import st_autorefresh
 
@@ -1233,7 +1234,19 @@ def show_new_settlement_page() -> None:
 
             except Exception as exc:
                 st.session_state["excel_calculation_loaded"] = False
-                st.error(f"Excel import sikertelen: {exc}")
+                error_details = "".join(
+                    traceback.format_exception(
+                        type(exc),
+                        exc,
+                        exc.__traceback__,
+                    )
+                )
+
+                st.error(
+                    f"Excel import sikertelen: {type(exc).__name__}: {exc!r}"
+                )
+                with st.expander("Technikai hiba r?szletei", expanded=True):
+                    st.code(error_details, language="text")
 
         import_session_id = st.session_state.get("settlement_import_session_id")
 
