@@ -436,4 +436,3 @@ def show_new_settlement_page() -> None:
 
 
 if __name__ == "__main__":
-    show_new_settlement_page()
