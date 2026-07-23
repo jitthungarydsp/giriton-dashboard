@@ -112,25 +112,6 @@ def normalize_text(value):
     return str(value or "").strip()
 
 
-def normalize_courier_id(value):
-    """Normalize courier IDs so values like 7644 and 7644.0 match."""
-    if value is None:
-        return ""
-
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none", "null"}:
-        return ""
-
-    try:
-        numeric = float(text.replace(",", "."))
-        if numeric.is_integer():
-            return str(int(numeric))
-    except (TypeError, ValueError):
-        pass
-
-    return text
-
-
 def normalize_person_key(value):
     text = unicodedata.normalize(
         "NFKD",
@@ -169,7 +150,7 @@ def _invoice_identity_series(frame):
     """Courier ID is authoritative; the normalized driver key is the fallback."""
     courier_ids = frame.get(
         "courier_id", pd.Series("", index=frame.index, dtype=str)
-    ).fillna("").map(normalize_courier_id)
+    ).fillna("").map(normalize_text)
     match_keys = frame.get(
         "driver_match_key", pd.Series("", index=frame.index, dtype=str)
     ).fillna("").map(normalize_text)
@@ -187,7 +168,7 @@ def collapse_invoice_rows_by_courier(grouped):
     result = grouped.copy()
     if "courier_id" not in result.columns:
         result["courier_id"] = ""
-    result["courier_id"] = result["courier_id"].fillna("").map(normalize_courier_id)
+    result["courier_id"] = result["courier_id"].fillna("").map(normalize_text)
 
     known_ids = (
         result[result["courier_id"] != ""]
@@ -279,7 +260,7 @@ def build_invoice_regeneration_candidates(final_df, invoice_documents_df=None):
     ).fillna("").map(normalize_text)
     if "courier_id" not in routes.columns:
         routes["courier_id"] = ""
-    routes["courier_id"] = routes["courier_id"].fillna("").map(normalize_courier_id)
+    routes["courier_id"] = routes["courier_id"].fillna("").map(normalize_text)
 
     known_route_ids = (
         routes[routes["courier_id"] != ""]
@@ -302,7 +283,7 @@ def build_invoice_regeneration_candidates(final_df, invoice_documents_df=None):
     if not documents.empty:
         documents["courier_id"] = documents.get(
             "courier_id", pd.Series("", index=documents.index)
-        ).fillna("").map(normalize_courier_id)
+        ).fillna("").map(normalize_text)
         documents["driver_match_key"] = documents.get(
             "courier_name", pd.Series("", index=documents.index)
         ).fillna("").map(normalize_person_key)
@@ -1224,7 +1205,7 @@ def build_driver_invoice_summary(
             ["driver_name", "worksheet_name", "courier_id"]
         ].copy()
         route_courier_ids["courier_id"] = (
-            route_courier_ids["courier_id"].fillna("").map(normalize_courier_id)
+            route_courier_ids["courier_id"].fillna("").map(normalize_text)
         )
         route_courier_ids = (
             route_courier_ids[route_courier_ids["courier_id"] != ""]
@@ -1345,7 +1326,7 @@ def build_driver_invoice_summary(
             pd.Series("", index=bonus_df.index),
         ).map(normalize_bonus_worksheet)
         if "courier_id" in bonus_df.columns:
-            bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_courier_id)
+            bonus_df["courier_id"] = bonus_df["courier_id"].map(normalize_text)
         bonus_df = add_numeric_columns(
             bonus_df,
             ["bonus_huf"],
@@ -1401,7 +1382,7 @@ def build_driver_invoice_summary(
             )
             grouped["courier_id"] = grouped["courier_id"].where(
                 grouped["courier_id"] != "",
-                grouped["_bonus_courier_id"].fillna("").map(normalize_courier_id),
+                grouped["_bonus_courier_id"].fillna("").map(normalize_text),
             )
             grouped = grouped.drop(columns=["_bonus_courier_id"])
     else:
@@ -1411,7 +1392,7 @@ def build_driver_invoice_summary(
         penalty_df = penalty_df.copy()
         penalty_df["driver_name"] = penalty_df["driver_name"].map(normalize_text)
         if "courier_id" in penalty_df.columns:
-            penalty_df["courier_id"] = penalty_df["courier_id"].map(normalize_courier_id)
+            penalty_df["courier_id"] = penalty_df["courier_id"].map(normalize_text)
         penalty_df = add_numeric_columns(
             penalty_df,
             ["amount_huf"],
@@ -1447,7 +1428,7 @@ def build_driver_invoice_summary(
             )
             grouped["courier_id"] = grouped["courier_id"].where(
                 grouped["courier_id"] != "",
-                grouped["_penalty_courier_id"].fillna("").map(normalize_courier_id),
+                grouped["_penalty_courier_id"].fillna("").map(normalize_text),
             )
             grouped = grouped.drop(columns=["_penalty_courier_id"])
     else:
@@ -1468,7 +1449,7 @@ def build_driver_invoice_summary(
         source["driver_match_key"] = source["driver_name"].map(normalize_person_key)
         if "courier_id" not in source.columns:
             source["courier_id"] = ""
-        source["courier_id"] = source["courier_id"].fillna("").map(normalize_courier_id)
+        source["courier_id"] = source["courier_id"].fillna("").map(normalize_text)
 
         ids = (
             source[source["courier_id"] != ""]
@@ -1477,7 +1458,7 @@ def build_driver_invoice_summary(
         )
         if "courier_id" not in grouped.columns:
             grouped["courier_id"] = ""
-        grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_courier_id)
+        grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_text)
         missing_grouped_id = grouped["courier_id"] == ""
         grouped.loc[missing_grouped_id, "courier_id"] = (
             grouped.loc[missing_grouped_id, "driver_match_key"].map(ids).fillna("")
@@ -1546,7 +1527,7 @@ def build_driver_invoice_summary(
 
     if "courier_id" not in grouped.columns:
         grouped["courier_id"] = ""
-    grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_courier_id)
+    grouped["courier_id"] = grouped["courier_id"].fillna("").map(normalize_text)
     manual_summary = build_manual_item_summary(manual_df)
     if not manual_summary.empty:
         grouped = grouped.merge(
@@ -1716,81 +1697,51 @@ def build_driver_invoice_summary(
         + grouped["atm_effect_huf"]
     )
 
-    def parse_ct_z_ft(value):
-        """CT_Z_FT mező biztonságos számmá alakítása."""
-        if value is None:
-            return 0
-
-        text = str(value).strip()
-        if not text:
-            return 0
-
-        text = (
-            text.replace("Ft", "")
-                .replace("ft", "")
-                .replace(" ", "")
-                .replace(".", "")
-                .replace(",", "")
-        )
-
-        try:
-            return int(text)
-        except ValueError:
-            return 0
-
-
-    reserve_lookup = {}
-
+    reserve_ids = set()
+    reserve_names = set()
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
-
-        for _, r in reserve_source.iterrows():
-            key = normalize_courier_id(r.get("courier_ID"))
-            if key:
-                reserve_lookup[key] = {
-                    "insurance_active": bool(r.get("insurance_active")),
-                    "ct_z_ft": parse_ct_z_ft(r.get("CT_Z_FT")),
-                }
-
-
-    def calculate_deductions(row):
-        info = reserve_lookup.get(
-            normalize_courier_id(row.get("courier_id")),
-            None,
-        )
-
-        insurance = 0
-        reserve = 0
-
-        if info and info["insurance_active"]:
-            insurance = INSURANCE_DEDUCTION_HUF
-
-            if info["ct_z_ft"] < 350_000:
-                reserve = min(
-                    max(row["payable_before_reserve_huf"], 0)
-                    * TARGET_RESERVE_RATE,
-                    TARGET_RESERVE_MAX_HUF,
+        for column in ["USERNUMBER", "usernumber", "courier_id", "courier_number"]:
+            if column in reserve_source.columns:
+                reserve_ids.update(
+                    reserve_source[column]
+                    .fillna("")
+                    .map(normalize_text)
+                    .loc[lambda values: values != ""]
+                    .tolist()
+                )
+        for column in ["USERNAME", "username", "driver_name", "courier_name", "name"]:
+            if column in reserve_source.columns:
+                reserve_names.update(
+                    reserve_source[column]
+                    .fillna("")
+                    .map(normalize_person_key)
+                    .loc[lambda values: values != ""]
+                    .tolist()
                 )
 
-        return pd.Series(
-            {
-                "insurance_deduction_huf": insurance,
-                "reserve_deduction_huf": reserve,
-            }
-        )
-
-
-    grouped[
-        ["insurance_deduction_huf", "reserve_deduction_huf"]
-    ] = grouped.apply(calculate_deductions, axis=1)
-
+    grouped["target_reserve_member"] = grouped.apply(
+        lambda row: (
+            normalize_text(row.get("courier_id")) in reserve_ids
+            or row.get("driver_match_key") in reserve_names
+        ),
+        axis=1,
+    )
+    grouped["reserve_deduction_huf"] = grouped["payable_before_reserve_huf"].where(
+        grouped["target_reserve_member"],
+        0,
+    ).clip(lower=0).mul(TARGET_RESERVE_RATE).clip(upper=TARGET_RESERVE_MAX_HUF)
+    grouped["insurance_deduction_huf"] = grouped["target_reserve_member"].map(
+        lambda is_member: INSURANCE_DEDUCTION_HUF if is_member else 0
+    )
     grouped["payable_total_huf"] = (
         grouped["payable_before_reserve_huf"]
-        - grouped["insurance_deduction_huf"]
         - grouped["reserve_deduction_huf"]
+        - grouped["insurance_deduction_huf"]
     )
 
-    return grouped
+    return grouped.sort_values(["driver_name"], kind="stable").reset_index(drop=True)
+
 
 def build_display_summary(summary_df):
     if summary_df.empty:
@@ -2115,7 +2066,8 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
     route_df = route_df.copy()
     
     # Financial aggregation has already happened in build_driver_invoice_summary().
-    # This function only renders the rows it receives.
+    # This function only renders the rows it
+    # receives.
 
     for index, driver_row in summary_df.reset_index(drop=True).iterrows():
         driver_name = normalize_text(driver_row.get("driver_name")) or "Ismeretlen futar"
@@ -2128,9 +2080,9 @@ def build_invoice_pdf_bytes(driver_summary_df, route_df, title):
             else pd.Series("", index=route_df.index)
         )
         route_mask = route_driver_keys == driver_match_key
-        courier_id = normalize_courier_id(driver_row.get("courier_id"))
+        courier_id = normalize_text(driver_row.get("courier_id"))
         if courier_id and "courier_id" in route_df.columns:
-            route_courier_ids = route_df["courier_id"].fillna("").map(normalize_courier_id)
+            route_courier_ids = route_df["courier_id"].fillna("").map(normalize_text)
             route_mask = route_mask | route_courier_ids.eq(courier_id)
         driver_routes = route_df[route_mask].copy()
 
