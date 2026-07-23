@@ -122,25 +122,6 @@ def _huf(value):
     return f"{amount:,}".replace(",", " ") + " Ft"
 
 
-def _row_amount(row, *keys):
-    """Az első megtalált, számmá alakítható összeg."""
-    for key in keys:
-        try:
-            value = row.get(key, 0)
-        except AttributeError:
-            value = 0
-
-        if value is None or str(value).strip().lower() in {"", "nan", "none", "null"}:
-            continue
-
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-
-    return 0.0
-
-
 def build_tig_pdf_bytes(
     *,
     courier_name: str,
@@ -152,46 +133,12 @@ def build_tig_pdf_bytes(
     cash_amount_huf: float = 0,
     tip_amount_huf: float = 0,
 ) -> bytes:
-    """
-    Teljesítési igazolás PDF előállítása.
-
-    A transfer_amount_huf a teljes fizetendő összeg.
-    A KP és a borravaló ebből kerül külön sorra.
-    A -2- ÁFA-kódú adószám 27%-os ÁFA-kezelést jelent.
-    """
+    """Teljesítési igazolás PDF előállítása a kiválasztott futárnak."""
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError(
             "A TIG PDF előállításához hiányzik a reportlab csomag. "
             "Telepítsd a requirements.txt függőségeit."
         )
-
-    def to_int(value):
-        try:
-            return int(round(float(value or 0)))
-        except (TypeError, ValueError):
-            return 0
-
-    def is_vat_payer(value):
-        parts = re.sub(r"\s+", "", str(value or "")).split("-")
-        return len(parts) >= 2 and parts[1] == "2"
-
-    def split_gross(gross):
-        net = int(round(gross / 1.27))
-        return net, gross - net
-
-    total = max(to_int(transfer_amount_huf), 0)
-    cash = max(to_int(cash_amount_huf), 0)
-    tip = max(to_int(tip_amount_huf), 0)
-
-    if cash + tip > total:
-        raise ValueError(
-            "A KP és a borravaló összege nem lehet több "
-            "a teljes fizetendő összegnél."
-        )
-
-    service = total - cash - tip
-    vat_payer = is_vat_payer(courier_tax_number)
-
     regular_font, bold_font = _register_tig_font()
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -203,261 +150,146 @@ def build_tig_pdf_bytes(
         bottomMargin=14 * mm,
         title=f"TIG {document_month:%Y-%m} - {courier_name}",
     )
-
     styles = getSampleStyleSheet()
     normal = ParagraphStyle(
-        "TIGNormal",
-        parent=styles["Normal"],
-        fontName=regular_font,
-        fontSize=9.5,
-        leading=12,
-        textColor=colors.HexColor("#222222"),
+        "TIGNormal", parent=styles["Normal"], fontName=regular_font,
+        fontSize=9.5, leading=12, textColor=colors.HexColor("#222222")
     )
-    small = ParagraphStyle("TIGSmall", parent=normal, fontSize=8, leading=10)
+    small = ParagraphStyle(
+        "TIGSmall", parent=normal, fontSize=8, leading=10
+    )
     title_style = ParagraphStyle(
-        "TIGTitle",
-        parent=normal,
-        fontName=bold_font,
-        fontSize=21,
-        leading=24,
-        alignment=TA_LEFT,
-        spaceAfter=8,
+        "TIGTitle", parent=normal, fontName=bold_font, fontSize=21,
+        leading=24, alignment=TA_LEFT, spaceAfter=8
     )
     heading = ParagraphStyle(
-        "TIGHeading",
-        parent=normal,
-        fontName=bold_font,
-        fontSize=10,
-        textColor=colors.HexColor("#666666"),
+        "TIGHeading", parent=normal, fontName=bold_font, fontSize=10,
+        textColor=colors.HexColor("#666666")
     )
     center = ParagraphStyle("TIGCenter", parent=normal, alignment=TA_CENTER)
     right = ParagraphStyle("TIGRight", parent=normal, alignment=TA_RIGHT)
     bold = ParagraphStyle("TIGBold", parent=normal, fontName=bold_font)
     red_bold = ParagraphStyle(
-        "TIGRedBold",
-        parent=right,
-        fontName=bold_font,
-        textColor=colors.HexColor("#d60000"),
-        fontSize=12,
+        "TIGRedBold", parent=right, fontName=bold_font,
+        textColor=colors.HexColor("#d60000"), fontSize=12
     )
 
+    period_label = f"{document_month.year}. {document_month.strftime('%B')}"
     hu_months = {
         1: "január", 2: "február", 3: "március", 4: "április",
         5: "május", 6: "június", 7: "július", 8: "augusztus",
         9: "szeptember", 10: "október", 11: "november", 12: "december",
     }
     period_label = f"{document_month.year}. {hu_months[document_month.month]}"
+    transfer_amount_huf = int(round(float(transfer_amount_huf or 0)))
+    cash_amount_huf = int(round(float(cash_amount_huf or 0)))
 
     story = [
         Paragraph("TELJESÍTÉSI IGAZOLÁS", title_style),
         Spacer(1, 3 * mm),
     ]
 
-    party_table = Table(
+    party_data = [
         [
-            [
-                Paragraph("SZOLGÁLTATÓ (ELADÓ):", heading),
-                Paragraph("MEGBÍZÓ (VEVŐ):", heading),
-            ],
-            [
-                Paragraph(
-                    f"<b>{courier_name}</b><br/>{courier_address or '—'}<br/>"
-                    f"Adószám: <b>{courier_tax_number or '—'}</b>",
-                    normal,
-                ),
-                Paragraph(
-                    "<b>Just in Time Transport Hungary Kft.</b><br/>"
-                    "1201 Budapest, Atléta utca 44<br/>"
-                    "Adószám: <b>32649460-2-43</b>",
-                    normal,
-                ),
-            ],
+            Paragraph("SZOLGÁLTATÓ (ELADÓ):", heading),
+            Paragraph("MEGBÍZÓ (VEVŐ):", heading),
         ],
-        colWidths=[82 * mm, 82 * mm],
-    )
-    party_table.setStyle(
-        TableStyle(
-            [
-                ("BOX", (0, 0), (0, 1), 0.7, colors.HexColor("#cccccc")),
-                ("BOX", (1, 0), (1, 1), 0.7, colors.HexColor("#cccccc")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f5f5f5")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-            ]
-        )
-    )
+        [
+            Paragraph(
+                f"<b>{courier_name}</b><br/>{courier_address or '—'}<br/>"
+                f"Adószám: <b>{courier_tax_number or '—'}</b>", normal
+            ),
+            Paragraph(
+                "<b>Just in Time Transport Hungary Kft.</b><br/>"
+                "1201 Budapest, Atléta utca 44<br/>"
+                "Adószám: <b>32649460-2-43</b>", normal
+            ),
+        ],
+    ]
+    party_table = Table(party_data, colWidths=[82 * mm, 82 * mm])
+    party_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (0, 1), 0.7, colors.HexColor("#cccccc")),
+        ("BOX", (1, 0), (1, 1), 0.7, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f5f5f5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
     story.extend([party_table, Spacer(1, 5 * mm)])
 
-    timing = Table(
-        [
-            [
-                Paragraph("Számlázott időszak", bold),
-                Paragraph("Teljesítés napja", bold),
-                Paragraph("Fizetési határidő", bold),
-                Paragraph("Fizetés módja", bold),
-            ],
-            [
-                Paragraph(period_label, center),
-                Paragraph("Kiállítás napja + 8 nap", center),
-                Paragraph("Kiállítás napja + 8 nap", center),
-                Paragraph("Átutalás", center),
-            ],
-        ],
-        colWidths=[40 * mm, 48 * mm, 48 * mm, 30 * mm],
-    )
-    timing.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-            ]
-        )
-    )
+    timing = Table([
+        [Paragraph("Számlázott időszak", bold), Paragraph("Teljesítés napja", bold), Paragraph("Fizetési határidő", bold), Paragraph("Fizetés módja", bold)],
+        [Paragraph(period_label, center), Paragraph("Kiállítás napja + 8 nap", center), Paragraph("Kiállítás napja + 8 nap", center), Paragraph("Átutalás", center)],
+    ], colWidths=[40 * mm, 48 * mm, 48 * mm, 30 * mm])
+    timing.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f2f2f2")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
     story.extend([timing, Spacer(1, 5 * mm)])
 
-    rows = [
-        [
-            Paragraph("Tétel megnevezése", bold),
-            Paragraph("Nettó (Ft)", bold),
-            Paragraph("ÁFA (Ft)", bold),
-            Paragraph("Bruttó (Ft)", bold),
-        ]
-    ]
-
-    def add_service_row(label, gross):
-        if gross <= 0:
-            return
-
-        if vat_payer:
-            net, vat = split_gross(gross)
-            rows.append(
-                [
-                    Paragraph(label, normal),
-                    Paragraph(_huf(net), right),
-                    Paragraph(_huf(vat), right),
-                    Paragraph(_huf(gross), right),
-                ]
-            )
-        else:
-            rows.append(
-                [
-                    Paragraph(label, normal),
-                    Paragraph(_huf(gross), right),
-                    Paragraph("AAM", center),
-                    Paragraph(_huf(gross), right),
-                ]
-            )
-
-    add_service_row("Szállítási díj – átutalás (494107)", service)
-    add_service_row("Szállítási díj – KP (494107)", cash)
-
-    if tip:
-        rows.append(
-            [
-                Paragraph("Borravaló – adómentes", normal),
-                Paragraph(_huf(tip), right),
-                Paragraph("Adómentes", center),
-                Paragraph(_huf(tip), right),
-            ]
-        )
-
-    if len(rows) == 1:
-        rows.append(
-            [
-                Paragraph("Szállítási díj – átutalás (494107)", normal),
-                Paragraph(_huf(0), right),
-                Paragraph("27%" if vat_payer else "AAM", center),
-                Paragraph(_huf(0), right),
-            ]
-        )
-
-    total_row = len(rows)
-    rows.append(
-        [
-            Paragraph("VÉGÖSSZEG:", bold),
-            "",
-            "",
-            Paragraph(_huf(total), red_bold),
-        ]
-    )
-
-    amount_table = Table(
-        rows,
-        colWidths=[76 * mm, 32 * mm, 28 * mm, 32 * mm],
-    )
-    amount_table.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, total_row - 1), 0.7, colors.HexColor("#444444")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("SPAN", (0, total_row), (2, total_row)),
-                ("ALIGN", (0, total_row), (2, total_row), "RIGHT"),
-                ("BACKGROUND", (0, total_row), (-1, total_row), colors.HexColor("#f9f9f9")),
-                ("BOX", (0, total_row), (-1, total_row), 0.7, colors.HexColor("#444444")),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]
-        )
-    )
+    amount_table = Table([
+        [Paragraph("Tétel megnevezése", bold), Paragraph("Nettó (Ft)", bold), Paragraph("ÁFA (Ft)", bold), Paragraph("Bruttó (Ft)", bold)],
+        [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(transfer_amount_huf), right), Paragraph("AAM", center), Paragraph(_huf(transfer_amount_huf), right)],
+        [Paragraph("VÉGÖSSZEG:", bold), "", "", Paragraph(_huf(transfer_amount_huf), red_bold)],
+    ], colWidths=[76 * mm, 32 * mm, 28 * mm, 32 * mm])
+    amount_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, 1), 0.7, colors.HexColor("#444444")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#444444")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("SPAN", (0, 2), (2, 2)),
+        ("ALIGN", (0, 2), (2, 2), "RIGHT"),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#f9f9f9")),
+        ("BOX", (0, 2), (-1, 2), 0.7, colors.HexColor("#444444")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
     story.extend([amount_table, Spacer(1, 4 * mm)])
 
-    id_table = Table(
-        [
-            [
-                Paragraph("Megjegyzésbe kötelező az azonosító:", bold),
-                Paragraph(str(courier_id), red_bold),
-            ]
-        ],
-        colWidths=[116 * mm, 52 * mm],
-    )
-    id_table.setStyle(
-        TableStyle(
-            [
-                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#777777")),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-            ]
-        )
-    )
+    id_table = Table([[Paragraph("Megjegyzésbe kötelező az azonosító:", bold), Paragraph(str(courier_id), red_bold)]], colWidths=[116 * mm, 52 * mm])
+    id_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#777777")),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.7, colors.HexColor("#777777")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
     story.extend([id_table, Spacer(1, 5 * mm)])
 
-    tax_label = "27%-os ÁFA" if vat_payer else "AAM"
-    story.append(
-        Paragraph(
-            "<b>⚠ SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
-            "• A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd.<br/>"
-            f"• Adózási mód az adószám alapján: <b>{tax_label}</b>.<br/>"
-            "• A borravaló külön, adómentes tétel.<br/>"
-            "• Hibás számla (stornó/javítás) esetén nettó 5 000 Ft "
-            "adminisztrációs költséget érvényesítünk.",
-            normal,
-        )
-    )
+    story.append(Paragraph(
+        "<b>⚠ SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
+        "• A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd.<br/>"
+        "• Hibás számla (stornó/javítás) esetén nettó 5 000 Ft adminisztrációs költséget érvényesítünk.",
+        normal,
+    ))
 
-    story.extend(
-        [
-            Spacer(1, 8 * mm),
-            Paragraph(
-                "Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/>"
-                "<b>Just in Time Transport Hungary Kft.</b><br/>"
-                "Észrevétel és kifogások: elszamolas@jitt.hu",
-                ParagraphStyle(
-                    "TIGFooter",
-                    parent=small,
-                    alignment=TA_CENTER,
-                    textColor=colors.HexColor("#777777"),
-                ),
-            ),
-        ]
-    )
+    if cash_amount_huf:
+        story.extend([Spacer(1, 5 * mm), Paragraph("KÉSZPÉNZES SZÁMLA (csak ha a levonás miatt szükséges)", heading)])
+        cash_table = Table([
+            [Paragraph("Megnevezés", bold), Paragraph("Nettó", bold), Paragraph("ÁFA", bold), Paragraph("Bruttó", bold), Paragraph("Mód", bold)],
+            [Paragraph("Szállítási díj (494107)", normal), Paragraph(_huf(cash_amount_huf), right), Paragraph("TA (0%)", center), Paragraph(_huf(cash_amount_huf), right), Paragraph("KP", bold)],
+        ], colWidths=[68 * mm, 29 * mm, 25 * mm, 29 * mm, 17 * mm])
+        cash_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cccccc")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(cash_table)
+
+    story.extend([
+        Spacer(1, 8 * mm),
+        Paragraph(
+            "Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/>"
+            "<b>Just in Time Transport Hungary Kft.</b><br/>"
+            "Észrevétel és kifogások: elszamolas@jitt.hu",
+            ParagraphStyle("TIGFooter", parent=small, alignment=TA_CENTER, textColor=colors.HexColor("#777777")),
+        ),
+    ])
 
     doc.build(story)
     return buffer.getvalue()
@@ -976,21 +808,14 @@ def _render_task_tig_generator(task_row, document_month):
     courier_name = str(task_row.get("Futár") or "").strip()
     master_row = _task_master_row(courier_id)
 
-    def first_value(*names, default=""):
+    def first_value(*names, default=""):    
         for name in names:
             value = master_row.get(name)
             if value is not None and str(value).strip():
                 return str(value).strip()
         return default
 
-    default_total = max(int(round(_row_amount(task_row, "_tig_amount"))), 0)
-    default_cash = max(int(round(_row_amount(task_row, "_cash_amount"))), 0)
-    default_tip = max(int(round(_row_amount(task_row, "_tip_amount"))), 0)
-
-    with st.expander(
-        "TIG generálása",
-        expanded="TIG elkészítésére" in str(task_row.get("Mire vár?")),
-    ):
+    with st.expander("TIG generálása", expanded="TIG elkészítésére" in str(task_row.get("Mire vár?"))):
         with st.form(f"task_tig_generator_{courier_id}_{document_month}"):
             col1, col2 = st.columns(2)
             seller_name = col1.text_input(
@@ -1004,58 +829,38 @@ def _render_task_tig_generator(task_row, document_month):
             address = st.text_input(
                 "Vállalkozás székhelye",
                 value=first_value(
-                    "company_address",
-                    "courier_address",
-                    "address",
-                    "billing_address",
-                    "invoice_address",
+                    "company_address", "courier_address", "address", "billing_address", "invoice_address"
                 ),
             )
-
-            amount1, amount2, amount3 = st.columns(3)
-            total_amount = amount1.number_input(
-                "Teljes fizetendő összeg (Ft)",
+            amount1, amount2 = st.columns(2)
+            transfer_amount = amount1.number_input(
+                "Átutalásos összeg (Ft)",
                 min_value=0,
-                value=default_total,
+                value=max(int(task_row.get("_tig_amount") or 0), 0),
                 step=100,
             )
             cash_amount = amount2.number_input(
-                "KP összeg (Ft)",
-                min_value=0,
-                value=default_cash,
-                step=100,
+                "Készpénzes összeg (Ft)", min_value=0, value=0, step=100
             )
-            tip_amount = amount3.number_input(
-                "Borravaló (Ft)",
-                min_value=0,
-                value=default_tip,
-                step=100,
-            )
-            generate = st.form_submit_button(
-                "TIG előállítása",
-                use_container_width=True,
-            )
+            generate = st.form_submit_button("TIG előállítása", use_container_width=True)
 
         state_key = f"task_generated_tig_{courier_id}_{document_month}"
         if generate:
             if not seller_name.strip() or not tax_number.strip() or not address.strip():
                 st.warning("A szolgáltató neve, adószáma és címe kötelező.")
-            elif cash_amount + tip_amount > total_amount:
-                st.warning(
-                    "A KP és a borravaló összege nem lehet több "
-                    "a teljes fizetendő összegnél."
-                )
             else:
                 try:
                     st.session_state[state_key] = build_tig_pdf_bytes(
-                        courier_name=seller_name.strip(),
-                        courier_address=address.strip(),
-                        courier_tax_number=tax_number.strip(),
+                    generated_tig_bytes = build_tig_pdf_bytes(
+                        courier_name=str(tig_seller_name).strip(),
+                        courier_address=str(tig_address).strip(),
+                        courier_tax_number=str(tig_tax_number).strip(),
                         courier_id=courier_id,
-                        document_month=month_start_from_date(document_month),
-                        transfer_amount_huf=total_amount,
-                        cash_amount_huf=cash_amount,
-                        tip_amount_huf=tip_amount,
+                        document_month=document_month,
+                        transfer_amount_huf=tig_transfer_amount,
+                        cash_amount_huf=abs(float(selected_row.get("atm_balance_huf", 0) or 0)),
+                        tip_amount_huf=float(selected_row.get("tip_huf", 0) or 0),
+                    )
                     )
                     st.success("A TIG elkészült.")
                 except Exception as exc:
@@ -1726,13 +1531,6 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 "_has_logged_in": has_logged_in,
                 "_courier_id": courier_id,
                 "_tig_amount": transfer_amount,
-                "_cash_amount": abs(_row_amount(
-                    summary_row, "atm_balance_huf", "atm_effect_huf"
-                )),
-                "_tip_amount": max(_row_amount(
-                    summary_row,
-                    "tip_huf", "tips_huf", "gratuity_huf", "borravalo_huf"
-                ), 0),
                 "_worksheet_name": str(summary_row.get("worksheet_name") or ""),
                 "_updated_at": latest_update,
                 "_workflow_priority": workflow_priority,
@@ -2497,30 +2295,15 @@ def show_invoice_summary_page():
                         try:
                             transfer_amount = int(round(float(tig_row.get("payable_total_huf", 0) or 0)))
                             tig_pdf_bytes = build_tig_pdf_bytes(
-                                courier_name=seller_name,
-                                courier_address=seller_address,
-                                courier_tax_number=tax_number,
-                                courier_id=tig_courier_id,
-                                document_month=document_month,
-                                transfer_amount_huf=transfer_amount,
-                                cash_amount_huf=abs(
-                                    _row_amount(
-                                        tig_row,
-                                        "atm_balance_huf",
-                                        "atm_effect_huf",
-                                    )
-                                ),
-                                tip_amount_huf=max(
-                                    _row_amount(
-                                        tig_row,
-                                        "tip_huf",
-                                        "tips_huf",
-                                        "gratuity_huf",
-                                        "borravalo_huf",
-                                    ),
-                                    0,
-                                ),
-                            )
+                            courier_name=seller_name,
+                            courier_address=seller_address,
+                            courier_tax_number=tax_number,
+                            courier_id=tig_courier_id,
+                            document_month=document_month,
+                            transfer_amount_huf=transfer_amount,
+                            cash_amount_huf=abs(float(tig_row.get("atm_balance_huf", 0) or 0)),
+                            tip_amount_huf=float(tig_row.get("tip_huf", 0) or 0),
+                        )
                             tig_file_name = f"jitt_tig_{tig_courier_id}_{slugify_filename(tig_courier_name)}_{document_month.strftime('%Y-%m')}.pdf"
                             upload_peopleforce_document_bytes(
                                 courier_id=tig_courier_id,
@@ -2686,23 +2469,17 @@ def show_invoice_summary_page():
                     value=default_billing_email,
                     disabled=True,
                 )
-                amount_col1, amount_col2, amount_col3 = st.columns(3)
+                amount_col1, amount_col2 = st.columns(2)
                 tig_transfer_amount = amount_col1.number_input(
-                    "Teljes fizetendő összeg (Ft)",
+                    "Átutalásos számla összege (Ft)",
                     min_value=0,
                     value=max(default_transfer_amount, 0),
                     step=100,
                 )
                 tig_cash_amount = amount_col2.number_input(
-                    "KP összeg (Ft)",
+                    "Készpénzes számla összege (Ft, ha szükséges)",
                     min_value=0,
-                    value=default_cash_amount,
-                    step=100,
-                )
-                tig_tip_amount = amount_col3.number_input(
-                    "Borravaló (Ft)",
-                    min_value=0,
-                    value=default_tip_amount,
+                    value=0,
                     step=100,
                 )
                 generate_tig = st.form_submit_button(
@@ -2730,7 +2507,6 @@ def show_invoice_summary_page():
                         document_month=document_month,
                         transfer_amount_huf=tig_transfer_amount,
                         cash_amount_huf=tig_cash_amount,
-                        tip_amount_huf=tig_tip_amount,
                     )
                     st.session_state[tig_state_key] = {
                         "bytes": generated_tig_bytes,
