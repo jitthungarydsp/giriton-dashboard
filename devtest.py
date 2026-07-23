@@ -29,7 +29,7 @@ login_screen()
 def get_db():
     return get_supabase_client(
         st.secrets["SUPABASE_URL"],
-        st.secrets["SERVICE_ROLE_KEY"],
+        st.secrets["SUPABASE_SERVICE_ROLE_KEY "],
     )
 
 
