@@ -1,5 +1,6 @@
 import html
 from datetime import date
+from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
 import streamlit as st
@@ -12,6 +13,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from resources.auth import (
+    login_screen,
+    logout_button,
+)
+
+login_screen()
+
+if "user" not in st.session_state:
+    st.stop()
+
+user = st.session_state["user"]
+
+st.sidebar.success(f"Felhasználó: {user['username']}")
+st.sidebar.info(f"Jogosultság: {user['role']}")
+logout_button()
 
 def apply_design() -> None:
     st.markdown(
@@ -314,7 +330,7 @@ def render_table(df: pd.DataFrame) -> None:
         return
 
     header = st.columns([1.45,0.75,0.85,1,1,1,0.9])
-    for col,label in zip(header,["Futár","Branch","Számítás","Bruttó","Levonás","Kifizetendő","Státusz"]):
+    for col,label in zip(header,["Futár","Branch","Számítás","Alap díj","Levonás","Kifizetendő","Státusz"]):
         col.markdown(f"**{label}**")
 
     for i,row in df.reset_index(drop=True).iterrows():
