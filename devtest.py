@@ -541,13 +541,117 @@ def show_bulk_tig_dialog() -> None:
 def show_reports_dialog() -> None:
     df = st.session_state.get("current_filtered_data", get_demo_data())
     ids = set(df["Courier ID"].astype(str))
+
     complaints = get_demo_complaints()
-    complaints = complaints[complaints["Courier ID"].astype(str).isin(ids)]
+    complaints = complaints[
+        complaints["Courier ID"].astype(str).isin(ids)
+    ].copy()
+
     if complaints.empty:
         st.success("Nincs bejelentés a szűrésben.")
         return
-    merged = complaints.merge(df[["Courier ID","Futár","Branch"]], on="Courier ID", how="left")
-    st.dataframe(merged[["Futár","Branch","Típus","Státusz","Dátum","Üzenet"]], use_container_width=True, hide_index=True)
+
+    merged = complaints.merge(
+        df[["Courier ID", "Futár", "Branch"]],
+        on="Courier ID",
+        how="left",
+    ).reset_index(drop=True)
+
+    st.subheader("Bejelentések")
+    st.caption("Kattints a futár nevére a részletes bejelentés megnyitásához.")
+
+    header = st.columns([1.35, 0.8, 0.8, 0.8, 1.8])
+    for col, label in zip(
+        header,
+        ["Futár", "Típus", "Státusz", "Dátum", "Üzenet"],
+    ):
+        col.markdown(f"**{label}**")
+
+    for index, report in merged.iterrows():
+        cols = st.columns(
+            [1.35, 0.8, 0.8, 0.8, 1.8],
+            vertical_alignment="center",
+        )
+
+        if cols[0].button(
+            f"{report['Futár']} · {report['Courier ID']}",
+            use_container_width=True,
+            key=f"open_report_{report['Courier ID']}_{index}",
+        ):
+            st.session_state["selected_report"] = report.to_dict()
+            show_report_detail_dialog()
+
+        cols[1].caption(str(report["Típus"]))
+        cols[2].caption(str(report["Státusz"]))
+        cols[3].caption(str(report["Dátum"]))
+        cols[4].caption(str(report["Üzenet"]))
+
+
+@st.dialog("Bejelentés részletei", width="large")
+def show_report_detail_dialog() -> None:
+    report = st.session_state.get("selected_report")
+
+    if not isinstance(report, dict):
+        st.warning("A kiválasztott bejelentés nem található.")
+        return
+
+    courier_name = str(report.get("Futár") or "Ismeretlen futár")
+    courier_id = str(report.get("Courier ID") or "")
+    report_type = str(report.get("Típus") or "Egyéb")
+    report_status = str(report.get("Státusz") or "Nyitott")
+    report_date = str(report.get("Dátum") or "-")
+    report_message = str(report.get("Üzenet") or "Nincs megadott üzenet.")
+
+    st.subheader(f"{courier_name} · {courier_id}")
+    st.caption(f"{report.get('Branch', '-')} · {report_type}")
+
+    detail1, detail2, detail3 = st.columns(3)
+    detail1.metric("Típus", report_type)
+    detail2.metric("Státusz", report_status)
+    detail3.metric("Dátum", report_date)
+
+    st.markdown("#### Bejelentés szövege")
+    st.markdown(
+        f"""
+        <div class="detail-card">
+          <div style="font-size:15px;line-height:1.6;color:#253047;">
+            {html.escape(report_message)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("#### Válasz a futárnak")
+    response_text = st.text_area(
+        "Szöveges válasz",
+        placeholder="Írd le az admin válaszát, a döntést vagy a szükséges teendőt.",
+        height=150,
+        key=f"ui_report_response_{courier_id}_{report_date}_{report_type}",
+    )
+
+    action1, action2 = st.columns(2)
+
+    if action1.button(
+        "Elfogadás",
+        type="primary",
+        use_container_width=True,
+        key=f"ui_report_accept_{courier_id}_{report_date}_{report_type}",
+        help="Csak designer gomb, még nincs mögötte mentési logika.",
+    ):
+        if not response_text.strip():
+            st.info("A designer nézetben a válasz mező üresen is hagyható.")
+        st.success("A bejelentés elfogadott állapotot kapna.")
+
+    if action2.button(
+        "Lezárás",
+        use_container_width=True,
+        key=f"ui_report_close_{courier_id}_{report_date}_{report_type}",
+        help="Csak designer gomb, még nincs mögötte mentési logika.",
+    ):
+        if not response_text.strip():
+            st.info("A designer nézetben a válasz mező üresen is hagyható.")
+        st.success("A bejelentés lezárt állapotot kapna.")
 
 
 def build_excel_export(df: pd.DataFrame) -> bytes:
