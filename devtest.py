@@ -1213,8 +1213,25 @@ def show_new_settlement_page() -> None:
             key="load_excel_calculation",
             help="Csak designer gomb, nincs mögötte számítási logika.",
         ):
-            st.session_state["excel_calculation_loaded"] = True
-            st.toast("Az Excel számítás betöltött állapotot kapna.", icon="✅")
+            try:
+                result = save_excel_to_supabase(
+                    uploaded_excel,
+                    get_db(),
+                )
+                st.session_state["excel_calculation_loaded"] = True
+                st.session_state["settlement_import_session_id"] = result["session_id"]
+
+                st.success(
+                    f"Excel import kesz: {result['sheet_count']} sheet, "
+                    f"{result['inserted_rows']} sor."
+                )
+
+                for sheet_name, row_count in result["sheet_row_counts"].items():
+                    st.write(f"- {sheet_name}: {row_count} sor")
+
+            except Exception as exc:
+                st.session_state["excel_calculation_loaded"] = False
+                st.error(f"Excel import sikertelen: {exc}")
 
         if excel_action2.button(
             "Törlés",
