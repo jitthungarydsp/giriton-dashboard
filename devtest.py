@@ -171,17 +171,6 @@ def get_demo_complaints() -> pd.DataFrame:
 
 
 def render_table(df: pd.DataFrame) -> None:
-    st.markdown(
-        f"""
-        <div class="table-card">
-          <div class="table-card-head">
-            <div><h3>Futárok elszámolásai</h3><span>Kattints a futár nevére a részletekhez</span></div>
-            <span>{len(df)} találat</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
         return
@@ -209,59 +198,321 @@ def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     data = get_demo_data()
     match = data[data["Courier ID"].astype(str) == courier_id]
+
     if match.empty:
         st.warning("A futár nem található.")
         return
+
     row = match.iloc[0]
 
-    st.subheader(f"{row['Futár']} · {courier_id}")
-    st.caption(f"{row['Branch']} · {row['Raktár']} · {row['Számítás módja']}")
+    st.markdown(
+        f"""
+        <div class="detail-card" style="padding:20px 22px;margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:24px;font-weight:850;color:#172033;">{html.escape(str(row['Futár']))}</div>
+              <div style="color:#667085;margin-top:4px;">
+                Courier ID: {html.escape(courier_id)} · {html.escape(str(row['Branch']))} · {html.escape(str(row['Raktár']))}
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <span class="status-badge status-green">KPI {row['KPI']:.1f}%</span>
+              <span class="status-badge status-yellow">{html.escape(str(row['Számítás módja']))}</span>
+              <span class="status-badge {status_meta(str(row['Státusz']))[0]}">{html.escape(str(row['Státusz']))}</span>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    k1,k2,k3,k4 = st.columns(4)
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("KPI", f"{row['KPI']:.1f}%")
     k2.metric("Aktuális havi összeg", format_huf(row["Kifizetendő"]))
     k3.metric("Előző havi összeg", format_huf(row["Előző havi összeg"]))
-    k4.metric("Havi változás", format_huf(row["Kifizetendő"]-row["Előző havi összeg"]))
+    k4.metric(
+        "Havi változás",
+        format_huf(int(row["Kifizetendő"]) - int(row["Előző havi összeg"])),
+    )
 
-    tab1,tab2,tab3 = st.tabs(["Aktuális hónap","Dokumentumok","Reklamációk"])
-    with tab1:
-        st.dataframe(pd.DataFrame([{
-            "Bruttó bevétel":format_huf(row["Bruttó bevétel"]),
-            "Bónusz":format_huf(row["Bónusz"]),
-            "Levonás":format_huf(row["Levonás"]),
-            "Kifizetendő":format_huf(row["Kifizetendő"]),
-            "Státusz":row["Státusz"],
-        }]), use_container_width=True, hide_index=True)
-    with tab2:
-        docs = get_demo_documents()
-        docs = docs[docs["Courier ID"].astype(str)==courier_id]
-        if docs.empty:
-            st.info("Nincs aktuális havi dokumentum.")
-        else:
-            st.dataframe(docs[["Típus","Fájl","Feltöltve"]], use_container_width=True, hide_index=True)
-    with tab3:
-        complaints = get_demo_complaints()
-        complaints = complaints[complaints["Courier ID"].astype(str)==courier_id]
-        if complaints.empty:
-            st.success("Nincs reklamáció.")
-        else:
-            st.dataframe(complaints[["Típus","Státusz","Dátum","Üzenet"]], use_container_width=True, hide_index=True)
+    (
+        tab_current,
+        tab_bonus,
+        tab_malus,
+        tab_reserve,
+        tab_documents,
+        tab_complaints,
+        tab_profile,
+    ) = st.tabs(
+        [
+            "Aktuális hónap",
+            "Bónusz",
+            "Málusz",
+            "Céltartalék",
+            "Dokumentumok",
+            "Reklamációk",
+            "Profil",
+        ]
+    )
 
-    st.divider()
-    st.markdown("#### Műveletek")
-    a,b = st.columns(2)
-    if a.button("Elszámolás generálása", type="primary", use_container_width=True, key=f"settlement_gen_{courier_id}"):
-        st.toast("Az elszámolás generálása elindult.", icon="🧾")
-    if b.button("TIG generálása", type="primary", use_container_width=True, key=f"tig_gen_{courier_id}"):
-        st.toast("A TIG generálása elindult.", icon="📄")
+    with tab_current:
+        st.markdown("#### Aktuális havi összesítés")
+        current_left, current_right = st.columns([1.1, 0.9])
 
-    c,d = st.columns(2)
-    settlement_file = c.file_uploader("Elszámolás feltöltése", type=["pdf"], key=f"settlement_upload_{courier_id}")
-    tig_file = d.file_uploader("TIG feltöltése", type=["pdf"], key=f"tig_upload_{courier_id}")
-    if settlement_file:
-        st.success(f"Elszámolás kiválasztva: {settlement_file.name}")
-    if tig_file:
-        st.success(f"TIG kiválasztva: {tig_file.name}")
+        with current_left:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Bruttó bevétel": format_huf(row["Bruttó bevétel"]),
+                            "Bónusz": format_huf(row["Bónusz"]),
+                            "Levonás": format_huf(row["Levonás"]),
+                            "Kifizetendő": format_huf(row["Kifizetendő"]),
+                            "Státusz": row["Státusz"],
+                        }
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        with current_right:
+            st.markdown(
+                f"""
+                <div class="detail-card">
+                  <h4>Havi áttekintés</h4>
+                  <div class="detail-line"><span class="detail-label">Számítás módja</span><span class="detail-value">{html.escape(str(row['Számítás módja']))}</span></div>
+                  <div class="detail-line"><span class="detail-label">Branch</span><span class="detail-value">{html.escape(str(row['Branch']))}</span></div>
+                  <div class="detail-line"><span class="detail-label">Raktár</span><span class="detail-value">{html.escape(str(row['Raktár']))}</span></div>
+                  <div class="detail-line"><span class="detail-label">Státusz</span><span class="detail-value">{html.escape(str(row['Státusz']))}</span></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("#### Dokumentumműveletek")
+        action1, action2 = st.columns(2)
+        action1.button(
+            "Elszámolás generálása",
+            type="primary",
+            use_container_width=True,
+            key=f"ui_settlement_generate_{courier_id}",
+            help="Dizájn gomb, még nincs mögötte üzleti logika.",
+        )
+        action2.button(
+            "TIG generálása",
+            type="primary",
+            use_container_width=True,
+            key=f"ui_tig_generate_{courier_id}",
+            help="Dizájn gomb, még nincs mögötte üzleti logika.",
+        )
+
+        upload1, upload2 = st.columns(2)
+        upload1.file_uploader(
+            "Elszámolás feltöltése",
+            type=["pdf"],
+            key=f"ui_settlement_upload_{courier_id}",
+        )
+        upload2.file_uploader(
+            "TIG feltöltése",
+            type=["pdf"],
+            key=f"ui_tig_upload_{courier_id}",
+        )
+
+    with tab_bonus:
+        st.markdown("#### Bónuszok")
+        bonus_list, bonus_editor = st.columns([1.35, 0.65])
+
+        with bonus_list:
+            bonus_demo = pd.DataFrame(
+                [
+                    {"Dátum": "2026-07-03", "Megnevezés": "Havi teljesítménybónusz", "Összeg": "38 000 Ft", "Státusz": "Elszámolva"},
+                    {"Dátum": "2026-07-08", "Megnevezés": "Minőségi bónusz", "Összeg": "12 000 Ft", "Státusz": "Tervezet"},
+                ]
+            )
+            st.dataframe(bonus_demo, use_container_width=True, hide_index=True)
+
+        with bonus_editor:
+            st.markdown("##### Új bónusz")
+            st.text_input("Megnevezés", key=f"ui_bonus_name_{courier_id}")
+            st.number_input("Összeg (Ft)", min_value=0, step=500, key=f"ui_bonus_amount_{courier_id}")
+            st.text_area("Megjegyzés", key=f"ui_bonus_note_{courier_id}")
+            st.button(
+                "Bónusz mentése",
+                use_container_width=True,
+                key=f"ui_bonus_save_{courier_id}",
+                help="Csak dizájn, még nem ment adatot.",
+            )
+
+    with tab_malus:
+        st.markdown("#### Máluszok és levonások")
+        malus_list, malus_editor = st.columns([1.35, 0.65])
+
+        with malus_list:
+            malus_demo = pd.DataFrame(
+                [
+                    {"Dátum": "2026-07-04", "Megnevezés": "Késés", "Összeg": "8 000 Ft", "Státusz": "Elszámolva"},
+                    {"Dátum": "2026-07-09", "Megnevezés": "Felszerelés hiány", "Összeg": "15 000 Ft", "Státusz": "Tervezet"},
+                ]
+            )
+            st.dataframe(malus_demo, use_container_width=True, hide_index=True)
+
+        with malus_editor:
+            st.markdown("##### Új málusz")
+            st.selectbox(
+                "Típus",
+                ["Késés", "Károkozás", "Felszerelés", "Adminisztráció", "Egyéb"],
+                key=f"ui_malus_type_{courier_id}",
+            )
+            st.number_input("Összeg (Ft)", min_value=0, step=500, key=f"ui_malus_amount_{courier_id}")
+            st.text_area("Megjegyzés", key=f"ui_malus_note_{courier_id}")
+            st.button(
+                "Málusz mentése",
+                use_container_width=True,
+                key=f"ui_malus_save_{courier_id}",
+                help="Csak dizájn, még nem ment adatot.",
+            )
+
+    with tab_reserve:
+        st.markdown("#### Céltartalék és biztosítás")
+
+        reserve1, reserve2 = st.columns(2)
+        with reserve1:
+            st.markdown(
+                """
+                <div class="detail-card">
+                  <h4>Biztosítási státusz</h4>
+                  <div class="detail-line"><span class="detail-label">Állapot</span><span class="detail-value">Van biztosítása</span></div>
+                  <div class="detail-line"><span class="detail-label">Érvényesség</span><span class="detail-value">2026. december 31.</span></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.radio(
+                "Van biztosításom",
+                ["Igen", "Nem"],
+                horizontal=True,
+                key=f"ui_insurance_{courier_id}",
+            )
+
+        with reserve2:
+            st.markdown(
+                """
+                <div class="detail-card">
+                  <h4>Aktuális céltartalék</h4>
+                  <div style="font-size:28px;font-weight:850;color:#172033;">65 000 Ft</div>
+                  <div style="color:#667085;margin-top:6px;">Dizájnadat</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.number_input(
+                "Céltartalék összege (Ft)",
+                min_value=0,
+                value=65000,
+                step=1000,
+                key=f"ui_reserve_amount_{courier_id}",
+            )
+
+        st.text_area(
+            "Megjegyzés",
+            placeholder="Például biztosítási kötvény, jóváhagyás vagy adminisztratív megjegyzés.",
+            key=f"ui_reserve_note_{courier_id}",
+        )
+        st.button(
+            "Céltartalék mentése",
+            use_container_width=True,
+            key=f"ui_reserve_save_{courier_id}",
+            help="Csak dizájn, még nem ment adatot.",
+        )
+
+    with tab_documents:
+        st.markdown("#### Dokumentumok")
+        docs = pd.DataFrame(
+            [
+                {"Típus": "Elszámolás", "Fájl": "elszamolas_2026_07.pdf", "Feltöltve": "2026-07-10 09:12", "Státusz": "Aktív"},
+                {"Típus": "TIG", "Fájl": "tig_2026_07.pdf", "Feltöltve": "2026-07-11 10:35", "Státusz": "Aktív"},
+                {"Típus": "Számla", "Fájl": "szamla_2026_07.pdf", "Feltöltve": "2026-07-12 14:02", "Státusz": "Ellenőrzés alatt"},
+                {"Típus": "Szerződés", "Fájl": "szerzodes.pdf", "Feltöltve": "2026-01-15 08:20", "Státusz": "Aktív"},
+            ]
+        )
+        st.dataframe(docs, use_container_width=True, hide_index=True)
+
+        doc1, doc2, doc3 = st.columns(3)
+        doc1.button("Megnyitás", use_container_width=True, key=f"ui_doc_open_{courier_id}")
+        doc2.button("Letöltés", use_container_width=True, key=f"ui_doc_download_{courier_id}")
+        doc3.file_uploader(
+            "Új dokumentum feltöltése",
+            type=["pdf", "png", "jpg", "jpeg"],
+            key=f"ui_doc_upload_{courier_id}",
+        )
+
+    with tab_complaints:
+        st.markdown("#### Reklamációk")
+        complaint_list, complaint_editor = st.columns([1.35, 0.65])
+
+        with complaint_list:
+            complaint_demo = pd.DataFrame(
+                [
+                    {"Dátum": "2026-07-05", "Típus": "Elszámolás", "Tárgy": "Bónusz eltérés", "Státusz": "Nyitott"},
+                    {"Dátum": "2026-06-18", "Típus": "TIG", "Tárgy": "Cím javítás", "Státusz": "Lezárt"},
+                ]
+            )
+            st.dataframe(complaint_demo, use_container_width=True, hide_index=True)
+
+        with complaint_editor:
+            st.markdown("##### Új reklamáció")
+            st.selectbox(
+                "Típus",
+                ["Elszámolás", "TIG", "Számla", "Egyéb"],
+                key=f"ui_complaint_type_{courier_id}",
+            )
+            st.text_input("Tárgy", key=f"ui_complaint_subject_{courier_id}")
+            st.text_area("Leírás", key=f"ui_complaint_text_{courier_id}")
+            st.button(
+                "Reklamáció mentése",
+                use_container_width=True,
+                key=f"ui_complaint_save_{courier_id}",
+                help="Csak dizájn, még nem ment adatot.",
+            )
+
+    with tab_profile:
+        st.markdown("#### Profil")
+        profile1, profile2 = st.columns(2)
+
+        with profile1:
+            st.text_input("Név", value=str(row["Futár"]), key=f"ui_profile_name_{courier_id}")
+            st.text_input("Courier ID", value=courier_id, disabled=True, key=f"ui_profile_id_{courier_id}")
+            st.text_input("Telefonszám", value="+36 30 123 4567", key=f"ui_profile_phone_{courier_id}")
+            st.text_input("E-mail", value="futar@example.com", key=f"ui_profile_email_{courier_id}")
+            st.selectbox(
+                "Branch",
+                ["Kifli", "Egyéb"],
+                index=0,
+                key=f"ui_profile_branch_{courier_id}",
+            )
+            st.text_input("Raktár", value=str(row["Raktár"]), key=f"ui_profile_warehouse_{courier_id}")
+
+        with profile2:
+            st.selectbox(
+                "Számítás módja",
+                ["Excel", "API", "Egyéni"],
+                index=["Excel", "API", "Egyéni"].index(str(row["Számítás módja"])),
+                key=f"ui_profile_calc_{courier_id}",
+            )
+            st.text_input("Vállalkozás neve", value="Minta Futár Kft.", key=f"ui_profile_company_{courier_id}")
+            st.text_input("Adószám", value="12345678-2-42", key=f"ui_profile_tax_{courier_id}")
+            st.text_input("Bankszámlaszám", value="11700000-00000000-00000000", key=f"ui_profile_bank_{courier_id}")
+            st.selectbox("Biztosítás", ["Van", "Nincs"], key=f"ui_profile_insurance_{courier_id}")
+            st.selectbox("Profil státusz", ["Aktív", "Inaktív"], key=f"ui_profile_status_{courier_id}")
+
+        st.button(
+            "Profil mentése",
+            type="primary",
+            use_container_width=True,
+            key=f"ui_profile_save_{courier_id}",
+            help="Csak dizájn, még nem ment adatot.",
+        )
 
 
 @st.dialog("Tömeges elszámolás", width="large")
