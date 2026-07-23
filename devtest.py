@@ -4,7 +4,10 @@ from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
 import streamlit as st
-
+from resources.settlement_excel_import import (
+    get_supabase_client,
+    save_excel_to_supabase,
+)
 
 st.set_page_config(
     page_title="Új Elszámolási oldal",
@@ -19,6 +22,17 @@ from resources.auth import (
 )
 
 login_screen()
+
+@st.cache_resource
+def get_db():
+    return get_supabase_client(
+        st.secrets["URL"],
+        st.secrets["SERVICE_ROLE_KEY"],
+    )
+
+
+supabase = get_db()
+
 
 if "user" not in st.session_state:
     st.stop()
