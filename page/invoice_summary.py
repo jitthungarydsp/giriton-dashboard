@@ -1810,26 +1810,7 @@ def show_invoice_summary_page():
 
             if name and key:
                 driver_names_by_key[key] = name
-    import re
-import unicodedata
 
-
-def normalize_person_key(value) -> str:
-    """Név egységesítése összehasonlításhoz."""
-    if value is None:
-        return ""
-
-    text = str(value).strip().lower()
-
-    # Ékezetek eltávolítása.
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(char for char in text if not unicodedata.combining(char))
-
-    # Többszörös szóközök és felesleges karakterek eltávolítása.
-    text = re.sub(r"[^a-z0-9\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-
-    return text
 
     def enrich_driver_names(frame):
         if (
@@ -2582,7 +2563,7 @@ def normalize_person_key(value) -> str:
                         document_month=document_month,
                         transfer_amount_huf=tig_transfer_amount,
                         cash_amount_huf=tig_cash_amount,
-                        tip_amount_huf=tig_row.get("tip_huf", 0),
+                        
                     )
                     st.session_state[tig_state_key] = {
                         "bytes": generated_tig_bytes,
