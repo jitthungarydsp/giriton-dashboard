@@ -300,6 +300,51 @@ def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_courier_master() -> pd.DataFrame:
+    response = (
+        get_db()
+        .table("courier_master")
+        .select("courier_id,courier_name,branch,warehouse_name,active")
+        .order("courier_name")
+        .execute()
+    )
+
+    rows = response.data or []
+    columns = [
+        "Courier ID", "Futár", "Branch", "Számítás módja",
+        "Raktár", "Státusz", "Bruttó bevétel", "Bónusz",
+        "Borravaló", "Levonás", "Kifizetendő", "Előző havi összeg",
+        "KPI",
+    ]
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    df = pd.DataFrame(rows).rename(columns={
+        "courier_id": "Courier ID",
+        "courier_name": "Futár",
+        "branch": "Branch",
+        "warehouse_name": "Raktár",
+        "active": "Aktív",
+    })
+
+    df["Courier ID"] = df["Courier ID"].astype(str)
+    df["Futár"] = df["Futár"].fillna("Ismeretlen futár")
+    df["Branch"] = df["Branch"].fillna("JIT")
+    df["Számítás módja"] = "Excel"
+    df["Raktár"] = df["Raktár"].fillna("")
+    df["Státusz"] = df["Aktív"].map({True: "Aktív", False: "Inaktív"}).fillna("Ismeretlen")
+
+    for column in [
+        "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
+        "Kifizetendő", "Előző havi összeg", "KPI",
+    ]:
+        df[column] = 0.0
+
+    return df[columns]
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
     query = (
         get_db()
@@ -427,31 +472,21 @@ def get_demo_complaints() -> pd.DataFrame:
 
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
-        st.info("Nincs találat a megadott szűrőkkel.")
+        st.info("Nincs futár a courier_master táblában.")
         return
 
-    header = st.columns([1.45,0.75,0.85,1,1,1,0.9])
-    for col,label in zip(header,["Futár","Branch","Számítás","Alap díj","Levonás","Kifizetendő","Státusz"]):
-        col.markdown(f"**{label}**")
-
-    for i,row in df.reset_index(drop=True).iterrows():
-        cols = st.columns([1.45,0.75,0.85,1,1,1,0.9], vertical_alignment="center")
-        if cols[0].button(f"{row['Futár']} · {row['Courier ID']}", key=f"courier_{row['Courier ID']}_{i}", use_container_width=True):
-            st.session_state["selected_courier_id"] = str(row["Courier ID"])
-            show_courier_dialog()
-        cols[1].caption(str(row["Branch"]))
-        cols[2].caption(str(row["Számítás módja"]))
-        cols[3].caption(format_huf(row["Bruttó bevétel"]))
-        cols[4].caption(format_huf(row["Levonás"]))
-        cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
-        badge,_ = status_meta(str(row["Státusz"]))
-        cols[6].markdown(f'<span class="status-badge {badge}">{html.escape(str(row["Státusz"]))}</span>', unsafe_allow_html=True)
+    shown = df[["Courier ID", "Futár"]].copy()
+    st.dataframe(
+        shown,
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    data = load_driver_dashboard(st.session_state.get("settlement_import_session_id"))
+    data = load_courier_master()
     match = data[data["Courier ID"].astype(str) == courier_id]
 
     if match.empty:
@@ -772,7 +807,7 @@ def show_courier_dialog() -> None:
 
 @st.dialog("Tömeges elszámolás", width="large")
 def show_bulk_settlement_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
+    df = st.session_state.get("current_filtered_data", load_courier_master())
 
     st.subheader("Tömeges elszámolás")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
@@ -847,7 +882,7 @@ def show_bulk_settlement_dialog() -> None:
 
 @st.dialog("Tömeges TIG", width="large")
 def show_bulk_tig_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
+    df = st.session_state.get("current_filtered_data", load_courier_master())
 
     st.subheader("Tömeges TIG")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
@@ -1087,7 +1122,7 @@ def show_parameter_catalog_dialog() -> None:
 
 @st.dialog("Bejelentések", width="large")
 def show_reports_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
+    df = st.session_state.get("current_filtered_data", load_courier_master())
     ids = set(df["Courier ID"].astype(str))
 
     complaints = get_demo_complaints()
@@ -1251,14 +1286,14 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
 
 def show_new_settlement_page() -> None:
     apply_design()
-    data=load_driver_dashboard(st.session_state.get("settlement_import_session_id"))
+    data=load_courier_master()
 
     with st.sidebar:
         st.markdown("## Elszámolás")
         st.caption("Szűrés és műveletek")
         selected_month=st.selectbox("Elszámolási hónap",month_options(),key="new_month")
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
-        calculation_mode=st.selectbox("Számítás módja",["Összes","Excel","API","Egyéni"],key="new_calculation_mode")
+        calculation_mode=st.selectbox("Számítás módja",["Összes","Excel"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
         status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
@@ -1321,6 +1356,7 @@ def show_new_settlement_page() -> None:
 
                 if processing_result.get("status") in {"completed", "completed_with_warnings"}:
                     load_driver_dashboard.clear()
+                    load_courier_master.clear()
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
@@ -1397,6 +1433,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
                 load_driver_dashboard.clear()
+                load_courier_master.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
