@@ -303,6 +303,7 @@ def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
 def load_courier_master() -> pd.DataFrame:
     response = (
         get_db()
+        .schema("public")
         .table("courier_master")
         .select("courier_id,courier_name,branch,warehouse_name,active")
         .order("courier_name")
