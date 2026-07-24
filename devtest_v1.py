@@ -1295,6 +1295,7 @@ def show_new_settlement_page() -> None:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["Összes","Excel"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
+        status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         st.divider()
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
@@ -1303,6 +1304,7 @@ def show_new_settlement_page() -> None:
             st.session_state["new_branch"]="Összes"
             st.session_state["new_calculation_mode"]="Összes"
             st.session_state["new_warehouse"]="Összes"
+            st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
             st.rerun()
 
@@ -1545,6 +1547,8 @@ def show_new_settlement_page() -> None:
         filtered=filtered[filtered["Számítás módja"]==calculation_mode]
     if warehouse!="Összes":
         filtered=filtered[filtered["Raktár"]==warehouse]
+    if status!="Összes":
+        filtered=filtered[filtered["Státusz"]==status]
     if search.strip():
         query=search.strip()
         filtered=filtered[
@@ -1553,18 +1557,64 @@ def show_new_settlement_page() -> None:
         ]
     st.session_state["current_filtered_data"]=filtered.copy()
 
+    total_gross=int(filtered["Bruttó bevétel"].sum()) if not filtered.empty else 0
+    total_deduction=int(filtered["Levonás"].sum()) if not filtered.empty else 0
+    total_payable=int(filtered["Kifizetendő"].sum()) if not filtered.empty else 0
+
     st.markdown(
         f"""
         <div class="premium-hero">
-          <div class="hero-left"><div class="badge">FUTÁRTÖRZS</div><h1>Új Elszámolási oldal</h1><p>A futárlista közvetlenül a courier_master táblából töltődik.</p></div>
+          <div class="hero-left"><div class="badge">ÚJ MODUL</div><h1>Új Elszámolási oldal</h1><p>Gyors, átlátható és biztonságos futárelszámolási felület.</p></div>
           <div class="month-pill"><div class="label">Elszámolási hónap</div><div class="value">{html.escape(selected_month)}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-title">Futárok</div>', unsafe_allow_html=True)
-    st.caption(f"Találatok száma: {len(filtered)}")
+    total_bonus = int(filtered["Bónusz"].sum()) if not filtered.empty else 0
+    total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
+
+    st.markdown(
+        f"""
+        <div class="summary-donut-grid">
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Bónuszok összesen</div>
+              <div class="summary-donut-value">{format_huf(total_bonus)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+            </div>
+            <div class="summary-donut summary-donut-primary">
+              <div class="summary-donut-center"><strong>{total_bonus / 1_000_000:.1f} M</strong><span>Ft</span></div>
+            </div>
+          </div>
+
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Borravaló összesen</div>
+              <div class="summary-donut-value">{format_huf(total_tip)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+            </div>
+            <div class="summary-donut summary-donut-secondary">
+              <div class="summary-donut-center"><strong>{total_tip / 1_000_000:.1f} M</strong><span>Ft</span></div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="kpi-grid">
+          <div class="kpi" style="--accent:#2f6fed"><div class="k-label">Futárok száma</div><div class="k-value">{len(filtered)}</div><div class="k-note">Aktív elszámolások</div></div>
+          <div class="kpi" style="--accent:#5b8def"><div class="k-label">Bruttó bevétel</div><div class="k-value">{format_huf(total_gross)}</div><div class="k-note">Havi összesítés</div></div>
+          <div class="kpi" style="--accent:#f0b429"><div class="k-label">Levonások</div><div class="k-value">{format_huf(total_deduction)}</div><div class="k-note">Összes levonás</div></div>
+          <div class="kpi" style="--accent:#1f9d74"><div class="k-label">Kifizetendő</div><div class="k-value">{format_huf(total_payable)}</div><div class="k-note">Végleges összeg</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     render_table(filtered)
 
