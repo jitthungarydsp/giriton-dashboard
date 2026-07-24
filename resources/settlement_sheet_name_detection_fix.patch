@@ -1,0 +1,500 @@
+--- a/resources/settlement_parser.py
++++ b/resources/settlement_parser.py
+@@ -38,6 +38,15 @@
+     score: float
+     matched_required_groups: int
+     matched_optional_groups: int
++
++
++@dataclass(frozen=True)
++class SheetNameDetection:
++    """Certain sheet type inferred from the normalized source sheet name."""
++
++    sheet_type: str
++    confidence: float
++    reason: str
+ 
+ 
+ @dataclass(frozen=True)
+@@ -141,6 +150,42 @@
+     return re.sub(r"\s+", " ", text).strip()
+ 
+ 
++def detect_sheet_type_from_name(
++    sheet_name: str,
++) -> SheetNameDetection | None:
++    """Return a certain type when the normalized sheet name is known.
++
++    Name rules intentionally run before content scoring. Content detection is
++    reserved for sheets whose normalized name has no explicit mapping.
++    """
++
++    normalized_name = normalize_text(sheet_name)
++    exact_types = {
++        "atm balance": "atm_balance",
++        "bonus routes": "bonus",
++        "penalties": "penalties",
++        "kesedelmi mutato": "performance_indicator",
++        "turamegfelelesi mutato": "performance_indicator",
++    }
++
++    exact_type = exact_types.get(normalized_name)
++    if exact_type is not None:
++        return SheetNameDetection(
++            sheet_type=exact_type,
++            confidence=1.0,
++            reason=f"exact_normalized_sheet_name:{normalized_name}",
++        )
++
++    if normalized_name.endswith(" jit"):
++        return SheetNameDetection(
++            sheet_type="jit",
++            confidence=1.0,
++            reason=f"normalized_sheet_name_suffix:*_JIT ({normalized_name})",
++        )
++
++    return None
++
++
+ def column_number(column_key: str) -> int:
+     """Return the numeric part from column_1, column_2, ... keys."""
+ 
+@@ -276,6 +321,88 @@
+             source_data_rows=len(records),
+         )
+ 
++    def parse_with_forced_type(self) -> ParsedSheet | None:
++        """Parse a name-identified sheet even when content confidence is low."""
++
++        detection = self.detect_header() or self.detect_generic_header()
++        if detection is None:
++            return None
++
++        header_row = self.matrix[detection.header_index]
++        headers = self.normalize_headers(header_row)
++        records = self.normalize_records(detection.header_index, headers)
++        sheet_name = self.rows[0].sheet_name if self.rows else ""
++        source_row_no = self.rows[detection.header_index].source_row_no
++
++        return ParsedSheet(
++            sheet_name=sheet_name,
++            sheet_type=self.sheet_type(),
++            parser_name=self.__class__.__name__,
++            header_source_row_no=source_row_no,
++            confidence=1.0,
++            headers=headers,
++            records=records,
++            source_data_rows=len(records),
++        )
++
++    def detect_generic_header(self) -> HeaderDetection | None:
++        """Find a plausible tabular header for a name-identified sheet."""
++
++        best: HeaderDetection | None = None
++
++        for index, row in enumerate(self.matrix):
++            non_empty_indexes = [
++                cell_index
++                for cell_index, cell in enumerate(row)
++                if cell is not None and str(cell).strip()
++            ]
++            if len(non_empty_indexes) < 2:
++                continue
++
++            normalized_cells = [
++                normalize_text(row[cell_index])
++                for cell_index in non_empty_indexes
++            ]
++            text_cells = sum(
++                1
++                for cell_index in non_empty_indexes
++                if isinstance(row[cell_index], str)
++                and normalize_text(row[cell_index])
++            )
++            unique_cells = len(set(normalized_cells))
++            if text_cells < 2 or unique_cells < 2:
++                continue
++
++            following_support = 0
++            for following_row in self.matrix[index + 1:index + 6]:
++                populated = sum(
++                    1
++                    for cell_index in non_empty_indexes
++                    if cell_index < len(following_row)
++                    and following_row[cell_index] is not None
++                    and str(following_row[cell_index]).strip()
++                )
++                if populated >= min(2, len(non_empty_indexes)):
++                    following_support += 1
++
++            score = (
++                text_cells * 2
++                + unique_cells
++                + following_support * 3
++                + len(non_empty_indexes) / 100
++                - index / 1000
++            )
++            candidate = HeaderDetection(
++                header_index=index,
++                score=score,
++                matched_required_groups=0,
++                matched_optional_groups=0,
++            )
++            if best is None or candidate.score > best.score:
++                best = candidate
++
++        return best
++
+     def detect_header(self) -> HeaderDetection | None:
+         """Find the best header row based on required/optional groups."""
+ 
+@@ -401,7 +528,14 @@
+         required_groups=(
+             ("route", "route id", "kor"),
+             ("driver", "courier", "futar", "nev"),
+-            ("amount", "total", "osszeg", "fizetendo"),
++            (
++                "amount",
++                "total",
++                "osszeg",
++                "fizetendo",
++                "fixed rate",
++                "alapdij",
++            ),
+         ),
+         optional_groups=(
+             ("invoice", "szamla"),
+@@ -1473,6 +1607,47 @@
+ )
+ 
+ 
++def _parser_class_for_type(
++    sheet_type: str,
++    parser_classes: Sequence[type[BaseSheetParser]],
++) -> type[BaseSheetParser] | None:
++    """Return the registered parser class for a logical sheet type."""
++
++    return next(
++        (
++            parser_class
++            for parser_class in parser_classes
++            if parser_class.sheet_type() == sheet_type
++        ),
++        None,
++    )
++
++
++def _parse_name_identified_sheet(
++    rows: Sequence[ImportedExcelRow],
++    detection: SheetNameDetection,
++    parser_classes: Sequence[type[BaseSheetParser]],
++) -> ParsedSheet | None:
++    """Parse with the parser selected by the primary sheet-name rule."""
++
++    parser_class = _parser_class_for_type(
++        detection.sheet_type,
++        parser_classes,
++    )
++    if parser_class is None:
++        return None
++
++    parser = parser_class(rows)
++    parsed = parser.parse()
++    if parsed is None and detection.sheet_type != "performance_indicator":
++        parsed = parser.parse_with_forced_type()
++
++    if parsed is not None:
++        parsed.confidence = detection.confidence
++
++    return parsed
++
++
+ def debug_sheet_detection(
+     rows: Sequence[ImportedExcelRow],
+     parser_classes: Sequence[type[BaseSheetParser]] | None = None,
+@@ -1485,7 +1660,9 @@
+ 
+     classes = tuple(parser_classes or DEFAULT_PARSERS)
+     parser_scores: list[dict[str, Any]] = []
+-    accepted_candidates: list[ParsedSheet] = []
++    content_candidates: list[ParsedSheet] = []
++    sheet_name = rows[0].sheet_name if rows else ""
++    name_detection = detect_sheet_type_from_name(sheet_name)
+ 
+     for parser_class in classes:
+         parser = parser_class(rows)
+@@ -1519,7 +1696,7 @@
+         elif not parsed.records:
+             rejection_reason = "no_accepted_records"
+         else:
+-            accepted_candidates.append(parsed)
++            content_candidates.append(parsed)
+ 
+         parser_scores.append(
+             {
+@@ -1540,28 +1717,71 @@
+             }
+         )
+ 
+-    selected = (
+-        max(accepted_candidates, key=lambda item: item.confidence)
+-        if accepted_candidates
++    content_selected = (
++        max(content_candidates, key=lambda item: item.confidence)
++        if content_candidates
+         else None
+     )
++    name_selected = (
++        _parse_name_identified_sheet(
++            rows,
++            name_detection,
++            classes,
++        )
++        if name_detection is not None
++        else None
++    )
++    final_selected = name_selected or content_selected
++
++    if name_detection is not None:
++        final_type = name_detection.sheet_type
++        final_confidence = name_detection.confidence
++        decision_reason = name_detection.reason
++    elif content_selected is not None:
++        final_type = content_selected.sheet_type
++        final_confidence = content_selected.confidence
++        decision_reason = (
++            "content_fallback:highest_confidence_accepted_parser"
++        )
++    else:
++        final_type = None
++        final_confidence = 0.0
++        decision_reason = "content_fallback:no_parser_accepted_sheet"
++
+     return {
+-        "sheet_name": rows[0].sheet_name if rows else "",
++        "sheet_name": sheet_name,
++        "name_based_type": (
++            name_detection.sheet_type
++            if name_detection is not None
++            else None
++        ),
++        "content_based_type": (
++            content_selected.sheet_type
++            if content_selected is not None
++            else None
++        ),
++        "final_type": final_type,
++        "confidence": final_confidence,
++        "decision_reason": decision_reason,
+         "selected_parser": (
+-            selected.parser_name if selected is not None else None
++            final_selected.parser_name
++            if final_selected is not None
++            else None
+         ),
+-        "detected_type": (
+-            selected.sheet_type if selected is not None else None
+-        ),
++        "detected_type": final_type,
+         "header_source_row_no": (
+-            selected.header_source_row_no if selected is not None else None
++            final_selected.header_source_row_no
++            if final_selected is not None
++            else None
+         ),
+         "normalized_headers": (
+-            selected.headers if selected is not None else []
++            final_selected.headers if final_selected is not None else []
+         ),
+         "parser_scores": parser_scores,
+         "rejection_reason": (
+-            None if selected is not None else "no_parser_accepted_sheet"
++            None
++            if final_type is not None
++            else "no_parser_accepted_sheet"
+         ),
+     }
+ 
+@@ -1662,7 +1882,7 @@
+     def group_by_sheet(
+         rows: Sequence[ImportedExcelRow],
+     ) -> dict[str, list[ImportedExcelRow]]:
+-        """Group raw rows by name without using it for type detection."""
++        """Group raw rows by source sheet name."""
+ 
+         grouped: dict[str, list[ImportedExcelRow]] = {}
+ 
+@@ -1675,7 +1895,16 @@
+         self,
+         rows: Sequence[ImportedExcelRow],
+     ) -> ParsedSheet | None:
+-        """Run every registered parser and return the best match."""
++        """Use a certain name match first, then content scoring as fallback."""
++
++        sheet_name = rows[0].sheet_name if rows else ""
++        name_detection = detect_sheet_type_from_name(sheet_name)
++        if name_detection is not None:
++            return _parse_name_identified_sheet(
++                rows,
++                name_detection,
++                self.parser_classes,
++            )
+ 
+         candidates: list[ParsedSheet] = []
+ 
+--- a/tests/test_settlement_real_structures.py
++++ b/tests/test_settlement_real_structures.py
+@@ -9,6 +9,7 @@
+     PerformanceIndicatorParser,
+     SettlementImportParser,
+     debug_sheet_detection,
++    debug_workbook_detection,
+ )
+ 
+ 
+@@ -226,6 +227,145 @@
+             "no_parser_accepted_sheet",
+         )
+ 
++    def test_jit_sheet_name_has_priority_over_bonus_content(self) -> None:
++        rows = make_rows(
++            [
++                ["DSP", "Site", "ID", "Driver", "Routes", "Bonus HUF"],
++                ["JIT", "BUD1", 7644, "Gurzo Balazs", 3, 3000],
++            ],
++            sheet_name="BUD1_JIT",
++        )
++
++        parsed = SettlementImportParser(object()).parse_sheet(rows)
++        report = debug_sheet_detection(rows)
++
++        self.assertIsNotNone(parsed)
++        assert parsed is not None
++        self.assertEqual(parsed.sheet_type, "jit")
++        self.assertEqual(report["name_based_type"], "jit")
++        self.assertEqual(report["content_based_type"], "bonus")
++        self.assertEqual(report["final_type"], "jit")
++        self.assertEqual(report["confidence"], 1.0)
++        self.assertIn("sheet_name", report["decision_reason"])
++
++    def test_real_workbook_sheet_names_have_expected_primary_types(
++        self,
++    ) -> None:
++        sheet_samples = {
++            "ATM Balance": (
++                [["Name", "Balance"], ["Driver A", 1000]],
++                "atm_balance",
++            ),
++            "Bonus routes": (
++                [
++                    ["DSP", "Driver", "Routes", "Bonus HUF"],
++                    ["JIT", "Driver A", 2, 2000],
++                ],
++                "bonus",
++            ),
++            "BUD1_JIT": (
++                [
++                    [
++                        "Location",
++                        "Driver",
++                        "Route Unique ID",
++                        "Fixed Rate",
++                    ],
++                    ["Budapest", "Driver A", 123, 12500],
++                ],
++                "jit",
++            ),
++            "BUD2_JIT": (
++                [
++                    [
++                        "Location",
++                        "Driver",
++                        "Route Unique ID",
++                        "Fixed Rate",
++                    ],
++                    ["BUD2", "Driver B", 456, 12500],
++                ],
++                "jit",
++            ),
++            "Regional_JIT": (
++                [
++                    [
++                        "Location",
++                        "Driver",
++                        "Route Unique ID",
++                        "Fixed Rate",
++                    ],
++                    ["Region", "Driver C", 789, 12500],
++                ],
++                "jit",
++            ),
++            "Penalties": (
++                [
++                    ["Driver", "Penalty", "Amount"],
++                    ["Driver A", "Late", 500],
++                ],
++                "penalties",
++            ),
++            "Késedelmi mutató": (
++                [
++                    ["KPI", "Partner", "Value"],
++                    ["Delay", "JIT", "1,5 %"],
++                ],
++                "performance_indicator",
++            ),
++            "Túramegfelelési mutató": (
++                [
++                    ["KPI", "Partner", "Value"],
++                    ["Tour compliance", "JIT", "98 %"],
++                ],
++                "performance_indicator",
++            ),
++        }
++
++        for sheet_name, (matrix, expected_type) in sheet_samples.items():
++            with self.subTest(sheet_name=sheet_name):
++                rows = make_rows(matrix, sheet_name=sheet_name)
++                parsed = SettlementImportParser(object()).parse_sheet(rows)
++                report = debug_sheet_detection(rows)
++
++                self.assertIsNotNone(parsed)
++                assert parsed is not None
++                self.assertEqual(parsed.sheet_type, expected_type)
++                self.assertEqual(
++                    report["name_based_type"],
++                    expected_type,
++                )
++                self.assertEqual(report["final_type"], expected_type)
++                self.assertEqual(report["confidence"], 1.0)
++
++    def test_debug_workbook_detection_reports_decision_columns(
++        self,
++    ) -> None:
++        workbook_rows = (
++            make_rows(
++                [
++                    ["DSP", "Site", "ID", "Driver", "Routes", "Bonus HUF"],
++                    ["JIT", "BUD1", 1, "Driver A", 2, 2000],
++                ],
++                sheet_name="BUD1_JIT",
++            )
++            + make_rows(
++                [["Name", "Balance"], ["Driver A", 1000]],
++                sheet_name="ATM Balance",
++            )
++        )
++
++        reports = debug_workbook_detection(workbook_rows)
++
++        self.assertEqual(len(reports), 2)
++        for report in reports:
++            self.assertIn("sheet_name", report)
++            self.assertIn("name_based_type", report)
++            self.assertIn("content_based_type", report)
++            self.assertIn("final_type", report)
++            self.assertIn("confidence", report)
++            self.assertIn("decision_reason", report)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

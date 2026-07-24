@@ -9,6 +9,7 @@ from resources.settlement_parser import (
     PerformanceIndicatorParser,
     SettlementImportParser,
     debug_sheet_detection,
+    debug_workbook_detection,
 )
 
 
@@ -225,6 +226,145 @@ class RealSettlementStructureTests(unittest.TestCase):
             report["rejection_reason"],
             "no_parser_accepted_sheet",
         )
+
+    def test_jit_sheet_name_has_priority_over_bonus_content(self) -> None:
+        rows = make_rows(
+            [
+                ["DSP", "Site", "ID", "Driver", "Routes", "Bonus HUF"],
+                ["JIT", "BUD1", 7644, "Gurzo Balazs", 3, 3000],
+            ],
+            sheet_name="BUD1_JIT",
+        )
+
+        parsed = SettlementImportParser(object()).parse_sheet(rows)
+        report = debug_sheet_detection(rows)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.sheet_type, "jit")
+        self.assertEqual(report["name_based_type"], "jit")
+        self.assertEqual(report["content_based_type"], "bonus")
+        self.assertEqual(report["final_type"], "jit")
+        self.assertEqual(report["confidence"], 1.0)
+        self.assertIn("sheet_name", report["decision_reason"])
+
+    def test_real_workbook_sheet_names_have_expected_primary_types(
+        self,
+    ) -> None:
+        sheet_samples = {
+            "ATM Balance": (
+                [["Name", "Balance"], ["Driver A", 1000]],
+                "atm_balance",
+            ),
+            "Bonus routes": (
+                [
+                    ["DSP", "Driver", "Routes", "Bonus HUF"],
+                    ["JIT", "Driver A", 2, 2000],
+                ],
+                "bonus",
+            ),
+            "BUD1_JIT": (
+                [
+                    [
+                        "Location",
+                        "Driver",
+                        "Route Unique ID",
+                        "Fixed Rate",
+                    ],
+                    ["Budapest", "Driver A", 123, 12500],
+                ],
+                "jit",
+            ),
+            "BUD2_JIT": (
+                [
+                    [
+                        "Location",
+                        "Driver",
+                        "Route Unique ID",
+                        "Fixed Rate",
+                    ],
+                    ["BUD2", "Driver B", 456, 12500],
+                ],
+                "jit",
+            ),
+            "Regional_JIT": (
+                [
+                    [
+                        "Location",
+                        "Driver",
+                        "Route Unique ID",
+                        "Fixed Rate",
+                    ],
+                    ["Region", "Driver C", 789, 12500],
+                ],
+                "jit",
+            ),
+            "Penalties": (
+                [
+                    ["Driver", "Penalty", "Amount"],
+                    ["Driver A", "Late", 500],
+                ],
+                "penalties",
+            ),
+            "Késedelmi mutató": (
+                [
+                    ["KPI", "Partner", "Value"],
+                    ["Delay", "JIT", "1,5 %"],
+                ],
+                "performance_indicator",
+            ),
+            "Túramegfelelési mutató": (
+                [
+                    ["KPI", "Partner", "Value"],
+                    ["Tour compliance", "JIT", "98 %"],
+                ],
+                "performance_indicator",
+            ),
+        }
+
+        for sheet_name, (matrix, expected_type) in sheet_samples.items():
+            with self.subTest(sheet_name=sheet_name):
+                rows = make_rows(matrix, sheet_name=sheet_name)
+                parsed = SettlementImportParser(object()).parse_sheet(rows)
+                report = debug_sheet_detection(rows)
+
+                self.assertIsNotNone(parsed)
+                assert parsed is not None
+                self.assertEqual(parsed.sheet_type, expected_type)
+                self.assertEqual(
+                    report["name_based_type"],
+                    expected_type,
+                )
+                self.assertEqual(report["final_type"], expected_type)
+                self.assertEqual(report["confidence"], 1.0)
+
+    def test_debug_workbook_detection_reports_decision_columns(
+        self,
+    ) -> None:
+        workbook_rows = (
+            make_rows(
+                [
+                    ["DSP", "Site", "ID", "Driver", "Routes", "Bonus HUF"],
+                    ["JIT", "BUD1", 1, "Driver A", 2, 2000],
+                ],
+                sheet_name="BUD1_JIT",
+            )
+            + make_rows(
+                [["Name", "Balance"], ["Driver A", 1000]],
+                sheet_name="ATM Balance",
+            )
+        )
+
+        reports = debug_workbook_detection(workbook_rows)
+
+        self.assertEqual(len(reports), 2)
+        for report in reports:
+            self.assertIn("sheet_name", report)
+            self.assertIn("name_based_type", report)
+            self.assertIn("content_based_type", report)
+            self.assertIn("final_type", report)
+            self.assertIn("confidence", report)
+            self.assertIn("decision_reason", report)
 
 
 if __name__ == "__main__":
