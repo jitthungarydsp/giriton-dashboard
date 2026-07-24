@@ -287,6 +287,60 @@ div[data-testid="stMetricValue"] {
     }
 }
 
+/* --- Lekerekített futárlista --- */
+.courier-list-header {
+    display:grid;
+    grid-template-columns:1.45fr .75fr .85fr 1fr 1fr 1fr .9fr;
+    gap:1rem;
+    align-items:center;
+    padding:0 18px 8px 18px;
+    color:#314235;
+    font-size:13px;
+    font-weight:800;
+}
+[class*="st-key-courier_row_"] {
+    background:#ffffff;
+    border:1px solid #DDE9E0 !important;
+    border-radius:18px !important;
+    padding:10px 14px 10px 14px !important;
+    margin:0 0 10px 0 !important;
+    box-shadow:0 5px 16px rgba(23,53,31,.045);
+    transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+[class*="st-key-courier_row_"]:hover {
+    transform:translateY(-1px);
+    border-color:#A9DEB8 !important;
+    box-shadow:0 10px 24px rgba(23,133,59,.09);
+}
+[class*="st-key-courier_row_"] div.stButton > button {
+    justify-content:flex-start !important;
+    min-height:42px;
+    border-radius:12px !important;
+    border:1px solid #BDE9C9 !important;
+    background:linear-gradient(135deg,#FFFFFF 0%,#F7FCF8 100%) !important;
+    color:#17351F !important;
+    font-weight:800 !important;
+    padding-left:14px !important;
+}
+[class*="st-key-courier_row_"] div.stButton > button:hover {
+    background:#F0FAF3 !important;
+    border-color:#1FA64A !important;
+    color:#17853B !important;
+}
+[class*="st-key-courier_row_"] [data-testid="stCaptionContainer"] {
+    color:#6D7F71;
+    font-size:13px;
+}
+.courier-list-footer {
+    color:#6D7F71;
+    font-size:12px;
+    padding:4px 4px 0 4px;
+}
+@media (max-width: 1000px) {
+    .courier-list-header { display:none; }
+    [class*="st-key-courier_row_"] { overflow-x:auto; }
+}
+
 </style>
         """,
         unsafe_allow_html=True,
@@ -475,52 +529,49 @@ def render_table(df: pd.DataFrame) -> None:
         return
 
     st.markdown(
-        f"""
-        <div class="table-card-head" style="border:1px solid #e4e9f2;border-bottom:none;border-radius:20px 20px 0 0;">
-          <div>
-            <h3>Futárok</h3>
-            <span>{len(df)} futár az aktuális szűrésben</span>
-          </div>
+        """
+        <div class="courier-list-header">
+          <div>Futár</div><div>Branch</div><div>Számítás</div>
+          <div>Bruttó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    header = st.columns([1.45, 0.75, 0.85, 1, 1, 1, 0.9])
-    for col, label in zip(
-        header,
-        ["Futár", "Branch", "Számítás", "Bruttó", "Levonás", "Kifizetendő", "Státusz"],
-    ):
-        col.markdown(f"**{label}**")
-
     for i, row in df.reset_index(drop=True).iterrows():
-        cols = st.columns(
-            [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
-            vertical_alignment="center",
-        )
-        if cols[0].button(
-            f"{row['Futár']} · {row['Courier ID']}",
-            key=f"courier_{row['Courier ID']}_{i}",
-            use_container_width=True,
-        ):
-            st.session_state["selected_courier_id"] = str(row["Courier ID"])
-            show_courier_dialog()
+        with st.container(border=True, key=f"courier_row_{i}"):
+            cols = st.columns(
+                [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
+                vertical_alignment="center",
+            )
 
-        cols[1].caption(str(row["Branch"]))
-        cols[2].caption(str(row["Számítás módja"]))
-        cols[3].caption(format_huf(row["Bruttó bevétel"]))
-        cols[4].caption(format_huf(row["Levonás"]))
-        cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
-        badge, _ = status_meta(str(row["Státusz"]))
-        cols[6].markdown(
-            f'<span class="status-badge {badge}">{html.escape(str(row["Státusz"]))}</span>',
-            unsafe_allow_html=True,
-        )
+            courier_label = f"{row['Futár']} · {row['Courier ID']}"
+            if cols[0].button(
+                courier_label,
+                key=f"courier_{row['Courier ID']}_{i}",
+                use_container_width=True,
+                help=f"Raktár: {row['Raktár'] or 'BUD1'}",
+            ):
+                st.session_state["selected_courier_id"] = str(row["Courier ID"])
+                show_courier_dialog()
+
+            cols[1].caption(str(row["Branch"]))
+            cols[2].caption(str(row["Számítás módja"]))
+            cols[3].caption(format_huf(row["Bruttó bevétel"]))
+            cols[4].caption(format_huf(row["Levonás"]))
+            cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
+
+            badge, led = status_meta(str(row["Státusz"]))
+            cols[6].markdown(
+                f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown(
-        '<div style="height:14px;border:1px solid #e4e9f2;border-top:none;border-radius:0 0 20px 20px;background:#fff;"></div>',
+        f'<div class="courier-list-footer">{len(df)} megjelenített futár</div>',
         unsafe_allow_html=True,
     )
+
 
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
