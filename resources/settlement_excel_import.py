@@ -421,3 +421,75 @@ def delete_excel_import(
         IMPORT_TABLE,
         normalized_session_id,
     )
+
+
+def _read_all_session_ids(
+    supabase: Client,
+    table_name: str,
+    page_size: int = 1000,
+) -> set[str]:
+    """Return every non-empty session_id found in one settlement table."""
+
+    session_ids: set[str] = set()
+    offset = 0
+
+    while True:
+        response = (
+            supabase
+            .table(table_name)
+            .select("session_id")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = response.data or []
+
+        for row in rows:
+            session_id = str(row.get("session_id") or "").strip()
+            if session_id:
+                session_ids.add(session_id)
+
+        if len(rows) < page_size:
+            break
+
+        offset += page_size
+
+    return session_ids
+
+
+def delete_all_settlement_data(
+    supabase: Client,
+) -> dict[str, int]:
+    """Delete every imported and derived settlement row.
+
+    The function does not rely on the type of the ``id`` column. It first
+    collects all session identifiers from every relevant table, then deletes
+    rows in child-to-parent order by ``session_id``.
+    """
+
+    delete_order = (
+        *NORMALIZED_TABLES,
+        *PROCESSING_CHILD_TABLES,
+        PROCESSING_RUN_TABLE,
+        IMPORT_TABLE,
+    )
+
+    all_session_ids: set[str] = set()
+    for table_name in delete_order:
+        all_session_ids.update(
+            _read_all_session_ids(supabase, table_name)
+        )
+
+    deleted_by_table = {
+        table_name: 0
+        for table_name in delete_order
+    }
+
+    for session_id in sorted(all_session_ids):
+        for table_name in delete_order:
+            deleted_by_table[table_name] += _delete_rows_for_session(
+                supabase,
+                table_name,
+                session_id,
+            )
+
+    return deleted_by_table
