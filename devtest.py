@@ -293,14 +293,94 @@ div[data-testid="stMetricValue"] {
     )
 
 
-@st.cache_data(show_spinner=False)
-def get_demo_data() -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Courier ID":"7486","Futár":"Kiss Péter","Raktár":"Budapest","Branch":"Kifli","Számítás módja":"API","Bruttó bevétel":482500,"Bónusz":38000,"Levonás":52000,"Kifizetendő":468500,"Előző havi összeg":441200,"KPI":94.2,"Státusz":"Előkészítve"},
-        {"Courier ID":"7612","Futár":"Nagy Ádám","Raktár":"Budapest","Branch":"Kifli","Számítás módja":"Excel","Bruttó bevétel":421900,"Bónusz":29500,"Levonás":43200,"Kifizetendő":408200,"Előző havi összeg":399800,"KPI":91.7,"Státusz":"Ellenőrzés alatt"},
-        {"Courier ID":"7740","Futár":"Tóth Bence","Raktár":"Győr","Branch":"Kifli","Számítás módja":"Egyéni","Bruttó bevétel":389600,"Bónusz":25000,"Levonás":31000,"Kifizetendő":383600,"Előző havi összeg":376100,"KPI":96.1,"Státusz":"Jóváhagyva"},
-        {"Courier ID":"7821","Futár":"Szabó Márk","Raktár":"Debrecen","Branch":"Kifli","Számítás módja":"API","Bruttó bevétel":511300,"Bónusz":42500,"Levonás":64000,"Kifizetendő":489800,"Előző havi összeg":472400,"KPI":89.4,"Státusz":"Előkészítve"},
-    ])
+def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(0.0, index=df.index, dtype="float64")
+    return pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
+    query = (
+        get_db()
+        .schema("settlement")
+        .table("vw_driver_dashboard")
+        .select("*")
+    )
+
+    if session_id:
+        query = query.eq("session_id", session_id)
+
+    response = query.order("driver_name").execute()
+    rows = response.data or []
+    if not rows:
+        return pd.DataFrame(columns=[
+            "Courier ID", "Futár", "Raktár", "Branch", "Számítás módja",
+            "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
+            "Kifizetendő", "Előző havi összeg", "KPI", "Státusz",
+        ])
+
+    df = pd.DataFrame(rows)
+    df = df.rename(columns={
+        "courier_id": "Courier ID",
+        "driver_name": "Futár",
+        "warehouse_name": "Raktár",
+        "company_name": "Vállalkozás",
+        "tax_number": "Adószám",
+        "vat_status": "ÁFA státusz",
+        "fixed_rate_total": "Alap díj",
+        "tip_total": "Borravaló",
+        "extra_bonus_total": "Extra bónusz",
+        "penalty_total": "Levonás",
+        "atm_balance": "ATM Balance",
+        "calculated_total": "Kifizetendő",
+        "total_orders": "Rendelések",
+        "total_routes": "Útvonalak",
+        "work_days": "Munkanapok",
+        "average_performance": "KPI",
+    })
+
+    for col in [
+        "Alap díj", "Borravaló", "Extra bónusz", "Levonás",
+        "ATM Balance", "Kifizetendő", "Rendelések", "Útvonalak",
+        "Munkanapok", "KPI",
+    ]:
+        df[col] = _numeric_series(df, col)
+
+    bonus_source_columns = [
+        "delay_bonus_total",
+        "compliance_bonus_total",
+        "fuel_bonus_total",
+        "car_fridge_bonus_total",
+        "fill_rate_bonus_total",
+        "branding_total",
+    ]
+    df["Bónusz"] = df["Extra bónusz"]
+    for col in bonus_source_columns:
+        df["Bónusz"] += _numeric_series(df, col)
+
+    df["Levonás"] = df["Levonás"].abs()
+    df["Bruttó bevétel"] = (
+        df["Alap díj"]
+        + df["Borravaló"]
+        + df["Bónusz"]
+        + df["ATM Balance"]
+    )
+
+    df["Courier ID"] = df.get("Courier ID", pd.Series(index=df.index, dtype="object")).fillna("").astype(str)
+    df["Futár"] = df.get("Futár", pd.Series(index=df.index, dtype="object")).fillna("Ismeretlen futár")
+    if "Raktár" not in df.columns:
+        df["Raktár"] = df.get("location", pd.Series("", index=df.index))
+    else:
+        df["Raktár"] = df["Raktár"].fillna(df.get("location", pd.Series("", index=df.index)))
+    df["Raktár"] = df["Raktár"].fillna("")
+
+    df["Branch"] = "JIT"
+    df["Számítás módja"] = "Excel"
+    df["Státusz"] = "Előkészítve"
+    df["Előző havi összeg"] = 0.0
+
+    return df
 
 
 def format_huf(value: float | int) -> str:
@@ -371,7 +451,7 @@ def render_table(df: pd.DataFrame) -> None:
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    data = get_demo_data()
+    data = load_driver_dashboard(st.session_state.get("settlement_import_session_id"))
     match = data[data["Courier ID"].astype(str) == courier_id]
 
     if match.empty:
@@ -692,7 +772,7 @@ def show_courier_dialog() -> None:
 
 @st.dialog("Tömeges elszámolás", width="large")
 def show_bulk_settlement_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
+    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
 
     st.subheader("Tömeges elszámolás")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
@@ -767,7 +847,7 @@ def show_bulk_settlement_dialog() -> None:
 
 @st.dialog("Tömeges TIG", width="large")
 def show_bulk_tig_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
+    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
 
     st.subheader("Tömeges TIG")
     st.caption("Az aktuális szűrés alapján kiválasztott futárok.")
@@ -1007,7 +1087,7 @@ def show_parameter_catalog_dialog() -> None:
 
 @st.dialog("Bejelentések", width="large")
 def show_reports_dialog() -> None:
-    df = st.session_state.get("current_filtered_data", get_demo_data())
+    df = st.session_state.get("current_filtered_data", load_driver_dashboard(st.session_state.get("settlement_import_session_id")))
     ids = set(df["Courier ID"].astype(str))
 
     complaints = get_demo_complaints()
@@ -1171,7 +1251,7 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
 
 def show_new_settlement_page() -> None:
     apply_design()
-    data=get_demo_data()
+    data=load_driver_dashboard(st.session_state.get("settlement_import_session_id"))
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -1238,6 +1318,9 @@ def show_new_settlement_page() -> None:
                 )
                 processing_result = report_as_dict(processing_report)
                 st.session_state["settlement_processing_report"] = processing_result
+
+                if processing_result.get("status") in {"completed", "completed_with_warnings"}:
+                    load_driver_dashboard.clear()
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
@@ -1313,6 +1396,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
+                load_driver_dashboard.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
@@ -1450,34 +1534,31 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
+    total_bonus = int(filtered["Bónusz"].sum()) if not filtered.empty else 0
+    total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
+
     st.markdown(
-        """
+        f"""
         <div class="summary-donut-grid">
           <div class="summary-donut-card">
             <div>
-              <div class="summary-donut-title">Futárdíj összesen</div>
-              <div class="summary-donut-value">103,2 M Ft</div>
-              <div class="summary-donut-note">2026. július</div>
+              <div class="summary-donut-title">Bónuszok összesen</div>
+              <div class="summary-donut-value">{format_huf(total_bonus)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
             </div>
             <div class="summary-donut summary-donut-primary">
-              <div class="summary-donut-center">
-                <strong>103,2 M</strong>
-                <span>Ft</span>
-              </div>
+              <div class="summary-donut-center"><strong>{total_bonus / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
 
           <div class="summary-donut-card">
             <div>
-              <div class="summary-donut-title">Vállalkozói díj összesen</div>
-              <div class="summary-donut-value">15,3 M Ft</div>
-              <div class="summary-donut-note">2026. július</div>
+              <div class="summary-donut-title">Borravaló összesen</div>
+              <div class="summary-donut-value">{format_huf(total_tip)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
             </div>
             <div class="summary-donut summary-donut-secondary">
-              <div class="summary-donut-center">
-                <strong>15,3 M</strong>
-                <span>Ft</span>
-              </div>
+              <div class="summary-donut-center"><strong>{total_tip / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
         </div>
