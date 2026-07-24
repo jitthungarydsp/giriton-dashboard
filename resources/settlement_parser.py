@@ -1,12 +1,18 @@
+"""Content-based parsers for raw settlement Excel imports."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Iterable, Mapping, Sequence
+from typing import Any, ClassVar, Iterable, Mapping, Sequence, TYPE_CHECKING
 import re
 import unicodedata
 
 import pandas as pd
-from supabase import Client
+
+if TYPE_CHECKING:
+    from supabase import Client
+else:
+    Client = Any
 
 
 IMPORT_TABLE = "excel_import"
@@ -44,6 +50,17 @@ class SheetRule:
 
 
 @dataclass
+class ParserValidationIssue:
+    """Validation issue produced while parsing one source sheet."""
+
+    error_code: str
+    severity: str
+    message: str
+    source_row_no: int | None = None
+    raw_data: dict[str, Any] | None = None
+
+
+@dataclass
 class ParsedSheet:
     """Normalized output of one parsed sheet."""
 
@@ -54,6 +71,11 @@ class ParsedSheet:
     confidence: float
     headers: list[str]
     records: list[dict[str, Any]] = field(default_factory=list)
+    validation_issues: list[ParserValidationIssue] = field(
+        default_factory=list
+    )
+    source_data_rows: int = 0
+    rejected_rows: int = 0
 
     def to_dataframe(self) -> pd.DataFrame:
         """Return records as a pandas DataFrame."""
@@ -92,6 +114,8 @@ class WorkbookParseResult:
                     "header_source_row_no": sheet.header_source_row_no,
                     "confidence": sheet.confidence,
                     "row_count": len(sheet.records),
+                    "rejected_rows": sheet.rejected_rows,
+                    "issue_count": len(sheet.validation_issues),
                     "headers": sheet.headers,
                 }
                 for sheet in self.sheets
@@ -108,7 +132,11 @@ def normalize_text(value: Any) -> str:
 
     text = str(value).strip().lower()
     text = unicodedata.normalize("NFKD", text)
-    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = "".join(
+        character
+        for character in text
+        if not unicodedata.combining(character)
+    )
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -123,19 +151,23 @@ def column_number(column_key: str) -> int:
 
 
 def build_matrix(rows: Sequence[ImportedExcelRow]) -> list[list[Any]]:
-    """Build a row matrix from raw JSONB column_N values."""
+    """Build a row matrix while preserving empty Excel column positions."""
 
     matrix: list[list[Any]] = []
 
     for row in sorted(rows, key=lambda item: item.source_row_no):
-        ordered_values = [
-            value
-            for _key, value in sorted(
-                row.data.items(),
-                key=lambda item: column_number(item[0]),
-            )
-        ]
-        matrix.append(ordered_values)
+        numbered_values = {
+            column_number(key): value
+            for key, value in row.data.items()
+            if column_number(key) > 0
+        }
+        highest_column = max(numbered_values, default=0)
+        matrix.append(
+            [
+                numbered_values.get(index)
+                for index in range(1, highest_column + 1)
+            ]
+        )
 
     return matrix
 
@@ -143,10 +175,17 @@ def build_matrix(rows: Sequence[ImportedExcelRow]) -> list[list[Any]]:
 def is_empty_row(row: Sequence[Any]) -> bool:
     """Return True when every cell in a row is empty-like."""
 
-    return all(cell is None or str(cell).strip() == "" for cell in row)
+    return all(
+        cell is None or str(cell).strip() == ""
+        for cell in row
+    )
 
 
-def make_unique_header(header: str, used_headers: set[str], index: int) -> str:
+def make_unique_header(
+    header: str,
+    used_headers: set[str],
+    index: int,
+) -> str:
     """Make a stable unique header name."""
 
     base = str(header).strip() if header is not None else ""
@@ -168,7 +207,26 @@ def group_matches(row_text: str, group: Iterable[str]) -> bool:
     """Return True if any alias from a rule group is present in row text."""
 
     normalized_aliases = [normalize_text(alias) for alias in group]
-    return any(alias and alias in row_text for alias in normalized_aliases)
+    return any(
+        alias and alias in row_text
+        for alias in normalized_aliases
+    )
+
+
+def first_matching_index(
+    values: Sequence[Any],
+    aliases: Iterable[str],
+    excluded_indexes: set[int] | None = None,
+) -> int | None:
+    """Return the first index whose normalized text matches an alias."""
+
+    excluded = excluded_indexes or set()
+    for index, value in enumerate(values):
+        if index in excluded:
+            continue
+        if group_matches(normalize_text(value), aliases):
+            return index
+    return None
 
 
 class BaseSheetParser:
@@ -178,7 +236,10 @@ class BaseSheetParser:
     MIN_CONFIDENCE: ClassVar[float] = 0.65
 
     def __init__(self, rows: Sequence[ImportedExcelRow]) -> None:
-        self.rows = list(rows)
+        self.rows = sorted(
+            rows,
+            key=lambda item: item.source_row_no,
+        )
         self.matrix = build_matrix(self.rows)
 
     @classmethod
@@ -212,6 +273,7 @@ class BaseSheetParser:
             confidence=confidence,
             headers=headers,
             records=records,
+            source_data_rows=len(records),
         )
 
     def detect_header(self) -> HeaderDetection | None:
@@ -238,8 +300,16 @@ class BaseSheetParser:
                 for group in self.RULE.optional_groups
                 if group_matches(row_text, group)
             )
-            non_empty_count = sum(1 for cell in row if str(cell).strip())
-            score = required_matches * 10 + optional_matches * 2 + non_empty_count / 100
+            non_empty_count = sum(
+                1
+                for cell in row
+                if str(cell).strip()
+            )
+            score = (
+                required_matches * 10
+                + optional_matches * 2
+                + non_empty_count / 100
+            )
 
             candidate = HeaderDetection(
                 header_index=index,
@@ -253,25 +323,42 @@ class BaseSheetParser:
 
         return best
 
-    def calculate_confidence(self, detection: HeaderDetection) -> float:
+    def calculate_confidence(
+        self,
+        detection: HeaderDetection,
+    ) -> float:
         """Calculate parser confidence from matched rule groups."""
 
         required_total = max(len(self.RULE.required_groups), 1)
         optional_total = max(len(self.RULE.optional_groups), 1)
-        required_score = detection.matched_required_groups / required_total
-        optional_score = detection.matched_optional_groups / optional_total
+        required_score = (
+            detection.matched_required_groups / required_total
+        )
+        optional_score = (
+            detection.matched_optional_groups / optional_total
+        )
 
         if not self.RULE.optional_groups:
             return required_score
 
-        return min(1.0, required_score * 0.85 + optional_score * 0.15)
+        return min(
+            1.0,
+            required_score * 0.85 + optional_score * 0.15,
+        )
 
-    def normalize_headers(self, header_row: Sequence[Any]) -> list[str]:
+    def normalize_headers(
+        self,
+        header_row: Sequence[Any],
+    ) -> list[str]:
         """Normalize raw header cells into unique dictionary keys."""
 
         used_headers: set[str] = set()
         return [
-            make_unique_header(str(cell or "").strip(), used_headers, index)
+            make_unique_header(
+                str(cell or "").strip(),
+                used_headers,
+                index,
+            )
             for index, cell in enumerate(header_row)
         ]
 
@@ -284,16 +371,23 @@ class BaseSheetParser:
 
         records: list[dict[str, Any]] = []
 
-        for raw_row in self.matrix[header_index + 1 :]:
+        for raw_row in self.matrix[header_index + 1:]:
             if is_empty_row(raw_row):
                 continue
 
             record: dict[str, Any] = {}
             for index, header in enumerate(headers):
-                value = raw_row[index] if index < len(raw_row) else None
+                value = (
+                    raw_row[index]
+                    if index < len(raw_row)
+                    else None
+                )
                 record[header] = value
 
-            if any(value is not None and str(value).strip() for value in record.values()):
+            if any(
+                value is not None and str(value).strip()
+                for value in record.values()
+            ):
                 records.append(record)
 
         return records
@@ -364,11 +458,679 @@ class BonusParser(BaseSheetParser):
     )
 
 
+class PerformanceIndicatorParser(BaseSheetParser):
+    """Parser for delay, compliance, and other performance indicators."""
+
+    RULE = SheetRule(
+        sheet_type="performance_indicator",
+        required_groups=(),
+    )
+    MIN_CONFIDENCE = 0.65
+    UNCERTAIN_CONFIDENCE = 0.78
+
+    INDICATOR_ALIASES: ClassVar[tuple[str, ...]] = (
+        "indicator",
+        "metric",
+        "measure",
+        "kpi",
+        "mutato",
+        "teljesitmeny",
+    )
+    PERFORMANCE_ALIASES: ClassVar[tuple[str, ...]] = (
+        "delay",
+        "late",
+        "lateness",
+        "keses",
+        "kesedelmi",
+        "compliance",
+        "tour compliance",
+        "route compliance",
+        "turamegfeleles",
+        "megfeleles",
+        "teljesitesi arany",
+        "no show",
+    )
+    VALUE_ALIASES: ClassVar[tuple[str, ...]] = (
+        "value",
+        "ertek",
+        "rate",
+        "ratio",
+        "percentage",
+        "percent",
+        "szazalek",
+        "score",
+        "mutato",
+    )
+    ENTITY_ALIASES: ClassVar[tuple[str, ...]] = (
+        "courier",
+        "driver",
+        "futar",
+        "partner",
+        "depot",
+        "warehouse",
+        "raktar",
+        "route",
+        "tour",
+        "tura",
+        "entity",
+        "azonosito",
+        "user",
+        "name",
+        "nev",
+    )
+    PERIOD_ALIASES: ClassVar[tuple[str, ...]] = (
+        "period",
+        "idoszak",
+        "date",
+        "datum",
+        "week",
+        "het",
+        "month",
+        "honap",
+        "year",
+        "ev",
+    )
+    ENTITY_ID_ALIASES: ClassVar[tuple[str, ...]] = (
+        "courier id",
+        "driver id",
+        "partner id",
+        "route id",
+        "tour id",
+        "entity id",
+        "user id",
+        "user number",
+        "futar id",
+        "azonosito",
+    )
+    ENTITY_NAME_ALIASES: ClassVar[tuple[str, ...]] = (
+        "courier name",
+        "driver name",
+        "partner name",
+        "entity name",
+        "futar neve",
+        "futar",
+        "name",
+        "nev",
+        "depot",
+        "warehouse",
+        "raktar",
+    )
+    UNIT_ALIASES: ClassVar[tuple[str, ...]] = (
+        "unit",
+        "egyseg",
+        "mertekegyseg",
+    )
+    DELAY_ALIASES: ClassVar[tuple[str, ...]] = (
+        "delay",
+        "late",
+        "lateness",
+        "keses",
+        "kesedelmi",
+    )
+    TOUR_COMPLIANCE_ALIASES: ClassVar[tuple[str, ...]] = (
+        "tour compliance",
+        "route compliance",
+        "turamegfeleles",
+        "tura megfeleles",
+        "compliance",
+        "megfeleles",
+        "teljesitesi arany",
+    )
+
+    def detect_header(self) -> HeaderDetection | None:
+        """Find the strongest multi-signal performance header."""
+
+        best: HeaderDetection | None = None
+
+        for index, row in enumerate(self.matrix):
+            row_text = " ".join(normalize_text(cell) for cell in row)
+            if not row_text:
+                continue
+
+            indicator_match = group_matches(
+                row_text,
+                self.INDICATOR_ALIASES,
+            )
+            performance_match = group_matches(
+                row_text,
+                self.PERFORMANCE_ALIASES,
+            )
+            value_match = group_matches(
+                row_text,
+                self.VALUE_ALIASES,
+            )
+            entity_match = group_matches(
+                row_text,
+                self.ENTITY_ALIASES,
+            )
+            period_match = group_matches(
+                row_text,
+                self.PERIOD_ALIASES,
+            )
+            percentage_match = self._has_percentage_signal(
+                index,
+                row,
+            )
+
+            semantic_signals = sum(
+                (
+                    indicator_match,
+                    performance_match,
+                    value_match,
+                    entity_match,
+                    period_match,
+                    percentage_match,
+                )
+            )
+
+            if not (indicator_match or performance_match):
+                continue
+            if not (value_match or percentage_match):
+                continue
+            if semantic_signals < 3:
+                continue
+
+            confidence = min(
+                1.0,
+                (0.15 if indicator_match else 0.0)
+                + (0.25 if performance_match else 0.0)
+                + (0.20 if value_match else 0.0)
+                + (0.15 if entity_match else 0.0)
+                + (0.10 if period_match else 0.0)
+                + (0.15 if percentage_match else 0.0),
+            )
+            candidate = HeaderDetection(
+                header_index=index,
+                score=confidence,
+                matched_required_groups=sum(
+                    (
+                        indicator_match,
+                        performance_match,
+                        value_match,
+                    )
+                ),
+                matched_optional_groups=sum(
+                    (
+                        entity_match,
+                        period_match,
+                        percentage_match,
+                    )
+                ),
+            )
+
+            if best is None or candidate.score > best.score:
+                best = candidate
+
+        return best
+
+    def calculate_confidence(
+        self,
+        detection: HeaderDetection,
+    ) -> float:
+        """Return the weighted content-based score."""
+
+        return detection.score
+
+    def parse(self) -> ParsedSheet | None:
+        """Parse and validate a performance indicator sheet."""
+
+        detection = self.detect_header()
+        if detection is None:
+            return None
+
+        confidence = self.calculate_confidence(detection)
+        if confidence < self.MIN_CONFIDENCE:
+            return None
+
+        header_row = self.matrix[detection.header_index]
+        headers = self.normalize_headers(header_row)
+        (
+            records,
+            issues,
+            source_data_rows,
+            rejected_rows,
+        ) = self._normalize_performance_records(
+            detection.header_index,
+            headers,
+        )
+
+        if confidence < self.UNCERTAIN_CONFIDENCE:
+            issues.append(
+                ParserValidationIssue(
+                    error_code="UNCERTAIN_HEADER",
+                    severity="warning",
+                    message=(
+                        "A performance fejléc felismerése bizonytalan."
+                    ),
+                    source_row_no=(
+                        self.rows[detection.header_index].source_row_no
+                    ),
+                    raw_data={"confidence": confidence},
+                )
+            )
+
+        return ParsedSheet(
+            sheet_name=self.rows[0].sheet_name if self.rows else "",
+            sheet_type=self.sheet_type(),
+            parser_name=self.__class__.__name__,
+            header_source_row_no=(
+                self.rows[detection.header_index].source_row_no
+            ),
+            confidence=confidence,
+            headers=headers,
+            records=records,
+            validation_issues=issues,
+            source_data_rows=source_data_rows,
+            rejected_rows=rejected_rows,
+        )
+
+    def _has_percentage_signal(
+        self,
+        header_index: int,
+        header_row: Sequence[Any],
+    ) -> bool:
+        """Return True when header or nearby values imply percentages."""
+
+        if any(
+            "%" in str(cell)
+            or group_matches(
+                normalize_text(cell),
+                ("percent", "percentage", "szazalek", "rate", "ratio"),
+            )
+            for cell in header_row
+        ):
+            return True
+
+        sample_rows = self.matrix[header_index + 1:header_index + 6]
+        return any(
+            isinstance(cell, str) and "%" in cell
+            for row in sample_rows
+            for cell in row
+        )
+
+    def _normalize_performance_records(
+        self,
+        header_index: int,
+        headers: Sequence[str],
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[ParserValidationIssue],
+        int,
+        int,
+    ]:
+        """Normalize data rows and collect non-fatal validation issues."""
+
+        header_values = self.matrix[header_index]
+        indexes = self._resolve_column_indexes(header_values)
+        records: list[dict[str, Any]] = []
+        issues: list[ParserValidationIssue] = []
+        source_data_rows = 0
+        rejected_rows = 0
+
+        for matrix_index in range(
+            header_index + 1,
+            len(self.matrix),
+        ):
+            raw_row = self.matrix[matrix_index]
+            source_row_no = self.rows[matrix_index].source_row_no
+
+            if is_empty_row(raw_row):
+                issues.append(
+                    ParserValidationIssue(
+                        error_code="EMPTY_DATA_ROW",
+                        severity="info",
+                        message="Az adatsor üres, ezért kimaradt.",
+                        source_row_no=source_row_no,
+                    )
+                )
+                continue
+
+            source_data_rows += 1
+            raw_record = self._row_as_dict(headers, raw_row)
+            entity_id = self._value_at(
+                raw_row,
+                indexes["entity_id"],
+            )
+            entity_name = self._value_at(
+                raw_row,
+                indexes["entity_name"],
+            )
+
+            if self._is_empty(entity_id):
+                issues.append(
+                    ParserValidationIssue(
+                        error_code="MISSING_ENTITY_ID",
+                        severity="warning",
+                        message=(
+                            "A sorhoz nem található egyértelmű azonosító."
+                        ),
+                        source_row_no=source_row_no,
+                        raw_data=raw_record,
+                    )
+                )
+
+            if self._is_empty(entity_id) and self._is_empty(entity_name):
+                issues.append(
+                    ParserValidationIssue(
+                        error_code="MISSING_ENTITY",
+                        severity="error",
+                        message=(
+                            "Sem azonosító, sem megnevezés nem található."
+                        ),
+                        source_row_no=source_row_no,
+                        raw_data=raw_record,
+                    )
+                )
+                rejected_rows += 1
+                continue
+
+            value_index = indexes["value"]
+            raw_value = self._value_at(raw_row, value_index)
+            percentage_context = self._is_percentage_context(
+                header_values,
+                value_index,
+                raw_value,
+            )
+            numeric_value, unit = normalize_indicator_value(
+                raw_value,
+                percentage_context=percentage_context,
+            )
+
+            if numeric_value is None:
+                issues.append(
+                    ParserValidationIssue(
+                        error_code="INVALID_INDICATOR_VALUE",
+                        severity="error",
+                        message=(
+                            "A mutatóérték nem alakítható biztonságosan "
+                            "számmá."
+                        ),
+                        source_row_no=source_row_no,
+                        raw_data=raw_record,
+                    )
+                )
+                rejected_rows += 1
+                continue
+
+            indicator_text = self._indicator_text(
+                header_values,
+                raw_row,
+                indexes,
+            )
+            indicator_type = detect_indicator_type(indicator_text)
+
+            if indicator_type == "other":
+                issues.append(
+                    ParserValidationIssue(
+                        error_code="UNKNOWN_INDICATOR_TYPE",
+                        severity="warning",
+                        message=(
+                            "A mutató típusa nem azonosítható biztosan; "
+                            "other értékkel került mentésre."
+                        ),
+                        source_row_no=source_row_no,
+                        raw_data={"indicator_text": indicator_text},
+                    )
+                )
+
+            explicit_unit = self._value_at(
+                raw_row,
+                indexes["unit"],
+            )
+            if not self._is_empty(explicit_unit):
+                unit = str(explicit_unit).strip()
+
+            mapped_indexes = {
+                index
+                for index in indexes.values()
+                if index is not None
+            }
+            extra = {
+                header: raw_record.get(header)
+                for index, header in enumerate(headers)
+                if index not in mapped_indexes
+                and not self._is_empty(raw_record.get(header))
+            }
+
+            records.append(
+                {
+                    "indicator_type": indicator_type,
+                    "entity_id": entity_id,
+                    "entity_name": entity_name,
+                    "period": self._value_at(
+                        raw_row,
+                        indexes["period"],
+                    ),
+                    "raw_value": raw_value,
+                    "numeric_value": numeric_value,
+                    "unit": unit,
+                    "source_row_no": source_row_no,
+                    "extra": extra,
+                }
+            )
+
+        return records, issues, source_data_rows, rejected_rows
+
+    def _resolve_column_indexes(
+        self,
+        header_values: Sequence[Any],
+    ) -> dict[str, int | None]:
+        """Resolve semantic columns from header content."""
+
+        entity_id_index = first_matching_index(
+            header_values,
+            self.ENTITY_ID_ALIASES,
+        )
+        entity_name_index = first_matching_index(
+            header_values,
+            self.ENTITY_NAME_ALIASES,
+            excluded_indexes=(
+                {entity_id_index}
+                if entity_id_index is not None
+                else set()
+            ),
+        )
+        indicator_index = first_matching_index(
+            header_values,
+            self.PERFORMANCE_ALIASES,
+        )
+        if indicator_index is None:
+            indicator_index = first_matching_index(
+                header_values,
+                self.INDICATOR_ALIASES,
+            )
+
+        value_index = first_matching_index(
+            header_values,
+            self.VALUE_ALIASES,
+        )
+        if value_index is None:
+            value_index = indicator_index
+
+        return {
+            "entity_id": entity_id_index,
+            "entity_name": entity_name_index,
+            "indicator": indicator_index,
+            "value": value_index,
+            "period": first_matching_index(
+                header_values,
+                self.PERIOD_ALIASES,
+            ),
+            "unit": first_matching_index(
+                header_values,
+                self.UNIT_ALIASES,
+            ),
+        }
+
+    @staticmethod
+    def _row_as_dict(
+        headers: Sequence[str],
+        raw_row: Sequence[Any],
+    ) -> dict[str, Any]:
+        """Convert one row to its original header/value mapping."""
+
+        return {
+            header: raw_row[index] if index < len(raw_row) else None
+            for index, header in enumerate(headers)
+        }
+
+    @staticmethod
+    def _value_at(
+        row: Sequence[Any],
+        index: int | None,
+    ) -> Any:
+        """Read a row value safely."""
+
+        if index is None or index >= len(row):
+            return None
+        return row[index]
+
+    @staticmethod
+    def _is_empty(value: Any) -> bool:
+        """Return True for empty-like values."""
+
+        return value is None or str(value).strip() == ""
+
+    def _indicator_text(
+        self,
+        header_values: Sequence[Any],
+        raw_row: Sequence[Any],
+        indexes: Mapping[str, int | None],
+    ) -> str:
+        """Build indicator context from header and optional row value."""
+
+        indicator_index = indexes["indicator"]
+        value_index = indexes["value"]
+        parts: list[str] = []
+
+        if indicator_index is not None:
+            parts.append(str(header_values[indicator_index]))
+            indicator_value = self._value_at(
+                raw_row,
+                indicator_index,
+            )
+            if (
+                indicator_index != value_index
+                and not self._is_empty(indicator_value)
+            ):
+                parts.append(str(indicator_value))
+
+        if value_index is not None:
+            parts.append(str(header_values[value_index]))
+
+        return " ".join(parts)
+
+    def _is_percentage_context(
+        self,
+        header_values: Sequence[Any],
+        value_index: int | None,
+        raw_value: Any,
+    ) -> bool:
+        """Determine whether a value represents percentage points."""
+
+        if isinstance(raw_value, str) and "%" in raw_value:
+            return True
+        if value_index is None:
+            return False
+
+        header = str(header_values[value_index])
+        return (
+            "%" in header
+            or group_matches(
+                normalize_text(header),
+                (
+                    "percent",
+                    "percentage",
+                    "szazalek",
+                    "rate",
+                    "ratio",
+                    "mutato",
+                    "compliance",
+                    "megfeleles",
+                    "delay",
+                    "late",
+                    "kesedelmi",
+                ),
+            )
+        )
+
+
+def detect_indicator_type(value: Any) -> str:
+    """Classify indicator context as delay, tour compliance, or other."""
+
+    normalized = normalize_text(value)
+    if group_matches(
+        normalized,
+        PerformanceIndicatorParser.DELAY_ALIASES,
+    ):
+        return "delay"
+    if group_matches(
+        normalized,
+        PerformanceIndicatorParser.TOUR_COMPLIANCE_ALIASES,
+    ):
+        return "tour_compliance"
+    return "other"
+
+
+def normalize_indicator_value(
+    value: Any,
+    percentage_context: bool = False,
+) -> tuple[float | None, str | None]:
+    """Normalize a number or percentage to a documented representation.
+
+    Percentage values are stored as percentage points on a 0-100 scale:
+    ``95%``, ``"95,0 %"`` and decimal ``0.95`` in percentage context all
+    become ``95.0`` with unit ``percent``.
+    """
+
+    if value is None or isinstance(value, bool):
+        return None, None
+
+    explicit_percent = isinstance(value, str) and "%" in value
+    number: float | None
+
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        text = str(value).strip().replace("\u00a0", " ")
+        if not text:
+            return None, None
+
+        numeric_match = re.search(
+            r"[-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+)",
+            text.replace(" ", ""),
+        )
+        if not numeric_match:
+            return None, None
+
+        numeric_text = numeric_match.group(0)
+        if "," in numeric_text and "." in numeric_text:
+            if numeric_text.rfind(",") > numeric_text.rfind("."):
+                numeric_text = numeric_text.replace(".", "")
+                numeric_text = numeric_text.replace(",", ".")
+            else:
+                numeric_text = numeric_text.replace(",", "")
+        else:
+            numeric_text = numeric_text.replace(",", ".")
+
+        try:
+            number = float(numeric_text)
+        except ValueError:
+            return None, None
+
+    is_percentage = explicit_percent or percentage_context
+    if is_percentage and abs(number) <= 1:
+        number *= 100
+
+    return number, "percent" if is_percentage else "number"
+
+
 DEFAULT_PARSERS: tuple[type[BaseSheetParser], ...] = (
     JITParser,
     PenaltyParser,
     ATMParser,
     BonusParser,
+    PerformanceIndicatorParser,
 )
 
 
@@ -383,7 +1145,9 @@ class SettlementImportParser:
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> None:
         self.supabase = supabase
-        self.parser_classes = tuple(parser_classes or DEFAULT_PARSERS)
+        self.parser_classes = tuple(
+            parser_classes or DEFAULT_PARSERS
+        )
         self.table_name = table_name
         self.page_size = page_size
 
@@ -403,7 +1167,10 @@ class SettlementImportParser:
 
         return result
 
-    def read_session_rows(self, session_id: str) -> list[ImportedExcelRow]:
+    def read_session_rows(
+        self,
+        session_id: str,
+    ) -> list[ImportedExcelRow]:
         """Read a complete import session from settlement.excel_import."""
 
         if not session_id or not str(session_id).strip():
@@ -416,7 +1183,9 @@ class SettlementImportParser:
             response = (
                 self.supabase
                 .table(self.table_name)
-                .select("session_id,row_no,sheet_name,source_row_no,data")
+                .select(
+                    "session_id,row_no,sheet_name,source_row_no,data"
+                )
                 .eq("session_id", session_id)
                 .order("sheet_name")
                 .order("source_row_no")
@@ -436,7 +1205,9 @@ class SettlementImportParser:
                 session_id=str(record.get("session_id") or ""),
                 row_no=int(record.get("row_no") or 0),
                 sheet_name=str(record.get("sheet_name") or ""),
-                source_row_no=int(record.get("source_row_no") or 0),
+                source_row_no=int(
+                    record.get("source_row_no") or 0
+                ),
                 data=record.get("data") or {},
             )
             for record in records
@@ -446,7 +1217,7 @@ class SettlementImportParser:
     def group_by_sheet(
         rows: Sequence[ImportedExcelRow],
     ) -> dict[str, list[ImportedExcelRow]]:
-        """Group raw rows by sheet_name without using it for type detection."""
+        """Group raw rows by name without using it for type detection."""
 
         grouped: dict[str, list[ImportedExcelRow]] = {}
 
@@ -459,7 +1230,7 @@ class SettlementImportParser:
         self,
         rows: Sequence[ImportedExcelRow],
     ) -> ParsedSheet | None:
-        """Run every registered parser and return the best matching result."""
+        """Run every registered parser and return the best match."""
 
         candidates: list[ParsedSheet] = []
 
@@ -471,7 +1242,10 @@ class SettlementImportParser:
         if not candidates:
             return None
 
-        return max(candidates, key=lambda sheet: sheet.confidence)
+        return max(
+            candidates,
+            key=lambda sheet: sheet.confidence,
+        )
 
 
 def parse_import_session(

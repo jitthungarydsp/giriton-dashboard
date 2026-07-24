@@ -257,6 +257,10 @@ def _pair_records_with_source_rows(
 ]:
     """Pair parser records with their original Excel row numbers."""
 
+    source_rows_by_number = {
+        row.source_row_no: row
+        for row in source_rows
+    }
     candidate_rows = [
         row
         for row in sorted(source_rows, key=lambda item: item.source_row_no)
@@ -264,6 +268,39 @@ def _pair_records_with_source_rows(
         and not is_empty_row(_ordered_raw_values(row))
     ]
     issues: list[ValidationIssue] = []
+
+    explicit_pairs: list[tuple[int, dict[str, Any]]] = []
+    records_without_source_row: list[dict[str, Any]] = []
+    for record in parsed_sheet.records:
+        source_row_no = record.get("source_row_no")
+        if (
+            isinstance(source_row_no, int)
+            and source_row_no in source_rows_by_number
+        ):
+            explicit_pairs.append((source_row_no, record))
+        else:
+            records_without_source_row.append(record)
+
+    if explicit_pairs and not records_without_source_row:
+        return explicit_pairs, issues
+
+    if explicit_pairs:
+        issues.append(
+            ValidationIssue(
+                error_code="PARTIAL_SOURCE_ROW_MAPPING",
+                severity="warning",
+                message=(
+                    "Csak a rekordok egy része tartalmazott érvényes "
+                    "source_row_no értéket; a többi rekord pozíció alapján "
+                    "került párosításra."
+                ),
+                sheet_name=parsed_sheet.sheet_name,
+                raw_data={
+                    "explicit_record_count": len(explicit_pairs),
+                    "fallback_record_count": len(records_without_source_row),
+                },
+            )
+        )
 
     if len(candidate_rows) != len(parsed_sheet.records):
         issues.append(
@@ -283,15 +320,45 @@ def _pair_records_with_source_rows(
             )
         )
 
-    pair_count = min(len(candidate_rows), len(parsed_sheet.records))
-    pairs = [
-        (
-            candidate_rows[index].source_row_no,
-            parsed_sheet.records[index],
-        )
-        for index in range(pair_count)
+    used_source_rows = {
+        source_row_no
+        for source_row_no, _record in explicit_pairs
+    }
+    fallback_candidates = [
+        row
+        for row in candidate_rows
+        if row.source_row_no not in used_source_rows
     ]
-    return pairs, issues
+    fallback_count = min(
+        len(fallback_candidates),
+        len(records_without_source_row),
+    )
+    fallback_pairs = [
+        (
+            fallback_candidates[index].source_row_no,
+            records_without_source_row[index],
+        )
+        for index in range(fallback_count)
+    ]
+    return explicit_pairs + fallback_pairs, issues
+
+
+def _convert_parser_issues(
+    parsed_sheet: ParsedSheet,
+) -> list[ValidationIssue]:
+    """Convert parser-level issues to persistent processor issues."""
+
+    return [
+        ValidationIssue(
+            error_code=issue.error_code,
+            severity=issue.severity,
+            message=issue.message,
+            sheet_name=parsed_sheet.sheet_name,
+            source_row_no=issue.source_row_no,
+            raw_data=issue.raw_data,
+        )
+        for issue in parsed_sheet.validation_issues
+    ]
 
 
 def _create_processing_run(client: Client, session_id: str) -> str:
@@ -544,7 +611,11 @@ def _process_sheet(
             [],
         )
 
-    pairs, issues = _pair_records_with_source_rows(parsed, source_rows)
+    pairs, mapping_issues = _pair_records_with_source_rows(
+        parsed,
+        source_rows,
+    )
+    issues = _convert_parser_issues(parsed) + mapping_issues
     normalized_rows = [
         {
             "processing_run_id": processing_run_id,
@@ -555,7 +626,10 @@ def _process_sheet(
         }
         for source_row_no, normalized_data in pairs
     ]
-    rejected_rows = max(len(parsed.records) - len(normalized_rows), 0)
+    rejected_rows = parsed.rejected_rows + max(
+        len(parsed.records) - len(normalized_rows),
+        0,
+    )
 
     return (
         SheetProcessingReport(
@@ -563,7 +637,11 @@ def _process_sheet(
             detected_type=parsed.sheet_type,
             header_row=parsed.header_source_row_no,
             confidence=parsed.confidence,
-            total_rows=len(parsed.records),
+            total_rows=(
+                parsed.source_data_rows
+                if parsed.source_data_rows
+                else len(parsed.records)
+            ),
             accepted_rows=len(normalized_rows),
             rejected_rows=rejected_rows,
             status=(
