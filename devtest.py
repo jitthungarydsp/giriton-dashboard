@@ -301,11 +301,12 @@ def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_master() -> pd.DataFrame:
+    """A futártörzs közvetlen betöltése a public.courier_master táblából."""
     response = (
         get_db()
         .schema("public")
         .table("courier_master")
-        .select("courier_id,courier_name,branch,warehouse_name,active")
+        .select("courier_id,courier_name,warehouse_name")
         .order("courier_name")
         .execute()
     )
@@ -324,17 +325,17 @@ def load_courier_master() -> pd.DataFrame:
     df = pd.DataFrame(rows).rename(columns={
         "courier_id": "Courier ID",
         "courier_name": "Futár",
-        "branch": "Branch",
         "warehouse_name": "Raktár",
-        "active": "Aktív",
     })
 
-    df["Courier ID"] = df["Courier ID"].astype(str)
+    df["Courier ID"] = df["Courier ID"].fillna("").astype(str)
     df["Futár"] = df["Futár"].fillna("Ismeretlen futár")
-    df["Branch"] = df["Branch"].fillna("JIT")
+
+    # Ezeket később az elszámolási adatokkal kapcsoljuk hozzá.
+    df["Branch"] = "JIT"
     df["Számítás módja"] = "Excel"
-    df["Raktár"] = df["Raktár"].fillna("")
-    df["Státusz"] = df["Aktív"].map({True: "Aktív", False: "Inaktív"}).fillna("Ismeretlen")
+    df["Raktár"] = df.get("Raktár", pd.Series("", index=df.index)).fillna("BUD1")
+    df["Státusz"] = "Aktív"
 
     for column in [
         "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
@@ -473,14 +474,62 @@ def get_demo_complaints() -> pd.DataFrame:
 
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
-        st.info("Nincs futár a courier_master táblában.")
+        st.info("Nincs találat a megadott szűrőkkel.")
         return
 
-    shown = df[["Courier ID", "Futár"]].copy()
-    st.dataframe(
-        shown,
-        use_container_width=True,
-        hide_index=True,
+    st.markdown(
+        f"""
+        <div class="table-card-head">
+          <div>
+            <h3>Futárlista</h3>
+            <span>{len(df)} futár a jelenlegi szűrésben</span>
+          </div>
+          <span>Forrás: public.courier_master</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    header = st.columns([1.65, 0.85, 0.75, 0.9, 0.8])
+    for col, label in zip(
+        header,
+        ["Futár", "Raktár", "Branch", "Számítás", "Státusz"],
+    ):
+        col.markdown(f"**{label}**")
+
+    st.divider()
+
+    for index, row in df.reset_index(drop=True).iterrows():
+        cols = st.columns(
+            [1.65, 0.85, 0.75, 0.9, 0.8],
+            vertical_alignment="center",
+        )
+
+        if cols[0].button(
+            f"{row['Futár']} · {row['Courier ID']}",
+            key=f"courier_{row['Courier ID']}_{index}",
+            use_container_width=True,
+        ):
+            st.session_state["selected_courier_id"] = str(row["Courier ID"])
+            show_courier_dialog()
+
+        cols[1].caption(str(row["Raktár"] or "—"))
+        cols[2].caption(str(row["Branch"]))
+        cols[3].caption(str(row["Számítás módja"]))
+        cols[4].markdown(
+            '<span class="status-badge status-green">'
+            '<span class="led led-green"></span>Aktív</span>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        f"""
+        <div class="table-footer">
+          <span>Megjelenítve: {len(df)} futár</span>
+          <span>A futár nevére kattintva megnyílik a részletes designer nézet.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -1565,9 +1614,9 @@ def show_new_settlement_page() -> None:
     )
 
     st.markdown('<div class="section-title">Futárok</div>', unsafe_allow_html=True)
-    st.caption(f"Találatok száma: {len(filtered)}")
-
+    st.markdown('<div class="table-card">', unsafe_allow_html=True)
     render_table(filtered)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d,e=st.columns(5)
