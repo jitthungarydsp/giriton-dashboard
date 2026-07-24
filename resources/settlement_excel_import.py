@@ -24,15 +24,10 @@ NORMALIZED_TABLES = (
     "bonus_route_row",
     "performance_indicator_row",
 )
-PROCESSING_CHILD_TABLES = (
-    "validation_error",
-    "sheet_processing_result",
-)
-PROCESSING_RUN_TABLE = "processing_run"
 
 
 def get_supabase_client(url: str, service_role_key: str) -> Client:
-    """Supabase kliens létrehozása a settlement sémához."""
+    """Supabase kliens letrehozasa a settlement semahoz."""
 
     if not url or not url.strip():
         raise ValueError("A Supabase URL nincs megadva.")
@@ -51,7 +46,7 @@ def get_supabase_client(url: str, service_role_key: str) -> Client:
 
 
 def clean_value(value: Any) -> Any:
-    """Excel-, pandas- és NumPy-érték JSON-kompatibilis alakra hozása."""
+    """Excel-, pandas- es NumPy-ertek JSON-kompatibilis alakra hozasa."""
 
     if value is None:
         return None
@@ -119,7 +114,7 @@ def _build_raw_row(
 def _read_xlsx_with_openpyxl(
     uploaded_file: BinaryIO | BytesIO,
 ) -> list[dict[str, Any]]:
-    """XLSX/XLSM összes sheetjének nyers beolvasása."""
+    """XLSX/XLSM osszes sheetjenek nyers beolvasasa."""
 
     _reset_file_pointer(uploaded_file)
 
@@ -155,9 +150,9 @@ def _read_xls_with_pandas(
     uploaded_file: BinaryIO | BytesIO,
 ) -> list[dict[str, Any]]:
     """
-    Régi XLS fájl összes sheetjének nyers beolvasása.
+    Regi XLS fajl osszes sheetjenek nyers beolvasasa.
 
-    Ehhez az xlrd csomag szükséges:
+    Ehhez az xlrd csomag szukseges:
         pip install xlrd
     """
 
@@ -193,16 +188,7 @@ def _read_xls_with_pandas(
 def read_all_excel_sheets(
     uploaded_file: BinaryIO | BytesIO,
 ) -> list[dict[str, Any]]:
-    """
-    Az Excel összes munkalapját nyers formában beolvassa.
-
-    Nem függ:
-    - a sheet nevétől,
-    - a sheetek sorrendjétől,
-    - a fejléc helyétől,
-    - az oszlopnevektől,
-    - az egyes sheetek szerkezetétől.
-    """
+    """Az Excel osszes munkalapjat nyers formaban beolvassa."""
 
     filename = str(getattr(uploaded_file, "name", "")).lower()
 
@@ -213,7 +199,7 @@ def read_all_excel_sheets(
 
     if not rows:
         raise ValueError(
-            "Az Excel-fájl egyik munkalapján sincs nem üres adat."
+            "Az Excel-fajl egyik munkalapjan sincs nem ures adat."
         )
 
     return rows
@@ -224,15 +210,10 @@ def save_excel_to_supabase(
     supabase: Client,
     batch_size: int = 500,
 ) -> dict[str, Any]:
-    """
-    Az összes sheet minden nem üres sorát elmenti a Supabase-be.
-
-    A sorok nyers, névfüggetlen formában kerülnek a data JSONB mezőbe:
-        column_1, column_2, ...
-    """
+    """Az osszes sheet minden nem ures sorat elmenti a Supabase-be."""
 
     if batch_size < 1:
-        raise ValueError("A batch_size értékének legalább 1-nek kell lennie.")
+        raise ValueError("A batch_size ertekenek legalabb 1-nek kell lennie.")
 
     raw_rows = read_all_excel_sheets(uploaded_file)
     session_id = str(uuid.uuid4())
@@ -253,16 +234,15 @@ def save_excel_to_supabase(
 
     try:
         for start_index in range(0, len(import_rows), batch_size):
-            batch = import_rows[start_index : start_index + batch_size]
+            batch = import_rows[start_index:start_index + batch_size]
 
-            response = (
+            (
                 supabase
                 .table(IMPORT_TABLE)
                 .insert(batch, returning="minimal")
                 .execute()
             )
 
-            # returning="minimal" esetén response.data jellemzően üres.
             inserted_rows += len(batch)
 
     except Exception as exc:
@@ -280,22 +260,21 @@ def save_excel_to_supabase(
             cleanup_error = delete_exc
 
         message = (
-            "Az Excel mentése közben hiba történt. "
-            "Az ehhez az importhoz korábban elmentett sorokat megpróbáltuk törölni. "
+            "Az Excel mentese kozben hiba tortent. "
+            "Az ehhez az importhoz korabban elmentett nyers sorokat "
+            "megprobaltuk torolni. "
             f"Eredeti hiba: {type(exc).__name__}: {exc}"
         )
 
         if cleanup_error is not None:
             message += (
-                " | Törlési próba hibája: "
+                " | Torlesi proba hibaja: "
                 f"{type(cleanup_error).__name__}: {cleanup_error}"
             )
 
         raise RuntimeError(message) from exc
 
-    sheet_names = list(
-        dict.fromkeys(row["sheet_name"] for row in raw_rows)
-    )
+    sheet_names = list(dict.fromkeys(row["sheet_name"] for row in raw_rows))
 
     sheet_row_counts = {
         sheet_name: sum(
@@ -320,17 +299,15 @@ def get_import_preview(
     sheet_name: str | None = None,
     limit: int = 200,
 ) -> pd.DataFrame:
-    """Egy import legfeljebb `limit` sorának visszaolvasása."""
+    """Egy import legfeljebb limit soranak visszaolvasasa."""
 
     if limit < 1:
-        raise ValueError("A limit értékének legalább 1-nek kell lennie.")
+        raise ValueError("A limit ertekenek legalabb 1-nek kell lennie.")
 
     query = (
         supabase
         .table(PREVIEW_VIEW)
-        .select(
-            "session_id,row_no,sheet_name,source_row_no,data,created_at"
-        )
+        .select("session_id,row_no,sheet_name,source_row_no,data,created_at")
         .eq("session_id", session_id)
         .order("row_no")
         .range(0, limit - 1)
@@ -359,12 +336,12 @@ def get_import_preview(
     return pd.DataFrame(preview_rows)
 
 
-def _delete_rows_for_session(
+def _delete_by_session_id(
     supabase: Client,
     table_name: str,
     session_id: str,
 ) -> int:
-    """Delete and count rows belonging to one import session."""
+    """Sorok torlese egy tablabol session_id alapjan."""
 
     response = (
         supabase
@@ -374,6 +351,7 @@ def _delete_rows_for_session(
         .select("id")
         .execute()
     )
+
     return len(response.data or [])
 
 
@@ -381,43 +359,103 @@ def delete_excel_import(
     supabase: Client,
     session_id: str,
 ) -> int:
-    """Delete one complete Excel import and every derived database row.
+    """
+    Egy teljes import torlese kizarolag a session_id alapjan.
 
-    The deletion order is child-first so it also works when foreign-key
-    constraints do not use ON DELETE CASCADE. The return value is the number
-    of deleted raw ``excel_import`` rows, preserving the previous API.
+    Onalloan hivhato: nem igenyel Excel-fajlt, nem indit feltoltest,
+    es nem indit uj feldolgozast.
     """
 
     normalized_session_id = str(session_id or "").strip()
     if not normalized_session_id:
-        raise ValueError("A session_id megadása kötelező.")
+        raise ValueError("A session_id megadasa kotelezo a torleshez.")
 
-    # 1. Feldolgozott, normalizált adatok
+    deleted_rows = 0
+
+    # 1. Normalizalt adatok
     for table_name in NORMALIZED_TABLES:
-        _delete_rows_for_session(
+        deleted_rows += _delete_by_session_id(
             supabase,
             table_name,
             normalized_session_id,
         )
 
-    # 2. Feldolgozási riportok és validációk
-    for table_name in PROCESSING_CHILD_TABLES:
-        _delete_rows_for_session(
-            supabase,
-            table_name,
-            normalized_session_id,
-        )
-
-    # 3. Feldolgozási futások
-    _delete_rows_for_session(
+    # 2. Feldolgozasi gyermekrekordok
+    deleted_rows += _delete_by_session_id(
         supabase,
-        PROCESSING_RUN_TABLE,
+        "validation_error",
+        normalized_session_id,
+    )
+    deleted_rows += _delete_by_session_id(
+        supabase,
+        "sheet_processing_result",
         normalized_session_id,
     )
 
-    # 4. Nyers Excel-import
-    return _delete_rows_for_session(
+    # 3. Feldolgozasi futasok
+    deleted_rows += _delete_by_session_id(
+        supabase,
+        "processing_run",
+        normalized_session_id,
+    )
+
+    # 4. Nyers import
+    deleted_rows += _delete_by_session_id(
         supabase,
         IMPORT_TABLE,
         normalized_session_id,
     )
+
+    return deleted_rows
+
+ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _delete_all_rows(
+    supabase: Client,
+    table_name: str,
+) -> int:
+    """Egy settlement tábla összes, UUID azonosítóval rendelkező sorának törlése."""
+
+    response = (
+        supabase
+        .table(table_name)
+        .delete()
+        .neq("id", ZERO_UUID)
+        .select("id")
+        .execute()
+    )
+
+    return len(response.data or [])
+
+
+def delete_all_settlement_data(supabase: Client) -> dict[str, int]:
+    """
+    Az importfolyamathoz tartozó settlement táblák teljes kiürítése.
+
+    A művelethez nem kell Excel-fájl vagy session_id, és nem indít
+    feltöltést vagy feldolgozást. A törlés gyermek -> szülő sorrendben
+    történik, hogy az idegen kulcsok ne akadályozzák a műveletet.
+    """
+
+    delete_order = (
+        "jit_row",
+        "penalty_row",
+        "atm_balance_row",
+        "bonus_route_row",
+        "performance_indicator_row",
+        "validation_error",
+        "sheet_processing_result",
+        "processing_run",
+        IMPORT_TABLE,
+    )
+
+    deleted_by_table: dict[str, int] = {}
+
+    for table_name in delete_order:
+        deleted_by_table[table_name] = _delete_all_rows(
+            supabase,
+            table_name,
+        )
+
+    return deleted_by_table

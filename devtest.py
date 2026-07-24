@@ -6,6 +6,7 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 from resources.settlement_excel_import import (
+    delete_all_settlement_data,
     delete_excel_import,
     get_import_preview,
     get_supabase_client,
@@ -1210,6 +1211,10 @@ def show_new_settlement_page() -> None:
         if uploaded_excel is not None:
             st.success(f"Kiválasztva: {uploaded_excel.name}")
 
+        delete_message = st.session_state.pop("settlement_delete_message", None)
+        if delete_message:
+            st.success(delete_message)
+
         import_session_id = st.session_state.get("settlement_import_session_id")
         excel_action1, excel_action_check, excel_action2 = st.columns(3)
 
@@ -1304,19 +1309,16 @@ def show_new_settlement_page() -> None:
         if excel_action2.button(
             "Törlés",
             use_container_width=True,
-            disabled=uploaded_excel is None
-            and not import_session_id
-            and not st.session_state.get("excel_calculation_loaded", False),
+            disabled=False,
             key="delete_excel_calculation",
-            help="Törli az aktuális import nyers és feldolgozott adatait, majd üríti a feltöltőt.",
+            help=(
+                "Kiüríti az összes importált és feldolgozott settlement "
+                "adatot. A művelethez nem kell Excel-fájl."
+            ),
         ):
             try:
-                if import_session_id:
-                    deleted_rows = delete_excel_import(
-                        get_db(),
-                        import_session_id,
-                    )
-                    st.toast(f"Excel import törölve: {deleted_rows} sor.")
+                deleted_by_table = delete_all_settlement_data(get_db())
+                deleted_rows = sum(deleted_by_table.values())
 
                 st.session_state["excel_upload_version"] += 1
                 st.session_state["excel_calculation_loaded"] = False
@@ -1324,10 +1326,13 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
+                st.session_state["settlement_delete_message"] = (
+                    f"A settlement adatbázis kiürítve: {deleted_rows} sor törölve."
+                )
                 st.rerun()
 
             except Exception as exc:
-                st.error(f"Excel import törlése sikertelen: {exc}")
+                st.error(f"A settlement adatbázis ürítése sikertelen: {exc}")
 
         import_result = st.session_state.get("settlement_import_result")
         if import_result:
