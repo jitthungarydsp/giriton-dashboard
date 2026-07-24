@@ -11,6 +11,10 @@ from resources.settlement_excel_import import (
     get_supabase_client,
     save_excel_to_supabase,
 )
+from resources.settlement_processor import (
+    process_settlement_session,
+    report_as_dict,
+)
 
 st.set_page_config(
     page_title="Új Elszámolási oldal",
@@ -1226,6 +1230,30 @@ def show_new_settlement_page() -> None:
                 st.session_state["settlement_import_session_id"] = result["session_id"]
                 st.session_state["settlement_import_result"] = result
                 st.session_state.pop("settlement_import_preview", None)
+                st.session_state.pop("settlement_processing_report", None)
+
+                try:
+                    processing_report = process_settlement_session(
+                        get_db(),
+                        result["session_id"],
+                    )
+                    st.session_state["settlement_processing_report"] = (
+                        report_as_dict(processing_report)
+                    )
+                except Exception as processing_exc:
+                    processing_details = "".join(
+                        traceback.format_exception(
+                            type(processing_exc),
+                            processing_exc,
+                            processing_exc.__traceback__,
+                        )
+                    )
+                    st.error(
+                        "Az Excel import sikerült, de a normalizált "
+                        f"feldolgozás sikertelen: {processing_exc}"
+                    )
+                    with st.expander("Feldolgozási hiba részletei"):
+                        st.code(processing_details, language="text")
 
                 st.success(
                     f"Excel import k?sz: {result['sheet_count']} sheet, "
@@ -1295,6 +1323,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_session_id", None)
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
+                st.session_state.pop("settlement_processing_report", None)
                 st.rerun()
 
             except Exception as exc:
@@ -1309,6 +1338,63 @@ def show_new_settlement_page() -> None:
             )
             for sheet_name, row_count in import_result["sheet_row_counts"].items():
                 st.write(f"- {sheet_name}: {row_count} sor")
+
+        processing_result = st.session_state.get(
+            "settlement_processing_report"
+        )
+        if processing_result:
+            st.markdown("#### Normalizált feldolgozás")
+            st.success(
+                "Feldolgozás kész: "
+                f"{processing_result['recognized_sheets']}/"
+                f"{processing_result['total_sheets']} felismert sheet, "
+                f"{processing_result['accepted_rows']} elfogadott és "
+                f"{processing_result['rejected_rows']} elutasított sor."
+            )
+            st.caption(
+                f"Állapot: {processing_result['status']} | "
+                f"Run: {processing_result['processing_run_id']}"
+            )
+
+            sheet_rows = [
+                {
+                    "Sheet": sheet["sheet_name"],
+                    "Típus": sheet["detected_type"] or "ismeretlen",
+                    "Állapot": sheet["status"],
+                    "Összes sor": sheet["total_rows"],
+                    "Elfogadott": sheet["accepted_rows"],
+                    "Elutasított": sheet["rejected_rows"],
+                    "Confidence": sheet["confidence"],
+                }
+                for sheet in processing_result.get("sheets", [])
+            ]
+            if sheet_rows:
+                st.dataframe(
+                    pd.DataFrame(sheet_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            processing_errors = processing_result.get("errors", [])
+            if processing_errors:
+                with st.expander(
+                    f"Validációs jelzések ({len(processing_errors)})"
+                ):
+                    error_rows = [
+                        {
+                            "Súlyosság": error["severity"],
+                            "Kód": error["error_code"],
+                            "Sheet": error.get("sheet_name"),
+                            "Forrássor": error.get("source_row_no"),
+                            "Üzenet": error["message"],
+                        }
+                        for error in processing_errors
+                    ]
+                    st.dataframe(
+                        pd.DataFrame(error_rows),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
         preview_df = st.session_state.get("settlement_import_preview")
         if isinstance(preview_df, pd.DataFrame) and not preview_df.empty:
