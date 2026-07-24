@@ -471,56 +471,16 @@ def get_demo_complaints() -> pd.DataFrame:
 
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
-        st.info("Nincs találat a megadott szűrőkkel.")
+        st.info("Nincs futár a courier_master táblában.")
         return
 
-    st.markdown(
-        f"""
-        <div class="table-card-head" style="border:1px solid #e4e9f2;border-bottom:none;border-radius:20px 20px 0 0;">
-          <div>
-            <h3>Futárok</h3>
-            <span>{len(df)} futár az aktuális szűrésben</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    shown = df[["Courier ID", "Futár"]].copy()
+    st.dataframe(
+        shown,
+        use_container_width=True,
+        hide_index=True,
     )
 
-    header = st.columns([1.45, 0.75, 0.85, 1, 1, 1, 0.9])
-    for col, label in zip(
-        header,
-        ["Futár", "Branch", "Számítás", "Bruttó", "Levonás", "Kifizetendő", "Státusz"],
-    ):
-        col.markdown(f"**{label}**")
-
-    for i, row in df.reset_index(drop=True).iterrows():
-        cols = st.columns(
-            [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
-            vertical_alignment="center",
-        )
-        if cols[0].button(
-            f"{row['Futár']} · {row['Courier ID']}",
-            key=f"courier_{row['Courier ID']}_{i}",
-            use_container_width=True,
-        ):
-            st.session_state["selected_courier_id"] = str(row["Courier ID"])
-            show_courier_dialog()
-
-        cols[1].caption(str(row["Branch"]))
-        cols[2].caption(str(row["Számítás módja"]))
-        cols[3].caption(format_huf(row["Bruttó bevétel"]))
-        cols[4].caption(format_huf(row["Levonás"]))
-        cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
-        badge, _ = status_meta(str(row["Státusz"]))
-        cols[6].markdown(
-            f'<span class="status-badge {badge}">{html.escape(str(row["Státusz"]))}</span>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown(
-        '<div style="height:14px;border:1px solid #e4e9f2;border-top:none;border-radius:0 0 20px 20px;background:#fff;"></div>',
-        unsafe_allow_html=True,
-    )
 
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
