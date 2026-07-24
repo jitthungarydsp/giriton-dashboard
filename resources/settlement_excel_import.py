@@ -17,6 +17,19 @@ SUPABASE_SCHEMA = "settlement"
 IMPORT_TABLE = "excel_import"
 PREVIEW_VIEW = "vw_excel_preview"
 
+NORMALIZED_TABLES = (
+    "jit_row",
+    "penalty_row",
+    "atm_balance_row",
+    "bonus_route_row",
+    "performance_indicator_row",
+)
+PROCESSING_CHILD_TABLES = (
+    "validation_error",
+    "sheet_processing_result",
+)
+PROCESSING_RUN_TABLE = "processing_run"
+
 
 def get_supabase_client(url: str, service_role_key: str) -> Client:
     """Supabase kliens létrehozása a settlement sémához."""
@@ -267,14 +280,14 @@ def save_excel_to_supabase(
             cleanup_error = delete_exc
 
         message = (
-            "Az Excel ment?se k?zben hiba t?rt?nt. "
-            "Az ehhez az importhoz kor?bban elmentett sorokat megpr?b?ltuk t?r?lni. "
+            "Az Excel mentése közben hiba történt. "
+            "Az ehhez az importhoz korábban elmentett sorokat megpróbáltuk törölni. "
             f"Eredeti hiba: {type(exc).__name__}: {exc}"
         )
 
         if cleanup_error is not None:
             message += (
-                " | T?rl?si pr?ba hib?ja: "
+                " | Törlési próba hibája: "
                 f"{type(cleanup_error).__name__}: {cleanup_error}"
             )
 
@@ -346,19 +359,65 @@ def get_import_preview(
     return pd.DataFrame(preview_rows)
 
 
-def delete_excel_import(
+def _delete_rows_for_session(
     supabase: Client,
+    table_name: str,
     session_id: str,
 ) -> int:
-    """Az adott session_id teljes importjának törlése."""
+    """Delete and count rows belonging to one import session."""
 
     response = (
         supabase
-        .table(IMPORT_TABLE)
+        .table(table_name)
         .delete()
         .eq("session_id", session_id)
         .select("id")
         .execute()
     )
-
     return len(response.data or [])
+
+
+def delete_excel_import(
+    supabase: Client,
+    session_id: str,
+) -> int:
+    """Delete one complete Excel import and every derived database row.
+
+    The deletion order is child-first so it also works when foreign-key
+    constraints do not use ON DELETE CASCADE. The return value is the number
+    of deleted raw ``excel_import`` rows, preserving the previous API.
+    """
+
+    normalized_session_id = str(session_id or "").strip()
+    if not normalized_session_id:
+        raise ValueError("A session_id megadása kötelező.")
+
+    # 1. Feldolgozott, normalizált adatok
+    for table_name in NORMALIZED_TABLES:
+        _delete_rows_for_session(
+            supabase,
+            table_name,
+            normalized_session_id,
+        )
+
+    # 2. Feldolgozási riportok és validációk
+    for table_name in PROCESSING_CHILD_TABLES:
+        _delete_rows_for_session(
+            supabase,
+            table_name,
+            normalized_session_id,
+        )
+
+    # 3. Feldolgozási futások
+    _delete_rows_for_session(
+        supabase,
+        PROCESSING_RUN_TABLE,
+        normalized_session_id,
+    )
+
+    # 4. Nyers Excel-import
+    return _delete_rows_for_session(
+        supabase,
+        IMPORT_TABLE,
+        normalized_session_id,
+    )
