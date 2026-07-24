@@ -7,7 +7,6 @@ import pandas as pd
 import streamlit as st
 from resources.settlement_excel_import import (
     delete_all_settlement_data,
-    delete_excel_import,
     get_import_preview,
     get_supabase_client,
     save_excel_to_supabase,
@@ -1205,15 +1204,11 @@ def show_new_settlement_page() -> None:
             "Excel feltöltése",
             type=["xlsx", "xls"],
             key=f"calculation_excel_upload_{st.session_state['excel_upload_version']}",
-            help="Az Excel feltöltése után a nyers és normalizált adatok is létrejönnek.",
+            help="Designer elem, az Excel tartalma még nem kerül feldolgozásra.",
         )
 
         if uploaded_excel is not None:
             st.success(f"Kiválasztva: {uploaded_excel.name}")
-
-        delete_message = st.session_state.pop("settlement_delete_message", None)
-        if delete_message:
-            st.success(delete_message)
 
         import_session_id = st.session_state.get("settlement_import_session_id")
         excel_action1, excel_action_check, excel_action2 = st.columns(3)
@@ -1224,7 +1219,7 @@ def show_new_settlement_page() -> None:
             use_container_width=True,
             disabled=uploaded_excel is None,
             key="load_excel_calculation",
-            help="Az Excel összes munkalapját elmenti, majd létrehozza a normalizált alapadatokat.",
+            help="Az Excel összes munkalapját nyersen menti a settlement sémába.",
         ):
             try:
                 result = save_excel_to_supabase(
@@ -1237,28 +1232,23 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
 
-                try:
-                    processing_report = process_settlement_session(
-                        get_db(),
-                        result["session_id"],
+                processing_report = process_settlement_session(
+                    get_db(),
+                    result["session_id"],
+                )
+                processing_result = report_as_dict(processing_report)
+                st.session_state["settlement_processing_report"] = processing_result
+
+                if processing_result.get("status") == "failed":
+                    error_messages = [
+                        f"{error.get('error_code', 'HIBA')}: "
+                        f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
+                        for error in processing_result.get("errors", [])
+                    ]
+                    raise RuntimeError(
+                        "A normalizált feldolgozás sikertelen. "
+                        + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
                     )
-                    st.session_state["settlement_processing_report"] = (
-                        report_as_dict(processing_report)
-                    )
-                except Exception as processing_exc:
-                    processing_details = "".join(
-                        traceback.format_exception(
-                            type(processing_exc),
-                            processing_exc,
-                            processing_exc.__traceback__,
-                        )
-                    )
-                    st.error(
-                        "Az Excel import sikerült, de a normalizált "
-                        f"feldolgozás sikertelen: {processing_exc}"
-                    )
-                    with st.expander("Feldolgozási hiba részletei"):
-                        st.code(processing_details, language="text")
 
                 st.success(
                     f"Excel import kész: {result['sheet_count']} sheet, "
@@ -1311,14 +1301,11 @@ def show_new_settlement_page() -> None:
             use_container_width=True,
             disabled=False,
             key="delete_excel_calculation",
-            help=(
-                "Kiüríti az összes importált és feldolgozott settlement "
-                "adatot. A művelethez nem kell Excel-fájl."
-            ),
+            help="Kiüríti az importhoz és feldolgozáshoz tartozó settlement táblákat.",
         ):
             try:
                 deleted_by_table = delete_all_settlement_data(get_db())
-                deleted_rows = sum(deleted_by_table.values())
+                deleted_total = sum(deleted_by_table.values())
 
                 st.session_state["excel_upload_version"] += 1
                 st.session_state["excel_calculation_loaded"] = False
@@ -1326,13 +1313,21 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
-                st.session_state["settlement_delete_message"] = (
-                    f"A settlement adatbázis kiürítve: {deleted_rows} sor törölve."
-                )
+
+                st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
 
             except Exception as exc:
-                st.error(f"A settlement adatbázis ürítése sikertelen: {exc}")
+                error_details = "".join(
+                    traceback.format_exception(
+                        type(exc),
+                        exc,
+                        exc.__traceback__,
+                    )
+                )
+                st.error(f"A settlement adatok törlése sikertelen: {exc}")
+                with st.expander("Törlési hiba részletei", expanded=True):
+                    st.code(error_details, language="text")
 
         import_result = st.session_state.get("settlement_import_result")
         if import_result:
@@ -1349,16 +1344,27 @@ def show_new_settlement_page() -> None:
         )
         if processing_result:
             st.markdown("#### Normalizált feldolgozás")
-            st.success(
-                "Feldolgozás kész: "
-                f"{processing_result['recognized_sheets']}/"
-                f"{processing_result['total_sheets']} felismert sheet, "
-                f"{processing_result['accepted_rows']} elfogadott és "
-                f"{processing_result['rejected_rows']} elutasított sor."
+
+            processing_status = processing_result.get("status", "unknown")
+            processing_message = (
+                f"{processing_result.get('recognized_sheets', 0)}/"
+                f"{processing_result.get('total_sheets', 0)} felismert sheet, "
+                f"{processing_result.get('accepted_rows', 0)} elfogadott és "
+                f"{processing_result.get('rejected_rows', 0)} elutasított sor."
             )
+
+            if processing_status == "failed":
+                st.error(f"Feldolgozás sikertelen: {processing_message}")
+            elif processing_status == "completed_with_warnings":
+                st.warning(f"Feldolgozás figyelmeztetésekkel kész: {processing_message}")
+            elif processing_status == "completed":
+                st.success(f"Feldolgozás kész: {processing_message}")
+            else:
+                st.info(f"Feldolgozás állapota: {processing_status}. {processing_message}")
+
             st.caption(
-                f"Állapot: {processing_result['status']} | "
-                f"Run: {processing_result['processing_run_id']}"
+                f"Állapot: {processing_status} | "
+                f"Run: {processing_result.get('processing_run_id', '-')}"
             )
 
             sheet_rows = [
