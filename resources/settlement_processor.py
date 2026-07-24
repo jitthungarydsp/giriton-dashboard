@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Sequence
 
 from supabase import Client
@@ -31,6 +32,60 @@ SHEET_RESULT_TABLE = "sheet_processing_result"
 VALIDATION_ERROR_TABLE = "validation_error"
 DEFAULT_PAGE_SIZE = 1000
 DEFAULT_BATCH_SIZE = 500
+
+
+
+DATE_FORMATS = (
+    "%d.%m.%Y",
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%Y/%m/%d",
+)
+
+INTEGER_FIELDS = {
+    "orders",
+    "routen",
+    "routes",
+    "route count",
+    "order count",
+    "count",
+}
+
+DECIMAL_FIELDS = {
+    "tip",
+    "fixed rate",
+    "delay bonus",
+    "compliance bonus",
+    "fuel bonus",
+    "car & fridge bonus",
+    "fill rate bonus",
+    "branding",
+    "balance",
+    "bonus",
+    "penalty",
+    "amount",
+    "indicator value",
+    "value",
+    "score",
+    "percentage",
+    "percent",
+}
+
+DECIMAL_FIELD_TOKENS = {
+    "bonus",
+    "balance",
+    "penalty",
+    "amount",
+    "rate",
+    "score",
+    "percentage",
+    "percent",
+    "tip",
+    "fee",
+    "cost",
+    "total",
+    "payout",
+}
 
 TYPE_TO_TARGET_TABLE = {
     "jit": "jit_row",
@@ -95,6 +150,118 @@ class SheetAnalysis:
 
     parsed_sheet: ParsedSheet | None
     source_rows: list[ImportedExcelRow]
+
+
+
+
+def _normalized_field_name(field_name: Any) -> str:
+    """Return a stable lowercase field name for type classification."""
+
+    return " ".join(str(field_name or "").strip().casefold().split())
+
+
+def _parse_localized_decimal(value: Any) -> Decimal | None:
+    """Parse Hungarian/German or standard decimal text safely."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    if isinstance(value, float):
+        return Decimal(str(value))
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    text = text.replace("\u00a0", "").replace(" ", "")
+
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+    elif text.count(".") > 1:
+        parts = text.split(".")
+        text = "".join(parts[:-1]) + "." + parts[-1]
+
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def _decimal_to_json_number(value: Decimal, prefer_integer: bool) -> int | float:
+    """Convert Decimal to a JSON-serializable numeric value."""
+
+    if prefer_integer and value == value.to_integral_value():
+        return int(value)
+    return float(value)
+
+
+def _is_decimal_field(field_name: str) -> bool:
+    """Return whether a field should be stored as a JSON number."""
+
+    if field_name in DECIMAL_FIELDS:
+        return True
+    tokens = set(field_name.replace("/", " ").replace("&", " ").split())
+    return bool(tokens & DECIMAL_FIELD_TOKENS)
+
+
+def _normalize_scalar(field_name: Any, value: Any) -> Any:
+    """Normalize one parser value without guessing unrelated identifiers."""
+
+    normalized_name = _normalized_field_name(field_name)
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        value = stripped
+
+    if "date" in normalized_name or normalized_name == "datum":
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, str):
+            for date_format in DATE_FORMATS:
+                try:
+                    return datetime.strptime(value, date_format).date().isoformat()
+                except ValueError:
+                    continue
+
+    if normalized_name in INTEGER_FIELDS:
+        parsed_number = _parse_localized_decimal(value)
+        if parsed_number is not None:
+            return _decimal_to_json_number(parsed_number, prefer_integer=True)
+
+    if _is_decimal_field(normalized_name):
+        parsed_number = _parse_localized_decimal(value)
+        if parsed_number is not None:
+            return _decimal_to_json_number(parsed_number, prefer_integer=False)
+
+    return value
+
+
+def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a parser record into JSON-safe database values."""
+
+    normalized: dict[str, Any] = {}
+    for key, value in record.items():
+        if isinstance(value, dict):
+            normalized[key] = _normalize_record(value)
+        elif isinstance(value, list):
+            normalized[key] = [
+                _normalize_record(item) if isinstance(item, dict)
+                else _normalize_scalar(key, item)
+                for item in value
+            ]
+        else:
+            normalized[key] = _normalize_scalar(key, value)
+    return normalized
 
 
 def _table(client: Client, table_name: str) -> Any:
@@ -622,7 +789,7 @@ def _process_sheet(
             "session_id": session_id,
             "source_sheet": sheet_name,
             "source_row_no": source_row_no,
-            "normalized_data": normalized_data,
+            "normalized_data": _normalize_record(normalized_data),
         }
         for source_row_no, normalized_data in pairs
     ]
