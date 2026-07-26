@@ -158,69 +158,162 @@ def apply_design() -> None:
         
 
 
-/* --- Kattintható workflow kártyák --- */
-.workflow-card-row {
-    display:grid;
-    grid-template-columns:repeat(4,minmax(0,1fr));
-    gap:16px;
-    margin:8px 0 14px 0;
-}
+/* --- Kép alapján kialakított workflow kártyák --- */
+.workflow-title { margin:2px 0 10px 0; }
 div[class*="st-key-status_card_"] button {
-    min-height:148px !important;
-    border-radius:20px !important;
-    padding:20px 20px !important;
+    min-height:170px !important;
+    border-radius:22px !important;
+    padding:22px 22px 18px 92px !important;
     text-align:left !important;
     justify-content:flex-start !important;
     white-space:pre-line !important;
-    font-size:15px !important;
-    font-weight:750 !important;
-    line-height:1.55 !important;
-    box-shadow:0 9px 24px rgba(20,40,80,.08) !important;
-    transition:transform .15s ease, box-shadow .15s ease !important;
+    font-size:14px !important;
+    font-weight:700 !important;
+    line-height:1.5 !important;
+    letter-spacing:0 !important;
+    box-shadow:0 10px 28px rgba(20,40,80,.09) !important;
+    transition:transform .16s ease, box-shadow .16s ease, outline-color .16s ease !important;
+    position:relative !important;
+    overflow:hidden !important;
 }
 div[class*="st-key-status_card_"] button:hover {
-    transform:translateY(-2px) !important;
-    box-shadow:0 13px 30px rgba(20,40,80,.12) !important;
+    transform:translateY(-3px) !important;
+    box-shadow:0 16px 34px rgba(20,40,80,.13) !important;
+}
+div[class*="st-key-status_card_"] button p {
+    margin:0 !important;
+    font-size:14px !important;
+    line-height:1.55 !important;
+}
+div[class*="st-key-status_card_"] button p::first-line {
+    font-size:17px !important;
+    font-weight:850 !important;
+}
+div[class*="st-key-status_card_"] button::before {
+    content:"";
+    position:absolute;
+    left:24px;
+    top:37px;
+    width:52px;
+    height:52px;
+    border-radius:50%;
+    display:block;
+}
+div[class*="st-key-status_card_"] button::after {
+    position:absolute;
+    left:40px;
+    top:48px;
+    font-size:27px;
+    line-height:1;
 }
 div.st-key-status_card_settlement button {
-    background:linear-gradient(135deg,#f4f8ff 0%,#eef4ff 100%) !important;
-    border:1px solid #d8e5ff !important;
-    border-left:6px solid #2474e5 !important;
+    background:linear-gradient(135deg,#f7faff 0%,#edf4ff 100%) !important;
+    border:1px solid #d9e6fb !important;
+    border-left:6px solid #1f6fe5 !important;
     color:#1454ad !important;
 }
+div.st-key-status_card_settlement button::before { background:#dbe9ff; }
+div.st-key-status_card_settlement button::after { content:"▣"; color:#1766d2; }
 div.st-key-status_card_tig button {
-    background:linear-gradient(135deg,#fbf7ff 0%,#f4ecff 100%) !important;
-    border:1px solid #eadcff !important;
-    border-left:6px solid #7b2bd4 !important;
-    color:#6320b4 !important;
+    background:linear-gradient(135deg,#fcf9ff 0%,#f3ebff 100%) !important;
+    border:1px solid #e8d9fb !important;
+    border-left:6px solid #7327cf !important;
+    color:#5f1cb4 !important;
 }
+div.st-key-status_card_tig button::before { background:#eadcff; }
+div.st-key-status_card_tig button::after { content:"◇"; color:#6f25c9; font-size:34px; top:44px; left:38px; }
 div.st-key-status_card_reports button {
-    background:linear-gradient(135deg,#fffaf4 0%,#fff3e7 100%) !important;
-    border:1px solid #ffe2c4 !important;
-    border-left:6px solid #f2760a !important;
-    color:#c75b00 !important;
+    background:linear-gradient(135deg,#fffaf5 0%,#fff1e4 100%) !important;
+    border:1px solid #ffe0bf !important;
+    border-left:6px solid #f07609 !important;
+    color:#c85c00 !important;
 }
+div.st-key-status_card_reports button::before { background:#ffe7cf; }
+div.st-key-status_card_reports button::after { content:"♢"; color:#e46800; font-size:34px; top:44px; left:39px; }
 div.st-key-status_card_payment button {
-    background:linear-gradient(135deg,#f4fff9 0%,#ebfbf2 100%) !important;
-    border:1px solid #d5f3e1 !important;
-    border-left:6px solid #16a765 !important;
-    color:#087a45 !important;
+    background:linear-gradient(135deg,#f7fff9 0%,#eaf9f0 100%) !important;
+    border:1px solid #d5efdf !important;
+    border-left:6px solid #12a35f !important;
+    color:#087b45 !important;
 }
+div.st-key-status_card_payment button::before { background:#d8f4e3; }
+div.st-key-status_card_payment button::after { content:"▰"; color:#0e9656; }
 div[class*="st-key-status_card_"] button[kind="primary"] {
-    outline:3px solid rgba(31,166,74,.18) !important;
-    box-shadow:0 0 0 2px #1FA64A inset, 0 13px 30px rgba(23,133,59,.15) !important;
+    outline:3px solid rgba(22,167,101,.23) !important;
+    box-shadow:0 12px 30px rgba(16,160,91,.16) !important;
 }
-.status-filter-note {
-    background:#f7fffa;
-    border:1px solid #d9f1e2;
-    border-radius:14px;
-    padding:11px 14px;
-    color:#355d43;
+div[class*="st-key-status_card_"] button[kind="primary"] p::after {
+    content:"  ✓";
+    color:#0cab60;
+    font-size:22px;
+    font-weight:900;
+}
+.status-filter-bar {
+    display:flex;
+    align-items:center;
+    gap:12px;
+    min-height:68px;
+    padding:14px 20px;
+    margin:6px 0 18px 0;
+    background:linear-gradient(135deg,#fbfffc 0%,#f6fbf8 100%);
+    border:1px solid #dcebe2;
+    border-radius:18px;
+    box-shadow:0 7px 20px rgba(20,80,50,.055);
+    color:#34533e;
     font-size:13px;
-    margin:2px 0 14px 0;
 }
-@media (max-width:1000px) {
-    .workflow-card-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.status-filter-chip {
+    display:inline-flex;
+    align-items:center;
+    border-radius:999px;
+    padding:8px 13px;
+    background:#e7f6ec;
+    color:#15723f;
+    font-weight:800;
+}
+.courier-list-header {
+    display:grid;
+    grid-template-columns:1.55fr .72fr .72fr .88fr .88fr .82fr .92fr 1.05fr;
+    gap:14px;
+    padding:10px 20px 12px 20px;
+    color:#1f2f3f;
+    font-size:13px;
+    font-weight:850;
+}
+div[class*="st-key-courier_row_"] {
+    border:1px solid #dfeee4 !important;
+    border-radius:18px !important;
+    background:#fff !important;
+    box-shadow:0 5px 16px rgba(20,70,45,.05) !important;
+    margin-bottom:8px !important;
+    padding:4px 10px !important;
+    transition:transform .14s ease, box-shadow .14s ease !important;
+}
+div[class*="st-key-courier_row_"]:hover {
+    transform:translateY(-1px);
+    box-shadow:0 9px 22px rgba(20,70,45,.085) !important;
+}
+div[class*="st-key-courier_row_"] button {
+    border:none !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    color:#17351F !important;
+    text-align:left !important;
+    justify-content:flex-start !important;
+    padding-left:0 !important;
+    font-weight:850 !important;
+}
+.courier-list-footer {
+    text-align:center;
+    color:#64766a;
+    padding:16px 0 4px 0;
+    font-size:13px;
+}
+@media (max-width:1100px) {
+    div[class*="st-key-status_card_"] button { min-height:150px !important; padding-left:72px !important; }
+    div[class*="st-key-status_card_"] button::before { left:16px; width:42px; height:42px; }
+    div[class*="st-key-status_card_"] button::after { left:28px; }
+    .courier-list-header { display:none; }
 }
 
 /* --- Egységes zöld arculat --- */
@@ -727,7 +820,7 @@ def render_table(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div class="courier-list-header">
-          <div>Futár</div><div>Branch</div><div>Számítás</div>
+          <div>Futár</div><div>Branch</div><div>Raktár</div><div>Számítás módja</div>
           <div>Bruttó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
@@ -737,34 +830,35 @@ def render_table(df: pd.DataFrame) -> None:
     for i, row in df.reset_index(drop=True).iterrows():
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
-                [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
+                [1.55, 0.72, 0.72, 0.88, 0.88, 0.82, 0.92, 1.05],
                 vertical_alignment="center",
             )
 
-            courier_label = f"{row['Futár']} · {row['Courier ID']}"
+            courier_label = f"{row['Futár']}\nID: {row['Courier ID']}"
             if cols[0].button(
                 courier_label,
                 key=f"courier_{row['Courier ID']}_{i}",
                 use_container_width=True,
-                help=f"Raktár: {row['Raktár'] or 'BUD1'}",
+                help="Futár részleteinek megnyitása",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
                 show_courier_dialog()
 
             cols[1].caption(str(row["Branch"]))
-            cols[2].caption(str(row["Számítás módja"]))
-            cols[3].caption(format_huf(row["Bruttó bevétel"]))
-            cols[4].caption(format_huf(row["Levonás"]))
-            cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
+            cols[2].caption(str(row["Raktár"] or "BUD1"))
+            cols[3].caption(str(row["Számítás módja"]))
+            cols[4].caption(format_huf(row["Bruttó bevétel"]))
+            cols[5].caption(format_huf(row["Levonás"]))
+            cols[6].markdown(f"**{format_huf(row['Kifizetendő'])}**")
 
             badge, led = status_meta(str(row["Státusz"]))
-            cols[6].markdown(
+            cols[7].markdown(
                 f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>',
                 unsafe_allow_html=True,
             )
 
     st.markdown(
-        f'<div class="courier-list-footer">{len(df)} megjelenített futár</div>',
+        f'<div class="courier-list-footer">1–{len(df)} / {len(df)} futár</div>',
         unsafe_allow_html=True,
     )
 
@@ -1866,7 +1960,6 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "status_card_settlement"),
@@ -1879,7 +1972,7 @@ def show_new_settlement_page() -> None:
 
     for card_column, (card_status, card_note, card_key) in zip(card_columns, workflow_cards):
         card_count = int((base_filtered["Státusz"] == card_status).sum())
-        button_label = f"{card_status}\n{card_count} db\n{card_note}"
+        button_label = f"{card_status}\n\n{card_count} db\n{card_note}"
         is_active = active_workflow_filter == card_status
 
         if card_column.button(
