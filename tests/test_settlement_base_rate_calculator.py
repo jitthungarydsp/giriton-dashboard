@@ -17,11 +17,12 @@ class ExcelCourierBaseRateTests(unittest.TestCase):
                 {"id": "highlighted", "day_type": "highlighted", "weekdays": [6, 7], "valid_from": "2026-01-01", "is_active": True},
             ],
             [
-                {"id": "express", "day_type": "normal", "route_type": "express", "warehouse_code": "BUD1", "courier_amount_huf": 3000, "calculation_unit": "per_route", "valid_from": "2026-01-01", "is_active": True},
-                {"id": "regional", "day_type": "normal", "route_type": "regional", "warehouse_code": "BUD1", "courier_amount_huf": 5000, "calculation_unit": "per_route", "valid_from": "2026-01-01", "is_active": True},
+                {"id": "express", "day_type": "normal", "route_type": "express", "warehouse_code": "BUD1", "company_amount_huf": 4000, "courier_amount_huf": 3000, "calculation_unit": "per_route", "valid_from": "2026-01-01", "is_active": True},
+                {"id": "regional", "day_type": "normal", "route_type": "regional", "warehouse_code": "BUD1", "company_amount_huf": 6000, "courier_amount_huf": 5000, "calculation_unit": "per_route", "valid_from": "2026-01-01", "is_active": True},
             ],
         )
         self.assertEqual(result.iloc[0]["Nettó bevétel"], 8000)
+        self.assertEqual(result.iloc[0]["Vállalkozói alapdíj"], 10000)
         self.assertEqual(result.iloc[0]["Számolt túrák"], 2)
 
     def test_does_not_pay_when_day_definition_or_rate_is_missing(self) -> None:
@@ -40,4 +41,3 @@ class ExcelCourierBaseRateTests(unittest.TestCase):
             [{"id": "orders", "day_type": "normal", "route_type": "normal", "courier_amount_huf": 100, "calculation_unit": "per_order", "valid_from": "2026-01-01", "is_active": True}],
         )
         self.assertEqual(result.iloc[0]["Nettó bevétel"], 1200)
-

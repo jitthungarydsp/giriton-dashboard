@@ -157,7 +157,7 @@ def _show_days(client: Any) -> None:
 
 
 def _show_base_rates(client: Any) -> None:
-    st.caption("Kiemelt és normál napokra, valamint Expressz/Normál/Regionális túrákra megadható JITT- és futár-alapdíj.")
+    st.caption("Az itt megadott vállalkozói és futár-alapdíj felülírja az Excel Fixed Rate értékét. Ugyanez lesz a központi szabály az API-s számításhoz is.")
     data = read_items(client, BASE_RATE_TABLE)
     if not data.empty:
         view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
@@ -171,7 +171,7 @@ def _show_base_rates(client: Any) -> None:
         route_type = right.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
         warehouse = left.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
         unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
-        money1, money2 = st.columns(2); company = money1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = money2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        money1, money2 = st.columns(2); company = money1.number_input("Vállalkozói Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = money2.number_input("Futár Fixed Rate (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "base")
         saved = st.form_submit_button("Módosítás mentése" if row else "Alapdíj mentése", type="primary")
     if saved:

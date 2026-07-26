@@ -1,8 +1,7 @@
-"""Safe, Excel-only calculation of the courier part of JITT base rates.
+"""Safe, Excel-only replacement calculation for JITT base rates.
 
-This module deliberately does not calculate bonuses, deductions or the JITT
-company amount.  It is kept independent from Streamlit so its rules can be
-tested before they are shown on the settlement page.
+The parameterised company and courier amounts replace the imported Excel
+``Fixed Rate`` values. Bonuses and deductions remain outside this module.
 """
 from __future__ import annotations
 
@@ -124,7 +123,7 @@ def calculate_excel_courier_base_rates(
     day_rules: list[dict[str, Any]],
     rate_rules: list[dict[str, Any]],
 ) -> pd.DataFrame:
-    """Return base-pay totals by Excel driver name.
+    """Return parameterised company and courier base-pay totals by driver.
 
     Only ``per_route`` and ``per_order`` base-rate rules are evaluated.  A
     fixed or hourly rule is intentionally skipped: without an agreed period or
@@ -143,7 +142,13 @@ def calculate_excel_courier_base_rates(
             continue
         item = totals.setdefault(
             driver,
-            {"Futár": driver, "Nettó bevétel": 0.0, "Számolt túrák": 0, "Nem számolt túrák": 0},
+            {
+                "Futár": driver,
+                "Vállalkozói alapdíj": 0.0,
+                "Nettó bevétel": 0.0,
+                "Számolt túrák": 0,
+                "Nem számolt túrák": 0,
+            },
         )
         if not route_date or not route_type:
             item["Nem számolt túrák"] += 1
@@ -157,14 +162,22 @@ def calculate_excel_courier_base_rates(
             item["Nem számolt túrák"] += 1
             continue
         unit = _text(rate.get("calculation_unit")).lower()
-        amount = _as_number(rate.get("courier_amount_huf"))
+        courier_amount = _as_number(rate.get("courier_amount_huf"))
+        company_amount = _as_number(rate.get("company_amount_huf"))
         if unit == "per_route":
-            calculated = amount
+            courier_calculated = courier_amount
+            company_calculated = company_amount
         elif unit == "per_order":
-            calculated = amount * _as_number(_value(record, "Orders", "Rendelések", "Order Count"))
+            orders = _as_number(_value(record, "Orders", "Rendelések", "Order Count"))
+            courier_calculated = courier_amount * orders
+            company_calculated = company_amount * orders
         else:
             item["Nem számolt túrák"] += 1
             continue
-        item["Nettó bevétel"] += calculated
+        item["Vállalkozói alapdíj"] += company_calculated
+        item["Nettó bevétel"] += courier_calculated
         item["Számolt túrák"] += 1
-    return pd.DataFrame(totals.values(), columns=["Futár", "Nettó bevétel", "Számolt túrák", "Nem számolt túrák"])
+    return pd.DataFrame(
+        totals.values(),
+        columns=["Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Számolt túrák", "Nem számolt túrák"],
+    )

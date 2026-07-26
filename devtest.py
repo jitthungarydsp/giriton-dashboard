@@ -550,9 +550,11 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     calculated = calculated.copy()
     calculated["_courier_lookup"] = calculated["Futár"].astype(str).str.strip().str.casefold()
     amount_by_courier = calculated.set_index("_courier_lookup")["Nettó bevétel"]
+    company_amount_by_courier = calculated.set_index("_courier_lookup")["Vállalkozói alapdíj"]
     matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
     result["Nettó bevétel"] = result["_courier_lookup"].map(amount_by_courier).fillna(0.0)
+    result["Vállalkozói alapdíj"] = result["_courier_lookup"].map(company_amount_by_courier).fillna(0.0)
     result["Számolt túrák"] = result["_courier_lookup"].map(matched_routes).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_lookup"].map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
