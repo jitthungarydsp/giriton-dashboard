@@ -545,6 +545,49 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     return result[columns]
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
+    """Show DB-stored matching outcomes; no amount is calculated in the UI."""
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("route_unique_id,calculated_day_type,base_rate_status,is_route_primary,normalized_data")
+            .eq("session_id", session_id)
+            .eq("is_route_primary", True)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    data = pd.DataFrame(rows)
+    data["Excel dátum"] = data["normalized_data"].map(
+        lambda value: (value or {}).get("Date") or (value or {}).get("work_date") or "-"
+    )
+    data["Naptípus"] = data["calculated_day_type"].map(
+        {"highlighted": "Kiemelt", "normal": "Normál"}
+    ).fillna("Nincs besorolás")
+    data["DB státusz"] = data["base_rate_status"].map(
+        {
+            "calculated": "Alapdíj kiszámolva",
+            "missing_base_rate": "Nincs érvényes alapdíj-szabály",
+            "missing_excel_date": "Hiányzó vagy nem olvasható Excel-dátum",
+            "unsupported_unit": "Nem támogatott elszámolási egység",
+            "duplicate_route_id": "Ismétlődő Route ID",
+        }
+    ).fillna(data["base_rate_status"].fillna("Ismeretlen"))
+    return (
+        data.groupby(["Excel dátum", "Naptípus", "DB státusz"], dropna=False)
+        .size()
+        .reset_index(name="Route ID db")
+        .sort_values(["Excel dátum", "Naptípus"])
+    )
+
+
 def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
     """Overlay the safe Excel base-fee calculation onto the main courier list."""
     if not session_id:
@@ -1388,6 +1431,7 @@ def show_new_settlement_page() -> None:
                     load_driver_dashboard.clear()
                     load_courier_master.clear()
                     load_excel_courier_base_rates.clear()
+                    load_excel_base_rate_diagnostics.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                     try:
                         recalculate_excel_base_rates(get_db(), result["session_id"])
@@ -1477,6 +1521,7 @@ def show_new_settlement_page() -> None:
                 load_driver_dashboard.clear()
                 load_courier_master.clear()
                 load_excel_courier_base_rates.clear()
+                load_excel_base_rate_diagnostics.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
@@ -1521,6 +1566,14 @@ def show_new_settlement_page() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+            diagnostics = load_excel_base_rate_diagnostics(
+                import_result["session_id"],
+                int(st.session_state.get("settlement_parameter_revision", 0)),
+            )
+            if not diagnostics.empty and (diagnostics["DB státusz"] != "Alapdíj kiszámolva").any():
+                st.markdown("##### Alapdíj-egyezés ellenőrzése (DB)")
+                st.caption("Ez a settlement.jit_row táblában tárolt eredmény; a főoldal nem számol újra.")
+                st.dataframe(diagnostics, use_container_width=True, hide_index=True)
 
         processing_result = st.session_state.get(
             "settlement_processing_report"
