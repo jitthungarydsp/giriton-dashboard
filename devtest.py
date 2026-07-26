@@ -503,37 +503,50 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Calculate only courier base fees from the imported Excel session."""
-    settlement_rows = (
-        get_db()
-        .schema("settlement")
-        .table("jit_row")
-        .select("normalized_data")
-        .eq("session_id", session_id)
-        .order("source_row_no")
-        .execute()
-        .data
-        or []
-    )
-    day_rules = (
-        get_db()
-        .schema("settlement")
-        .table("cfg_jitt_day_definitions")
-        .select("*")
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
-    base_rate_rules = (
-        get_db()
-        .schema("settlement")
-        .table("cfg_jitt_base_rates")
-        .select("*")
-        .is_("deleted_at", "null")
-        .execute()
-        .data
-        or []
-    )
+    columns = [
+        "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
+        "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
+    ]
+    try:
+        settlement_rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("normalized_data")
+            .eq("session_id", session_id)
+            .order("source_row_no")
+            .execute()
+            .data
+            or []
+        )
+        day_rules = (
+            get_db()
+            .schema("settlement")
+            .table("cfg_jitt_day_definitions")
+            .select("*")
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+        base_rate_rules = (
+            get_db()
+            .schema("settlement")
+            .table("cfg_jitt_base_rates")
+            .select("*")
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        result = pd.DataFrame(columns=columns)
+        result.attrs["configuration_error"] = (
+            "A settlement paramétertáblák még nem érhetők el. "
+            "Futtasd le a docs/supabase_jitt_parameter_catalog.sql migrációt, "
+            "utána a Fixed Rate számítás automatikusan bekapcsol."
+        )
+        return result
     return calculate_excel_courier_base_rates(settlement_rows, day_rules, base_rate_rules)
 
 
@@ -543,6 +556,10 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         return data
     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
     calculated = load_excel_courier_base_rates(session_id, parameter_revision)
+    configuration_error = calculated.attrs.get("configuration_error")
+    if configuration_error:
+        st.warning(configuration_error)
+        return data
     if calculated.empty:
         return data
 
