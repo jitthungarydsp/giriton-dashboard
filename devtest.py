@@ -1352,7 +1352,7 @@ def show_new_settlement_page() -> None:
             use_container_width=True,
             disabled=uploaded_excel is None,
             key="load_excel_calculation",
-            help="Az Excel összes munkalapját nyersen menti a settlement sémába.",
+            help="Importálja az Excelt, majd a paraméterezett Fixed Rate szabályokkal kiszámítja a futár alapdíját.",
         ):
             try:
                 result = save_excel_to_supabase(
@@ -1376,6 +1376,11 @@ def show_new_settlement_page() -> None:
                     load_driver_dashboard.clear()
                     load_courier_master.clear()
                     load_excel_courier_base_rates.clear()
+                    parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+                    st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+                        result["session_id"],
+                        parameter_revision,
+                    )
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
@@ -1452,6 +1457,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
+                st.session_state.pop("settlement_base_rate_summary", None)
                 load_driver_dashboard.clear()
                 load_courier_master.clear()
                 load_excel_courier_base_rates.clear()
@@ -1480,6 +1486,25 @@ def show_new_settlement_page() -> None:
             )
             for sheet_name, row_count in import_result["sheet_row_counts"].items():
                 st.write(f"- {sheet_name}: {row_count} sor")
+
+        base_rate_summary = st.session_state.get("settlement_base_rate_summary")
+        if isinstance(base_rate_summary, pd.DataFrame) and not base_rate_summary.empty:
+            st.markdown("#### Paraméterezett alapdíj-számítás")
+            st.caption("Az Excel Fixed Rate helyett a Kiemelt/Normál nap és Alap díj szabályok szerinti eredmény.")
+            summary_net = int(base_rate_summary["Nettó bevétel"].sum())
+            summary_tip = int(base_rate_summary["Borravaló"].sum())
+            summary_routes = int(base_rate_summary["Számolt túrák"].sum())
+            c_net, c_tip, c_routes = st.columns(3)
+            c_net.metric("Futár nettó alapdíj", format_huf(summary_net))
+            c_tip.metric("Borravaló", format_huf(summary_tip))
+            c_routes.metric("Számolt Route ID", summary_routes)
+            st.dataframe(
+                base_rate_summary[
+                    ["Futár", "Nettó bevétel", "Borravaló", "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák"]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
         processing_result = st.session_state.get(
             "settlement_processing_report"
