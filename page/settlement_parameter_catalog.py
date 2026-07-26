@@ -25,7 +25,7 @@ from resources.settlement_parameters import (
 
 
 DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bármely nap"}
-ROUTE_LABELS = {"express": "Expressz", "normal": "Normál / City", "regional": "Regionális", "any": "Bármely túra"}
+ROUTE_LABELS = {"express": "Expressz", "normal": "Normál", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
 CALCULATION_MODE_LABELS = {"excel": "Excel", "api": "API", "custom": "Egyéni"}
 CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban"}
@@ -175,9 +175,16 @@ def _show_days(client: Any) -> None:
 def _show_base_rates(client: Any) -> None:
     st.caption("Az itt megadott vállalkozói és futár-alapdíj felülírja az Excel Fixed Rate értékét. Ugyanez lesz a központi szabály az API-s számításhoz is.")
     data = read_items(client, BASE_RATE_TABLE)
-    if not data.empty:
-        view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["Naptípus", "Túratípus", "warehouse_code", "JITT", "Futár", "calculation_unit", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    table_slot = st.empty()
+
+    def render_base_rate_table(table_data: pd.DataFrame) -> None:
+        if table_data.empty:
+            table_slot.info("Még nincs mentett alapdíj-szabály.")
+            return
+        view = table_data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        table_slot.dataframe(view[["Naptípus", "Túratípus", "warehouse_code", "JITT", "Futár", "calculation_unit", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+
+    render_base_rate_table(data)
     row = _editor_row(data, "base", "route_type")
     form_key = f"base_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
@@ -194,6 +201,7 @@ def _show_base_rates(client: Any) -> None:
         try:
             save_item(client, BASE_RATE_TABLE, validate_base_rate({"day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             _mark_parameters_changed(client)
+            render_base_rate_table(read_items(client, BASE_RATE_TABLE))
             st.success("Az alapdíj mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")
     _delete_control(client, BASE_RATE_TABLE, row, "base")

@@ -148,12 +148,14 @@ with raw as (
         coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
         coalesce(nullif(j.normalized_data ->> 'Route Unique ID', ''), nullif(j.normalized_data ->> 'route_unique_id', ''), j.id::text) as route_unique_id,
         case
-            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}-\d{2}-\d{2}'
-                then left(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), 10)::date
-            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}/\d{2}/\d{2}'
-                then to_date(left(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), 10), 'YYYY/MM/DD')
-            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$'
-                then to_date(replace(replace(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), '.', '/'), '-', '/'), 'DD/MM/YYYY')
+            when date_value.date_text ~ '^\d{4}-\d{2}-\d{2}'
+                then left(date_value.date_text, 10)::date
+            when date_value.date_text ~ '^\d{4}/\d{2}/\d{2}'
+                then to_date(left(date_value.date_text, 10), 'YYYY/MM/DD')
+            when date_value.date_text ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$'
+                then to_date(replace(replace(date_value.date_text, '.', '/'), '-', '/'), 'DD/MM/YYYY')
+            when date_value.date_text ~ '^\d{5}(\.0+)?$'
+                then date '1899-12-30' + date_value.date_text::numeric::integer
         end as work_date,
         case
             when lower(coalesce(j.normalized_data ->> 'Route Type', j.normalized_data ->> 'route_type', '')) like '%express%' then 'express'
@@ -163,6 +165,16 @@ with raw as (
         coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders,
         coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Tip', j.normalized_data ->> 'tip_huf', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as tip_huf
     from settlement.jit_row j
+    cross join lateral (
+        select coalesce(
+            nullif(j.normalized_data ->> 'Date', ''),
+            nullif(j.normalized_data ->> 'date', ''),
+            nullif(j.normalized_data ->> 'Dátum', ''),
+            nullif(j.normalized_data ->> 'work_date', ''),
+            (select item.value from jsonb_each_text(j.normalized_data) as item(key, value) where lower(trim(item.key)) in ('date', 'dátum', 'datum', 'work_date') limit 1),
+            ''
+        ) as date_text
+    ) date_value
     where j.session_id = p_session_id
 ), ranked as (
     select raw.*, row_number() over (partition by route_unique_id order by id) as route_rank
@@ -170,7 +182,7 @@ with raw as (
 ), resolved as (
     select
         r.*,
-        coalesce(day_rule.day_type, 'normal') as calculated_day_type,
+        coalesce(day_rule.day_type, 'normal') as resolved_day_type,
         rate.id as rate_id,
         rate.company_amount_huf,
         rate.courier_amount_huf,
@@ -204,7 +216,7 @@ set
     route_unique_id = resolved.route_unique_id,
     route_date = resolved.work_date,
     weekday_iso = case when resolved.work_date is not null then extract(isodow from resolved.work_date)::smallint end,
-    calculated_day_type = resolved.calculated_day_type,
+    calculated_day_type = resolved.resolved_day_type,
     company_base_rate_huf = case
         when resolved.route_rank <> 1 then 0
         when resolved.calculation_unit = 'per_order' then coalesce(resolved.company_amount_huf, 0) * resolved.orders
@@ -250,116 +262,6 @@ grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, set
 grant select, update on settlement.jit_row to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_base_rates(uuid) to service_role;
-
-/* Persisted source: this table is populated by the existing JITT Excel importer
-   and is deliberately not cleared by the settlement staging delete button. */
-alter table public.jitt_invoice_final_routes
-    add column if not exists calculated_day_type text,
-    add column if not exists company_base_rate_huf numeric not null default 0,
-    add column if not exists courier_base_rate_huf numeric not null default 0,
-    add column if not exists courier_tip_huf numeric not null default 0,
-    add column if not exists is_route_primary boolean not null default false,
-    add column if not exists base_rate_status text not null default 'pending',
-    add column if not exists base_rate_calculated_at timestamptz;
-
-create or replace function settlement.recalculate_jitt_invoice_final_routes()
-returns void
-language sql
-security definer
-set search_path = settlement, public
-as $$
-with ranked as (
-    select
-        r.*,
-        row_number() over (
-            partition by coalesce(nullif(r.route_unique_id, ''), r.source_spreadsheet_id || ':' || r.worksheet_name || ':' || r.row_number::text)
-            order by r.source_spreadsheet_id, r.worksheet_name, r.row_number
-        ) as route_rank
-    from public.jitt_invoice_final_routes r
-), resolved as (
-    select
-        r.*,
-        coalesce(day_rule.day_type, 'normal') as calculated_day_type,
-        rate.id as rate_id,
-        rate.company_amount_huf,
-        rate.courier_amount_huf,
-        rate.calculation_unit
-    from ranked r
-    left join lateral (
-        select d.day_type
-        from settlement.cfg_jitt_day_definitions d
-        where d.is_active and d.deleted_at is null
-          and r.work_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
-          and extract(isodow from r.work_date)::smallint = any(d.weekdays)
-        order by d.priority, d.id
-        limit 1
-    ) day_rule on true
-    left join lateral (
-        select b.*
-        from settlement.cfg_jitt_base_rates b
-        where b.is_active and b.deleted_at is null
-          and r.work_date between b.valid_from and coalesce(b.valid_to, 'infinity'::date)
-          and b.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
-          and b.route_type in (
-              case when lower(coalesce(r.route_type, '')) like '%express%' then 'express'
-                   when lower(coalesce(r.route_type, '')) like '%region%' then 'regional'
-                   else 'normal' end,
-              'any'
-          )
-        order by b.priority, b.id
-        limit 1
-    ) rate on true
-)
-update public.jitt_invoice_final_routes r
-set
-    calculated_day_type = resolved.calculated_day_type,
-    company_base_rate_huf = case when resolved.route_rank = 1 and resolved.calculation_unit = 'per_route' then coalesce(resolved.company_amount_huf, 0) when resolved.route_rank = 1 and resolved.calculation_unit = 'per_order' then coalesce(resolved.company_amount_huf, 0) * coalesce(resolved.orders, 0) else 0 end,
-    courier_base_rate_huf = case when resolved.route_rank = 1 and resolved.calculation_unit = 'per_route' then coalesce(resolved.courier_amount_huf, 0) when resolved.route_rank = 1 and resolved.calculation_unit = 'per_order' then coalesce(resolved.courier_amount_huf, 0) * coalesce(resolved.orders, 0) else 0 end,
-    courier_tip_huf = case when resolved.route_rank = 1 then coalesce(resolved.tip_huf, 0) else 0 end,
-    is_route_primary = resolved.route_rank = 1,
-    base_rate_status = case when resolved.route_rank <> 1 then 'duplicate_route_id' when resolved.rate_id is null then 'missing_base_rate' when resolved.calculation_unit not in ('per_route', 'per_order') then 'unsupported_unit' else 'calculated' end,
-    base_rate_calculated_at = now()
-from resolved
-where r.source_name = resolved.source_name
-  and r.source_spreadsheet_id = resolved.source_spreadsheet_id
-  and r.worksheet_name = resolved.worksheet_name
-  and r.row_number = resolved.row_number;
-$$;
-
-drop view if exists settlement.vw_parameterized_courier_base_summary;
-create view settlement.vw_parameterized_courier_base_summary as
-select
-    driver_name,
-    sum(courier_base_rate_huf) as courier_base_rate_huf,
-    sum(company_base_rate_huf) as company_base_rate_huf,
-    sum(courier_tip_huf) as tip_huf,
-    count(*) filter (where is_route_primary and calculated_day_type = 'highlighted') as highlighted_routes,
-    count(*) filter (where is_route_primary and calculated_day_type = 'normal') as normal_routes,
-    count(*) filter (where is_route_primary and base_rate_status = 'calculated') as calculated_routes,
-    count(*) filter (where is_route_primary and base_rate_status <> 'calculated') as uncalculated_routes
-from public.jitt_invoice_final_routes
-group by driver_name;
-
-grant select, update on public.jitt_invoice_final_routes to service_role;
-grant select on settlement.vw_parameterized_courier_base_summary to service_role;
-grant execute on function settlement.recalculate_jitt_invoice_final_routes() to service_role;
-
-/* The new settlement screen reads these DB-written jit_row values directly. */
-drop view if exists settlement.vw_parameterized_courier_base_summary;
-create view settlement.vw_parameterized_courier_base_summary as
-select
-    session_id,
-    coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
-    sum(courier_base_rate_huf) as courier_base_rate_huf,
-    sum(company_base_rate_huf) as company_base_rate_huf,
-    sum(courier_tip_huf) as tip_huf,
-    count(*) filter (where is_route_primary and calculated_day_type = 'highlighted') as highlighted_routes,
-    count(*) filter (where is_route_primary and calculated_day_type = 'normal') as normal_routes,
-    count(*) filter (where is_route_primary and base_rate_status = 'calculated') as calculated_routes,
-    count(*) filter (where is_route_primary and base_rate_status <> 'calculated') as uncalculated_routes
-from settlement.jit_row
-group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
-grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 
 /* Backfill every already imported JIT session immediately; no Excel re-upload. */
 select settlement.recalculate_jitt_base_rates(session_id)
