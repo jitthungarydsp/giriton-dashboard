@@ -38,6 +38,23 @@ class SettlementParameterValidationTests(unittest.TestCase):
         self.assertEqual(payload["threshold_max"], 1.5)
         self.assertEqual(payload["planned_duration_max_hours"], 2.0)
 
+    def test_only_delay_and_compliance_rate_kinds_are_allowed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Ismeretlen díjparaméter"):
+            validate_rate_parameter(
+                {
+                    "parameter_name": "Alapdíj",
+                    "parameter_kind": "base_rate",
+                    "day_type": "any",
+                    "weekdays": [],
+                    "route_type": "normal",
+                    "company_amount_huf": 6500,
+                    "courier_amount_huf": 7500,
+                    "calculation_unit": "per_route",
+                    "valid_from": date(2026, 6, 1),
+                    "valid_to": None,
+                }
+            )
+
     def test_periodic_route_bonus_supports_minimum_orders(self) -> None:
         payload = validate_periodic_bonus(
             {
@@ -80,8 +97,8 @@ class SettlementParameterValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legalább egy napot"):
             validate_rate_parameter(
                 {
-                    "parameter_name": "Kiemelt napi alapdíj",
-                    "parameter_kind": "base_rate",
+                    "parameter_name": "Kiemelt napi Delay bónusz",
+                    "parameter_kind": "delay_bonus",
                     "day_type": "highlighted",
                     "weekdays": [],
                     "route_type": "normal",

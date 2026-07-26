@@ -11,6 +11,7 @@ from resources.settlement_parameters import (
     delete_rate_parameter,
     parameter_status,
     read_periodic_bonuses,
+    read_rate_parameter_names,
     read_rate_parameters,
     save_periodic_bonus,
     save_rate_parameter,
@@ -18,11 +19,8 @@ from resources.settlement_parameters import (
 
 
 RATE_KIND_LABELS = {
-    "base_rate": "Alapdíj",
     "delay_bonus": "Delay bónusz",
     "compliance_bonus": "Compliance bónusz",
-    "customer_rating_bonus": "Ügyfélértékelési bónusz",
-    "other": "Egyéb díjparaméter",
 }
 DAY_TYPE_LABELS = {
     "any": "Bármely nap",
@@ -251,6 +249,7 @@ def _catalog_records(
 def _render_rate_form(
     client: Any,
     edit_row: dict[str, Any] | None,
+    parameter_names: pd.DataFrame,
 ) -> None:
     row = edit_row or {}
     edit_id = _text(row.get("id")) or None
@@ -261,24 +260,37 @@ def _render_rate_form(
         else "#### Új díj- vagy teljesítményparaméter"
     )
 
+    name_rows = parameter_names.to_dict("records")
+    names_by_label = {
+        _text(item.get("display_name")): item
+        for item in name_rows
+        if _text(item.get("display_name"))
+    }
+    if not names_by_label:
+        st.warning(
+            "Nincs aktív Delay/Compliance megnevezés az adatbázis-katalógusban."
+        )
+        return
+
     with st.form(form_key):
         left, right = st.columns(2)
         with left:
-            name = st.text_input(
+            name_options = list(names_by_label)
+            current_name = _text(row.get("parameter_name"))
+            name = st.selectbox(
                 "Megnevezés",
-                value=_text(row.get("parameter_name")),
-                placeholder="Például: Delay bónusz – Szint 1",
-            )
-            rate_options = list(RATE_KIND_LABELS)
-            parameter_kind = st.selectbox(
-                "Paraméter típusa",
-                rate_options,
                 index=_choice_index(
-                    rate_options,
-                    _text(row.get("parameter_kind")) or "base_rate",
+                    name_options,
+                    current_name or name_options[0],
                 ),
-                format_func=RATE_KIND_LABELS.get,
+                options=name_options,
+                help=(
+                    "A lista kizárólag az adatbázis "
+                    "`cfg_jitt_rate_parameter_names` táblájából módosítható."
+                ),
             )
+            selected_name = names_by_label[name]
+            parameter_kind = _text(selected_name.get("parameter_kind"))
             level_code = st.text_input(
                 "Level / szint",
                 value=_text(row.get("level_code")),
@@ -724,6 +736,7 @@ def render_parameter_catalog(client: Any) -> None:
 
     try:
         rates = read_rate_parameters(client)
+        parameter_names = read_rate_parameter_names(client)
         bonuses = read_periodic_bonuses(client)
     except Exception as exc:
         st.error(
@@ -879,7 +892,11 @@ def render_parameter_catalog(client: Any) -> None:
         )
 
     if parameter_group == "rate":
-        _render_rate_form(client, edit_row if edit_source == "rate" else None)
+        _render_rate_form(
+            client,
+            edit_row if edit_source == "rate" else None,
+            parameter_names,
+        )
     else:
         _render_periodic_form(
             client,

@@ -8,13 +8,11 @@ import pandas as pd
 
 RATE_TABLE = "cfg_jitt_rate_parameters"
 PERIODIC_BONUS_TABLE = "cfg_jitt_periodic_bonuses"
+RATE_NAME_TABLE = "cfg_jitt_rate_parameter_names"
 
 RATE_KINDS = {
-    "base_rate",
     "delay_bonus",
     "compliance_bonus",
-    "customer_rating_bonus",
-    "other",
 }
 DAY_TYPES = {"any", "highlighted", "not_highlighted"}
 ROUTE_TYPES = {"any", "express", "normal", "regional"}
@@ -311,6 +309,18 @@ def read_rate_parameters(client: Any) -> pd.DataFrame:
         .order("is_active", desc=True)
         .order("valid_from", desc=True)
         .order("parameter_name")
+        .execute()
+    )
+    return pd.DataFrame(response.data or [])
+
+
+def read_rate_parameter_names(client: Any) -> pd.DataFrame:
+    response = (
+        _table(client, RATE_NAME_TABLE)
+        .select("parameter_code,parameter_kind,display_name,sort_order")
+        .eq("is_active", True)
+        .order("sort_order")
+        .order("display_name")
         .execute()
     )
     return pd.DataFrame(response.data or [])
