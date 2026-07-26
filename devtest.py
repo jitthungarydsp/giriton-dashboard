@@ -15,6 +15,7 @@ from resources.settlement_processor import (
     process_settlement_session,
     report_as_dict,
 )
+from resources.settlement_base_rate_calculator import calculate_excel_courier_base_rates
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 st.set_page_config(
@@ -374,7 +375,7 @@ def load_courier_master() -> pd.DataFrame:
     rows = response.data or []
     columns = [
         "Courier ID", "Futár", "Branch", "Számítás módja",
-        "Raktár", "Státusz", "Bruttó bevétel", "Bónusz",
+        "Raktár", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Levonás", "Kifizetendő", "Előző havi összeg",
         "KPI",
     ]
@@ -407,7 +408,7 @@ def load_courier_master() -> pd.DataFrame:
     ]
 
     for column in [
-        "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
+        "Nettó bevétel", "Bónusz", "Borravaló", "Levonás",
         "Kifizetendő", "Előző havi összeg", "KPI",
     ]:
         df[column] = 0.0
@@ -432,7 +433,7 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=[
             "Courier ID", "Futár", "Raktár", "Branch", "Számítás módja",
-            "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
+            "Nettó bevétel", "Bónusz", "Borravaló", "Levonás",
             "Kifizetendő", "Előző havi összeg", "KPI", "Státusz",
         ])
 
@@ -476,7 +477,7 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
         df["Bónusz"] += _numeric_series(df, col)
 
     df["Levonás"] = df["Levonás"].abs()
-    df["Bruttó bevétel"] = (
+    df["Nettó bevétel"] = (
         df["Alap díj"]
         + df["Borravaló"]
         + df["Bónusz"]
@@ -497,6 +498,64 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
     df["Előző havi összeg"] = 0.0
 
     return df
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_excel_courier_base_rates(session_id: str) -> pd.DataFrame:
+    """Calculate only courier base fees from the imported Excel session."""
+    settlement_rows = (
+        get_db()
+        .schema("settlement")
+        .table("jit_row")
+        .select("normalized_data")
+        .eq("session_id", session_id)
+        .order("source_row_no")
+        .execute()
+        .data
+        or []
+    )
+    day_rules = (
+        get_db()
+        .schema("public")
+        .table("cfg_jitt_day_definitions")
+        .select("*")
+        .is_("deleted_at", "null")
+        .execute()
+        .data
+        or []
+    )
+    base_rate_rules = (
+        get_db()
+        .schema("public")
+        .table("cfg_jitt_base_rates")
+        .select("*")
+        .is_("deleted_at", "null")
+        .execute()
+        .data
+        or []
+    )
+    return calculate_excel_courier_base_rates(settlement_rows, day_rules, base_rate_rules)
+
+
+def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
+    """Overlay the safe Excel base-fee calculation onto the main courier list."""
+    if not session_id:
+        return data
+    calculated = load_excel_courier_base_rates(session_id)
+    if calculated.empty:
+        return data
+
+    result = data.copy()
+    result["_courier_lookup"] = result["Futár"].fillna("").astype(str).str.strip().str.casefold()
+    calculated = calculated.copy()
+    calculated["_courier_lookup"] = calculated["Futár"].astype(str).str.strip().str.casefold()
+    amount_by_courier = calculated.set_index("_courier_lookup")["Nettó bevétel"]
+    matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
+    unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
+    result["Nettó bevétel"] = result["_courier_lookup"].map(amount_by_courier).fillna(0.0)
+    result["Számolt túrák"] = result["_courier_lookup"].map(matched_routes).fillna(0).astype(int)
+    result["Nem számolt túrák"] = result["_courier_lookup"].map(unmatched_routes).fillna(0).astype(int)
+    return result.drop(columns="_courier_lookup")
 
 
 def format_huf(value: float | int) -> str:
@@ -554,7 +613,7 @@ def render_table(df: pd.DataFrame) -> None:
         """
         <div class="courier-list-header">
           <div>Futár</div><div>Branch</div><div>Számítás</div>
-          <div>Bruttó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
+          <div>Nettó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -579,7 +638,7 @@ def render_table(df: pd.DataFrame) -> None:
 
             cols[1].caption(str(row["Branch"]))
             cols[2].caption(str(row["Számítás módja"]))
-            cols[3].caption(format_huf(row["Bruttó bevétel"]))
+            cols[3].caption(format_huf(row["Nettó bevétel"]))
             cols[4].caption(format_huf(row["Levonás"]))
             cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
 
@@ -666,7 +725,7 @@ def show_courier_dialog() -> None:
                 pd.DataFrame(
                     [
                         {
-                            "Bruttó bevétel": format_huf(row["Bruttó bevétel"]),
+                            "Nettó bevétel": format_huf(row["Nettó bevétel"]),
                             "Bónusz": format_huf(row["Bónusz"]),
                             "Levonás": format_huf(row["Levonás"]),
                             "Kifizetendő": format_huf(row["Kifizetendő"]),
@@ -1238,7 +1297,8 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
 
 def show_new_settlement_page() -> None:
     apply_design()
-    data=load_courier_master()
+    import_session_id = st.session_state.get("settlement_import_session_id")
+    data = apply_excel_base_rates(load_courier_master(), import_session_id)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -1310,6 +1370,7 @@ def show_new_settlement_page() -> None:
                 if processing_result.get("status") in {"completed", "completed_with_warnings"}:
                     load_driver_dashboard.clear()
                     load_courier_master.clear()
+                    load_excel_courier_base_rates.clear()
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
@@ -1326,6 +1387,7 @@ def show_new_settlement_page() -> None:
                     f"Excel import kész: {result['sheet_count']} sheet, "
                     f"{result['inserted_rows']} sor."
                 )
+                st.rerun()
 
             except Exception as exc:
                 st.session_state["excel_calculation_loaded"] = False
@@ -1387,6 +1449,7 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_processing_report", None)
                 load_driver_dashboard.clear()
                 load_courier_master.clear()
+                load_excel_courier_base_rates.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
@@ -1518,7 +1581,7 @@ def show_new_settlement_page() -> None:
 
     st.session_state["current_filtered_data"]=filtered.copy()
 
-    total_gross=int(filtered["Bruttó bevétel"].sum()) if not filtered.empty else 0
+    total_gross=int(filtered["Nettó bevétel"].sum()) if not filtered.empty else 0
     total_deduction=int(filtered["Levonás"].sum()) if not filtered.empty else 0
     total_payable=int(filtered["Kifizetendő"].sum()) if not filtered.empty else 0
 
