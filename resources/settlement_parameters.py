@@ -6,23 +6,15 @@ from typing import Any
 import pandas as pd
 
 
-RATE_TABLE = "cfg_jitt_rate_parameters"
-PERIODIC_BONUS_TABLE = "cfg_jitt_periodic_bonuses"
-RATE_NAME_TABLE = "cfg_jitt_rate_parameter_names"
+DAY_TABLE = "cfg_jitt_day_definitions"
+BASE_RATE_TABLE = "cfg_jitt_base_rates"
+DELAY_TABLE = "cfg_jitt_delay_bonus_rules"
+COMPLIANCE_TABLE = "cfg_jitt_compliance_bonus_rules"
+PERIODIC_FEE_TABLE = "cfg_jitt_periodic_fees"
 
-RATE_KINDS = {
-    "delay_bonus",
-    "compliance_bonus",
-}
-DAY_TYPES = {"any", "highlighted", "not_highlighted"}
-ROUTE_TYPES = {"any", "express", "normal", "regional"}
-CALCULATION_UNITS = {
-    "fixed",
-    "per_route",
-    "per_order",
-    "per_hour",
-    "percent",
-}
+DAY_TYPES = {"highlighted", "normal", "any"}
+ROUTE_TYPES = {"express", "normal", "regional", "any"}
+CALCULATION_UNITS = {"fixed", "per_route", "per_order", "per_hour"}
 PERIODIC_CONDITIONS = {
     "none",
     "orders_per_route",
@@ -32,8 +24,8 @@ PERIODIC_CONDITIONS = {
 }
 
 
-def _table(client: Any, table_name: str) -> Any:
-    return client.schema("public").table(table_name)
+def _table(client: Any, name: str) -> Any:
+    return client.schema("public").table(name)
 
 
 def _text(value: Any) -> str:
@@ -41,11 +33,11 @@ def _text(value: Any) -> str:
 
 
 def _optional_text(value: Any) -> str | None:
-    normalized = _text(value)
-    return normalized or None
+    value = _text(value)
+    return value or None
 
 
-def _date(value: Any, field_name: str) -> date:
+def _date(value: Any, label: str) -> date:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -53,365 +45,168 @@ def _date(value: Any, field_name: str) -> date:
     try:
         return date.fromisoformat(_text(value))
     except ValueError as exc:
-        raise ValueError(f"A(z) {field_name} dátuma érvénytelen.") from exc
+        raise ValueError(f"A(z) {label} dátuma érvénytelen.") from exc
 
 
-def _optional_number(value: Any) -> float | None:
+def _period(payload: dict[str, Any]) -> tuple[str, str | None]:
+    valid_from = _date(payload.get("valid_from"), "kezdő")
+    raw_to = payload.get("valid_to")
+    valid_to = _date(raw_to, "záró") if raw_to not in (None, "") else None
+    if valid_to and valid_to < valid_from:
+        raise ValueError("A záró dátum nem lehet korábbi a kezdő dátumnál.")
+    return valid_from.isoformat(), valid_to.isoformat() if valid_to else None
+
+
+def _number(value: Any) -> float | None:
     if value in (None, ""):
         return None
     return float(value)
 
 
-def _nonnegative_int(value: Any, field_name: str) -> int:
-    number = int(value or 0)
-    if number < 0:
-        raise ValueError(f"A(z) {field_name} nem lehet negatív.")
-    return number
-
-
-def _weekdays(values: Any) -> list[int]:
-    result = sorted({int(value) for value in (values or [])})
-    if any(value < 1 or value > 7 for value in result):
-        raise ValueError("A hét napjai csak 1 és 7 közötti értékek lehetnek.")
-    return result
-
-
-def _validated_weekdays(values: Any, day_type: str) -> list[int]:
-    result = _weekdays(values)
-    if day_type != "any" and not result:
-        raise ValueError(
-            "Kiemelt vagy nem kiemelt naptípusnál legalább egy napot válassz."
-        )
-    return result
-
-
-def _text_list(values: Any) -> list[str]:
-    if isinstance(values, str):
-        values = values.split(",")
-    return list(dict.fromkeys(_text(value) for value in (values or []) if _text(value)))
-
-
-def _validate_period(
-    valid_from_value: Any,
-    valid_to_value: Any,
-) -> tuple[str, str | None]:
-    valid_from = _date(valid_from_value, "kezdő")
-    valid_to = (
-        _date(valid_to_value, "záró")
-        if valid_to_value not in (None, "")
-        else None
-    )
-    if valid_to is not None and valid_to < valid_from:
-        raise ValueError("A záró dátum nem lehet korábbi a kezdő dátumnál.")
-    return valid_from.isoformat(), valid_to.isoformat() if valid_to else None
-
-
-def _validate_range(
-    minimum: Any,
-    maximum: Any,
-    label: str,
-) -> tuple[float | None, float | None]:
-    minimum_value = _optional_number(minimum)
-    maximum_value = _optional_number(maximum)
-    if (
-        minimum_value is not None
-        and maximum_value is not None
-        and maximum_value < minimum_value
-    ):
+def _range(payload: dict[str, Any], prefix: str, label: str) -> tuple[float | None, float | None]:
+    minimum = _number(payload.get(f"{prefix}_min"))
+    maximum = _number(payload.get(f"{prefix}_max"))
+    if minimum is not None and maximum is not None and maximum < minimum:
         raise ValueError(f"A(z) {label} felső értéke nem lehet kisebb az alsónál.")
-    return minimum_value, maximum_value
+    return minimum, maximum
 
 
-def validate_rate_parameter(payload: dict[str, Any]) -> dict[str, Any]:
-    name = _text(payload.get("parameter_name"))
-    if not name:
-        raise ValueError("A paraméter megnevezése kötelező.")
+def _amount(value: Any, label: str) -> int:
+    amount = int(value or 0)
+    if amount < 0:
+        raise ValueError(f"A(z) {label} nem lehet negatív.")
+    return amount
 
-    parameter_kind = _text(payload.get("parameter_kind")).lower()
-    if parameter_kind not in RATE_KINDS:
-        raise ValueError("Ismeretlen díjparaméter-típus.")
 
-    day_type = _text(payload.get("day_type")).lower()
-    if day_type not in DAY_TYPES:
-        raise ValueError("Ismeretlen naptípus.")
+def _choice(value: Any, choices: set[str], label: str) -> str:
+    value = _text(value).lower()
+    if value not in choices:
+        raise ValueError(f"Ismeretlen {label}.")
+    return value
 
-    route_type = _text(payload.get("route_type")).lower()
-    if route_type not in ROUTE_TYPES:
-        raise ValueError("Ismeretlen túratípus.")
 
-    calculation_unit = _text(payload.get("calculation_unit")).lower()
-    if calculation_unit not in CALCULATION_UNITS:
-        raise ValueError("Ismeretlen elszámolási egység.")
-
-    threshold_min, threshold_max = _validate_range(
-        payload.get("threshold_min"),
-        payload.get("threshold_max"),
-        "mutatósáv",
-    )
-    duration_min, duration_max = _validate_range(
-        payload.get("planned_duration_min_hours"),
-        payload.get("planned_duration_max_hours"),
-        "túrahossz",
-    )
-    valid_from, valid_to = _validate_period(
-        payload.get("valid_from"),
-        payload.get("valid_to"),
-    )
-
+def _common(payload: dict[str, Any]) -> dict[str, Any]:
+    valid_from, valid_to = _period(payload)
     return {
-        "parameter_name": name,
-        "parameter_kind": parameter_kind,
-        "level_code": _optional_text(payload.get("level_code")),
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "priority": int(payload.get("priority") or 100),
+        "is_active": bool(payload.get("is_active", True)),
+        "note": _optional_text(payload.get("note")),
+    }
+
+
+def validate_day_definition(payload: dict[str, Any]) -> dict[str, Any]:
+    day_type = _choice(payload.get("day_type"), {"highlighted", "normal"}, "naptípus")
+    weekday = int(payload.get("weekday") or 0)
+    if weekday not in range(1, 8):
+        raise ValueError("A hét napja 1 és 7 közötti érték lehet.")
+    return {"day_type": day_type, "weekday": weekday, **_common(payload)}
+
+
+def validate_base_rate(payload: dict[str, Any]) -> dict[str, Any]:
+    day_type = _choice(payload.get("day_type"), DAY_TYPES, "naptípus")
+    route_type = _choice(payload.get("route_type"), ROUTE_TYPES, "túratípus")
+    unit = _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység")
+    return {
         "day_type": day_type,
-        "weekdays": _validated_weekdays(
-            payload.get("weekdays"),
-            day_type,
-        ),
         "route_type": route_type,
+        "warehouse_code": _optional_text(payload.get("warehouse_code")),
+        "company_amount_huf": _amount(payload.get("company_amount_huf"), "JITT-összeg"),
+        "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
+        "calculation_unit": unit,
+        **_common(payload),
+    }
+
+
+def validate_performance_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    level_code = _text(payload.get("level_code"))
+    if not level_code:
+        raise ValueError("A szint megadása kötelező.")
+    threshold_min, threshold_max = _range(payload, "threshold", "mutatósáv")
+    duration_min, duration_max = _range(payload, "duration", "túrahossz")
+    return {
+        "level_code": level_code,
+        "day_type": _choice(payload.get("day_type"), DAY_TYPES, "naptípus"),
+        "route_type": _choice(payload.get("route_type"), ROUTE_TYPES, "túratípus"),
         "warehouse_code": _optional_text(payload.get("warehouse_code")),
         "threshold_min": threshold_min,
         "threshold_max": threshold_max,
-        "threshold_min_inclusive": bool(
-            payload.get("threshold_min_inclusive", True)
-        ),
-        "threshold_max_inclusive": bool(
-            payload.get("threshold_max_inclusive", True)
-        ),
-        "planned_duration_min_hours": duration_min,
-        "planned_duration_max_hours": duration_max,
-        "company_amount_huf": _nonnegative_int(
-            payload.get("company_amount_huf"),
-            "JITT-összeg",
-        ),
-        "courier_amount_huf": _nonnegative_int(
-            payload.get("courier_amount_huf"),
-            "futárösszeg",
-        ),
-        "calculation_unit": calculation_unit,
-        "valid_from": valid_from,
-        "valid_to": valid_to,
-        "priority": int(payload.get("priority") or 100),
-        "is_active": bool(payload.get("is_active", True)),
-        "note": _optional_text(payload.get("note")),
+        "threshold_min_inclusive": bool(payload.get("threshold_min_inclusive", True)),
+        "threshold_max_inclusive": bool(payload.get("threshold_max_inclusive", True)),
+        "duration_min_hours": duration_min,
+        "duration_max_hours": duration_max,
+        "company_amount_huf": _amount(payload.get("company_amount_huf"), "JITT-összeg"),
+        "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
+        "calculation_unit": _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység"),
+        **_common(payload),
     }
 
 
-def validate_periodic_bonus(payload: dict[str, Any]) -> dict[str, Any]:
-    name = _text(payload.get("bonus_name"))
-    if not name:
-        raise ValueError("A bónusz megnevezése kötelező.")
-
-    day_type = _text(payload.get("day_type")).lower()
-    if day_type not in DAY_TYPES:
-        raise ValueError("Ismeretlen naptípus.")
-
-    route_type = _text(payload.get("route_type")).lower()
-    if route_type not in ROUTE_TYPES:
-        raise ValueError("Ismeretlen túratípus.")
-
-    calculation_unit = _text(payload.get("calculation_unit")).lower()
-    if calculation_unit not in CALCULATION_UNITS:
-        raise ValueError("Ismeretlen elszámolási egység.")
-
-    condition_metric = _text(payload.get("condition_metric")).lower()
-    if condition_metric not in PERIODIC_CONDITIONS:
-        raise ValueError("Ismeretlen időszakos bónuszfeltétel.")
-
-    condition_min, condition_max = _validate_range(
-        payload.get("condition_min"),
-        payload.get("condition_max"),
-        "bónuszfeltétel",
-    )
-    if condition_metric == "none":
-        condition_min = None
-        condition_max = None
-
-    valid_from, valid_to = _validate_period(
-        payload.get("valid_from"),
-        payload.get("valid_to"),
-    )
-    maximum_awards = payload.get("maximum_awards_per_courier")
-    maximum_awards = (
-        _nonnegative_int(maximum_awards, "maximális jóváírás")
-        if maximum_awards not in (None, "")
-        else None
-    )
-    separate_invoice_line = bool(
-        payload.get("show_as_separate_invoice_line", False)
-    )
-    invoice_line_note = _optional_text(payload.get("invoice_line_note"))
-    if separate_invoice_line and not invoice_line_note:
-        raise ValueError(
-            "A külön számlasorhoz számlasor-megjegyzés szükséges."
-        )
-
+def validate_periodic_fee(payload: dict[str, Any]) -> dict[str, Any]:
+    fee_name = _text(payload.get("fee_name"))
+    if not fee_name:
+        raise ValueError("Az időszakos díj megnevezése kötelező.")
+    condition = _choice(payload.get("condition_metric"), PERIODIC_CONDITIONS, "időszakos feltétel")
+    condition_min, condition_max = _range(payload, "condition", "bónuszfeltétel")
+    if condition == "none":
+        condition_min, condition_max = None, None
     return {
-        "bonus_name": name,
-        "day_type": day_type,
-        "weekdays": _validated_weekdays(
-            payload.get("weekdays"),
-            day_type,
-        ),
-        "route_type": route_type,
+        "fee_name": fee_name,
+        "day_type": _choice(payload.get("day_type"), DAY_TYPES, "naptípus"),
+        "route_type": _choice(payload.get("route_type"), ROUTE_TYPES, "túratípus"),
         "warehouse_code": _optional_text(payload.get("warehouse_code")),
-        "courier_ids": _text_list(payload.get("courier_ids")),
-        "company_names": _text_list(payload.get("company_names")),
-        "condition_metric": condition_metric,
+        "condition_metric": condition,
         "condition_min": condition_min,
         "condition_max": condition_max,
-        "company_amount_huf": _nonnegative_int(
-            payload.get("company_amount_huf"),
-            "JITT-összeg",
-        ),
-        "courier_amount_huf": _nonnegative_int(
-            payload.get("courier_amount_huf"),
-            "futárösszeg",
-        ),
-        "calculation_unit": calculation_unit,
-        "maximum_awards_per_courier": maximum_awards,
-        "valid_from": valid_from,
-        "valid_to": valid_to,
-        "priority": int(payload.get("priority") or 100),
-        "is_active": bool(payload.get("is_active", True)),
-        "show_as_separate_invoice_line": separate_invoice_line,
-        "invoice_line_note": invoice_line_note,
-        "note": _optional_text(payload.get("note")),
+        "company_amount_huf": _amount(payload.get("company_amount_huf"), "JITT-összeg"),
+        "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
+        "calculation_unit": _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység"),
+        **_common(payload),
     }
 
 
-def parameter_status(
-    valid_from_value: Any,
-    valid_to_value: Any,
-    is_active: bool,
-    today: date | None = None,
-) -> str:
+def parameter_status(valid_from: Any, valid_to: Any, is_active: bool, today: date | None = None) -> str:
     if not is_active:
         return "Inaktív"
-    current_date = today or date.today()
-    valid_from = _date(valid_from_value, "kezdő")
-    valid_to = (
-        _date(valid_to_value, "záró")
-        if valid_to_value not in (None, "")
-        else None
-    )
-    if current_date < valid_from:
+    today = today or date.today()
+    if today < _date(valid_from, "kezdő"):
         return "Jövőbeni"
-    if valid_to is not None and current_date > valid_to:
+    if valid_to not in (None, "") and today > _date(valid_to, "záró"):
         return "Lejárt"
     return "Aktív"
 
 
-def read_rate_parameters(client: Any) -> pd.DataFrame:
+def read_items(client: Any, table_name: str) -> pd.DataFrame:
     response = (
-        _table(client, RATE_TABLE)
+        _table(client, table_name)
         .select("*")
         .is_("deleted_at", "null")
         .order("is_active", desc=True)
         .order("valid_from", desc=True)
-        .order("parameter_name")
         .execute()
     )
     return pd.DataFrame(response.data or [])
 
 
-def read_rate_parameter_names(client: Any) -> pd.DataFrame:
-    response = (
-        _table(client, RATE_NAME_TABLE)
-        .select("parameter_code,parameter_kind,display_name,sort_order")
-        .eq("is_active", True)
-        .order("sort_order")
-        .order("display_name")
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
-
-
-def read_periodic_bonuses(client: Any) -> pd.DataFrame:
-    response = (
-        _table(client, PERIODIC_BONUS_TABLE)
-        .select("*")
-        .is_("deleted_at", "null")
-        .order("is_active", desc=True)
-        .order("valid_from", desc=True)
-        .order("bonus_name")
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
-
-
-def _audit_payload(payload: dict[str, Any], actor: str, *, create: bool) -> dict[str, Any]:
-    result = dict(payload)
-    normalized_actor = _text(actor) or "unknown"
-    result["updated_by"] = normalized_actor
-    result["updated_at"] = datetime.now(timezone.utc).isoformat()
-    if create:
-        result["created_by"] = normalized_actor
-    return result
-
-
-def save_rate_parameter(
-    client: Any,
-    payload: dict[str, Any],
-    actor: str,
-    parameter_id: str | None = None,
-) -> dict[str, Any]:
-    clean_payload = _audit_payload(
-        validate_rate_parameter(payload),
-        actor,
-        create=not parameter_id,
-    )
-    query = _table(client, RATE_TABLE)
-    if parameter_id:
-        response = query.update(clean_payload).eq("id", parameter_id).execute()
+def save_item(client: Any, table_name: str, payload: dict[str, Any], actor: str, item_id: str | None = None) -> None:
+    audit = {
+        **payload,
+        "updated_by": _text(actor) or "unknown",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    query = _table(client, table_name)
+    if item_id:
+        query.update(audit).eq("id", item_id).execute()
     else:
-        response = query.insert(clean_payload).execute()
-    rows = response.data or []
-    return rows[0] if rows else clean_payload
+        query.insert({**audit, "created_by": _text(actor) or "unknown"}).execute()
 
 
-def save_periodic_bonus(
-    client: Any,
-    payload: dict[str, Any],
-    actor: str,
-    bonus_id: str | None = None,
-) -> dict[str, Any]:
-    clean_payload = _audit_payload(
-        validate_periodic_bonus(payload),
-        actor,
-        create=not bonus_id,
-    )
-    query = _table(client, PERIODIC_BONUS_TABLE)
-    if bonus_id:
-        response = query.update(clean_payload).eq("id", bonus_id).execute()
-    else:
-        response = query.insert(clean_payload).execute()
-    rows = response.data or []
-    return rows[0] if rows else clean_payload
-
-
-def delete_rate_parameter(
-    client: Any,
-    parameter_id: str,
-    actor: str,
-) -> None:
-    _table(client, RATE_TABLE).update(
+def soft_delete_item(client: Any, table_name: str, item_id: str, actor: str) -> None:
+    _table(client, table_name).update(
         {
+            "is_active": False,
             "deleted_at": datetime.now(timezone.utc).isoformat(),
             "deleted_by": _text(actor) or "unknown",
-            "is_active": False,
         }
-    ).eq("id", parameter_id).is_("deleted_at", "null").execute()
-
-
-def delete_periodic_bonus(
-    client: Any,
-    bonus_id: str,
-    actor: str,
-) -> None:
-    _table(client, PERIODIC_BONUS_TABLE).update(
-        {
-            "deleted_at": datetime.now(timezone.utc).isoformat(),
-            "deleted_by": _text(actor) or "unknown",
-            "is_active": False,
-        }
-    ).eq("id", bonus_id).is_("deleted_at", "null").execute()
+    ).eq("id", item_id).is_("deleted_at", "null").execute()

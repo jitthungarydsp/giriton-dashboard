@@ -1,70 +1,37 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import streamlit as st
 
 from resources.settlement_parameters import (
-    delete_periodic_bonus,
-    delete_rate_parameter,
+    BASE_RATE_TABLE,
+    COMPLIANCE_TABLE,
+    DAY_TABLE,
+    DELAY_TABLE,
+    PERIODIC_FEE_TABLE,
     parameter_status,
-    read_periodic_bonuses,
-    read_rate_parameter_names,
-    read_rate_parameters,
-    save_periodic_bonus,
-    save_rate_parameter,
+    read_items,
+    save_item,
+    soft_delete_item,
+    validate_base_rate,
+    validate_day_definition,
+    validate_performance_rule,
+    validate_periodic_fee,
 )
 
 
-RATE_KIND_LABELS = {
-    "delay_bonus": "Delay bónusz",
-    "compliance_bonus": "Compliance bónusz",
-}
-DAY_TYPE_LABELS = {
-    "any": "Bármely nap",
-    "highlighted": "Kiemelt nap",
-    "not_highlighted": "Nem kiemelt nap",
-}
-ROUTE_TYPE_LABELS = {
-    "any": "Bármely túra",
-    "express": "Expressz",
-    "normal": "Normál / City",
-    "regional": "Regionális",
-}
-CALCULATION_UNIT_LABELS = {
-    "fixed": "Fix összeg",
-    "per_route": "Ft / túra",
-    "per_order": "Ft / cím",
-    "per_hour": "Ft / óra",
-    "percent": "%",
-}
-CONDITION_LABELS = {
-    "none": "Nincs külön feltétel",
-    "orders_per_route": "Címek száma túránként",
-    "routes_per_day": "Túrák száma naponta",
-    "routes_in_period": "Túrák száma az időszakban",
-    "orders_in_period": "Címek száma az időszakban",
-}
-WEEKDAY_LABELS = {
-    1: "Hétfő",
-    2: "Kedd",
-    3: "Szerda",
-    4: "Csütörtök",
-    5: "Péntek",
-    6: "Szombat",
-    7: "Vasárnap",
-}
-GROUP_LABELS = {
-    "rate": "Díj- és teljesítményparaméter",
-    "periodic": "Időszakos bónusz",
-}
+DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bármely nap"}
+ROUTE_LABELS = {"express": "Expressz", "normal": "Normál / City", "regional": "Regionális", "any": "Bármely túra"}
+UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
+CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban"}
+WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 
 
 def _actor() -> str:
-    user = st.session_state.get("user", {})
-    return str(user.get("username") or "unknown").strip()
+    return str(st.session_state.get("user", {}).get("username") or "unknown").strip()
 
 
 def _clean(value: Any, default: Any = None) -> Any:
@@ -83,822 +50,202 @@ def _text(value: Any) -> str:
 
 
 def _number(value: Any, default: float = 0.0) -> float:
-    value = _clean(value, default)
     try:
-        return float(value)
+        return float(_clean(value, default))
     except (TypeError, ValueError):
         return default
 
 
-def _integer(value: Any, default: int = 0) -> int:
+def _int(value: Any, default: int = 0) -> int:
     return int(round(_number(value, default)))
 
 
-def _date(value: Any, default: date | None = None) -> date:
+def _date(value: Any) -> date:
     if isinstance(value, date):
         return value
     try:
         return date.fromisoformat(_text(value))
     except ValueError:
-        return default or date.today()
+        return date.today()
 
 
-def _list(value: Any) -> list[Any]:
-    value = _clean(value, [])
-    if isinstance(value, (list, tuple, set)):
-        return list(value)
-    return []
-
-
-def _choice_index(options: list[Any], value: Any) -> int:
+def _index(options: list[str], value: Any) -> int:
     try:
-        return options.index(value)
+        return options.index(_text(value))
     except ValueError:
         return 0
 
 
-def _format_money(value: Any) -> str:
-    return f"{_integer(value):,} Ft".replace(",", " ")
+def _money(value: Any) -> str:
+    return f"{_int(value):,} Ft".replace(",", " ")
 
 
-def _format_range(
-    minimum: Any,
-    maximum: Any,
-    suffix: str = "",
-) -> str:
-    minimum = _clean(minimum)
-    maximum = _clean(maximum)
+def _range(minimum: Any, maximum: Any, suffix: str = "") -> str:
+    minimum, maximum = _clean(minimum), _clean(maximum)
     if minimum is None and maximum is None:
-        return ""
+        return "-"
     if minimum is None:
-        return f"≤ {maximum:g}{suffix}"
+        return f"≤ {float(maximum):g}{suffix}"
     if maximum is None:
-        return f"≥ {minimum:g}{suffix}"
-    return f"{minimum:g}–{maximum:g}{suffix}"
+        return f"≥ {float(minimum):g}{suffix}"
+    return f"{float(minimum):g}–{float(maximum):g}{suffix}"
 
 
-def _rate_condition(row: dict[str, Any]) -> str:
-    parts: list[str] = []
-    threshold = _format_range(
-        _clean(row.get("threshold_min")),
-        _clean(row.get("threshold_max")),
-        "%",
-    )
-    if threshold:
-        parts.append(threshold)
-    duration = _format_range(
-        _clean(row.get("planned_duration_min_hours")),
-        _clean(row.get("planned_duration_max_hours")),
-        " óra",
-    )
-    if duration:
-        parts.append(duration)
-    warehouse = _text(row.get("warehouse_code"))
-    if warehouse:
-        parts.append(warehouse)
-    return " · ".join(parts) or "Nincs külön feltétel"
+def _editor_row(data: pd.DataFrame, key: str, label_field: str) -> dict[str, Any] | None:
+    rows = data.to_dict("records")
+    choices = {"Új tétel": None}
+    for row in rows:
+        label = f"{_text(row.get(label_field))} · {_text(row.get('valid_from'))} · {_text(row.get('id'))[:8]}"
+        choices[label] = row
+    selected = st.selectbox("Szerkesztendő tétel", list(choices), key=f"{key}_select")
+    return choices[selected]
 
 
-def _periodic_condition(row: dict[str, Any]) -> str:
-    metric = _text(row.get("condition_metric")) or "none"
-    parts = [CONDITION_LABELS.get(metric, metric)]
-    value_range = _format_range(
-        _clean(row.get("condition_min")),
-        _clean(row.get("condition_max")),
-    )
-    if value_range:
-        parts.append(value_range)
-    warehouse = _text(row.get("warehouse_code"))
-    if warehouse:
-        parts.append(warehouse)
-    return " · ".join(parts)
-
-
-def _catalog_records(
-    rates: pd.DataFrame,
-    bonuses: pd.DataFrame,
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for row in rates.to_dict("records"):
-        status = parameter_status(
-            row.get("valid_from"),
-            row.get("valid_to"),
-            bool(row.get("is_active", True)),
-        )
-        records.append(
-            {
-                "_source": "rate",
-                "_id": str(row.get("id") or ""),
-                "_raw": row,
-                "Kategória": RATE_KIND_LABELS.get(
-                    _text(row.get("parameter_kind")),
-                    _text(row.get("parameter_kind")),
-                ),
-                "Level": _text(row.get("level_code")),
-                "Megnevezés": _text(row.get("parameter_name")),
-                "JITT": _format_money(row.get("company_amount_huf")),
-                "Futár": _format_money(row.get("courier_amount_huf")),
-                "Naptípus": DAY_TYPE_LABELS.get(
-                    _text(row.get("day_type")),
-                    _text(row.get("day_type")),
-                ),
-                "Túratípus": ROUTE_TYPE_LABELS.get(
-                    _text(row.get("route_type")),
-                    _text(row.get("route_type")),
-                ),
-                "Feltétel": _rate_condition(row),
-                "Érvényes ettől": _text(row.get("valid_from")),
-                "Érvényes eddig": _text(row.get("valid_to")) or "Folyamatos",
-                "Státusz": status,
-            }
-        )
-
-    for row in bonuses.to_dict("records"):
-        status = parameter_status(
-            row.get("valid_from"),
-            row.get("valid_to"),
-            bool(row.get("is_active", True)),
-        )
-        records.append(
-            {
-                "_source": "periodic",
-                "_id": str(row.get("id") or ""),
-                "_raw": row,
-                "Kategória": "Időszakos bónusz",
-                "Level": "",
-                "Megnevezés": _text(row.get("bonus_name")),
-                "JITT": _format_money(row.get("company_amount_huf")),
-                "Futár": _format_money(row.get("courier_amount_huf")),
-                "Naptípus": DAY_TYPE_LABELS.get(
-                    _text(row.get("day_type")),
-                    _text(row.get("day_type")),
-                ),
-                "Túratípus": ROUTE_TYPE_LABELS.get(
-                    _text(row.get("route_type")),
-                    _text(row.get("route_type")),
-                ),
-                "Feltétel": _periodic_condition(row),
-                "Érvényes ettől": _text(row.get("valid_from")),
-                "Érvényes eddig": _text(row.get("valid_to")) or "Folyamatos",
-                "Státusz": status,
-            }
-        )
-    return records
-
-
-def _render_rate_form(
-    client: Any,
-    edit_row: dict[str, Any] | None,
-    parameter_names: pd.DataFrame,
-) -> None:
-    row = edit_row or {}
-    edit_id = _text(row.get("id")) or None
-    form_key = f"parameter_rate_form_{edit_id or 'new'}"
-    st.markdown(
-        "#### Díjparaméter szerkesztése"
-        if edit_id
-        else "#### Új díj- vagy teljesítményparaméter"
-    )
-
-    name_rows = parameter_names.to_dict("records")
-    names_by_label = {
-        _text(item.get("display_name")): item
-        for item in name_rows
-        if _text(item.get("display_name"))
-    }
-    if not names_by_label:
-        st.warning(
-            "Nincs aktív Delay/Compliance megnevezés az adatbázis-katalógusban."
-        )
+def _delete_control(client: Any, table_name: str, row: dict[str, Any] | None, key: str) -> None:
+    if not row:
         return
-
-    with st.form(form_key):
-        left, right = st.columns(2)
-        with left:
-            name_options = list(names_by_label)
-            current_name = _text(row.get("parameter_name"))
-            name = st.selectbox(
-                "Megnevezés",
-                index=_choice_index(
-                    name_options,
-                    current_name or name_options[0],
-                ),
-                options=name_options,
-                help=(
-                    "A lista kizárólag az adatbázis "
-                    "`cfg_jitt_rate_parameter_names` táblájából módosítható."
-                ),
-            )
-            selected_name = names_by_label[name]
-            parameter_kind = _text(selected_name.get("parameter_kind"))
-            level_code = st.text_input(
-                "Level / szint",
-                value=_text(row.get("level_code")),
-                placeholder="Például: Szint 1",
-            )
-            amount1, amount2 = st.columns(2)
-            company_amount = amount1.number_input(
-                "JITT összege (Ft)",
-                min_value=0,
-                value=_integer(row.get("company_amount_huf")),
-                step=100,
-            )
-            courier_amount = amount2.number_input(
-                "Futár összege (Ft)",
-                min_value=0,
-                value=_integer(row.get("courier_amount_huf")),
-                step=100,
-            )
-            unit_options = list(CALCULATION_UNIT_LABELS)
-            calculation_unit = st.selectbox(
-                "Elszámolási egység",
-                unit_options,
-                index=_choice_index(
-                    unit_options,
-                    _text(row.get("calculation_unit")) or "per_route",
-                ),
-                format_func=CALCULATION_UNIT_LABELS.get,
-            )
-
-        with right:
-            day_options = list(DAY_TYPE_LABELS)
-            day_type = st.selectbox(
-                "Naptípus",
-                day_options,
-                index=_choice_index(
-                    day_options,
-                    _text(row.get("day_type")) or "any",
-                ),
-                format_func=DAY_TYPE_LABELS.get,
-            )
-            route_options = list(ROUTE_TYPE_LABELS)
-            route_type = st.selectbox(
-                "Túratípus",
-                route_options,
-                index=_choice_index(
-                    route_options,
-                    _text(row.get("route_type")) or "any",
-                ),
-                format_func=ROUTE_TYPE_LABELS.get,
-            )
-            weekdays = st.multiselect(
-                "Érintett napok",
-                list(WEEKDAY_LABELS),
-                default=[
-                    int(value)
-                    for value in _list(row.get("weekdays"))
-                    if str(value).isdigit()
-                ],
-                format_func=WEEKDAY_LABELS.get,
-                help=(
-                    "Üresen hagyva a naptípus minden napjára érvényes. "
-                    "Nincs ünnep előtti vagy utáni automatikus szabály."
-                ),
-            )
-            warehouse_code = st.text_input(
-                "Raktár",
-                value=_text(row.get("warehouse_code")),
-                placeholder="Üres = minden raktár",
-            )
-            priority = st.number_input(
-                "Prioritás",
-                value=_integer(row.get("priority"), 100),
-                step=1,
-                help="Ütköző szabályoknál a kisebb szám az erősebb.",
-            )
-
-        st.markdown("##### Mutatósáv (opcionális)")
-        threshold1, threshold2, threshold3, threshold4 = st.columns(4)
-        threshold_min_enabled = threshold1.checkbox(
-            "Van alsó határ",
-            value=_clean(row.get("threshold_min")) is not None,
-        )
-        threshold_min = threshold1.number_input(
-            "Mutató alsó határa",
-            value=_number(row.get("threshold_min")),
-            step=0.01,
-        )
-        threshold_min_inclusive = threshold2.checkbox(
-            "Alsó határ beleértve",
-            value=bool(row.get("threshold_min_inclusive", True)),
-        )
-        threshold_max_enabled = threshold3.checkbox(
-            "Van felső határ",
-            value=_clean(row.get("threshold_max")) is not None,
-        )
-        threshold_max = threshold3.number_input(
-            "Mutató felső határa",
-            value=_number(row.get("threshold_max")),
-            step=0.01,
-        )
-        threshold_max_inclusive = threshold4.checkbox(
-            "Felső határ beleértve",
-            value=bool(row.get("threshold_max_inclusive", True)),
-        )
-
-        st.markdown("##### Tervezett túrahossz (opcionális)")
-        duration1, duration2 = st.columns(2)
-        duration_min_enabled = duration1.checkbox(
-            "Van minimum túrahossz",
-            value=_clean(row.get("planned_duration_min_hours")) is not None,
-        )
-        duration_min = duration1.number_input(
-            "Minimum túrahossz (óra)",
-            min_value=0.0,
-            value=_number(row.get("planned_duration_min_hours")),
-            step=0.5,
-        )
-        duration_max_enabled = duration2.checkbox(
-            "Van maximum túrahossz",
-            value=_clean(row.get("planned_duration_max_hours")) is not None,
-        )
-        duration_max = duration2.number_input(
-            "Maximum túrahossz (óra)",
-            min_value=0.0,
-            value=_number(row.get("planned_duration_max_hours")),
-            step=0.5,
-        )
-
-        period1, period2 = st.columns(2)
-        valid_from = period1.date_input(
-            "Érvényes ettől",
-            value=_date(row.get("valid_from")),
-        )
-        has_end = period2.checkbox(
-            "Van záródátum",
-            value=_clean(row.get("valid_to")) is not None,
-        )
-        valid_to = period2.date_input(
-            "Érvényes eddig",
-            value=_date(row.get("valid_to")),
-            help="Csak akkor kerül mentésre, ha a „Van záródátum” be van jelölve.",
-        )
-        is_active = st.checkbox(
-            "Engedélyezett szabály",
-            value=bool(row.get("is_active", True)),
-        )
-        note = st.text_area(
-            "Megjegyzés",
-            value=_text(row.get("note")),
-            height=80,
-        )
-        submitted = st.form_submit_button(
-            "Módosítások mentése" if edit_id else "Paraméter mentése",
-            type="primary",
-            use_container_width=True,
-        )
-
-    if submitted:
+    confirmed = st.checkbox("Törlés megerősítése", key=f"{key}_confirm")
+    if st.button("Kiválasztott törlése", key=f"{key}_delete"):
+        if not confirmed:
+            st.warning("A törléshez jelöld be a megerősítést.")
+            return
         try:
-            save_rate_parameter(
-                client,
-                {
-                    "parameter_name": name,
-                    "parameter_kind": parameter_kind,
-                    "level_code": level_code,
-                    "day_type": day_type,
-                    "weekdays": weekdays,
-                    "route_type": route_type,
-                    "warehouse_code": warehouse_code,
-                    "threshold_min": (
-                        threshold_min
-                        if threshold_min_enabled
-                        else None
-                    ),
-                    "threshold_max": (
-                        threshold_max
-                        if threshold_max_enabled
-                        else None
-                    ),
-                    "threshold_min_inclusive": threshold_min_inclusive,
-                    "threshold_max_inclusive": threshold_max_inclusive,
-                    "planned_duration_min_hours": (
-                        duration_min
-                        if duration_min_enabled
-                        else None
-                    ),
-                    "planned_duration_max_hours": (
-                        duration_max
-                        if duration_max_enabled
-                        else None
-                    ),
-                    "company_amount_huf": company_amount,
-                    "courier_amount_huf": courier_amount,
-                    "calculation_unit": calculation_unit,
-                    "valid_from": valid_from,
-                    "valid_to": valid_to if has_end else None,
-                    "priority": priority,
-                    "is_active": is_active,
-                    "note": note,
-                },
-                _actor(),
-                edit_id,
-            )
-            st.session_state.pop("parameter_catalog_edit", None)
-            st.success("A díjparaméter mentve.")
+            soft_delete_item(client, table_name, _text(row.get("id")), _actor())
+            st.success("A tétel törölve.")
             st.rerun()
         except Exception as exc:
-            st.error(f"A díjparaméter nem menthető: {exc}")
+            st.error(f"A tétel nem törölhető: {exc}")
 
 
-def _render_periodic_form(
-    client: Any,
-    edit_row: dict[str, Any] | None,
-) -> None:
-    row = edit_row or {}
-    edit_id = _text(row.get("id")) or None
-    form_key = f"parameter_periodic_form_{edit_id or 'new'}"
-    st.markdown(
-        "#### Időszakos bónusz szerkesztése"
-        if edit_id
-        else "#### Új időszakos bónusz"
-    )
+def _common_period(row: dict[str, Any], key: str) -> tuple[date, date, bool, int, bool, str]:
+    col1, col2, col3 = st.columns(3)
+    valid_from = col1.date_input("Érvényes ettől", value=_date(row.get("valid_from")), key=f"{key}_from")
+    has_end = col2.checkbox("Van záródátum", value=_clean(row.get("valid_to")) is not None, key=f"{key}_has_end")
+    valid_to = col2.date_input("Érvényes eddig", value=_date(row.get("valid_to")), key=f"{key}_to")
+    priority = col3.number_input("Prioritás", value=_int(row.get("priority"), 100), step=1, key=f"{key}_priority")
+    is_active = st.checkbox("Engedélyezett", value=bool(row.get("is_active", True)), key=f"{key}_active")
+    note = st.text_area("Megjegyzés", value=_text(row.get("note")), key=f"{key}_note", height=70)
+    return valid_from, valid_to, has_end, priority, is_active, note
 
+
+def _show_days(client: Any) -> None:
+    st.caption("Itt állítható be, hogy az egyes időszakokban mely hétköznapok számítanak kiemeltnek vagy normálnak.")
+    data = read_items(client, DAY_TABLE)
+    if not data.empty:
+        view = data.copy()
+        view["Naptípus"] = view["day_type"].map(DAY_LABELS)
+        view["Nap"] = view["weekday"].map(WEEKDAY_LABELS)
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        view["Státusz"] = [parameter_status(a, b, c) for a, b, c in zip(view["valid_from"], view["valid_to"], view["is_active"])]
+        st.dataframe(view[["Naptípus", "Nap", "valid_from", "Vége", "Státusz", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "day", "day_type")
+    form_key = f"day_form_{_text((row or {}).get('id')) or 'new'}"
+    with st.form(form_key):
+        types = ["highlighted", "normal"]
+        day_type = st.selectbox("Naptípus", types, index=_index(types, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
+        weekday = st.selectbox("Hét napja", list(WEEKDAY_LABELS), index=list(WEEKDAY_LABELS).index(int(_clean((row or {}).get("weekday"), 1))), format_func=WEEKDAY_LABELS.get)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "day")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Napbesorolás mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, DAY_TABLE, validate_day_definition({"day_type": day_type, "weekday": weekday, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("A napbesorolás mentve."); st.rerun()
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, DAY_TABLE, row, "day")
+
+
+def _show_base_rates(client: Any) -> None:
+    st.caption("Kiemelt és normál napokra, valamint Expressz/Normál/Regionális túrákra megadható JITT- és futár-alapdíj.")
+    data = read_items(client, BASE_RATE_TABLE)
+    if not data.empty:
+        view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["Naptípus", "Túratípus", "warehouse_code", "JITT", "Futár", "calculation_unit", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "base", "route_type")
+    form_key = f"base_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
         left, right = st.columns(2)
-        with left:
-            name = st.text_input(
-                "Megnevezés",
-                value=_text(row.get("bonus_name")),
-                placeholder="Például: Júniusi 12 címes túrabónusz",
-            )
-            amount1, amount2 = st.columns(2)
-            company_amount = amount1.number_input(
-                "JITT összege (Ft)",
-                min_value=0,
-                value=_integer(row.get("company_amount_huf")),
-                step=100,
-            )
-            courier_amount = amount2.number_input(
-                "Futár összege (Ft)",
-                min_value=0,
-                value=_integer(row.get("courier_amount_huf")),
-                step=100,
-            )
-            unit_options = list(CALCULATION_UNIT_LABELS)
-            calculation_unit = st.selectbox(
-                "Elszámolási egység",
-                unit_options,
-                index=_choice_index(
-                    unit_options,
-                    _text(row.get("calculation_unit")) or "per_route",
-                ),
-                format_func=CALCULATION_UNIT_LABELS.get,
-            )
-            condition_options = list(CONDITION_LABELS)
-            condition_metric = st.selectbox(
-                "Bónusz feltétele",
-                condition_options,
-                index=_choice_index(
-                    condition_options,
-                    _text(row.get("condition_metric")) or "none",
-                ),
-                format_func=CONDITION_LABELS.get,
-            )
-            condition1, condition2 = st.columns(2)
-            condition_min = condition1.number_input(
-                "Minimum érték",
-                min_value=0.0,
-                value=_number(row.get("condition_min")),
-                step=1.0,
-                help="A „Nincs külön feltétel” opciónál nem kerül mentésre.",
-            )
-            condition_max_enabled = condition2.checkbox(
-                "Maximum feltétel",
-                value=_clean(row.get("condition_max")) is not None,
-            )
-            condition_max = condition2.number_input(
-                "Maximum érték",
-                min_value=0.0,
-                value=_number(row.get("condition_max")),
-                step=1.0,
-                help="Csak a „Maximum feltétel” jelöléssel kerül mentésre.",
-            )
-
-        with right:
-            day_options = list(DAY_TYPE_LABELS)
-            day_type = st.selectbox(
-                "Naptípus",
-                day_options,
-                index=_choice_index(
-                    day_options,
-                    _text(row.get("day_type")) or "any",
-                ),
-                format_func=DAY_TYPE_LABELS.get,
-            )
-            route_options = list(ROUTE_TYPE_LABELS)
-            route_type = st.selectbox(
-                "Túratípus",
-                route_options,
-                index=_choice_index(
-                    route_options,
-                    _text(row.get("route_type")) or "any",
-                ),
-                format_func=ROUTE_TYPE_LABELS.get,
-            )
-            weekdays = st.multiselect(
-                "Érintett napok",
-                list(WEEKDAY_LABELS),
-                default=[
-                    int(value)
-                    for value in _list(row.get("weekdays"))
-                    if str(value).isdigit()
-                ],
-                format_func=WEEKDAY_LABELS.get,
-                help="Üresen hagyva a naptípus minden napjára érvényes.",
-            )
-            warehouse_code = st.text_input(
-                "Raktár",
-                value=_text(row.get("warehouse_code")),
-                placeholder="Üres = minden raktár",
-            )
-            courier_ids = st.text_input(
-                "Futárazonosítók",
-                value=", ".join(str(value) for value in _list(row.get("courier_ids"))),
-                placeholder="Üres = minden futár; több ID vesszővel",
-            )
-            company_names = st.text_input(
-                "Vállalkozások",
-                value=", ".join(str(value) for value in _list(row.get("company_names"))),
-                placeholder="Üres = minden vállalkozás",
-            )
-
-        cap1, cap2 = st.columns(2)
-        maximum_enabled = cap1.checkbox(
-            "Jóváírások számának korlátozása",
-            value=_clean(row.get("maximum_awards_per_courier")) is not None,
-        )
-        maximum_awards = cap1.number_input(
-            "Maximum jóváírás futáronként",
-            min_value=0,
-            value=_integer(row.get("maximum_awards_per_courier")),
-            step=1,
-            help="Csak a korlátozás bekapcsolásakor kerül mentésre.",
-        )
-        priority = cap2.number_input(
-            "Prioritás",
-            value=_integer(row.get("priority"), 100),
-            step=1,
-            help="Ütköző szabályoknál a kisebb szám az erősebb.",
-        )
-
-        period1, period2 = st.columns(2)
-        valid_from = period1.date_input(
-            "Érvényes ettől",
-            value=_date(row.get("valid_from")),
-        )
-        has_end = period2.checkbox(
-            "Van záródátum",
-            value=_clean(row.get("valid_to")) is not None,
-        )
-        valid_to = period2.date_input(
-            "Érvényes eddig",
-            value=_date(row.get("valid_to")),
-            help="Csak akkor kerül mentésre, ha a „Van záródátum” be van jelölve.",
-        )
-
-        invoice1, invoice2 = st.columns(2)
-        separate_invoice_line = invoice1.checkbox(
-            "Külön soron jelenjen meg a számlán",
-            value=bool(row.get("show_as_separate_invoice_line", False)),
-        )
-        invoice_line_note = invoice2.text_input(
-            "Számlasor megjegyzése",
-            value=_text(row.get("invoice_line_note")),
-            help="Kötelező, ha a külön számlasor be van jelölve.",
-        )
-        is_active = st.checkbox(
-            "Engedélyezett bónusz",
-            value=bool(row.get("is_active", True)),
-        )
-        note = st.text_area(
-            "Megjegyzés",
-            value=_text(row.get("note")),
-            height=80,
-        )
-        submitted = st.form_submit_button(
-            "Módosítások mentése" if edit_id else "Időszakos bónusz mentése",
-            type="primary",
-            use_container_width=True,
-        )
-
-    if submitted:
+        days, routes, units = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS)
+        day_type = left.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
+        route_type = right.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
+        warehouse = left.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
+        money1, money2 = st.columns(2); company = money1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = money2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "base")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Alapdíj mentése", type="primary")
+    if saved:
         try:
-            save_periodic_bonus(
-                client,
-                {
-                    "bonus_name": name,
-                    "day_type": day_type,
-                    "weekdays": weekdays,
-                    "route_type": route_type,
-                    "warehouse_code": warehouse_code,
-                    "courier_ids": courier_ids,
-                    "company_names": company_names,
-                    "condition_metric": condition_metric,
-                    "condition_min": (
-                        condition_min if condition_metric != "none" else None
-                    ),
-                    "condition_max": (
-                        condition_max
-                        if condition_metric != "none" and condition_max_enabled
-                        else None
-                    ),
-                    "company_amount_huf": company_amount,
-                    "courier_amount_huf": courier_amount,
-                    "calculation_unit": calculation_unit,
-                    "maximum_awards_per_courier": (
-                        maximum_awards if maximum_enabled else None
-                    ),
-                    "valid_from": valid_from,
-                    "valid_to": valid_to if has_end else None,
-                    "priority": priority,
-                    "is_active": is_active,
-                    "show_as_separate_invoice_line": separate_invoice_line,
-                    "invoice_line_note": invoice_line_note,
-                    "note": note,
-                },
-                _actor(),
-                edit_id,
-            )
-            st.session_state.pop("parameter_catalog_edit", None)
-            st.success("Az időszakos bónusz mentve.")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Az időszakos bónusz nem menthető: {exc}")
+            save_item(client, BASE_RATE_TABLE, validate_base_rate({"day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("Az alapdíj mentve."); st.rerun()
+        except Exception as exc: st.error(f"Nem menthető: {exc}")
+    _delete_control(client, BASE_RATE_TABLE, row, "base")
+
+
+def _show_performance(client: Any, table: str, title: str, key: str) -> None:
+    st.caption(f"{title}: szint, százalékos sáv, tervezett túrahossz és kétoldali díjazás külön paraméterezhető.")
+    data = read_items(client, table)
+    if not data.empty:
+        view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Mutatósáv"] = [_range(a, b, "%") for a, b in zip(view["threshold_min"], view["threshold_max"])]; view["Túrahossz"] = [_range(a, b, " óra") for a, b in zip(view["duration_min_hours"], view["duration_max_hours"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["level_code", "Naptípus", "Túratípus", "Mutatósáv", "Túrahossz", "JITT", "Futár", "valid_from", "Vége"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, key, "level_code")
+    form_key = f"{key}_form_{_text((row or {}).get('id')) or 'new'}"
+    with st.form(form_key):
+        left, right = st.columns(2); days, routes, units = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS)
+        level = left.text_input("Szint", value=_text((row or {}).get("level_code")), placeholder="Például: Szint 1")
+        day_type = right.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
+        route_type = left.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
+        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        st.markdown("##### Mutatósáv és tervezett túrahossz")
+        c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5)
+        bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
+        durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
+        m1,m2,m3 = st.columns(3); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, key)
+        saved = st.form_submit_button("Módosítás mentése" if row else f"{title} mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success(f"{title} mentve."); st.rerun()
+        except Exception as exc: st.error(f"Nem menthető: {exc}")
+    _delete_control(client, table, row, key)
+
+
+def _show_periodic(client: Any) -> None:
+    st.caption("Egyedi dátumtartományú díjak és bónuszok. Például: 2026-06-07–09 között, minimum 12 címes túrára 1 000 Ft.")
+    data = read_items(client, PERIODIC_FEE_TABLE)
+    if not data.empty:
+        view=data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Feltétel"] = [f"{CONDITION_LABELS.get(c, c)} · {_range(a,b)}" for c,a,b in zip(view["condition_metric"],view["condition_min"],view["condition_max"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["fee_name", "Naptípus", "Túratípus", "Feltétel", "JITT", "Futár", "valid_from", "Vége"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "periodic", "fee_name")
+    form_key = f"periodic_form_{_text((row or {}).get('id')) or 'new'}"
+    with st.form(form_key):
+        left,right=st.columns(2); days,routes,units,conditions=list(DAY_LABELS),list(ROUTE_LABELS),list(UNIT_LABELS),list(CONDITION_LABELS)
+        fee_name = left.text_input("Megnevezés", value=_text((row or {}).get("fee_name")), placeholder="Például: 12 címes túrabónusz")
+        day_type = right.selectbox("Naptípus", days, index=_index(days,(row or {}).get("day_type")), format_func=DAY_LABELS.get)
+        route_type = left.selectbox("Túratípus", routes, index=_index(routes,(row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
+        warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        condition = left.selectbox("Feltétel", conditions, index=_index(conditions,(row or {}).get("condition_metric") or "none"), format_func=CONDITION_LABELS.get)
+        c1,c2=right.columns(2); condition_min=c1.number_input("Minimum érték", min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0); condition_max=c2.number_input("Maximum érték", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0); has_max=c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None)
+        m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get)
+        valid_from,valid_to,has_end,priority,is_active,note=_common_period(row or {},"periodic")
+        saved=st.form_submit_button("Módosítás mentése" if row else "Időszakos díj mentése",type="primary")
+    if saved:
+        try:
+            save_item(client, PERIODIC_FEE_TABLE, validate_periodic_fee({"fee_name":fee_name,"day_type":day_type,"route_type":route_type,"warehouse_code":warehouse,"condition_metric":condition,"condition_min":condition_min if condition != "none" else None,"condition_max":condition_max if condition != "none" and has_max else None,"company_amount_huf":company,"courier_amount_huf":courier,"calculation_unit":unit,"valid_from":valid_from,"valid_to":valid_to if has_end else None,"priority":priority,"is_active":is_active,"note":note}),_actor(),_text((row or {}).get("id")) or None)
+            st.success("Az időszakos díj mentve."); st.rerun()
+        except Exception as exc: st.error(f"Nem menthető: {exc}")
+    _delete_control(client, PERIODIC_FEE_TABLE, row, "periodic")
 
 
 def render_parameter_catalog(client: Any) -> None:
-    st.subheader("Paraméterértékek katalógusa")
-    st.caption(
-        "JITT- és futárdíjak, Delay/Compliance szabályok és külön kezelt "
-        "időszakos bónuszok teljes érvényességi idővel."
-    )
-
+    st.subheader("Paraméterértékek")
+    st.caption("Minden szabály külön menüpontban kezelhető. A dátum nélküli zárás folyamatos érvényességet jelent.")
     try:
-        rates = read_rate_parameters(client)
-        parameter_names = read_rate_parameter_names(client)
-        bonuses = read_periodic_bonuses(client)
+        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak"])
+        with tabs[0]: _show_days(client)
+        with tabs[1]: _show_base_rates(client)
+        with tabs[2]: _show_performance(client, DELAY_TABLE, "Delay bónusz", "delay")
+        with tabs[3]: _show_performance(client, COMPLIANCE_TABLE, "Compliance bónusz", "compliance")
+        with tabs[4]: _show_periodic(client)
     except Exception as exc:
-        st.error(
-            "A paramétertáblák még nem érhetők el. Futtasd a "
-            "`docs/supabase_jitt_parameter_catalog.sql` migrációt. "
-            f"Részlet: {exc}"
-        )
-        return
-
-    records = _catalog_records(rates, bonuses)
-    filter1, filter2 = st.columns(2)
-    categories = sorted({row["Kategória"] for row in records})
-    category_filter = filter1.selectbox(
-        "Kategória",
-        ["Összes", *categories],
-        key="ui_parameter_category_filter",
-    )
-    status_filter = filter2.selectbox(
-        "Státusz",
-        ["Összes", "Aktív", "Jövőbeni", "Lejárt", "Inaktív"],
-        key="ui_parameter_status_filter",
-    )
-
-    filtered = [
-        row
-        for row in records
-        if (
-            category_filter == "Összes"
-            or row["Kategória"] == category_filter
-        )
-        and (
-            status_filter == "Összes"
-            or row["Státusz"] == status_filter
-        )
-    ]
-    display_columns = [
-        "Kategória",
-        "Level",
-        "Megnevezés",
-        "JITT",
-        "Futár",
-        "Naptípus",
-        "Túratípus",
-        "Feltétel",
-        "Érvényes ettől",
-        "Érvényes eddig",
-        "Státusz",
-    ]
-    if filtered:
-        st.dataframe(
-            pd.DataFrame(filtered)[display_columns],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("A szűrésnek megfelelő paraméter még nincs rögzítve.")
-
-    selected_record: dict[str, Any] | None = None
-    if filtered:
-        selectable = {
-            (
-                f"{row['Megnevezés']} · {row['Kategória']} · "
-                f"{row['Érvényes ettől']} · {row['_id'][:8]}"
-            ): row
-            for row in filtered
-        }
-        selected_label = st.selectbox(
-            "Kezelendő paraméter",
-            list(selectable),
-            key="ui_parameter_selected",
-        )
-        selected_record = selectable[selected_label]
-
-    edit_col, delete_col = st.columns(2)
-    if edit_col.button(
-        "Kiválasztott szerkesztése",
-        use_container_width=True,
-        disabled=selected_record is None,
-        key="ui_parameter_edit",
-    ):
-        st.session_state["parameter_catalog_edit"] = {
-            "source": selected_record["_source"],
-            "id": selected_record["_id"],
-        }
-        st.rerun()
-
-    confirm_delete = delete_col.checkbox(
-        "Törlés megerősítése",
-        key="ui_parameter_delete_confirm",
-        disabled=selected_record is None,
-    )
-    if delete_col.button(
-        "Kiválasztott törlése",
-        use_container_width=True,
-        disabled=selected_record is None,
-        key="ui_parameter_delete",
-    ):
-        if not confirm_delete:
-            st.warning("A törléshez jelöld be a megerősítést.")
-        else:
-            try:
-                if selected_record["_source"] == "rate":
-                    delete_rate_parameter(
-                        client,
-                        selected_record["_id"],
-                        _actor(),
-                    )
-                else:
-                    delete_periodic_bonus(
-                        client,
-                        selected_record["_id"],
-                        _actor(),
-                    )
-                current_edit = st.session_state.get("parameter_catalog_edit", {})
-                if current_edit.get("id") == selected_record["_id"]:
-                    st.session_state.pop("parameter_catalog_edit", None)
-                st.success("A kiválasztott paraméter törölve.")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"A paraméter nem törölhető: {exc}")
-
-    st.divider()
-    edit_state = st.session_state.get("parameter_catalog_edit") or {}
-    edit_source = edit_state.get("source")
-    edit_id = edit_state.get("id")
-    lookup = {
-        (record["_source"], record["_id"]): record["_raw"]
-        for record in records
-    }
-    edit_row = lookup.get((edit_source, edit_id))
-    if edit_id and edit_row is None:
-        st.session_state.pop("parameter_catalog_edit", None)
-        edit_source = None
-
-    if edit_source:
-        header1, header2 = st.columns([4, 1])
-        header1.info(
-            "Szerkesztési mód: a mentés a kiválasztott rekordot frissíti."
-        )
-        if header2.button(
-            "Szerkesztés megszakítása",
-            use_container_width=True,
-        ):
-            st.session_state.pop("parameter_catalog_edit", None)
-            st.rerun()
-        parameter_group = edit_source
-    else:
-        parameter_group = st.selectbox(
-            "Új paraméter csoportja",
-            list(GROUP_LABELS),
-            format_func=GROUP_LABELS.get,
-            key="ui_parameter_group",
-        )
-
-    if parameter_group == "rate":
-        _render_rate_form(
-            client,
-            edit_row if edit_source == "rate" else None,
-            parameter_names,
-        )
-    else:
-        _render_periodic_form(
-            client,
-            edit_row if edit_source == "periodic" else None,
-        )
+        st.error("Az új paramétertáblák még nem érhetők el. Futtasd a `docs/supabase_jitt_parameter_catalog.sql` migrációt. Részlet: " + str(exc))
