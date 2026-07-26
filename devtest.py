@@ -502,7 +502,7 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
-    """Read the database-calculated courier base fees for one import."""
+    """Read persisted database-calculated courier base fees."""
     columns = [
         "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
         "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
@@ -513,7 +513,6 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
             .schema("settlement")
             .table("vw_parameterized_courier_base_summary")
             .select("*")
-            .eq("session_id", session_id)
             .execute()
             .data
             or []
@@ -551,10 +550,9 @@ def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 
     try:
         rows = (
             get_db()
-            .schema("settlement")
-            .table("jit_row")
-            .select("route_unique_id,calculated_day_type,base_rate_status,is_route_primary,normalized_data")
-            .eq("session_id", session_id)
+            .schema("public")
+            .table("jitt_invoice_final_routes")
+            .select("route_unique_id,work_date,calculated_day_type,base_rate_status,is_route_primary")
             .eq("is_route_primary", True)
             .execute()
             .data
@@ -565,9 +563,7 @@ def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 
     if not rows:
         return pd.DataFrame()
     data = pd.DataFrame(rows)
-    data["Excel dátum"] = data["normalized_data"].map(
-        lambda value: (value or {}).get("Date") or (value or {}).get("work_date") or "-"
-    )
+    data["Excel dátum"] = data["work_date"].fillna("-")
     data["Naptípus"] = data["calculated_day_type"].map(
         {"highlighted": "Kiemelt", "normal": "Normál"}
     ).fillna("Nincs besorolás")
@@ -590,10 +586,8 @@ def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 
 
 def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
     """Overlay the safe Excel base-fee calculation onto the main courier list."""
-    if not session_id:
-        return data
     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-    calculated = load_excel_courier_base_rates(session_id, parameter_revision)
+    calculated = load_excel_courier_base_rates(session_id or "persisted", parameter_revision)
     configuration_error = calculated.attrs.get("configuration_error")
     if configuration_error:
         st.warning(configuration_error)
@@ -1549,6 +1543,11 @@ def show_new_settlement_page() -> None:
                 st.write(f"- {sheet_name}: {row_count} sor")
 
         base_rate_summary = st.session_state.get("settlement_base_rate_summary")
+        if not isinstance(base_rate_summary, pd.DataFrame) or base_rate_summary.empty:
+            base_rate_summary = load_excel_courier_base_rates(
+                "persisted",
+                int(st.session_state.get("settlement_parameter_revision", 0)),
+            )
         if isinstance(base_rate_summary, pd.DataFrame) and not base_rate_summary.empty:
             st.markdown("#### Paraméterezett alapdíj-számítás")
             st.caption("Az Excel Fixed Rate helyett a Kiemelt/Normál nap és Alap díj szabályok szerinti eredmény.")
@@ -1567,12 +1566,12 @@ def show_new_settlement_page() -> None:
                 hide_index=True,
             )
             diagnostics = load_excel_base_rate_diagnostics(
-                import_result["session_id"],
+                "persisted",
                 int(st.session_state.get("settlement_parameter_revision", 0)),
             )
             if not diagnostics.empty and (diagnostics["DB státusz"] != "Alapdíj kiszámolva").any():
                 st.markdown("##### Alapdíj-egyezés ellenőrzése (DB)")
-                st.caption("Ez a settlement.jit_row táblában tárolt eredmény; a főoldal nem számol újra.")
+                st.caption("Ez a tartós jitt_invoice_final_routes táblában tárolt eredmény; a főoldal nem számol újra.")
                 st.dataframe(diagnostics, use_container_width=True, hide_index=True)
 
         processing_result = st.session_state.get(

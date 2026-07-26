@@ -130,6 +130,7 @@ alter table settlement.jit_row
     add column if not exists courier_base_rate_huf numeric not null default 0,
     add column if not exists courier_tip_huf numeric not null default 0,
     add column if not exists is_route_primary boolean not null default false,
+    add column if not exists base_rate_status text not null default 'pending',
     add column if not exists base_rate_calculated_at timestamptz;
 
 create or replace function settlement.recalculate_jitt_base_rates(p_session_id uuid)
@@ -145,10 +146,12 @@ with raw as (
         coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
         coalesce(nullif(j.normalized_data ->> 'Route Unique ID', ''), nullif(j.normalized_data ->> 'route_unique_id', ''), j.id::text) as route_unique_id,
         case
-            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}-\d{2}-\d{2}$'
-                then coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '')::date
-            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}/\d{2}/\d{2}$'
-                then to_date(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), 'YYYY/MM/DD')
+            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}-\d{2}-\d{2}'
+                then left(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), 10)::date
+            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{4}/\d{2}/\d{2}'
+                then to_date(left(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), 10), 'YYYY/MM/DD')
+            when coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', '') ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$'
+                then to_date(replace(replace(coalesce(j.normalized_data ->> 'Date', j.normalized_data ->> 'work_date', ''), '.', '/'), '-', '/'), 'DD/MM/YYYY')
         end as work_date,
         case
             when lower(coalesce(j.normalized_data ->> 'Route Type', j.normalized_data ->> 'route_type', '')) like '%express%' then 'express'
@@ -165,7 +168,8 @@ with raw as (
 ), resolved as (
     select
         r.*,
-        day_rule.day_type as calculated_day_type,
+        coalesce(day_rule.day_type, 'normal') as calculated_day_type,
+        rate.id as rate_id,
         rate.company_amount_huf,
         rate.courier_amount_huf,
         rate.calculation_unit
@@ -184,10 +188,10 @@ with raw as (
         from settlement.cfg_jitt_base_rates b
         where b.is_active and b.deleted_at is null
           and r.work_date between b.valid_from and coalesce(b.valid_to, 'infinity'::date)
-          and b.day_type in (coalesce(day_rule.day_type, ''), 'any')
+          and b.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
           and b.route_type in (r.route_type, 'any')
         order by b.priority,
-                 case when b.day_type = coalesce(day_rule.day_type, '') then 0 else 1 end,
+                 case when b.day_type = coalesce(day_rule.day_type, 'normal') then 0 else 1 end,
                  case when b.route_type = r.route_type then 0 else 1 end,
                  b.id
         limit 1
@@ -211,6 +215,13 @@ set
     end,
     courier_tip_huf = case when resolved.route_rank = 1 then resolved.tip_huf else 0 end,
     is_route_primary = resolved.route_rank = 1,
+    base_rate_status = case
+        when resolved.route_rank <> 1 then 'duplicate_route_id'
+        when resolved.work_date is null then 'missing_excel_date'
+        when resolved.rate_id is null then 'missing_base_rate'
+        when resolved.calculation_unit not in ('per_route', 'per_order') then 'unsupported_unit'
+        else 'calculated'
+    end,
     base_rate_calculated_at = now()
 from resolved
 where j.id = resolved.id;
@@ -225,8 +236,8 @@ select
     sum(courier_tip_huf) as tip_huf,
     count(*) filter (where is_route_primary and calculated_day_type = 'highlighted') as highlighted_routes,
     count(*) filter (where is_route_primary and calculated_day_type = 'normal') as normal_routes,
-    count(*) filter (where is_route_primary and courier_base_rate_huf > 0) as calculated_routes,
-    count(*) filter (where is_route_primary and courier_base_rate_huf = 0) as uncalculated_routes
+    count(*) filter (where is_route_primary and base_rate_status = 'calculated') as calculated_routes,
+    count(*) filter (where is_route_primary and base_rate_status <> 'calculated') as uncalculated_routes
 from settlement.jit_row
 group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
 
@@ -235,5 +246,98 @@ grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, set
 grant select, update on settlement.jit_row to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_base_rates(uuid) to service_role;
+
+/* Persisted source: this table is populated by the existing JITT Excel importer
+   and is deliberately not cleared by the settlement staging delete button. */
+alter table public.jitt_invoice_final_routes
+    add column if not exists calculated_day_type text,
+    add column if not exists company_base_rate_huf numeric not null default 0,
+    add column if not exists courier_base_rate_huf numeric not null default 0,
+    add column if not exists courier_tip_huf numeric not null default 0,
+    add column if not exists is_route_primary boolean not null default false,
+    add column if not exists base_rate_status text not null default 'pending',
+    add column if not exists base_rate_calculated_at timestamptz;
+
+create or replace function settlement.recalculate_jitt_invoice_final_routes()
+returns void
+language sql
+security definer
+set search_path = settlement, public
+as $$
+with ranked as (
+    select
+        r.*,
+        row_number() over (
+            partition by coalesce(nullif(r.route_unique_id, ''), r.source_spreadsheet_id || ':' || r.worksheet_name || ':' || r.row_number::text)
+            order by r.source_spreadsheet_id, r.worksheet_name, r.row_number
+        ) as route_rank
+    from public.jitt_invoice_final_routes r
+), resolved as (
+    select
+        r.*,
+        coalesce(day_rule.day_type, 'normal') as calculated_day_type,
+        rate.id as rate_id,
+        rate.company_amount_huf,
+        rate.courier_amount_huf,
+        rate.calculation_unit
+    from ranked r
+    left join lateral (
+        select d.day_type
+        from settlement.cfg_jitt_day_definitions d
+        where d.is_active and d.deleted_at is null
+          and r.work_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
+          and extract(isodow from r.work_date)::smallint = any(d.weekdays)
+        order by d.priority, d.id
+        limit 1
+    ) day_rule on true
+    left join lateral (
+        select b.*
+        from settlement.cfg_jitt_base_rates b
+        where b.is_active and b.deleted_at is null
+          and r.work_date between b.valid_from and coalesce(b.valid_to, 'infinity'::date)
+          and b.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
+          and b.route_type in (
+              case when lower(coalesce(r.route_type, '')) like '%express%' then 'express'
+                   when lower(coalesce(r.route_type, '')) like '%region%' then 'regional'
+                   else 'normal' end,
+              'any'
+          )
+        order by b.priority, b.id
+        limit 1
+    ) rate on true
+)
+update public.jitt_invoice_final_routes r
+set
+    calculated_day_type = resolved.calculated_day_type,
+    company_base_rate_huf = case when resolved.route_rank = 1 and resolved.calculation_unit = 'per_route' then coalesce(resolved.company_amount_huf, 0) when resolved.route_rank = 1 and resolved.calculation_unit = 'per_order' then coalesce(resolved.company_amount_huf, 0) * coalesce(resolved.orders, 0) else 0 end,
+    courier_base_rate_huf = case when resolved.route_rank = 1 and resolved.calculation_unit = 'per_route' then coalesce(resolved.courier_amount_huf, 0) when resolved.route_rank = 1 and resolved.calculation_unit = 'per_order' then coalesce(resolved.courier_amount_huf, 0) * coalesce(resolved.orders, 0) else 0 end,
+    courier_tip_huf = case when resolved.route_rank = 1 then coalesce(resolved.tip_huf, 0) else 0 end,
+    is_route_primary = resolved.route_rank = 1,
+    base_rate_status = case when resolved.route_rank <> 1 then 'duplicate_route_id' when resolved.rate_id is null then 'missing_base_rate' when resolved.calculation_unit not in ('per_route', 'per_order') then 'unsupported_unit' else 'calculated' end,
+    base_rate_calculated_at = now()
+from resolved
+where r.source_name = resolved.source_name
+  and r.source_spreadsheet_id = resolved.source_spreadsheet_id
+  and r.worksheet_name = resolved.worksheet_name
+  and r.row_number = resolved.row_number;
+$$;
+
+drop view if exists settlement.vw_parameterized_courier_base_summary;
+create view settlement.vw_parameterized_courier_base_summary as
+select
+    driver_name,
+    sum(courier_base_rate_huf) as courier_base_rate_huf,
+    sum(company_base_rate_huf) as company_base_rate_huf,
+    sum(courier_tip_huf) as tip_huf,
+    count(*) filter (where is_route_primary and calculated_day_type = 'highlighted') as highlighted_routes,
+    count(*) filter (where is_route_primary and calculated_day_type = 'normal') as normal_routes,
+    count(*) filter (where is_route_primary and base_rate_status = 'calculated') as calculated_routes,
+    count(*) filter (where is_route_primary and base_rate_status <> 'calculated') as uncalculated_routes
+from public.jitt_invoice_final_routes
+group by driver_name;
+
+grant select, update on public.jitt_invoice_final_routes to service_role;
+grant select on settlement.vw_parameterized_courier_base_summary to service_role;
+grant execute on function settlement.recalculate_jitt_invoice_final_routes() to service_role;
 
 commit;
