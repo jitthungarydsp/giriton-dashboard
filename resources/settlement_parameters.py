@@ -217,7 +217,10 @@ def soft_delete_item(client: Any, table_name: str, item_id: str, actor: str) -> 
 
 
 def recalculate_excel_base_rates(client: Any, session_id: str | None = None) -> None:
-    """Refresh persisted JITT Fixed Rate values in the existing final-route table."""
+    """Refresh DB-stored JITT row values for one imported settlement session."""
+    if not _text(session_id):
+        return
     client.schema("settlement").rpc(
-        "recalculate_jitt_invoice_final_routes",
+        "recalculate_jitt_base_rates",
+        {"p_session_id": _text(session_id)},
     ).execute()

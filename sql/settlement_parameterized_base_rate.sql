@@ -125,6 +125,8 @@ create table if not exists settlement.cfg_jitt_periodic_fees (
 
 alter table settlement.jit_row
     add column if not exists route_unique_id text,
+    add column if not exists route_date date,
+    add column if not exists weekday_iso smallint,
     add column if not exists calculated_day_type text,
     add column if not exists company_base_rate_huf numeric not null default 0,
     add column if not exists courier_base_rate_huf numeric not null default 0,
@@ -200,6 +202,8 @@ with raw as (
 update settlement.jit_row j
 set
     route_unique_id = resolved.route_unique_id,
+    route_date = resolved.work_date,
+    weekday_iso = case when resolved.work_date is not null then extract(isodow from resolved.work_date)::smallint end,
     calculated_day_type = resolved.calculated_day_type,
     company_base_rate_huf = case
         when resolved.route_rank <> 1 then 0
@@ -339,5 +343,26 @@ group by driver_name;
 grant select, update on public.jitt_invoice_final_routes to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_invoice_final_routes() to service_role;
+
+/* The new settlement screen reads these DB-written jit_row values directly. */
+drop view if exists settlement.vw_parameterized_courier_base_summary;
+create view settlement.vw_parameterized_courier_base_summary as
+select
+    session_id,
+    coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
+    sum(courier_base_rate_huf) as courier_base_rate_huf,
+    sum(company_base_rate_huf) as company_base_rate_huf,
+    sum(courier_tip_huf) as tip_huf,
+    count(*) filter (where is_route_primary and calculated_day_type = 'highlighted') as highlighted_routes,
+    count(*) filter (where is_route_primary and calculated_day_type = 'normal') as normal_routes,
+    count(*) filter (where is_route_primary and base_rate_status = 'calculated') as calculated_routes,
+    count(*) filter (where is_route_primary and base_rate_status <> 'calculated') as uncalculated_routes
+from settlement.jit_row
+group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
+grant select on settlement.vw_parameterized_courier_base_summary to service_role;
+
+/* Backfill every already imported JIT session immediately; no Excel re-upload. */
+select settlement.recalculate_jitt_base_rates(session_id)
+from (select distinct session_id from settlement.jit_row) sessions;
 
 commit;
