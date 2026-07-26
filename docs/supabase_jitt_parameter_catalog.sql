@@ -1,15 +1,32 @@
 /*
-RESET MIGRATION - removes only the three earlier prototype parameter tables.
-Their data is intentionally deleted at the user's request.
+RESET MIGRATION - removes every earlier JITT parameter table from public.
+Their data is intentionally deleted at the user's request. New parameter
+tables are created exclusively in the settlement schema.
 */
+
+create schema if not exists settlement;
+
+drop table if exists settlement.cfg_jitt_rate_parameters cascade;
+drop table if exists settlement.cfg_jitt_periodic_bonuses cascade;
+drop table if exists settlement.cfg_jitt_rate_parameter_names cascade;
+drop table if exists settlement.cfg_jitt_day_definitions cascade;
+drop table if exists settlement.cfg_jitt_base_rates cascade;
+drop table if exists settlement.cfg_jitt_delay_bonus_rules cascade;
+drop table if exists settlement.cfg_jitt_compliance_bonus_rules cascade;
+drop table if exists settlement.cfg_jitt_periodic_fees cascade;
 
 drop table if exists public.cfg_jitt_rate_parameters cascade;
 drop table if exists public.cfg_jitt_periodic_bonuses cascade;
 drop table if exists public.cfg_jitt_rate_parameter_names cascade;
+drop table if exists public.cfg_jitt_day_definitions cascade;
+drop table if exists public.cfg_jitt_base_rates cascade;
+drop table if exists public.cfg_jitt_delay_bonus_rules cascade;
+drop table if exists public.cfg_jitt_compliance_bonus_rules cascade;
+drop table if exists public.cfg_jitt_periodic_fees cascade;
 
 create extension if not exists pgcrypto;
 
-create table if not exists public.cfg_jitt_day_definitions (
+create table if not exists settlement.cfg_jitt_day_definitions (
     id uuid primary key default gen_random_uuid(),
     day_type text not null check (day_type in ('highlighted', 'normal')),
     weekdays smallint[] not null default '{}'::smallint[] check (
@@ -34,7 +51,7 @@ create table if not exists public.cfg_jitt_day_definitions (
     )
 );
 
-create table if not exists public.cfg_jitt_base_rates (
+create table if not exists settlement.cfg_jitt_base_rates (
     id uuid primary key default gen_random_uuid(),
     day_type text not null default 'any' check (day_type in ('highlighted', 'normal', 'any')),
     route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
@@ -56,7 +73,7 @@ create table if not exists public.cfg_jitt_base_rates (
     check (valid_to is null or valid_to >= valid_from)
 );
 
-create table if not exists public.cfg_jitt_delay_bonus_rules (
+create table if not exists settlement.cfg_jitt_delay_bonus_rules (
     id uuid primary key default gen_random_uuid(),
     level_code text not null,
     day_type text not null default 'any' check (day_type in ('highlighted', 'normal', 'any')),
@@ -88,42 +105,42 @@ create table if not exists public.cfg_jitt_delay_bonus_rules (
     check (duration_max_hours is null or duration_min_hours is null or duration_max_hours >= duration_min_hours)
 );
 
-create table if not exists public.cfg_jitt_compliance_bonus_rules (
-    like public.cfg_jitt_delay_bonus_rules including all
+create table if not exists settlement.cfg_jitt_compliance_bonus_rules (
+    like settlement.cfg_jitt_delay_bonus_rules including all
 );
 
 /* Existing first-version day rows are preserved as one-element weekday arrays. */
-alter table public.cfg_jitt_day_definitions
+alter table settlement.cfg_jitt_day_definitions
     add column if not exists weekdays smallint[] not null default '{}'::smallint[];
 
 do $$
 begin
     if exists (
         select 1 from information_schema.columns
-        where table_schema = 'public'
+        where table_schema = 'settlement'
           and table_name = 'cfg_jitt_day_definitions'
           and column_name = 'weekday'
     ) then
-        update public.cfg_jitt_day_definitions
+        update settlement.cfg_jitt_day_definitions
         set weekdays = array[weekday]
         where cardinality(weekdays) = 0
           and weekday is not null;
 
-        alter table public.cfg_jitt_day_definitions
+        alter table settlement.cfg_jitt_day_definitions
             drop column weekday;
     end if;
 end
 $$;
 
-alter table public.cfg_jitt_delay_bonus_rules
+alter table settlement.cfg_jitt_delay_bonus_rules
     add column if not exists calculation_mode text not null default 'excel'
     check (calculation_mode in ('excel', 'api', 'custom'));
 
-alter table public.cfg_jitt_compliance_bonus_rules
+alter table settlement.cfg_jitt_compliance_bonus_rules
     add column if not exists calculation_mode text not null default 'excel'
     check (calculation_mode in ('excel', 'api', 'custom'));
 
-create table if not exists public.cfg_jitt_periodic_fees (
+create table if not exists settlement.cfg_jitt_periodic_fees (
     id uuid primary key default gen_random_uuid(),
     fee_name text not null,
     day_type text not null default 'any' check (day_type in ('highlighted', 'normal', 'any')),
@@ -150,11 +167,12 @@ create table if not exists public.cfg_jitt_periodic_fees (
     check (condition_max is null or condition_min is null or condition_max >= condition_min)
 );
 
-drop index if exists public.idx_jitt_day_definitions_lookup;
-create index if not exists idx_jitt_day_definitions_lookup on public.cfg_jitt_day_definitions (is_active, valid_from, valid_to) where deleted_at is null;
-create index if not exists idx_jitt_base_rates_lookup on public.cfg_jitt_base_rates (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
-create index if not exists idx_jitt_delay_bonus_lookup on public.cfg_jitt_delay_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
-create index if not exists idx_jitt_compliance_bonus_lookup on public.cfg_jitt_compliance_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
-create index if not exists idx_jitt_periodic_fees_lookup on public.cfg_jitt_periodic_fees (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
+drop index if exists settlement.idx_jitt_day_definitions_lookup;
+create index if not exists idx_jitt_day_definitions_lookup on settlement.cfg_jitt_day_definitions (is_active, valid_from, valid_to) where deleted_at is null;
+create index if not exists idx_jitt_base_rates_lookup on settlement.cfg_jitt_base_rates (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
+create index if not exists idx_jitt_delay_bonus_lookup on settlement.cfg_jitt_delay_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
+create index if not exists idx_jitt_compliance_bonus_lookup on settlement.cfg_jitt_compliance_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
+create index if not exists idx_jitt_periodic_fees_lookup on settlement.cfg_jitt_periodic_fees (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
 
-grant select, insert, update, delete on public.cfg_jitt_day_definitions, public.cfg_jitt_base_rates, public.cfg_jitt_delay_bonus_rules, public.cfg_jitt_compliance_bonus_rules, public.cfg_jitt_periodic_fees to service_role;
+grant usage on schema settlement to service_role;
+grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates, settlement.cfg_jitt_delay_bonus_rules, settlement.cfg_jitt_compliance_bonus_rules, settlement.cfg_jitt_periodic_fees to service_role;

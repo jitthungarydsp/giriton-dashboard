@@ -26,7 +26,7 @@ PERIODIC_CONDITIONS = {
 
 
 def _table(client: Any, name: str) -> Any:
-    return client.schema("public").table(name)
+    return client.schema("settlement").table(name)
 
 
 def _text(value: Any) -> str:
