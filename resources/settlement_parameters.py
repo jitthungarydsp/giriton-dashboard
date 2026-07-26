@@ -15,6 +15,7 @@ PERIODIC_FEE_TABLE = "cfg_jitt_periodic_fees"
 DAY_TYPES = {"highlighted", "normal", "any"}
 ROUTE_TYPES = {"express", "normal", "regional", "any"}
 CALCULATION_UNITS = {"fixed", "per_route", "per_order", "per_hour"}
+CALCULATION_MODES = {"excel", "api", "custom"}
 PERIODIC_CONDITIONS = {
     "none",
     "orders_per_route",
@@ -98,10 +99,12 @@ def _common(payload: dict[str, Any]) -> dict[str, Any]:
 
 def validate_day_definition(payload: dict[str, Any]) -> dict[str, Any]:
     day_type = _choice(payload.get("day_type"), {"highlighted", "normal"}, "naptípus")
-    weekday = int(payload.get("weekday") or 0)
-    if weekday not in range(1, 8):
-        raise ValueError("A hét napja 1 és 7 közötti érték lehet.")
-    return {"day_type": day_type, "weekday": weekday, **_common(payload)}
+    weekdays = sorted({int(day) for day in (payload.get("weekdays") or [])})
+    if not weekdays:
+        raise ValueError("Legalább egy napot ki kell jelölni.")
+    if any(day not in range(1, 8) for day in weekdays):
+        raise ValueError("A hét napjai csak 1 és 7 közötti értékek lehetnek.")
+    return {"day_type": day_type, "weekdays": weekdays, **_common(payload)}
 
 
 def validate_base_rate(payload: dict[str, Any]) -> dict[str, Any]:
@@ -139,6 +142,7 @@ def validate_performance_rule(payload: dict[str, Any]) -> dict[str, Any]:
         "company_amount_huf": _amount(payload.get("company_amount_huf"), "JITT-összeg"),
         "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
         "calculation_unit": _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység"),
+        "calculation_mode": _choice(payload.get("calculation_mode"), CALCULATION_MODES, "számítási mód"),
         **_common(payload),
     }
 

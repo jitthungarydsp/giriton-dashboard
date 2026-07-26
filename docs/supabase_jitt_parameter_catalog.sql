@@ -12,7 +12,10 @@ create extension if not exists pgcrypto;
 create table if not exists public.cfg_jitt_day_definitions (
     id uuid primary key default gen_random_uuid(),
     day_type text not null check (day_type in ('highlighted', 'normal')),
-    weekday smallint not null check (weekday between 1 and 7),
+    weekdays smallint[] not null default '{}'::smallint[] check (
+        weekdays <@ array[1,2,3,4,5,6,7]::smallint[]
+        and cardinality(weekdays) > 0
+    ),
     valid_from date not null,
     valid_to date,
     priority integer not null default 100,
@@ -68,6 +71,7 @@ create table if not exists public.cfg_jitt_delay_bonus_rules (
     company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
     courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
     calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
+    calculation_mode text not null default 'excel' check (calculation_mode in ('excel', 'api', 'custom')),
     valid_from date not null,
     valid_to date,
     priority integer not null default 100,
@@ -87,6 +91,37 @@ create table if not exists public.cfg_jitt_delay_bonus_rules (
 create table if not exists public.cfg_jitt_compliance_bonus_rules (
     like public.cfg_jitt_delay_bonus_rules including all
 );
+
+/* Existing first-version day rows are preserved as one-element weekday arrays. */
+alter table public.cfg_jitt_day_definitions
+    add column if not exists weekdays smallint[] not null default '{}'::smallint[];
+
+do $$
+begin
+    if exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'cfg_jitt_day_definitions'
+          and column_name = 'weekday'
+    ) then
+        update public.cfg_jitt_day_definitions
+        set weekdays = array[weekday]
+        where cardinality(weekdays) = 0
+          and weekday is not null;
+
+        alter table public.cfg_jitt_day_definitions
+            drop column weekday;
+    end if;
+end
+$$;
+
+alter table public.cfg_jitt_delay_bonus_rules
+    add column if not exists calculation_mode text not null default 'excel'
+    check (calculation_mode in ('excel', 'api', 'custom'));
+
+alter table public.cfg_jitt_compliance_bonus_rules
+    add column if not exists calculation_mode text not null default 'excel'
+    check (calculation_mode in ('excel', 'api', 'custom'));
 
 create table if not exists public.cfg_jitt_periodic_fees (
     id uuid primary key default gen_random_uuid(),
@@ -115,7 +150,8 @@ create table if not exists public.cfg_jitt_periodic_fees (
     check (condition_max is null or condition_min is null or condition_max >= condition_min)
 );
 
-create index if not exists idx_jitt_day_definitions_lookup on public.cfg_jitt_day_definitions (is_active, weekday, valid_from, valid_to) where deleted_at is null;
+drop index if exists public.idx_jitt_day_definitions_lookup;
+create index if not exists idx_jitt_day_definitions_lookup on public.cfg_jitt_day_definitions (is_active, valid_from, valid_to) where deleted_at is null;
 create index if not exists idx_jitt_base_rates_lookup on public.cfg_jitt_base_rates (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
 create index if not exists idx_jitt_delay_bonus_lookup on public.cfg_jitt_delay_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;
 create index if not exists idx_jitt_compliance_bonus_lookup on public.cfg_jitt_compliance_bonus_rules (is_active, day_type, route_type, valid_from, valid_to) where deleted_at is null;

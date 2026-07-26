@@ -26,6 +26,7 @@ from resources.settlement_parameters import (
 DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bármely nap"}
 ROUTE_LABELS = {"express": "Expressz", "normal": "Normál / City", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
+CALCULATION_MODE_LABELS = {"excel": "Excel", "api": "API", "custom": "Egyéni"}
 CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban"}
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 
@@ -134,21 +135,21 @@ def _show_days(client: Any) -> None:
     if not data.empty:
         view = data.copy()
         view["Naptípus"] = view["day_type"].map(DAY_LABELS)
-        view["Nap"] = view["weekday"].map(WEEKDAY_LABELS)
+        view["Napok"] = view["weekdays"].apply(lambda values: ", ".join(WEEKDAY_LABELS.get(int(value), str(value)) for value in (values or [])))
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
         view["Státusz"] = [parameter_status(a, b, c) for a, b, c in zip(view["valid_from"], view["valid_to"], view["is_active"])]
-        st.dataframe(view[["Naptípus", "Nap", "valid_from", "Vége", "Státusz", "note"]], use_container_width=True, hide_index=True)
+        st.dataframe(view[["Naptípus", "Napok", "valid_from", "Vége", "Státusz", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "day", "day_type")
     form_key = f"day_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
         types = ["highlighted", "normal"]
         day_type = st.selectbox("Naptípus", types, index=_index(types, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
-        weekday = st.selectbox("Hét napja", list(WEEKDAY_LABELS), index=list(WEEKDAY_LABELS).index(int(_clean((row or {}).get("weekday"), 1))), format_func=WEEKDAY_LABELS.get)
+        weekdays = st.multiselect("Érintett napok", list(WEEKDAY_LABELS), default=[int(value) for value in ((row or {}).get("weekdays") or [])], format_func=WEEKDAY_LABELS.get, help="Egy bejegyzéshez több nap is kijelölhető.")
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "day")
         saved = st.form_submit_button("Módosítás mentése" if row else "Napbesorolás mentése", type="primary")
     if saved:
         try:
-            save_item(client, DAY_TABLE, validate_day_definition({"day_type": day_type, "weekday": weekday, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, DAY_TABLE, validate_day_definition({"day_type": day_type, "weekdays": weekdays, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             st.success("A napbesorolás mentve."); st.rerun()
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")
@@ -185,8 +186,8 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
     st.caption(f"{title}: szint, százalékos sáv, tervezett túrahossz és kétoldali díjazás külön paraméterezhető.")
     data = read_items(client, table)
     if not data.empty:
-        view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Mutatósáv"] = [_range(a, b, "%") for a, b in zip(view["threshold_min"], view["threshold_max"])]; view["Túrahossz"] = [_range(a, b, " óra") for a, b in zip(view["duration_min_hours"], view["duration_max_hours"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["level_code", "Naptípus", "Túratípus", "Mutatósáv", "Túrahossz", "JITT", "Futár", "valid_from", "Vége"]], use_container_width=True, hide_index=True)
+        view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Számítás módja"] = view["calculation_mode"].map(CALCULATION_MODE_LABELS); view["Mutatósáv"] = [_range(a, b, "%") for a, b in zip(view["threshold_min"], view["threshold_max"])]; view["Túrahossz"] = [_range(a, b, " óra") for a, b in zip(view["duration_min_hours"], view["duration_max_hours"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["level_code", "Számítás módja", "Naptípus", "Túratípus", "Mutatósáv", "Túrahossz", "JITT", "Futár", "valid_from", "Vége"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, key, "level_code")
     form_key = f"{key}_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
@@ -199,12 +200,12 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
         c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5)
         bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
         durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
-        m1,m2,m3 = st.columns(3); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
+        m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, key)
         saved = st.form_submit_button("Módosítás mentése" if row else f"{title} mentése", type="primary")
     if saved:
         try:
-            save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "calculation_mode": calculation_mode, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             st.success(f"{title} mentve."); st.rerun()
         except Exception as exc: st.error(f"Nem menthető: {exc}")
     _delete_control(client, table, row, key)

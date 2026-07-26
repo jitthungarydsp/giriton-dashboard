@@ -17,12 +17,12 @@ class SettlementParameterValidationTests(unittest.TestCase):
         row = validate_day_definition(
             {
                 "day_type": "highlighted",
-                "weekday": 1,
+                "weekdays": [1, 4, 5, 6],
                 "valid_from": date(2026, 6, 1),
                 "valid_to": None,
             }
         )
-        self.assertEqual(row["weekday"], 1)
+        self.assertEqual(row["weekdays"], [1, 4, 5, 6])
         self.assertIsNone(row["valid_to"])
 
     def test_base_rate_supports_day_and_route_type(self) -> None:
@@ -53,12 +53,14 @@ class SettlementParameterValidationTests(unittest.TestCase):
                 "company_amount_huf": 1333,
                 "courier_amount_huf": 1333,
                 "calculation_unit": "per_route",
+                "calculation_mode": "api",
                 "valid_from": date(2026, 6, 1),
                 "valid_to": None,
             }
         )
         self.assertEqual(row["threshold_max"], 1.5)
         self.assertEqual(row["duration_max_hours"], 2.0)
+        self.assertEqual(row["calculation_mode"], "api")
 
     def test_periodic_fee_supports_twelve_order_route_condition(self) -> None:
         row = validate_periodic_fee(
