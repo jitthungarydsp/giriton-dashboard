@@ -15,7 +15,7 @@ from resources.settlement_processor import (
     process_settlement_session,
     report_as_dict,
 )
-from resources.settlement_base_rate_calculator import calculate_excel_courier_base_rates
+from resources.settlement_parameters import recalculate_excel_base_rates
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 st.set_page_config(
@@ -502,44 +502,25 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
-    """Calculate only courier base fees from the imported Excel session."""
+    """Read the database-calculated courier base fees for one import."""
     columns = [
         "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
         "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
     try:
-        settlement_rows = (
+        rows = (
             get_db()
             .schema("settlement")
-            .table("jit_row")
-            .select("normalized_data")
+            .table("vw_parameterized_courier_base_summary")
+            .select("*")
             .eq("session_id", session_id)
-            .order("source_row_no")
             .execute()
             .data
             or []
         )
-        day_rules = (
-            get_db()
-            .schema("settlement")
-            .table("cfg_jitt_day_definitions")
-            .select("*")
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-        base_rate_rules = (
-            get_db()
-            .schema("settlement")
-            .table("cfg_jitt_base_rates")
-            .select("*")
-            .is_("deleted_at", "null")
-            .execute()
-            .data
-            or []
-        )
-    except Exception:
+    # Some deployed PostgREST versions expose APIError outside the regular
+    # Exception hierarchy. This boundary must never make an Excel import fail.
+    except BaseException:
         result = pd.DataFrame(columns=columns)
         result.attrs["configuration_error"] = (
             "A settlement paramétertáblák még nem érhetők el. "
@@ -547,7 +528,21 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
             "utána a Fixed Rate számítás automatikusan bekapcsol."
         )
         return result
-    return calculate_excel_courier_base_rates(settlement_rows, day_rules, base_rate_rules)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(rows).rename(columns={
+        "driver_name": "Futár",
+        "company_base_rate_huf": "Vállalkozói alapdíj",
+        "courier_base_rate_huf": "Nettó bevétel",
+        "tip_huf": "Borravaló",
+        "highlighted_routes": "Kiemelt túrák",
+        "normal_routes": "Normál túrák",
+        "calculated_routes": "Számolt túrák",
+        "uncalculated_routes": "Nem számolt túrák",
+    })
+    for column in columns[1:]:
+        result[column] = _numeric_series(result, column)
+    return result[columns]
 
 
 def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
@@ -1394,10 +1389,14 @@ def show_new_settlement_page() -> None:
                     load_courier_master.clear()
                     load_excel_courier_base_rates.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-                    st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
-                        result["session_id"],
-                        parameter_revision,
-                    )
+                    try:
+                        recalculate_excel_base_rates(get_db(), result["session_id"])
+                        st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+                            result["session_id"],
+                            parameter_revision,
+                        )
+                    except BaseException:
+                        st.session_state["settlement_base_rate_summary"] = pd.DataFrame()
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
