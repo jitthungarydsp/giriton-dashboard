@@ -501,7 +501,7 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_excel_courier_base_rates(session_id: str) -> pd.DataFrame:
+def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Calculate only courier base fees from the imported Excel session."""
     settlement_rows = (
         get_db()
@@ -541,7 +541,8 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     """Overlay the safe Excel base-fee calculation onto the main courier list."""
     if not session_id:
         return data
-    calculated = load_excel_courier_base_rates(session_id)
+    parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+    calculated = load_excel_courier_base_rates(session_id, parameter_revision)
     if calculated.empty:
         return data
 
@@ -551,10 +552,12 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     calculated["_courier_lookup"] = calculated["Futár"].astype(str).str.strip().str.casefold()
     amount_by_courier = calculated.set_index("_courier_lookup")["Nettó bevétel"]
     company_amount_by_courier = calculated.set_index("_courier_lookup")["Vállalkozói alapdíj"]
+    tip_by_courier = calculated.set_index("_courier_lookup")["Borravaló"]
     matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
     result["Nettó bevétel"] = result["_courier_lookup"].map(amount_by_courier).fillna(0.0)
     result["Vállalkozói alapdíj"] = result["_courier_lookup"].map(company_amount_by_courier).fillna(0.0)
+    result["Borravaló"] = result["_courier_lookup"].map(tip_by_courier).fillna(0.0)
     result["Számolt túrák"] = result["_courier_lookup"].map(matched_routes).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_lookup"].map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
@@ -615,7 +618,7 @@ def render_table(df: pd.DataFrame) -> None:
         """
         <div class="courier-list-header">
           <div>Futár</div><div>Branch</div><div>Számítás</div>
-          <div>Nettó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
+          <div>Nettó</div><div>Borravaló</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -641,7 +644,7 @@ def render_table(df: pd.DataFrame) -> None:
             cols[1].caption(str(row["Branch"]))
             cols[2].caption(str(row["Számítás módja"]))
             cols[3].caption(format_huf(row["Nettó bevétel"]))
-            cols[4].caption(format_huf(row["Levonás"]))
+            cols[4].caption(format_huf(row["Borravaló"]))
             cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
 
             badge, led = status_meta(str(row["Státusz"]))

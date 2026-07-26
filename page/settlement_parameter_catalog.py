@@ -35,6 +35,12 @@ def _actor() -> str:
     return str(st.session_state.get("user", {}).get("username") or "unknown").strip()
 
 
+def _mark_parameters_changed() -> None:
+    st.session_state["settlement_parameter_revision"] = int(
+        st.session_state.get("settlement_parameter_revision", 0)
+    ) + 1
+
+
 def _clean(value: Any, default: Any = None) -> Any:
     if value is None:
         return default
@@ -112,8 +118,8 @@ def _delete_control(client: Any, table_name: str, row: dict[str, Any] | None, ke
             return
         try:
             soft_delete_item(client, table_name, _text(row.get("id")), _actor())
-            st.success("A tétel törölve.")
-            st.rerun()
+            _mark_parameters_changed()
+            st.success("A tétel törölve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc:
             st.error(f"A tétel nem törölhető: {exc}")
 
@@ -150,7 +156,8 @@ def _show_days(client: Any) -> None:
     if saved:
         try:
             save_item(client, DAY_TABLE, validate_day_definition({"day_type": day_type, "weekdays": weekdays, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
-            st.success("A napbesorolás mentve."); st.rerun()
+            _mark_parameters_changed()
+            st.success("A napbesorolás mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")
     _delete_control(client, DAY_TABLE, row, "day")
@@ -177,7 +184,8 @@ def _show_base_rates(client: Any) -> None:
     if saved:
         try:
             save_item(client, BASE_RATE_TABLE, validate_base_rate({"day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
-            st.success("Az alapdíj mentve."); st.rerun()
+            _mark_parameters_changed()
+            st.success("Az alapdíj mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")
     _delete_control(client, BASE_RATE_TABLE, row, "base")
 
@@ -206,7 +214,8 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
     if saved:
         try:
             save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "calculation_mode": calculation_mode, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
-            st.success(f"{title} mentve."); st.rerun()
+            _mark_parameters_changed()
+            st.success(f"{title} mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")
     _delete_control(client, table, row, key)
 
@@ -233,7 +242,8 @@ def _show_periodic(client: Any) -> None:
     if saved:
         try:
             save_item(client, PERIODIC_FEE_TABLE, validate_periodic_fee({"fee_name":fee_name,"day_type":day_type,"route_type":route_type,"warehouse_code":warehouse,"condition_metric":condition,"condition_min":condition_min if condition != "none" else None,"condition_max":condition_max if condition != "none" and has_max else None,"company_amount_huf":company,"courier_amount_huf":courier,"calculation_unit":unit,"valid_from":valid_from,"valid_to":valid_to if has_end else None,"priority":priority,"is_active":is_active,"note":note}),_actor(),_text((row or {}).get("id")) or None)
-            st.success("Az időszakos díj mentve."); st.rerun()
+            _mark_parameters_changed()
+            st.success("Az időszakos díj mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")
     _delete_control(client, PERIODIC_FEE_TABLE, row, "periodic")
 

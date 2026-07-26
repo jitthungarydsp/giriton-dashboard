@@ -41,3 +41,16 @@ class ExcelCourierBaseRateTests(unittest.TestCase):
             [{"id": "orders", "day_type": "normal", "route_type": "normal", "courier_amount_huf": 100, "calculation_unit": "per_order", "valid_from": "2026-01-01", "is_active": True}],
         )
         self.assertEqual(result.iloc[0]["Nettó bevétel"], 1200)
+
+    def test_route_id_is_counted_once_across_warehouses_and_keeps_tip(self) -> None:
+        result = calculate_excel_courier_base_rates(
+            [
+                {"normalized_data": {"Driver": "Dani", "Route Unique ID": "route-42", "Date": "2026-06-08", "Route Type": "Normal", "Location": "BUD1", "Tip": 500}},
+                {"normalized_data": {"Driver": "Dani", "Route Unique ID": "route-42", "Date": "2026-06-08", "Route Type": "Normal", "Location": "BUD2", "Tip": 500}},
+            ],
+            [{"id": "normal", "day_type": "normal", "weekdays": [1], "valid_from": "2026-01-01", "is_active": True}],
+            [{"id": "normal", "day_type": "normal", "route_type": "normal", "courier_amount_huf": 3000, "calculation_unit": "per_route", "valid_from": "2026-01-01", "is_active": True}],
+        )
+        self.assertEqual(result.iloc[0]["Nettó bevétel"], 3000)
+        self.assertEqual(result.iloc[0]["Borravaló"], 500)
+        self.assertEqual(result.iloc[0]["Normál túrák"], 1)

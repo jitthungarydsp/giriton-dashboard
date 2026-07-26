@@ -130,26 +130,39 @@ def calculate_excel_courier_base_rates(
     duration source, applying it would risk paying an incorrect amount.
     """
     totals: dict[str, dict[str, Any]] = {}
+    seen_route_ids: set[str] = set()
     for row in rows:
         record = row.get("normalized_data", row)
         if not isinstance(record, dict):
             continue
         driver = _text(_value(record, "Driver", "Futár", "Courier", "Driver Name"))
+        route_id = _text(_value(record, "Route Unique ID", "Route ID", "RouteId", "Útvonal ID"))
         route_date = _as_date(_value(record, "Date", "Dátum", "Route Date"))
         route_type = _route_type(_value(record, "Route Type", "Túra típusa", "Tour Type"))
         warehouse = _text(_value(record, "Location", "Warehouse", "Raktár"))
         if not driver:
             continue
+        # The route is the accounting unit. A route copied between BUD1/BUD2
+        # must only be counted once, regardless of its source worksheet.
+        route_key = _key(route_id)
+        if route_key and route_key in seen_route_ids:
+            continue
+        if route_key:
+            seen_route_ids.add(route_key)
         item = totals.setdefault(
             driver,
             {
                 "Futár": driver,
                 "Vállalkozói alapdíj": 0.0,
                 "Nettó bevétel": 0.0,
+                "Borravaló": 0.0,
+                "Kiemelt túrák": 0,
+                "Normál túrák": 0,
                 "Számolt túrák": 0,
                 "Nem számolt túrák": 0,
             },
         )
+        item["Borravaló"] += _as_number(_value(record, "Tip", "Borravaló", "Tips"))
         if not route_date or not route_type:
             item["Nem számolt túrák"] += 1
             continue
@@ -157,6 +170,10 @@ def calculate_excel_courier_base_rates(
         if not resolved_day_type:
             item["Nem számolt túrák"] += 1
             continue
+        if resolved_day_type == "highlighted":
+            item["Kiemelt túrák"] += 1
+        elif resolved_day_type == "normal":
+            item["Normál túrák"] += 1
         rate = _matching_rate(route_date, resolved_day_type, route_type, warehouse, rate_rules)
         if not rate:
             item["Nem számolt túrák"] += 1
@@ -179,5 +196,8 @@ def calculate_excel_courier_base_rates(
         item["Számolt túrák"] += 1
     return pd.DataFrame(
         totals.values(),
-        columns=["Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Számolt túrák", "Nem számolt túrák"],
+        columns=[
+            "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
+            "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
+        ],
     )
