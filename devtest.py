@@ -524,7 +524,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         result = pd.DataFrame(columns=columns)
         result.attrs["configuration_error"] = (
             "A settlement paramétertáblák még nem érhetők el. "
-            "Futtasd le a docs/supabase_jitt_parameter_catalog.sql migrációt, "
+            "Futtasd le a sql/settlement_parameterized_base_rate.sql migrációt, "
             "utána a Fixed Rate számítás automatikusan bekapcsol."
         )
         return result

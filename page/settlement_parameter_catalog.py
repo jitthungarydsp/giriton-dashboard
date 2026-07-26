@@ -268,4 +268,4 @@ def render_parameter_catalog(client: Any) -> None:
         with tabs[3]: _show_performance(client, COMPLIANCE_TABLE, "Compliance bónusz", "compliance")
         with tabs[4]: _show_periodic(client)
     except Exception as exc:
-        st.error("Az új paramétertáblák még nem érhetők el. Futtasd a `docs/supabase_jitt_parameter_catalog.sql` migrációt. Részlet: " + str(exc))
+        st.error("A settlement paramétertáblák még nem érhetők el. Futtasd a `sql/settlement_parameterized_base_rate.sql` fájlt a Supabase SQL Editorban. Részlet: " + str(exc))

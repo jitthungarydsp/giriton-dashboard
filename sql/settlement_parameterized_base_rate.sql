@@ -60,6 +60,69 @@ create table if not exists settlement.cfg_jitt_base_rates (
     check (valid_to is null or valid_to >= valid_from)
 );
 
+create table if not exists settlement.cfg_jitt_delay_bonus_rules (
+    id uuid primary key default gen_random_uuid(),
+    level_code text not null,
+    day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
+    route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
+    warehouse_code text,
+    threshold_min numeric,
+    threshold_max numeric,
+    threshold_min_inclusive boolean not null default true,
+    threshold_max_inclusive boolean not null default true,
+    duration_min_hours numeric,
+    duration_max_hours numeric,
+    company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
+    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
+    calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
+    calculation_mode text not null default 'excel' check (calculation_mode in ('excel', 'api', 'custom')),
+    valid_from date not null,
+    valid_to date,
+    priority integer not null default 100,
+    is_active boolean not null default true,
+    note text,
+    created_by text not null,
+    created_at timestamptz not null default now(),
+    updated_by text,
+    updated_at timestamptz not null default now(),
+    deleted_at timestamptz,
+    deleted_by text,
+    check (valid_to is null or valid_to >= valid_from),
+    check (threshold_max is null or threshold_min is null or threshold_max >= threshold_min),
+    check (duration_max_hours is null or duration_min_hours is null or duration_max_hours >= duration_min_hours)
+);
+
+create table if not exists settlement.cfg_jitt_compliance_bonus_rules (
+    like settlement.cfg_jitt_delay_bonus_rules including all
+);
+
+create table if not exists settlement.cfg_jitt_periodic_fees (
+    id uuid primary key default gen_random_uuid(),
+    fee_name text not null,
+    day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
+    route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
+    warehouse_code text,
+    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period')),
+    condition_min numeric,
+    condition_max numeric,
+    company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
+    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
+    calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
+    valid_from date not null,
+    valid_to date,
+    priority integer not null default 100,
+    is_active boolean not null default true,
+    note text,
+    created_by text not null,
+    created_at timestamptz not null default now(),
+    updated_by text,
+    updated_at timestamptz not null default now(),
+    deleted_at timestamptz,
+    deleted_by text,
+    check (valid_to is null or valid_to >= valid_from),
+    check (condition_max is null or condition_min is null or condition_max >= condition_min)
+);
+
 alter table settlement.jit_row
     add column if not exists route_unique_id text,
     add column if not exists calculated_day_type text,
@@ -168,7 +231,7 @@ from settlement.jit_row
 group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
 
 grant usage on schema settlement to service_role;
-grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates to service_role;
+grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates, settlement.cfg_jitt_delay_bonus_rules, settlement.cfg_jitt_compliance_bonus_rules, settlement.cfg_jitt_periodic_fees to service_role;
 grant select, update on settlement.jit_row to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_base_rates(uuid) to service_role;
