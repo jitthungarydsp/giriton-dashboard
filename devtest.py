@@ -156,6 +156,73 @@ def apply_design() -> None:
             .premium-table { min-width:950px; }
         }
         
+
+
+/* --- Kattintható workflow kártyák --- */
+.workflow-card-row {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:16px;
+    margin:8px 0 14px 0;
+}
+div[class*="st-key-status_card_"] button {
+    min-height:148px !important;
+    border-radius:20px !important;
+    padding:20px 20px !important;
+    text-align:left !important;
+    justify-content:flex-start !important;
+    white-space:pre-line !important;
+    font-size:15px !important;
+    font-weight:750 !important;
+    line-height:1.55 !important;
+    box-shadow:0 9px 24px rgba(20,40,80,.08) !important;
+    transition:transform .15s ease, box-shadow .15s ease !important;
+}
+div[class*="st-key-status_card_"] button:hover {
+    transform:translateY(-2px) !important;
+    box-shadow:0 13px 30px rgba(20,40,80,.12) !important;
+}
+div.st-key-status_card_settlement button {
+    background:linear-gradient(135deg,#f4f8ff 0%,#eef4ff 100%) !important;
+    border:1px solid #d8e5ff !important;
+    border-left:6px solid #2474e5 !important;
+    color:#1454ad !important;
+}
+div.st-key-status_card_tig button {
+    background:linear-gradient(135deg,#fbf7ff 0%,#f4ecff 100%) !important;
+    border:1px solid #eadcff !important;
+    border-left:6px solid #7b2bd4 !important;
+    color:#6320b4 !important;
+}
+div.st-key-status_card_reports button {
+    background:linear-gradient(135deg,#fffaf4 0%,#fff3e7 100%) !important;
+    border:1px solid #ffe2c4 !important;
+    border-left:6px solid #f2760a !important;
+    color:#c75b00 !important;
+}
+div.st-key-status_card_payment button {
+    background:linear-gradient(135deg,#f4fff9 0%,#ebfbf2 100%) !important;
+    border:1px solid #d5f3e1 !important;
+    border-left:6px solid #16a765 !important;
+    color:#087a45 !important;
+}
+div[class*="st-key-status_card_"] button[kind="primary"] {
+    outline:3px solid rgba(31,166,74,.18) !important;
+    box-shadow:0 0 0 2px #1FA64A inset, 0 13px 30px rgba(23,133,59,.15) !important;
+}
+.status-filter-note {
+    background:#f7fffa;
+    border:1px solid #d9f1e2;
+    border-radius:14px;
+    padding:11px 14px;
+    color:#355d43;
+    font-size:13px;
+    margin:2px 0 14px 0;
+}
+@media (max-width:1000px) {
+    .workflow-card-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
 /* --- Egységes zöld arculat --- */
 div.stButton > button[kind="primary"],
 div.stDownloadButton > button {
@@ -1726,23 +1793,27 @@ def show_new_settlement_page() -> None:
     st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
 
     workflow_cards = [
-        ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
-        ("TIG-re vár", "Még nem készült TIG", "🟣"),
-        ("Bejelentések", "Nyitott ügyek", "🟠"),
-        ("Kifizetésre vár", "Jóváhagyás után", "🟢"),
+        ("Elszámolásra vár", "Még nem készült elszámolás", "📄", "status_card_settlement"),
+        ("TIG-re vár", "Még nem készült TIG", "🛡️", "status_card_tig"),
+        ("Bejelentések", "Nyitott ügyek", "🔔", "status_card_reports"),
+        ("Kifizetésre vár", "Jóváhagyás után", "💳", "status_card_payment"),
     ]
-    card_columns = st.columns(4)
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
+    card_columns = st.columns(4, gap="medium")
 
-    for card_column, (card_status, card_note, card_icon) in zip(card_columns, workflow_cards):
+    for card_column, (card_status, card_note, card_icon, card_key) in zip(card_columns, workflow_cards):
         card_count = int((base_filtered["Státusz"] == card_status).sum())
         is_active = active_workflow_filter == card_status
-        checkmark = "  ✅" if is_active else ""
-        button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
+        active_mark = "  ✅" if is_active else ""
+        button_label = (
+            f"{card_icon}  {card_status}\n"
+            f"{card_count} db{active_mark}\n"
+            f"{card_note}"
+        )
 
         if card_column.button(
             button_label,
-            key=f"workflow_card_{card_status}",
+            key=card_key,
             use_container_width=True,
             type="primary" if is_active else "secondary",
         ):
@@ -1753,13 +1824,19 @@ def show_new_settlement_page() -> None:
             st.rerun()
 
     if active_workflow_filter:
-        st.caption(
-            f"Aktív szűrés: {active_workflow_filter}. "
-            "A kijelölt kártyára ismét kattintva a szűrés kikapcsol."
+        st.markdown(
+            f'<div class="status-filter-note">✅ Aktív szűrés: '
+            f'<strong>{html.escape(active_workflow_filter)}</strong>. '
+            'A kijelölt kártyára kattintva a szűrés kikapcsol.</div>',
+            unsafe_allow_html=True,
         )
     else:
         selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
-        st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
+        st.markdown(
+            f'<div class="status-filter-note">Nincs státuszszűrés: az '
+            f'<strong>{html.escape(selected_warehouse_label)}</strong> összes futárja látható.</div>',
+            unsafe_allow_html=True,
+        )
 
     render_table(filtered)
 
