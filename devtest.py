@@ -156,166 +156,6 @@ def apply_design() -> None:
             .premium-table { min-width:950px; }
         }
         
-
-
-/* --- Kép alapján kialakított workflow kártyák --- */
-.workflow-title { margin:2px 0 10px 0; }
-div[class*="st-key-status_card_"] button {
-    min-height:170px !important;
-    border-radius:22px !important;
-    padding:22px 22px 18px 92px !important;
-    text-align:left !important;
-    justify-content:flex-start !important;
-    white-space:pre-line !important;
-    font-size:14px !important;
-    font-weight:700 !important;
-    line-height:1.5 !important;
-    letter-spacing:0 !important;
-    box-shadow:0 10px 28px rgba(20,40,80,.09) !important;
-    transition:transform .16s ease, box-shadow .16s ease, outline-color .16s ease !important;
-    position:relative !important;
-    overflow:hidden !important;
-}
-div[class*="st-key-status_card_"] button:hover {
-    transform:translateY(-3px) !important;
-    box-shadow:0 16px 34px rgba(20,40,80,.13) !important;
-}
-div[class*="st-key-status_card_"] button p {
-    margin:0 !important;
-    font-size:14px !important;
-    line-height:1.55 !important;
-}
-div[class*="st-key-status_card_"] button p::first-line {
-    font-size:17px !important;
-    font-weight:850 !important;
-}
-div[class*="st-key-status_card_"] button::before {
-    content:"";
-    position:absolute;
-    left:24px;
-    top:37px;
-    width:52px;
-    height:52px;
-    border-radius:50%;
-    display:block;
-}
-div[class*="st-key-status_card_"] button::after {
-    position:absolute;
-    left:40px;
-    top:48px;
-    font-size:27px;
-    line-height:1;
-}
-div.st-key-status_card_settlement button {
-    background:linear-gradient(135deg,#f7faff 0%,#edf4ff 100%) !important;
-    border:1px solid #d9e6fb !important;
-    border-left:6px solid #1f6fe5 !important;
-    color:#1454ad !important;
-}
-div.st-key-status_card_settlement button::before { background:#dbe9ff; }
-div.st-key-status_card_settlement button::after { content:"▣"; color:#1766d2; }
-div.st-key-status_card_tig button {
-    background:linear-gradient(135deg,#fcf9ff 0%,#f3ebff 100%) !important;
-    border:1px solid #e8d9fb !important;
-    border-left:6px solid #7327cf !important;
-    color:#5f1cb4 !important;
-}
-div.st-key-status_card_tig button::before { background:#eadcff; }
-div.st-key-status_card_tig button::after { content:"◇"; color:#6f25c9; font-size:34px; top:44px; left:38px; }
-div.st-key-status_card_reports button {
-    background:linear-gradient(135deg,#fffaf5 0%,#fff1e4 100%) !important;
-    border:1px solid #ffe0bf !important;
-    border-left:6px solid #f07609 !important;
-    color:#c85c00 !important;
-}
-div.st-key-status_card_reports button::before { background:#ffe7cf; }
-div.st-key-status_card_reports button::after { content:"♢"; color:#e46800; font-size:34px; top:44px; left:39px; }
-div.st-key-status_card_payment button {
-    background:linear-gradient(135deg,#f7fff9 0%,#eaf9f0 100%) !important;
-    border:1px solid #d5efdf !important;
-    border-left:6px solid #12a35f !important;
-    color:#087b45 !important;
-}
-div.st-key-status_card_payment button::before { background:#d8f4e3; }
-div.st-key-status_card_payment button::after { content:"▰"; color:#0e9656; }
-div[class*="st-key-status_card_"] button[kind="primary"] {
-    outline:3px solid rgba(22,167,101,.23) !important;
-    box-shadow:0 12px 30px rgba(16,160,91,.16) !important;
-}
-div[class*="st-key-status_card_"] button[kind="primary"] p::after {
-    content:"  ✓";
-    color:#0cab60;
-    font-size:22px;
-    font-weight:900;
-}
-.status-filter-bar {
-    display:flex;
-    align-items:center;
-    gap:12px;
-    min-height:68px;
-    padding:14px 20px;
-    margin:6px 0 18px 0;
-    background:linear-gradient(135deg,#fbfffc 0%,#f6fbf8 100%);
-    border:1px solid #dcebe2;
-    border-radius:18px;
-    box-shadow:0 7px 20px rgba(20,80,50,.055);
-    color:#34533e;
-    font-size:13px;
-}
-.status-filter-chip {
-    display:inline-flex;
-    align-items:center;
-    border-radius:999px;
-    padding:8px 13px;
-    background:#e7f6ec;
-    color:#15723f;
-    font-weight:800;
-}
-.courier-list-header {
-    display:grid;
-    grid-template-columns:1.55fr .72fr .72fr .88fr .88fr .82fr .92fr 1.05fr;
-    gap:14px;
-    padding:10px 20px 12px 20px;
-    color:#1f2f3f;
-    font-size:13px;
-    font-weight:850;
-}
-div[class*="st-key-courier_row_"] {
-    border:1px solid #dfeee4 !important;
-    border-radius:18px !important;
-    background:#fff !important;
-    box-shadow:0 5px 16px rgba(20,70,45,.05) !important;
-    margin-bottom:8px !important;
-    padding:4px 10px !important;
-    transition:transform .14s ease, box-shadow .14s ease !important;
-}
-div[class*="st-key-courier_row_"]:hover {
-    transform:translateY(-1px);
-    box-shadow:0 9px 22px rgba(20,70,45,.085) !important;
-}
-div[class*="st-key-courier_row_"] button {
-    border:none !important;
-    background:transparent !important;
-    box-shadow:none !important;
-    color:#17351F !important;
-    text-align:left !important;
-    justify-content:flex-start !important;
-    padding-left:0 !important;
-    font-weight:850 !important;
-}
-.courier-list-footer {
-    text-align:center;
-    color:#64766a;
-    padding:16px 0 4px 0;
-    font-size:13px;
-}
-@media (max-width:1100px) {
-    div[class*="st-key-status_card_"] button { min-height:150px !important; padding-left:72px !important; }
-    div[class*="st-key-status_card_"] button::before { left:16px; width:42px; height:42px; }
-    div[class*="st-key-status_card_"] button::after { left:28px; }
-    .courier-list-header { display:none; }
-}
-
 /* --- Egységes zöld arculat --- */
 div.stButton > button[kind="primary"],
 div.stDownloadButton > button {
@@ -505,114 +345,6 @@ div[data-testid="stMetricValue"] {
 @media (max-width: 1000px) {
     .courier-list-header { display:none; }
     [class*="st-key-courier_row_"] { overflow-x:auto; }
-}
-
-
-/* --- Képminta szerinti kattintható workflow-kártyák --- */
-.workflow-card-grid { margin-top: 4px; }
-[class*="st-key-status_card_"] div.stButton > button {
-    width: 100% !important;
-    min-height: 166px !important;
-    border-radius: 22px !important;
-    border: 1px solid rgba(20, 50, 80, .08) !important;
-    box-shadow: 0 9px 24px rgba(31, 55, 90, .09) !important;
-    padding: 22px 20px 20px 98px !important;
-    text-align: left !important;
-    justify-content: flex-start !important;
-    align-items: flex-start !important;
-    white-space: pre-line !important;
-    font-size: 15px !important;
-    line-height: 1.72 !important;
-    font-weight: 700 !important;
-    position: relative !important;
-    overflow: hidden !important;
-    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease !important;
-}
-[class*="st-key-status_card_"] div.stButton > button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 14px 30px rgba(31, 55, 90, .13) !important;
-}
-[class*="st-key-status_card_"] div.stButton > button p {
-    white-space: pre-line !important;
-    text-align: left !important;
-    width: 100% !important;
-}
-[class*="st-key-status_card_"] div.stButton > button::before {
-    position: absolute;
-    left: 24px;
-    top: 31px;
-    width: 54px;
-    height: 54px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: 28px;
-    font-weight: 800;
-}
-[class*="st-key-status_card_"] div.stButton > button::after {
-    content: "";
-    position: absolute;
-    inset: 0 auto 0 0;
-    width: 5px;
-}
-.st-key-status_card_settlement div.stButton > button { background: linear-gradient(135deg,#F8FBFF 0%,#EDF4FF 100%) !important; color:#1557B0 !important; }
-.st-key-status_card_settlement div.stButton > button::before { content:"▣"; background:#DCEAFF; color:#1464CF; }
-.st-key-status_card_settlement div.stButton > button::after { background:#1670E8; }
-.st-key-status_card_tig div.stButton > button { background: linear-gradient(135deg,#FCFAFF 0%,#F4ECFF 100%) !important; color:#6321C5 !important; }
-.st-key-status_card_tig div.stButton > button::before { content:"◇"; background:#EDE0FF; color:#7026D5; }
-.st-key-status_card_tig div.stButton > button::after { background:#7427D8; }
-.st-key-status_card_reports div.stButton > button { background: linear-gradient(135deg,#FFFDF9 0%,#FFF3E6 100%) !important; color:#C95B00 !important; }
-.st-key-status_card_reports div.stButton > button::before { content:"◉"; background:#FFE9CE; color:#E66A00; }
-.st-key-status_card_reports div.stButton > button::after { background:#F27600; }
-.st-key-status_card_payment div.stButton > button { background: linear-gradient(135deg,#F9FFFC 0%,#EAF9F0 100%) !important; color:#087B44 !important; }
-.st-key-status_card_payment div.stButton > button::before { content:"▰"; background:#D9F5E4; color:#079552; }
-.st-key-status_card_payment div.stButton > button::after { background:#10A85B; }
-
-/* Az aktív gomb Streamlit primary típusa: zöld keret és pipa. */
-[class*="st-key-status_card_"] div.stButton > button[kind="primary"] {
-    border: 2px solid #18A957 !important;
-    box-shadow: 0 0 0 3px rgba(24,169,87,.10), 0 12px 28px rgba(31,55,90,.12) !important;
-}
-[class*="st-key-status_card_"] div.stButton > button[kind="primary"] span::after {
-    content:"✓";
-    position:absolute;
-    right:20px;
-    top:54px;
-    width:34px;
-    height:34px;
-    border-radius:50%;
-    display:grid;
-    place-items:center;
-    background:#18A957;
-    color:white;
-    font-size:21px;
-    font-weight:900;
-    box-shadow:0 4px 10px rgba(24,169,87,.24);
-}
-.status-filter-bar {
-    margin: 18px 0 16px;
-    padding: 14px 18px;
-    border: 1px solid #DCEFE3;
-    border-radius: 16px;
-    background: linear-gradient(135deg,#FBFFFC 0%,#F2FBF6 100%);
-    box-shadow: 0 5px 16px rgba(23,133,59,.06);
-    color:#42624B;
-    font-size:14px;
-}
-.status-filter-chip {
-    display:inline-flex;
-    align-items:center;
-    gap:7px;
-    margin-left:10px;
-    padding:7px 12px;
-    border-radius:999px;
-    background:#E4F7EB;
-    color:#087B44;
-    font-weight:800;
-}
-@media (max-width: 900px) {
-    [class*="st-key-status_card_"] div.stButton > button { min-height:145px !important; padding-left:82px !important; }
-    [class*="st-key-status_card_"] div.stButton > button::before { left:18px; width:48px; height:48px; }
 }
 
 </style>
@@ -820,7 +552,7 @@ def render_table(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div class="courier-list-header">
-          <div>Futár</div><div>Branch</div><div>Raktár</div><div>Számítás módja</div>
+          <div>Futár</div><div>Branch</div><div>Számítás</div>
           <div>Bruttó</div><div>Levonás</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
@@ -830,35 +562,34 @@ def render_table(df: pd.DataFrame) -> None:
     for i, row in df.reset_index(drop=True).iterrows():
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
-                [1.55, 0.72, 0.72, 0.88, 0.88, 0.82, 0.92, 1.05],
+                [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
                 vertical_alignment="center",
             )
 
-            courier_label = f"{row['Futár']}\nID: {row['Courier ID']}"
+            courier_label = f"{row['Futár']} · {row['Courier ID']}"
             if cols[0].button(
                 courier_label,
                 key=f"courier_{row['Courier ID']}_{i}",
                 use_container_width=True,
-                help="Futár részleteinek megnyitása",
+                help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
                 show_courier_dialog()
 
             cols[1].caption(str(row["Branch"]))
-            cols[2].caption(str(row["Raktár"] or "BUD1"))
-            cols[3].caption(str(row["Számítás módja"]))
-            cols[4].caption(format_huf(row["Bruttó bevétel"]))
-            cols[5].caption(format_huf(row["Levonás"]))
-            cols[6].markdown(f"**{format_huf(row['Kifizetendő'])}**")
+            cols[2].caption(str(row["Számítás módja"]))
+            cols[3].caption(format_huf(row["Bruttó bevétel"]))
+            cols[4].caption(format_huf(row["Levonás"]))
+            cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
 
             badge, led = status_meta(str(row["Státusz"]))
-            cols[7].markdown(
+            cols[6].markdown(
                 f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>',
                 unsafe_allow_html=True,
             )
 
     st.markdown(
-        f'<div class="courier-list-footer">1–{len(df)} / {len(df)} futár</div>',
+        f'<div class="courier-list-footer">{len(df)} megjelenített futár</div>',
         unsafe_allow_html=True,
     )
 
@@ -1960,24 +1691,58 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
+    total_bonus = int(filtered["Bónusz"].sum()) if not filtered.empty else 0
+    total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
+
+    st.markdown(
+        f"""
+        <div class="summary-donut-grid">
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Bónuszok összesen</div>
+              <div class="summary-donut-value">{format_huf(total_bonus)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+            </div>
+            <div class="summary-donut summary-donut-primary">
+              <div class="summary-donut-center"><strong>{total_bonus / 1_000_000:.1f} M</strong><span>Ft</span></div>
+            </div>
+          </div>
+
+          <div class="summary-donut-card">
+            <div>
+              <div class="summary-donut-title">Borravaló összesen</div>
+              <div class="summary-donut-value">{format_huf(total_tip)}</div>
+              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+            </div>
+            <div class="summary-donut summary-donut-secondary">
+              <div class="summary-donut-center"><strong>{total_tip / 1_000_000:.1f} M</strong><span>Ft</span></div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
 
     workflow_cards = [
-        ("Elszámolásra vár", "Még nem készült elszámolás", "status_card_settlement"),
-        ("TIG-re vár", "Még nem készült TIG", "status_card_tig"),
-        ("Bejelentések", "Nyitott ügyek", "status_card_reports"),
-        ("Kifizetésre vár", "Jóváhagyás után", "status_card_payment"),
+        ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
+        ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("Bejelentések", "Nyitott ügyek", "🟠"),
+        ("Kifizetésre vár", "Jóváhagyás után", "🟢"),
     ]
+    card_columns = st.columns(4)
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
-    card_columns = st.columns(4, gap="medium")
 
-    for card_column, (card_status, card_note, card_key) in zip(card_columns, workflow_cards):
+    for card_column, (card_status, card_note, card_icon) in zip(card_columns, workflow_cards):
         card_count = int((base_filtered["Státusz"] == card_status).sum())
-        button_label = f"{card_status}\n\n{card_count} db\n{card_note}"
         is_active = active_workflow_filter == card_status
+        checkmark = "  ✅" if is_active else ""
+        button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
 
         if card_column.button(
             button_label,
-            key=card_key,
+            key=f"workflow_card_{card_status}",
             use_container_width=True,
             type="primary" if is_active else "secondary",
         ):
@@ -1988,19 +1753,13 @@ def show_new_settlement_page() -> None:
             st.rerun()
 
     if active_workflow_filter:
-        st.markdown(
-            f'<div class="status-filter-bar">⌁ <strong>Aktív szűrő:</strong>'
-            f'<span class="status-filter-chip">{html.escape(active_workflow_filter)} &nbsp;×</span>'
-            '<span style="margin-left:10px;color:#6D7F71;">A kijelölt kártyára kattintva kikapcsolható.</span></div>',
-            unsafe_allow_html=True,
+        st.caption(
+            f"Aktív szűrés: {active_workflow_filter}. "
+            "A kijelölt kártyára ismét kattintva a szűrés kikapcsol."
         )
     else:
         selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
-        st.markdown(
-            f'<div class="status-filter-bar">⌁ Nincs aktív státuszszűrés — az '
-            f'<strong>{html.escape(selected_warehouse_label)}</strong> összes futárja látható.</div>',
-            unsafe_allow_html=True,
-        )
+        st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
 
     render_table(filtered)
 
