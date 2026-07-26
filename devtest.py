@@ -414,6 +414,114 @@ div[data-testid="stMetricValue"] {
     [class*="st-key-courier_row_"] { overflow-x:auto; }
 }
 
+
+/* --- Képminta szerinti kattintható workflow-kártyák --- */
+.workflow-card-grid { margin-top: 4px; }
+[class*="st-key-status_card_"] div.stButton > button {
+    width: 100% !important;
+    min-height: 166px !important;
+    border-radius: 22px !important;
+    border: 1px solid rgba(20, 50, 80, .08) !important;
+    box-shadow: 0 9px 24px rgba(31, 55, 90, .09) !important;
+    padding: 22px 20px 20px 98px !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    white-space: pre-line !important;
+    font-size: 15px !important;
+    line-height: 1.72 !important;
+    font-weight: 700 !important;
+    position: relative !important;
+    overflow: hidden !important;
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease !important;
+}
+[class*="st-key-status_card_"] div.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 14px 30px rgba(31, 55, 90, .13) !important;
+}
+[class*="st-key-status_card_"] div.stButton > button p {
+    white-space: pre-line !important;
+    text-align: left !important;
+    width: 100% !important;
+}
+[class*="st-key-status_card_"] div.stButton > button::before {
+    position: absolute;
+    left: 24px;
+    top: 31px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 28px;
+    font-weight: 800;
+}
+[class*="st-key-status_card_"] div.stButton > button::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 5px;
+}
+.st-key-status_card_settlement div.stButton > button { background: linear-gradient(135deg,#F8FBFF 0%,#EDF4FF 100%) !important; color:#1557B0 !important; }
+.st-key-status_card_settlement div.stButton > button::before { content:"▣"; background:#DCEAFF; color:#1464CF; }
+.st-key-status_card_settlement div.stButton > button::after { background:#1670E8; }
+.st-key-status_card_tig div.stButton > button { background: linear-gradient(135deg,#FCFAFF 0%,#F4ECFF 100%) !important; color:#6321C5 !important; }
+.st-key-status_card_tig div.stButton > button::before { content:"◇"; background:#EDE0FF; color:#7026D5; }
+.st-key-status_card_tig div.stButton > button::after { background:#7427D8; }
+.st-key-status_card_reports div.stButton > button { background: linear-gradient(135deg,#FFFDF9 0%,#FFF3E6 100%) !important; color:#C95B00 !important; }
+.st-key-status_card_reports div.stButton > button::before { content:"◉"; background:#FFE9CE; color:#E66A00; }
+.st-key-status_card_reports div.stButton > button::after { background:#F27600; }
+.st-key-status_card_payment div.stButton > button { background: linear-gradient(135deg,#F9FFFC 0%,#EAF9F0 100%) !important; color:#087B44 !important; }
+.st-key-status_card_payment div.stButton > button::before { content:"▰"; background:#D9F5E4; color:#079552; }
+.st-key-status_card_payment div.stButton > button::after { background:#10A85B; }
+
+/* Az aktív gomb Streamlit primary típusa: zöld keret és pipa. */
+[class*="st-key-status_card_"] div.stButton > button[kind="primary"] {
+    border: 2px solid #18A957 !important;
+    box-shadow: 0 0 0 3px rgba(24,169,87,.10), 0 12px 28px rgba(31,55,90,.12) !important;
+}
+[class*="st-key-status_card_"] div.stButton > button[kind="primary"] span::after {
+    content:"✓";
+    position:absolute;
+    right:20px;
+    top:54px;
+    width:34px;
+    height:34px;
+    border-radius:50%;
+    display:grid;
+    place-items:center;
+    background:#18A957;
+    color:white;
+    font-size:21px;
+    font-weight:900;
+    box-shadow:0 4px 10px rgba(24,169,87,.24);
+}
+.status-filter-bar {
+    margin: 18px 0 16px;
+    padding: 14px 18px;
+    border: 1px solid #DCEFE3;
+    border-radius: 16px;
+    background: linear-gradient(135deg,#FBFFFC 0%,#F2FBF6 100%);
+    box-shadow: 0 5px 16px rgba(23,133,59,.06);
+    color:#42624B;
+    font-size:14px;
+}
+.status-filter-chip {
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+    margin-left:10px;
+    padding:7px 12px;
+    border-radius:999px;
+    background:#E4F7EB;
+    color:#087B44;
+    font-weight:800;
+}
+@media (max-width: 900px) {
+    [class*="st-key-status_card_"] div.stButton > button { min-height:145px !important; padding-left:82px !important; }
+    [class*="st-key-status_card_"] div.stButton > button::before { left:18px; width:48px; height:48px; }
+}
+
 </style>
         """,
         unsafe_allow_html=True,
@@ -1758,58 +1866,21 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
-    total_bonus = int(filtered["Bónusz"].sum()) if not filtered.empty else 0
-    total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
-
-    st.markdown(
-        f"""
-        <div class="summary-donut-grid">
-          <div class="summary-donut-card">
-            <div>
-              <div class="summary-donut-title">Bónuszok összesen</div>
-              <div class="summary-donut-value">{format_huf(total_bonus)}</div>
-              <div class="summary-donut-note">{html.escape(selected_month)}</div>
-            </div>
-            <div class="summary-donut summary-donut-primary">
-              <div class="summary-donut-center"><strong>{total_bonus / 1_000_000:.1f} M</strong><span>Ft</span></div>
-            </div>
-          </div>
-
-          <div class="summary-donut-card">
-            <div>
-              <div class="summary-donut-title">Borravaló összesen</div>
-              <div class="summary-donut-value">{format_huf(total_tip)}</div>
-              <div class="summary-donut-note">{html.escape(selected_month)}</div>
-            </div>
-            <div class="summary-donut summary-donut-secondary">
-              <div class="summary-donut-center"><strong>{total_tip / 1_000_000:.1f} M</strong><span>Ft</span></div>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
 
     workflow_cards = [
-        ("Elszámolásra vár", "Még nem készült elszámolás", "📄", "status_card_settlement"),
-        ("TIG-re vár", "Még nem készült TIG", "🛡️", "status_card_tig"),
-        ("Bejelentések", "Nyitott ügyek", "🔔", "status_card_reports"),
-        ("Kifizetésre vár", "Jóváhagyás után", "💳", "status_card_payment"),
+        ("Elszámolásra vár", "Még nem készült elszámolás", "status_card_settlement"),
+        ("TIG-re vár", "Még nem készült TIG", "status_card_tig"),
+        ("Bejelentések", "Nyitott ügyek", "status_card_reports"),
+        ("Kifizetésre vár", "Jóváhagyás után", "status_card_payment"),
     ]
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
     card_columns = st.columns(4, gap="medium")
 
-    for card_column, (card_status, card_note, card_icon, card_key) in zip(card_columns, workflow_cards):
+    for card_column, (card_status, card_note, card_key) in zip(card_columns, workflow_cards):
         card_count = int((base_filtered["Státusz"] == card_status).sum())
+        button_label = f"{card_status}\n{card_count} db\n{card_note}"
         is_active = active_workflow_filter == card_status
-        active_mark = "  ✅" if is_active else ""
-        button_label = (
-            f"{card_icon}  {card_status}\n"
-            f"{card_count} db{active_mark}\n"
-            f"{card_note}"
-        )
 
         if card_column.button(
             button_label,
@@ -1825,15 +1896,15 @@ def show_new_settlement_page() -> None:
 
     if active_workflow_filter:
         st.markdown(
-            f'<div class="status-filter-note">✅ Aktív szűrés: '
-            f'<strong>{html.escape(active_workflow_filter)}</strong>. '
-            'A kijelölt kártyára kattintva a szűrés kikapcsol.</div>',
+            f'<div class="status-filter-bar">⌁ <strong>Aktív szűrő:</strong>'
+            f'<span class="status-filter-chip">{html.escape(active_workflow_filter)} &nbsp;×</span>'
+            '<span style="margin-left:10px;color:#6D7F71;">A kijelölt kártyára kattintva kikapcsolható.</span></div>',
             unsafe_allow_html=True,
         )
     else:
         selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
         st.markdown(
-            f'<div class="status-filter-note">Nincs státuszszűrés: az '
+            f'<div class="status-filter-bar">⌁ Nincs aktív státuszszűrés — az '
             f'<strong>{html.escape(selected_warehouse_label)}</strong> összes futárja látható.</div>',
             unsafe_allow_html=True,
         )
