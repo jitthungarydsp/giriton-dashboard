@@ -124,6 +124,9 @@ def apply_design() -> None:
         .status-red { background:#fff0f2; color:#b42334; }
         .status-yellow { background:#fff8e7; color:#9a6700; }
         .status-green { background:#eaf8f2; color:#157254; }
+        .status-blue { background:#eaf2ff; color:#1f5fbf; }
+        .status-purple { background:#f2eaff; color:#6b21c9; }
+        .status-orange { background:#fff2e5; color:#c85b00; }
         .led {
             display:inline-block; width:14px; height:14px; border-radius:50%;
             box-shadow:inset 0 1px 1px rgba(255,255,255,.7), 0 0 0 3px rgba(0,0,0,.03), 0 2px 6px rgba(0,0,0,.18);
@@ -131,6 +134,9 @@ def apply_design() -> None:
         .led-red { background:radial-gradient(circle at 35% 30%,#ffb3bd 0 18%,#f05a6b 35%,#c92f43 75%); }
         .led-yellow { background:radial-gradient(circle at 35% 30%,#fff0a6 0 18%,#f4c542 35%,#d69900 75%); }
         .led-green { background:radial-gradient(circle at 35% 30%,#a8f0d6 0 18%,#29b784 35%,#15775a 75%); }
+        .led-blue { background:radial-gradient(circle at 35% 30%,#b8d7ff 0 18%,#3b82f6 35%,#1d4ed8 75%); }
+        .led-purple { background:radial-gradient(circle at 35% 30%,#dfc5ff 0 18%,#8b5cf6 35%,#6d28d9 75%); }
+        .led-orange { background:radial-gradient(circle at 35% 30%,#ffd2a8 0 18%,#f59e0b 35%,#c65b00 75%); }
         .table-footer {
             display:flex; justify-content:space-between; align-items:center; padding:14px 18px;
             border-top:1px solid var(--border); background:#fbfcfe; color:var(--muted); font-size:12px;
@@ -386,7 +392,18 @@ def load_courier_master() -> pd.DataFrame:
     df["Branch"] = "JIT"
     df["Számítás módja"] = "Excel"
     df["Raktár"] = df["Raktár"].fillna("BUD1")
-    df["Státusz"] = "Előkészítve"
+
+    # Ideiglenes designer státuszok. Később ezt valódi üzleti logika váltja fel.
+    workflow_statuses = [
+        "Elszámolásra vár",
+        "TIG-re vár",
+        "Bejelentések",
+        "Kifizetésre vár",
+    ]
+    df["Státusz"] = [
+        workflow_statuses[index % len(workflow_statuses)]
+        for index in range(len(df))
+    ]
 
     for column in [
         "Bruttó bevétel", "Bónusz", "Borravaló", "Levonás",
@@ -504,6 +521,10 @@ def status_meta(status: str) -> tuple[str,str]:
         "Előkészítve":("status-red","led-red"),
         "Ellenőrzés alatt":("status-yellow","led-yellow"),
         "Jóváhagyva":("status-green","led-green"),
+        "Elszámolásra vár":("status-blue","led-blue"),
+        "TIG-re vár":("status-purple","led-purple"),
+        "Bejelentések":("status-orange","led-orange"),
+        "Kifizetésre vár":("status-green","led-green"),
     }
     return mapping.get(status,("status-yellow","led-yellow"))
 
@@ -1396,6 +1417,7 @@ def show_new_settlement_page() -> None:
             st.session_state["new_warehouse"]="Összes"
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
+            st.session_state.pop("dashboard_status_filter", None)
             st.rerun()
 
         st.divider()
@@ -1630,21 +1652,29 @@ def show_new_settlement_page() -> None:
 
         st.markdown('<p class="side-note">Könnyű, külső UI-csomag nélküli felület. A régi elszámolási oldalt nem módosítja.</p>',unsafe_allow_html=True)
 
-    filtered=data.copy()
+    # Alapszűrés: ha nincs kijelölt felső státuszkártya, minden futár látszik
+    # az aktuálisan kiválasztott raktárban és a többi oldalsávos szűrő szerint.
+    base_filtered=data.copy()
     if branch!="Összes":
-        filtered=filtered[filtered["Branch"]==branch]
+        base_filtered=base_filtered[base_filtered["Branch"]==branch]
     if calculation_mode!="Összes":
-        filtered=filtered[filtered["Számítás módja"]==calculation_mode]
+        base_filtered=base_filtered[base_filtered["Számítás módja"]==calculation_mode]
     if warehouse!="Összes":
-        filtered=filtered[filtered["Raktár"]==warehouse]
+        base_filtered=base_filtered[base_filtered["Raktár"]==warehouse]
     if status!="Összes":
-        filtered=filtered[filtered["Státusz"]==status]
+        base_filtered=base_filtered[base_filtered["Státusz"]==status]
     if search.strip():
         query=search.strip()
-        filtered=filtered[
-            filtered["Futár"].str.contains(query,case=False,na=False)
-            | filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
+        base_filtered=base_filtered[
+            base_filtered["Futár"].str.contains(query,case=False,na=False)
+            | base_filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
         ]
+
+    active_workflow_filter = st.session_state.get("dashboard_status_filter")
+    filtered = base_filtered.copy()
+    if active_workflow_filter:
+        filtered = filtered[filtered["Státusz"] == active_workflow_filter]
+
     st.session_state["current_filtered_data"]=filtered.copy()
 
     total_gross=int(filtered["Bruttó bevétel"].sum()) if not filtered.empty else 0
@@ -1694,17 +1724,42 @@ def show_new_settlement_page() -> None:
     )
 
     st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
-    st.markdown(
-        f"""
-        <div class="kpi-grid">
-          <div class="kpi" style="--accent:#2f6fed"><div class="k-label">Futárok száma</div><div class="k-value">{len(filtered)}</div><div class="k-note">Aktív elszámolások</div></div>
-          <div class="kpi" style="--accent:#5b8def"><div class="k-label">Bruttó bevétel</div><div class="k-value">{format_huf(total_gross)}</div><div class="k-note">Havi összesítés</div></div>
-          <div class="kpi" style="--accent:#f0b429"><div class="k-label">Levonások</div><div class="k-value">{format_huf(total_deduction)}</div><div class="k-note">Összes levonás</div></div>
-          <div class="kpi" style="--accent:#1f9d74"><div class="k-label">Kifizetendő</div><div class="k-value">{format_huf(total_payable)}</div><div class="k-note">Végleges összeg</div></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    workflow_cards = [
+        ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
+        ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("Bejelentések", "Nyitott ügyek", "🟠"),
+        ("Kifizetésre vár", "Jóváhagyás után", "🟢"),
+    ]
+    card_columns = st.columns(4)
+    active_workflow_filter = st.session_state.get("dashboard_status_filter")
+
+    for card_column, (card_status, card_note, card_icon) in zip(card_columns, workflow_cards):
+        card_count = int((base_filtered["Státusz"] == card_status).sum())
+        is_active = active_workflow_filter == card_status
+        checkmark = "  ✅" if is_active else ""
+        button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
+
+        if card_column.button(
+            button_label,
+            key=f"workflow_card_{card_status}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            if is_active:
+                st.session_state.pop("dashboard_status_filter", None)
+            else:
+                st.session_state["dashboard_status_filter"] = card_status
+            st.rerun()
+
+    if active_workflow_filter:
+        st.caption(
+            f"Aktív szűrés: {active_workflow_filter}. "
+            "A kijelölt kártyára ismét kattintva a szűrés kikapcsol."
+        )
+    else:
+        selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
+        st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
 
     render_table(filtered)
 
