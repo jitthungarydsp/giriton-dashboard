@@ -482,8 +482,18 @@ def _courier_match_key(value: object) -> str:
 
     Names can differ only by accents, whitespace, word order, or a copied
     numeric identifier. These differences must not hide a DB-calculated row.
+    Pandas/Arrow missing values (``pd.NA``) are handled explicitly because
+    they cannot be evaluated in a boolean expression such as ``value or ""``.
     """
-    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    try:
+        if value is None or pd.isna(value):
+            raw_text = ""
+        else:
+            raw_text = str(value)
+    except (TypeError, ValueError):
+        raw_text = "" if value is None else str(value)
+
+    text = unicodedata.normalize("NFKD", raw_text.casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
     tokens = re.findall(r"[a-z0-9]+", text)
     tokens = [token for token in tokens if not (token.isdigit() and 3 <= len(token) <= 6)]
