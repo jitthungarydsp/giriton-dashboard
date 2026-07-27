@@ -894,9 +894,19 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
     data = pd.DataFrame(rows)
     if data.empty:
         return data
-    data["valid_from"] = pd.to_datetime(data["valid_from"].fillna(data["effective_date"]), errors="coerce").dt.date
-    data["valid_to"] = pd.to_datetime(data["valid_to"], errors="coerce").dt.date
-    return data.loc[(data["valid_from"] <= period_end) & (data["valid_to"].isna() | (data["valid_to"] >= period_start))].copy()
+    try:
+        from_values = data["valid_from"] if "valid_from" in data.columns else pd.Series(pd.NaT, index=data.index)
+        effective_values = data["effective_date"] if "effective_date" in data.columns else pd.Series(pd.NaT, index=data.index)
+        to_values = data["valid_to"] if "valid_to" in data.columns else pd.Series(pd.NaT, index=data.index)
+        valid_from = pd.to_datetime(from_values, errors="coerce").fillna(pd.to_datetime(effective_values, errors="coerce"))
+        valid_to = pd.to_datetime(to_values, errors="coerce")
+        period_start_ts, period_end_ts = pd.Timestamp(period_start), pd.Timestamp(period_end)
+        data = data.loc[(valid_from <= period_end_ts) & (valid_to.isna() | (valid_to >= period_start_ts))].copy()
+        data["valid_from"] = valid_from.loc[data.index].dt.date
+        data["valid_to"] = valid_to.loc[data.index].dt.date
+        return data
+    except (TypeError, ValueError, KeyError):
+        return pd.DataFrame(columns=["id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note"])
 
 
 def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
