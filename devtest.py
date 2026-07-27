@@ -3,7 +3,7 @@ import json
 import re
 import traceback
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
@@ -750,6 +750,25 @@ def format_huf(value: float | int) -> str:
     return f"{value:,.0f} Ft".replace(",", " ")
 
 
+def parse_huf_value(value: object) -> float:
+    """Accept numeric DB values and formatted Hungarian money strings."""
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace("−", "-").replace("Ft", "").replace("ft", "")
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[^0-9,.-]", "", text)
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
 def month_options(count: int = 24) -> list[str]:
     names = ["január","február","március","április","május","június","július","augusztus","szeptember","október","november","december"]
     today = date.today()
@@ -843,24 +862,54 @@ def load_courier_route_breakdown(courier_name: str, session_id: str | None) -> p
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_adjustments(session_id: str | None, courier_id: str) -> pd.DataFrame:
-    if not session_id or not courier_id:
+def load_settlement_month(session_id: str | None) -> tuple[date, date]:
+    if session_id:
+        try:
+            rows = (get_db().schema("settlement").table("jit_row").select("route_date")
+                    .eq("session_id", session_id).not_.is_("route_date", "null")
+                    .order("route_date").limit(1).execute().data or [])
+            if rows and rows[0].get("route_date"):
+                route_date = date.fromisoformat(str(rows[0]["route_date"])[:10])
+                start = route_date.replace(day=1)
+                next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+                return start, next_month - timedelta(days=1)
+        except BaseException:
+            pass
+    start = date.today().replace(day=1)
+    next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return start, next_month - timedelta(days=1)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_adjustments(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    if not courier_id:
         return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
     try:
         rows = (get_db().schema("settlement").table("courier_settlement_adjustment")
-                .select("adjustment_type,amount_huf,effective_date,note")
-                .eq("session_id", session_id).eq("courier_id", courier_id)
+                .select("id,adjustment_type,amount_huf,effective_date,valid_from,valid_to,note")
+                .eq("courier_id", courier_id)
                 .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
     except BaseException:
         return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
-    return pd.DataFrame(rows)
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    data["valid_from"] = pd.to_datetime(data["valid_from"].fillna(data["effective_date"]), errors="coerce").dt.date
+    data["valid_to"] = pd.to_datetime(data["valid_to"], errors="coerce").dt.date
+    return data.loc[(data["valid_from"] <= period_end) & (data["valid_to"].isna() | (data["valid_to"] >= period_start))].copy()
 
 
-def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
+def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    existing = load_courier_adjustments(courier_id, valid_from, valid_to or valid_from)
+    same_end = existing["valid_to"].isna() if valid_to is None else existing["valid_to"] == valid_to
+    duplicate = existing.loc[(existing["adjustment_type"] == adjustment_type) & (existing["amount_huf"].astype(float) == float(amount_huf)) & (existing["note"].fillna("") == (note.strip() or "")) & (existing["valid_from"] == valid_from) & same_end]
+    if not duplicate.empty:
+        return
     get_db().schema("settlement").table("courier_settlement_adjustment").insert({
         "session_id": session_id, "courier_id": courier_id, "adjustment_type": adjustment_type,
-        "amount_huf": float(amount_huf), "note": note.strip() or None,
+        "amount_huf": float(amount_huf), "note": note.strip() or None, "effective_date": valid_from.isoformat(),
+        "valid_from": valid_from.isoformat(), "valid_to": valid_to.isoformat() if valid_to else None,
         "created_by": actor,
     }).execute()
     get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
@@ -885,11 +934,13 @@ def load_courier_adjustment_log(session_id: str | None, courier_id: str) -> pd.D
         return pd.DataFrame()
 
 
-def reset_courier_adjustments(session_id: str, courier_id: str) -> None:
+def reset_courier_adjustments(session_id: str, courier_id: str, period_start: date, period_end: date) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-    get_db().schema("settlement").table("courier_settlement_adjustment").update({
-        "is_active": False, "deleted_at": pd.Timestamp.utcnow().isoformat(), "deleted_by": actor,
-    }).eq("session_id", session_id).eq("courier_id", courier_id).eq("is_active", True).is_("deleted_at", "null").execute()
+    adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+    for adjustment_id in adjustments.get("id", pd.Series(dtype=str)):
+        get_db().schema("settlement").table("courier_settlement_adjustment").update({
+            "is_active": False, "deleted_at": pd.Timestamp.utcnow().isoformat(), "deleted_by": actor,
+        }).eq("id", adjustment_id).execute()
     get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
         "session_id": session_id, "courier_id": courier_id, "event_type": "reset",
         "note": "Kézi havi korrekciók visszaállítása", "performed_by": actor,
@@ -998,8 +1049,9 @@ def show_courier_dialog() -> None:
 
     if selected_menu == "Aktuális hónap":
         session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+        period_start, period_end = load_settlement_month(session_id)
         route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
-        adjustments = load_courier_adjustments(session_id, courier_id)
+        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
         base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
         tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
@@ -1066,17 +1118,24 @@ def show_courier_dialog() -> None:
                 adjustment_type = a1.selectbox("Típus", ["bonus", "malus", "atm_deduction", "other_expense", "customer_rating"], format_func={"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"}.get)
                 adjustment_amount = a2.number_input("Összeg (Ft)", min_value=0, step=100, value=0)
                 adjustment_note = a3.text_input("Megjegyzés")
+                validity = st.columns(2)
+                adjustment_from = validity[0].date_input("Érvényes ettől", value=period_start)
+                has_adjustment_end = validity[1].checkbox("Van záródátum", value=True)
+                adjustment_to = validity[1].date_input("Érvényes eddig", value=period_end)
                 adjustment_saved = st.form_submit_button("Korrekció mentése", type="primary")
             if adjustment_saved:
                 try:
-                    save_courier_adjustment(str(session_id), courier_id, adjustment_type, adjustment_amount, adjustment_note)
-                    st.rerun()
+                    if has_adjustment_end and adjustment_to < adjustment_from:
+                        st.error("A záródátum nem lehet korábbi a kezdő dátumnál.")
+                    else:
+                        save_courier_adjustment(str(session_id), courier_id, adjustment_type, adjustment_amount, adjustment_note, adjustment_from, adjustment_to if has_adjustment_end else None)
+                        st.rerun()
                 except Exception as exc:
                     st.error(f"A korrekció nem menthető. Futtasd le a courier adjustment migrációt. Részlet: {exc}")
             reset_col, reset_note_col = st.columns([0.24, 0.76])
             if reset_col.button("↻ Visszaállítás", key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak. A változás naplózva marad."):
                 try:
-                    reset_courier_adjustments(str(session_id), courier_id)
+                    reset_courier_adjustments(str(session_id), courier_id, period_start, period_end)
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
@@ -1184,10 +1243,7 @@ def show_courier_dialog() -> None:
             (value for column, value in reserve_row.items() if "ctzft" in re.sub(r"[^a-z0-9]", "", str(column).casefold())),
             None,
         )
-        try:
-            reserve_amount = float(str(reserve_value if reserve_value is not None else 0).replace("−", "-").replace(" ", "").replace(",", "."))
-        except ValueError:
-            reserve_amount = 0.0
+        reserve_amount = parse_huf_value(reserve_value)
         st.markdown("#### Céltartalék és biztosítás")
 
         reserve1, reserve2 = st.columns(2)
@@ -1198,6 +1254,8 @@ def show_courier_dialog() -> None:
         with reserve2:
             st.metric("Aktuális céltartalék", format_huf(reserve_amount))
             st.caption("Forrás: courier_target_reserve.CT_Z_FT")
+            if reserve_value is not None:
+                st.caption(f"Nyers DB-érték: {reserve_value}")
             if reserve_row and reserve_value is None:
                 st.warning("A Courier ID-hoz tartozó sor megvan, de nem található benne CT_Z_FT mező.")
             elif not reserve_row:
