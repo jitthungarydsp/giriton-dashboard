@@ -2438,46 +2438,15 @@ def show_courier_dialog() -> None:
                 st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
 
         adjustment_log = load_courier_adjustment_log(courier_id)
-        if not adjustment_log.empty:
-            with st.expander("Módosítási napló", expanded=False):
-                log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Módosította", "created_at": "Időpont"}).copy()
-                log_view["Művelet"] = log_view["Művelet"].map({"created": "Létrehozva", "updated": "Módosítva", "deleted": "Törölve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
-                log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
-                log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
-                st.dataframe(log_view, use_container_width=True, hide_index=True)
-
-        st.markdown("#### Dokumentumműveletek")
-        action1, action2 = st.columns(2)
-        pdf_bytes = build_settlement_pdf(
-            {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
-            route_breakdown.to_dict("records"),
-            {"base": base_total, "tip": tip_total, "bonus": bonus_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total, "customer_rating": customer_rating_total, "payable": payable_total},
-        )
-        tig_bytes = build_demo_preview_pdf(
-            f"TIG - {row['Futár']}",
-            f"Courier ID: {courier_id} | Időszak: {period_start} - {period_end} | Fizetendő: {format_huf(payable_total)}",
-        )
-        action1.download_button("Elszámolás PDF letöltése", data=pdf_bytes, file_name=f"jitt_elszamolas_{courier_id}.pdf", mime="application/pdf", type="primary", use_container_width=True, key=f"ui_settlement_generate_{courier_id}")
-        action2.download_button(
-            "TIG PDF letöltése",
-            data=tig_bytes,
-            file_name=f"tig_{courier_id}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            key=f"ui_tig_generate_{courier_id}",
-        )
-
-        upload1, upload2 = st.columns(2)
-        upload1.file_uploader(
-            "Elszámolás feltöltése",
-            type=["pdf"],
-            key=f"ui_settlement_upload_{courier_id}",
-        )
-        upload2.file_uploader(
-            "TIG feltöltése",
-            type=["pdf"],
-            key=f"ui_tig_upload_{courier_id}",
-        )
+        st.markdown('<div class="settlement-profile-shell"><div class="finance-log-panel"><div class="finance-panel-title">Módosítási napló</div></div></div>', unsafe_allow_html=True)
+        if adjustment_log.empty:
+            st.info("Még nincs naplózott módosítás ennél a futárnál.")
+        else:
+            log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Felhasználó", "created_at": "Időpont"}).copy()
+            log_view["Művelet"] = log_view["Művelet"].map({"created": "Létrehozva", "updated": "Módosítva", "deleted": "Törölve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
+            log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
+            log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
+            st.dataframe(log_view, use_container_width=True, hide_index=True)
 
     if selected_menu == "Útvonalak":
         st.markdown("#### Útvonalak")
