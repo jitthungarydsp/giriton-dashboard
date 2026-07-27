@@ -448,12 +448,13 @@ def build_tig_pdf_bytes(
         cash_rows = [
             [
                 Paragraph("Szállítási díj – KP", bold),
-                Paragraph("Nettó levonás", bold),
-                Paragraph("Bruttó KP", bold),
+                Paragraph("Nettó FT", bold),
+                Paragraph("ÁFA tartalom", bold),
+                Paragraph("Bruttó FT", bold),
                 Paragraph("ÁFA tartalom", bold),
             ],
             [
-                Paragraph("Nem szerepel a fenti szállítási díj számlasorban.", normal),
+                Paragraph("Szállítási díj – KP-  (494107) ", normal),
                 Paragraph(_huf(cash_gross), right),
                 Paragraph(_huf(cash_net), right),
                 Paragraph(_huf(cash_vat) if vat_payer else "AAM", right),
