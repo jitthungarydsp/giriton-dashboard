@@ -694,13 +694,13 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     """Read persisted database-calculated courier base fees."""
     columns = [
         "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
-        "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
+        "Rendszerbónusz", "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
     try:
         rows = (
             get_db()
             .schema("settlement")
-            .table("vw_parameterized_courier_base_summary")
+            .table("vw_parameterized_courier_settlement_summary")
             .select("*")
             .eq("session_id", session_id)
             .execute()
@@ -711,12 +711,25 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     # Exception hierarchy. This boundary must never make an Excel import fail.
     except BaseException:
         result = pd.DataFrame(columns=columns)
-        result.attrs["configuration_error"] = (
-            "A settlement paramétertáblák még nem érhetők el. "
-            "Futtasd le a sql/settlement_parameterized_base_rate.sql migrációt, "
-            "utána a Fixed Rate számítás automatikusan bekapcsol."
-        )
-        return result
+        try:
+            rows = (
+                get_db()
+                .schema("settlement")
+                .table("vw_parameterized_courier_base_summary")
+                .select("*")
+                .eq("session_id", session_id)
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            result = pd.DataFrame(columns=columns)
+            result.attrs["configuration_error"] = (
+                "A settlement paramétertáblák még nem érhetők el. "
+                "Futtasd le előbb a sql/settlement_parameterized_base_rate.sql, majd a "
+                "sql/settlement_persist_jitt_bonus_calculation.sql migrációt."
+            )
+            return result
     if not rows:
         return pd.DataFrame(columns=columns)
     result = pd.DataFrame(rows).rename(columns={
@@ -724,6 +737,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "company_base_rate_huf": "Vállalkozói alapdíj",
         "courier_base_rate_huf": "Nettó bevétel",
         "tip_huf": "Borravaló",
+        "route_bonus_huf": "Rendszerbónusz",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
         "calculated_routes": "Számolt túrák",
@@ -799,7 +813,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         calculated.groupby("_courier_lookup", as_index=False)[
             [
                 "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
-                "Számolt túrák", "Nem számolt túrák",
+                "Rendszerbónusz", "Számolt túrák", "Nem számolt túrák",
             ]
         ]
         .sum()
@@ -807,6 +821,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     amount_by_courier = calculated.set_index("_courier_lookup")["Nettó bevétel"]
     company_amount_by_courier = calculated.set_index("_courier_lookup")["Vállalkozói alapdíj"]
     tip_by_courier = calculated.set_index("_courier_lookup")["Borravaló"]
+    system_bonus_by_courier = calculated.set_index("_courier_lookup")["Rendszerbónusz"]
     matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
     calculated_keys = set(amount_by_courier.index)
@@ -816,6 +831,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Nettó bevétel"] = resolved_lookup.map(amount_by_courier).fillna(0.0)
     result["Vállalkozói alapdíj"] = resolved_lookup.map(company_amount_by_courier).fillna(0.0)
     result["Borravaló"] = resolved_lookup.map(tip_by_courier).fillna(0.0)
+    result["Bónusz"] = resolved_lookup.map(system_bonus_by_courier).fillna(0.0)
     result["Számolt túrák"] = resolved_lookup.map(matched_routes).fillna(0).astype(int)
     result["Nem számolt túrák"] = resolved_lookup.map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
@@ -1039,7 +1055,9 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
             get_db().schema("settlement").table("jit_row")
             .select(
                 "normalized_data,route_unique_id,route_date,weekday_iso,calculated_day_type,"
-                "courier_base_rate_huf,courier_tip_huf,is_route_primary,base_rate_status"
+                "courier_base_rate_huf,courier_tip_huf,courier_delay_bonus_huf,"
+                "courier_compliance_bonus_huf,courier_other_bonus_huf,"
+                "courier_bonus_total_huf,is_route_primary,base_rate_status"
             )
             .eq("session_id", session_id).execute().data or []
         )
@@ -1049,8 +1067,6 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
     target_id = _courier_id_key(courier_id)
     target_name = _courier_match_key(courier_name)
     weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
-    delay_rules = load_active_excel_bonus_rules("cfg_jitt_delay_bonus_rules")
-    compliance_rules = load_active_excel_bonus_rules("cfg_jitt_compliance_bonus_rules")
     for source in rows:
         normalized = source.get("normalized_data") or {}
         if isinstance(normalized, str):
@@ -1093,19 +1109,9 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
         route_type = {"normal": "Normál", "express": "Expressz", "regional": "Regionális"}[route_type_key]
         day_type_key = str(source.get("calculated_day_type") or "").casefold()
         day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(day_type_key, "Nincs besorolás")
-        warehouse = normalized_fields.get("location") or normalized_fields.get("warehouse")
-        delay_bonus = _configured_excel_bonus_for_route(
-            delay_rules, "Delay Bonus", source.get("route_date"), day_type_key,
-            route_type_key, warehouse, normalized_fields,
-        )
-        compliance_bonus = _configured_excel_bonus_for_route(
-            compliance_rules, "Compliance Bonus", source.get("route_date"), day_type_key,
-            route_type_key, warehouse, normalized_fields,
-        )
-        other_bonus = sum(
-            parse_huf_value(normalized_fields.get(_normalized_field_key(column)))
-            for column in ("Fuel Bonus", "Car & Fridge Bonus", "Fill Rate Bonus", "Branding")
-        )
+        delay_bonus = parse_huf_value(source.get("courier_delay_bonus_huf"))
+        compliance_bonus = parse_huf_value(source.get("courier_compliance_bonus_huf"))
+        other_bonus = parse_huf_value(source.get("courier_other_bonus_huf"))
         parsed.append({
             "Route ID": str(source.get("route_unique_id") or "–"),
             "Excel dátum": str(source.get("route_date") or "–"),
@@ -1118,7 +1124,7 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
             "Késedelmi díj": delay_bonus,
             "Túramegfelelés": compliance_bonus,
             "Egyéb bónusz": other_bonus,
-            "Bónuszok": delay_bonus + compliance_bonus + other_bonus,
+            "Bónuszok": parse_huf_value(source.get("courier_bonus_total_huf")),
             "DB státusz": str(source.get("base_rate_status") or "ismeretlen"),
         })
     if not parsed:
