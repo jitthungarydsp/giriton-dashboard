@@ -1272,28 +1272,29 @@ def show_courier_dialog() -> None:
         current_left, current_right = st.columns([1.1, 0.9])
 
         with current_left:
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Alapdíj": format_huf(base_total),
-                            "Borravaló": format_huf(tip_total),
-                            "Bónuszok": format_huf(bonus_total),
-                            "Importált bónusz": format_huf(imported_bonus_total),
-                            "Máluszok": format_huf(malus_total),
-                            "Importált málusz": format_huf(imported_malus_total),
-                            "ATM levonás": format_huf(atm_deduction_total),
-                            "Importált ATM": format_huf(imported_atm_total),
-                            "Egyéb kiadás": format_huf(other_expense_total),
-                            "Ügyfélértékelés": format_huf(customer_rating_total),
-                            "Kifizetendő": format_huf(payable_total),
-                            "Státusz": row["Státusz"],
-                        }
-                    ]
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.caption("Kattints egy összegre a részletes levezetéshez.")
+            summary_cards = [
+                ("Alapdíj", base_total, "base"),
+                ("Borravaló", tip_total, "tip"),
+                ("Bónuszok", bonus_total, "bonus"),
+                ("Máluszok", malus_total, "malus"),
+                ("ATM levonás", atm_deduction_total, "atm"),
+                ("Egyéb kiadás", other_expense_total, "other"),
+                ("Ügyfélértékelés", customer_rating_total, "customer_rating"),
+                ("Kifizetendő", payable_total, "payable"),
+            ]
+            selected_component_key = f"settlement_component_detail_{courier_id}"
+            for start in range(0, len(summary_cards), 2):
+                card_columns = st.columns(2)
+                for card_column, (label, amount, component) in zip(card_columns, summary_cards[start:start + 2]):
+                    with card_column:
+                        if st.button(
+                            f"{label}\n{format_huf(amount)}",
+                            key=f"{selected_component_key}_{component}",
+                            use_container_width=True,
+                            type="primary" if component == "payable" else "secondary",
+                        ):
+                            st.session_state[selected_component_key] = component
 
         with current_right:
             st.markdown(
@@ -1308,6 +1309,71 @@ def show_courier_dialog() -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
+        selected_component = st.session_state.get(selected_component_key, "payable")
+        component_titles = {
+            "base": "Alapdíj levezetése", "tip": "Borravaló levezetése",
+            "bonus": "Bónuszok levezetése", "malus": "Máluszok levezetése",
+            "atm": "ATM levonás levezetése", "other": "Egyéb kiadás levezetése",
+            "customer_rating": "Ügyfélértékelés levezetése", "payable": "Kifizetendő levezetése",
+        }
+        st.markdown(f"#### {component_titles[selected_component]}")
+        if selected_component in {"base", "tip"}:
+            source_column = "Alapdíj" if selected_component == "base" else "Borravaló"
+            detail = route_breakdown[["Túratípus", "Naptípus", "Túrák", source_column]].copy() if not route_breakdown.empty else pd.DataFrame()
+            if detail.empty:
+                st.info("Ehhez az összeghez nincs route-szintű Excel-adat.")
+            else:
+                detail = detail.rename(columns={source_column: "Összeg"})
+                detail["Összeg"] = detail["Összeg"].map(format_huf)
+                st.dataframe(detail, use_container_width=True, hide_index=True)
+        elif selected_component == "bonus":
+            route_bonus = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum())
+            manual_bonus = float(adjustment_totals.get("bonus", 0.0))
+            bonus_sources = pd.DataFrame([
+                {"Forrás": "JITT route bónuszok (Delay, Compliance és egyéb)", "Összeg": route_bonus},
+                {"Forrás": "Excel: settlement.bonus_route_row", "Összeg": imported_bonus_total},
+                {"Forrás": "Kézi bónusz korrekció", "Összeg": manual_bonus},
+            ])
+            bonus_sources["Összeg"] = bonus_sources["Összeg"].map(format_huf)
+            st.dataframe(bonus_sources, use_container_width=True, hide_index=True)
+        elif selected_component in {"malus", "atm", "other", "customer_rating"}:
+            adjustment_type = {
+                "malus": "malus", "atm": "atm_deduction", "other": "other_expense",
+                "customer_rating": "customer_rating",
+            }[selected_component]
+            manual_rows = adjustments[adjustments["adjustment_type"] == adjustment_type].copy() if not adjustments.empty else pd.DataFrame()
+            source_rows = []
+            imported_value = {"malus": imported_malus_total, "atm": imported_atm_total}.get(selected_component, 0.0)
+            imported_source = {"malus": "Excel: settlement.penalty_row", "atm": "Excel: settlement.atm_balance_row"}.get(selected_component)
+            if imported_source:
+                source_rows.append({"Forrás": imported_source, "Megjegyzés": "Aktuális Excel-import", "Összeg": imported_value})
+            if not manual_rows.empty:
+                for _, adjustment in manual_rows.iterrows():
+                    source_rows.append({
+                        "Forrás": "Kézi, naplózott korrekció",
+                        "Megjegyzés": adjustment.get("note") or "–",
+                        "Összeg": float(adjustment.get("amount_huf") or 0),
+                    })
+            if not source_rows:
+                st.info("Ehhez az összeghez nincs rögzített tétel.")
+            else:
+                detail = pd.DataFrame(source_rows)
+                detail["Összeg"] = detail["Összeg"].map(format_huf)
+                st.dataframe(detail, use_container_width=True, hide_index=True)
+        else:
+            payable_sources = pd.DataFrame([
+                {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
+                {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
+                {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
+                {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
+                {"Művelet": "−", "Tétel": "Máluszok", "Összeg": malus_total},
+                {"Művelet": "−", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
+                {"Művelet": "−", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+                {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
+            ])
+            payable_sources["Összeg"] = payable_sources["Összeg"].map(format_huf)
+            st.dataframe(payable_sources, use_container_width=True, hide_index=True)
 
         st.markdown("#### Túratípus és naptípus szerinti teljesítés")
         if route_breakdown.empty:
