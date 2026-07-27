@@ -726,6 +726,177 @@ div[data-testid="stDialog"] [role="dialog"] {
     font-size:12px;
     font-weight:850;
 }
+.finance-toolbar {
+    display:grid;
+    grid-template-columns:minmax(170px,.9fr) minmax(150px,.7fr) 1fr;
+    gap:16px;
+    align-items:center;
+    padding:14px 16px;
+    margin:14px 0 16px;
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fff;
+    box-shadow:0 8px 20px rgba(23,37,29,.035);
+}
+.finance-toolbar-label {
+    color:var(--sp-muted);
+    font-size:12px;
+    font-weight:800;
+    margin-bottom:6px;
+}
+.finance-toolbar-value {
+    display:inline-flex;
+    align-items:center;
+    min-height:36px;
+    padding:0 12px;
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fbfcfb;
+    color:var(--sp-ink);
+    font-size:14px;
+    font-weight:850;
+}
+.finance-toolbar-actions {
+    display:flex;
+    justify-content:flex-end;
+    color:var(--sp-muted);
+    font-size:12px;
+}
+.finance-status {
+    display:inline-flex;
+    align-items:center;
+    min-height:34px;
+    padding:0 12px;
+    border-radius:999px;
+    background:var(--sp-green-soft);
+    color:var(--sp-green);
+    font-weight:900;
+}
+.finance-kpi-grid {
+    display:grid;
+    grid-template-columns:repeat(6,minmax(0,1fr));
+    gap:14px;
+    margin:10px 0 16px;
+}
+.finance-kpi {
+    min-height:96px;
+    padding:16px;
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fff;
+    box-shadow:0 7px 18px rgba(23,37,29,.035);
+}
+.finance-kpi.payable {
+    background:linear-gradient(135deg,#19a64d,#108138);
+    border-color:#19a64d;
+    color:#fff;
+}
+.finance-kpi-label {
+    color:var(--sp-muted);
+    font-size:12px;
+    font-weight:800;
+}
+.finance-kpi.payable .finance-kpi-label { color:rgba(255,255,255,.84); }
+.finance-kpi-value {
+    margin-top:12px;
+    color:var(--sp-ink);
+    font-size:22px;
+    font-weight:950;
+    letter-spacing:0;
+}
+.finance-kpi.payable .finance-kpi-value { color:#fff; }
+.finance-work-grid {
+    display:grid;
+    grid-template-columns:minmax(360px,.55fr) minmax(560px,1fr);
+    gap:14px;
+    align-items:start;
+    margin-top:4px;
+}
+.finance-panel {
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fff;
+    padding:14px;
+    box-shadow:0 8px 22px rgba(23,37,29,.035);
+}
+.finance-panel-head {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+    margin-bottom:12px;
+}
+.finance-panel-title {
+    color:var(--sp-ink);
+    font-size:17px;
+    font-weight:950;
+}
+.finance-table {
+    border:1px solid #e5ebe7;
+    border-radius:8px;
+    overflow:hidden;
+}
+.finance-row {
+    display:grid;
+    grid-template-columns:72px 1fr 120px;
+    min-height:36px;
+    align-items:center;
+    border-top:1px solid #edf2ef;
+    font-size:13px;
+}
+.finance-row:first-child { border-top:none; }
+.finance-row.header {
+    color:var(--sp-muted);
+    background:#f8faf9;
+    font-size:12px;
+    font-weight:850;
+}
+.finance-row > div {
+    padding:8px 10px;
+    border-left:1px solid #edf2ef;
+}
+.finance-row > div:first-child { border-left:none; }
+.finance-op {
+    display:inline-grid;
+    place-items:center;
+    min-width:46px;
+    height:22px;
+    border-radius:999px;
+    font-weight:950;
+}
+.finance-op.plus { background:#dcf9e3;color:var(--sp-green); }
+.finance-op.minus { background:#ffe2e0;color:var(--sp-red); }
+.finance-op.equals { background:#f0f2f3;color:var(--sp-ink); }
+.finance-amount {
+    text-align:right;
+    font-variant-numeric:tabular-nums;
+    font-weight:850;
+}
+.finance-row.total {
+    font-weight:950;
+    background:#fbfcfb;
+}
+.finance-note {
+    color:var(--sp-muted);
+    font-size:12px;
+    margin-top:10px;
+}
+.finance-log-panel {
+    margin-top:14px;
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fff;
+    padding:14px;
+}
+@media (max-width:1100px) {
+    .finance-toolbar,
+    .finance-work-grid {
+        grid-template-columns:1fr;
+    }
+    .finance-kpi-grid {
+        grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+}
 @media (max-width:1100px) {
     .settlement-profile-top,
     .settlement-overview-grid,
@@ -2066,127 +2237,98 @@ def show_courier_dialog() -> None:
                 monthly_bonus_malus_effect = imported_bonus_total + manual_bonus_total - malus_total
                 manual_other_total = other_expense_total
 
-        st.markdown("#### Teljesítmény és elszámolási mutatók")
-        selected_component_key = f"settlement_component_detail_{courier_id}"
-        if selected_component_key not in st.session_state:
-            st.session_state[selected_component_key] = "payable"
-        settlement_cards = [
-            ("Rendelés", f"{order_total:,}".replace(",", " "), "orders"),
-            ("Kör", str(route_total), "routes"),
-            ("Késedelmi díj", format_huf(delay_total), "delay"),
-            ("Túramegfelelés", format_huf(compliance_total), "compliance"),
-            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "customer_rating"),
+        pdf_bytes = build_settlement_pdf(
+            {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
+            route_breakdown.to_dict("records"),
+            {"base": base_total, "tip": tip_total, "bonus": bonus_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total, "customer_rating": customer_rating_total, "payable": payable_total},
+        )
+        tig_bytes = build_demo_preview_pdf(
+            f"TIG - {row['Futár']}",
+            f"Courier ID: {courier_id} | Időszak: {period_start} - {period_end} | Fizetendő: {format_huf(payable_total)}",
+        )
+        st.markdown(
+            f"""
+            <div class="settlement-profile-shell">
+              <div class="finance-toolbar">
+                <div><div class="finance-toolbar-label">Elszámolási hónap</div><div class="finance-toolbar-value">{period_end:%Y. %B}</div></div>
+                <div><div class="finance-toolbar-label">Státusz</div><div class="finance-status">Szerkeszthető</div></div>
+                <div class="finance-toolbar-actions">A havi tételek mentése lent, a szerkeszthető táblánál történik.</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        doc_a, doc_b = st.columns([0.18, 0.18])
+        doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=f"jitt_elszamolas_{courier_id}.pdf", mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
+        doc_b.download_button("TIG PDF", data=tig_bytes, file_name=f"tig_{courier_id}.pdf", mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+
+        kpi_items = [
+            ("Rendelés", f"{order_total:,}".replace(",", " "), ""),
+            ("Kör", str(route_total), ""),
+            ("Késedelmi díj", format_huf(delay_total), ""),
+            ("Túramegfelelés", format_huf(compliance_total), ""),
+            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), ""),
             ("Fizetendő", format_huf(payable_total), "payable"),
-            ("Levonás / plusz", format_huf(-other_expense_total), "other"),
-            ("Havi bónusz/málusz hatás", format_huf(monthly_bonus_malus_effect), "bonus"),
-            ("ATM hatás", format_huf(-atm_deduction_total), "atm"),
-            ("Lojalitás", "0 Ft", "loyalty"),
-            ("Oktatói díj", "0 Ft", "instructor"),
-            ("Manuális", format_huf(-manual_other_total), "manual"),
+            ("Levonás / plusz", format_huf(-other_expense_total), ""),
+            ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), ""),
+            ("ATM hatás", format_huf(-atm_deduction_total), ""),
+            ("Lojalitás", "0 Ft", ""),
+            ("Oktatói díj", "0 Ft", ""),
+            ("Manuális", format_huf(-manual_other_total), ""),
         ]
-        for card_start in range(0, len(settlement_cards), 6):
-            for card_column, (label, value, component) in zip(st.columns(6), settlement_cards[card_start:card_start + 6]):
-                with card_column.container(border=True):
-                    st.caption(label)
-                    if st.button(
-                        value,
-                        key=f"{selected_component_key}_{component}",
-                        use_container_width=True,
-                        type="primary" if st.session_state[selected_component_key] == component else "secondary",
-                    ):
-                        st.session_state[selected_component_key] = component
+        st.markdown(
+            '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
+            + "".join(
+                f'<div class="finance-kpi {css_class}"><div class="finance-kpi-label">{html.escape(label)}</div><div class="finance-kpi-value">{html.escape(value)}</div></div>'
+                for label, value, css_class in kpi_items
+            )
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
 
-        selected_component = st.session_state[selected_component_key]
-        component_titles = {
-            "orders": "Rendelések és Route ID-k", "routes": "Körök és Route ID-k",
-            "base": "Alapdíj levezetése", "tip": "Borravaló levezetése",
-            "delay": "Késedelmi díj levezetése", "compliance": "Túramegfelelés levezetése",
-            "bonus": "Bónuszok levezetése", "malus": "Máluszok levezetése",
-            "atm": "ATM levonás levezetése", "other": "Egyéb kiadás levezetése",
-            "customer_rating": "Ügyfélértékelés levezetése", "payable": "Kifizetendő levezetése",
-            "loyalty": "Lojalitási bónusz", "instructor": "Oktatói díj", "manual": "Manuális tétel",
-        }
-        st.markdown(f"#### {component_titles[selected_component]}")
-        if selected_component in {"orders", "routes"}:
-            route_columns = ["Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus", "Rendelések", "DB státusz"]
-            st.dataframe(route_detail[route_columns], use_container_width=True, hide_index=True)
-        elif selected_component in {"base", "tip", "delay", "compliance"}:
-            source_column = {
-                "base": "Alapdíj", "tip": "Borravaló", "delay": "Késedelmi díj",
-                "compliance": "Túramegfelelés",
-            }[selected_component]
-            detail_columns = [
-                "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
-                "Rendelések", source_column, "DB státusz",
-            ]
-            detail = route_detail[detail_columns].copy() if not route_detail.empty else pd.DataFrame()
-            if detail.empty:
-                st.info("Ehhez az összeghez nincs Courier ID-hoz biztonságosan köthető Route ID-adat.")
-            else:
-                detail = detail.rename(columns={source_column: "Összeg"})
-                detail["Összeg"] = detail["Összeg"].map(format_huf)
-                st.dataframe(detail, use_container_width=True, hide_index=True)
-        elif selected_component == "bonus":
-            route_bonus = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum())
-            manual_bonus = float(adjustment_totals.get("bonus", 0.0))
-            bonus_sources = pd.DataFrame([
-                {"Forrás": "JITT route bónuszok (Delay, Compliance és egyéb)", "Összeg": route_bonus},
-                {"Forrás": "Excel: settlement.bonus_route_row", "Összeg": imported_bonus_total},
-                {"Forrás": "Kézi bónusz korrekció", "Összeg": manual_bonus},
-            ])
-            bonus_sources["Összeg"] = bonus_sources["Összeg"].map(format_huf)
-            st.dataframe(bonus_sources, use_container_width=True, hide_index=True)
-        elif selected_component in {"malus", "atm", "other", "customer_rating"}:
-            adjustment_type = {
-                "malus": "malus", "atm": "atm_deduction", "other": "other_expense",
-                "customer_rating": "customer_rating",
-            }[selected_component]
-            manual_rows = adjustments[adjustments["adjustment_type"] == adjustment_type].copy() if not adjustments.empty else pd.DataFrame()
-            source_rows = []
-            imported_value = {"malus": imported_malus_total, "atm": imported_atm_total}.get(selected_component, 0.0)
-            imported_source = {"malus": "Excel: settlement.penalty_row", "atm": "Excel: settlement.atm_balance_row"}.get(selected_component)
-            if imported_source:
-                source_rows.append({"Forrás": imported_source, "Megjegyzés": "Aktuális Excel-import", "Összeg": imported_value})
-            if not manual_rows.empty:
-                for _, adjustment in manual_rows.iterrows():
-                    source_rows.append({
-                        "Forrás": "Kézi, naplózott korrekció",
-                        "Megjegyzés": adjustment.get("note") or "–",
-                        "Összeg": float(adjustment.get("amount_huf") or 0),
-                    })
-            if not source_rows:
-                st.info("Ehhez az összeghez nincs rögzített tétel.")
-            else:
-                detail = pd.DataFrame(source_rows)
-                detail["Összeg"] = detail["Összeg"].map(format_huf)
-                st.dataframe(detail, use_container_width=True, hide_index=True)
-        else:
-            payable_sources = pd.DataFrame([
-                {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
-                {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
-                {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
-                {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-                {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
-                {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
-                {"Művelet": "−", "Tétel": "Máluszok", "Összeg": malus_total},
-                {"Művelet": "−", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
-                {"Művelet": "−", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
-                {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
-            ])
-            payable_sources["Összeg"] = payable_sources["Összeg"].map(format_huf)
-            st.dataframe(payable_sources, use_container_width=True, hide_index=True)
+        payable_sources = [
+            ("+", "Alapdíj", base_total, "plus"),
+            ("+", "Borravaló", tip_total, "plus"),
+            ("+", "Késedelmi díj", delay_total, "plus"),
+            ("+", "Túramegfelelés", compliance_total, "plus"),
+            ("+", "Bónuszok", bonus_total, "plus"),
+            ("+", "Ügyfélértékelés", customer_rating_total, "plus"),
+            ("−", "Máluszok", malus_total, "minus"),
+            ("−", "ATM levonás", atm_deduction_total, "minus"),
+            ("−", "Egyéb kiadás", other_expense_total, "minus"),
+            ("=", "Kifizetendő", payable_total, "equals"),
+        ]
+        finance_rows = "".join(
+            f"""
+            <div class="finance-row {'total' if op == '=' else ''}">
+              <div><span class="finance-op {op_class}">{html.escape(op)}</span></div>
+              <div>{html.escape(label)}</div>
+              <div class="finance-amount">{format_huf(amount)}</div>
+            </div>
+            """
+            for op, label, amount, op_class in payable_sources
+        )
 
-        st.markdown("#### Túratípus és naptípus szerinti teljesítés")
-        if route_breakdown.empty:
-            st.info("Ehhez a futárhoz még nincs számolható JITT route az aktuális Excel-importban.")
-        else:
-            route_view = route_breakdown.copy()
-            route_view["Alapdíj"] = route_view["Alapdíj"].map(format_huf)
-            route_view["Borravaló"] = route_view["Borravaló"].map(format_huf)
-            route_view["Bónuszok"] = route_view["Bónuszok"].map(format_huf)
-            st.dataframe(route_view, use_container_width=True, hide_index=True)
+        finance_left, finance_right = st.columns([0.38, 0.62], gap="medium")
+        with finance_left:
+            st.markdown(
+                f"""
+                <div class="settlement-profile-shell">
+                  <div class="finance-panel">
+                    <div class="finance-panel-head"><div class="finance-panel-title">Kifizetendő levezetése</div><span class="settlement-info">i</span></div>
+                    <div class="finance-table">
+                      <div class="finance-row header"><div>Művelet</div><div>Tétel</div><div class="finance-amount">Összeg</div></div>
+                      {finance_rows}
+                    </div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-        st.markdown("#### Aktuális hónap szerkeszthető tételei")
+        with finance_right:
+            st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Aktuális hónap szerkeszthető tételei</div></div>', unsafe_allow_html=True)
+
         adjustment_type_labels = {
             "bonus": "Bónusz",
             "malus": "Málusz",
@@ -2208,23 +2350,25 @@ def show_courier_dialog() -> None:
             editor_df["Törlés"] = False
             editor_df = editor_df[editor_columns]
 
-        edited_adjustments = st.data_editor(
-            editor_df,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic",
-            key=f"finance_adjustment_editor_{courier_id}",
-            disabled=["id"],
-            column_config={
-                "id": st.column_config.TextColumn("ID", help="Belső azonosító", width="small"),
-                "Típus": st.column_config.SelectboxColumn("Típus", options=list(adjustment_type_values.keys()), required=True),
-                "Összeg": st.column_config.NumberColumn("Összeg (Ft)", min_value=0, step=100, format="%d"),
-                "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
-                "Érvényes ettől": st.column_config.DateColumn("Érvényes ettől"),
-                "Érvényes eddig": st.column_config.DateColumn("Érvényes eddig"),
-                "Törlés": st.column_config.CheckboxColumn("Törlés"),
-            },
-        )
+        with finance_right:
+            edited_adjustments = st.data_editor(
+                editor_df,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                key=f"finance_adjustment_editor_{courier_id}",
+                disabled=["id"],
+                column_config={
+                    "id": st.column_config.TextColumn("ID", help="Belső azonosító", width="small"),
+                    "Típus": st.column_config.SelectboxColumn("Típus", options=list(adjustment_type_values.keys()), required=True),
+                    "Összeg": st.column_config.NumberColumn("Összeg (Ft)", min_value=0, step=100, format="%d"),
+                    "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
+                    "Érvényes ettől": st.column_config.DateColumn("Érvényes ettől"),
+                    "Érvényes eddig": st.column_config.DateColumn("Érvényes eddig"),
+                    "Törlés": st.column_config.CheckboxColumn("Törlés"),
+                },
+            )
+            st.markdown('<div class="finance-note">A pozitív összeg növeli, a levonás típusú sor csökkenti a kifizetendő összeget.</div>', unsafe_allow_html=True)
 
         def editor_date(value: object, fallback: date | None = None) -> date | None:
             if value is None or value == "":
