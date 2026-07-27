@@ -468,6 +468,40 @@ def load_courier_master() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_courier_profile(courier_id: str) -> dict[str, object]:
+    try:
+        rows = (get_db().schema("public").table("courier_master").select("*")
+                .eq("courier_id", courier_id).limit(1).execute().data or [])
+        return rows[0] if rows else {}
+    except BaseException:
+        return {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
+    """Return reserve/insurance membership despite legacy column-name variants."""
+    try:
+        rows = (get_db().schema("public").table("courier_target_reserve")
+                .select("*").limit(10000).execute().data or [])
+    except BaseException:
+        return {"is_member": False, "row": {}}
+    def id_key(value: object) -> str:
+        text = str(value or "").strip().casefold()
+        return text[:-2] if text.endswith(".0") else text
+
+    target_id = id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    for reserve_row in rows:
+        id_values = [reserve_row.get(column) for column in ("courier_id", "courier_number", "usernumber", "USERNUMBER")]
+        name_values = [reserve_row.get(column) for column in ("courier_name", "driver_name", "username", "USERNAME", "name")]
+        if target_id and any(id_key(value) == target_id for value in id_values if value is not None):
+            return {"is_member": True, "row": reserve_row}
+        if any(_courier_match_key(value) == target_name for value in name_values if value is not None):
+            return {"is_member": True, "row": reserve_row}
+    return {"is_member": False, "row": {}}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
     query = (
         get_db()
@@ -896,6 +930,8 @@ def show_courier_dialog() -> None:
         return
 
     row = match.iloc[0]
+    profile = load_courier_profile(courier_id)
+    reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
     session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
     route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
     adjustments = load_courier_adjustments(session_id, courier_id)
@@ -1234,41 +1270,29 @@ def show_courier_dialog() -> None:
 
     with tab_profile:
         st.markdown("#### Profil")
+        st.caption("Forrás: public.courier_master. A biztosítási tagság forrása: public.courier_target_reserve.")
         profile1, profile2 = st.columns(2)
 
         with profile1:
-            st.text_input("Név", value=str(row["Futár"]), key=f"ui_profile_name_{courier_id}")
+            st.text_input("Név", value=str(profile.get("courier_name") or row["Futár"]), disabled=True, key=f"ui_profile_name_{courier_id}")
             st.text_input("Courier ID", value=courier_id, disabled=True, key=f"ui_profile_id_{courier_id}")
-            st.text_input("Telefonszám", value="+36 30 123 4567", key=f"ui_profile_phone_{courier_id}")
-            st.text_input("E-mail", value="futar@example.com", key=f"ui_profile_email_{courier_id}")
-            st.selectbox(
-                "Branch",
-                ["Kifli", "Egyéb"],
-                index=0,
-                key=f"ui_profile_branch_{courier_id}",
-            )
-            st.text_input("Raktár", value=str(row["Raktár"]), key=f"ui_profile_warehouse_{courier_id}")
+            st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=True, key=f"ui_profile_phone_{courier_id}")
+            st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=True, key=f"ui_profile_email_{courier_id}")
+            st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=True, key=f"ui_profile_warehouse_{courier_id}")
+            st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=True, key=f"ui_profile_billing_email_{courier_id}")
 
         with profile2:
-            st.selectbox(
-                "Számítás módja",
-                ["Excel", "API", "Egyéni"],
-                index=["Excel", "API", "Egyéni"].index(str(row["Számítás módja"])),
-                key=f"ui_profile_calc_{courier_id}",
-            )
-            st.text_input("Vállalkozás neve", value="Minta Futár Kft.", key=f"ui_profile_company_{courier_id}")
-            st.text_input("Adószám", value="12345678-2-42", key=f"ui_profile_tax_{courier_id}")
-            st.text_input("Bankszámlaszám", value="11700000-00000000-00000000", key=f"ui_profile_bank_{courier_id}")
-            st.selectbox("Biztosítás", ["Van", "Nincs"], key=f"ui_profile_insurance_{courier_id}")
-            st.selectbox("Profil státusz", ["Aktív", "Inaktív"], key=f"ui_profile_status_{courier_id}")
+            st.text_input("Számítás módja", value=str(row["Számítás módja"]), disabled=True, key=f"ui_profile_calc_{courier_id}")
+            st.text_input("Vállalkozás neve", value=str(profile.get("company_name") or ""), disabled=True, key=f"ui_profile_company_{courier_id}")
+            st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=True, key=f"ui_profile_tax_{courier_id}")
+            st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=True, key=f"ui_profile_bank_{courier_id}")
+            st.text_input("Biztosítás", value="Van" if reserve_status["is_member"] else "Nincs", disabled=True, key=f"ui_profile_insurance_{courier_id}")
+            st.text_input("Profil státusz", value="Aktív" if bool(profile.get("active", True)) else "Inaktív", disabled=True, key=f"ui_profile_status_{courier_id}")
 
-        st.button(
-            "Profil mentése",
-            type="primary",
-            use_container_width=True,
-            key=f"ui_profile_save_{courier_id}",
-            help="Csak dizájn, még nem ment adatot.",
-        )
+        if st.button("↻ Profiladatok újratöltése", use_container_width=True, key=f"ui_profile_refresh_{courier_id}"):
+            load_courier_profile.clear()
+            load_target_reserve_status.clear()
+            st.rerun()
 
 
 @st.dialog("Tömeges elszámolás", width="large")
