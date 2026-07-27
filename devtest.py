@@ -1022,8 +1022,10 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
     """Return auditable, unique Route ID rows for one courier.
 
     The JITT upload does not always contain a Courier ID.  In that case only a
-    *full normalized name match* is accepted; partial token matching is never
-    used for a financial calculation.
+    *full normalized name match* is accepted.  When the upload contains a
+    legal-form suffix (for example ``E.V.``), the complete personal name may
+    be extended only by that suffix; arbitrary partial name matching is not
+    used.
     """
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
@@ -1070,10 +1072,17 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
             None,
         )
         has_source_id = source_id is not None and _courier_id_key(source_id) != ""
+        source_name_key = _courier_match_key(source_name)
+        source_tokens, target_tokens = set(source_name_key.split()), set(target_name.split())
+        is_exact_name = source_name_key == target_name
+        is_extended_full_name = (
+            len(source_tokens) >= 2 and len(target_tokens) >= 2
+            and (source_tokens <= target_tokens or target_tokens <= source_tokens)
+        )
         is_matching_courier = (
             _courier_id_key(source_id) == target_id
             if has_source_id
-            else _courier_match_key(source_name) == target_name
+            else (is_exact_name or is_extended_full_name)
         )
         if not is_matching_courier:
             continue
@@ -1376,8 +1385,10 @@ def show_courier_dialog() -> None:
         route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
-        base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
-        tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
+        # These two totals are calculated and persisted by the DB view.  The
+        # Route ID table below is an audit drill-down, not a second calculator.
+        base_total = float(row.get("Nettó bevétel", 0.0))
+        tip_total = float(row.get("Borravaló", 0.0))
         delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
         compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
         route_other_bonus_total = float(route_breakdown.get("Egyéb bónusz", pd.Series(dtype=float)).sum())
@@ -1425,51 +1436,17 @@ def show_courier_dialog() -> None:
             format_huf(int(payable_total) - int(row["Előző havi összeg"])),
         )
 
-        st.markdown("#### Aktuális havi összesítés")
-        current_left, current_right = st.columns([1.1, 0.9])
-
-        with current_left:
-            st.caption("Kattints egy összegre a részletes levezetéshez.")
-            summary_cards = [
-                ("Alapdíj", base_total, "base"),
-                ("Borravaló", tip_total, "tip"),
-                ("Késedelmi díj", delay_total, "delay"),
-                ("Túramegfelelés", compliance_total, "compliance"),
-                ("Bónuszok", bonus_total, "bonus"),
-                ("Máluszok", malus_total, "malus"),
-                ("ATM levonás", atm_deduction_total, "atm"),
-                ("Egyéb kiadás", other_expense_total, "other"),
-                ("Ügyfélértékelés", customer_rating_total, "customer_rating"),
-                ("Kifizetendő", payable_total, "payable"),
-            ]
-            selected_component_key = f"settlement_component_detail_{courier_id}"
-            for start in range(0, len(summary_cards), 2):
-                card_columns = st.columns(2)
-                for card_column, (label, amount, component) in zip(card_columns, summary_cards[start:start + 2]):
-                    with card_column:
-                        if st.button(
-                            f"{label}\n{format_huf(amount)}",
-                            key=f"{selected_component_key}_{component}",
-                            use_container_width=True,
-                            type="primary" if component == "payable" else "secondary",
-                        ):
-                            st.session_state[selected_component_key] = component
-
-        with current_right:
-            st.markdown(
-                f"""
-                <div class="detail-card">
-                  <h4>Havi áttekintés</h4>
-                  <div class="detail-line"><span class="detail-label">Számítás módja</span><span class="detail-value">{html.escape(str(row['Számítás módja']))}</span></div>
-                  <div class="detail-line"><span class="detail-label">Branch</span><span class="detail-value">{html.escape(str(row['Branch']))}</span></div>
-                  <div class="detail-line"><span class="detail-label">Raktár</span><span class="detail-value">{html.escape(str(row['Raktár']))}</span></div>
-                  <div class="detail-line"><span class="detail-label">Státusz</span><span class="detail-value">{html.escape(str(row['Státusz']))}</span></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        selected_component = st.session_state.get(selected_component_key, "payable")
+        detail_options = {
+            "Alapdíj": "base", "Borravaló": "tip", "Késedelmi díj": "delay",
+            "Túramegfelelés": "compliance", "Bónuszok": "bonus", "Máluszok": "malus",
+            "ATM levonás": "atm", "Egyéb kiadás": "other", "Ügyfélértékelés": "customer_rating",
+            "Kifizetendő": "payable",
+        }
+        selected_detail_label = st.selectbox(
+            "Részletes levezetés", list(detail_options), index=9,
+            key=f"settlement_component_detail_{courier_id}",
+        )
+        selected_component = detail_options[selected_detail_label]
         component_titles = {
             "base": "Alapdíj levezetése", "tip": "Borravaló levezetése",
             "delay": "Késedelmi díj levezetése", "compliance": "Túramegfelelés levezetése",
