@@ -1,3 +1,4 @@
+import html
 import re
 import traceback
 import unicodedata
