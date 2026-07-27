@@ -11,6 +11,9 @@ BASE_RATE_TABLE = "cfg_jitt_base_rates"
 DELAY_TABLE = "cfg_jitt_delay_bonus_rules"
 COMPLIANCE_TABLE = "cfg_jitt_compliance_bonus_rules"
 PERIODIC_FEE_TABLE = "cfg_jitt_periodic_fees"
+RESERVE_INSURANCE_TABLE = "cfg_jitt_reserve_insurance_rules"
+LOYALTY_BONUS_TABLE = "cfg_jitt_loyalty_bonus_rules"
+LIFE_INSURANCE_TABLE = "cfg_jitt_life_insurance_rules"
 
 DAY_TYPES = {"highlighted", "normal", "any"}
 ROUTE_TYPES = {"express", "normal", "regional", "any"}
@@ -167,6 +170,33 @@ def validate_periodic_fee(payload: dict[str, Any]) -> dict[str, Any]:
         "company_amount_huf": _amount(payload.get("company_amount_huf"), "JITT-összeg"),
         "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
         "calculation_unit": _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység"),
+        **_common(payload),
+    }
+
+
+def validate_reserve_insurance_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    deduction_percent = _number(payload.get("deduction_percent"))
+    if deduction_percent is None or not 0 <= deduction_percent <= 100:
+        raise ValueError("A levonási százaléknak 0 és 100 között kell lennie.")
+    return {
+        "insurance_fee_huf": _amount(payload.get("insurance_fee_huf"), "biztosítási díj"),
+        "base_insurance_total_huf": _amount(payload.get("base_insurance_total_huf"), "alap biztosítási végösszeg"),
+        "deduction_percent": deduction_percent,
+        **_common(payload),
+    }
+
+
+def validate_loyalty_bonus_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "loyalty_start_date": _date(payload.get("loyalty_start_date"), "lojalitási kezdő" ).isoformat(),
+        "bonus_amount_huf": _amount(payload.get("bonus_amount_huf"), "lojalitási bónusz összege"),
+        **_common(payload),
+    }
+
+
+def validate_life_insurance_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "life_insurance_amount_huf": _amount(payload.get("life_insurance_amount_huf"), "életbiztosítás összege"),
         **_common(payload),
     }
 

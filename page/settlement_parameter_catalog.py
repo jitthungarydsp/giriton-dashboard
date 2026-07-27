@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 from typing import Any, Callable
 
 import pandas as pd
@@ -11,7 +12,10 @@ from resources.settlement_parameters import (
     COMPLIANCE_TABLE,
     DAY_TABLE,
     DELAY_TABLE,
+    LIFE_INSURANCE_TABLE,
+    LOYALTY_BONUS_TABLE,
     PERIODIC_FEE_TABLE,
+    RESERVE_INSURANCE_TABLE,
     parameter_status,
     read_items,
     recalculate_excel_base_rates,
@@ -21,6 +25,9 @@ from resources.settlement_parameters import (
     validate_day_definition,
     validate_performance_rule,
     validate_periodic_fee,
+    validate_life_insurance_rule,
+    validate_loyalty_bonus_rule,
+    validate_reserve_insurance_rule,
 )
 
 
@@ -99,21 +106,21 @@ def _money(value: Any) -> str:
 def _excel_source_headers(client: Any) -> list[str]:
     """Read the real JITT Excel headers from already imported rows."""
     try:
-        rows = (
-            client.schema("settlement")
-            .table("jit_row")
-            .select("normalized_data")
-            .order("created_at", desc=True)
-            .limit(250)
-            .execute()
-            .data
-            or []
-        )
+        query = client.schema("settlement").table("jit_row").select("normalized_data").limit(1000)
+        session_id = _text(st.session_state.get("settlement_import_session_id"))
+        if session_id:
+            query = query.eq("session_id", session_id)
+        rows = query.execute().data or []
     except Exception:
         return []
     headers: set[str] = set()
     for row in rows:
         normalized_data = row.get("normalized_data") or {}
+        if isinstance(normalized_data, str):
+            try:
+                normalized_data = json.loads(normalized_data)
+            except json.JSONDecodeError:
+                normalized_data = {}
         if isinstance(normalized_data, dict):
             headers.update(str(header).strip() for header in normalized_data if str(header).strip())
     return sorted(headers, key=str.casefold)
@@ -244,22 +251,24 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
         day_type = right.selectbox("Naptípus", days, index=_index(days, (row or {}).get("day_type")), format_func=DAY_LABELS.get)
         route_type = left.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
         warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
-        st.markdown("##### Mutatósáv és tervezett túrahossz")
-        c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5)
-        bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
-        durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
-        m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get)
         source_headers = ["(nincs kiválasztva)"] + _excel_source_headers(client)
         stored_source = _text((row or {}).get("excel_source_field"))
         default_source = stored_source or ("Delay Bonus" if key == "delay" else "Compliance Bonus")
         if default_source not in source_headers:
             source_headers.append(default_source)
-        excel_source_field = st.selectbox(
+        excel_source_field = right.selectbox(
             "Excel forrásmező",
             source_headers,
             index=_index(source_headers, default_source),
-            help="Az Excelben talált fejléc. Excel mód esetén ebből a mezőből olvassuk a bónusz alapértékét.",
+            help="A feltöltött JITT Excelből beolvasott fejléc. Excel mód esetén ebből olvassuk a bónusz alapértékét.",
         )
+        if len(source_headers) == 2 and source_headers[1] == default_source:
+            st.info("A JITT Excel fejléc-lista még nem érhető el az adatbázisból. Ellenőrizd, hogy van-e betöltött settlement.jit_row adat.")
+        st.markdown("##### Mutatósáv és tervezett túrahossz")
+        c1,c2,c3,c4 = st.columns(4); threshold_min = c1.number_input("Mutató minimum (%)", value=_number((row or {}).get("threshold_min")), step=0.01); threshold_max = c2.number_input("Mutató maximum (%)", value=_number((row or {}).get("threshold_max")), step=0.01); duration_min = c3.number_input("Túrahossz minimum", value=_number((row or {}).get("duration_min_hours")), min_value=0.0, step=0.5); duration_max = c4.number_input("Túrahossz maximum", value=_number((row or {}).get("duration_max_hours")), min_value=0.0, step=0.5)
+        bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
+        durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
+        m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, key)
         saved = st.form_submit_button("Módosítás mentése" if row else f"{title} mentése", type="primary")
     if saved:
@@ -299,15 +308,87 @@ def _show_periodic(client: Any) -> None:
     _delete_control(client, PERIODIC_FEE_TABLE, row, "periodic")
 
 
+def _show_reserve_insurance(client: Any) -> None:
+    st.caption("Itt verziózottan állítható a biztosítás díja, az alap biztosítási végösszeg és a levonás százaléka.")
+    data = read_items(client, RESERVE_INSURANCE_TABLE)
+    if not data.empty:
+        view = data.copy()
+        view["Biztosítás díja"] = view["insurance_fee_huf"].map(_money)
+        view["Alap biztosítás"] = view["base_insurance_total_huf"].map(_money)
+        view["Levonás"] = view["deduction_percent"].map(lambda value: f"{_number(value):g}%")
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["Biztosítás díja", "Alap biztosítás", "Levonás", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "reserve_insurance", "valid_from")
+    with st.form(f"reserve_insurance_form_{_text((row or {}).get('id')) or 'new'}"):
+        left, right, third = st.columns(3)
+        insurance_fee = left.number_input("Biztosítás díja (Ft)", min_value=0, value=_int((row or {}).get("insurance_fee_huf")), step=100)
+        base_total = right.number_input("Alap biztosítási végösszeg (Ft)", min_value=0, value=_int((row or {}).get("base_insurance_total_huf")), step=100)
+        deduction = third.number_input("Levonás (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("deduction_percent")), step=0.1)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "reserve_insurance")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Biztosítási szabály mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, RESERVE_INSURANCE_TABLE, validate_reserve_insurance_rule({"insurance_fee_huf": insurance_fee, "base_insurance_total_huf": base_total, "deduction_percent": deduction, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("A Céltartalék / Biztosítás szabály mentve.")
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, RESERVE_INSURANCE_TABLE, row, "reserve_insurance")
+
+
+def _show_loyalty_bonus(client: Any) -> None:
+    st.caption("A lojalitási bónusz kezdete és összege időszakosan, verziókövetve kezelhető.")
+    data = read_items(client, LOYALTY_BONUS_TABLE)
+    if not data.empty:
+        view = data.copy(); view["Összeg"] = view["bonus_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["loyalty_start_date", "Összeg", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "loyalty", "loyalty_start_date")
+    with st.form(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}"):
+        left, right = st.columns(2)
+        loyalty_start = left.date_input("Lojalitási bónusz kezdete", value=_date((row or {}).get("loyalty_start_date")))
+        amount = right.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "loyalty")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Lojalitási bónusz mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, LOYALTY_BONUS_TABLE, validate_loyalty_bonus_rule({"loyalty_start_date": loyalty_start, "bonus_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("A lojalitási bónusz mentve.")
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, LOYALTY_BONUS_TABLE, row, "loyalty")
+
+
+def _show_life_insurance(client: Any) -> None:
+    st.caption("Életbiztosítási összeg verziózott érvényességi idővel.")
+    data = read_items(client, LIFE_INSURANCE_TABLE)
+    if not data.empty:
+        view = data.copy(); view["Életbiztosítás összege"] = view["life_insurance_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["Életbiztosítás összege", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "life_insurance", "valid_from")
+    with st.form(f"life_insurance_form_{_text((row or {}).get('id')) or 'new'}"):
+        amount = st.number_input("Életbiztosítás összege (Ft)", min_value=0, value=_int((row or {}).get("life_insurance_amount_huf")), step=100)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "life_insurance")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Életbiztosítás mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, LIFE_INSURANCE_TABLE, validate_life_insurance_rule({"life_insurance_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("Az életbiztosítási szabály mentve.")
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, LIFE_INSURANCE_TABLE, row, "life_insurance")
+
+
 def render_parameter_catalog(client: Any) -> None:
     st.subheader("Paraméterértékek")
     st.caption("Minden szabály külön menüpontban kezelhető. A dátum nélküli zárás folyamatos érvényességet jelent.")
     try:
-        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak"])
+        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "Életbiztosítás"])
         with tabs[0]: _show_days(client)
         with tabs[1]: _show_base_rates(client)
         with tabs[2]: _show_performance(client, DELAY_TABLE, "Delay bónusz", "delay")
         with tabs[3]: _show_performance(client, COMPLIANCE_TABLE, "Compliance bónusz", "compliance")
         with tabs[4]: _show_periodic(client)
+        with tabs[5]: _show_reserve_insurance(client)
+        with tabs[6]: _show_loyalty_bonus(client)
+        with tabs[7]: _show_life_insurance(client)
     except Exception as exc:
         st.error("A settlement paramétertáblák még nem érhetők el. Futtasd a `sql/settlement_parameterized_base_rate.sql` fájlt a Supabase SQL Editorban. Részlet: " + str(exc))

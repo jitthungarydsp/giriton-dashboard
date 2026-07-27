@@ -7,8 +7,11 @@ from resources.settlement_parameters import (
     parameter_status,
     validate_base_rate,
     validate_day_definition,
+    validate_life_insurance_rule,
+    validate_loyalty_bonus_rule,
     validate_performance_rule,
     validate_periodic_fee,
+    validate_reserve_insurance_rule,
 )
 
 
@@ -85,6 +88,15 @@ class SettlementParameterValidationTests(unittest.TestCase):
     def test_end_date_is_inclusive(self) -> None:
         self.assertEqual(parameter_status("2026-06-07", "2026-06-09", True, date(2026, 6, 9)), "Aktív")
         self.assertEqual(parameter_status("2026-06-07", "2026-06-09", True, date(2026, 6, 10)), "Lejárt")
+
+    def test_insurance_and_loyalty_rules_are_versioned(self) -> None:
+        common = {"valid_from": date(2026, 6, 1), "valid_to": None}
+        reserve = validate_reserve_insurance_rule({"insurance_fee_huf": 1200, "base_insurance_total_huf": 10000, "deduction_percent": 12.5, **common})
+        loyalty = validate_loyalty_bonus_rule({"loyalty_start_date": date(2026, 1, 1), "bonus_amount_huf": 5000, **common})
+        life = validate_life_insurance_rule({"life_insurance_amount_huf": 3500, **common})
+        self.assertEqual(reserve["deduction_percent"], 12.5)
+        self.assertEqual(loyalty["loyalty_start_date"], "2026-01-01")
+        self.assertEqual(life["life_insurance_amount_huf"], 3500)
 
 
 if __name__ == "__main__":
