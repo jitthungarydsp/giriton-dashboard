@@ -1,5 +1,7 @@
 import html
+import re
 import traceback
+import unicodedata
 from datetime import date
 from streamlit_autorefresh import st_autorefresh
 
@@ -361,6 +363,19 @@ def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(df[column], errors="coerce").fillna(0.0)
 
 
+def _courier_match_key(value: object) -> str:
+    """Stable match key for DB and Excel courier names.
+
+    Names can differ only by accents, whitespace, word order, or a copied
+    numeric identifier. These differences must not hide a DB-calculated row.
+    """
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    tokens = re.findall(r"[a-z0-9]+", text)
+    tokens = [token for token in tokens if not (token.isdigit() and 3 <= len(token) <= 6)]
+    return " ".join(sorted(tokens))
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_jit_session_id() -> str | None:
     """Use existing DB data even after an app refresh; no Excel re-upload needed."""
@@ -623,9 +638,9 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         return data
 
     result = data.copy()
-    result["_courier_lookup"] = result["Futár"].fillna("").astype(str).str.strip().str.casefold()
+    result["_courier_lookup"] = result["Futár"].map(_courier_match_key)
     calculated = calculated.copy()
-    calculated["_courier_lookup"] = calculated["Futár"].astype(str).str.strip().str.casefold()
+    calculated["_courier_lookup"] = calculated["Futár"].map(_courier_match_key)
     calculated = (
         calculated.groupby("_courier_lookup", as_index=False)[
             [
