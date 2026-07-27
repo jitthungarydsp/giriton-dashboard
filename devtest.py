@@ -1180,9 +1180,12 @@ def show_courier_dialog() -> None:
     if selected_menu == "Céltartalék":
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
         reserve_row = reserve_status.get("row") or {}
-        reserve_value = next((value for column, value in reserve_row.items() if re.sub(r"[^a-z0-9]", "", str(column).casefold()) == "ctzft"), 0)
+        reserve_value = next(
+            (value for column, value in reserve_row.items() if "ctzft" in re.sub(r"[^a-z0-9]", "", str(column).casefold())),
+            None,
+        )
         try:
-            reserve_amount = float(str(reserve_value or 0).replace(" ", "").replace(",", "."))
+            reserve_amount = float(str(reserve_value if reserve_value is not None else 0).replace("−", "-").replace(" ", "").replace(",", "."))
         except ValueError:
             reserve_amount = 0.0
         st.markdown("#### Céltartalék és biztosítás")
@@ -1195,6 +1198,10 @@ def show_courier_dialog() -> None:
         with reserve2:
             st.metric("Aktuális céltartalék", format_huf(reserve_amount))
             st.caption("Forrás: courier_target_reserve.CT_Z_FT")
+            if reserve_row and reserve_value is None:
+                st.warning("A Courier ID-hoz tartozó sor megvan, de nem található benne CT_Z_FT mező.")
+            elif not reserve_row:
+                st.warning(f"A {courier_id} Courier ID-hoz nem található courier_target_reserve sor.")
 
     if selected_menu == "Dokumentumok":
         st.markdown("#### Dokumentumok")
