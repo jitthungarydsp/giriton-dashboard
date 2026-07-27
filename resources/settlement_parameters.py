@@ -143,6 +143,7 @@ def validate_performance_rule(payload: dict[str, Any]) -> dict[str, Any]:
         "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
         "calculation_unit": _choice(payload.get("calculation_unit"), CALCULATION_UNITS, "elszámolási egység"),
         "calculation_mode": _choice(payload.get("calculation_mode"), CALCULATION_MODES, "számítási mód"),
+        "excel_source_field": _optional_text(payload.get("excel_source_field")),
         **_common(payload),
     }
 

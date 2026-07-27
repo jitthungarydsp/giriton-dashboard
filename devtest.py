@@ -376,6 +376,20 @@ def _courier_match_key(value: object) -> str:
     return " ".join(sorted(tokens))
 
 
+def _resolve_courier_lookup_key(courier_key: str, available_keys: set[str]) -> str:
+    """Resolve one unambiguous shortened or extended courier name."""
+    if courier_key in available_keys:
+        return courier_key
+    tokens = set(courier_key.split())
+    if not tokens:
+        return courier_key
+    candidates = [
+        key for key in available_keys
+        if tokens <= set(key.split()) or set(key.split()) <= tokens
+    ]
+    return candidates[0] if len(candidates) == 1 else courier_key
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_jit_session_id() -> str | None:
     """Use existing DB data even after an app refresh; no Excel re-upload needed."""
@@ -655,11 +669,15 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     tip_by_courier = calculated.set_index("_courier_lookup")["Borravaló"]
     matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
-    result["Nettó bevétel"] = result["_courier_lookup"].map(amount_by_courier).fillna(0.0)
-    result["Vállalkozói alapdíj"] = result["_courier_lookup"].map(company_amount_by_courier).fillna(0.0)
-    result["Borravaló"] = result["_courier_lookup"].map(tip_by_courier).fillna(0.0)
-    result["Számolt túrák"] = result["_courier_lookup"].map(matched_routes).fillna(0).astype(int)
-    result["Nem számolt túrák"] = result["_courier_lookup"].map(unmatched_routes).fillna(0).astype(int)
+    calculated_keys = set(amount_by_courier.index)
+    resolved_lookup = result["_courier_lookup"].map(
+        lambda key: _resolve_courier_lookup_key(key, calculated_keys)
+    )
+    result["Nettó bevétel"] = resolved_lookup.map(amount_by_courier).fillna(0.0)
+    result["Vállalkozói alapdíj"] = resolved_lookup.map(company_amount_by_courier).fillna(0.0)
+    result["Borravaló"] = resolved_lookup.map(tip_by_courier).fillna(0.0)
+    result["Számolt túrák"] = resolved_lookup.map(matched_routes).fillna(0).astype(int)
+    result["Nem számolt túrák"] = resolved_lookup.map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
 
 

@@ -76,6 +76,7 @@ create table if not exists settlement.cfg_jitt_delay_bonus_rules (
     courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
     calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
     calculation_mode text not null default 'excel' check (calculation_mode in ('excel', 'api', 'custom')),
+    excel_source_field text,
     valid_from date not null,
     valid_to date,
     priority integer not null default 100,
@@ -95,6 +96,11 @@ create table if not exists settlement.cfg_jitt_delay_bonus_rules (
 create table if not exists settlement.cfg_jitt_compliance_bonus_rules (
     like settlement.cfg_jitt_delay_bonus_rules including all
 );
+
+alter table settlement.cfg_jitt_delay_bonus_rules
+    add column if not exists excel_source_field text;
+alter table settlement.cfg_jitt_compliance_bonus_rules
+    add column if not exists excel_source_field text;
 
 create table if not exists settlement.cfg_jitt_periodic_fees (
     id uuid primary key default gen_random_uuid(),

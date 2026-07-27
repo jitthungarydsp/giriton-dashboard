@@ -96,6 +96,29 @@ def _money(value: Any) -> str:
     return f"{_int(value):,} Ft".replace(",", " ")
 
 
+def _excel_source_headers(client: Any) -> list[str]:
+    """Read the real JITT Excel headers from already imported rows."""
+    try:
+        rows = (
+            client.schema("settlement")
+            .table("jit_row")
+            .select("normalized_data")
+            .order("created_at", desc=True)
+            .limit(250)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return []
+    headers: set[str] = set()
+    for row in rows:
+        normalized_data = row.get("normalized_data") or {}
+        if isinstance(normalized_data, dict):
+            headers.update(str(header).strip() for header in normalized_data if str(header).strip())
+    return sorted(headers, key=str.casefold)
+
+
 def _range(minimum: Any, maximum: Any, suffix: str = "") -> str:
     minimum, maximum = _clean(minimum), _clean(maximum)
     if minimum is None and maximum is None:
@@ -226,11 +249,22 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
         bounds = st.columns(2); has_threshold_min = bounds[0].checkbox("Van alsó mutatóhatár", value=_clean((row or {}).get("threshold_min")) is not None); has_threshold_max = bounds[1].checkbox("Van felső mutatóhatár", value=_clean((row or {}).get("threshold_max")) is not None)
         durations = st.columns(2); has_duration_min = durations[0].checkbox("Van minimum túrahossz", value=_clean((row or {}).get("duration_min_hours")) is not None); has_duration_max = durations[1].checkbox("Van maximum túrahossz", value=_clean((row or {}).get("duration_max_hours")) is not None)
         m1,m2,m3,m4 = st.columns(4); company = m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier = m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit = m3.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get); modes = list(CALCULATION_MODE_LABELS); calculation_mode = m4.selectbox("Számítás módja", modes, index=_index(modes, (row or {}).get("calculation_mode") or "excel"), format_func=CALCULATION_MODE_LABELS.get)
+        source_headers = ["(nincs kiválasztva)"] + _excel_source_headers(client)
+        stored_source = _text((row or {}).get("excel_source_field"))
+        default_source = stored_source or ("Delay Bonus" if key == "delay" else "Compliance Bonus")
+        if default_source not in source_headers:
+            source_headers.append(default_source)
+        excel_source_field = st.selectbox(
+            "Excel forrásmező",
+            source_headers,
+            index=_index(source_headers, default_source),
+            help="Az Excelben talált fejléc. Excel mód esetén ebből a mezőből olvassuk a bónusz alapértékét.",
+        )
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, key)
         saved = st.form_submit_button("Módosítás mentése" if row else f"{title} mentése", type="primary")
     if saved:
         try:
-            save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "calculation_mode": calculation_mode, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, table, validate_performance_rule({"level_code": level, "day_type": day_type, "route_type": route_type, "warehouse_code": warehouse, "threshold_min": threshold_min if has_threshold_min else None, "threshold_max": threshold_max if has_threshold_max else None, "duration_min": duration_min if has_duration_min else None, "duration_max": duration_max if has_duration_max else None, "company_amount_huf": company, "courier_amount_huf": courier, "calculation_unit": unit, "calculation_mode": calculation_mode, "excel_source_field": None if excel_source_field == "(nincs kiválasztva)" else excel_source_field, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             _mark_parameters_changed(client)
             st.success(f"{title} mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")

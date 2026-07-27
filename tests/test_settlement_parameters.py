@@ -54,6 +54,7 @@ class SettlementParameterValidationTests(unittest.TestCase):
                 "courier_amount_huf": 1333,
                 "calculation_unit": "per_route",
                 "calculation_mode": "api",
+                "excel_source_field": "Delay Bonus",
                 "valid_from": date(2026, 6, 1),
                 "valid_to": None,
             }
@@ -61,6 +62,7 @@ class SettlementParameterValidationTests(unittest.TestCase):
         self.assertEqual(row["threshold_max"], 1.5)
         self.assertEqual(row["duration_max_hours"], 2.0)
         self.assertEqual(row["calculation_mode"], "api")
+        self.assertEqual(row["excel_source_field"], "Delay Bonus")
 
     def test_periodic_fee_supports_twelve_order_route_condition(self) -> None:
         row = validate_periodic_fee(
