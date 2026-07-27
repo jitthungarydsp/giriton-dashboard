@@ -488,14 +488,24 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
         return {"insurance_active": False, "row": {}}
     def id_key(value: object) -> str:
         text = str(value or "").strip().casefold()
-        return text[:-2] if text.endswith(".0") else text
+        if not text:
+            return ""
+        try:
+            numeric = float(text.replace(" ", "").replace(",", "."))
+            return str(int(numeric)) if numeric.is_integer() else str(numeric)
+        except ValueError:
+            return text
+
+    def normalized_column_name(value: object) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
 
     target_id = id_key(courier_id)
     for reserve_row in rows:
-        id_values = [reserve_row.get(column) for column in ("courier_id", "courier_number", "usernumber", "USERNUMBER", "Courier ID", "COURIER_ID")]
+        id_columns = {"courierid", "couriernumber", "usernumber", "userid", "driverid"}
+        id_values = [value for column, value in reserve_row.items() if normalized_column_name(column) in id_columns]
         matches_id = target_id and any(id_key(value) == target_id for value in id_values if value is not None)
         if matches_id:
-            active_value = reserve_row.get("insurance_active")
+            active_value = next((value for column, value in reserve_row.items() if normalized_column_name(column) == "insuranceactive"), None)
             active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
             return {"insurance_active": active, "row": reserve_row}
     return {"insurance_active": False, "row": {}}
@@ -1170,7 +1180,11 @@ def show_courier_dialog() -> None:
     if selected_menu == "Céltartalék":
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
         reserve_row = reserve_status.get("row") or {}
-        reserve_amount = float(reserve_row.get("CT_Z_FT") or reserve_row.get("ct_z_ft") or 0)
+        reserve_value = next((value for column, value in reserve_row.items() if re.sub(r"[^a-z0-9]", "", str(column).casefold()) == "ctzft"), 0)
+        try:
+            reserve_amount = float(str(reserve_value or 0).replace(" ", "").replace(",", "."))
+        except ValueError:
+            reserve_amount = 0.0
         st.markdown("#### Céltartalék és biztosítás")
 
         reserve1, reserve2 = st.columns(2)
