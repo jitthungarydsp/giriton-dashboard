@@ -794,12 +794,45 @@ def load_courier_adjustments(session_id: str | None, courier_id: str) -> pd.Data
 
 
 def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     get_db().schema("settlement").table("courier_settlement_adjustment").insert({
         "session_id": session_id, "courier_id": courier_id, "adjustment_type": adjustment_type,
         "amount_huf": float(amount_huf), "note": note.strip() or None,
-        "created_by": str(st.session_state.get("user", {}).get("username") or "unknown"),
+        "created_by": actor,
+    }).execute()
+    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
+        "session_id": session_id, "courier_id": courier_id, "event_type": "created",
+        "adjustment_type": adjustment_type, "amount_huf": float(amount_huf),
+        "note": note.strip() or None, "performed_by": actor,
     }).execute()
     load_courier_adjustments.clear()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_adjustment_log(session_id: str | None, courier_id: str) -> pd.DataFrame:
+    if not session_id or not courier_id:
+        return pd.DataFrame()
+    try:
+        rows = (get_db().schema("settlement").table("courier_settlement_adjustment_event")
+                .select("event_type,adjustment_type,amount_huf,note,performed_by,created_at")
+                .eq("session_id", session_id).eq("courier_id", courier_id)
+                .order("created_at", desc=True).execute().data or [])
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def reset_courier_adjustments(session_id: str, courier_id: str) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    get_db().schema("settlement").table("courier_settlement_adjustment").update({
+        "is_active": False, "deleted_at": pd.Timestamp.utcnow().isoformat(), "deleted_by": actor,
+    }).eq("session_id", session_id).eq("courier_id", courier_id).eq("is_active", True).is_("deleted_at", "null").execute()
+    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
+        "session_id": session_id, "courier_id": courier_id, "event_type": "reset",
+        "note": "Kézi havi korrekciók visszaállítása", "performed_by": actor,
+    }).execute()
+    load_courier_adjustments.clear()
+    load_courier_adjustment_log.clear()
 
 
 def render_table(df: pd.DataFrame) -> None:
@@ -992,11 +1025,27 @@ def show_courier_dialog() -> None:
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A korrekció nem menthető. Futtasd le a courier adjustment migrációt. Részlet: {exc}")
+            reset_col, reset_note_col = st.columns([0.24, 0.76])
+            if reset_col.button("↻ Visszaállítás", key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak. A változás naplózva marad."):
+                try:
+                    reset_courier_adjustments(str(session_id), courier_id)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
+            reset_note_col.caption("A visszaállítás nem végleges törlés: a naplóban megmarad, ki és mikor állította vissza.")
         if not adjustments.empty:
             adjustment_view = adjustments.rename(columns={"adjustment_type": "Típus", "amount_huf": "Összeg", "effective_date": "Dátum", "note": "Megjegyzés"}).copy()
             adjustment_view["Típus"] = adjustment_view["Típus"].map({"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"})
             adjustment_view["Összeg"] = adjustment_view["Összeg"].map(format_huf)
             st.dataframe(adjustment_view, use_container_width=True, hide_index=True)
+        adjustment_log = load_courier_adjustment_log(session_id, courier_id)
+        if not adjustment_log.empty:
+            with st.expander("Módosítási napló", expanded=False):
+                log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Módosította", "created_at": "Időpont"}).copy()
+                log_view["Művelet"] = log_view["Művelet"].map({"created": "Korrekció rögzítve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
+                log_view["Típus"] = log_view["Típus"].map({"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"}).fillna("-")
+                log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
+                st.dataframe(log_view, use_container_width=True, hide_index=True)
 
         st.markdown("#### Dokumentumműveletek")
         action1, action2 = st.columns(2)
