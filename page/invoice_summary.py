@@ -160,6 +160,13 @@ def tig_cash_net_deduction(cash_amount_huf, courier_tax_number):
     return cash
 
 
+def tig_service_amount_without_cash_and_tip(payable_total_huf, cash_amount_huf, tip_amount_huf):
+    payable = max(int(round(float(payable_total_huf or 0))), 0)
+    cash = max(int(round(float(cash_amount_huf or 0))), 0)
+    tip = max(int(round(float(tip_amount_huf or 0))), 0)
+    return max(payable + cash - tip, 0)
+
+
 def build_tig_pdf_bytes(
     *,
     courier_name: str,
@@ -174,8 +181,8 @@ def build_tig_pdf_bytes(
     """
     Teljesítési igazolás PDF előállítása.
 
-    A transfer_amount_huf a teljes fizetendő összeg.
-    A KP és a borravaló ebből kerül külön sorra.
+    A transfer_amount_huf a KP nélküli, borravaló nélküli szállítási díj.
+    A KP és a borravaló külön sorra kerül.
     A -2- ÁFA-kódú adószám 27%-os ÁFA-kezelést jelent.
     """
     if not REPORTLAB_AVAILABLE:
@@ -206,13 +213,7 @@ def build_tig_pdf_bytes(
         else (cash, 0, cash)
     )
 
-    if tip > total:
-        raise ValueError(
-            "A borravaló összege nem lehet több "
-            "a teljes fizetendő összegnél."
-        )
-
-    service = total - tip
+    service = total
 
     regular_font, bold_font = _register_tig_font()
     buffer = BytesIO()
@@ -402,7 +403,7 @@ def build_tig_pdf_bytes(
         service_vat = int(round(service * 0.27))
         final_total = service + service_vat + tip
     else:
-        final_total = total
+        final_total = service + tip
 
     total_row = len(rows)
     rows.append(
@@ -1046,7 +1047,11 @@ def _render_task_tig_generator(task_row, document_month):
     default_cash = max(int(round(_row_amount(task_row, "_cash_amount"))), 0)
     default_tip = max(int(round(_row_amount(task_row, "_tip_amount"))), 0)
     default_tax_number = first_value("tax_number", "tax_id", "vat_number", "adoszam")
-    default_total = max(int(round(_row_amount(task_row, "_tig_amount"))), 0)
+    default_total = tig_service_amount_without_cash_and_tip(
+        _row_amount(task_row, "_tig_amount"),
+        default_cash,
+        default_tip,
+    )
 
     with st.expander(
         "TIG generálása",
@@ -1104,11 +1109,6 @@ def _render_task_tig_generator(task_row, document_month):
         if generate:
             if not seller_name.strip() or not tax_number.strip() or not address.strip():
                 st.warning("A szolgáltató neve, adószáma és címe kötelező.")
-            elif tip_amount > total_amount:
-                st.warning(
-                    "A borravaló összege nem lehet több "
-                    "a teljes fizetendő összegnél."
-                )
             else:
                 try:
                     st.session_state[state_key] = build_tig_pdf_bytes(
@@ -2566,7 +2566,21 @@ def show_invoice_summary_page():
                                     "atm_effect_huf",
                                 )
                             )
-                            transfer_amount = int(round(float(tig_row.get("payable_total_huf", 0) or 0)))
+                            tip_amount = max(
+                                _row_amount(
+                                    tig_row,
+                                    "tip_huf",
+                                    "tips_huf",
+                                    "gratuity_huf",
+                                    "borravalo_huf",
+                                ),
+                                0,
+                            )
+                            transfer_amount = tig_service_amount_without_cash_and_tip(
+                                tig_row.get("payable_total_huf", 0),
+                                cash_amount,
+                                tip_amount,
+                            )
                             tig_pdf_bytes = build_tig_pdf_bytes(
                                 courier_name=seller_name,
                                 courier_address=seller_address,
@@ -2575,16 +2589,7 @@ def show_invoice_summary_page():
                                 document_month=document_month,
                                 transfer_amount_huf=transfer_amount,
                                 cash_amount_huf=cash_amount,
-                                tip_amount_huf=max(
-                                    _row_amount(
-                                        tig_row,
-                                        "tip_huf",
-                                        "tips_huf",
-                                        "gratuity_huf",
-                                        "borravalo_huf",
-                                    ),
-                                    0,
-                                ),
+                                tip_amount_huf=tip_amount,
                             )
                             tig_file_name = f"jitt_tig_{tig_courier_id}_{slugify_filename(tig_courier_name)}_{document_month.strftime('%Y-%m')}.pdf"
                             upload_peopleforce_document_bytes(
@@ -2742,6 +2747,11 @@ def show_invoice_summary_page():
                     "borravalo_huf",
                 ))),
                 0,
+            )
+            default_transfer_amount = tig_service_amount_without_cash_and_tip(
+                default_transfer_amount,
+                default_cash_amount,
+                default_tip_amount,
             )
 
             
