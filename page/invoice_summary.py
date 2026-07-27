@@ -160,13 +160,6 @@ def tig_cash_net_deduction(cash_amount_huf, courier_tax_number):
     return cash
 
 
-def tig_total_with_net_cash_deduction(payable_total_huf, cash_amount_huf, courier_tax_number):
-    payable = max(int(round(float(payable_total_huf or 0))), 0)
-    cash = max(int(round(float(cash_amount_huf or 0))), 0)
-    cash_net = tig_cash_net_deduction(cash, courier_tax_number)
-    return payable + cash - cash_net
-
-
 def build_tig_pdf_bytes(
     *,
     courier_name: str,
@@ -1053,11 +1046,7 @@ def _render_task_tig_generator(task_row, document_month):
     default_cash = max(int(round(_row_amount(task_row, "_cash_amount"))), 0)
     default_tip = max(int(round(_row_amount(task_row, "_tip_amount"))), 0)
     default_tax_number = first_value("tax_number", "tax_id", "vat_number", "adoszam")
-    default_total = tig_total_with_net_cash_deduction(
-        _row_amount(task_row, "_tig_amount"),
-        default_cash,
-        default_tax_number,
-    )
+    default_total = max(int(round(_row_amount(task_row, "_tig_amount"))), 0)
 
     with st.expander(
         "TIG generálása",
@@ -2577,11 +2566,7 @@ def show_invoice_summary_page():
                                     "atm_effect_huf",
                                 )
                             )
-                            transfer_amount = tig_total_with_net_cash_deduction(
-                                tig_row.get("payable_total_huf", 0),
-                                cash_amount,
-                                tax_number,
-                            )
+                            transfer_amount = int(round(float(tig_row.get("payable_total_huf", 0) or 0)))
                             tig_pdf_bytes = build_tig_pdf_bytes(
                                 courier_name=seller_name,
                                 courier_address=seller_address,
@@ -2747,11 +2732,6 @@ def show_invoice_summary_page():
                     "atm_effect_huf",
                 )))),
                 0,
-            )
-            default_transfer_amount = tig_total_with_net_cash_deduction(
-                default_transfer_amount,
-                default_cash_amount,
-                default_tax_number,
             )
             default_tip_amount = max(
                 int(round(_row_amount(
