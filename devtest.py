@@ -962,21 +962,34 @@ def get_demo_complaints() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_route_breakdown(courier_name: str, session_id: str | None) -> pd.DataFrame:
-    """Read route counts and DB-calculated amounts directly from settlement.jit_row."""
-    columns = ["Túratípus", "Naptípus", "Túrák", "Alapdíj", "Borravaló", "Bónuszok"]
-    if not session_id:
+def load_courier_route_detail(courier_id: str, courier_name: str, session_id: str | None) -> pd.DataFrame:
+    """Return auditable, unique Route ID rows for one courier.
+
+    The JITT upload does not always contain a Courier ID.  In that case only a
+    *full normalized name match* is accepted; partial token matching is never
+    used for a financial calculation.
+    """
+    columns = [
+        "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
+        "Rendelések", "Alapdíj", "Borravaló", "Bónuszok", "DB státusz",
+    ]
+    if not session_id or not courier_id:
         return pd.DataFrame(columns=columns)
     try:
         rows = (
             get_db().schema("settlement").table("jit_row")
-            .select("normalized_data,route_unique_id,calculated_day_type,courier_base_rate_huf,courier_tip_huf,is_route_primary")
+            .select(
+                "normalized_data,route_unique_id,route_date,weekday_iso,calculated_day_type,"
+                "courier_base_rate_huf,courier_tip_huf,is_route_primary,base_rate_status"
+            )
             .eq("session_id", session_id).execute().data or []
         )
     except BaseException:
         return pd.DataFrame(columns=columns)
     parsed: list[dict[str, object]] = []
-    target_key = _courier_match_key(courier_name)
+    target_id = _courier_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
     for source in rows:
         normalized = source.get("normalized_data") or {}
         if isinstance(normalized, str):
@@ -986,28 +999,56 @@ def load_courier_route_breakdown(courier_name: str, session_id: str | None) -> p
                 normalized = {}
         if not isinstance(normalized, dict):
             continue
-        source_key = _courier_match_key(normalized.get("Driver") or normalized.get("driver_name"))
-        source_tokens, target_tokens = set(source_key.split()), set(target_key.split())
-        if not source_key or not (source_key == target_key or source_tokens <= target_tokens or target_tokens <= source_tokens):
+        normalized_fields = {_normalized_field_key(key): value for key, value in normalized.items()}
+        source_id = next(
+            (value for key, value in normalized_fields.items()
+             if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
+            None,
+        )
+        source_name = next(
+            (value for key, value in normalized_fields.items()
+             if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev"}),
+            None,
+        )
+        has_source_id = source_id is not None and _courier_id_key(source_id) != ""
+        is_matching_courier = (
+            _courier_id_key(source_id) == target_id
+            if has_source_id
+            else _courier_match_key(source_name) == target_name
+        )
+        if not is_matching_courier:
             continue
-        if source.get("is_route_primary") is False:
+        if source.get("is_route_primary") is not True:
             continue
         route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
         route_type = {"NORMAL": "Normál", "CITY": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_value, route_value.title())
         day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(str(source.get("calculated_day_type") or ""), "Nincs besorolás")
         bonus_columns = ["Delay Bonus", "Compliance Bonus", "Fuel Bonus", "Car & Fridge Bonus", "Fill Rate Bonus", "Branding"]
-        bonus = sum(float(normalized.get(column) or 0) for column in bonus_columns)
+        bonus = sum(parse_huf_value(normalized.get(column)) for column in bonus_columns)
         parsed.append({
+            "Route ID": str(source.get("route_unique_id") or "–"),
+            "Excel dátum": str(source.get("route_date") or "–"),
+            "Hét napja": weekday_names.get(source.get("weekday_iso"), "–"),
             "Túratípus": route_type,
             "Naptípus": day_type,
-            "Túrák": 1,
-            "Alapdíj": float(source.get("courier_base_rate_huf") or 0),
-            "Borravaló": float(source.get("courier_tip_huf") or normalized.get("Tip") or 0),
+            "Rendelések": parse_huf_value(normalized.get("Orders") or normalized.get("orders")),
+            "Alapdíj": parse_huf_value(source.get("courier_base_rate_huf")),
+            "Borravaló": parse_huf_value(source.get("courier_tip_huf")),
             "Bónuszok": bonus,
+            "DB státusz": str(source.get("base_rate_status") or "ismeretlen"),
         })
     if not parsed:
         return pd.DataFrame(columns=columns)
-    detail = pd.DataFrame(parsed)
+    return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+
+
+def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate only the auditable Route ID rows displayed to the user."""
+    columns = ["Túratípus", "Naptípus", "Túrák", "Alapdíj", "Borravaló", "Bónuszok"]
+    if route_detail.empty:
+        return pd.DataFrame(columns=columns)
+    detail = route_detail.copy()
+    detail["Túrák"] = 1
     return detail.groupby(["Túratípus", "Naptípus"], as_index=False)[columns[2:]].sum()
 
 
@@ -1251,7 +1292,8 @@ def show_courier_dialog() -> None:
     if selected_menu == "Aktuális hónap":
         session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         period_start, period_end = load_settlement_month(session_id)
-        route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
+        route_detail = load_courier_route_detail(courier_id, str(row["Futár"]), session_id)
+        route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
         base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
@@ -1320,9 +1362,13 @@ def show_courier_dialog() -> None:
         st.markdown(f"#### {component_titles[selected_component]}")
         if selected_component in {"base", "tip"}:
             source_column = "Alapdíj" if selected_component == "base" else "Borravaló"
-            detail = route_breakdown[["Túratípus", "Naptípus", "Túrák", source_column]].copy() if not route_breakdown.empty else pd.DataFrame()
+            detail_columns = [
+                "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
+                "Rendelések", source_column, "DB státusz",
+            ]
+            detail = route_detail[detail_columns].copy() if not route_detail.empty else pd.DataFrame()
             if detail.empty:
-                st.info("Ehhez az összeghez nincs route-szintű Excel-adat.")
+                st.info("Ehhez az összeghez nincs Courier ID-hoz biztonságosan köthető Route ID-adat.")
             else:
                 detail = detail.rename(columns={source_column: "Összeg"})
                 detail["Összeg"] = detail["Összeg"].map(format_huf)
