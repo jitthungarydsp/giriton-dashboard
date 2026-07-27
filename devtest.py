@@ -20,6 +20,7 @@ from resources.settlement_processor import (
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf
+from resources.courier_master_db import update_courier_master_profile
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 st.set_page_config(
@@ -479,12 +480,12 @@ def load_courier_profile(courier_id: str) -> dict[str, object]:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
-    """Return reserve/insurance membership despite legacy column-name variants."""
+    """Return insurance only from the insurance_active flag of a matching reserve row."""
     try:
         rows = (get_db().schema("public").table("courier_target_reserve")
                 .select("*").limit(10000).execute().data or [])
     except BaseException:
-        return {"is_member": False, "row": {}}
+        return {"insurance_active": False, "row": {}}
     def id_key(value: object) -> str:
         text = str(value or "").strip().casefold()
         return text[:-2] if text.endswith(".0") else text
@@ -494,11 +495,32 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
     for reserve_row in rows:
         id_values = [reserve_row.get(column) for column in ("courier_id", "courier_number", "usernumber", "USERNUMBER")]
         name_values = [reserve_row.get(column) for column in ("courier_name", "driver_name", "username", "USERNAME", "name")]
-        if target_id and any(id_key(value) == target_id for value in id_values if value is not None):
-            return {"is_member": True, "row": reserve_row}
-        if any(_courier_match_key(value) == target_name for value in name_values if value is not None):
-            return {"is_member": True, "row": reserve_row}
-    return {"is_member": False, "row": {}}
+        matches_id = target_id and any(id_key(value) == target_id for value in id_values if value is not None)
+        matches_name = any(_courier_match_key(value) == target_name for value in name_values if value is not None)
+        if matches_id or matches_name:
+            active_value = reserve_row.get("insurance_active")
+            active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
+            return {"insurance_active": active, "row": reserve_row}
+    return {"insurance_active": False, "row": {}}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_profile_change_log(courier_id: str) -> pd.DataFrame:
+    try:
+        rows = (get_db().schema("settlement").table("courier_profile_change_log")
+                .select("changed_fields,changed_by,created_at").eq("courier_id", courier_id)
+                .order("created_at", desc=True).limit(100).execute().data or [])
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def log_profile_change(courier_id: str, changes: dict[str, dict[str, str]]) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    get_db().schema("settlement").table("courier_profile_change_log").insert({
+        "courier_id": courier_id, "changed_fields": changes, "changed_by": actor,
+    }).execute()
+    load_profile_change_log.clear()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -1271,28 +1293,56 @@ def show_courier_dialog() -> None:
     with tab_profile:
         st.markdown("#### Profil")
         st.caption("Forrás: public.courier_master. A biztosítási tagság forrása: public.courier_target_reserve.")
+        edit_key = f"profile_edit_mode_{courier_id}"
+        is_editing = bool(st.session_state.get(edit_key, False))
         profile1, profile2 = st.columns(2)
 
         with profile1:
-            st.text_input("Név", value=str(profile.get("courier_name") or row["Futár"]), disabled=True, key=f"ui_profile_name_{courier_id}")
+            courier_name = st.text_input("Név", value=str(profile.get("courier_name") or row["Futár"]), disabled=not is_editing, key=f"ui_profile_name_{courier_id}")
             st.text_input("Courier ID", value=courier_id, disabled=True, key=f"ui_profile_id_{courier_id}")
-            st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=True, key=f"ui_profile_phone_{courier_id}")
-            st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=True, key=f"ui_profile_email_{courier_id}")
-            st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=True, key=f"ui_profile_warehouse_{courier_id}")
-            st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=True, key=f"ui_profile_billing_email_{courier_id}")
+            phone_number = st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=not is_editing, key=f"ui_profile_phone_{courier_id}")
+            email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"ui_profile_email_{courier_id}")
+            warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=not is_editing, key=f"ui_profile_warehouse_{courier_id}")
+            billing_email = st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=not is_editing, key=f"ui_profile_billing_email_{courier_id}")
 
         with profile2:
             st.text_input("Számítás módja", value=str(row["Számítás módja"]), disabled=True, key=f"ui_profile_calc_{courier_id}")
-            st.text_input("Vállalkozás neve", value=str(profile.get("company_name") or ""), disabled=True, key=f"ui_profile_company_{courier_id}")
-            st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=True, key=f"ui_profile_tax_{courier_id}")
-            st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=True, key=f"ui_profile_bank_{courier_id}")
-            st.text_input("Biztosítás", value="Van" if reserve_status["is_member"] else "Nincs", disabled=True, key=f"ui_profile_insurance_{courier_id}")
+            company_name = st.text_input("Vállalkozás neve", value=str(profile.get("company_name") or ""), disabled=not is_editing, key=f"ui_profile_company_{courier_id}")
+            company_address = st.text_input("Vállalkozás címe", value=str(profile.get("company_address") or ""), disabled=not is_editing, key=f"ui_profile_company_address_{courier_id}")
+            tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"ui_profile_tax_{courier_id}")
+            bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"ui_profile_bank_{courier_id}")
+            st.text_input("Biztosítás", value="Van" if reserve_status["insurance_active"] else "Nincs", disabled=True, key=f"ui_profile_insurance_{courier_id}")
             st.text_input("Profil státusz", value="Aktív" if bool(profile.get("active", True)) else "Inaktív", disabled=True, key=f"ui_profile_status_{courier_id}")
 
-        if st.button("↻ Profiladatok újratöltése", use_container_width=True, key=f"ui_profile_refresh_{courier_id}"):
+        profile_actions = st.columns(3)
+        if not is_editing and profile_actions[0].button("Profil szerkesztése", type="primary", use_container_width=True, key=f"ui_profile_edit_{courier_id}"):
+            st.session_state[edit_key] = True
+            st.rerun()
+        if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"ui_profile_save_{courier_id}"):
+            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number}
+            changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
+            try:
+                if changes:
+                    update_courier_master_profile(courier_id, new_fields)
+                    log_profile_change(courier_id, changes)
+                st.session_state[edit_key] = False
+                load_courier_profile.clear()
+                load_courier_master.clear()
+                st.success("A profil mentve, a változás naplózva.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A profil nem menthető: {exc}")
+        if is_editing and profile_actions[1].button("Mégse", use_container_width=True, key=f"ui_profile_cancel_{courier_id}"):
+            st.session_state[edit_key] = False
+            st.rerun()
+        if profile_actions[2].button("↻ Profiladatok újratöltése", use_container_width=True, key=f"ui_profile_refresh_{courier_id}"):
             load_courier_profile.clear()
             load_target_reserve_status.clear()
             st.rerun()
+        profile_log = load_profile_change_log(courier_id)
+        if not profile_log.empty:
+            with st.expander("Profil módosítási napló", expanded=False):
+                st.dataframe(profile_log.rename(columns={"changed_fields": "Változások", "changed_by": "Módosította", "created_at": "Időpont"}), use_container_width=True, hide_index=True)
 
 
 @st.dialog("Tömeges elszámolás", width="large")
