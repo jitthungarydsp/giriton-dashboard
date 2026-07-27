@@ -959,6 +959,45 @@ def reset_courier_adjustments(session_id: str, courier_id: str, period_start: da
     load_courier_adjustment_log.clear()
 
 
+def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
+    """The Bonus and Malus menus use the same persistent, period-aware rows."""
+    title = "Bónuszok" if adjustment_type == "bonus" else "Máluszok"
+    singular = "Bónusz" if adjustment_type == "bonus" else "Málusz"
+    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+    period_start, period_end = load_settlement_month(session_id)
+    rows = load_courier_adjustments(courier_id, period_start, period_end)
+    rows = rows.loc[rows.get("adjustment_type", pd.Series(index=rows.index, dtype=str)) == adjustment_type].copy()
+    st.markdown(f"#### {title}")
+    left, right = st.columns([1.35, 0.65])
+    with left:
+        if rows.empty:
+            st.info(f"Nincs rögzített {singular.lower()} az aktuális elszámolási hónapra.")
+        else:
+            view = rows.rename(columns={"effective_date": "Kezdete", "valid_to": "Vége", "amount_huf": "Összeg", "note": "Megjegyzés"}).copy()
+            view["Összeg"] = view["Összeg"].map(format_huf)
+            st.dataframe(view[["Kezdete", "Vége", "Összeg", "Megjegyzés"]], use_container_width=True, hide_index=True)
+    with right:
+        if not session_id:
+            st.warning("A mentéshez előbb tölts fel egy JITT Excel-fájlt.")
+            return
+        with st.form(f"{adjustment_type}_form_{courier_id}"):
+            st.text_input("Megnevezés / megjegyzés", key=f"{adjustment_type}_note_{courier_id}")
+            amount = st.number_input("Összeg (Ft)", min_value=0, step=100, key=f"{adjustment_type}_amount_{courier_id}")
+            valid_from = st.date_input("Érvényes ettől", value=period_start, key=f"{adjustment_type}_from_{courier_id}")
+            has_end = st.checkbox("Van záródátum", value=True, key=f"{adjustment_type}_has_end_{courier_id}")
+            valid_to = st.date_input("Érvényes eddig", value=period_end, key=f"{adjustment_type}_to_{courier_id}")
+            saved = st.form_submit_button(f"{singular} mentése", type="primary")
+        if saved:
+            if has_end and valid_to < valid_from:
+                st.error("A záródátum nem lehet korábbi a kezdő dátumnál.")
+            else:
+                try:
+                    save_courier_adjustment(str(session_id), courier_id, adjustment_type, amount, st.session_state[f"{adjustment_type}_note_{courier_id}"], valid_from, valid_to if has_end else None)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A mentés nem sikerült: {exc}")
+
+
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
@@ -1193,58 +1232,10 @@ def show_courier_dialog() -> None:
         )
 
     if selected_menu == "Bónusz":
-        st.markdown("#### Bónuszok")
-        bonus_list, bonus_editor = st.columns([1.35, 0.65])
-
-        with bonus_list:
-            bonus_demo = pd.DataFrame(
-                [
-                    {"Dátum": "2026-07-03", "Megnevezés": "Havi teljesítménybónusz", "Összeg": "38 000 Ft", "Státusz": "Elszámolva"},
-                    {"Dátum": "2026-07-08", "Megnevezés": "Minőségi bónusz", "Összeg": "12 000 Ft", "Státusz": "Tervezet"},
-                ]
-            )
-            st.dataframe(bonus_demo, use_container_width=True, hide_index=True)
-
-        with bonus_editor:
-            st.markdown("##### Új bónusz")
-            st.text_input("Megnevezés", key=f"ui_bonus_name_{courier_id}")
-            st.number_input("Összeg (Ft)", min_value=0, step=500, key=f"ui_bonus_amount_{courier_id}")
-            st.text_area("Megjegyzés", key=f"ui_bonus_note_{courier_id}")
-            st.button(
-                "Bónusz mentése",
-                use_container_width=True,
-                key=f"ui_bonus_save_{courier_id}",
-                help="Csak dizájn, még nem ment adatot.",
-            )
+        render_bonus_malus_manager(courier_id, "bonus")
 
     if selected_menu == "Málusz":
-        st.markdown("#### Máluszok és levonások")
-        malus_list, malus_editor = st.columns([1.35, 0.65])
-
-        with malus_list:
-            malus_demo = pd.DataFrame(
-                [
-                    {"Dátum": "2026-07-04", "Megnevezés": "Késés", "Összeg": "8 000 Ft", "Státusz": "Elszámolva"},
-                    {"Dátum": "2026-07-09", "Megnevezés": "Felszerelés hiány", "Összeg": "15 000 Ft", "Státusz": "Tervezet"},
-                ]
-            )
-            st.dataframe(malus_demo, use_container_width=True, hide_index=True)
-
-        with malus_editor:
-            st.markdown("##### Új málusz")
-            st.selectbox(
-                "Típus",
-                ["Késés", "Károkozás", "Felszerelés", "Adminisztráció", "Egyéb"],
-                key=f"ui_malus_type_{courier_id}",
-            )
-            st.number_input("Összeg (Ft)", min_value=0, step=500, key=f"ui_malus_amount_{courier_id}")
-            st.text_area("Megjegyzés", key=f"ui_malus_note_{courier_id}")
-            st.button(
-                "Málusz mentése",
-                use_container_width=True,
-                key=f"ui_malus_save_{courier_id}",
-                help="Csak dizájn, még nem ment adatot.",
-            )
+        render_bonus_malus_manager(courier_id, "malus")
 
     if selected_menu == "Céltartalék":
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
