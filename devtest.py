@@ -379,6 +379,25 @@ def _courier_match_key(value: object) -> str:
     return " ".join(sorted(tokens))
 
 
+def _courier_id_key(value: object) -> str:
+    """Normalize Courier ID values such as ``7056`` and ``7056.0``."""
+    text = str(value or "").strip().casefold()
+    if not text:
+        return ""
+    try:
+        numeric = float(text.replace(" ", "").replace(",", "."))
+        return str(int(numeric)) if numeric.is_integer() else str(numeric)
+    except ValueError:
+        return text
+
+
+def _normalized_field_key(value: object) -> str:
+    """Normalize Excel/JSON field names, including Hungarian accents."""
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]", "", text)
+
+
 def _resolve_courier_lookup_key(courier_key: str, available_keys: set[str]) -> str:
     """Resolve one unambiguous shortened or extended courier name."""
     if courier_key in available_keys:
@@ -746,6 +765,137 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     return result.drop(columns="_courier_lookup")
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_monthly_adjustment_totals(period_start: date, period_end: date) -> pd.DataFrame:
+    """Manual courier balances are available even when no Excel session exists."""
+    try:
+        rows = (get_db().schema("settlement").table("courier_settlement_adjustment")
+                .select("courier_id,adjustment_type,amount_huf,valid_from,valid_to,effective_date")
+                .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
+    except BaseException:
+        return pd.DataFrame(columns=["courier_id", "adjustment_type", "amount_huf"])
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    from_values = data["valid_from"] if "valid_from" in data else data.get("effective_date")
+    to_values = data["valid_to"] if "valid_to" in data else pd.Series(pd.NaT, index=data.index)
+    valid_from = pd.to_datetime(from_values, errors="coerce").fillna(pd.to_datetime(data.get("effective_date"), errors="coerce"))
+    valid_to = pd.to_datetime(to_values, errors="coerce")
+    mask = (valid_from <= pd.Timestamp(period_end)) & (valid_to.isna() | (valid_to >= pd.Timestamp(period_start)))
+    return data.loc[mask, ["courier_id", "adjustment_type", "amount_huf"]].copy()
+
+
+def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    """Add bonuses and subtract maluses on the main courier balance list."""
+    result = data.copy()
+    adjustments = load_monthly_adjustment_totals(period_start, period_end)
+    if not adjustments.empty:
+        adjustments["courier_id"] = adjustments["courier_id"].map(lambda value: str(value).strip().removesuffix(".0"))
+        adjustments["amount_huf"] = pd.to_numeric(adjustments["amount_huf"], errors="coerce").fillna(0.0)
+        pivot = adjustments.pivot_table(index="courier_id", columns="adjustment_type", values="amount_huf", aggfunc="sum", fill_value=0.0)
+        courier_ids = result["Courier ID"].map(lambda value: str(value).strip().removesuffix(".0"))
+        result["Bónusz"] = _numeric_series(result, "Bónusz") + courier_ids.map(pivot.get("bonus", pd.Series(dtype=float))).fillna(0.0)
+        deductions = (pivot.get("malus", pd.Series(dtype=float)) + pivot.get("atm_deduction", pd.Series(dtype=float)) + pivot.get("other_expense", pd.Series(dtype=float)))
+        result["Levonás"] = _numeric_series(result, "Levonás") + courier_ids.map(deductions).fillna(0.0)
+        result["Bónusz"] += courier_ids.map(pivot.get("customer_rating", pd.Series(dtype=float))).fillna(0.0)
+    result["Kifizetendő"] = _numeric_series(result, "Nettó bevétel") + _numeric_series(result, "Borravaló") + _numeric_series(result, "Bónusz") - _numeric_series(result, "Levonás")
+    return result
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
+    """Read the separate Excel bonus, penalty and ATM sheets for one session."""
+    columns = [
+        "courier_id_key", "courier_name_key", "Importált bónusz",
+        "Importált málusz", "Importált ATM levonás",
+    ]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    definitions = {
+        "bonus_route_row": ("Importált bónusz", ("bonus", "bonusz", "amount", "osszeg", "total"), False),
+        "penalty_row": ("Importált málusz", ("penalty", "malus", "levonas", "amount", "osszeg"), True),
+        "atm_balance_row": ("Importált ATM levonás", ("balance", "egyenleg", "atm", "cash", "amount", "osszeg"), True),
+    }
+    records: list[dict[str, object]] = []
+    for table_name, (output_column, amount_tokens, use_absolute) in definitions.items():
+        try:
+            rows = (get_db().schema("settlement").table(table_name).select("normalized_data")
+                    .eq("session_id", session_id).execute().data or [])
+        except BaseException:
+            continue
+        for row in rows:
+            payload = row.get("normalized_data") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            if not isinstance(payload, dict):
+                continue
+            normalized_payload = {
+                _normalized_field_key(key): value
+                for key, value in payload.items()
+            }
+            courier_id = next(
+                (value for key, value in normalized_payload.items()
+                 if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
+                None,
+            )
+            courier_name = next(
+                (value for key, value in normalized_payload.items()
+                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
+                None,
+            )
+            amount_value = next(
+                (value for key, value in normalized_payload.items()
+                 if any(token in key for token in amount_tokens)),
+                None,
+            )
+            amount = parse_huf_value(amount_value)
+            if (courier_id is None and courier_name is None) or amount == 0:
+                continue
+            records.append({
+                "courier_id_key": _courier_id_key(courier_id),
+                "courier_name_key": _courier_match_key(courier_name),
+                output_column: abs(amount) if use_absolute else amount,
+            })
+    if not records:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(records).fillna(0.0)
+    for column in columns[1:]:
+        if column not in result:
+            result[column] = 0.0
+    return result.groupby(columns[:2], as_index=False, dropna=False)[columns[2:]].sum()
+
+
+def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
+    result = data.copy()
+    components = load_imported_balance_components(session_id)
+    component_columns = ("Importált bónusz", "Importált málusz", "Importált ATM levonás")
+    for column in component_columns:
+        result[column] = 0.0
+    if components.empty:
+        return result
+    component_by_id = (
+        components[components["courier_id_key"] != ""]
+        .groupby("courier_id_key")[list(component_columns)].sum()
+    )
+    component_by_name = (
+        components[components["courier_name_key"] != ""]
+        .groupby("courier_name_key")[list(component_columns)].sum()
+    )
+    result["_courier_id_component_key"] = result["Courier ID"].map(_courier_id_key)
+    result["_courier_name_component_key"] = result["Futár"].map(_courier_match_key)
+    for column in component_columns:
+        empty_values = pd.Series(float("nan"), index=result.index, dtype="float64")
+        by_id = result["_courier_id_component_key"].map(component_by_id[column]) if column in component_by_id else empty_values
+        by_name = result["_courier_name_component_key"].map(component_by_name[column]) if column in component_by_name else empty_values
+        result[column] = by_id.fillna(by_name).fillna(0.0)
+    result["Bónusz"] = _numeric_series(result, "Bónusz") + result["Importált bónusz"]
+    result["Levonás"] = _numeric_series(result, "Levonás") + result["Importált málusz"] + result["Importált ATM levonás"]
+    return result.drop(columns=["_courier_id_component_key", "_courier_name_component_key"])
+
+
 def format_huf(value: float | int) -> str:
     return f"{value:,.0f} Ft".replace(",", " ")
 
@@ -1048,7 +1198,12 @@ def render_table(df: pd.DataFrame) -> None:
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    data = load_courier_master()
+    data = st.session_state.get("current_filtered_data")
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+        dialog_start, dialog_end = load_settlement_month(dialog_session_id)
+        data = apply_imported_balance_components(load_courier_master(), dialog_session_id)
+        data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
     match = data[data["Courier ID"].astype(str) == courier_id]
 
     if match.empty:
@@ -1106,7 +1261,13 @@ def show_courier_dialog() -> None:
         malus_total = float(adjustment_totals.get("malus", 0))
         atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
         other_expense_total = float(adjustment_totals.get("other_expense", 0))
-        payable_total = base_total + tip_total + bonus_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+        imported_bonus_total = float(row.get("Importált bónusz", 0.0))
+        imported_malus_total = float(row.get("Importált málusz", 0.0))
+        imported_atm_total = float(row.get("Importált ATM levonás", 0.0))
+        bonus_total += imported_bonus_total
+        malus_total += imported_malus_total
+        atm_deduction_total += imported_atm_total
+        payable_total = float(row["Kifizetendő"])
         st.markdown("#### Aktuális havi összesítés")
         current_left, current_right = st.columns([1.1, 0.9])
 
@@ -1118,8 +1279,11 @@ def show_courier_dialog() -> None:
                             "Alapdíj": format_huf(base_total),
                             "Borravaló": format_huf(tip_total),
                             "Bónuszok": format_huf(bonus_total),
+                            "Importált bónusz": format_huf(imported_bonus_total),
                             "Máluszok": format_huf(malus_total),
+                            "Importált málusz": format_huf(imported_malus_total),
                             "ATM levonás": format_huf(atm_deduction_total),
+                            "Importált ATM": format_huf(imported_atm_total),
                             "Egyéb kiadás": format_huf(other_expense_total),
                             "Ügyfélértékelés": format_huf(customer_rating_total),
                             "Kifizetendő": format_huf(payable_total),
@@ -1689,6 +1853,9 @@ def show_new_settlement_page() -> None:
         or load_latest_jit_session_id()
     )
     data = apply_excel_base_rates(load_courier_master(), import_session_id)
+    data = apply_imported_balance_components(data, import_session_id)
+    balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+    data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
