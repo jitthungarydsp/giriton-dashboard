@@ -700,7 +700,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         rows = (
             get_db()
             .schema("settlement")
-            .table("vw_parameterized_courier_settlement_summary")
+            .table("courier_settlement_summary")
             .select("*")
             .eq("session_id", session_id)
             .execute()
@@ -715,7 +715,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
             rows = (
                 get_db()
                 .schema("settlement")
-                .table("vw_parameterized_courier_base_summary")
+                .table("vw_parameterized_courier_settlement_summary")
                 .select("*")
                 .eq("session_id", session_id)
                 .execute()
@@ -723,13 +723,18 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
                 or []
             )
         except BaseException:
-            result = pd.DataFrame(columns=columns)
-            result.attrs["configuration_error"] = (
-                "A settlement paramétertáblák még nem érhetők el. "
-                "Futtasd le előbb a sql/settlement_parameterized_base_rate.sql, majd a "
-                "sql/settlement_persist_jitt_bonus_calculation.sql migrációt."
-            )
-            return result
+            try:
+                rows = (
+                    get_db().schema("settlement").table("vw_parameterized_courier_base_summary")
+                    .select("*").eq("session_id", session_id).execute().data or []
+                )
+            except BaseException:
+                result = pd.DataFrame(columns=columns)
+                result.attrs["configuration_error"] = (
+                    "A settlement paramétertáblák még nem érhetők el. Futtasd le a teljes "
+                    "settlement-paraméter és courier-settlement-summary migrációt."
+                )
+                return result
     if not rows:
         return pd.DataFrame(columns=columns)
     result = pd.DataFrame(rows).rename(columns={
@@ -738,6 +743,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "courier_base_rate_huf": "Nettó bevétel",
         "tip_huf": "Borravaló",
         "route_bonus_huf": "Rendszerbónusz",
+        "route_bonus_total_huf": "Rendszerbónusz",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
         "calculated_routes": "Számolt túrák",
@@ -2148,6 +2154,8 @@ def show_new_settlement_page() -> None:
                     load_latest_jit_session_id.clear()
                     load_excel_courier_base_rates.clear()
                     load_excel_base_rate_diagnostics.clear()
+                    load_courier_route_detail.clear()
+                    load_imported_balance_components.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                     try:
                         recalculate_excel_base_rates(get_db(), result["session_id"])
@@ -2239,6 +2247,8 @@ def show_new_settlement_page() -> None:
                 load_latest_jit_session_id.clear()
                 load_excel_courier_base_rates.clear()
                 load_excel_base_rate_diagnostics.clear()
+                load_courier_route_detail.clear()
+                load_imported_balance_components.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()

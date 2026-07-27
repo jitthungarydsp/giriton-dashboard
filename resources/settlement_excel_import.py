@@ -18,6 +18,7 @@ IMPORT_TABLE = "excel_import"
 PREVIEW_VIEW = "vw_excel_preview"
 
 NORMALIZED_TABLES = (
+    "courier_settlement_summary",
     "jit_row",
     "penalty_row",
     "atm_balance_row",

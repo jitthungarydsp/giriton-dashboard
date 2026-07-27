@@ -52,7 +52,6 @@ def _mark_parameters_changed(client: Any) -> None:
     try:
         recalculate_excel_base_rates(
             client,
-            st.session_state.get("settlement_import_session_id"),
         )
     except BaseException:
         # The parameter is saved even if the SQL migration is not deployed yet.

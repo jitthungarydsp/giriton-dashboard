@@ -262,10 +262,26 @@ def soft_delete_item(client: Any, table_name: str, item_id: str, actor: str) -> 
 
 
 def recalculate_excel_base_rates(client: Any, session_id: str | None = None) -> None:
-    """Refresh DB-stored JITT row values for one imported settlement session."""
-    if not _text(session_id):
-        return
-    client.schema("settlement").rpc(
-        "recalculate_jitt_base_rates",
-        {"p_session_id": _text(session_id)},
-    ).execute()
+    """Refresh persisted JITT calculations and the courier summary table.
+
+    A parameter change has to affect every imported session, not only the
+    Excel file that happens to be open in the current browser session.
+    """
+    normalized_session_id = _text(session_id)
+    if normalized_session_id:
+        session_ids = [normalized_session_id]
+    else:
+        rows = (
+            client.schema("settlement").table("jit_row").select("session_id")
+            .limit(10000).execute().data or []
+        )
+        session_ids = sorted({str(row.get("session_id")) for row in rows if row.get("session_id")})
+    for current_session_id in session_ids:
+        client.schema("settlement").rpc(
+            "recalculate_jitt_base_rates",
+            {"p_session_id": current_session_id},
+        ).execute()
+        client.schema("settlement").rpc(
+            "refresh_courier_settlement_summary",
+            {"p_session_id": current_session_id},
+        ).execute()

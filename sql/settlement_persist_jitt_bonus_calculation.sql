@@ -172,7 +172,7 @@ $$;
 -- Keep the existing base-summary view unchanged.  A separate view avoids a
 -- breaking column-order change for any already deployed consumer.
 create or replace view settlement.vw_parameterized_courier_settlement_summary as
-select
+  select
     session_id,
     coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
     sum(courier_base_rate_huf) as courier_base_rate_huf,
