@@ -755,6 +755,21 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_courier_settlement_summary(session_id: str | None) -> pd.DataFrame:
+    """Read the persisted, authoritative courier settlement rows for one Excel session."""
+    if not session_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_settlement_summary")
+            .select("*").eq("session_id", session_id).execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Show DB-stored matching outcomes; no amount is calculated in the UI."""
     try:
@@ -1428,6 +1443,40 @@ def show_courier_dialog() -> None:
             - imported_malus_total - float(adjustment_totals.get("malus", 0))
         )
         manual_other_total = float(adjustment_totals.get("other_expense", 0))
+
+        # The profile cards are a direct projection of the persisted central
+        # settlement row.  Route detail is drill-down only and must never
+        # overwrite the authoritative summary amounts.
+        persisted_summary = load_courier_settlement_summary(session_id)
+        if not persisted_summary.empty:
+            summary_match = persisted_summary[
+                persisted_summary.get("courier_id", pd.Series("", index=persisted_summary.index))
+                .map(_courier_id_key).eq(_courier_id_key(courier_id))
+            ]
+            if summary_match.empty and "driver_name" in persisted_summary:
+                summary_match = persisted_summary[
+                    persisted_summary["driver_name"].map(_courier_match_key).eq(_courier_match_key(row["Futár"]))
+                ]
+            if not summary_match.empty:
+                persisted = summary_match.iloc[0]
+                amount = lambda field: parse_huf_value(persisted.get(field))
+                base_total = amount("courier_base_rate_huf")
+                tip_total = amount("tip_huf")
+                delay_total = amount("delay_bonus_huf")
+                compliance_total = amount("compliance_bonus_huf")
+                route_other_bonus_total = amount("other_route_bonus_huf")
+                imported_bonus_total = amount("imported_bonus_huf")
+                customer_rating_total = amount("customer_rating_bonus_huf")
+                malus_total = amount("malus_huf")
+                atm_deduction_total = amount("atm_deduction_huf")
+                other_expense_total = amount("other_expense_huf")
+                manual_bonus_total = amount("manual_bonus_huf")
+                bonus_total = route_other_bonus_total + imported_bonus_total + manual_bonus_total
+                payable_total = amount("payable_huf")
+                order_total = int(amount("order_count"))
+                route_total = int(amount("route_count"))
+                monthly_bonus_malus_effect = imported_bonus_total + manual_bonus_total - malus_total
+                manual_other_total = other_expense_total
 
         st.markdown("#### Teljesítmény és elszámolási mutatók")
         selected_component_key = f"settlement_component_detail_{courier_id}"
@@ -2167,6 +2216,7 @@ def show_new_settlement_page() -> None:
                     load_excel_base_rate_diagnostics.clear()
                     load_courier_route_detail.clear()
                     load_imported_balance_components.clear()
+                    load_courier_settlement_summary.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                     try:
                         recalculate_excel_base_rates(get_db(), result["session_id"])
@@ -2260,6 +2310,7 @@ def show_new_settlement_page() -> None:
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
                 load_imported_balance_components.clear()
+                load_courier_settlement_summary.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
