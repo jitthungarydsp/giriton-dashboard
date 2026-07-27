@@ -398,6 +398,62 @@ def _normalized_field_key(value: object) -> str:
     return re.sub(r"[^a-z0-9]", "", text)
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_active_excel_bonus_rules(table_name: str) -> pd.DataFrame:
+    """Read configured Excel-mode performance rules; missing tables pay nothing."""
+    try:
+        rows = (
+            get_db().schema("settlement").table(table_name).select("*")
+            .eq("is_active", True).is_("deleted_at", "null").execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    rules = pd.DataFrame(rows)
+    if rules.empty or "calculation_mode" not in rules:
+        return pd.DataFrame()
+    return rules[rules["calculation_mode"].fillna("").str.casefold() == "excel"].copy()
+
+
+def _configured_excel_bonus_for_route(
+    rules: pd.DataFrame,
+    source_field: str,
+    route_date: object,
+    day_type: str,
+    route_type: str,
+    warehouse_code: object,
+    normalized_fields: dict[str, object],
+) -> float:
+    """Use an Excel amount only when an explicit matching parameter rule exists."""
+    field_key = _normalized_field_key(source_field)
+    if rules.empty or field_key not in normalized_fields:
+        return 0.0
+    try:
+        work_date = date.fromisoformat(str(route_date)[:10])
+    except ValueError:
+        return 0.0
+    warehouse_key = str(warehouse_code or "").strip().casefold()
+    for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+        if _normalized_field_key(rule.get("excel_source_field")) != field_key:
+            continue
+        try:
+            valid_from = date.fromisoformat(str(rule.get("valid_from"))[:10])
+            valid_to_value = rule.get("valid_to")
+            valid_to = date.fromisoformat(str(valid_to_value)[:10]) if pd.notna(valid_to_value) else None
+        except ValueError:
+            continue
+        if work_date < valid_from or (valid_to and work_date > valid_to):
+            continue
+        if str(rule.get("day_type") or "any").casefold() not in {"any", day_type}:
+            continue
+        if str(rule.get("route_type") or "any").casefold() not in {"any", route_type}:
+            continue
+        rule_warehouse = str(rule.get("warehouse_code") or "").strip().casefold()
+        if rule_warehouse and rule_warehouse != warehouse_key:
+            continue
+        return parse_huf_value(normalized_fields[field_key])
+    return 0.0
+
+
 def _resolve_courier_lookup_key(courier_key: str, available_keys: set[str]) -> str:
     """Resolve one unambiguous shortened or extended courier name."""
     if courier_key in available_keys:
@@ -971,7 +1027,8 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
     """
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
-        "Rendelések", "Alapdíj", "Borravaló", "Bónuszok", "DB státusz",
+        "Rendelések", "Alapdíj", "Borravaló", "Késedelmi díj",
+        "Túramegfelelés", "Egyéb bónusz", "Bónuszok", "DB státusz",
     ]
     if not session_id or not courier_id:
         return pd.DataFrame(columns=columns)
@@ -990,6 +1047,8 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
     target_id = _courier_id_key(courier_id)
     target_name = _courier_match_key(courier_name)
     weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+    delay_rules = load_active_excel_bonus_rules("cfg_jitt_delay_bonus_rules")
+    compliance_rules = load_active_excel_bonus_rules("cfg_jitt_compliance_bonus_rules")
     for source in rows:
         normalized = source.get("normalized_data") or {}
         if isinstance(normalized, str):
@@ -1021,10 +1080,23 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
         if source.get("is_route_primary") is not True:
             continue
         route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
-        route_type = {"NORMAL": "Normál", "CITY": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_value, route_value.title())
-        day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(str(source.get("calculated_day_type") or ""), "Nincs besorolás")
-        bonus_columns = ["Delay Bonus", "Compliance Bonus", "Fuel Bonus", "Car & Fridge Bonus", "Fill Rate Bonus", "Branding"]
-        bonus = sum(parse_huf_value(normalized.get(column)) for column in bonus_columns)
+        route_type_key = {"NORMAL": "normal", "CITY": "normal", "EXPRESS": "express", "REGIONAL": "regional"}.get(route_value, "normal")
+        route_type = {"normal": "Normál", "express": "Expressz", "regional": "Regionális"}[route_type_key]
+        day_type_key = str(source.get("calculated_day_type") or "").casefold()
+        day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(day_type_key, "Nincs besorolás")
+        warehouse = normalized_fields.get("location") or normalized_fields.get("warehouse")
+        delay_bonus = _configured_excel_bonus_for_route(
+            delay_rules, "Delay Bonus", source.get("route_date"), day_type_key,
+            route_type_key, warehouse, normalized_fields,
+        )
+        compliance_bonus = _configured_excel_bonus_for_route(
+            compliance_rules, "Compliance Bonus", source.get("route_date"), day_type_key,
+            route_type_key, warehouse, normalized_fields,
+        )
+        other_bonus = sum(
+            parse_huf_value(normalized_fields.get(_normalized_field_key(column)))
+            for column in ("Fuel Bonus", "Car & Fridge Bonus", "Fill Rate Bonus", "Branding")
+        )
         parsed.append({
             "Route ID": str(source.get("route_unique_id") or "–"),
             "Excel dátum": str(source.get("route_date") or "–"),
@@ -1034,7 +1106,10 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
             "Rendelések": parse_huf_value(normalized.get("Orders") or normalized.get("orders")),
             "Alapdíj": parse_huf_value(source.get("courier_base_rate_huf")),
             "Borravaló": parse_huf_value(source.get("courier_tip_huf")),
-            "Bónuszok": bonus,
+            "Késedelmi díj": delay_bonus,
+            "Túramegfelelés": compliance_bonus,
+            "Egyéb bónusz": other_bonus,
+            "Bónuszok": delay_bonus + compliance_bonus + other_bonus,
             "DB státusz": str(source.get("base_rate_status") or "ismeretlen"),
         })
     if not parsed:
@@ -1044,7 +1119,10 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
 
 def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
     """Aggregate only the auditable Route ID rows displayed to the user."""
-    columns = ["Túratípus", "Naptípus", "Túrák", "Alapdíj", "Borravaló", "Bónuszok"]
+    columns = [
+        "Túratípus", "Naptípus", "Túrák", "Alapdíj", "Borravaló",
+        "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz", "Bónuszok",
+    ]
     if route_detail.empty:
         return pd.DataFrame(columns=columns)
     detail = route_detail.copy()
@@ -1277,9 +1355,11 @@ def show_courier_dialog() -> None:
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("KPI", f"{row['KPI']:.1f}%")
-    k2.metric("Aktuális havi összeg", format_huf(payable_total))
+    current_amount_metric = k2.empty()
+    monthly_change_metric = k4.empty()
+    current_amount_metric.metric("Aktuális havi összeg", format_huf(payable_total))
     k3.metric("Előző havi összeg", format_huf(row["Előző havi összeg"]))
-    k4.metric(
+    monthly_change_metric.metric(
         "Havi változás",
         format_huf(int(payable_total) - int(row["Előző havi összeg"])),
     )
@@ -1298,7 +1378,10 @@ def show_courier_dialog() -> None:
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
         base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
         tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
-        bonus_total = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum()) + float(adjustment_totals.get("bonus", 0))
+        delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
+        compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
+        route_other_bonus_total = float(route_breakdown.get("Egyéb bónusz", pd.Series(dtype=float)).sum())
+        bonus_total = route_other_bonus_total + float(adjustment_totals.get("bonus", 0))
         customer_rating_total = float(adjustment_totals.get("customer_rating", 0))
         malus_total = float(adjustment_totals.get("malus", 0))
         atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
@@ -1309,7 +1392,39 @@ def show_courier_dialog() -> None:
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
-        payable_total = float(row["Kifizetendő"])
+        payable_total = (
+            base_total + tip_total + delay_total + compliance_total + bonus_total
+            + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+        )
+        order_total = int(route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
+        route_total = int(len(route_detail))
+        monthly_bonus_malus_effect = (
+            imported_bonus_total + float(adjustment_totals.get("bonus", 0))
+            - imported_malus_total - float(adjustment_totals.get("malus", 0))
+        )
+        manual_other_total = float(adjustment_totals.get("other_expense", 0))
+
+        st.markdown("#### Teljesítmény és elszámolási mutatók")
+        performance_row_1 = st.columns(6)
+        performance_row_1[0].metric("Rendelés", f"{order_total:,}".replace(",", " "))
+        performance_row_1[1].metric("Kör", route_total)
+        performance_row_1[2].metric("Késedelmi díj", format_huf(delay_total))
+        performance_row_1[3].metric("Túramegfelelés", format_huf(compliance_total))
+        performance_row_1[4].metric("Ügyfélértékelési bónusz", format_huf(customer_rating_total))
+        performance_row_1[5].metric("Fizetendő", format_huf(payable_total))
+        performance_row_2 = st.columns(6)
+        performance_row_2[0].metric("Levonás / plusz", format_huf(-other_expense_total))
+        performance_row_2[1].metric("Havi bónusz/málusz hatás", format_huf(monthly_bonus_malus_effect))
+        performance_row_2[2].metric("ATM hatás", format_huf(-atm_deduction_total))
+        performance_row_2[3].metric("Lojalitás", "0 Ft", help="Még nincs bekötött lojalitási számítási adatforrás.")
+        performance_row_2[4].metric("Oktatói díj", "0 Ft", help="Még nincs bekötött oktatói díj adatforrás.")
+        performance_row_2[5].metric("Manuális", format_huf(-manual_other_total))
+        current_amount_metric.metric("Aktuális havi összeg", format_huf(payable_total))
+        monthly_change_metric.metric(
+            "Havi változás",
+            format_huf(int(payable_total) - int(row["Előző havi összeg"])),
+        )
+
         st.markdown("#### Aktuális havi összesítés")
         current_left, current_right = st.columns([1.1, 0.9])
 
@@ -1318,6 +1433,8 @@ def show_courier_dialog() -> None:
             summary_cards = [
                 ("Alapdíj", base_total, "base"),
                 ("Borravaló", tip_total, "tip"),
+                ("Késedelmi díj", delay_total, "delay"),
+                ("Túramegfelelés", compliance_total, "compliance"),
                 ("Bónuszok", bonus_total, "bonus"),
                 ("Máluszok", malus_total, "malus"),
                 ("ATM levonás", atm_deduction_total, "atm"),
@@ -1355,13 +1472,17 @@ def show_courier_dialog() -> None:
         selected_component = st.session_state.get(selected_component_key, "payable")
         component_titles = {
             "base": "Alapdíj levezetése", "tip": "Borravaló levezetése",
+            "delay": "Késedelmi díj levezetése", "compliance": "Túramegfelelés levezetése",
             "bonus": "Bónuszok levezetése", "malus": "Máluszok levezetése",
             "atm": "ATM levonás levezetése", "other": "Egyéb kiadás levezetése",
             "customer_rating": "Ügyfélértékelés levezetése", "payable": "Kifizetendő levezetése",
         }
         st.markdown(f"#### {component_titles[selected_component]}")
-        if selected_component in {"base", "tip"}:
-            source_column = "Alapdíj" if selected_component == "base" else "Borravaló"
+        if selected_component in {"base", "tip", "delay", "compliance"}:
+            source_column = {
+                "base": "Alapdíj", "tip": "Borravaló", "delay": "Késedelmi díj",
+                "compliance": "Túramegfelelés",
+            }[selected_component]
             detail_columns = [
                 "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
                 "Rendelések", source_column, "DB státusz",
@@ -1411,6 +1532,8 @@ def show_courier_dialog() -> None:
             payable_sources = pd.DataFrame([
                 {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
                 {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
+                {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
+                {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
                 {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
                 {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
                 {"Művelet": "−", "Tétel": "Máluszok", "Összeg": malus_total},
