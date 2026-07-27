@@ -181,6 +181,12 @@ def build_tig_pdf_bytes(
         gross = net + vat
         return net, vat, gross
 
+    def split_gross_vat(gross):
+        gross = int(round(gross))
+        net = int(round(gross / 1.27))
+        vat = gross - net
+        return net, vat, gross
+
     total = max(to_int(transfer_amount_huf), 0)
     cash = max(to_int(cash_amount_huf), 0)
     tip = max(to_int(tip_amount_huf), 0)
@@ -332,12 +338,15 @@ def build_tig_pdf_bytes(
         ]
     ]
 
-    def add_service_row(label, gross):
-        if gross <= 0:
+    def add_service_row(label, amount, *, amount_is_gross=False):
+        if amount <= 0:
             return
 
         if vat_payer:
-            net, vat, gross_total = add_vat(gross)
+            if amount_is_gross:
+                net, vat, gross_total = split_gross_vat(amount)
+            else:
+                net, vat, gross_total = add_vat(amount)
             rows.append(
                 [
                     Paragraph(label, normal),
@@ -350,14 +359,16 @@ def build_tig_pdf_bytes(
             rows.append(
                 [
                     Paragraph(label, normal),
-                    Paragraph(_huf(gross), right),
+                    Paragraph(_huf(amount), right),
                     Paragraph("AAM", center),
-                    Paragraph(_huf(gross), right),
+                    Paragraph(_huf(amount), right),
                 ]
             )
 
     add_service_row("Szállítási díj – átutalás (494107)", service)
-    add_service_row("Szállítási díj – KP (494107)", cash)
+    # Az ATM/KP forras brutto keszpenz osszeg. AFA-koros futarnal ebbol
+    # netto + AFA bontast kepzunk, nem bruttositjuk meg egyszer.
+    add_service_row("Szállítási díj – KP (494107)", cash, amount_is_gross=True)
 
     if tip:
         rows.append(
@@ -381,8 +392,7 @@ def build_tig_pdf_bytes(
 
     if vat_payer:
         service_vat = int(round(service * 0.27))
-        cash_vat = int(round(cash * 0.27))
-        final_total = total + service_vat + cash_vat
+        final_total = total + service_vat
     else:
         final_total = total
 

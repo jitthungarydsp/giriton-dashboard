@@ -2028,15 +2028,13 @@ def build_route_issue_rows(
         order_data = order_details.copy()
         order_data["route_id_key"] = order_data["route_id"].map(normalize_route_key)
         for _, order in order_data.iterrows():
-            planned_delta = parse_huf_value(order.get("planned_delta_minutes"))
             window_delta = parse_huf_value(order.get("time_window_delta_minutes"))
-            if planned_delta <= 0 and window_delta <= 0:
+            if window_delta <= 0:
                 continue
             route_id = normalize_route_key(order.get("route_id"))
             route_row = route_lookup.get(route_id, {})
             story_row = story_lookup.get(route_id, {})
             issue_type = "Késő rendelés"
-            delta = max(planned_delta, window_delta)
             order_id = str(order.get("order_id") or order.get("checkpoint_id") or "").strip()
             rows.append({
                 "issue_key": route_issue_key(courier_id, route_id, order_id, issue_type),
@@ -2044,7 +2042,7 @@ def build_route_issue_rows(
                 "Order ID": order_id,
                 "Dátum": str(order.get("work_date") or route_row.get("Excel dátum") or story_row.get("work_date") or ""),
                 "Probléma": issue_type,
-                "Eltérés perc": int(delta),
+                "Eltérés perc": int(window_delta),
                 "Rendelések": parse_huf_value(route_row.get("Rendelések")),
                 "Késedelmi díj": parse_huf_value(route_row.get("Késedelmi díj")),
                 "Túramegfelelés": parse_huf_value(route_row.get("Túramegfelelés")),
@@ -2059,7 +2057,7 @@ def build_route_issue_rows(
         story_row = story_lookup.get(route_id, {})
         queue_delta = parse_huf_value(story_row.get("queue_entry_delta_minutes"))
         next_shift_delta = parse_huf_value(story_row.get("next_shift_delay_minutes"))
-        late_count = parse_huf_value(story_row.get("time_window_late_count")) + parse_huf_value(story_row.get("planned_late_count"))
+        late_count = parse_huf_value(story_row.get("time_window_late_count"))
         delay_fee = parse_huf_value(route_row.get("Késedelmi díj"))
         compliance_fee = parse_huf_value(route_row.get("Túramegfelelés"))
         assignment_mode = str(story_row.get("assignment_mode") or "").casefold()
@@ -2072,10 +2070,6 @@ def build_route_issue_rows(
             route_problems.append(("Következő műszak késés", next_shift_delta))
         if late_count > 0 and not any(row["Route ID"] == route_id and row["Probléma"] == "Késő rendelés" for row in rows):
             route_problems.append(("Késő rendelés", late_count))
-        if delay_fee != 0 and not route_problems:
-            route_problems.append(("Késedelmi díj érintett", 0))
-        if compliance_fee != 0 and not route_problems:
-            route_problems.append(("Túramegfelelés érintett", 0))
         for issue_type, delta in route_problems:
             rows.append({
                 "issue_key": route_issue_key(courier_id, route_id, "", issue_type),
