@@ -160,11 +160,18 @@ def tig_cash_net_deduction(cash_amount_huf, courier_tax_number):
     return cash
 
 
-def tig_service_amount_without_cash_and_tip(payable_total_huf, cash_amount_huf, tip_amount_huf):
+def tig_service_amount_without_cash_and_tip(
+    payable_total_huf,
+    cash_amount_huf,
+    tip_amount_huf,
+    courier_tax_number="",
+):
     payable = max(int(round(float(payable_total_huf or 0))), 0)
     cash = max(int(round(float(cash_amount_huf or 0))), 0)
     tip = max(int(round(float(tip_amount_huf or 0))), 0)
-    return max(payable + cash - tip, 0)
+    vat_cash_net = tig_cash_net_deduction(cash, courier_tax_number)
+    cash_vat_adjustment = vat_cash_net if is_vat_payer_tax_number(courier_tax_number) else 0
+    return max(payable + cash - tip - cash_vat_adjustment, 0)
 
 
 def build_tig_pdf_bytes(
@@ -440,9 +447,9 @@ def build_tig_pdf_bytes(
     if cash_gross:
         cash_rows = [
             [
-                Paragraph("KP bevétel - külön nyilvántartás", bold),
-                Paragraph("Bruttó KP", bold),
+                Paragraph("Szállítási díj – KP", bold),
                 Paragraph("Nettó levonás", bold),
+                Paragraph("Bruttó KP", bold),
                 Paragraph("ÁFA tartalom", bold),
             ],
             [
@@ -1051,6 +1058,7 @@ def _render_task_tig_generator(task_row, document_month):
         _row_amount(task_row, "_tig_amount"),
         default_cash,
         default_tip,
+        default_tax_number,
     )
 
     with st.expander(
@@ -2580,6 +2588,7 @@ def show_invoice_summary_page():
                                 tig_row.get("payable_total_huf", 0),
                                 cash_amount,
                                 tip_amount,
+                                tax_number,
                             )
                             tig_pdf_bytes = build_tig_pdf_bytes(
                                 courier_name=seller_name,
@@ -2752,6 +2761,7 @@ def show_invoice_summary_page():
                 default_transfer_amount,
                 default_cash_amount,
                 default_tip_amount,
+                default_tax_number,
             )
 
             
