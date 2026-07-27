@@ -57,6 +57,7 @@ TARGET_RESERVE_TABLES = [
 
 TARGET_RESERVE_RATE = 0.10
 TARGET_RESERVE_MAX_HUF = 50_000
+TARGET_RESERVE_TOTAL_CAP_HUF = 350_000
 INSURANCE_DEDUCTION_HUF = 10_000
 
 # Pozitív ATM-egyenleg levonásként jelenik meg az elszámolásban.
@@ -1697,43 +1698,114 @@ def build_driver_invoice_summary(
         + grouped["atm_effect_huf"]
     )
 
-    reserve_ids = set()
-    reserve_names = set()
+    # A biztosítás és a céltartalék levonása kizárólag akkor történik,
+    # ha a futár courier_target_reserve rekordjában insurance_active = true.
+    # Courier ID az elsődleges egyezési kulcs; a név csak tartalék.
+    reserve_by_id = {}
+    reserve_by_name = {}
+
+    def parse_reserve_huf(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return 0
+        if isinstance(value, (int, float)):
+            return max(0, int(round(value)))
+        cleaned = re.sub(r"[^0-9-]", "", normalize_text(value))
+        try:
+            return max(0, int(cleaned or 0))
+        except ValueError:
+            return 0
+
+    def parse_boolean(value):
+        if isinstance(value, bool):
+            return value
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return False
+        return normalize_text(value).casefold() in {
+            "true", "1", "yes", "igen", "i", "t"
+        }
+
     if target_reserve_df is not None and not target_reserve_df.empty:
         reserve_source = target_reserve_df.copy()
-        for column in ["USERNUMBER", "usernumber", "courier_id", "courier_number"]:
-            if column in reserve_source.columns:
-                reserve_ids.update(
-                    reserve_source[column]
-                    .fillna("")
-                    .map(normalize_text)
-                    .loc[lambda values: values != ""]
-                    .tolist()
-                )
-        for column in ["USERNAME", "username", "driver_name", "courier_name", "name"]:
-            if column in reserve_source.columns:
-                reserve_names.update(
-                    reserve_source[column]
-                    .fillna("")
-                    .map(normalize_person_key)
-                    .loc[lambda values: values != ""]
-                    .tolist()
-                )
+        id_columns = [
+            "courier_ID", "courier_id", "USERNUMBER", "usernumber",
+            "courier_number",
+        ]
+        name_columns = [
+            "USERNAME", "username", "driver_name", "courier_name", "name",
+        ]
 
-    grouped["target_reserve_member"] = grouped.apply(
-        lambda row: (
-            normalize_text(row.get("courier_id")) in reserve_ids
-            or row.get("driver_match_key") in reserve_names
-        ),
-        axis=1,
-    )
-    grouped["reserve_deduction_huf"] = grouped["payable_before_reserve_huf"].where(
-        grouped["target_reserve_member"],
-        0,
-    ).clip(lower=0).mul(TARGET_RESERVE_RATE).clip(upper=TARGET_RESERVE_MAX_HUF)
-    grouped["insurance_deduction_huf"] = grouped["target_reserve_member"].map(
-        lambda is_member: INSURANCE_DEDUCTION_HUF if is_member else 0
-    )
+        for _index, reserve_row in reserve_source.iterrows():
+            courier_id = _first_non_empty(
+                reserve_row.get(column)
+                for column in id_columns
+                if column in reserve_source.columns
+            )
+            courier_name = _first_non_empty(
+                reserve_row.get(column)
+                for column in name_columns
+                if column in reserve_source.columns
+            )
+
+            current_reserve = parse_reserve_huf(
+                reserve_row.get("current_reserve_huf")
+            )
+            # Régi adatállományoknál a CT_Z_FT tartalmazhatja a nyitó egyenleget.
+            if current_reserve == 0:
+                current_reserve = parse_reserve_huf(reserve_row.get("CT_Z_FT"))
+
+            reserve_info = {
+                "insurance_active": parse_boolean(
+                    reserve_row.get("insurance_active")
+                ),
+                "current_reserve_huf": current_reserve,
+            }
+            if courier_id:
+                reserve_by_id[normalize_text(courier_id)] = reserve_info
+            if courier_name:
+                reserve_by_name[normalize_person_key(courier_name)] = reserve_info
+
+    def target_reserve_calculation(row):
+        courier_id = normalize_text(row.get("courier_id"))
+        driver_key = normalize_text(row.get("driver_match_key"))
+        reserve_info = reserve_by_id.get(courier_id)
+        if reserve_info is None:
+            reserve_info = reserve_by_name.get(driver_key)
+
+        if not reserve_info or not reserve_info["insurance_active"]:
+            return pd.Series({
+                "target_reserve_member": bool(reserve_info),
+                "insurance_active": False,
+                "current_reserve_huf": (
+                    reserve_info["current_reserve_huf"] if reserve_info else 0
+                ),
+                "reserve_deduction_huf": 0,
+                "insurance_deduction_huf": 0,
+            })
+
+        current_reserve = int(reserve_info["current_reserve_huf"] or 0)
+        remaining_to_cap = max(
+            0, TARGET_RESERVE_TOTAL_CAP_HUF - current_reserve
+        )
+        calculated_reserve = max(
+            0, money(row.get("payable_before_reserve_huf"))
+        ) * TARGET_RESERVE_RATE
+        reserve_deduction = int(round(min(
+            calculated_reserve,
+            TARGET_RESERVE_MAX_HUF,
+            remaining_to_cap,
+        )))
+
+        return pd.Series({
+            "target_reserve_member": True,
+            "insurance_active": True,
+            "current_reserve_huf": current_reserve,
+            "reserve_deduction_huf": reserve_deduction,
+            "insurance_deduction_huf": INSURANCE_DEDUCTION_HUF,
+        })
+
+    reserve_calculation = grouped.apply(target_reserve_calculation, axis=1)
+    for column in reserve_calculation.columns:
+        grouped[column] = reserve_calculation[column]
     grouped["payable_total_huf"] = (
         grouped["payable_before_reserve_huf"]
         - grouped["reserve_deduction_huf"]
