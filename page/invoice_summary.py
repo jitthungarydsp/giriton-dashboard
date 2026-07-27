@@ -448,10 +448,9 @@ def build_tig_pdf_bytes(
         cash_rows = [
             [
                 Paragraph("Tétel megnevezése", bold),
-                Paragraph("Nettó FT", bold),
+                Paragraph("Nettó", bold),
                 Paragraph("ÁFA tartalom", bold),
-                Paragraph("Bruttó FT", bold),
-                Paragraph("ÁFA tartalom", bold),
+                Paragraph("Bruttó", bold),
             ],
             [
                 Paragraph("Szállítási díj – KP-  (494107) ", normal),
