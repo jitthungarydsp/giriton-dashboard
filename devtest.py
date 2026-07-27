@@ -491,13 +491,10 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
         return text[:-2] if text.endswith(".0") else text
 
     target_id = id_key(courier_id)
-    target_name = _courier_match_key(courier_name)
     for reserve_row in rows:
-        id_values = [reserve_row.get(column) for column in ("courier_id", "courier_number", "usernumber", "USERNUMBER")]
-        name_values = [reserve_row.get(column) for column in ("courier_name", "driver_name", "username", "USERNAME", "name")]
+        id_values = [reserve_row.get(column) for column in ("courier_id", "courier_number", "usernumber", "USERNUMBER", "Courier ID", "COURIER_ID")]
         matches_id = target_id and any(id_key(value) == target_id for value in id_values if value is not None)
-        matches_name = any(_courier_match_key(value) == target_name for value in name_values if value is not None)
-        if matches_id or matches_name:
+        if matches_id:
             active_value = reserve_row.get("insurance_active")
             active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
             return {"insurance_active": active, "row": reserve_row}
@@ -952,21 +949,7 @@ def show_courier_dialog() -> None:
         return
 
     row = match.iloc[0]
-    profile = load_courier_profile(courier_id)
-    reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
-    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-    route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
-    adjustments = load_courier_adjustments(session_id, courier_id)
-    adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
-    base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
-    tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
-    bonus_total = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum())
-    customer_rating_total = float(adjustment_totals.get("customer_rating", 0))
-    malus_total = float(adjustment_totals.get("malus", 0))
-    atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
-    other_expense_total = float(adjustment_totals.get("other_expense", 0))
-    bonus_total += float(adjustment_totals.get("bonus", 0))
-    payable_total = base_total + tip_total + bonus_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+    payable_total = float(row["Kifizetendő"])
 
     st.markdown(
         f"""
@@ -998,27 +981,24 @@ def show_courier_dialog() -> None:
         format_huf(int(payable_total) - int(row["Előző havi összeg"])),
     )
 
-    (
-        tab_current,
-        tab_bonus,
-        tab_malus,
-        tab_reserve,
-        tab_documents,
-        tab_complaints,
-        tab_profile,
-    ) = st.tabs(
-        [
-            "Aktuális hónap",
-            "Bónusz",
-            "Málusz",
-            "Céltartalék",
-            "Dokumentumok",
-            "Reklamációk",
-            "Profil",
-        ]
+    selected_menu = st.radio(
+        "Futármenü", ["Aktuális hónap", "Bónusz", "Málusz", "Céltartalék", "Dokumentumok", "Reklamációk", "Profil"],
+        horizontal=True, label_visibility="collapsed", key=f"courier_menu_{courier_id}",
     )
 
-    with tab_current:
+    if selected_menu == "Aktuális hónap":
+        session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+        route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
+        adjustments = load_courier_adjustments(session_id, courier_id)
+        adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
+        base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
+        tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
+        bonus_total = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum()) + float(adjustment_totals.get("bonus", 0))
+        customer_rating_total = float(adjustment_totals.get("customer_rating", 0))
+        malus_total = float(adjustment_totals.get("malus", 0))
+        atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
+        other_expense_total = float(adjustment_totals.get("other_expense", 0))
+        payable_total = base_total + tip_total + bonus_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
         st.markdown("#### Aktuális havi összesítés")
         current_left, current_right = st.columns([1.1, 0.9])
 
@@ -1133,7 +1113,7 @@ def show_courier_dialog() -> None:
             key=f"ui_tig_upload_{courier_id}",
         )
 
-    with tab_bonus:
+    if selected_menu == "Bónusz":
         st.markdown("#### Bónuszok")
         bonus_list, bonus_editor = st.columns([1.35, 0.65])
 
@@ -1158,7 +1138,7 @@ def show_courier_dialog() -> None:
                 help="Csak dizájn, még nem ment adatot.",
             )
 
-    with tab_malus:
+    if selected_menu == "Málusz":
         st.markdown("#### Máluszok és levonások")
         malus_list, malus_editor = st.columns([1.35, 0.65])
 
@@ -1187,60 +1167,22 @@ def show_courier_dialog() -> None:
                 help="Csak dizájn, még nem ment adatot.",
             )
 
-    with tab_reserve:
+    if selected_menu == "Céltartalék":
+        reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
+        reserve_row = reserve_status.get("row") or {}
+        reserve_amount = float(reserve_row.get("CT_Z_FT") or reserve_row.get("ct_z_ft") or 0)
         st.markdown("#### Céltartalék és biztosítás")
 
         reserve1, reserve2 = st.columns(2)
         with reserve1:
-            st.markdown(
-                """
-                <div class="detail-card">
-                  <h4>Biztosítási státusz</h4>
-                  <div class="detail-line"><span class="detail-label">Állapot</span><span class="detail-value">Van biztosítása</span></div>
-                  <div class="detail-line"><span class="detail-label">Érvényesség</span><span class="detail-value">2026. december 31.</span></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.radio(
-                "Van biztosításom",
-                ["Igen", "Nem"],
-                horizontal=True,
-                key=f"ui_insurance_{courier_id}",
-            )
+            st.metric("Biztosítási státusz", "Van biztosítása" if reserve_status["insurance_active"] else "Nincs biztosítása")
+            st.caption("Forrás: courier_target_reserve.insurance_active")
 
         with reserve2:
-            st.markdown(
-                """
-                <div class="detail-card">
-                  <h4>Aktuális céltartalék</h4>
-                  <div style="font-size:28px;font-weight:850;color:#17351F;">65 000 Ft</div>
-                  <div style="color:#5E7464;margin-top:6px;">Dizájnadat</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.number_input(
-                "Céltartalék összege (Ft)",
-                min_value=0,
-                value=65000,
-                step=1000,
-                key=f"ui_reserve_amount_{courier_id}",
-            )
+            st.metric("Aktuális céltartalék", format_huf(reserve_amount))
+            st.caption("Forrás: courier_target_reserve.CT_Z_FT")
 
-        st.text_area(
-            "Megjegyzés",
-            placeholder="Például biztosítási kötvény, jóváhagyás vagy adminisztratív megjegyzés.",
-            key=f"ui_reserve_note_{courier_id}",
-        )
-        st.button(
-            "Céltartalék mentése",
-            use_container_width=True,
-            key=f"ui_reserve_save_{courier_id}",
-            help="Csak dizájn, még nem ment adatot.",
-        )
-
-    with tab_documents:
+    if selected_menu == "Dokumentumok":
         st.markdown("#### Dokumentumok")
         docs = pd.DataFrame(
             [
@@ -1261,7 +1203,7 @@ def show_courier_dialog() -> None:
             key=f"ui_doc_upload_{courier_id}",
         )
 
-    with tab_complaints:
+    if selected_menu == "Reklamációk":
         st.markdown("#### Reklamációk")
         complaint_list, complaint_editor = st.columns([1.35, 0.65])
 
@@ -1290,7 +1232,9 @@ def show_courier_dialog() -> None:
                 help="Csak dizájn, még nem ment adatot.",
             )
 
-    with tab_profile:
+    if selected_menu == "Profil":
+        profile = load_courier_profile(courier_id)
+        reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
         st.markdown("#### Profil")
         st.caption("Forrás: public.courier_master. A biztosítási tagság forrása: public.courier_target_reserve.")
         edit_key = f"profile_edit_mode_{courier_id}"
