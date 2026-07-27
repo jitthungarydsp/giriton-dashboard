@@ -141,6 +141,32 @@ def _row_amount(row, *keys):
     return 0.0
 
 
+def is_vat_payer_tax_number(value):
+    parts = re.sub(r"\s+", "", str(value or "")).split("-")
+    return len(parts) >= 2 and parts[1] == "2"
+
+
+def split_gross_vat_amount(gross):
+    gross = int(round(float(gross or 0)))
+    net = int(round(gross / 1.27))
+    vat = gross - net
+    return net, vat, gross
+
+
+def tig_cash_net_deduction(cash_amount_huf, courier_tax_number):
+    cash = max(int(round(float(cash_amount_huf or 0))), 0)
+    if is_vat_payer_tax_number(courier_tax_number):
+        return split_gross_vat_amount(cash)[0]
+    return cash
+
+
+def tig_total_with_net_cash_deduction(payable_total_huf, cash_amount_huf, courier_tax_number):
+    payable = max(int(round(float(payable_total_huf or 0))), 0)
+    cash = max(int(round(float(cash_amount_huf or 0))), 0)
+    cash_net = tig_cash_net_deduction(cash, courier_tax_number)
+    return payable + cash - cash_net
+
+
 def build_tig_pdf_bytes(
     *,
     courier_name: str,
@@ -171,34 +197,29 @@ def build_tig_pdf_bytes(
         except (TypeError, ValueError):
             return 0
 
-    def is_vat_payer(value):
-        parts = re.sub(r"\s+", "", str(value or "")).split("-")
-        return len(parts) >= 2 and parts[1] == "2"
-
     def add_vat(net):
         net = int(round(net))
         vat = int(round(net * 0.27))
         gross = net + vat
         return net, vat, gross
 
-    def split_gross_vat(gross):
-        gross = int(round(gross))
-        net = int(round(gross / 1.27))
-        vat = gross - net
-        return net, vat, gross
-
     total = max(to_int(transfer_amount_huf), 0)
     cash = max(to_int(cash_amount_huf), 0)
     tip = max(to_int(tip_amount_huf), 0)
+    vat_payer = is_vat_payer_tax_number(courier_tax_number)
+    cash_net, cash_vat, cash_gross = (
+        split_gross_vat_amount(cash)
+        if vat_payer
+        else (cash, 0, cash)
+    )
 
-    if cash + tip > total:
+    if tip > total:
         raise ValueError(
-            "A KP és a borravaló összege nem lehet több "
+            "A borravaló összege nem lehet több "
             "a teljes fizetendő összegnél."
         )
 
-    service = total - cash - tip
-    vat_payer = is_vat_payer(courier_tax_number)
+    service = total - tip
 
     regular_font, bold_font = _register_tig_font()
     buffer = BytesIO()
@@ -338,15 +359,12 @@ def build_tig_pdf_bytes(
         ]
     ]
 
-    def add_service_row(label, amount, *, amount_is_gross=False):
+    def add_service_row(label, amount):
         if amount <= 0:
             return
 
         if vat_payer:
-            if amount_is_gross:
-                net, vat, gross_total = split_gross_vat(amount)
-            else:
-                net, vat, gross_total = add_vat(amount)
+            net, vat, gross_total = add_vat(amount)
             rows.append(
                 [
                     Paragraph(label, normal),
@@ -366,9 +384,6 @@ def build_tig_pdf_bytes(
             )
 
     add_service_row("Szállítási díj – átutalás (494107)", service)
-    # Az ATM/KP forras brutto keszpenz osszeg. AFA-koros futarnal ebbol
-    # netto + AFA bontast kepzunk, nem bruttositjuk meg egyszer.
-    add_service_row("Szállítási díj – KP (494107)", cash, amount_is_gross=True)
 
     if tip:
         rows.append(
@@ -392,7 +407,7 @@ def build_tig_pdf_bytes(
 
     if vat_payer:
         service_vat = int(round(service * 0.27))
-        final_total = total + service_vat
+        final_total = service + service_vat + tip
     else:
         final_total = total
 
@@ -427,6 +442,39 @@ def build_tig_pdf_bytes(
         )
     )
     story.extend([amount_table, Spacer(1, 4 * mm)])
+
+    if cash_gross:
+        cash_rows = [
+            [
+                Paragraph("KP bevétel - külön nyilvántartás", bold),
+                Paragraph("Bruttó KP", bold),
+                Paragraph("Nettó levonás", bold),
+                Paragraph("ÁFA tartalom", bold),
+            ],
+            [
+                Paragraph("Nem szerepel a fenti szállítási díj számlasorban.", normal),
+                Paragraph(_huf(cash_gross), right),
+                Paragraph(_huf(cash_net), right),
+                Paragraph(_huf(cash_vat) if vat_payer else "AAM", right),
+            ],
+        ]
+        cash_table = Table(
+            cash_rows,
+            colWidths=[76 * mm, 32 * mm, 32 * mm, 28 * mm],
+        )
+        cash_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#b7c7b7")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf7ea")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]
+            )
+        )
+        story.extend([cash_table, Spacer(1, 4 * mm)])
 
     id_table = Table(
         [
@@ -1002,9 +1050,14 @@ def _render_task_tig_generator(task_row, document_month):
                 return str(value).strip()
         return default
 
-    default_total = max(int(round(_row_amount(task_row, "_tig_amount"))), 0)
     default_cash = max(int(round(_row_amount(task_row, "_cash_amount"))), 0)
     default_tip = max(int(round(_row_amount(task_row, "_tip_amount"))), 0)
+    default_tax_number = first_value("tax_number", "tax_id", "vat_number", "adoszam")
+    default_total = tig_total_with_net_cash_deduction(
+        _row_amount(task_row, "_tig_amount"),
+        default_cash,
+        default_tax_number,
+    )
 
     with st.expander(
         "TIG generálása",
@@ -1018,7 +1071,7 @@ def _render_task_tig_generator(task_row, document_month):
             )
             tax_number = col2.text_input(
                 "Adószám",
-                value=first_value("tax_number", "tax_id", "vat_number", "adoszam"),
+                value=default_tax_number,
             )
             address = st.text_input(
                 "Vállalkozás székhelye",
@@ -1031,25 +1084,28 @@ def _render_task_tig_generator(task_row, document_month):
                 ),
             )
 
-            amount1, amount2, amount3 = st.columns(3)
+            amount1, amount2 = st.columns(2)
             total_amount = amount1.number_input(
                 "Teljes fizetendő összeg (Ft)",
                 min_value=0,
                 value=default_total,
                 step=100,
             )
-            cash_amount = amount2.number_input(
-                "KP összeg (Ft)",
-                min_value=0,
-                value=default_cash,
-                step=100,
-            )
-            tip_amount = amount3.number_input(
+            tip_amount = amount2.number_input(
                 "Borravaló (Ft)",
                 min_value=0,
                 value=default_tip,
                 step=100,
             )
+            st.caption("KP bevétel külön alsó blokkba kerül, nem lesz TIG szállítási díj sor.")
+            cash_amount = st.number_input(
+                "KP bevétel bruttó összeg (Ft)",
+                min_value=0,
+                value=default_cash,
+                step=100,
+            )
+            cash_net_preview = tig_cash_net_deduction(cash_amount, tax_number)
+            st.caption(f"KP levonás nettó összege: {format_huf(cash_net_preview)}")
             generate = st.form_submit_button(
                 "TIG előállítása",
                 use_container_width=True,
@@ -1059,9 +1115,9 @@ def _render_task_tig_generator(task_row, document_month):
         if generate:
             if not seller_name.strip() or not tax_number.strip() or not address.strip():
                 st.warning("A szolgáltató neve, adószáma és címe kötelező.")
-            elif cash_amount + tip_amount > total_amount:
+            elif tip_amount > total_amount:
                 st.warning(
-                    "A KP és a borravaló összege nem lehet több "
+                    "A borravaló összege nem lehet több "
                     "a teljes fizetendő összegnél."
                 )
             else:
@@ -2514,7 +2570,18 @@ def show_invoice_summary_page():
                             continue
 
                         try:
-                            transfer_amount = int(round(float(tig_row.get("payable_total_huf", 0) or 0)))
+                            cash_amount = abs(
+                                _row_amount(
+                                    tig_row,
+                                    "atm_balance_huf",
+                                    "atm_effect_huf",
+                                )
+                            )
+                            transfer_amount = tig_total_with_net_cash_deduction(
+                                tig_row.get("payable_total_huf", 0),
+                                cash_amount,
+                                tax_number,
+                            )
                             tig_pdf_bytes = build_tig_pdf_bytes(
                                 courier_name=seller_name,
                                 courier_address=seller_address,
@@ -2522,13 +2589,7 @@ def show_invoice_summary_page():
                                 courier_id=tig_courier_id,
                                 document_month=document_month,
                                 transfer_amount_huf=transfer_amount,
-                                cash_amount_huf=abs(
-                                    _row_amount(
-                                        tig_row,
-                                        "atm_balance_huf",
-                                        "atm_effect_huf",
-                                    )
-                                ),
+                                cash_amount_huf=cash_amount,
                                 tip_amount_huf=max(
                                     _row_amount(
                                         tig_row,
@@ -2687,6 +2748,11 @@ def show_invoice_summary_page():
                 )))),
                 0,
             )
+            default_transfer_amount = tig_total_with_net_cash_deduction(
+                default_transfer_amount,
+                default_cash_amount,
+                default_tax_number,
+            )
             default_tip_amount = max(
                 int(round(_row_amount(
                     selected_row,
@@ -2725,25 +2791,28 @@ def show_invoice_summary_page():
                     value=default_billing_email,
                     disabled=True,
                 )
-                amount_col1, amount_col2, amount_col3 = st.columns(3)
+                amount_col1, amount_col2 = st.columns(2)
                 tig_transfer_amount = amount_col1.number_input(
                     "Teljes fizetendő összeg (Ft)",
                     min_value=0,
                     value=max(default_transfer_amount, 0),
                     step=100,
                 )
-                tig_cash_amount = amount_col2.number_input(
-                    "KP összeg (Ft)",
-                    min_value=0,
-                    value=default_cash_amount,
-                    step=100,
-                )
-                tig_tip_amount = amount_col3.number_input(
+                tig_tip_amount = amount_col2.number_input(
                     "Borravaló (Ft)",
                     min_value=0,
                     value=default_tip_amount,
                     step=100,
                 )
+                st.caption("KP bevétel külön alsó blokkba kerül, nem lesz TIG szállítási díj sor.")
+                tig_cash_amount = st.number_input(
+                    "KP bevétel bruttó összeg (Ft)",
+                    min_value=0,
+                    value=default_cash_amount,
+                    step=100,
+                )
+                tig_cash_net_preview = tig_cash_net_deduction(tig_cash_amount, tig_tax_number)
+                st.caption(f"KP levonás nettó összege: {format_huf(tig_cash_net_preview)}")
                 generate_tig = st.form_submit_button(
                     "TIG előállítása",
                     use_container_width=True,
