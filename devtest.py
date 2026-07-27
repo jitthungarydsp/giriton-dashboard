@@ -23,6 +23,10 @@ from resources.settlement_pdf import build_settlement_pdf
 from resources.courier_master_db import update_courier_master_profile
 from page.settlement_parameter_catalog import render_parameter_catalog
 
+RESERVE_TARGET_HUF = 350_000
+RESERVE_RATE = 0.10
+INSURANCE_FEE_HUF = 10_000
+
 st.set_page_config(
     page_title="Új Elszámolási oldal",
     page_icon="🧾",
@@ -1146,6 +1150,149 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
     return {"insurance_active": False, "row": {}}
 
 
+def reserve_row_amount(reserve_row: dict[str, object], column: str) -> float:
+    if not reserve_row:
+        return 0.0
+    value = reserve_row.get(column)
+    if value in (None, "") and column == "current_reserve_huf":
+        value = reserve_row.get("CT_Z_FT")
+    return parse_huf_value(value)
+
+
+def calculate_target_reserve_month(
+    reserve_status: dict[str, object],
+    payable_before_insurance: float,
+) -> dict[str, object]:
+    reserve_row = reserve_status.get("row") or {}
+    insurance_active_before = bool(reserve_status.get("insurance_active"))
+    reserve_before = reserve_row_amount(reserve_row, "current_reserve_huf")
+    if reserve_before == 0:
+        reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
+
+    should_charge = insurance_active_before and reserve_before < RESERVE_TARGET_HUF
+    reserve_addition = round(max(float(payable_before_insurance), 0.0) * RESERVE_RATE) if should_charge else 0
+    insurance_fee = INSURANCE_FEE_HUF if should_charge else 0
+    reserve_after = reserve_before + reserve_addition
+    insurance_active_after = bool(insurance_active_before and reserve_after < RESERVE_TARGET_HUF)
+    payable_after = float(payable_before_insurance) - reserve_addition - insurance_fee
+    return {
+        "payable_before_insurance_huf": float(payable_before_insurance),
+        "reserve_before_huf": reserve_before,
+        "reserve_addition_huf": reserve_addition,
+        "insurance_fee_huf": insurance_fee,
+        "reserve_after_huf": reserve_after,
+        "payable_after_insurance_huf": payable_after,
+        "insurance_active_before": insurance_active_before,
+        "insurance_active_after": insurance_active_after,
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_target_reserve_monthly(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
+    try:
+        rows = (get_db().schema("settlement").table("courier_target_reserve_monthly")
+                .select("*").eq("courier_id", courier_id)
+                .eq("period_start", period_start.isoformat())
+                .eq("period_end", period_end.isoformat())
+                .limit(1).execute().data or [])
+        return rows[0] if rows else {}
+    except BaseException:
+        return {}
+
+
+def save_target_reserve_monthly(
+    session_id: str | None,
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+    calculation: dict[str, object],
+) -> None:
+    existing = load_target_reserve_monthly(courier_id, period_start, period_end)
+    if existing.get("status") == "done":
+        return
+    payload = {
+        "courier_id": courier_id,
+        "session_id": session_id,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "status": "in_progress",
+        "calculated_at": pd.Timestamp.utcnow().isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+        **calculation,
+    }
+    try:
+        get_db().schema("settlement").table("courier_target_reserve_monthly").upsert(
+            payload,
+            on_conflict="courier_id,period_start,period_end",
+        ).execute()
+        load_target_reserve_monthly.clear()
+    except BaseException:
+        pass
+
+
+def close_target_reserve_month(
+    session_id: str | None,
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+    calculation: dict[str, object],
+) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    payload = {
+        "courier_id": courier_id,
+        "session_id": session_id,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "status": "done",
+        "closed_at": pd.Timestamp.utcnow().isoformat(),
+        "closed_by": actor,
+        "calculated_at": pd.Timestamp.utcnow().isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+        **calculation,
+    }
+    get_db().schema("settlement").table("courier_target_reserve_monthly").upsert(
+        payload,
+        on_conflict="courier_id,period_start,period_end",
+    ).execute()
+    get_db().schema("public").table("courier_target_reserve").update({
+        "CT_Z_FT": str(int(round(parse_huf_value(calculation.get("reserve_after_huf"))))),
+        "CT_NY_FT": str(int(round(parse_huf_value(calculation.get("reserve_addition_huf"))))),
+        "current_reserve_huf": int(round(parse_huf_value(calculation.get("reserve_after_huf")))),
+        "reserve_deduction_huf": int(round(parse_huf_value(calculation.get("reserve_addition_huf")))),
+        "insurance_active": bool(calculation.get("insurance_active_after")),
+        "reserve_status": "done",
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("courier_ID", courier_id).execute()
+    load_target_reserve_status.clear()
+    load_target_reserve_monthly.clear()
+
+
+def resolve_target_reserve_month(
+    session_id: str | None,
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+    reserve_status: dict[str, object],
+    payable_before_insurance: float,
+) -> dict[str, object]:
+    calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance)
+    saved = load_target_reserve_monthly(courier_id, period_start, period_end)
+    if saved.get("status") == "done":
+        return {
+            "payable_before_insurance_huf": parse_huf_value(saved.get("payable_before_insurance_huf")),
+            "reserve_before_huf": parse_huf_value(saved.get("reserve_before_huf")),
+            "reserve_addition_huf": parse_huf_value(saved.get("reserve_addition_huf")),
+            "insurance_fee_huf": parse_huf_value(saved.get("insurance_fee_huf")),
+            "reserve_after_huf": parse_huf_value(saved.get("reserve_after_huf")),
+            "payable_after_insurance_huf": parse_huf_value(saved.get("payable_after_insurance_huf")),
+            "insurance_active_before": bool(saved.get("insurance_active_before")),
+            "insurance_active_after": bool(saved.get("insurance_active_after")),
+            "status": "done",
+        }
+    save_target_reserve_monthly(session_id, courier_id, period_start, period_end, calculation)
+    return {**calculation, "status": "in_progress"}
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_profile_change_log(courier_id: str) -> pd.DataFrame:
     try:
@@ -2019,6 +2166,11 @@ def show_courier_dialog() -> None:
             ]
         if not summary_match.empty:
             summary_row = summary_match.iloc[0].to_dict()
+    profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+    profile_adjustment_totals = (
+        profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
+        if not profile_adjustments.empty else {}
+    )
 
     def settlement_amount(summary_column: str, fallback_column: str | None = None) -> float:
         if summary_column in summary_row:
@@ -2033,17 +2185,28 @@ def show_courier_dialog() -> None:
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
     imported_bonus_total = settlement_amount("imported_bonus_huf", "Importált bónusz")
-    manual_bonus_total = settlement_amount("manual_bonus_huf")
-    customer_rating_total = settlement_amount("customer_rating_bonus_huf")
-    malus_total = abs(settlement_amount("malus_huf", "Importált málusz"))
-    atm_deduction_total = abs(settlement_amount("atm_deduction_huf", "Importált ATM levonás"))
-    other_expense_total = abs(settlement_amount("other_expense_huf"))
+    imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
+    imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
+    manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
+    customer_rating_total = float(profile_adjustment_totals.get("customer_rating", 0.0))
+    manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
+    manual_atm_total = float(profile_adjustment_totals.get("atm_deduction", 0.0))
+    other_expense_total = float(profile_adjustment_totals.get("other_expense", 0.0))
+    malus_total = imported_malus_total + manual_malus_total
+    atm_deduction_total = imported_atm_total + manual_atm_total
     total_income = (
         base_total + tip_total + delay_total + compliance_total + other_route_bonus_total
         + imported_bonus_total + manual_bonus_total + customer_rating_total
     )
     total_deduction = malus_total + atm_deduction_total + other_expense_total
-    payable_total = settlement_amount("payable_huf", "Kifizetendő") or (total_income - total_deduction)
+    payable_before_insurance = total_income - total_deduction
+    reserve_month = resolve_target_reserve_month(
+        session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
+    )
+    reserve_addition_total = parse_huf_value(reserve_month.get("reserve_addition_huf"))
+    insurance_fee_total = parse_huf_value(reserve_month.get("insurance_fee_huf"))
+    total_deduction += reserve_addition_total + insurance_fee_total
+    payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
     order_total = int(settlement_amount("order_count") or route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
     route_total = int(settlement_amount("route_count") or len(route_detail))
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
@@ -2113,6 +2276,8 @@ def show_courier_dialog() -> None:
                       <div class="settlement-ledger-row"><span>Málusz</span><strong>-{format_huf(malus_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>ATM levonás</span><strong>-{format_huf(atm_deduction_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>Egyéb kiadás</span><strong>-{format_huf(other_expense_total)}</strong></div>
+                      <div class="settlement-ledger-row"><span>Céltartalék 10%</span><strong>-{format_huf(reserve_addition_total)}</strong></div>
+                      <div class="settlement-ledger-row"><span>Biztosítási díj</span><strong>-{format_huf(insurance_fee_total)}</strong></div>
                       <div class="settlement-ledger-row total"><span>Összesen</span><strong>-{format_huf(total_deduction)}</strong></div>
                     </div>
                   </div>
@@ -2185,9 +2350,9 @@ def show_courier_dialog() -> None:
         malus_total = float(adjustment_totals.get("malus", 0))
         atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
         other_expense_total = float(adjustment_totals.get("other_expense", 0))
-        imported_bonus_total = float(row.get("Importált bónusz", 0.0))
-        imported_malus_total = float(row.get("Importált málusz", 0.0))
-        imported_atm_total = float(row.get("Importált ATM levonás", 0.0))
+        imported_bonus_total = parse_huf_value(row.get("Importált bónusz"))
+        imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
+        imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
@@ -2225,17 +2390,37 @@ def show_courier_dialog() -> None:
                 compliance_total = amount("compliance_bonus_huf")
                 route_other_bonus_total = amount("other_route_bonus_huf")
                 imported_bonus_total = amount("imported_bonus_huf")
-                customer_rating_total = amount("customer_rating_bonus_huf")
-                malus_total = amount("malus_huf")
-                atm_deduction_total = amount("atm_deduction_huf")
-                other_expense_total = amount("other_expense_huf")
-                manual_bonus_total = amount("manual_bonus_huf")
-                bonus_total = route_other_bonus_total + imported_bonus_total + manual_bonus_total
-                payable_total = amount("payable_huf")
                 order_total = int(amount("order_count"))
                 route_total = int(amount("route_count"))
-                monthly_bonus_malus_effect = imported_bonus_total + manual_bonus_total - malus_total
-                manual_other_total = other_expense_total
+
+        manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
+        manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
+        manual_malus_total = float(adjustment_totals.get("malus", 0.0))
+        manual_atm_total = float(adjustment_totals.get("atm_deduction", 0.0))
+        manual_other_total = float(adjustment_totals.get("other_expense", 0.0))
+        bonus_total = route_other_bonus_total + imported_bonus_total + manual_bonus_total
+        customer_rating_total = manual_customer_rating_total
+        malus_total = imported_malus_total + manual_malus_total
+        atm_deduction_total = imported_atm_total + manual_atm_total
+        other_expense_total = manual_other_total
+        payable_total = (
+            base_total + tip_total + delay_total + compliance_total + bonus_total
+            + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+        )
+        payable_before_insurance = payable_total
+        reserve_month = resolve_target_reserve_month(
+            session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
+        )
+        reserve_addition_total = parse_huf_value(reserve_month.get("reserve_addition_huf"))
+        insurance_fee_total = parse_huf_value(reserve_month.get("insurance_fee_huf"))
+        reserve_before_total = parse_huf_value(reserve_month.get("reserve_before_huf"))
+        reserve_after_total = parse_huf_value(reserve_month.get("reserve_after_huf"))
+        reserve_month_status = str(reserve_month.get("status") or "in_progress")
+        payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+        monthly_bonus_malus_effect = (
+            imported_bonus_total + manual_bonus_total + manual_customer_rating_total
+            - imported_malus_total - manual_malus_total
+        )
 
         pdf_bytes = build_settlement_pdf(
             {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
@@ -2272,9 +2457,9 @@ def show_courier_dialog() -> None:
             ("Levonás / plusz", format_huf(-other_expense_total), ""),
             ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), ""),
             ("ATM hatás", format_huf(-atm_deduction_total), ""),
-            ("Lojalitás", "0 Ft", ""),
-            ("Oktatói díj", "0 Ft", ""),
-            ("Manuális", format_huf(-manual_other_total), ""),
+            ("Céltartalék 10%", format_huf(-reserve_addition_total), ""),
+            ("Biztosítási díj", format_huf(-insurance_fee_total), ""),
+            ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", ""),
         ]
         st.markdown(
             '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
@@ -2296,6 +2481,8 @@ def show_courier_dialog() -> None:
             {"Művelet": "-", "Tétel": "Máluszok", "Összeg": malus_total},
             {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
             {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+            {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
+            {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
             {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
         ])
         payable_sources["Összeg"] = payable_sources["Összeg"].map(format_huf)
@@ -2314,6 +2501,25 @@ def show_courier_dialog() -> None:
 
         with finance_right:
             st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Aktuális hónap szerkeszthető tételei</div></div>', unsafe_allow_html=True)
+            ct_a, ct_b, ct_c = st.columns(3)
+            ct_a.metric("CT nyitó", format_huf(reserve_before_total))
+            ct_b.metric("CT_NY_FT", format_huf(reserve_addition_total))
+            ct_c.metric("CT záró", format_huf(reserve_after_total))
+            close_disabled = reserve_month_status == "done"
+            if st.button(
+                "Havi céltartalék zárása",
+                type="primary",
+                use_container_width=True,
+                disabled=close_disabled,
+                key=f"close_target_reserve_{courier_id}",
+                help="Zárás után a havi CT sor done állapotú lesz és frissül a public.courier_target_reserve.",
+            ):
+                try:
+                    close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
+                    st.success("A havi céltartalék lezárva.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A céltartalék zárása sikertelen. Futtasd le a havi céltartalék migrációt. Részlet: {exc}")
 
         adjustment_type_labels = {
             "bonus": "Bónusz",
