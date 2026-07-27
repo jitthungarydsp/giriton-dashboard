@@ -36,6 +36,7 @@ RESERVE_TARGET_HUF = 350_000
 RESERVE_RATE = 0.10
 INSURANCE_FEE_HUF = 10_000
 ROUTE_ISSUE_STATUSES = ["Nincs reklamáció", "Vizsgálat", "Elfogadva", "Elutasítva", "Lezárva"]
+CUSTOMER_RATING_UPLOAD_TABLE = "bill_jitt_invoice_customer_rating_bonus"
 
 st.set_page_config(
     page_title="Új Elszámolási oldal",
@@ -1613,6 +1614,171 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_customer_rating_bonus_rows(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
+                .select("billing_month,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
+                .eq("billing_month", period_start.replace(day=1).isoformat())
+                .order("driver_name").execute().data or [])
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_customer_rating_rules_for_month(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (get_db().schema("settlement").table("cfg_jitt_customer_rating_rules")
+                .select("*").eq("is_active", True).is_("deleted_at", "null")
+                .lte("valid_from", period_end.isoformat())
+                .order("priority").execute().data or [])
+    except BaseException:
+        return pd.DataFrame()
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    valid_to = pd.to_datetime(data.get("valid_to"), errors="coerce")
+    return data.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+
+
+def customer_rating_rule_amount(average_rating: float, rules: pd.DataFrame) -> float:
+    if rules.empty:
+        return 0.0
+    rating_5 = float(average_rating or 0.0)
+    rating_percent = rating_5 * 20.0
+    for _, rule in rules.iterrows():
+        try:
+            min_value = float(rule["rating_min_percent"]) if pd.notna(rule.get("rating_min_percent")) else None
+            max_value = float(rule["rating_max_percent"]) if pd.notna(rule.get("rating_max_percent")) else None
+        except (TypeError, ValueError):
+            continue
+        compare_value = rating_5 if max((min_value or 0), (max_value or 0)) <= 5 else rating_percent
+        if min_value is not None and compare_value < min_value:
+            continue
+        if max_value is not None and compare_value > max_value:
+            continue
+        return parse_huf_value(rule.get("courier_amount_huf"))
+    return 0.0
+
+
+def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    result = data.copy()
+    rating_rows = load_customer_rating_bonus_rows(period_start, period_end)
+    if rating_rows.empty:
+        if "Ügyfélértékelés" not in result.columns:
+            result["Ügyfélértékelés"] = 0.0
+        return result
+    rating_rows["courier_id"] = rating_rows.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+    rating_rows["driver_key"] = rating_rows.get("driver_name", pd.Series(dtype=str)).map(_courier_match_key)
+    rating_rows["bonus_total_huf"] = pd.to_numeric(rating_rows.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+    by_id = rating_rows.groupby("courier_id")["bonus_total_huf"].sum()
+    by_name = rating_rows.groupby("driver_key")["bonus_total_huf"].sum()
+    courier_ids = result["Courier ID"].map(_courier_id_key)
+    courier_names = result["Futár"].map(_courier_match_key)
+    rating_bonus = courier_ids.map(by_id).fillna(courier_names.map(by_name)).fillna(0.0)
+    result["Ügyfélértékelés"] = rating_bonus
+    result["Bónusz"] = _numeric_series(result, "Bónusz") + rating_bonus
+    result["Kifizetendő"] = (
+        _numeric_series(result, "Nettó bevétel")
+        + _numeric_series(result, "Borravaló")
+        + _numeric_series(result, "Bónusz")
+        - _numeric_series(result, "Levonás")
+    )
+    return result
+
+
+def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
+    raw = pd.read_excel(uploaded_file)
+    normalized_columns = {_normalized_field_key(column): column for column in raw.columns}
+    required = {
+        "courier_id": ["courierid", "futarid", "driverid"],
+        "courier_name": ["couriername", "futarneve", "futarnev", "drivername"],
+        "courier_rating": ["courierrating", "rating", "ertekeles", "ugyfelertekeles"],
+        "deliver_at": ["deliverat", "deliverydate", "datum", "date"],
+    }
+    resolved: dict[str, str] = {}
+    for output_name, aliases in required.items():
+        source_column = next((normalized_columns[alias] for alias in aliases if alias in normalized_columns), "")
+        if not source_column:
+            raise ValueError(f"Hiányzó oszlop az ügyfélértékelés Excelben: {output_name}")
+        resolved[output_name] = source_column
+    warehouse_column = next((normalized_columns[alias] for alias in ["warehousename", "raktar", "warehouse"] if alias in normalized_columns), "")
+
+    data = raw.copy()
+    data["courier_id"] = data[resolved["courier_id"]].map(_courier_id_key)
+    data["driver_name"] = data[resolved["courier_name"]].astype(str).str.strip()
+    data["courier_rating"] = pd.to_numeric(data[resolved["courier_rating"]], errors="coerce")
+    data["deliver_at"] = pd.to_datetime(data[resolved["deliver_at"]], errors="coerce")
+    data = data.dropna(subset=["courier_rating"])
+    if data.empty:
+        raise ValueError("Nem található feldolgozható ügyfélértékelés sor.")
+    month_start = billing_month.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    data = data.loc[(data["deliver_at"].dt.date >= month_start) & (data["deliver_at"].dt.date < next_month)].copy()
+    if data.empty:
+        raise ValueError("A feltöltött Excelben nincs sor a kiválasztott hónapra.")
+
+    routes_by_id = pd.Series(dtype=float)
+    routes_by_name = pd.Series(dtype=float)
+    if not dashboard_data.empty:
+        dash = dashboard_data.copy()
+        dash["id_key"] = dash["Courier ID"].map(_courier_id_key)
+        dash["name_key"] = dash["Futár"].map(_courier_match_key)
+        route_source = _numeric_series(dash, "Útvonalak")
+        if route_source.eq(0).all() and "Számolt túrák" in dash.columns:
+            route_source = _numeric_series(dash, "Számolt túrák")
+        dash["_routes"] = route_source
+        routes_by_id = dash.groupby("id_key")["_routes"].sum()
+        routes_by_name = dash.groupby("name_key")["_routes"].sum()
+
+    rules = load_customer_rating_rules_for_month(month_start, next_month - timedelta(days=1))
+    grouped = (
+        data.groupby(["courier_id", "driver_name"], dropna=False)
+        .agg(rating_count=("courier_rating", "count"), average_rating=("courier_rating", "mean"))
+        .reset_index()
+    )
+    grouped["name_key"] = grouped["driver_name"].map(_courier_match_key)
+    grouped["completed_routes"] = grouped["courier_id"].map(routes_by_id).fillna(grouped["name_key"].map(routes_by_name)).fillna(0).astype(int)
+    grouped["bonus_per_route_huf"] = grouped["average_rating"].map(lambda value: customer_rating_rule_amount(value, rules))
+    grouped["bonus_total_huf"] = grouped["bonus_per_route_huf"] * grouped["completed_routes"]
+    grouped["billing_month"] = month_start.isoformat()
+    grouped["worksheet_name"] = data[warehouse_column].astype(str).str.strip().mode().iloc[0] if warehouse_column else "Ügyfélértékelés"
+    grouped["source_row_number"] = range(2, len(grouped) + 2)
+    grouped["source_spreadsheet_id"] = f"customer_rating_upload_{month_start:%Y_%m}"
+    grouped["row_data"] = grouped.apply(
+        lambda row: {
+            "rating_count": int(row["rating_count"]),
+            "average_rating": float(row["average_rating"]),
+            "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
+        },
+        axis=1,
+    )
+    now = pd.Timestamp.utcnow().isoformat()
+    grouped["imported_at"] = now
+    grouped["updated_at"] = now
+    return grouped[[
+        "source_spreadsheet_id", "worksheet_name", "source_row_number", "billing_month",
+        "courier_id", "driver_name", "rating_count", "average_rating",
+        "bonus_per_route_huf", "completed_routes", "bonus_total_huf", "row_data",
+        "imported_at", "updated_at",
+    ]]
+
+
+def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None:
+    month_text = billing_month.replace(day=1).isoformat()
+    get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).delete().eq("billing_month", month_text).execute()
+    payload = rows.copy()
+    for column in ["average_rating", "bonus_per_route_huf", "bonus_total_huf"]:
+        payload[column] = pd.to_numeric(payload[column], errors="coerce").fillna(0).astype(float)
+    payload["rating_count"] = pd.to_numeric(payload["rating_count"], errors="coerce").fillna(0).astype(int)
+    payload["completed_routes"] = pd.to_numeric(payload["completed_routes"], errors="coerce").fillna(0).astype(int)
+    records = payload.to_dict("records")
+    for start in range(0, len(records), 500):
+        get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).insert(records[start:start + 500]).execute()
+    load_customer_rating_bonus_rows.clear()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     """Read the separate Excel bonus, penalty and ATM sheets for one session."""
     columns = [
@@ -2410,7 +2576,8 @@ def show_courier_dialog() -> None:
     imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
     imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
-    customer_rating_total = float(profile_adjustment_totals.get("customer_rating", 0.0))
+    imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
+    customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
     manual_atm_total = float(profile_adjustment_totals.get("atm_deduction", 0.0))
     other_expense_total = float(profile_adjustment_totals.get("other_expense", 0.0))
@@ -2568,7 +2735,8 @@ def show_courier_dialog() -> None:
         compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
         route_other_bonus_total = float(route_breakdown.get("Egyéb bónusz", pd.Series(dtype=float)).sum())
         bonus_total = route_other_bonus_total + float(adjustment_totals.get("bonus", 0))
-        customer_rating_total = float(adjustment_totals.get("customer_rating", 0))
+        imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
+        customer_rating_total = imported_customer_rating_total + float(adjustment_totals.get("customer_rating", 0))
         malus_total = float(adjustment_totals.get("malus", 0))
         atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
         other_expense_total = float(adjustment_totals.get("other_expense", 0))
@@ -2617,11 +2785,12 @@ def show_courier_dialog() -> None:
 
         manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
         manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
+        imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
         manual_malus_total = float(adjustment_totals.get("malus", 0.0))
         manual_atm_total = float(adjustment_totals.get("atm_deduction", 0.0))
         manual_other_total = float(adjustment_totals.get("other_expense", 0.0))
         bonus_total = route_other_bonus_total + imported_bonus_total + manual_bonus_total
-        customer_rating_total = manual_customer_rating_total
+        customer_rating_total = imported_customer_rating_total + manual_customer_rating_total
         malus_total = imported_malus_total + manual_malus_total
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
@@ -2640,7 +2809,7 @@ def show_courier_dialog() -> None:
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
         payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
         monthly_bonus_malus_effect = (
-            imported_bonus_total + manual_bonus_total + manual_customer_rating_total
+            imported_bonus_total + manual_bonus_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
         )
 
@@ -3452,6 +3621,7 @@ def show_new_settlement_page() -> None:
     data = apply_excel_base_rates(load_courier_master(), import_session_id)
     data = apply_imported_balance_components(data, import_session_id)
     balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+    data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
@@ -3639,6 +3809,61 @@ def show_new_settlement_page() -> None:
                 st.error(f"A settlement adatok törlése sikertelen: {exc}")
                 with st.expander("Törlési hiba részletei", expanded=True):
                     st.code(error_details, language="text")
+
+        st.divider()
+        st.markdown("### Ügyfélértékelés feltöltése")
+        st.caption("Havi order rating Excel. A bónusz a futár profil Pénzügy fülén is megjelenik.")
+        rating_month = st.date_input(
+            "Értékelési hónap",
+            value=balance_period_start,
+            key="customer_rating_upload_month",
+        ).replace(day=1)
+        uploaded_rating_excel = st.file_uploader(
+            "Ügyfélértékelés Excel",
+            type=["xlsx", "xls"],
+            key="customer_rating_excel_upload",
+            help="Elvárt oszlopok: order_id, courier_name, courier_id, courier_rating, deliver_at, warehouse_name.",
+        )
+        rating_preview = pd.DataFrame()
+        if uploaded_rating_excel is not None:
+            try:
+                rating_preview = parse_customer_rating_excel(
+                    uploaded_rating_excel,
+                    rating_month,
+                    data,
+                )
+                st.success(f"Előnézet kész: {len(rating_preview)} futár.")
+                preview_view = rating_preview.rename(columns={
+                    "courier_id": "Courier ID",
+                    "driver_name": "Futár",
+                    "rating_count": "Értékelés db",
+                    "average_rating": "Átlag",
+                    "bonus_per_route_huf": "Bónusz / kör",
+                    "completed_routes": "Teljesített kör",
+                    "bonus_total_huf": "Ügyfélértékelési bónusz",
+                })[[
+                    "Courier ID", "Futár", "Értékelés db", "Átlag",
+                    "Bónusz / kör", "Teljesített kör", "Ügyfélértékelési bónusz",
+                ]].head(20)
+                st.dataframe(preview_view, use_container_width=True, hide_index=True)
+            except Exception as exc:
+                st.error(f"Az ügyfélértékelés Excel nem olvasható: {exc}")
+
+        if st.button(
+            "Ügyfélértékelés mentése",
+            type="primary",
+            use_container_width=True,
+            disabled=uploaded_rating_excel is None or rating_preview.empty,
+            key="save_customer_rating_upload",
+        ):
+            try:
+                save_customer_rating_upload(rating_preview, rating_month)
+                load_customer_rating_bonus_rows.clear()
+                load_driver_dashboard.clear()
+                st.success(f"Ügyfélértékelés mentve: {len(rating_preview)} futár, hónap: {rating_month:%Y-%m}.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Az ügyfélértékelés mentése sikertelen: {exc}")
 
         import_result = st.session_state.get("settlement_import_result")
         if import_result:
