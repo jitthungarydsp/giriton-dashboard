@@ -2299,30 +2299,23 @@ def show_courier_dialog() -> None:
             ("=", "Kifizetendő", payable_total, "equals"),
         ]
         finance_rows = "".join(
-            f"""
-            <div class="finance-row {'total' if op == '=' else ''}">
-              <div><span class="finance-op {op_class}">{html.escape(op)}</span></div>
-              <div>{html.escape(label)}</div>
-              <div class="finance-amount">{format_huf(amount)}</div>
-            </div>
-            """
+            f'<div class="finance-row {"total" if op == "=" else ""}">'
+            f'<div><span class="finance-op {op_class}">{html.escape(op)}</span></div>'
+            f'<div>{html.escape(label)}</div>'
+            f'<div class="finance-amount">{format_huf(amount)}</div>'
+            f'</div>'
             for op, label, amount, op_class in payable_sources
         )
 
         finance_left, finance_right = st.columns([0.38, 0.62], gap="medium")
         with finance_left:
             st.markdown(
-                f"""
-                <div class="settlement-profile-shell">
-                  <div class="finance-panel">
-                    <div class="finance-panel-head"><div class="finance-panel-title">Kifizetendő levezetése</div><span class="settlement-info">i</span></div>
-                    <div class="finance-table">
-                      <div class="finance-row header"><div>Művelet</div><div>Tétel</div><div class="finance-amount">Összeg</div></div>
-                      {finance_rows}
-                    </div>
-                  </div>
-                </div>
-                """,
+                '<div class="settlement-profile-shell"><div class="finance-panel">'
+                '<div class="finance-panel-head"><div class="finance-panel-title">Kifizetendő levezetése</div><span class="settlement-info">i</span></div>'
+                '<div class="finance-table">'
+                '<div class="finance-row header"><div>Művelet</div><div>Tétel</div><div class="finance-amount">Összeg</div></div>'
+                f'{finance_rows}'
+                '</div></div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -2339,7 +2332,16 @@ def show_courier_dialog() -> None:
         adjustment_type_values = {label: key for key, label in adjustment_type_labels.items()}
         editor_columns = ["id", "Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"]
         if adjustments.empty:
-            editor_df = pd.DataFrame(columns=editor_columns)
+            editor_df = pd.DataFrame(
+                [
+                    {"id": "", "Típus": "Bónusz", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Ügyfélértékelés", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Málusz", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "ATM levonás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Egyéb kiadás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                ],
+                columns=editor_columns,
+            )
         else:
             editor_df = adjustments.copy()
             editor_df["Típus"] = editor_df["adjustment_type"].map(adjustment_type_labels).fillna(editor_df["adjustment_type"])
@@ -2358,6 +2360,7 @@ def show_courier_dialog() -> None:
                 num_rows="dynamic",
                 key=f"finance_adjustment_editor_{courier_id}",
                 disabled=["id"],
+                column_order=["Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"],
                 column_config={
                     "id": st.column_config.TextColumn("ID", help="Belső azonosító", width="small"),
                     "Típus": st.column_config.SelectboxColumn("Típus", options=list(adjustment_type_values.keys()), required=True),
@@ -2369,6 +2372,9 @@ def show_courier_dialog() -> None:
                 },
             )
             st.markdown('<div class="finance-note">A pozitív összeg növeli, a levonás típusú sor csökkenti a kifizetendő összeget.</div>', unsafe_allow_html=True)
+            save_col, reset_col = st.columns([0.46, 0.54])
+            save_clicked = save_col.button("Változások mentése", type="primary", use_container_width=True, key=f"finance_save_adjustments_{courier_id}")
+            reset_clicked = reset_col.button("Havi kézi tételek visszaállítása", use_container_width=True, key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak.")
 
         def editor_date(value: object, fallback: date | None = None) -> date | None:
             if value is None or value == "":
@@ -2378,8 +2384,7 @@ def show_courier_dialog() -> None:
                 return fallback
             return parsed.date()
 
-        save_col, reset_col = st.columns([0.28, 0.22])
-        if save_col.button("Tételek mentése", type="primary", use_container_width=True, key=f"finance_save_adjustments_{courier_id}"):
+        if save_clicked:
             try:
                 original_by_id = {str(item.get("id")): item for _, item in adjustments.iterrows()} if not adjustments.empty else {}
                 saved_changes = 0
@@ -2430,7 +2435,7 @@ def show_courier_dialog() -> None:
             except Exception as exc:
                 st.error(f"A tételek nem menthetők. Futtasd le az adjustment edit migrációt. Részlet: {exc}")
 
-        if reset_col.button("Havi kézi tételek visszaállítása", use_container_width=True, key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak."):
+        if reset_clicked:
             try:
                 reset_courier_adjustments(session_id, courier_id, period_start, period_end)
                 st.rerun()
