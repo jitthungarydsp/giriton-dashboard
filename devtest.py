@@ -1859,26 +1859,6 @@ def show_courier_dialog() -> None:
     )
 
     if selected_menu == "Áttekintés":
-        route_rows = []
-        for _, route in route_detail.head(5).iterrows():
-            route_amount = sum(
-                parse_huf_value(route.get(column))
-                for column in ["Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]
-            )
-            route_rows.append(
-                f"""
-                <div class="settlement-route-row">
-                  <div>{html.escape(str(route.get('Route ID') or '-'))}</div>
-                  <div>{html.escape(str(route.get('Excel dátum') or '-'))}</div>
-                  <div>{int(parse_huf_value(route.get('Kör') or 1))}</div>
-                  <div>{int(parse_huf_value(route.get('Rendelések')))}</div>
-                  <div>{format_huf(route_amount)}</div>
-                  <div><span class="settlement-chip">Elszámolva</span></div>
-                  <div>⋮</div>
-                </div>
-                """
-            )
-        route_rows_html = "".join(route_rows) or '<div class="settlement-route-row" style="grid-template-columns:1fr"><div>Nincs megjeleníthető útvonal az aktuális sessionben.</div></div>'
         missing_data_count = 0
         if not summary_row:
             missing_data_count += 1
@@ -1932,15 +1912,36 @@ def show_courier_dialog() -> None:
                   </div>
                 </div>
               </div>
-              <div class="settlement-card settlement-route-card">
-                <div class="settlement-card-title">Útvonalak (legutóbbi 5) <span class="settlement-route-link">Összes útvonal megtekintése →</span></div>
-                <div class="settlement-route-head"><div>Útvonal azonosító</div><div>Dátum</div><div>Kör</div><div>Rendelések</div><div>Bevétel</div><div>Státusz</div><div></div></div>
-                {route_rows_html}
-              </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        st.markdown("#### Útvonalak (legutóbbi 5)")
+        if route_detail.empty:
+            st.info("Nincs megjeleníthető útvonal az aktuális sessionben.")
+        else:
+            route_preview = route_detail.head(5).copy()
+            route_preview["Kör"] = 1
+            route_preview["Bevétel"] = route_preview.apply(
+                lambda route: sum(
+                    parse_huf_value(route.get(column))
+                    for column in ["Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]
+                ),
+                axis=1,
+            )
+            route_preview["Bevétel"] = route_preview["Bevétel"].map(format_huf)
+            route_preview["Státusz"] = "Elszámolva"
+            route_preview = route_preview.rename(
+                columns={
+                    "Route ID": "Útvonal azonosító",
+                    "Excel dátum": "Dátum",
+                }
+            )
+            st.dataframe(
+                route_preview[["Útvonal azonosító", "Dátum", "Kör", "Rendelések", "Bevétel", "Státusz"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     if selected_menu == "Pénzügy":
         session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
