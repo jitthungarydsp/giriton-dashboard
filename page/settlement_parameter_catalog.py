@@ -10,6 +10,7 @@ import streamlit as st
 from resources.settlement_parameters import (
     BASE_RATE_TABLE,
     COMPLIANCE_TABLE,
+    CUSTOMER_RATING_TABLE,
     DAY_TABLE,
     DELAY_TABLE,
     LIFE_INSURANCE_TABLE,
@@ -22,6 +23,7 @@ from resources.settlement_parameters import (
     save_item,
     soft_delete_item,
     validate_base_rate,
+    validate_customer_rating_rule,
     validate_day_definition,
     validate_performance_rule,
     validate_periodic_fee,
@@ -377,11 +379,41 @@ def _show_life_insurance(client: Any) -> None:
     _delete_control(client, LIFE_INSURANCE_TABLE, row, "life_insurance")
 
 
+def _show_customer_rating(client: Any) -> None:
+    st.caption("Ügyfélértékelési bónusz százalékos sávval, futárösszeggel és verziózott érvényességgel.")
+    data = read_items(client, CUSTOMER_RATING_TABLE)
+    if not data.empty:
+        view = data.copy()
+        view["Értékelési sáv"] = [_range(a, b, "%") for a, b in zip(view["rating_min_percent"], view["rating_max_percent"])]
+        view["Futár összege"] = view["courier_amount_huf"].map(_money)
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["level_code", "Értékelési sáv", "Futár összege", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "customer_rating", "level_code")
+    with st.form(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}"):
+        left, middle, right = st.columns(3)
+        level = left.text_input("Megnevezés", value=_text((row or {}).get("level_code")) or "Ügyfélértékelés")
+        rating_min = middle.number_input("Minimum értékelés (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("rating_min_percent")), step=0.01)
+        rating_max = right.number_input("Maximum értékelés (%)", min_value=0.0, max_value=100.0, value=_number((row or {}).get("rating_max_percent")), step=0.01)
+        bounds = st.columns(2)
+        has_min = bounds[0].checkbox("Van minimum", value=_clean((row or {}).get("rating_min_percent")) is not None)
+        has_max = bounds[1].checkbox("Van maximum", value=_clean((row or {}).get("rating_max_percent")) is not None)
+        courier_amount = st.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "customer_rating")
+        saved = st.form_submit_button("Módosítás mentése" if row else "Ügyfélértékelés mentése", type="primary")
+    if saved:
+        try:
+            save_item(client, CUSTOMER_RATING_TABLE, validate_customer_rating_rule({"level_code": level, "rating_min": rating_min if has_min else None, "rating_max": rating_max if has_max else None, "courier_amount_huf": courier_amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            st.success("Az ügyfélértékelési szabály mentve.")
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, CUSTOMER_RATING_TABLE, row, "customer_rating")
+
+
 def render_parameter_catalog(client: Any) -> None:
     st.subheader("Paraméterértékek")
     st.caption("Minden szabály külön menüpontban kezelhető. A dátum nélküli zárás folyamatos érvényességet jelent.")
     try:
-        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "Életbiztosítás"])
+        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "Életbiztosítás", "Ügyfélértékelés"])
         with tabs[0]: _show_days(client)
         with tabs[1]: _show_base_rates(client)
         with tabs[2]: _show_performance(client, DELAY_TABLE, "Delay bónusz", "delay")
@@ -390,5 +422,6 @@ def render_parameter_catalog(client: Any) -> None:
         with tabs[5]: _show_reserve_insurance(client)
         with tabs[6]: _show_loyalty_bonus(client)
         with tabs[7]: _show_life_insurance(client)
+        with tabs[8]: _show_customer_rating(client)
     except Exception as exc:
         st.error("A settlement paramétertáblák még nem érhetők el. Futtasd a `sql/settlement_parameterized_base_rate.sql` fájlt a Supabase SQL Editorban. Részlet: " + str(exc))

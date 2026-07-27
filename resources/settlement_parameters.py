@@ -14,6 +14,7 @@ PERIODIC_FEE_TABLE = "cfg_jitt_periodic_fees"
 RESERVE_INSURANCE_TABLE = "cfg_jitt_reserve_insurance_rules"
 LOYALTY_BONUS_TABLE = "cfg_jitt_loyalty_bonus_rules"
 LIFE_INSURANCE_TABLE = "cfg_jitt_life_insurance_rules"
+CUSTOMER_RATING_TABLE = "cfg_jitt_customer_rating_rules"
 
 DAY_TYPES = {"highlighted", "normal", "any"}
 ROUTE_TYPES = {"express", "normal", "regional", "any"}
@@ -197,6 +198,19 @@ def validate_loyalty_bonus_rule(payload: dict[str, Any]) -> dict[str, Any]:
 def validate_life_insurance_rule(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "life_insurance_amount_huf": _amount(payload.get("life_insurance_amount_huf"), "életbiztosítás összege"),
+        **_common(payload),
+    }
+
+
+def validate_customer_rating_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    rating_min, rating_max = _range(payload, "rating", "ügyfélértékelési sáv")
+    if rating_min is None and rating_max is None:
+        raise ValueError("Legalább minimum vagy maximum értékelést adj meg.")
+    return {
+        "level_code": _optional_text(payload.get("level_code")) or "Ügyfélértékelés",
+        "rating_min_percent": rating_min,
+        "rating_max_percent": rating_max,
+        "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
         **_common(payload),
     }
 

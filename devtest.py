@@ -1,4 +1,5 @@
 import html
+import json
 import re
 import traceback
 import unicodedata
@@ -727,6 +728,56 @@ def get_demo_complaints() -> pd.DataFrame:
     ])
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_route_breakdown(courier_name: str, session_id: str | None) -> pd.DataFrame:
+    """Read route counts and DB-calculated amounts directly from settlement.jit_row."""
+    columns = ["Túratípus", "Naptípus", "Túrák", "Alapdíj", "Borravaló", "Bónuszok"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    try:
+        rows = (
+            get_db().schema("settlement").table("jit_row")
+            .select("normalized_data,route_unique_id,calculated_day_type,courier_base_rate_huf,courier_tip_huf,is_route_primary")
+            .eq("session_id", session_id).execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+    parsed: list[dict[str, object]] = []
+    target_key = _courier_match_key(courier_name)
+    for source in rows:
+        normalized = source.get("normalized_data") or {}
+        if isinstance(normalized, str):
+            try:
+                normalized = json.loads(normalized)
+            except json.JSONDecodeError:
+                normalized = {}
+        if not isinstance(normalized, dict):
+            continue
+        source_key = _courier_match_key(normalized.get("Driver") or normalized.get("driver_name"))
+        source_tokens, target_tokens = set(source_key.split()), set(target_key.split())
+        if not source_key or not (source_key == target_key or source_tokens <= target_tokens or target_tokens <= source_tokens):
+            continue
+        if source.get("is_route_primary") is False:
+            continue
+        route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
+        route_type = {"NORMAL": "Normál", "CITY": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_value, route_value.title())
+        day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(str(source.get("calculated_day_type") or ""), "Nincs besorolás")
+        bonus_columns = ["Delay Bonus", "Compliance Bonus", "Fuel Bonus", "Car & Fridge Bonus", "Fill Rate Bonus", "Branding"]
+        bonus = sum(float(normalized.get(column) or 0) for column in bonus_columns)
+        parsed.append({
+            "Túratípus": route_type,
+            "Naptípus": day_type,
+            "Túrák": 1,
+            "Alapdíj": float(source.get("courier_base_rate_huf") or 0),
+            "Borravaló": float(source.get("courier_tip_huf") or normalized.get("Tip") or 0),
+            "Bónuszok": bonus,
+        })
+    if not parsed:
+        return pd.DataFrame(columns=columns)
+    detail = pd.DataFrame(parsed)
+    return detail.groupby(["Túratípus", "Naptípus"], as_index=False)[columns[2:]].sum()
+
+
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
@@ -788,6 +839,18 @@ def show_courier_dialog() -> None:
         return
 
     row = match.iloc[0]
+    route_breakdown = load_courier_route_breakdown(
+        str(row["Futár"]),
+        st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id(),
+    )
+    base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
+    tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
+    bonus_total = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum())
+    customer_rating_total = 0.0
+    malus_total = 0.0
+    atm_deduction_total = 0.0
+    other_expense_total = 0.0
+    payable_total = base_total + tip_total + bonus_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
 
     st.markdown(
         f"""
@@ -812,11 +875,11 @@ def show_courier_dialog() -> None:
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("KPI", f"{row['KPI']:.1f}%")
-    k2.metric("Aktuális havi összeg", format_huf(row["Kifizetendő"]))
+    k2.metric("Aktuális havi összeg", format_huf(payable_total))
     k3.metric("Előző havi összeg", format_huf(row["Előző havi összeg"]))
     k4.metric(
         "Havi változás",
-        format_huf(int(row["Kifizetendő"]) - int(row["Előző havi összeg"])),
+        format_huf(int(payable_total) - int(row["Előző havi összeg"])),
     )
 
     (
@@ -848,10 +911,14 @@ def show_courier_dialog() -> None:
                 pd.DataFrame(
                     [
                         {
-                            "Nettó bevétel": format_huf(row["Nettó bevétel"]),
-                            "Bónusz": format_huf(row["Bónusz"]),
-                            "Levonás": format_huf(row["Levonás"]),
-                            "Kifizetendő": format_huf(row["Kifizetendő"]),
+                            "Alapdíj": format_huf(base_total),
+                            "Borravaló": format_huf(tip_total),
+                            "Bónuszok": format_huf(bonus_total),
+                            "Máluszok": format_huf(malus_total),
+                            "ATM levonás": format_huf(atm_deduction_total),
+                            "Egyéb kiadás": format_huf(other_expense_total),
+                            "Ügyfélértékelés": format_huf(customer_rating_total),
+                            "Kifizetendő": format_huf(payable_total),
                             "Státusz": row["Státusz"],
                         }
                     ]
@@ -873,6 +940,16 @@ def show_courier_dialog() -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
+        st.markdown("#### Túratípus és naptípus szerinti teljesítés")
+        if route_breakdown.empty:
+            st.info("Ehhez a futárhoz még nincs számolható JITT route az aktuális Excel-importban.")
+        else:
+            route_view = route_breakdown.copy()
+            route_view["Alapdíj"] = route_view["Alapdíj"].map(format_huf)
+            route_view["Borravaló"] = route_view["Borravaló"].map(format_huf)
+            route_view["Bónuszok"] = route_view["Bónuszok"].map(format_huf)
+            st.dataframe(route_view, use_container_width=True, hide_index=True)
 
         st.markdown("#### Dokumentumműveletek")
         action1, action2 = st.columns(2)

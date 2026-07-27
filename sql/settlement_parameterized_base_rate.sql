@@ -183,6 +183,27 @@ create table if not exists settlement.cfg_jitt_life_insurance_rules (
     check (valid_to is null or valid_to >= valid_from)
 );
 
+create table if not exists settlement.cfg_jitt_customer_rating_rules (
+    id uuid primary key default gen_random_uuid(),
+    level_code text not null default 'Ügyfélértékelés',
+    rating_min_percent numeric,
+    rating_max_percent numeric,
+    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
+    valid_from date not null,
+    valid_to date,
+    priority integer not null default 100,
+    is_active boolean not null default true,
+    note text,
+    created_by text not null,
+    created_at timestamptz not null default now(),
+    updated_by text,
+    updated_at timestamptz not null default now(),
+    deleted_at timestamptz,
+    deleted_by text,
+    check (valid_to is null or valid_to >= valid_from),
+    check (rating_max_percent is null or rating_min_percent is null or rating_max_percent >= rating_min_percent)
+);
+
 alter table settlement.jit_row
     add column if not exists route_unique_id text,
     add column if not exists route_date date,
@@ -318,7 +339,7 @@ from settlement.jit_row
 group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
 
 grant usage on schema settlement to service_role;
-grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates, settlement.cfg_jitt_delay_bonus_rules, settlement.cfg_jitt_compliance_bonus_rules, settlement.cfg_jitt_periodic_fees, settlement.cfg_jitt_reserve_insurance_rules, settlement.cfg_jitt_loyalty_bonus_rules, settlement.cfg_jitt_life_insurance_rules to service_role;
+grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates, settlement.cfg_jitt_delay_bonus_rules, settlement.cfg_jitt_compliance_bonus_rules, settlement.cfg_jitt_periodic_fees, settlement.cfg_jitt_reserve_insurance_rules, settlement.cfg_jitt_loyalty_bonus_rules, settlement.cfg_jitt_life_insurance_rules, settlement.cfg_jitt_customer_rating_rules to service_role;
 grant select, update on settlement.jit_row to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_base_rates(uuid) to service_role;

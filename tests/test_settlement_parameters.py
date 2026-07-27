@@ -6,6 +6,7 @@ import unittest
 from resources.settlement_parameters import (
     parameter_status,
     validate_base_rate,
+    validate_customer_rating_rule,
     validate_day_definition,
     validate_life_insurance_rule,
     validate_loyalty_bonus_rule,
@@ -97,6 +98,18 @@ class SettlementParameterValidationTests(unittest.TestCase):
         self.assertEqual(reserve["deduction_percent"], 12.5)
         self.assertEqual(loyalty["loyalty_start_date"], "2026-01-01")
         self.assertEqual(life["life_insurance_amount_huf"], 3500)
+
+    def test_customer_rating_rule_has_percent_band_and_courier_amount(self) -> None:
+        row = validate_customer_rating_rule({
+            "level_code": "Kiemelkedő értékelés",
+            "rating_min": 95,
+            "rating_max": 100,
+            "courier_amount_huf": 5000,
+            "valid_from": date(2026, 6, 1),
+            "valid_to": None,
+        })
+        self.assertEqual(row["rating_min_percent"], 95)
+        self.assertEqual(row["courier_amount_huf"], 5000)
 
 
 if __name__ == "__main__":
