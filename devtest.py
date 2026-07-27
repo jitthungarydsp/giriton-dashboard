@@ -886,7 +886,7 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
         return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
     try:
         rows = (get_db().schema("settlement").table("courier_settlement_adjustment")
-                .select("id,adjustment_type,amount_huf,effective_date,valid_from,valid_to,note")
+                .select("id,adjustment_type,amount_huf,effective_date,valid_from,valid_to,note,created_by,created_at")
                 .eq("courier_id", courier_id)
                 .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
     except BaseException:
@@ -909,7 +909,7 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
         return pd.DataFrame(columns=["id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note"])
 
 
-def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
+def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     existing = load_courier_adjustments(courier_id, valid_from, valid_to or valid_from)
     same_end = existing["valid_to"].isna() if valid_to is None else existing["valid_to"] == valid_to
@@ -931,20 +931,20 @@ def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: s
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_adjustment_log(session_id: str | None, courier_id: str) -> pd.DataFrame:
-    if not session_id or not courier_id:
+def load_courier_adjustment_log(courier_id: str) -> pd.DataFrame:
+    if not courier_id:
         return pd.DataFrame()
     try:
         rows = (get_db().schema("settlement").table("courier_settlement_adjustment_event")
                 .select("event_type,adjustment_type,amount_huf,note,performed_by,created_at")
-                .eq("session_id", session_id).eq("courier_id", courier_id)
+                .eq("courier_id", courier_id)
                 .order("created_at", desc=True).execute().data or [])
         return pd.DataFrame(rows)
     except BaseException:
         return pd.DataFrame()
 
 
-def reset_courier_adjustments(session_id: str, courier_id: str, period_start: date, period_end: date) -> None:
+def reset_courier_adjustments(session_id: str | None, courier_id: str, period_start: date, period_end: date) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     for adjustment_id in adjustments.get("id", pd.Series(dtype=str)):
@@ -973,13 +973,10 @@ def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
         if rows.empty:
             st.info(f"Nincs rögzített {singular.lower()} az aktuális elszámolási hónapra.")
         else:
-            view = rows.rename(columns={"effective_date": "Kezdete", "valid_to": "Vége", "amount_huf": "Összeg", "note": "Megjegyzés"}).copy()
+            view = rows.rename(columns={"effective_date": "Kezdete", "valid_to": "Vége", "amount_huf": "Összeg", "note": "Megjegyzés", "created_by": "Létrehozta", "created_at": "Létrehozva"}).copy()
             view["Összeg"] = view["Összeg"].map(format_huf)
-            st.dataframe(view[["Kezdete", "Vége", "Összeg", "Megjegyzés"]], use_container_width=True, hide_index=True)
+            st.dataframe(view[["Kezdete", "Vége", "Összeg", "Megjegyzés", "Létrehozta", "Létrehozva"]], use_container_width=True, hide_index=True)
     with right:
-        if not session_id:
-            st.warning("A mentéshez előbb tölts fel egy JITT Excel-fájlt.")
-            return
         with st.form(f"{adjustment_type}_form_{courier_id}"):
             st.text_input("Megnevezés / megjegyzés", key=f"{adjustment_type}_note_{courier_id}")
             amount = st.number_input("Összeg (Ft)", min_value=0, step=100, key=f"{adjustment_type}_amount_{courier_id}")
@@ -992,7 +989,7 @@ def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
                 st.error("A záródátum nem lehet korábbi a kezdő dátumnál.")
             else:
                 try:
-                    save_courier_adjustment(str(session_id), courier_id, adjustment_type, amount, st.session_state[f"{adjustment_type}_note_{courier_id}"], valid_from, valid_to if has_end else None)
+                    save_courier_adjustment(session_id, courier_id, adjustment_type, amount, st.session_state[f"{adjustment_type}_note_{courier_id}"], valid_from, valid_to if has_end else None)
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A mentés nem sikerült: {exc}")
@@ -1159,42 +1156,39 @@ def show_courier_dialog() -> None:
             st.dataframe(route_view, use_container_width=True, hide_index=True)
 
         st.markdown("#### Havi korrekció rögzítése")
-        if not session_id:
-            st.warning("A korrekció mentéséhez előbb legyen betöltött JITT Excel-munkamenet.")
-        else:
-            with st.form(f"monthly_adjustment_{courier_id}"):
-                a1, a2, a3 = st.columns(3)
-                adjustment_type = a1.selectbox("Típus", ["bonus", "malus", "atm_deduction", "other_expense", "customer_rating"], format_func={"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"}.get)
-                adjustment_amount = a2.number_input("Összeg (Ft)", min_value=0, step=100, value=0)
-                adjustment_note = a3.text_input("Megjegyzés")
-                validity = st.columns(2)
-                adjustment_from = validity[0].date_input("Érvényes ettől", value=period_start)
-                has_adjustment_end = validity[1].checkbox("Van záródátum", value=True)
-                adjustment_to = validity[1].date_input("Érvényes eddig", value=period_end)
-                adjustment_saved = st.form_submit_button("Korrekció mentése", type="primary")
-            if adjustment_saved:
-                try:
-                    if has_adjustment_end and adjustment_to < adjustment_from:
-                        st.error("A záródátum nem lehet korábbi a kezdő dátumnál.")
-                    else:
-                        save_courier_adjustment(str(session_id), courier_id, adjustment_type, adjustment_amount, adjustment_note, adjustment_from, adjustment_to if has_adjustment_end else None)
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"A korrekció nem menthető. Futtasd le a courier adjustment migrációt. Részlet: {exc}")
-            reset_col, reset_note_col = st.columns([0.24, 0.76])
-            if reset_col.button("↻ Visszaállítás", key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak. A változás naplózva marad."):
-                try:
-                    reset_courier_adjustments(str(session_id), courier_id, period_start, period_end)
+        with st.form(f"monthly_adjustment_{courier_id}"):
+            a1, a2, a3 = st.columns(3)
+            adjustment_type = a1.selectbox("Típus", ["bonus", "malus", "atm_deduction", "other_expense", "customer_rating"], format_func={"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"}.get)
+            adjustment_amount = a2.number_input("Összeg (Ft)", min_value=0, step=100, value=0)
+            adjustment_note = a3.text_input("Megjegyzés")
+            validity = st.columns(2)
+            adjustment_from = validity[0].date_input("Érvényes ettől", value=period_start)
+            has_adjustment_end = validity[1].checkbox("Van záródátum", value=True)
+            adjustment_to = validity[1].date_input("Érvényes eddig", value=period_end)
+            adjustment_saved = st.form_submit_button("Korrekció mentése", type="primary")
+        if adjustment_saved:
+            try:
+                if has_adjustment_end and adjustment_to < adjustment_from:
+                    st.error("A záródátum nem lehet korábbi a kezdő dátumnál.")
+                else:
+                    save_courier_adjustment(session_id, courier_id, adjustment_type, adjustment_amount, adjustment_note, adjustment_from, adjustment_to if has_adjustment_end else None)
                     st.rerun()
-                except Exception as exc:
-                    st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
-            reset_note_col.caption("A visszaállítás nem végleges törlés: a naplóban megmarad, ki és mikor állította vissza.")
+            except Exception as exc:
+                st.error(f"A korrekció nem menthető. Futtasd le a courier adjustment migrációt. Részlet: {exc}")
+        reset_col, reset_note_col = st.columns([0.24, 0.76])
+        if reset_col.button("↻ Visszaállítás", key=f"reset_adjustments_{courier_id}", help="A kézi korrekciók inaktiválódnak, az alap DB-értékek maradnak. A változás naplózva marad."):
+            try:
+                reset_courier_adjustments(session_id, courier_id, period_start, period_end)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
+        reset_note_col.caption("A visszaállítás nem végleges törlés: a naplóban megmarad, ki és mikor állította vissza.")
         if not adjustments.empty:
             adjustment_view = adjustments.rename(columns={"adjustment_type": "Típus", "amount_huf": "Összeg", "effective_date": "Dátum", "note": "Megjegyzés"}).copy()
             adjustment_view["Típus"] = adjustment_view["Típus"].map({"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"})
             adjustment_view["Összeg"] = adjustment_view["Összeg"].map(format_huf)
             st.dataframe(adjustment_view, use_container_width=True, hide_index=True)
-        adjustment_log = load_courier_adjustment_log(session_id, courier_id)
+        adjustment_log = load_courier_adjustment_log(courier_id)
         if not adjustment_log.empty:
             with st.expander("Módosítási napló", expanded=False):
                 log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Módosította", "created_at": "Időpont"}).copy()
