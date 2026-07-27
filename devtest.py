@@ -2286,37 +2286,30 @@ def show_courier_dialog() -> None:
             unsafe_allow_html=True,
         )
 
-        payable_sources = [
-            ("+", "Alapdíj", base_total, "plus"),
-            ("+", "Borravaló", tip_total, "plus"),
-            ("+", "Késedelmi díj", delay_total, "plus"),
-            ("+", "Túramegfelelés", compliance_total, "plus"),
-            ("+", "Bónuszok", bonus_total, "plus"),
-            ("+", "Ügyfélértékelés", customer_rating_total, "plus"),
-            ("−", "Máluszok", malus_total, "minus"),
-            ("−", "ATM levonás", atm_deduction_total, "minus"),
-            ("−", "Egyéb kiadás", other_expense_total, "minus"),
-            ("=", "Kifizetendő", payable_total, "equals"),
-        ]
-        finance_rows = "".join(
-            f'<div class="finance-row {"total" if op == "=" else ""}">'
-            f'<div><span class="finance-op {op_class}">{html.escape(op)}</span></div>'
-            f'<div>{html.escape(label)}</div>'
-            f'<div class="finance-amount">{format_huf(amount)}</div>'
-            f'</div>'
-            for op, label, amount, op_class in payable_sources
-        )
+        payable_sources = pd.DataFrame([
+            {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
+            {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
+            {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
+            {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
+            {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
+            {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
+            {"Művelet": "-", "Tétel": "Máluszok", "Összeg": malus_total},
+            {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
+            {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+            {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
+        ])
+        payable_sources["Összeg"] = payable_sources["Összeg"].map(format_huf)
 
         finance_left, finance_right = st.columns([0.38, 0.62], gap="medium")
         with finance_left:
             st.markdown(
-                '<div class="settlement-profile-shell"><div class="finance-panel">'
-                '<div class="finance-panel-head"><div class="finance-panel-title">Kifizetendő levezetése</div><span class="settlement-info">i</span></div>'
-                '<div class="finance-table">'
-                '<div class="finance-row header"><div>Művelet</div><div>Tétel</div><div class="finance-amount">Összeg</div></div>'
-                f'{finance_rows}'
-                '</div></div></div>',
+                '<div class="settlement-profile-shell"><div class="finance-panel-head"><div class="finance-panel-title">Kifizetendő levezetése</div><span class="settlement-info">i</span></div></div>',
                 unsafe_allow_html=True,
+            )
+            st.dataframe(
+                payable_sources,
+                use_container_width=True,
+                hide_index=True,
             )
 
         with finance_right:
