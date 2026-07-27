@@ -1379,6 +1379,11 @@ def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None
 
 
 def format_huf(value: float | int) -> str:
+    try:
+        if pd.isna(value):
+            value = 0
+    except (TypeError, ValueError):
+        value = 0
     return f"{value:,.0f} Ft".replace(",", " ")
 
 
@@ -1386,6 +1391,11 @@ def parse_huf_value(value: object) -> float:
     """Accept numeric DB values and formatted Hungarian money strings."""
     if value is None or value == "":
         return 0.0
+    try:
+        if pd.isna(value):
+            return 0.0
+    except (TypeError, ValueError):
+        pass
     if isinstance(value, (int, float)):
         return float(value)
     text = str(value).strip().replace("−", "-").replace("Ft", "").replace("ft", "")
