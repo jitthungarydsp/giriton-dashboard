@@ -1,5 +1,3 @@
-import html
-import re
 import traceback
 import unicodedata
 from datetime import date, timedelta
@@ -1467,18 +1465,18 @@ def render_table(df: pd.DataFrame) -> None:
 
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
-    """Prémium, csak vizuális futárprofil-prototípus.
+    """A futár aktuális elszámolási adatainak prémium nézete.
 
-    A főoldal, az Excel-import és a háttérfolyamatok változatlanok. Ez a nézet
-    szándékosan demonstrációs tartalmakat is használ, hogy a végleges UI teljes
-    szerkezete üzleti logika nélkül is megítélhető legyen.
+    Az elszámolási összegek elsődleges forrása a
+    ``settlement.courier_settlement_summary`` tábla. A főoldal és az import
+    működése változatlan marad.
     """
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
         data = load_courier_master()
 
-    match = data[data["Courier ID"].astype(str) == courier_id]
+    match = data[data["Courier ID"].astype(str).map(_courier_id_key) == _courier_id_key(courier_id)]
     if match.empty:
         st.warning("A futár nem található.")
         return
@@ -1486,27 +1484,72 @@ def show_courier_dialog() -> None:
     row = match.iloc[0]
     courier_name = str(row.get("Futár") or "Ismeretlen futár")
     initials = "".join(part[0] for part in courier_name.split()[:2] if part).upper() or "FT"
-    payable = float(row.get("Kifizetendő", 468500) or 468500)
-    if payable == 0:
-        payable = 468500
-    previous = float(row.get("Előző havi összeg", 421300) or 421300)
-    if previous == 0:
-        previous = 421300
-    net = float(row.get("Nettó bevétel", 392000) or 392000)
-    if net == 0:
-        net = 392000
-    tip = float(row.get("Borravaló", 28600) or 28600)
-    if tip == 0:
-        tip = 28600
-    bonus = float(row.get("Bónusz", 57900) or 57900)
-    if bonus == 0:
-        bonus = 57900
-    deduction = float(row.get("Levonás", 10000) or 10000)
-    if deduction == 0:
-        deduction = 10000
-    kpi = float(row.get("KPI", 96.4) or 96.4)
-    if kpi == 0:
-        kpi = 96.4
+    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+
+    summary_data = load_courier_settlement_summary(session_id)
+    summary_row: dict[str, object] = {}
+    if not summary_data.empty:
+        by_id = summary_data[
+            summary_data.get("courier_id", pd.Series("", index=summary_data.index))
+            .map(_courier_id_key)
+            .eq(_courier_id_key(courier_id))
+        ]
+        if by_id.empty and "driver_name" in summary_data.columns:
+            by_name = summary_data[
+                summary_data["driver_name"].map(_courier_match_key).eq(_courier_match_key(courier_name))
+            ]
+            if not by_name.empty:
+                by_id = by_name
+        if not by_id.empty:
+            summary_row = by_id.iloc[0].to_dict()
+
+    def summary_amount(column: str, fallback_column: str | None = None) -> float:
+        if column in summary_row:
+            return parse_huf_value(summary_row.get(column))
+        if fallback_column:
+            return parse_huf_value(row.get(fallback_column))
+        return 0.0
+
+    payable = summary_amount("payable_huf", "Kifizetendő")
+    order_count = int(round(summary_amount("order_count", "Rendelések")))
+    route_count = int(round(summary_amount("route_count", "Útvonalak")))
+    courier_base_rate = summary_amount("courier_base_rate_huf", "Nettó bevétel")
+    tip = summary_amount("tip_huf", "Borravaló")
+    delay_bonus = summary_amount("delay_bonus_huf")
+    compliance_bonus = summary_amount("compliance_bonus_huf")
+    other_route_bonus = summary_amount("other_route_bonus_huf")
+    route_bonus_total = summary_amount("route_bonus_total_huf")
+    imported_bonus = summary_amount("imported_bonus_huf")
+    manual_bonus = summary_amount("manual_bonus_huf")
+    customer_rating_bonus = summary_amount("customer_rating_bonus_huf")
+    malus = abs(summary_amount("malus_huf"))
+    atm_deduction = abs(summary_amount("atm_deduction_huf"))
+    other_expense = abs(summary_amount("other_expense_huf"))
+
+    if not summary_row:
+        imported_bonus = parse_huf_value(row.get("Importált bónusz"))
+        malus = parse_huf_value(row.get("Importált málusz"))
+        atm_deduction = parse_huf_value(row.get("Importált ATM levonás"))
+
+    period_start = str(summary_row.get("period_start") or "")
+    period_end = str(summary_row.get("period_end") or "")
+    period_label = f"{period_start} – {period_end}" if period_start and period_end else "Aktuális elszámolás"
+
+    reserve_status = load_target_reserve_status(courier_id, courier_name)
+    insurance_active = bool(reserve_status.get("insurance_active"))
+    insurance_label = "Biztosított" if insurance_active else "Nincs biztosítás"
+
+    route_detail = load_courier_route_detail(courier_id, courier_name, session_id)
+    if route_count == 0 and not route_detail.empty:
+        route_count = len(route_detail)
+    if order_count == 0 and not route_detail.empty:
+        order_count = int(pd.to_numeric(route_detail["Rendelések"], errors="coerce").fillna(0).sum())
+
+    total_credits = (
+        courier_base_rate + tip + delay_bonus + compliance_bonus + other_route_bonus
+        + imported_bonus + manual_bonus + customer_rating_bonus
+    )
+    total_deductions = malus + atm_deduction + other_expense
 
     st.markdown('<div class="courier-shell">', unsafe_allow_html=True)
     st.markdown(
@@ -1520,22 +1563,20 @@ def show_courier_dialog() -> None:
                 <div class="courier-meta">
                   <span>Courier ID: {html.escape(courier_id)}</span>
                   <span>{html.escape(str(row.get('Branch') or 'JIT'))}</span>
-                  <span>{html.escape(str(row.get('Raktár') or 'BUD1'))}</span>
-                  <span>Aktív partner</span>
+                  <span>{html.escape(str(row.get('Raktár') or '–'))}</span>
                 </div>
               </div>
             </div>
             <div class="courier-badges">
               <span class="courier-badge"><span class="dot"></span> Aktív</span>
-              <span class="courier-badge">🛡️ Biztosított</span>
-              <span class="courier-badge light">KPI {kpi:.1f}%</span>
+              <span class="courier-badge">🛡️ {html.escape(insurance_label)}</span>
             </div>
           </div>
           <div class="courier-cover-bottom">
             <div class="cover-stat"><div class="label">Aktuális kifizetés</div><div class="value">{format_huf(payable)}</div></div>
-            <div class="cover-stat"><div class="label">Rendelések</div><div class="value">161</div></div>
-            <div class="cover-stat"><div class="label">Teljesített körök</div><div class="value">18</div></div>
-            <div class="cover-stat"><div class="label">Havi változás</div><div class="value">+{format_huf(max(0, payable-previous))}</div></div>
+            <div class="cover-stat"><div class="label">Rendelések</div><div class="value">{order_count}</div></div>
+            <div class="cover-stat"><div class="label">Teljesített körök</div><div class="value">{route_count}</div></div>
+            <div class="cover-stat"><div class="label">Elszámolási időszak</div><div class="value" style="font-size:15px">{html.escape(period_label)}</div></div>
           </div>
         </div>
         """,
@@ -1544,12 +1585,11 @@ def show_courier_dialog() -> None:
 
     selected_view = st.radio(
         "Profilnézet",
-        ["Áttekintés", "Pénzügy", "Teljesítmény", "Útvonalak", "Dokumentumok", "Reklamációk", "Profil"],
+        ["Áttekintés", "Pénzügy", "Útvonalak", "Dokumentumok", "Reklamációk", "Profil"],
         horizontal=True,
         label_visibility="collapsed",
         key=f"premium_profile_nav_{courier_id}",
     )
-    st.markdown('<div class="profile-nav-hint">Vizuális prototípus – a gombok és adatok egy része demonstrációs.</div>', unsafe_allow_html=True)
 
     if selected_view == "Áttekintés":
         st.markdown(
@@ -1558,68 +1598,51 @@ def show_courier_dialog() -> None:
               <div>
                 <div class="profile-card">
                   <div class="profile-card-head">
-                    <div><div class="profile-card-title">Havi elszámolás</div><div class="profile-card-sub">2026. július · előzetes összesítés</div></div>
-                    <span class="route-pill">Frissítve ma 09:42</span>
+                    <div><div class="profile-card-title">Havi elszámolás</div><div class="profile-card-sub">{html.escape(period_label)}</div></div>
+                    <span class="route-pill">Adatbázisból</span>
                   </div>
                   <div class="money-hero">
                     <div class="eyebrow">Kifizetendő összeg</div>
                     <div class="amount">{format_huf(payable)}</div>
-                    <div class="delta">↗ {format_huf(max(0,payable-previous))} az előző hónaphoz képest</div>
+                    <div class="delta">{route_count} kör · {order_count} rendelés</div>
                   </div>
                   <div class="finance-columns">
                     <div class="finance-block income">
                       <div class="finance-title">Bevételek</div>
-                      <div class="ledger-row"><span>Alapdíj</span><strong>{format_huf(net)}</strong></div>
+                      <div class="ledger-row"><span>Futár alapdíj</span><strong>{format_huf(courier_base_rate)}</strong></div>
                       <div class="ledger-row"><span>Borravaló</span><strong>{format_huf(tip)}</strong></div>
-                      <div class="ledger-row"><span>Késedelmi díj</span><strong>12 400 Ft</strong></div>
-                      <div class="ledger-row"><span>Túramegfelelés</span><strong>18 500 Ft</strong></div>
-                      <div class="ledger-row"><span>Extra bónusz</span><strong>{format_huf(bonus)}</strong></div>
+                      <div class="ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_bonus)}</strong></div>
+                      <div class="ledger-row"><span>Túramegfelelési bónusz</span><strong>{format_huf(compliance_bonus)}</strong></div>
+                      <div class="ledger-row"><span>Egyéb route bónusz</span><strong>{format_huf(other_route_bonus)}</strong></div>
+                      <div class="ledger-row"><span>Importált bónusz</span><strong>{format_huf(imported_bonus)}</strong></div>
+                      <div class="ledger-row"><span>Manuális bónusz</span><strong>{format_huf(manual_bonus)}</strong></div>
+                      <div class="ledger-row"><span>Értékelési bónusz</span><strong>{format_huf(customer_rating_bonus)}</strong></div>
                     </div>
                     <div class="finance-block outcome">
                       <div class="finance-title">Levonások</div>
-                      <div class="ledger-row"><span>ATM egyenleg</span><strong>0 Ft</strong></div>
-                      <div class="ledger-row"><span>Málusz</span><strong>{format_huf(deduction)}</strong></div>
-                      <div class="ledger-row"><span>Biztosítás</span><strong>10 000 Ft</strong></div>
-                      <div class="ledger-row"><span>Céltartalék</span><strong>0 Ft</strong></div>
-                      <div class="ledger-row"><span>Egyéb korrekció</span><strong>0 Ft</strong></div>
+                      <div class="ledger-row"><span>Málusz</span><strong>{format_huf(malus)}</strong></div>
+                      <div class="ledger-row"><span>ATM levonás</span><strong>{format_huf(atm_deduction)}</strong></div>
+                      <div class="ledger-row"><span>Egyéb kiadás</span><strong>{format_huf(other_expense)}</strong></div>
+                      <div class="ledger-row"><span>Levonások összesen</span><strong>{format_huf(total_deductions)}</strong></div>
                     </div>
                   </div>
-                </div>
-                <div class="profile-card">
-                  <div class="profile-card-head"><div><div class="profile-card-title">6 havi kifizetési trend</div><div class="profile-card-sub">Havi nettó kifizetések vizuális összevetése</div></div><span class="route-pill">+11,2%</span></div>
-                  <div class="chart-wrap"><div class="chart-bars">
-                    <div class="chart-col"><div class="chart-value">391k</div><div class="chart-bar" style="height:72px"></div><div class="chart-label">febr.</div></div>
-                    <div class="chart-col"><div class="chart-value">428k</div><div class="chart-bar" style="height:91px"></div><div class="chart-label">márc.</div></div>
-                    <div class="chart-col"><div class="chart-value">405k</div><div class="chart-bar" style="height:80px"></div><div class="chart-label">ápr.</div></div>
-                    <div class="chart-col"><div class="chart-value">452k</div><div class="chart-bar" style="height:105px"></div><div class="chart-label">máj.</div></div>
-                    <div class="chart-col"><div class="chart-value">421k</div><div class="chart-bar" style="height:88px"></div><div class="chart-label">jún.</div></div>
-                    <div class="chart-col active"><div class="chart-value">{int(payable/1000)}k</div><div class="chart-bar" style="height:128px"></div><div class="chart-label">júl.</div></div>
-                  </div></div>
                 </div>
               </div>
               <div>
                 <div class="profile-card">
-                  <div class="profile-card-head"><div><div class="profile-card-title">Teljesítmény</div><div class="profile-card-sub">Aktuális havi mutatók</div></div></div>
+                  <div class="profile-card-head"><div><div class="profile-card-title">Elszámolási mutatók</div><div class="profile-card-sub">Aktuális összesítés</div></div></div>
                   <div class="kpi-mini-grid">
-                    <div class="kpi-mini"><div class="icon">📦</div><div class="value">161</div><div class="label">Rendelés</div></div>
-                    <div class="kpi-mini"><div class="icon">🚚</div><div class="value">18</div><div class="label">Kör</div></div>
-                    <div class="kpi-mini"><div class="icon">⭐</div><div class="value">4,94</div><div class="label">Értékelés</div></div>
+                    <div class="kpi-mini"><div class="icon">📦</div><div class="value">{order_count}</div><div class="label">Rendelés</div></div>
+                    <div class="kpi-mini"><div class="icon">🚚</div><div class="value">{route_count}</div><div class="label">Kör</div></div>
+                    <div class="kpi-mini"><div class="icon">💰</div><div class="value" style="font-size:16px">{format_huf(total_credits)}</div><div class="label">Bevétel összesen</div></div>
                   </div>
                 </div>
                 <div class="profile-card">
-                  <div class="profile-card-head"><div><div class="profile-card-title">Gyors műveletek</div><div class="profile-card-sub">A végleges verzióban működő műveletek</div></div></div>
-                  <div class="quick-grid">
-                    <div class="quick-action"><div class="qa-icon">📄</div><div class="qa-title">Elszámolás PDF</div><div class="qa-sub">Generálás és letöltés</div></div>
-                    <div class="quick-action"><div class="qa-icon">🧾</div><div class="qa-title">TIG generálás</div><div class="qa-sub">Új dokumentum</div></div>
-                    <div class="quick-action"><div class="qa-icon">⬆️</div><div class="qa-title">Feltöltés</div><div class="qa-sub">PDF vagy kép</div></div>
-                    <div class="quick-action"><div class="qa-icon">✉️</div><div class="qa-title">Üzenet</div><div class="qa-sub">Kapcsolatfelvétel</div></div>
-                  </div>
-                </div>
-                <div class="profile-card">
-                  <div class="profile-card-head"><div><div class="profile-card-title">Legutóbbi aktivitás</div><div class="profile-card-sub">Profil és dokumentum események</div></div></div>
-                  <div class="activity-item"><div class="activity-dot"></div><div><div class="activity-title">Elszámolás előkészítve</div><div class="activity-meta">Ma · 09:42 · admin</div></div></div>
-                  <div class="activity-item"><div class="activity-dot"></div><div><div class="activity-title">TIG dokumentum feltöltve</div><div class="activity-meta">Tegnap · 16:18</div></div></div>
-                  <div class="activity-item"><div class="activity-dot"></div><div><div class="activity-title">Profiladat módosítva</div><div class="activity-meta">2026.07.08. · admin</div></div></div>
+                  <div class="profile-card-head"><div><div class="profile-card-title">Adatforrás</div><div class="profile-card-sub">A megjelenített elszámolás állapota</div></div></div>
+                  <div class="ledger-row"><span>Session</span><strong>{html.escape(str(session_id or '–'))}</strong></div>
+                  <div class="ledger-row"><span>Összesítő sor</span><strong>{'Megtalálva' if summary_row else 'Nincs, főoldali tartalékadat'}</strong></div>
+                  <div class="ledger-row"><span>Biztosítás</span><strong>{html.escape(insurance_label)}</strong></div>
+                  <div class="ledger-row"><span>Route részletek</span><strong>{len(route_detail)} db</strong></div>
                 </div>
               </div>
             </div>
@@ -1628,52 +1651,83 @@ def show_courier_dialog() -> None:
         )
 
     elif selected_view == "Pénzügy":
-        st.markdown(f"""
-        <div class="profile-card">
-          <div class="profile-card-head"><div><div class="profile-card-title">Pénzügyi levezetés</div><div class="profile-card-sub">Tételes, könnyen ellenőrizhető havi elszámolás</div></div><span class="route-pill">2026. július</span></div>
-          <div class="finance-columns">
-            <div class="finance-block income"><div class="finance-title">Jóváírások</div>
-              <div class="ledger-row"><span>Alapdíj</span><strong>{format_huf(net)}</strong></div><div class="ledger-row"><span>Borravaló</span><strong>{format_huf(tip)}</strong></div><div class="ledger-row"><span>Késedelmi díj</span><strong>12 400 Ft</strong></div><div class="ledger-row"><span>Túramegfelelés</span><strong>18 500 Ft</strong></div><div class="ledger-row"><span>Manuális bónusz</span><strong>15 000 Ft</strong></div>
+        st.markdown(
+            f"""
+            <div class="profile-card">
+              <div class="profile-card-head"><div><div class="profile-card-title">Pénzügyi levezetés</div><div class="profile-card-sub">{html.escape(period_label)}</div></div><span class="route-pill">DB összesítő</span></div>
+              <div class="finance-columns">
+                <div class="finance-block income"><div class="finance-title">Jóváírások</div>
+                  <div class="ledger-row"><span>Futár alapdíj</span><strong>{format_huf(courier_base_rate)}</strong></div>
+                  <div class="ledger-row"><span>Borravaló</span><strong>{format_huf(tip)}</strong></div>
+                  <div class="ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_bonus)}</strong></div>
+                  <div class="ledger-row"><span>Túramegfelelési bónusz</span><strong>{format_huf(compliance_bonus)}</strong></div>
+                  <div class="ledger-row"><span>Egyéb route bónusz</span><strong>{format_huf(other_route_bonus)}</strong></div>
+                  <div class="ledger-row"><span>Route bónusz összesen</span><strong>{format_huf(route_bonus_total)}</strong></div>
+                  <div class="ledger-row"><span>Importált bónusz</span><strong>{format_huf(imported_bonus)}</strong></div>
+                  <div class="ledger-row"><span>Manuális bónusz</span><strong>{format_huf(manual_bonus)}</strong></div>
+                  <div class="ledger-row"><span>Értékelési bónusz</span><strong>{format_huf(customer_rating_bonus)}</strong></div>
+                </div>
+                <div class="finance-block outcome"><div class="finance-title">Terhelések</div>
+                  <div class="ledger-row"><span>Málusz</span><strong>{format_huf(malus)}</strong></div>
+                  <div class="ledger-row"><span>ATM levonás</span><strong>{format_huf(atm_deduction)}</strong></div>
+                  <div class="ledger-row"><span>Egyéb kiadás</span><strong>{format_huf(other_expense)}</strong></div>
+                  <div class="ledger-row"><span>Terhelések összesen</span><strong>{format_huf(total_deductions)}</strong></div>
+                </div>
+              </div>
+              <div class="money-hero" style="margin-top:14px"><div class="eyebrow">Végösszeg</div><div class="amount">{format_huf(payable)}</div><div class="delta">{route_count} kör · {order_count} rendelés</div></div>
             </div>
-            <div class="finance-block outcome"><div class="finance-title">Terhelések</div>
-              <div class="ledger-row"><span>Málusz</span><strong>{format_huf(deduction)}</strong></div><div class="ledger-row"><span>Biztosítás</span><strong>10 000 Ft</strong></div><div class="ledger-row"><span>ATM</span><strong>0 Ft</strong></div><div class="ledger-row"><span>Céltartalék</span><strong>0 Ft</strong></div><div class="ledger-row"><span>Egyéb kiadás</span><strong>0 Ft</strong></div>
-            </div>
-          </div>
-          <div class="money-hero" style="margin-top:14px"><div class="eyebrow">Végösszeg</div><div class="amount">{format_huf(payable)}</div><div class="delta">Elszámolásra kész</div></div>
-        </div>""", unsafe_allow_html=True)
-
-    elif selected_view == "Teljesítmény":
-        st.markdown("""
-        <div class="profile-grid"><div>
-          <div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Teljesítmény pillanatkép</div><div class="profile-card-sub">Kiemelt operációs mutatók</div></div><span class="route-pill">Top 14%</span></div>
-          <div class="kpi-mini-grid"><div class="kpi-mini"><div class="icon">🎯</div><div class="value">96,4%</div><div class="label">KPI</div></div><div class="kpi-mini"><div class="icon">📦</div><div class="value">8,9</div><div class="label">Rendelés / kör</div></div><div class="kpi-mini"><div class="icon">⏱️</div><div class="value">98,1%</div><div class="label">Pontosság</div></div></div></div>
-          <div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Heti aktivitás</div><div class="profile-card-sub">Teljesített körök napi bontásban</div></div></div><div class="chart-bars"><div class="chart-col"><div class="chart-bar" style="height:65px"></div><div class="chart-label">H</div></div><div class="chart-col"><div class="chart-bar" style="height:104px"></div><div class="chart-label">K</div></div><div class="chart-col"><div class="chart-bar" style="height:82px"></div><div class="chart-label">Sze</div></div><div class="chart-col"><div class="chart-bar" style="height:118px"></div><div class="chart-label">Cs</div></div><div class="chart-col"><div class="chart-bar" style="height:96px"></div><div class="chart-label">P</div></div><div class="chart-col active"><div class="chart-bar" style="height:132px"></div><div class="chart-label">Szo</div></div><div class="chart-col"><div class="chart-bar" style="height:50px"></div><div class="chart-label">V</div></div></div></div>
-        </div><div><div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Minőségi mutatók</div><div class="profile-card-sub">Demó állapotkártyák</div></div></div><div class="ledger-row"><span>Ügyfélértékelés</span><strong>4,94 / 5</strong></div><div class="ledger-row"><span>Túramegfelelés</span><strong>97,8%</strong></div><div class="ledger-row"><span>Késési arány</span><strong>1,9%</strong></div><div class="ledger-row"><span>Lemondási arány</span><strong>0,6%</strong></div></div></div></div>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True,
+        )
 
     elif selected_view == "Útvonalak":
-        st.markdown("""
-        <div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Legutóbbi útvonalak</div><div class="profile-card-sub">Kártyás lista a nyers táblázat helyett</div></div><span class="route-pill">18 útvonal</span></div>
-          <div class="route-card"><div><div class="route-id">RT-2026-0712-018</div><div class="route-sub">2026.07.12. · BUD1</div></div><div><span class="route-pill">Kiemelt nap</span></div><div><div class="route-id">11 rendelés</div><div class="route-sub">Normál kör</div></div><div><div class="route-id">28 400 Ft</div><div class="route-sub">Összesen</div></div><div class="route-arrow">›</div></div>
-          <div class="route-card"><div><div class="route-id">RT-2026-0711-006</div><div class="route-sub">2026.07.11. · BUD1</div></div><div><span class="route-pill">Normál nap</span></div><div><div class="route-id">9 rendelés</div><div class="route-sub">Expressz</div></div><div><div class="route-id">24 600 Ft</div><div class="route-sub">Összesen</div></div><div class="route-arrow">›</div></div>
-          <div class="route-card"><div><div class="route-id">RT-2026-0710-014</div><div class="route-sub">2026.07.10. · BUD1</div></div><div><span class="route-pill">Normál nap</span></div><div><div class="route-id">10 rendelés</div><div class="route-sub">Normál kör</div></div><div><div class="route-id">25 900 Ft</div><div class="route-sub">Összesen</div></div><div class="route-arrow">›</div></div>
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Elszámolt körök</div><div class="profile-card-sub">A settlement.jit_row alapján</div></div><span class="route-pill">{len(route_detail)} kör</span></div>',
+            unsafe_allow_html=True,
+        )
+        if route_detail.empty:
+            st.info("Ehhez a futárhoz nem található route részlet az aktuális sessionben.")
+        else:
+            for _, route in route_detail.iterrows():
+                route_total = sum(
+                    parse_huf_value(route.get(column))
+                    for column in ["Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]
+                )
+                st.markdown(
+                    f"""
+                    <div class="route-card">
+                      <div><div class="route-id">{html.escape(str(route.get('Route ID') or '–'))}</div><div class="route-sub">{html.escape(str(route.get('Excel dátum') or '–'))} · {html.escape(str(row.get('Raktár') or '–'))}</div></div>
+                      <div><span class="route-pill">{html.escape(str(route.get('Naptípus') or '–'))}</span></div>
+                      <div><div class="route-id">{int(parse_huf_value(route.get('Rendelések')))} rendelés</div><div class="route-sub">{html.escape(str(route.get('Túratípus') or '–'))}</div></div>
+                      <div><div class="route-id">{format_huf(route_total)}</div><div class="route-sub">Elszámolt összeg</div></div>
+                      <div class="route-arrow">›</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        st.markdown('</div>', unsafe_allow_html=True)
 
     elif selected_view == "Dokumentumok":
-        st.markdown("""
-        <div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Dokumentumtár</div><div class="profile-card-sub">Elszámolások, TIG-ek, számlák és szerződések</div></div><span class="route-pill">4 aktív</span></div><div class="quick-grid"><div class="quick-action"><div class="qa-icon">📄</div><div class="qa-title">Júliusi elszámolás</div><div class="qa-sub">PDF · Előkészítve</div></div><div class="quick-action"><div class="qa-icon">🧾</div><div class="qa-title">Júliusi TIG</div><div class="qa-sub">PDF · Feltöltve</div></div><div class="quick-action"><div class="qa-icon">💳</div><div class="qa-title">Júliusi számla</div><div class="qa-sub">PDF · Ellenőrzés alatt</div></div><div class="quick-action"><div class="qa-icon">📝</div><div class="qa-title">Vállalkozói szerződés</div><div class="qa-sub">PDF · Aktív</div></div></div></div>
-        """, unsafe_allow_html=True)
-        st.file_uploader("Új dokumentum feltöltése – látványterv", type=["pdf","png","jpg"], key=f"mock_doc_upload_{courier_id}")
+        st.info("A dokumentumok bekötése a következő fejlesztési kör része.")
 
     elif selected_view == "Reklamációk":
-        st.markdown("""
-        <div class="profile-grid"><div><div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Reklamációs előzmények</div><div class="profile-card-sub">Nyitott és lezárt ügyek</div></div><span class="route-pill">1 nyitott</span></div><div class="activity-item"><div class="activity-dot"></div><div><div class="activity-title">Bónusz összegének ellenőrzése</div><div class="activity-meta">Nyitott · 2026.07.05. · Elszámolás</div></div></div><div class="activity-item"><div class="activity-dot"></div><div><div class="activity-title">Vállalkozási cím javítása</div><div class="activity-meta">Lezárt · 2026.06.18. · TIG</div></div></div></div></div><div><div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Új ügy</div><div class="profile-card-sub">A végleges változatban menthető űrlap</div></div></div><div class="empty-design-note">Ide kerülne a típus, tárgy, leírás, csatolmány és felelős kiválasztása.</div></div></div></div>
-        """, unsafe_allow_html=True)
+        st.info("A reklamációk bekötése a következő fejlesztési kör része.")
 
     else:
-        st.markdown("""
-        <div class="profile-grid"><div><div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Személyes adatok</div><div class="profile-card-sub">CRM-szerű, kétoszlopos profilnézet</div></div></div><div class="ledger-row"><span>Teljes név</span><strong>Abonyi György</strong></div><div class="ledger-row"><span>Telefonszám</span><strong>+36 30 123 4567</strong></div><div class="ledger-row"><span>E-mail</span><strong>futar@example.hu</strong></div><div class="ledger-row"><span>Raktár</span><strong>BUD1</strong></div><div class="ledger-row"><span>Státusz</span><strong>Aktív</strong></div></div></div><div><div class="profile-card"><div class="profile-card-head"><div><div class="profile-card-title">Vállalkozási adatok</div><div class="profile-card-sub">Számlázás és kifizetés</div></div></div><div class="ledger-row"><span>Vállalkozás</span><strong>Minta Futár EV</strong></div><div class="ledger-row"><span>Adószám</span><strong>12345678-1-42</strong></div><div class="ledger-row"><span>Bankszámla</span><strong>11700000-00000000</strong></div><div class="ledger-row"><span>Biztosítás</span><strong>Aktív</strong></div><div class="ledger-row"><span>Céltartalék</span><strong>247 500 Ft</strong></div></div></div></div>
-        """, unsafe_allow_html=True)
+        profile = load_courier_profile(courier_id)
+        st.markdown(
+            f"""
+            <div class="profile-card">
+              <div class="profile-card-head"><div><div class="profile-card-title">Futár alapadatai</div><div class="profile-card-sub">courier_master</div></div></div>
+              <div class="ledger-row"><span>Teljes név</span><strong>{html.escape(courier_name)}</strong></div>
+              <div class="ledger-row"><span>Courier ID</span><strong>{html.escape(courier_id)}</strong></div>
+              <div class="ledger-row"><span>Raktár</span><strong>{html.escape(str(row.get('Raktár') or profile.get('warehouse_name') or '–'))}</strong></div>
+              <div class="ledger-row"><span>Branch</span><strong>{html.escape(str(row.get('Branch') or 'JIT'))}</strong></div>
+              <div class="ledger-row"><span>Biztosítás</span><strong>{html.escape(insurance_label)}</strong></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown('</div>', unsafe_allow_html=True)
 
