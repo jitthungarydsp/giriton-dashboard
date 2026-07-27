@@ -1262,6 +1262,8 @@ def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
     with left:
         if rows.empty:
             st.info(f"Nincs rögzített {singular.lower()} az aktuális elszámolási hónapra.")
+        elif selected_component in {"loyalty", "instructor", "manual"}:
+            st.info("Ehhez a tételhez az aktuális elszámolási időszakban nincs rögzített, kifizethető DB-adat.")
         else:
             view = rows.rename(columns={"effective_date": "Kezdete", "valid_to": "Vége", "amount_huf": "Összeg", "note": "Megjegyzés", "created_by": "Létrehozta", "created_at": "Létrehozva"}).copy()
             view["Összeg"] = view["Összeg"].map(format_huf)
@@ -1428,46 +1430,55 @@ def show_courier_dialog() -> None:
         manual_other_total = float(adjustment_totals.get("other_expense", 0))
 
         st.markdown("#### Teljesítmény és elszámolási mutatók")
-        performance_row_1 = st.columns(6)
-        performance_row_1[0].metric("Rendelés", f"{order_total:,}".replace(",", " "))
-        performance_row_1[1].metric("Kör", route_total)
-        performance_row_1[2].metric("Késedelmi díj", format_huf(delay_total))
-        performance_row_1[3].metric("Túramegfelelés", format_huf(compliance_total))
-        performance_row_1[4].metric("Ügyfélértékelési bónusz", format_huf(customer_rating_total))
-        performance_row_1[5].metric("Fizetendő", format_huf(payable_total))
-        performance_row_2 = st.columns(6)
-        performance_row_2[0].metric("Levonás / plusz", format_huf(-other_expense_total))
-        performance_row_2[1].metric("Havi bónusz/málusz hatás", format_huf(monthly_bonus_malus_effect))
-        performance_row_2[2].metric("ATM hatás", format_huf(-atm_deduction_total))
-        performance_row_2[3].metric("Lojalitás", "0 Ft", help="Még nincs bekötött lojalitási számítási adatforrás.")
-        performance_row_2[4].metric("Oktatói díj", "0 Ft", help="Még nincs bekötött oktatói díj adatforrás.")
-        performance_row_2[5].metric("Manuális", format_huf(-manual_other_total))
+        selected_component_key = f"settlement_component_detail_{courier_id}"
+        if selected_component_key not in st.session_state:
+            st.session_state[selected_component_key] = "payable"
+        settlement_cards = [
+            ("Rendelés", f"{order_total:,}".replace(",", " "), "orders"),
+            ("Kör", str(route_total), "routes"),
+            ("Késedelmi díj", format_huf(delay_total), "delay"),
+            ("Túramegfelelés", format_huf(compliance_total), "compliance"),
+            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "customer_rating"),
+            ("Fizetendő", format_huf(payable_total), "payable"),
+            ("Levonás / plusz", format_huf(-other_expense_total), "other"),
+            ("Havi bónusz/málusz hatás", format_huf(monthly_bonus_malus_effect), "bonus"),
+            ("ATM hatás", format_huf(-atm_deduction_total), "atm"),
+            ("Lojalitás", "0 Ft", "loyalty"),
+            ("Oktatói díj", "0 Ft", "instructor"),
+            ("Manuális", format_huf(-manual_other_total), "manual"),
+        ]
+        for card_start in range(0, len(settlement_cards), 6):
+            for card_column, (label, value, component) in zip(st.columns(6), settlement_cards[card_start:card_start + 6]):
+                with card_column.container(border=True):
+                    st.caption(label)
+                    if st.button(
+                        value,
+                        key=f"{selected_component_key}_{component}",
+                        use_container_width=True,
+                        type="primary" if st.session_state[selected_component_key] == component else "secondary",
+                    ):
+                        st.session_state[selected_component_key] = component
         current_amount_metric.metric("Aktuális havi összeg", format_huf(payable_total))
         monthly_change_metric.metric(
             "Havi változás",
             format_huf(int(payable_total) - int(row["Előző havi összeg"])),
         )
 
-        detail_options = {
-            "Alapdíj": "base", "Borravaló": "tip", "Késedelmi díj": "delay",
-            "Túramegfelelés": "compliance", "Bónuszok": "bonus", "Máluszok": "malus",
-            "ATM levonás": "atm", "Egyéb kiadás": "other", "Ügyfélértékelés": "customer_rating",
-            "Kifizetendő": "payable",
-        }
-        selected_detail_label = st.selectbox(
-            "Részletes levezetés", list(detail_options), index=9,
-            key=f"settlement_component_detail_{courier_id}",
-        )
-        selected_component = detail_options[selected_detail_label]
+        selected_component = st.session_state[selected_component_key]
         component_titles = {
+            "orders": "Rendelések és Route ID-k", "routes": "Körök és Route ID-k",
             "base": "Alapdíj levezetése", "tip": "Borravaló levezetése",
             "delay": "Késedelmi díj levezetése", "compliance": "Túramegfelelés levezetése",
             "bonus": "Bónuszok levezetése", "malus": "Máluszok levezetése",
             "atm": "ATM levonás levezetése", "other": "Egyéb kiadás levezetése",
             "customer_rating": "Ügyfélértékelés levezetése", "payable": "Kifizetendő levezetése",
+            "loyalty": "Lojalitási bónusz", "instructor": "Oktatói díj", "manual": "Manuális tétel",
         }
         st.markdown(f"#### {component_titles[selected_component]}")
-        if selected_component in {"base", "tip", "delay", "compliance"}:
+        if selected_component in {"orders", "routes"}:
+            route_columns = ["Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus", "Rendelések", "DB státusz"]
+            st.dataframe(route_detail[route_columns], use_container_width=True, hide_index=True)
+        elif selected_component in {"base", "tip", "delay", "compliance"}:
             source_column = {
                 "base": "Alapdíj", "tip": "Borravaló", "delay": "Késedelmi díj",
                 "compliance": "Túramegfelelés",

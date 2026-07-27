@@ -94,40 +94,80 @@ with raw as (
         limit 1
     ) rate on true
     left join lateral (
-        select case when source_value.value like '%,%'
-            then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
-            else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
+        select case d.calculation_unit
+            when 'per_route' then d.courier_amount_huf
+            when 'per_order' then d.courier_amount_huf * r.orders
+            when 'fixed' then d.courier_amount_huf
+            else 0
         end as excel_amount_huf
         from settlement.cfg_jitt_delay_bonus_rules d
         left join lateral (
             select item.value from jsonb_each_text(r.normalized_data) as item(key, value)
             where lower(trim(item.key)) = lower(trim(d.excel_source_field)) limit 1
         ) source_value on true
+        cross join lateral (
+            select case when source_value.value like '%,%'
+                then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
+                else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
+            end as value
+        ) excel_value
         where d.is_active and d.deleted_at is null and d.calculation_mode = 'excel'
           and nullif(trim(d.excel_source_field), '') is not null
           and r.work_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
           and d.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
           and d.route_type in (r.route_type, 'any')
           and (nullif(trim(d.warehouse_code), '') is null or lower(trim(d.warehouse_code)) = lower(trim(r.warehouse_code)))
+          and excel_value.value > 0
+          and (
+              (
+                  (d.threshold_min is not null or d.threshold_max is not null)
+                  and (d.threshold_min is null or excel_value.value >= d.threshold_min)
+                  and (d.threshold_max is null or excel_value.value <= d.threshold_max)
+              )
+              or (
+                  d.threshold_min is null and d.threshold_max is null
+                  and excel_value.value = d.company_amount_huf
+              )
+          )
         order by d.priority, d.id
         limit 1
     ) delay_rule on true
     left join lateral (
-        select case when source_value.value like '%,%'
-            then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
-            else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
+        select case d.calculation_unit
+            when 'per_route' then d.courier_amount_huf
+            when 'per_order' then d.courier_amount_huf * r.orders
+            when 'fixed' then d.courier_amount_huf
+            else 0
         end as excel_amount_huf
         from settlement.cfg_jitt_compliance_bonus_rules d
         left join lateral (
             select item.value from jsonb_each_text(r.normalized_data) as item(key, value)
             where lower(trim(item.key)) = lower(trim(d.excel_source_field)) limit 1
         ) source_value on true
+        cross join lateral (
+            select case when source_value.value like '%,%'
+                then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
+                else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
+            end as value
+        ) excel_value
         where d.is_active and d.deleted_at is null and d.calculation_mode = 'excel'
           and nullif(trim(d.excel_source_field), '') is not null
           and r.work_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
           and d.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
           and d.route_type in (r.route_type, 'any')
           and (nullif(trim(d.warehouse_code), '') is null or lower(trim(d.warehouse_code)) = lower(trim(r.warehouse_code)))
+          and excel_value.value > 0
+          and (
+              (
+                  (d.threshold_min is not null or d.threshold_max is not null)
+                  and (d.threshold_min is null or excel_value.value >= d.threshold_min)
+                  and (d.threshold_max is null or excel_value.value <= d.threshold_max)
+              )
+              or (
+                  d.threshold_min is null and d.threshold_max is null
+                  and excel_value.value = d.company_amount_huf
+              )
+          )
         order by d.priority, d.id
         limit 1
     ) compliance_rule on true
