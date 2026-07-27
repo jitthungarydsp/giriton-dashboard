@@ -19,6 +19,7 @@ from resources.settlement_processor import (
     report_as_dict,
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
+from resources.settlement_pdf import build_settlement_pdf
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 st.set_page_config(
@@ -778,6 +779,29 @@ def load_courier_route_breakdown(courier_name: str, session_id: str | None) -> p
     return detail.groupby(["Túratípus", "Naptípus"], as_index=False)[columns[2:]].sum()
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_adjustments(session_id: str | None, courier_id: str) -> pd.DataFrame:
+    if not session_id or not courier_id:
+        return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
+    try:
+        rows = (get_db().schema("settlement").table("courier_settlement_adjustment")
+                .select("adjustment_type,amount_huf,effective_date,note")
+                .eq("session_id", session_id).eq("courier_id", courier_id)
+                .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
+    except BaseException:
+        return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
+    return pd.DataFrame(rows)
+
+
+def save_courier_adjustment(session_id: str, courier_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
+    get_db().schema("settlement").table("courier_settlement_adjustment").insert({
+        "session_id": session_id, "courier_id": courier_id, "adjustment_type": adjustment_type,
+        "amount_huf": float(amount_huf), "note": note.strip() or None,
+        "created_by": str(st.session_state.get("user", {}).get("username") or "unknown"),
+    }).execute()
+    load_courier_adjustments.clear()
+
+
 def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
@@ -839,17 +863,18 @@ def show_courier_dialog() -> None:
         return
 
     row = match.iloc[0]
-    route_breakdown = load_courier_route_breakdown(
-        str(row["Futár"]),
-        st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id(),
-    )
+    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+    route_breakdown = load_courier_route_breakdown(str(row["Futár"]), session_id)
+    adjustments = load_courier_adjustments(session_id, courier_id)
+    adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
     base_total = float(route_breakdown.get("Alapdíj", pd.Series(dtype=float)).sum())
     tip_total = float(route_breakdown.get("Borravaló", pd.Series(dtype=float)).sum())
     bonus_total = float(route_breakdown.get("Bónuszok", pd.Series(dtype=float)).sum())
-    customer_rating_total = 0.0
-    malus_total = 0.0
-    atm_deduction_total = 0.0
-    other_expense_total = 0.0
+    customer_rating_total = float(adjustment_totals.get("customer_rating", 0))
+    malus_total = float(adjustment_totals.get("malus", 0))
+    atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
+    other_expense_total = float(adjustment_totals.get("other_expense", 0))
+    bonus_total += float(adjustment_totals.get("bonus", 0))
     payable_total = base_total + tip_total + bonus_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
 
     st.markdown(
@@ -951,15 +976,36 @@ def show_courier_dialog() -> None:
             route_view["Bónuszok"] = route_view["Bónuszok"].map(format_huf)
             st.dataframe(route_view, use_container_width=True, hide_index=True)
 
+        st.markdown("#### Havi korrekció rögzítése")
+        if not session_id:
+            st.warning("A korrekció mentéséhez előbb legyen betöltött JITT Excel-munkamenet.")
+        else:
+            with st.form(f"monthly_adjustment_{courier_id}"):
+                a1, a2, a3 = st.columns(3)
+                adjustment_type = a1.selectbox("Típus", ["bonus", "malus", "atm_deduction", "other_expense", "customer_rating"], format_func={"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"}.get)
+                adjustment_amount = a2.number_input("Összeg (Ft)", min_value=0, step=100, value=0)
+                adjustment_note = a3.text_input("Megjegyzés")
+                adjustment_saved = st.form_submit_button("Korrekció mentése", type="primary")
+            if adjustment_saved:
+                try:
+                    save_courier_adjustment(str(session_id), courier_id, adjustment_type, adjustment_amount, adjustment_note)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A korrekció nem menthető. Futtasd le a courier adjustment migrációt. Részlet: {exc}")
+        if not adjustments.empty:
+            adjustment_view = adjustments.rename(columns={"adjustment_type": "Típus", "amount_huf": "Összeg", "effective_date": "Dátum", "note": "Megjegyzés"}).copy()
+            adjustment_view["Típus"] = adjustment_view["Típus"].map({"bonus": "Bónusz", "malus": "Málusz", "atm_deduction": "ATM levonás", "other_expense": "Egyéb kiadás", "customer_rating": "Ügyfélértékelés"})
+            adjustment_view["Összeg"] = adjustment_view["Összeg"].map(format_huf)
+            st.dataframe(adjustment_view, use_container_width=True, hide_index=True)
+
         st.markdown("#### Dokumentumműveletek")
         action1, action2 = st.columns(2)
-        action1.button(
-            "Elszámolás generálása",
-            type="primary",
-            use_container_width=True,
-            key=f"ui_settlement_generate_{courier_id}",
-            help="Dizájn gomb, még nincs mögötte üzleti logika.",
+        pdf_bytes = build_settlement_pdf(
+            {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
+            route_breakdown.to_dict("records"),
+            {"base": base_total, "tip": tip_total, "bonus": bonus_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total, "customer_rating": customer_rating_total, "payable": payable_total},
         )
+        action1.download_button("Elszámolás PDF letöltése", data=pdf_bytes, file_name=f"jitt_elszamolas_{courier_id}.pdf", mime="application/pdf", type="primary", use_container_width=True, key=f"ui_settlement_generate_{courier_id}")
         action2.button(
             "TIG generálása",
             type="primary",
