@@ -1066,6 +1066,30 @@ def load_latest_jit_session_id() -> str | None:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_latest_excel_jit_session_id() -> str | None:
+    """Find the latest non-API JIT session for Excel calculation mode."""
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("session_id,source_sheet,created_at")
+            .order("created_at", desc=True)
+            .limit(10000)
+            .execute()
+            .data
+            or []
+        )
+        for row in rows:
+            source_sheet = str(row.get("source_sheet") or "")
+            if not source_sheet.lower().startswith("api financial overview"):
+                return str(row["session_id"])
+        return None
+    except BaseException:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | None = None) -> str | None:
     """Find the latest API-imported JIT session for the selected month."""
     try:
@@ -1093,6 +1117,12 @@ def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | No
             data = data.loc[data["source_sheet"].astype(str).str.contains(needle, case=False, na=False)]
             if data.empty:
                 return None
+            grouped = (
+                data.groupby("session_id", as_index=False)
+                .agg(latest_created_at=("created_at", "max"))
+                .sort_values("latest_created_at", ascending=False)
+            )
+            return str(grouped.iloc[0]["session_id"]) if not grouped.empty else None
         grouped = (
             data.groupby("session_id", as_index=False)
             .agg(
@@ -2076,6 +2106,28 @@ def _api_route_other_bonus(route: dict[str, object]) -> float:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
+    target_tables = [
+        "courier_financial_overview_raw_bud1",
+        "courier_financial_overview_raw_bud2",
+    ]
+    frames = []
+    for table_name in target_tables:
+        try:
+            rows = (
+                get_db().schema("public").table(table_name)
+                .select("courier_id,courier_name,warehouse_id,year,month,response_json,fetched_at")
+                .eq("year", int(year))
+                .eq("month", int(month))
+                .eq("status_code", 200)
+                .execute().data or []
+            )
+            if rows:
+                frames.append(pd.DataFrame(rows))
+        except BaseException:
+            continue
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+
     try:
         rows = (
             get_db().schema("public").table("courier_financial_overview_raw")
@@ -4757,20 +4809,21 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
 
 def show_new_settlement_page() -> None:
     apply_design()
-    import_session_id = (
-        st.session_state.get("settlement_import_session_id")
-        or load_latest_jit_session_id()
-    )
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     selected_month_label = st.session_state.get("new_month") or month_options()[0]
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
     if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+        import_session_id = (
+            st.session_state.get("settlement_excel_session_id")
+            or load_latest_excel_jit_session_id()
+        )
         balance_period_start, balance_period_end = load_settlement_month(import_session_id)
     else:
         balance_period_start = selected_period_start
         _, balance_period_end = month_bounds(balance_period_start)
         api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
+        import_session_id = api_session_id
         if api_session_id:
             import_session_id = api_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
@@ -4826,6 +4879,9 @@ def show_new_settlement_page() -> None:
                         )
                         st.stop()
                     api_session_id = import_api_financial_overview_to_jit(api_period_start, warehouse)
+                    if settlement_warehouse_id(warehouse) is not None:
+                        import_api_financial_overview_to_jit(api_period_start, "Összes")
+                    st.session_state["settlement_api_session_id"] = api_session_id
                     st.session_state["settlement_import_session_id"] = api_session_id
                     load_latest_api_jit_session_id.clear()
                     load_excel_courier_base_rates.clear()
@@ -4882,6 +4938,7 @@ def show_new_settlement_page() -> None:
                     get_db(),
                 )
                 st.session_state["excel_calculation_loaded"] = True
+                st.session_state["settlement_excel_session_id"] = result["session_id"]
                 st.session_state["settlement_import_session_id"] = result["session_id"]
                 st.session_state["settlement_import_result"] = result
                 st.session_state.pop("settlement_import_preview", None)
@@ -4898,6 +4955,7 @@ def show_new_settlement_page() -> None:
                     load_driver_dashboard.clear()
                     load_courier_master.clear()
                     load_latest_jit_session_id.clear()
+                    load_latest_excel_jit_session_id.clear()
                     load_excel_courier_base_rates.clear()
                     load_excel_base_rate_diagnostics.clear()
                     load_courier_route_detail.clear()
@@ -4985,6 +5043,8 @@ def show_new_settlement_page() -> None:
                 st.session_state["excel_upload_version"] += 1
                 st.session_state["excel_calculation_loaded"] = False
                 st.session_state.pop("settlement_import_session_id", None)
+                st.session_state.pop("settlement_excel_session_id", None)
+                st.session_state.pop("settlement_api_session_id", None)
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
@@ -4992,6 +5052,7 @@ def show_new_settlement_page() -> None:
                 load_driver_dashboard.clear()
                 load_courier_master.clear()
                 load_latest_jit_session_id.clear()
+                load_latest_excel_jit_session_id.clear()
                 load_excel_courier_base_rates.clear()
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
