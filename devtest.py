@@ -1299,6 +1299,36 @@ def load_courier_monthly_closure(courier_id: str, period_start: date, period_end
         return {}
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def load_monthly_closure_statuses(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_monthly_closure")
+            .select("courier_id,status")
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .eq("status", "done")
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def apply_monthly_closure_status(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    result = data.copy()
+    closures = load_monthly_closure_statuses(period_start, period_end)
+    if closures.empty or "Courier ID" not in result.columns:
+        if "Kifizetve" not in result.columns:
+            result["Kifizetve"] = False
+        return result
+    paid_ids = set(closures.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key))
+    courier_ids = result["Courier ID"].map(_courier_id_key)
+    result["Kifizetve"] = courier_ids.isin(paid_ids)
+    result.loc[result["Kifizetve"], "Státusz"] = "Kifizetve"
+    return result
+
+
 def format_bank_account_4(value: object) -> str:
     digits = re.sub(r"\D+", "", str(value or ""))
     if not digits:
@@ -2269,7 +2299,8 @@ def status_meta(status: str) -> tuple[str,str]:
         "Elszámolásra vár":("status-blue","led-blue"),
         "TIG-re vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
-        "Kifizetésre vár":("status-green","led-green"),
+        "Kifizetésre vár":("status-yellow","led-yellow"),
+        "Kifizetve":("status-green","led-green"),
     }
     return mapping.get(status,("status-yellow","led-yellow"))
 
@@ -2939,6 +2970,9 @@ def show_courier_dialog() -> None:
     insurance_fee_total = parse_huf_value(reserve_month.get("insurance_fee_huf"))
     total_deduction += reserve_addition_total + insurance_fee_total
     payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+    monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
+    closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
+    paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
     order_total = int(settlement_amount("order_count") or route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
     route_total = int(settlement_amount("route_count") or len(route_detail))
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
@@ -2961,7 +2995,7 @@ def show_courier_dialog() -> None:
               </div>
             </div>
             <div class="settlement-top-kpis">
-              <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+              <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Összes bevétel</div><div class="settlement-kpi-value">{format_huf(total_income)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon red">−</div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
@@ -4026,6 +4060,7 @@ def show_new_settlement_page() -> None:
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
+    data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -4469,9 +4504,10 @@ def show_new_settlement_page() -> None:
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
         ("TIG-re vár", "Még nem készült TIG", "🟣"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
-        ("Kifizetésre vár", "Jóváhagyás után", "🟢"),
+        ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
+        ("Kifizetve", "Havi zárás kész", "🟢"),
     ]
-    card_columns = st.columns(4)
+    card_columns = st.columns(len(workflow_cards))
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
 
     for card_column, (card_status, card_note, card_icon) in zip(card_columns, workflow_cards):
