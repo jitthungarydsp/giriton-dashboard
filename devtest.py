@@ -1066,7 +1066,7 @@ def load_latest_jit_session_id() -> str | None:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_latest_api_jit_session_id(period_start: date) -> str | None:
+def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | None = None) -> str | None:
     """Find the latest API-imported JIT session for the selected month."""
     try:
         _, period_end = month_bounds(period_start)
@@ -1074,17 +1074,34 @@ def load_latest_api_jit_session_id(period_start: date) -> str | None:
             get_db()
             .schema("settlement")
             .table("jit_row")
-            .select("session_id,created_at")
+            .select("session_id,source_sheet,created_at")
             .ilike("source_sheet", "API financial overview%")
             .gte("route_date", period_start.isoformat())
             .lte("route_date", period_end.isoformat())
             .order("created_at", desc=True)
-            .limit(1)
+            .limit(10000)
             .execute()
             .data
             or []
         )
-        return str(rows[0]["session_id"]) if rows else None
+        if not rows:
+            return None
+        data = pd.DataFrame(rows)
+        warehouse_id = settlement_warehouse_id(warehouse_label)
+        if warehouse_id is not None:
+            needle = f"WH{warehouse_id}"
+            data = data.loc[data["source_sheet"].astype(str).str.contains(needle, case=False, na=False)]
+            if data.empty:
+                return None
+        grouped = (
+            data.groupby("session_id", as_index=False)
+            .agg(
+                warehouse_count=("source_sheet", "nunique"),
+                latest_created_at=("created_at", "max"),
+            )
+            .sort_values(["warehouse_count", "latest_created_at"], ascending=[False, False])
+        )
+        return str(grouped.iloc[0]["session_id"]) if not grouped.empty else None
     except BaseException:
         return None
 
@@ -2141,23 +2158,23 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
     return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
 
 
-def apply_api_base_rates(data: pd.DataFrame, period_start: date) -> pd.DataFrame:
+def apply_api_base_rates(data: pd.DataFrame, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     """API mode must keep the same output contract as the Excel pipeline."""
     result = data.copy()
     result["Számítás módja"] = "API"
-    api_session_id = load_latest_api_jit_session_id(period_start)
+    api_session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
     if not api_session_id:
         return result
     return apply_excel_base_rates(result, api_session_id)
 
 
-def build_settlement_working_data(calculation_mode: str, session_id: str | None, period_start: date) -> pd.DataFrame:
+def build_settlement_working_data(calculation_mode: str, session_id: str | None, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     """Build the main settlement table without changing its shape per source."""
     normalized_mode = str(calculation_mode or "API").strip().casefold()
     if normalized_mode == "excel":
         data = load_courier_master("Excel")
         return apply_excel_base_rates(data, session_id)
-    return apply_api_base_rates(load_courier_master("API"), period_start)
+    return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label)
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -4666,13 +4683,14 @@ def show_new_settlement_page() -> None:
     )
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     selected_month_label = st.session_state.get("new_month") or month_options()[0]
+    selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
     if str(selected_calculation_mode or "API").strip().casefold() == "excel":
         balance_period_start, balance_period_end = load_settlement_month(import_session_id)
     else:
         balance_period_start = selected_period_start
         _, balance_period_end = month_bounds(balance_period_start)
-    data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start)
+    data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
     data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
