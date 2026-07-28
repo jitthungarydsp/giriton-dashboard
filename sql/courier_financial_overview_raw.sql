@@ -47,6 +47,56 @@ create index if not exists courier_financial_overview_month_raw_json_idx
 grant select, insert, update, delete on public.courier_financial_overview_raw to service_role;
 grant select, insert, update, delete on public.courier_financial_overview_month_raw to service_role;
 
+create or replace function settlement.refresh_courier_settlement_summary(p_session_id uuid)
+returns void
+language sql
+security definer
+set search_path = settlement, public
+as $$
+delete from settlement.courier_settlement_summary where session_id = p_session_id;
+
+insert into settlement.courier_settlement_summary (
+    session_id, courier_id, driver_name, period_start, period_end, route_count, order_count,
+    company_base_rate_huf, courier_base_rate_huf, tip_huf, delay_bonus_huf,
+    compliance_bonus_huf, other_route_bonus_huf, route_bonus_total_huf, payable_huf, calculated_at
+)
+select
+    source.session_id,
+    coalesce(source.courier_id, master.courier_id::text),
+    source.driver_name,
+    min(source.route_date),
+    max(source.route_date),
+    count(*) filter (where source.is_route_primary),
+    sum(case when source.is_route_primary then coalesce(source.orders, 0) else 0 end),
+    sum(source.company_base_rate_huf),
+    sum(source.courier_base_rate_huf),
+    sum(source.courier_tip_huf),
+    sum(source.courier_delay_bonus_huf),
+    sum(source.courier_compliance_bonus_huf),
+    sum(source.courier_other_bonus_huf),
+    sum(source.courier_bonus_total_huf),
+    sum(source.courier_base_rate_huf + source.courier_tip_huf + source.courier_bonus_total_huf),
+    now()
+from (
+    select
+        j.session_id,
+        nullif(coalesce(j.normalized_data ->> 'Courier ID', j.normalized_data ->> 'courier_id'), '') as courier_id,
+        coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
+        j.route_date, j.is_route_primary, j.company_base_rate_huf, j.courier_base_rate_huf,
+        j.courier_tip_huf, j.courier_delay_bonus_huf, j.courier_compliance_bonus_huf,
+        j.courier_other_bonus_huf, j.courier_bonus_total_huf,
+        coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders
+    from settlement.jit_row j
+    where j.session_id = p_session_id
+) source
+left join public.courier_master master
+    on master.courier_id::text = source.courier_id
+    or lower(trim(master.courier_name)) = lower(trim(source.driver_name))
+group by source.session_id, source.courier_id, source.driver_name, master.courier_id;
+$$;
+
+grant execute on function settlement.refresh_courier_settlement_summary(uuid) to service_role;
+
 create or replace function settlement.import_api_financial_overview_to_jit(
     p_year integer,
     p_month integer,

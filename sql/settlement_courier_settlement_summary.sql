@@ -47,7 +47,7 @@ insert into settlement.courier_settlement_summary (
 )
 select
     source.session_id,
-    master.courier_id::text,
+    coalesce(source.courier_id, master.courier_id::text),
     source.driver_name,
     min(source.route_date),
     max(source.route_date),
@@ -65,6 +65,7 @@ select
 from (
     select
         j.session_id,
+        nullif(coalesce(j.normalized_data ->> 'Courier ID', j.normalized_data ->> 'courier_id'), '') as courier_id,
         coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
         j.route_date, j.is_route_primary, j.company_base_rate_huf, j.courier_base_rate_huf,
         j.courier_tip_huf, j.courier_delay_bonus_huf, j.courier_compliance_bonus_huf,
@@ -74,8 +75,9 @@ from (
     where j.session_id = p_session_id
 ) source
 left join public.courier_master master
-    on lower(trim(master.courier_name)) = lower(trim(source.driver_name))
-group by source.session_id, source.driver_name, master.courier_id;
+    on master.courier_id::text = source.courier_id
+    or lower(trim(master.courier_name)) = lower(trim(source.driver_name))
+group by source.session_id, source.courier_id, source.driver_name, master.courier_id;
 $$;
 
 grant select, insert, update, delete on settlement.courier_settlement_summary to service_role;

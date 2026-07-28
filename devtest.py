@@ -1856,7 +1856,7 @@ def load_driver_dashboard(session_id: str | None = None, calculation_mode: str =
 def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Read persisted database-calculated courier base fees."""
     columns = [
-        "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
+        "Courier ID", "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
         "Rendszerbónusz", "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
     try:
@@ -1901,6 +1901,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     if not rows:
         return pd.DataFrame(columns=columns)
     result = pd.DataFrame(rows).rename(columns={
+        "courier_id": "Courier ID",
         "driver_name": "Futár",
         "company_base_rate_huf": "Vállalkozói alapdíj",
         "courier_base_rate_huf": "Nettó bevétel",
@@ -1912,7 +1913,10 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "calculated_routes": "Számolt túrák",
         "uncalculated_routes": "Nem számolt túrák",
     })
-    for column in columns[1:]:
+    if "Courier ID" not in result.columns:
+        result["Courier ID"] = ""
+    result["Courier ID"] = result["Courier ID"].fillna("").astype(str)
+    for column in columns[2:]:
         result[column] = _numeric_series(result, column)
     return result[columns]
 
@@ -1990,10 +1994,12 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         return data
 
     result = data.copy()
+    result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
     result["_courier_lookup"] = result["Futár"].map(_courier_match_key)
     calculated = calculated.copy()
+    calculated["_courier_id_lookup"] = calculated["Courier ID"].map(_courier_id_key)
     calculated["_courier_lookup"] = calculated["Futár"].map(_courier_match_key)
-    calculated = (
+    calculated_by_name = (
         calculated.groupby("_courier_lookup", as_index=False)[
             [
                 "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
@@ -2002,23 +2008,41 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         ]
         .sum()
     )
-    amount_by_courier = calculated.set_index("_courier_lookup")["Nettó bevétel"]
-    company_amount_by_courier = calculated.set_index("_courier_lookup")["Vállalkozói alapdíj"]
-    tip_by_courier = calculated.set_index("_courier_lookup")["Borravaló"]
-    system_bonus_by_courier = calculated.set_index("_courier_lookup")["Rendszerbónusz"]
-    matched_routes = calculated.set_index("_courier_lookup")["Számolt túrák"]
-    unmatched_routes = calculated.set_index("_courier_lookup")["Nem számolt túrák"]
+    calculated_by_id = calculated[calculated["_courier_id_lookup"] != ""].groupby("_courier_id_lookup", as_index=False)[
+        [
+            "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
+            "Rendszerbónusz", "Számolt túrák", "Nem számolt túrák",
+        ]
+    ].sum()
+    amount_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nettó bevétel"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    company_amount_by_id = calculated_by_id.set_index("_courier_id_lookup")["Vállalkozói alapdíj"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    tip_by_id = calculated_by_id.set_index("_courier_id_lookup")["Borravaló"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    system_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Rendszerbónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    matched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    unmatched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nem számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    amount_by_courier = calculated_by_name.set_index("_courier_lookup")["Nettó bevétel"]
+    company_amount_by_courier = calculated_by_name.set_index("_courier_lookup")["Vállalkozói alapdíj"]
+    tip_by_courier = calculated_by_name.set_index("_courier_lookup")["Borravaló"]
+    system_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Rendszerbónusz"]
+    matched_routes = calculated_by_name.set_index("_courier_lookup")["Számolt túrák"]
+    unmatched_routes = calculated_by_name.set_index("_courier_lookup")["Nem számolt túrák"]
     calculated_keys = set(amount_by_courier.index)
     resolved_lookup = result["_courier_lookup"].map(
         lambda key: _resolve_courier_lookup_key(key, calculated_keys)
     )
-    result["Nettó bevétel"] = resolved_lookup.map(amount_by_courier).fillna(0.0)
-    result["Vállalkozói alapdíj"] = resolved_lookup.map(company_amount_by_courier).fillna(0.0)
-    result["Borravaló"] = resolved_lookup.map(tip_by_courier).fillna(0.0)
-    result["Bónusz"] = resolved_lookup.map(system_bonus_by_courier).fillna(0.0)
-    result["Számolt túrák"] = resolved_lookup.map(matched_routes).fillna(0).astype(int)
-    result["Nem számolt túrák"] = resolved_lookup.map(unmatched_routes).fillna(0).astype(int)
-    return result.drop(columns="_courier_lookup")
+    result["Nettó bevétel"] = result["_courier_id_lookup"].map(amount_by_id).fillna(resolved_lookup.map(amount_by_courier)).fillna(0.0)
+    result["Vállalkozói alapdíj"] = result["_courier_id_lookup"].map(company_amount_by_id).fillna(resolved_lookup.map(company_amount_by_courier)).fillna(0.0)
+    result["Borravaló"] = result["_courier_id_lookup"].map(tip_by_id).fillna(resolved_lookup.map(tip_by_courier)).fillna(0.0)
+    result["Bónusz"] = result["_courier_id_lookup"].map(system_bonus_by_id).fillna(resolved_lookup.map(system_bonus_by_courier)).fillna(0.0)
+    result["Számolt túrák"] = result["_courier_id_lookup"].map(matched_routes_by_id).fillna(resolved_lookup.map(matched_routes)).fillna(0).astype(int)
+    result["Nem számolt túrák"] = result["_courier_id_lookup"].map(unmatched_routes_by_id).fillna(resolved_lookup.map(unmatched_routes)).fillna(0).astype(int)
+    result["Kifizetendő"] = (
+        _numeric_series(result, "Nettó bevétel")
+        + _numeric_series(result, "Borravaló")
+        + _numeric_series(result, "Bónusz")
+        - _numeric_series(result, "Levonás")
+    )
+    return result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
 
 
 def _money_amount(value: object) -> float:
@@ -2175,6 +2199,17 @@ def build_settlement_working_data(calculation_mode: str, session_id: str | None,
         data = load_courier_master("Excel")
         return apply_excel_base_rates(data, session_id)
     return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label)
+
+
+def recompute_payable_total(data: pd.DataFrame) -> pd.DataFrame:
+    result = data.copy()
+    result["Kifizetendő"] = (
+        _numeric_series(result, "Nettó bevétel")
+        + _numeric_series(result, "Borravaló")
+        + _numeric_series(result, "Bónusz")
+        - _numeric_series(result, "Levonás")
+    )
+    return result
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -3399,12 +3434,20 @@ def show_courier_dialog() -> None:
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
         dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-        dialog_start, dialog_end = load_settlement_month(dialog_session_id)
         dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
-        data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start)
+        if str(dialog_calculation_mode or "API").strip().casefold() == "excel":
+            dialog_start, dialog_end = load_settlement_month(dialog_session_id)
+        else:
+            dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+            _, dialog_end = month_bounds(dialog_start)
+            dialog_api_session_id = load_latest_api_jit_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
+            if dialog_api_session_id:
+                dialog_session_id = dialog_api_session_id
+        data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
         data = apply_imported_balance_components(data, dialog_session_id)
         data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
         data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
+        data = recompute_payable_total(data)
     match = data[data["Courier ID"].astype(str) == courier_id]
 
     if match.empty:
@@ -3415,7 +3458,15 @@ def show_courier_dialog() -> None:
     courier_name = str(row.get("Futár") or "Ismeretlen futár")
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
     session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-    period_start, period_end = load_settlement_month(session_id)
+    active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    if str(active_calculation_mode or "API").strip().casefold() == "excel":
+        period_start, period_end = load_settlement_month(session_id)
+    else:
+        period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+        _, period_end = month_bounds(period_start)
+        api_session_id = load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
+        if api_session_id:
+            session_id = api_session_id
     period_label = (
         f"{period_start:%Y. %m. %d.} - {period_end:%Y. %m. %d.}"
         if period_start and period_end
@@ -3424,7 +3475,6 @@ def show_courier_dialog() -> None:
     month_label = f"{period_end:%Y. %B}" if period_end else "Aktuális hónap"
     last_settlement_label = f"{period_end:%Y. %m. %d.}" if period_end else "-"
 
-    active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     route_detail = load_courier_route_detail(courier_id, courier_name, session_id, active_calculation_mode, period_start)
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
@@ -4690,12 +4740,16 @@ def show_new_settlement_page() -> None:
     else:
         balance_period_start = selected_period_start
         _, balance_period_end = month_bounds(balance_period_start)
+        api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
+        if api_session_id:
+            import_session_id = api_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
     data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
+    data = recompute_payable_total(data)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
@@ -4739,7 +4793,7 @@ def show_new_settlement_page() -> None:
                     load_courier_master.clear()
                     st.toast(f"API adatok betöltve és újraszámolva: {selected_month}", icon="✅")
                     st.rerun()
-                except BaseException as exc:
+                except Exception as exc:
                     st.error(f"API adatok betöltése sikertelen: {exc}")
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
