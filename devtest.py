@@ -8,6 +8,7 @@ from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from resources.settlement_excel_import import (
     delete_all_settlement_data,
     get_import_preview,
@@ -1279,6 +1280,124 @@ def close_target_reserve_month(
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_courier_monthly_closure(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_monthly_closure")
+            .select("*")
+            .eq("courier_id", courier_id)
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .limit(1)
+            .execute().data or []
+        )
+        return rows[0] if rows else {}
+    except BaseException:
+        return {}
+
+
+def format_bank_account_4(value: object) -> str:
+    digits = re.sub(r"\D+", "", str(value or ""))
+    if not digits:
+        return ""
+    return " ".join(digits[index:index + 4] for index in range(0, len(digits), 4))
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_latest_invoice_number(courier_id: str, period_start: date) -> str:
+    month_text = period_start.strftime("%Y-%m")
+    try:
+        rows = (
+            get_db().schema("public").table("peopleforce_documents")
+            .select("document_type,document_month,title,file_name,note,uploaded_at")
+            .eq("courier_id", courier_id)
+            .eq("document_month", month_text)
+            .order("uploaded_at", desc=True)
+            .limit(20)
+            .execute().data or []
+        )
+    except BaseException:
+        return ""
+    invoice_rows = [
+        row for row in rows
+        if "számla" in str(row.get("document_type") or row.get("title") or row.get("file_name") or "").casefold()
+        or "szamla" in str(row.get("document_type") or row.get("title") or row.get("file_name") or "").casefold()
+    ]
+    for row in invoice_rows or rows:
+        haystack = " ".join(str(row.get(column) or "") for column in ["note", "title", "file_name"])
+        for pattern in [
+            r"(?:számlaszám|szamlaszam|sorszám|sorszam)\s*:?\s*([A-Za-z0-9/_-]{3,})",
+            r"\b([A-Z]{1,5}[-_/]?\d{3,})\b",
+        ]:
+            match = re.search(pattern, haystack, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+    return ""
+
+
+def copy_cards_html(items: list[tuple[str, str]]) -> None:
+    payload = json.dumps([{"label": label, "value": value} for label, value in items])
+    components.html(
+        f"""
+        <div id="copy-grid" style="display:grid;gap:10px;font-family:Inter,Arial,sans-serif;">
+        </div>
+        <script>
+        const items = {payload};
+        const root = document.getElementById("copy-grid");
+        items.forEach((item) => {{
+          const button = document.createElement("button");
+          button.type = "button";
+          button.style.cssText = "width:100%;text-align:left;border:1px solid #dfe7e2;border-radius:8px;background:#fff;padding:10px 12px;cursor:pointer;color:#15251d;";
+          button.innerHTML = `<div style="font-size:11px;color:#6c7971;margin-bottom:4px;">${{item.label}}</div><div style="font-size:15px;font-weight:700;">${{item.value || '-'}}</div>`;
+          button.onclick = async () => {{
+            await navigator.clipboard.writeText(item.value || "");
+            const old = button.innerHTML;
+            button.innerHTML = `<div style="font-size:11px;color:#16803a;margin-bottom:4px;">Másolva</div><div style="font-size:15px;font-weight:700;">${{item.value || '-'}}</div>`;
+            setTimeout(() => button.innerHTML = old, 1100);
+          }};
+          root.appendChild(button);
+        }});
+        </script>
+        """,
+        height=max(120, len(items) * 72),
+    )
+
+
+def save_courier_monthly_closure(
+    session_id: str | None,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    period_end: date,
+    transfer_data: dict[str, object],
+    snapshot: dict[str, object],
+) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    payload = {
+        "courier_id": courier_id,
+        "courier_name": courier_name,
+        "session_id": session_id,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "bank_account_number": str(transfer_data.get("bank_account_number") or ""),
+        "recipient_name": str(transfer_data.get("recipient_name") or ""),
+        "payment_note": str(transfer_data.get("payment_note") or ""),
+        "invoice_number": str(transfer_data.get("invoice_number") or ""),
+        "payable_huf": parse_huf_value(transfer_data.get("payable_huf")),
+        "status": "done",
+        "closed_at": pd.Timestamp.utcnow().isoformat(),
+        "closed_by": actor,
+        "snapshot": snapshot,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }
+    get_db().schema("settlement").table("courier_monthly_closure").upsert(
+        payload,
+        on_conflict="courier_id,period_start,period_end",
+    ).execute()
+    load_courier_monthly_closure.clear()
 
 
 def resolve_target_reserve_month(
@@ -3034,6 +3153,8 @@ def show_courier_dialog() -> None:
         reserve_after_total = parse_huf_value(reserve_month.get("reserve_after_huf"))
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
         payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+        monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
+        closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         monthly_bonus_malus_effect = (
             imported_bonus_total + manual_bonus_total + loyalty_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
@@ -3124,21 +3245,67 @@ def show_courier_dialog() -> None:
             ct_a.metric("CT nyitó", format_huf(reserve_before_total))
             ct_b.metric("CT_NY_FT", format_huf(reserve_addition_total))
             ct_c.metric("CT záró", format_huf(reserve_after_total))
-            close_disabled = reserve_month_status == "done"
-            if st.button(
-                "Havi céltartalék zárása",
-                type="primary",
-                use_container_width=True,
-                disabled=close_disabled,
-                key=f"close_target_reserve_{courier_id}",
-                help="Zárás után a havi CT sor done állapotú lesz és frissül a public.courier_target_reserve.",
-            ):
-                try:
-                    close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
-                    st.success("A havi céltartalék lezárva.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"A céltartalék zárása sikertelen. Futtasd le a havi céltartalék migrációt. Részlet: {exc}")
+            if closure_done:
+                st.success("✓ Havi zárás megtörtént.")
+
+            with st.popover("✓ Havi zárás" if closure_done else "Havi zárás", use_container_width=True):
+                invoice_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
+                invoice_number = st.text_input("Feltöltött számla sorszáma", value=invoice_default, key=f"monthly_close_invoice_{courier_id}")
+                recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
+                bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
+                payment_note = str(monthly_closure.get("payment_note") or f"{courier_id}-{invoice_number}".strip("-"))
+                st.text_input(
+                    "Közlemény",
+                    value=payment_note,
+                    disabled=True,
+                    key=f"monthly_close_note_{courier_id}_{invoice_number}",
+                )
+                st.caption("Kattints bármelyik mezőre, és az érték a vágólapra kerül.")
+                copy_cards_html([
+                    ("Számlaszám", bank_account),
+                    ("Név", recipient_name),
+                    ("Közlemény", payment_note),
+                    ("Fizetendő összeg", format_huf(payable_total)),
+                ])
+                close_disabled = closure_done
+                if st.button("Zárás", type="primary", use_container_width=True, disabled=close_disabled, key=f"monthly_close_{courier_id}"):
+                    try:
+                        close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
+                        save_courier_monthly_closure(
+                            session_id,
+                            courier_id,
+                            str(row["Futár"]),
+                            period_start,
+                            period_end,
+                            {
+                                "bank_account_number": bank_account,
+                                "recipient_name": recipient_name,
+                                "payment_note": payment_note,
+                                "invoice_number": invoice_number,
+                                "payable_huf": payable_total,
+                            },
+                            {
+                                "base_huf": base_total,
+                                "tip_huf": tip_total,
+                                "delay_bonus_huf": delay_total,
+                                "compliance_bonus_huf": compliance_total,
+                                "bonus_huf": bonus_total,
+                                "loyalty_huf": loyalty_total,
+                                "customer_rating_huf": customer_rating_total,
+                                "malus_huf": malus_total,
+                                "atm_deduction_huf": atm_deduction_total,
+                                "other_expense_huf": other_expense_total,
+                                "reserve_addition_huf": reserve_addition_total,
+                                "insurance_fee_huf": insurance_fee_total,
+                                "reserve_before_huf": reserve_before_total,
+                                "reserve_after_huf": reserve_after_total,
+                                "payable_huf": payable_total,
+                            },
+                        )
+                        st.success("A futár havi elszámolása lezárva.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A havi zárás sikertelen. Futtasd le a havi zárás migrációkat. Részlet: {exc}")
 
         adjustment_type_labels = {
             "bonus": "Bónusz",
