@@ -29,7 +29,11 @@ from resources.courier_master_db import (
     read_courier_master_by_id,
     update_courier_master_profile,
 )
-from resources.courier_card_snapshot import read_snapshot
+try:
+    from resources.courier_card_snapshot import read_snapshot
+except Exception:
+    def read_snapshot(_snapshot_month):
+        return pd.DataFrame()
 from resources.app_settings import load_app_settings
 from resources.discord_notifier import notify_route_assigned_once
 from resources.discord_routes import read_latest_discord_route
