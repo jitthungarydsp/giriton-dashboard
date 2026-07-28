@@ -91,14 +91,13 @@ def raise_for_response(response: requests.Response, label: str) -> None:
     raise RuntimeError(f"{label}: HTTP {response.status_code}: {body}")
 
 
-def read_active_couriers() -> list[dict[str, Any]]:
+def read_couriers() -> list[dict[str, Any]]:
     url = os.environ["SUPABASE_URL"].rstrip("/")
     response = requests.get(
         f"{url}/rest/v1/courier_master",
         headers=supabase_headers(),
         params={
             "select": "courier_id,courier_name,warehouse_name,active",
-            "or": "(active.eq.true,active.is.null)",
             "order": "courier_id.asc",
             "limit": "10000",
         },
@@ -339,7 +338,7 @@ def main() -> int:
     if month < 1 or month > 12:
         raise RuntimeError("A hónap 1 és 12 közötti szám legyen.")
 
-    couriers = read_active_couriers()
+    couriers = read_couriers()
     if args.courier_id:
         couriers = [
             row for row in couriers
@@ -395,78 +394,81 @@ def main() -> int:
         courier_id = int(courier["courier_id"])
         courier_name = clean_text(courier.get("courier_name"))
         warehouse_name = clean_text(courier.get("warehouse_name"))
-        warehouse_id = warehouse_id_from_name(warehouse_name)
-        if args.warehouse_id and warehouse_id != args.warehouse_id:
-            continue
+        if args.warehouse_id:
+            courier_warehouse_ids = [args.warehouse_id]
+        else:
+            inferred_warehouse_id = warehouse_id_from_name(warehouse_name)
+            courier_warehouse_ids = [inferred_warehouse_id] if inferred_warehouse_id else [1, 2]
 
-        if warehouse_id is None:
-            skipped += 1
-            print(
-                f"KIHAGYVA: {courier_id} | {courier_name} | "
-                f"ismeretlen warehouse_name={warehouse_name!r}"
-            )
-            continue
+        for warehouse_id in courier_warehouse_ids:
+            if warehouse_id is None:
+                skipped += 1
+                print(
+                    f"KIHAGYVA: {courier_id} | {courier_name} | "
+                    f"ismeretlen warehouse_name={warehouse_name!r}"
+                )
+                continue
 
-        try:
-            request_url, status_code, response_json = fetch_financial_overview(
-                courier_id=courier_id,
-                warehouse_id=warehouse_id,
-                year=year,
-                month=month,
-            )
-
-            if status_code != 200:
-                raise RuntimeError(
-                    f"Courier Hub HTTP {status_code}: {str(response_json)[:1000]}"
+            try:
+                request_url, status_code, response_json = fetch_financial_overview(
+                    courier_id=courier_id,
+                    warehouse_id=warehouse_id,
+                    year=year,
+                    month=month,
                 )
 
-            validate_payload(response_json, courier_id)
+                if status_code != 200:
+                    raise RuntimeError(
+                        f"Courier Hub HTTP {status_code}: {str(response_json)[:1000]}"
+                    )
 
-            db_payload = make_db_payload(
-                courier=courier,
-                warehouse_id=warehouse_id,
-                request_url=request_url,
-                status_code=status_code,
-                response_json=response_json,
-                year=year,
-                month=month,
-            )
+                validate_payload(response_json, courier_id)
 
-            total_cost = (
-                response_json.get("totalCost", {}).get("amount")
-                if isinstance(response_json, dict)
-                else None
-            )
-            total_routes = (
-                response_json.get("totalRoutes")
-                if isinstance(response_json, dict)
-                else None
-            )
-            total_orders = (
-                response_json.get("totalOrders")
-                if isinstance(response_json, dict)
-                else None
-            )
+                db_payload = make_db_payload(
+                    courier=courier,
+                    warehouse_id=warehouse_id,
+                    request_url=request_url,
+                    status_code=status_code,
+                    response_json=response_json,
+                    year=year,
+                    month=month,
+                )
 
-            if args.apply:
-                upsert_financial_overview(db_payload)
+                total_cost = (
+                    response_json.get("totalCost", {}).get("amount")
+                    if isinstance(response_json, dict)
+                    else None
+                )
+                total_routes = (
+                    response_json.get("totalRoutes")
+                    if isinstance(response_json, dict)
+                    else None
+                )
+                total_orders = (
+                    response_json.get("totalOrders")
+                    if isinstance(response_json, dict)
+                    else None
+                )
 
-            success += 1
-            print(
-                f"OK: {courier_id} | {courier_name} | "
-                f"WH={warehouse_id} | routes={total_routes} | "
-                f"orders={total_orders} | totalCost={total_cost}"
-            )
+                if args.apply:
+                    upsert_financial_overview(db_payload)
 
-        except Exception as exc:
-            failed += 1
-            print(
-                f"HIBA: {courier_id} | {courier_name} | {exc}",
-                file=sys.stderr,
-            )
+                success += 1
+                print(
+                    f"OK: {courier_id} | {courier_name} | "
+                    f"WH={warehouse_id} | routes={total_routes} | "
+                    f"orders={total_orders} | totalCost={total_cost}"
+                )
 
-        if args.sleep > 0:
-            time.sleep(args.sleep)
+            except Exception as exc:
+                failed += 1
+                print(
+                    f"HIBA: {courier_id} | {courier_name} | WH={warehouse_id} | {exc}",
+                    file=sys.stderr,
+                )
+
+            if args.sleep > 0:
+                time.sleep(args.sleep)
 
     print(
         f"\nKész. Sikeres: {success}, kihagyva: {skipped}, hibás: {failed}"
