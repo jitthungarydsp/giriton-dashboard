@@ -2681,6 +2681,53 @@ def month_options(count: int = 24) -> list[str]:
     return items
 
 
+def parse_month_option(value: str | None) -> date:
+    names = {
+        "január": 1, "február": 2, "március": 3, "április": 4,
+        "május": 5, "június": 6, "július": 7, "augusztus": 8,
+        "szeptember": 9, "október": 10, "november": 11, "december": 12,
+    }
+    text = str(value or "").strip().lower()
+    match = re.match(r"^(\d{4})\.\s*(.+)$", text)
+    if not match:
+        today = date.today()
+        return date(today.year, today.month, 1)
+    year = int(match.group(1))
+    month = names.get(match.group(2).strip(), date.today().month)
+    return date(year, month, 1)
+
+
+def settlement_warehouse_id(value: str | None) -> int | None:
+    normalized = str(value or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+    if normalized in {"", "ÖSSZES", "OSSZES"}:
+        return None
+    if "BUD2" in normalized:
+        return 2
+    if "BUD1" in normalized or normalized in {"BUD", "BUDAPEST"}:
+        return 1
+    return None
+
+
+def import_api_financial_overview_to_jit(period_start: date, warehouse_label: str | None) -> str:
+    warehouse_id = settlement_warehouse_id(warehouse_label)
+    response = (
+        get_db()
+        .schema("settlement")
+        .rpc(
+            "import_api_financial_overview_to_jit",
+            {
+                "p_year": period_start.year,
+                "p_month": period_start.month,
+                "p_warehouse_id": warehouse_id,
+            },
+        )
+        .execute()
+    )
+    if isinstance(response.data, str):
+        return response.data
+    return str(response.data or "")
+
+
 def status_meta(status: str) -> tuple[str,str]:
     mapping={
         "Előkészítve":("status-red","led-red"),
@@ -4575,8 +4622,14 @@ def show_new_settlement_page() -> None:
         st.session_state.get("settlement_import_session_id")
         or load_latest_jit_session_id()
     )
-    balance_period_start, balance_period_end = load_settlement_month(import_session_id)
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    selected_month_label = st.session_state.get("new_month") or month_options()[0]
+    selected_period_start = parse_month_option(selected_month_label)
+    if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+        balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+    else:
+        balance_period_start = selected_period_start
+        balance_period_end = month_end(balance_period_start)
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start)
     data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
@@ -4596,7 +4649,24 @@ def show_new_settlement_page() -> None:
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         st.divider()
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
-            st.toast(f"Betöltve: {selected_month}",icon="✅")
+            if str(calculation_mode or "API").strip().casefold() == "excel":
+                st.toast(f"Betöltve: {selected_month}",icon="✅")
+            else:
+                try:
+                    api_period_start = parse_month_option(selected_month)
+                    api_session_id = import_api_financial_overview_to_jit(api_period_start, warehouse)
+                    st.session_state["settlement_import_session_id"] = api_session_id
+                    load_latest_api_jit_session_id.clear()
+                    load_excel_courier_base_rates.clear()
+                    load_excel_base_rate_diagnostics.clear()
+                    load_courier_route_detail.clear()
+                    load_imported_balance_components.clear()
+                    load_courier_settlement_summary.clear()
+                    load_courier_master.clear()
+                    st.toast(f"API adatok betöltve és újraszámolva: {selected_month}", icon="✅")
+                    st.rerun()
+                except BaseException as exc:
+                    st.error(f"API adatok betöltése sikertelen: {exc}")
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
             st.session_state["new_calculation_mode"]="API"
