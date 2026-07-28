@@ -1502,12 +1502,25 @@ def save_courier_monthly_closure(
 
 def reopen_courier_monthly_closure(courier_id: str, period_start: date, period_end: date) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-    get_db().schema("settlement").table("courier_monthly_closure").update({
-        "status": "reopened",
-        "reopened_at": pd.Timestamp.utcnow().isoformat(),
-        "reopened_by": actor,
-        "updated_at": pd.Timestamp.utcnow().isoformat(),
-    }).eq("courier_id", courier_id).eq("period_start", period_start.isoformat()).eq("period_end", period_end.isoformat()).execute()
+    try:
+        get_db().schema("settlement").table("courier_monthly_closure").update({
+            "status": "reopened",
+            "reopened_at": pd.Timestamp.utcnow().isoformat(),
+            "reopened_by": actor,
+            "updated_at": pd.Timestamp.utcnow().isoformat(),
+        }).eq("courier_id", courier_id).eq("period_start", period_start.isoformat()).eq("period_end", period_end.isoformat()).execute()
+    except Exception as exc:
+        message = str(exc)
+        if "reopened_at" not in message and "courier_monthly_closure_status_check" not in message:
+            raise
+        # Backward-compatible fallback for environments where the reopen
+        # migration has not run yet: removing the closure row makes the month
+        # editable again and avoids counting it as paid.
+        get_db().schema("settlement").table("courier_monthly_closure").delete() \
+            .eq("courier_id", courier_id) \
+            .eq("period_start", period_start.isoformat()) \
+            .eq("period_end", period_end.isoformat()) \
+            .execute()
     load_courier_monthly_closure.clear()
     load_monthly_closure_statuses.clear()
 
