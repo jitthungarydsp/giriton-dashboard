@@ -12,10 +12,12 @@ create table if not exists settlement.courier_monthly_closure (
     payment_note text,
     invoice_number text,
     payable_huf numeric not null default 0,
-    status text not null default 'done' check (status in ('done')),
+    status text not null default 'done' check (status in ('done', 'reopened')),
     snapshot jsonb not null default '{}'::jsonb,
     closed_at timestamptz not null default now(),
     closed_by text,
+    reopened_at timestamptz,
+    reopened_by text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     unique (courier_id, period_start, period_end)
