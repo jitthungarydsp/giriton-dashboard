@@ -1046,36 +1046,23 @@ def _resolve_courier_lookup_key(courier_key: str, available_keys: set[str]) -> s
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_latest_jit_session_id(period_start: date | None = None) -> str | None:
-    """Use the latest non-API Excel/import session after an app refresh."""
+def load_latest_jit_session_id() -> str | None:
+    """Use existing DB data even after an app refresh; no Excel re-upload needed."""
     try:
-        query = (
+        rows = (
             get_db()
             .schema("settlement")
             .table("jit_row")
-            .select("session_id,source_sheet,created_at")
-            .not_.ilike("source_sheet", "API financial overview%")
-        )
-        if period_start is not None:
-            _, period_end = month_bounds(period_start)
-            query = query.gte("route_date", period_start.isoformat()).lte("route_date", period_end.isoformat())
-        rows = (
-            query.order("created_at", desc=True).limit(1).execute().data or []
+            .select("session_id,created_at")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
         )
         return str(rows[0]["session_id"]) if rows else None
     except BaseException:
         return None
-
-
-def selected_excel_session_id(period_start: date | None = None) -> str | None:
-    return (
-        load_latest_jit_session_id(period_start)
-        or st.session_state.get("excel_settlement_import_session_id")
-    )
-
-
-def selected_api_session_id(period_start: date, warehouse_label: str | None = None) -> str | None:
-    return load_latest_api_jit_session_id(period_start, warehouse_label)
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -2609,13 +2596,9 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     )
     grouped["name_key"] = grouped["driver_name"].map(_courier_match_key)
     grouped["completed_routes"] = grouped["courier_id"].map(routes_by_id).fillna(grouped["name_key"].map(routes_by_name)).fillna(0).astype(int)
-    active_mode = str(st.session_state.get("new_calculation_mode", "API")).strip().casefold()
-    active_session_id = (
-        selected_excel_session_id(month_start)
-        if active_mode == "excel"
-        else selected_api_session_id(month_start, st.session_state.get("new_warehouse", "Összes"))
+    route_type_counts = load_customer_rating_route_type_counts(
+        str(st.session_state.get("settlement_import_session_id") or "").strip()
     )
-    route_type_counts = load_customer_rating_route_type_counts(str(active_session_id or "").strip())
     route_records: list[dict[str, object]] = []
     for _, row in grouped.iterrows():
         route_counts: dict[str, int] = {}
@@ -3391,14 +3374,8 @@ def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
     """The Bonus and Malus menus use the same persistent, period-aware rows."""
     title = "Bónuszok" if adjustment_type == "bonus" else "Máluszok"
     singular = "Bónusz" if adjustment_type == "bonus" else "Málusz"
-    period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-    _, period_end = month_bounds(period_start)
-    active_mode = str(st.session_state.get("new_calculation_mode", "API")).strip().casefold()
-    session_id = (
-        selected_excel_session_id(period_start)
-        if active_mode == "excel"
-        else selected_api_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
-    )
+    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+    period_start, period_end = load_settlement_month(session_id)
     rows = load_courier_adjustments(courier_id, period_start, period_end)
     rows = rows.loc[rows.get("adjustment_type", pd.Series(index=rows.index, dtype=str)) == adjustment_type].copy()
     st.markdown(f"#### {title}")
@@ -3486,15 +3463,14 @@ def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
+        dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
         if str(dialog_calculation_mode or "API").strip().casefold() == "excel":
-            dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-            dialog_session_id = selected_excel_session_id(dialog_start)
             dialog_start, dialog_end = load_settlement_month(dialog_session_id)
         else:
             dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
             _, dialog_end = month_bounds(dialog_start)
-            dialog_api_session_id = selected_api_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
+            dialog_api_session_id = load_latest_api_jit_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
             if dialog_api_session_id:
                 dialog_session_id = dialog_api_session_id
         data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
@@ -3511,15 +3487,14 @@ def show_courier_dialog() -> None:
     row = match.iloc[0]
     courier_name = str(row.get("Futár") or "Ismeretlen futár")
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
-    session_id = str(row.get("Adat session") or "")
-    active_calculation_mode = str(row.get("Számítás módja") or st.session_state.get("new_calculation_mode", "API"))
+    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+    active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     if str(active_calculation_mode or "API").strip().casefold() == "excel":
-        session_id = session_id or selected_excel_session_id(parse_month_option(st.session_state.get("new_month") or month_options()[0]))
         period_start, period_end = load_settlement_month(session_id)
     else:
         period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
         _, period_end = month_bounds(period_start)
-        api_session_id = session_id or load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
+        api_session_id = load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
         if api_session_id:
             session_id = api_session_id
     period_label = (
@@ -3730,12 +3705,8 @@ def show_courier_dialog() -> None:
             )
 
     if selected_menu == "Pénzügy":
-        session_id = str(row.get("Adat session") or session_id or "")
-        if str(active_calculation_mode or "API").strip().casefold() == "excel":
-            period_start, period_end = load_settlement_month(session_id)
-        else:
-            period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-            _, period_end = month_bounds(period_start)
+        session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
+        period_start, period_end = load_settlement_month(session_id)
         route_detail = load_courier_route_detail(courier_id, str(row["Futár"]), session_id, active_calculation_mode, period_start)
         route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
@@ -4784,47 +4755,32 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name="Elszámolások")
     return output.getvalue()
 
-
-def build_source_settlement_data(
-    calculation_mode: str,
-    session_id: str | None,
-    period_start: date,
-    period_end: date,
-    warehouse_label: str | None = None,
-) -> pd.DataFrame:
-    data = build_settlement_working_data(calculation_mode, session_id, period_start, warehouse_label)
-    data = apply_imported_balance_components(data, session_id)
-    data = apply_loyalty_bonus(data, period_start, period_end, session_id)
-    data = apply_customer_rating_bonus(data, period_start, period_end)
-    data = apply_manual_balance_adjustments(data, period_start, period_end)
-    data = apply_salary_advance_deduction(data, period_start, period_end)
-    data = recompute_payable_total(data)
-    data = apply_monthly_closure_status(data, period_start, period_end)
-    data["Adat session"] = str(session_id or "")
-    return data
-
-
 def show_new_settlement_page() -> None:
     apply_design()
+    import_session_id = (
+        st.session_state.get("settlement_import_session_id")
+        or load_latest_jit_session_id()
+    )
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     selected_month_label = st.session_state.get("new_month") or month_options()[0]
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
-    normalized_calculation_mode = str(selected_calculation_mode or "API").strip().casefold()
-    balance_period_start = selected_period_start
-    _, balance_period_end = month_bounds(balance_period_start)
-    excel_session_id = selected_excel_session_id(balance_period_start)
-    api_session_id = selected_api_session_id(balance_period_start, selected_warehouse_label)
-    import_session_id = api_session_id if normalized_calculation_mode != "excel" else excel_session_id
-
-    if normalized_calculation_mode == "excel":
-        data = build_source_settlement_data("Excel", excel_session_id, balance_period_start, balance_period_end, selected_warehouse_label)
-    elif normalized_calculation_mode == "összes" or normalized_calculation_mode == "osszes":
-        api_data = build_source_settlement_data("API", api_session_id, balance_period_start, balance_period_end, selected_warehouse_label)
-        excel_data = build_source_settlement_data("Excel", excel_session_id, balance_period_start, balance_period_end, selected_warehouse_label)
-        data = pd.concat([api_data, excel_data], ignore_index=True) if not excel_data.empty else api_data
+    if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+        balance_period_start, balance_period_end = load_settlement_month(import_session_id)
     else:
-        data = build_source_settlement_data("API", api_session_id, balance_period_start, balance_period_end, selected_warehouse_label)
+        balance_period_start = selected_period_start
+        _, balance_period_end = month_bounds(balance_period_start)
+        api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
+        if api_session_id:
+            import_session_id = api_session_id
+    data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
+    data = apply_imported_balance_components(data, import_session_id)
+    data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
+    data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
+    data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
+    data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
+    data = recompute_payable_total(data)
+    data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -4870,7 +4826,7 @@ def show_new_settlement_page() -> None:
                         )
                         st.stop()
                     api_session_id = import_api_financial_overview_to_jit(api_period_start, warehouse)
-                    st.session_state["api_settlement_import_session_id"] = api_session_id
+                    st.session_state["settlement_import_session_id"] = api_session_id
                     load_latest_api_jit_session_id.clear()
                     load_excel_courier_base_rates.clear()
                     load_excel_base_rate_diagnostics.clear()
@@ -4909,7 +4865,7 @@ def show_new_settlement_page() -> None:
         if uploaded_excel is not None:
             st.success(f"Kiválasztva: {uploaded_excel.name}")
 
-        import_session_id = st.session_state.get("excel_settlement_import_session_id")
+        import_session_id = st.session_state.get("settlement_import_session_id")
         excel_action1, excel_action_check, excel_action2 = st.columns(3)
 
         if excel_action1.button(
@@ -4926,7 +4882,7 @@ def show_new_settlement_page() -> None:
                     get_db(),
                 )
                 st.session_state["excel_calculation_loaded"] = True
-                st.session_state["excel_settlement_import_session_id"] = result["session_id"]
+                st.session_state["settlement_import_session_id"] = result["session_id"]
                 st.session_state["settlement_import_result"] = result
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
@@ -4990,7 +4946,7 @@ def show_new_settlement_page() -> None:
                 with st.expander("Technikai hiba részletei", expanded=True):
                     st.code(error_details, language="text")
 
-        import_session_id = st.session_state.get("excel_settlement_import_session_id")
+        import_session_id = st.session_state.get("settlement_import_session_id")
 
         if excel_action_check.button(
             "SQL ellenőrzés",
@@ -5028,7 +4984,7 @@ def show_new_settlement_page() -> None:
 
                 st.session_state["excel_upload_version"] += 1
                 st.session_state["excel_calculation_loaded"] = False
-                st.session_state.pop("excel_settlement_import_session_id", None)
+                st.session_state.pop("settlement_import_session_id", None)
                 st.session_state.pop("settlement_import_result", None)
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
