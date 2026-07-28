@@ -1069,7 +1069,7 @@ def load_latest_jit_session_id() -> str | None:
 def load_latest_api_jit_session_id(period_start: date) -> str | None:
     """Find the latest API-imported JIT session for the selected month."""
     try:
-        period_end = month_end(period_start)
+        _, period_end = month_bounds(period_start)
         rows = (
             get_db()
             .schema("settlement")
@@ -4629,7 +4629,7 @@ def show_new_settlement_page() -> None:
         balance_period_start, balance_period_end = load_settlement_month(import_session_id)
     else:
         balance_period_start = selected_period_start
-        balance_period_end = month_end(balance_period_start)
+        _, balance_period_end = month_bounds(balance_period_start)
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start)
     data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
