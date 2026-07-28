@@ -1638,24 +1638,23 @@ def load_customer_rating_rules_for_month(period_start: date, period_end: date) -
     if data.empty:
         return data
     valid_to = pd.to_datetime(data.get("valid_to"), errors="coerce")
-    return data.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+    result = data.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+    return result
 
 
 def customer_rating_rule_amount(average_rating: float, rules: pd.DataFrame) -> float:
     if rules.empty:
         return 0.0
     rating_5 = float(average_rating or 0.0)
-    rating_percent = rating_5 * 20.0
     for _, rule in rules.iterrows():
         try:
             min_value = float(rule["rating_min_percent"]) if pd.notna(rule.get("rating_min_percent")) else None
             max_value = float(rule["rating_max_percent"]) if pd.notna(rule.get("rating_max_percent")) else None
         except (TypeError, ValueError):
             continue
-        compare_value = rating_5 if max((min_value or 0), (max_value or 0)) <= 5 else rating_percent
-        if min_value is not None and compare_value < min_value:
+        if min_value is not None and rating_5 < min_value:
             continue
-        if max_value is not None and compare_value > max_value:
+        if max_value is not None and rating_5 > max_value:
             continue
         return parse_huf_value(rule.get("courier_amount_huf"))
     return 0.0
@@ -3833,6 +3832,12 @@ def show_new_settlement_page() -> None:
                     data,
                 )
                 st.success(f"Előnézet kész: {len(rating_preview)} futár.")
+                rating_rules = load_customer_rating_rules_for_month(
+                    rating_month,
+                    (rating_month.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1),
+                )
+                if rating_rules.empty:
+                    st.warning("Nincs érvényes Ügyfélértékelés paraméter erre a hónapra. A bónusz 0 Ft lesz, amíg a Paraméterértékekben nincs rögzített sáv.")
                 preview_view = rating_preview.rename(columns={
                     "courier_id": "Courier ID",
                     "driver_name": "Futár",

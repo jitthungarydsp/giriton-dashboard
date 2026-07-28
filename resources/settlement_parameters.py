@@ -206,6 +206,10 @@ def validate_customer_rating_rule(payload: dict[str, Any]) -> dict[str, Any]:
     rating_min, rating_max = _range(payload, "rating", "ügyfélértékelési sáv")
     if rating_min is None and rating_max is None:
         raise ValueError("Legalább minimum vagy maximum értékelést adj meg.")
+    if rating_min is not None and not 0 <= rating_min <= 5:
+        raise ValueError("Az ügyfélértékelés alsó határa 0 és 5 között lehet.")
+    if rating_max is not None and not 0 <= rating_max <= 5:
+        raise ValueError("Az ügyfélértékelés felső határa 0 és 5 között lehet.")
     return {
         "level_code": _optional_text(payload.get("level_code")) or "Ügyfélértékelés",
         "rating_min_percent": rating_min,

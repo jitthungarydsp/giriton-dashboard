@@ -99,17 +99,28 @@ class SettlementParameterValidationTests(unittest.TestCase):
         self.assertEqual(loyalty["loyalty_start_date"], "2026-01-01")
         self.assertEqual(life["life_insurance_amount_huf"], 3500)
 
-    def test_customer_rating_rule_has_percent_band_and_courier_amount(self) -> None:
+    def test_customer_rating_rule_has_rating_band_and_courier_amount(self) -> None:
         row = validate_customer_rating_rule({
             "level_code": "Kiemelkedő értékelés",
-            "rating_min": 95,
-            "rating_max": 100,
-            "courier_amount_huf": 5000,
-            "valid_from": date(2026, 6, 1),
+            "rating_min": 4.9,
+            "rating_max": 5.0,
+            "courier_amount_huf": 500,
+            "valid_from": date(2026, 5, 1),
             "valid_to": None,
         })
-        self.assertEqual(row["rating_min_percent"], 95)
-        self.assertEqual(row["courier_amount_huf"], 5000)
+        self.assertEqual(row["rating_min_percent"], 4.9)
+        self.assertEqual(row["courier_amount_huf"], 500)
+
+    def test_customer_rating_rule_rejects_percent_scale(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_customer_rating_rule({
+                "level_code": "Hibás százalékos sáv",
+                "rating_min": 95,
+                "rating_max": 100,
+                "courier_amount_huf": 500,
+                "valid_from": date(2026, 5, 1),
+                "valid_to": None,
+            })
 
 
 if __name__ == "__main__":
