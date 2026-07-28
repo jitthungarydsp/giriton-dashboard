@@ -1066,7 +1066,31 @@ def load_latest_jit_session_id() -> str | None:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_master() -> pd.DataFrame:
+def load_latest_api_jit_session_id(period_start: date) -> str | None:
+    """Find the latest API-imported JIT session for the selected month."""
+    try:
+        period_end = month_end(period_start)
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("session_id,created_at")
+            .ilike("source_sheet", "API financial overview%")
+            .gte("route_date", period_start.isoformat())
+            .lte("route_date", period_end.isoformat())
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return str(rows[0]["session_id"]) if rows else None
+    except BaseException:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     response = (
         get_db()
         .schema("public")
@@ -1097,7 +1121,7 @@ def load_courier_master() -> pd.DataFrame:
     df["Courier ID"] = df["Courier ID"].astype(str)
     df["Futár"] = df["Futár"].fillna("Ismeretlen futár")
     df["Branch"] = "JIT"
-    df["Számítás módja"] = "Excel"
+    df["Számítás módja"] = "API" if str(calculation_mode).casefold() == "api" else "Excel"
     df["Raktár"] = df["Raktár"].fillna("BUD1")
     if "Munkakezdés" not in df.columns:
         df["Munkakezdés"] = ""
@@ -1728,7 +1752,7 @@ def log_profile_change(courier_id: str, changes: dict[str, dict[str, str]]) -> N
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
+def load_driver_dashboard(session_id: str | None = None, calculation_mode: str = "Excel") -> pd.DataFrame:
     query = (
         get_db()
         .schema("settlement")
@@ -1804,7 +1828,7 @@ def load_driver_dashboard(session_id: str | None = None) -> pd.DataFrame:
     df["Raktár"] = df["Raktár"].fillna("")
 
     df["Branch"] = "JIT"
-    df["Számítás módja"] = "Excel"
+    df["Számítás módja"] = "API" if str(calculation_mode).casefold() == "api" else "Excel"
     df["Státusz"] = "Előkészítve"
     df["Előző havi összeg"] = 0.0
 
@@ -1978,6 +2002,120 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Számolt túrák"] = resolved_lookup.map(matched_routes).fillna(0).astype(int)
     result["Nem számolt túrák"] = resolved_lookup.map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
+
+
+def _money_amount(value: object) -> float:
+    if isinstance(value, dict):
+        return parse_huf_value(value.get("amount"))
+    return parse_huf_value(value)
+
+
+def _api_route_fee(route: dict[str, object], *fee_types: str) -> float:
+    wanted = {fee_type.casefold() for fee_type in fee_types}
+    total = 0.0
+    for item in route.get("ruleBreakdown") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("feeType") or "").casefold() in wanted:
+            total += _money_amount(item.get("amount"))
+    return total
+
+
+def _api_route_other_bonus(route: dict[str, object]) -> float:
+    excluded = {"fixed_base", "delay_performance", "dataport_delay_performance", "compliance"}
+    total = 0.0
+    for item in route.get("ruleBreakdown") or []:
+        if not isinstance(item, dict):
+            continue
+        fee_type = str(item.get("feeType") or "").casefold()
+        if fee_type and fee_type not in excluded:
+            total += _money_amount(item.get("amount"))
+    return total
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("public").table("courier_financial_overview_raw")
+            .select("courier_id,courier_name,warehouse_id,year,month,response_json,fetched_at")
+            .eq("year", int(year))
+            .eq("month", int(month))
+            .eq("status_code", 200)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = None) -> pd.DataFrame:
+    columns = [
+        "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
+        "Rendelések", "Alapdíj", "Borravaló", "Késedelmi díj",
+        "Túramegfelelés", "Egyéb bónusz", "Bónuszok", "DB státusz",
+    ]
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    target_id = _courier_id_key(courier_id)
+    weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+    parsed: list[dict[str, object]] = []
+    for source in rows.to_dict("records"):
+        if target_id and _courier_id_key(source.get("courier_id")) != target_id:
+            continue
+        payload = source.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        for route in payload.get("routes") or []:
+            if not isinstance(route, dict):
+                continue
+            delivery_date = str(route.get("deliveryDate") or "")
+            parsed_date = pd.to_datetime(delivery_date, errors="coerce")
+            route_layer = str(route.get("routeLayer") or "NORMAL").strip().upper()
+            route_type = {"NORMAL": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_layer, route_layer.title())
+            parsed.append({
+                "_courier_id": _courier_id_key(source.get("courier_id")),
+                "Route ID": str(route.get("routeId") or "–"),
+                "Excel dátum": delivery_date or "–",
+                "Hét napja": weekday_names.get(int(parsed_date.dayofweek) + 1, "–") if pd.notna(parsed_date) else "–",
+                "Túratípus": route_type,
+                "Naptípus": "Nincs besorolás",
+                "Rendelések": parse_huf_value(route.get("orderCount")),
+                "Alapdíj": 0.0,
+                "Borravaló": _money_amount(route.get("customerTipsTotal")),
+                "Késedelmi díj": 0.0,
+                "Túramegfelelés": 0.0,
+                "Egyéb bónusz": 0.0,
+                "Bónuszok": 0.0,
+                "DB státusz": "API nyers adat - paraméterezés szükséges",
+            })
+    if not parsed:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+
+
+def apply_api_base_rates(data: pd.DataFrame, period_start: date) -> pd.DataFrame:
+    """API mode must keep the same output contract as the Excel pipeline."""
+    result = data.copy()
+    result["Számítás módja"] = "API"
+    api_session_id = load_latest_api_jit_session_id(period_start)
+    if not api_session_id:
+        return result
+    return apply_excel_base_rates(result, api_session_id)
+
+
+def build_settlement_working_data(calculation_mode: str, session_id: str | None, period_start: date) -> pd.DataFrame:
+    """Build the main settlement table without changing its shape per source."""
+    normalized_mode = str(calculation_mode or "API").strip().casefold()
+    if normalized_mode == "excel":
+        data = load_courier_master("Excel")
+        return apply_excel_base_rates(data, session_id)
+    return apply_api_base_rates(load_courier_master("API"), period_start)
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -2573,7 +2711,13 @@ def get_demo_complaints() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_route_detail(courier_id: str, courier_name: str, session_id: str | None) -> pd.DataFrame:
+def load_courier_route_detail(
+    courier_id: str,
+    courier_name: str,
+    session_id: str | None,
+    calculation_mode: str = "Excel",
+    period_start: date | None = None,
+) -> pd.DataFrame:
     """Return auditable, unique Route ID rows for one courier.
 
     The JITT upload does not always contain a Courier ID.  In that case only a
@@ -2588,7 +2732,16 @@ def load_courier_route_detail(courier_id: str, courier_name: str, session_id: st
         "Túramegfelelés", "Egyéb bónusz", "Bónuszok", "DB státusz",
     ]
     if not session_id or not courier_id:
-        return pd.DataFrame(columns=columns)
+        if str(calculation_mode).casefold() != "api" or period_start is None:
+            return pd.DataFrame(columns=columns)
+    if str(calculation_mode).casefold() == "api" and period_start is not None:
+        api_session_id = load_latest_api_jit_session_id(period_start)
+        if api_session_id:
+            session_id = api_session_id
+        else:
+            api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+            api_detail = api_financial_routes_to_detail(api_rows, courier_id)
+            return api_detail.drop(columns=["_courier_id"], errors="ignore")
     try:
         rows = (
             get_db().schema("settlement").table("jit_row")
@@ -3141,7 +3294,9 @@ def show_courier_dialog() -> None:
     if not isinstance(data, pd.DataFrame) or data.empty:
         dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         dialog_start, dialog_end = load_settlement_month(dialog_session_id)
-        data = apply_imported_balance_components(load_courier_master(), dialog_session_id)
+        dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+        data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start)
+        data = apply_imported_balance_components(data, dialog_session_id)
         data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
         data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
     match = data[data["Courier ID"].astype(str) == courier_id]
@@ -3163,7 +3318,8 @@ def show_courier_dialog() -> None:
     month_label = f"{period_end:%Y. %B}" if period_end else "Aktuális hónap"
     last_settlement_label = f"{period_end:%Y. %m. %d.}" if period_end else "-"
 
-    route_detail = load_courier_route_detail(courier_id, courier_name, session_id)
+    active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    route_detail = load_courier_route_detail(courier_id, courier_name, session_id, active_calculation_mode, period_start)
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
@@ -3231,6 +3387,7 @@ def show_courier_dialog() -> None:
     route_total = int(settlement_amount("route_count") or len(route_detail))
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
+    vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
 
     st.markdown(
         f"""
@@ -3245,6 +3402,7 @@ def show_courier_dialog() -> None:
                   <div class="settlement-meta-item"><div class="settlement-meta-label">Raktár</div><div class="settlement-meta-value">{html.escape(str(row.get('Raktár') or profile.get('warehouse_name') or '-'))}</div></div>
                   <div class="settlement-meta-item"><div class="settlement-meta-label">Státusz</div><div class="settlement-chip">{html.escape(str(row.get('Státusz') or 'Aktív'))}</div></div>
                   <div class="settlement-meta-item"><div class="settlement-meta-label">Biztosítás</div><div class="settlement-meta-value">{html.escape(insurance_label)}</div></div>
+                  <div class="settlement-meta-item"><div class="settlement-meta-label">ÁFA státusz</div><div class="settlement-meta-value">{html.escape(vat_status_label)}</div></div>
                 </div>
               </div>
             </div>
@@ -3259,10 +3417,19 @@ def show_courier_dialog() -> None:
         """,
         unsafe_allow_html=True,
     )
+    menu_key = f"courier_menu_{courier_id}"
+    menu_target_key = f"courier_menu_target_{courier_id}"
+    menu_target = st.session_state.pop(menu_target_key, None)
+    if menu_target:
+        st.session_state[menu_key] = menu_target
+
     selected_menu = st.radio(
         "Futármenü", ["Áttekintés", "Pénzügy", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Reklamációk", "Profil"],
-        horizontal=True, label_visibility="collapsed", key=f"courier_menu_{courier_id}",
+        horizontal=True, label_visibility="collapsed", key=menu_key,
     )
+
+    def keep_courier_menu(menu_name: str) -> None:
+        st.session_state[menu_target_key] = menu_name
 
     if selected_menu == "Áttekintés":
         missing_data_count = 0
@@ -3354,7 +3521,7 @@ def show_courier_dialog() -> None:
     if selected_menu == "Pénzügy":
         session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         period_start, period_end = load_settlement_month(session_id)
-        route_detail = load_courier_route_detail(courier_id, str(row["Futár"]), session_id)
+        route_detail = load_courier_route_detail(courier_id, str(row["Futár"]), session_id, active_calculation_mode, period_start)
         route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
@@ -4005,6 +4172,15 @@ def show_courier_dialog() -> None:
         st.caption("Forrás: public.courier_master. A biztosítási tagság forrása: public.courier_target_reserve.")
         edit_key = f"profile_edit_mode_{courier_id}"
         is_editing = bool(st.session_state.get(edit_key, False))
+
+        def enable_profile_edit() -> None:
+            st.session_state[edit_key] = True
+            keep_courier_menu("Profil")
+
+        def cancel_profile_edit() -> None:
+            st.session_state[edit_key] = False
+            keep_courier_menu("Profil")
+
         profile1, profile2 = st.columns(2)
 
         with profile1:
@@ -4028,31 +4204,43 @@ def show_courier_dialog() -> None:
             company_address = st.text_input("Vállalkozás címe", value=str(profile.get("company_address") or ""), disabled=not is_editing, key=f"ui_profile_company_address_{courier_id}")
             tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"ui_profile_tax_{courier_id}")
             bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"ui_profile_bank_{courier_id}")
+            vat_status = st.text_input("ÁFA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"ui_profile_vat_status_{courier_id}")
             st.text_input("Biztosítás", value="Van" if reserve_status["insurance_active"] else "Nincs", disabled=True, key=f"ui_profile_insurance_{courier_id}")
             st.text_input("Profil státusz", value="Aktív" if bool(profile.get("active", True)) else "Inaktív", disabled=True, key=f"ui_profile_status_{courier_id}")
 
         profile_actions = st.columns(3)
-        if not is_editing and profile_actions[0].button("Profil szerkesztése", type="primary", use_container_width=True, key=f"ui_profile_edit_{courier_id}"):
-            st.session_state[edit_key] = True
-            st.rerun()
+        if not is_editing:
+            profile_actions[0].button(
+                "Profil szerkesztése",
+                type="primary",
+                use_container_width=True,
+                key=f"ui_profile_edit_{courier_id}",
+                on_click=enable_profile_edit,
+            )
         if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"ui_profile_save_{courier_id}"):
-            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "work_start_date": work_start_date.isoformat() if work_start_date else "", "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number}
+            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "work_start_date": work_start_date.isoformat() if work_start_date else "", "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number, "vat_status": vat_status}
             changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
             try:
                 if changes:
                     update_courier_master_profile(courier_id, new_fields)
                     log_profile_change(courier_id, changes)
                 st.session_state[edit_key] = False
+                keep_courier_menu("Profil")
                 load_courier_profile.clear()
                 load_courier_master.clear()
                 st.success("A profil mentve, a változás naplózva.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"A profil nem menthető: {exc}")
-        if is_editing and profile_actions[1].button("Mégse", use_container_width=True, key=f"ui_profile_cancel_{courier_id}"):
-            st.session_state[edit_key] = False
-            st.rerun()
+        if is_editing:
+            profile_actions[1].button(
+                "Mégse",
+                use_container_width=True,
+                key=f"ui_profile_cancel_{courier_id}",
+                on_click=cancel_profile_edit,
+            )
         if profile_actions[2].button("↻ Profiladatok újratöltése", use_container_width=True, key=f"ui_profile_refresh_{courier_id}"):
+            keep_courier_menu("Profil")
             load_courier_profile.clear()
             load_target_reserve_status.clear()
             st.rerun()
@@ -4387,9 +4575,10 @@ def show_new_settlement_page() -> None:
         st.session_state.get("settlement_import_session_id")
         or load_latest_jit_session_id()
     )
-    data = apply_excel_base_rates(load_courier_master(), import_session_id)
-    data = apply_imported_balance_components(data, import_session_id)
     balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+    selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start)
+    data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
@@ -4401,7 +4590,7 @@ def show_new_settlement_page() -> None:
         st.caption("Szűrés és műveletek")
         selected_month=st.selectbox("Elszámolási hónap",month_options(),key="new_month")
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
-        calculation_mode=st.selectbox("Számítás módja",["Összes","Excel"],key="new_calculation_mode")
+        calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
         status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
@@ -4410,7 +4599,7 @@ def show_new_settlement_page() -> None:
             st.toast(f"Betöltve: {selected_month}",icon="✅")
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
-            st.session_state["new_calculation_mode"]="Összes"
+            st.session_state["new_calculation_mode"]="API"
             st.session_state["new_warehouse"]="Összes"
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
