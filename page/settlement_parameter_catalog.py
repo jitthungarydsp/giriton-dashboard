@@ -411,21 +411,30 @@ def _show_reserve_insurance(client: Any) -> None:
 
 
 def _show_loyalty_bonus(client: Any) -> None:
-    st.caption("A lojalitási bónusz kezdete és összege időszakosan, verziókövetve kezelhető.")
+    st.caption("A lojalitási bónusz a futár munkakezdése alapján, hónapszámhoz kötve számolható túrára vagy címre.")
     data = read_items(client, LOYALTY_BONUS_TABLE)
     if not data.empty:
-        view = data.copy(); view["Összeg"] = view["bonus_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["loyalty_start_date", "Összeg", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
-    row = _editor_row(data, "loyalty", "loyalty_start_date")
+        view = data.copy()
+        view["Hónapok"] = pd.to_numeric(view.get("loyalty_months_required", 0), errors="coerce").fillna(0).astype(int)
+        view["Túratípus"] = view.get("route_type", pd.Series("normal", index=view.index)).fillna("normal").map(ROUTE_LABELS)
+        view["Egység"] = view.get("calculation_unit", pd.Series("per_route", index=view.index)).fillna("per_route").map(UNIT_LABELS)
+        view["Összeg"] = view["bonus_amount_huf"].map(_money)
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(view[["Hónapok", "Túratípus", "Egység", "Összeg", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+    row = _editor_row(data, "loyalty", "valid_from")
     with st.form(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}"):
-        left, right = st.columns(2)
-        loyalty_start = left.date_input("Lojalitási bónusz kezdete", value=_date((row or {}).get("loyalty_start_date")))
-        amount = right.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100)
+        left, middle, right = st.columns(3)
+        required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1)
+        routes = ["normal", "express", "regional", "any"]
+        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
+        units = ["per_route", "per_order"]
+        unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
+        amount = st.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "loyalty")
         saved = st.form_submit_button("Módosítás mentése" if row else "Lojalitási bónusz mentése", type="primary")
     if saved:
         try:
-            save_item(client, LOYALTY_BONUS_TABLE, validate_loyalty_bonus_rule({"loyalty_start_date": loyalty_start, "bonus_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, LOYALTY_BONUS_TABLE, validate_loyalty_bonus_rule({"loyalty_months_required": required_months, "route_type": route_type, "calculation_unit": unit, "bonus_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             st.success("A lojalitási bónusz mentve.")
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")

@@ -151,6 +151,9 @@ create table if not exists settlement.cfg_jitt_reserve_insurance_rules (
 create table if not exists settlement.cfg_jitt_loyalty_bonus_rules (
     id uuid primary key default gen_random_uuid(),
     loyalty_start_date date not null,
+    loyalty_months_required integer not null default 0 check (loyalty_months_required >= 0),
+    route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
+    calculation_unit text not null default 'per_route' check (calculation_unit in ('per_route', 'per_order')),
     bonus_amount_huf integer not null default 0 check (bonus_amount_huf >= 0),
     valid_from date not null,
     valid_to date,
@@ -165,6 +168,11 @@ create table if not exists settlement.cfg_jitt_loyalty_bonus_rules (
     deleted_by text,
     check (valid_to is null or valid_to >= valid_from)
 );
+
+alter table settlement.cfg_jitt_loyalty_bonus_rules
+    add column if not exists loyalty_months_required integer not null default 0 check (loyalty_months_required >= 0),
+    add column if not exists route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
+    add column if not exists calculation_unit text not null default 'per_route' check (calculation_unit in ('per_route', 'per_order'));
 
 create table if not exists settlement.cfg_jitt_life_insurance_rules (
     id uuid primary key default gen_random_uuid(),

@@ -188,8 +188,14 @@ def validate_reserve_insurance_rule(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_loyalty_bonus_rule(payload: dict[str, Any]) -> dict[str, Any]:
+    required_months = int(payload.get("loyalty_months_required") or 0)
+    if required_months < 0:
+        raise ValueError("A lojalitási hónapok száma nem lehet negatív.")
     return {
-        "loyalty_start_date": _date(payload.get("loyalty_start_date"), "lojalitási kezdő" ).isoformat(),
+        "loyalty_start_date": _date(payload.get("loyalty_start_date") or payload.get("valid_from"), "lojalitási kezdő").isoformat(),
+        "loyalty_months_required": required_months,
+        "route_type": _choice(payload.get("route_type") or "normal", ROUTE_TYPES, "túratípus"),
+        "calculation_unit": _choice(payload.get("calculation_unit") or "per_route", {"per_route", "per_order"}, "elszámolási egység"),
         "bonus_amount_huf": _amount(payload.get("bonus_amount_huf"), "lojalitási bónusz összege"),
         **_common(payload),
     }

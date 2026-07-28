@@ -1069,7 +1069,7 @@ def load_courier_master() -> pd.DataFrame:
         get_db()
         .schema("public")
         .table("courier_master")
-        .select("courier_id,courier_name,warehouse_name")
+        .select("*")
         .order("courier_name")
         .execute()
     )
@@ -1079,7 +1079,7 @@ def load_courier_master() -> pd.DataFrame:
         "Courier ID", "Futár", "Branch", "Számítás módja",
         "Raktár", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Levonás", "Kifizetendő", "Előző havi összeg",
-        "KPI",
+        "KPI", "Munkakezdés",
     ]
 
     if not rows:
@@ -1089,6 +1089,7 @@ def load_courier_master() -> pd.DataFrame:
         "courier_id": "Courier ID",
         "courier_name": "Futár",
         "warehouse_name": "Raktár",
+        "work_start_date": "Munkakezdés",
     })
 
     df["Courier ID"] = df["Courier ID"].astype(str)
@@ -1096,6 +1097,8 @@ def load_courier_master() -> pd.DataFrame:
     df["Branch"] = "JIT"
     df["Számítás módja"] = "Excel"
     df["Raktár"] = df["Raktár"].fillna("BUD1")
+    if "Munkakezdés" not in df.columns:
+        df["Munkakezdés"] = ""
 
     # Ideiglenes designer státuszok. Később ezt valódi üzleti logika váltja fel.
     workflow_statuses = [
@@ -1574,6 +1577,130 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Számolt túrák"] = resolved_lookup.map(matched_routes).fillna(0).astype(int)
     result["Nem számolt túrák"] = resolved_lookup.map(unmatched_routes).fillna(0).astype(int)
     return result.drop(columns="_courier_lookup")
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_loyalty_bonus_rules_for_month(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_loyalty_bonus_rules")
+            .select("*")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", period_end.isoformat())
+            .order("priority")
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    valid_to = pd.to_datetime(data.get("valid_to"), errors="coerce")
+    return data.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+
+
+def completed_months_between(start_value: object, as_of: date) -> int:
+    start = pd.to_datetime(start_value, errors="coerce")
+    if pd.isna(start):
+        return -1
+    start_date = start.date()
+    months = (as_of.year - start_date.year) * 12 + (as_of.month - start_date.month)
+    if as_of.day < start_date.day:
+        months -= 1
+    return max(months, 0)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_loyalty_route_counts(session_id: str | None) -> pd.DataFrame:
+    if not session_id:
+        return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
+    try:
+        rows = (
+            get_db().schema("settlement").table("jit_row")
+            .select("normalized_data,is_route_primary")
+            .eq("session_id", session_id)
+            .eq("is_route_primary", True)
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
+    records: list[dict[str, object]] = []
+    for row in rows:
+        payload = row.get("normalized_data") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        driver_name = payload.get("Driver") or payload.get("driver_name") or payload.get("Futár") or payload.get("courier_name") or ""
+        route_type = payload.get("Route Type") or payload.get("route_type") or payload.get("Túratípus") or payload.get("Tipus") or "normal"
+        orders = next(
+            (payload.get(key) for key in ["Orders", "orders", "Rendelések", "order_count"] if payload.get(key) not in (None, "")),
+            0,
+        )
+        records.append({
+            "driver_key": _courier_match_key(driver_name),
+            "route_type": normalize_customer_rating_route_type(route_type),
+            "routes": 1,
+            "orders": parse_huf_value(orders),
+        })
+    if not records:
+        return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
+    return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
+
+
+def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date, session_id: str | None) -> pd.DataFrame:
+    result = data.copy()
+    rules = load_loyalty_bonus_rules_for_month(period_start, period_end)
+    counts = load_loyalty_route_counts(session_id)
+    if rules.empty or counts.empty:
+        if "Lojalitás" not in result.columns:
+            result["Lojalitás"] = 0.0
+        return result
+
+    counts_by_driver = {
+        driver_key: group.copy()
+        for driver_key, group in counts.groupby("driver_key")
+    }
+    loyalty_amounts: list[float] = []
+    for _, row in result.iterrows():
+        driver_key = _courier_match_key(row.get("Futár"))
+        months_worked = completed_months_between(row.get("Munkakezdés"), period_end)
+        if months_worked < 0:
+            loyalty_amounts.append(0.0)
+            continue
+        driver_counts = counts_by_driver.get(driver_key)
+        if driver_counts is None or driver_counts.empty:
+            loyalty_amounts.append(0.0)
+            continue
+        total = 0.0
+        for _, rule in rules.iterrows():
+            required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
+            if months_worked < required_months:
+                continue
+            route_type = str(rule.get("route_type") or "normal")
+            unit = str(rule.get("calculation_unit") or "per_route")
+            amount = parse_huf_value(rule.get("bonus_amount_huf"))
+            matched_counts = driver_counts if route_type == "any" else driver_counts.loc[driver_counts["route_type"] == normalize_customer_rating_route_type(route_type)]
+            if matched_counts.empty:
+                continue
+            quantity_column = "orders" if unit == "per_order" else "routes"
+            total += float(matched_counts[quantity_column].sum()) * amount
+        loyalty_amounts.append(total)
+
+    loyalty_bonus = pd.Series(loyalty_amounts, index=result.index)
+    result["Lojalitás"] = loyalty_bonus
+    result["Bónusz"] = _numeric_series(result, "Bónusz") + loyalty_bonus
+    result["Kifizetendő"] = (
+        _numeric_series(result, "Nettó bevétel")
+        + _numeric_series(result, "Borravaló")
+        + _numeric_series(result, "Bónusz")
+        - _numeric_series(result, "Levonás")
+    )
+    return result
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -2672,6 +2799,7 @@ def show_courier_dialog() -> None:
     imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
     imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
+    loyalty_total = parse_huf_value(row.get("Lojalitás"))
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
@@ -2681,7 +2809,7 @@ def show_courier_dialog() -> None:
     atm_deduction_total = imported_atm_total + manual_atm_total
     total_income = (
         base_total + tip_total + delay_total + compliance_total + other_route_bonus_total
-        + imported_bonus_total + manual_bonus_total + customer_rating_total
+        + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
     )
     total_deduction = malus_total + atm_deduction_total + other_expense_total
     payable_before_insurance = total_income - total_deduction
@@ -2753,7 +2881,7 @@ def show_courier_dialog() -> None:
                       <div class="settlement-ledger-row"><span>Alapdíj</span><strong>{format_huf(base_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
-                      <div class="settlement-ledger-row"><span>Túramegfelelés / egyéb bónusz</span><strong>{format_huf(compliance_total + other_route_bonus_total + imported_bonus_total + manual_bonus_total + customer_rating_total)}</strong></div>
+                      <div class="settlement-ledger-row"><span>Túramegfelelés / egyéb bónusz</span><strong>{format_huf(compliance_total + other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total)}</strong></div>
                       <div class="settlement-ledger-row total"><span>Összesen</span><strong>{format_huf(total_income)}</strong></div>
                     </div>
                     <div class="settlement-ledger outcome">
@@ -2831,6 +2959,7 @@ def show_courier_dialog() -> None:
         compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
         route_other_bonus_total = float(route_breakdown.get("Egyéb bónusz", pd.Series(dtype=float)).sum())
         bonus_total = route_other_bonus_total + float(adjustment_totals.get("bonus", 0))
+        loyalty_total = parse_huf_value(row.get("Lojalitás"))
         imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
         customer_rating_total = imported_customer_rating_total + float(adjustment_totals.get("customer_rating", 0))
         malus_total = float(adjustment_totals.get("malus", 0))
@@ -2844,12 +2973,12 @@ def show_courier_dialog() -> None:
         atm_deduction_total += imported_atm_total
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + bonus_total
-            + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+            + loyalty_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
         )
         order_total = int(route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
         route_total = int(len(route_detail))
         monthly_bonus_malus_effect = (
-            imported_bonus_total + float(adjustment_totals.get("bonus", 0))
+            imported_bonus_total + float(adjustment_totals.get("bonus", 0)) + loyalty_total
             - imported_malus_total - float(adjustment_totals.get("malus", 0))
         )
         manual_other_total = float(adjustment_totals.get("other_expense", 0))
@@ -2881,6 +3010,7 @@ def show_courier_dialog() -> None:
 
         manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
         manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
+        loyalty_total = parse_huf_value(row.get("Lojalitás"))
         imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
         manual_malus_total = float(adjustment_totals.get("malus", 0.0))
         manual_atm_total = float(adjustment_totals.get("atm_deduction", 0.0))
@@ -2892,7 +3022,7 @@ def show_courier_dialog() -> None:
         other_expense_total = manual_other_total
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + bonus_total
-            + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
+            + loyalty_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total
         )
         payable_before_insurance = payable_total
         reserve_month = resolve_target_reserve_month(
@@ -2905,14 +3035,14 @@ def show_courier_dialog() -> None:
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
         payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
         monthly_bonus_malus_effect = (
-            imported_bonus_total + manual_bonus_total + imported_customer_rating_total + manual_customer_rating_total
+            imported_bonus_total + manual_bonus_total + loyalty_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
         )
 
         pdf_bytes = build_settlement_pdf(
             {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
             route_breakdown.to_dict("records"),
-            {"base": base_total, "tip": tip_total, "bonus": bonus_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total, "customer_rating": customer_rating_total, "payable": payable_total},
+            {"base": base_total, "tip": tip_total, "bonus": bonus_total + loyalty_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total, "customer_rating": customer_rating_total, "payable": payable_total},
         )
         tig_bytes = build_demo_preview_pdf(
             f"TIG - {row['Futár']}",
@@ -2939,6 +3069,7 @@ def show_courier_dialog() -> None:
             ("Kör", str(route_total), ""),
             ("Késedelmi díj", format_huf(delay_total), ""),
             ("Túramegfelelés", format_huf(compliance_total), ""),
+            ("Lojalitás", format_huf(loyalty_total), ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), ""),
             ("Fizetendő", format_huf(payable_total), "payable"),
             ("Levonás / plusz", format_huf(-other_expense_total), ""),
@@ -2964,6 +3095,7 @@ def show_courier_dialog() -> None:
             {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
             {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
             {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
+            {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
             {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
             {"Művelet": "-", "Tétel": "Máluszok", "Összeg": malus_total},
             {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
@@ -3348,6 +3480,13 @@ def show_courier_dialog() -> None:
             email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"ui_profile_email_{courier_id}")
             warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=not is_editing, key=f"ui_profile_warehouse_{courier_id}")
             billing_email = st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=not is_editing, key=f"ui_profile_billing_email_{courier_id}")
+            current_work_start = pd.to_datetime(profile.get("work_start_date"), errors="coerce")
+            work_start_date = st.date_input(
+                "Munkakezdés dátuma",
+                value=current_work_start.date() if pd.notna(current_work_start) else date.today(),
+                disabled=not is_editing,
+                key=f"ui_profile_work_start_{courier_id}",
+            )
 
         with profile2:
             st.text_input("Számítás módja", value=str(row["Számítás módja"]), disabled=True, key=f"ui_profile_calc_{courier_id}")
@@ -3363,7 +3502,7 @@ def show_courier_dialog() -> None:
             st.session_state[edit_key] = True
             st.rerun()
         if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"ui_profile_save_{courier_id}"):
-            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number}
+            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "work_start_date": work_start_date.isoformat() if work_start_date else "", "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number}
             changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
             try:
                 if changes:
@@ -3717,6 +3856,7 @@ def show_new_settlement_page() -> None:
     data = apply_excel_base_rates(load_courier_master(), import_session_id)
     data = apply_imported_balance_components(data, import_session_id)
     balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+    data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
 

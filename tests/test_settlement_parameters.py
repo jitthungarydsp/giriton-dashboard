@@ -93,10 +93,13 @@ class SettlementParameterValidationTests(unittest.TestCase):
     def test_insurance_and_loyalty_rules_are_versioned(self) -> None:
         common = {"valid_from": date(2026, 6, 1), "valid_to": None}
         reserve = validate_reserve_insurance_rule({"insurance_fee_huf": 1200, "base_insurance_total_huf": 10000, "deduction_percent": 12.5, **common})
-        loyalty = validate_loyalty_bonus_rule({"loyalty_start_date": date(2026, 1, 1), "bonus_amount_huf": 5000, **common})
+        loyalty = validate_loyalty_bonus_rule({"loyalty_months_required": 7, "route_type": "normal", "calculation_unit": "per_route", "bonus_amount_huf": 500, **common})
         life = validate_life_insurance_rule({"life_insurance_amount_huf": 3500, **common})
         self.assertEqual(reserve["deduction_percent"], 12.5)
-        self.assertEqual(loyalty["loyalty_start_date"], "2026-01-01")
+        self.assertEqual(loyalty["loyalty_start_date"], "2026-06-01")
+        self.assertEqual(loyalty["loyalty_months_required"], 7)
+        self.assertEqual(loyalty["route_type"], "normal")
+        self.assertEqual(loyalty["calculation_unit"], "per_route")
         self.assertEqual(life["life_insurance_amount_huf"], 3500)
 
     def test_customer_rating_rule_has_rating_band_and_courier_amount(self) -> None:
