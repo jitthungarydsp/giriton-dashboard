@@ -23,6 +23,11 @@ from resources.settlement_processor import (
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf
 from resources.courier_master_db import update_courier_master_profile
+from resources.peopleforce_documents import (
+    read_peopleforce_card_statuses_for_month,
+    read_peopleforce_complaints_for_month,
+    read_peopleforce_documents_for_month,
+)
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 try:
@@ -1102,17 +1107,7 @@ def load_courier_master() -> pd.DataFrame:
     if "Munkakezdés" not in df.columns:
         df["Munkakezdés"] = ""
 
-    # Ideiglenes designer státuszok. Később ezt valódi üzleti logika váltja fel.
-    workflow_statuses = [
-        "Elszámolásra vár",
-        "TIG-re vár",
-        "Bejelentések",
-        "Kifizetésre vár",
-    ]
-    df["Státusz"] = [
-        workflow_statuses[index % len(workflow_statuses)]
-        for index in range(len(df))
-    ]
+    df["Státusz"] = "Elszámolásra vár"
 
     for column in [
         "Nettó bevétel", "Bónusz", "Borravaló", "Levonás",
@@ -1327,6 +1322,80 @@ def apply_monthly_closure_status(data: pd.DataFrame, period_start: date, period_
     courier_ids = result["Courier ID"].map(_courier_id_key)
     result["Kifizetve"] = courier_ids.isin(paid_ids)
     result.loc[result["Kifizetve"], "Státusz"] = "Kifizetve"
+    return result
+
+
+def _first_day(value: date) -> date:
+    return value.replace(day=1)
+
+
+def _done_action_set(status_rows: pd.DataFrame) -> set[tuple[str, str]]:
+    if status_rows.empty:
+        return set()
+    required = {"courier_id", "action_key", "status"}
+    if not required.issubset(status_rows.columns):
+        return set()
+    done_rows = status_rows[status_rows["status"].astype(str).str.casefold().eq("done")]
+    return {
+        (_courier_id_key(row.get("courier_id")), str(row.get("action_key") or "").strip())
+        for _, row in done_rows.iterrows()
+    }
+
+
+def _document_courier_set(documents: pd.DataFrame, document_type: str) -> set[str]:
+    if documents.empty or "courier_id" not in documents.columns or "document_type" not in documents.columns:
+        return set()
+    typed = documents[documents["document_type"].astype(str).str.casefold().eq(document_type)]
+    return set(typed["courier_id"].map(_courier_id_key))
+
+
+def _complaint_courier_set(complaints: pd.DataFrame) -> set[str]:
+    if complaints.empty or "courier_id" not in complaints.columns:
+        return set()
+    if "status" not in complaints.columns:
+        return set(complaints["courier_id"].map(_courier_id_key))
+    open_complaints = complaints[
+        ~complaints["status"].astype(str).str.casefold().isin({"resolved", "lezárva", "lezarva", "closed"})
+    ]
+    return set(open_complaints["courier_id"].map(_courier_id_key))
+
+
+def apply_pwa_workflow_status(data: pd.DataFrame, period_start: date) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty or "Courier ID" not in result.columns:
+        return result
+    document_month = _first_day(period_start)
+    try:
+        status_rows = read_peopleforce_card_statuses_for_month(document_month)
+        documents = read_peopleforce_documents_for_month(document_month)
+        complaints = read_peopleforce_complaints_for_month(document_month)
+    except Exception:
+        return result
+
+    done_actions = _done_action_set(status_rows)
+    settlement_docs = _document_courier_set(documents, "settlement")
+    tig_docs = _document_courier_set(documents, "tig")
+    invoice_docs = _document_courier_set(documents, "invoice")
+    complaint_ids = _complaint_courier_set(complaints)
+
+    def status_for(courier_id: object) -> str:
+        key = _courier_id_key(courier_id)
+        if key in complaint_ids:
+            return "Bejelentések"
+        if (key, "invoice_payment") in done_actions:
+            return "Kifizetve"
+        if (key, "invoice_submit") in done_actions or key in invoice_docs:
+            return "Kifizetésre vár"
+        if (key, "invoice_check") in done_actions or (key, "tig") in done_actions:
+            return "Számlára vár"
+        if key in tig_docs or (key, "settlement") in done_actions:
+            return "TIG-re vár"
+        if key in settlement_docs:
+            return "Elszámolásra vár"
+        return str(result.loc[result["Courier ID"].map(_courier_id_key).eq(key), "Státusz"].iloc[0] or "Elszámolásra vár")
+
+    result["Státusz"] = result["Courier ID"].map(status_for)
+    result["PWA számla feltöltve"] = result["Courier ID"].map(lambda value: _courier_id_key(value) in invoice_docs)
     return result
 
 
@@ -2537,6 +2606,7 @@ def status_meta(status: str) -> tuple[str,str]:
         "Jóváhagyva":("status-green","led-green"),
         "Elszámolásra vár":("status-blue","led-blue"),
         "TIG-re vár":("status-purple","led-purple"),
+        "Számlára vár":("status-blue","led-blue"),
         "Bejelentések":("status-orange","led-orange"),
         "Kifizetésre vár":("status-yellow","led-yellow"),
         "Kifizetve":("status-green","led-green"),
@@ -3131,6 +3201,7 @@ def show_courier_dialog() -> None:
         data = apply_imported_balance_components(load_courier_master(), dialog_session_id)
         data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
         data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
+        data = apply_pwa_workflow_status(data, dialog_start)
     match = data[data["Courier ID"].astype(str) == courier_id]
 
     if match.empty:
@@ -4381,6 +4452,7 @@ def show_new_settlement_page() -> None:
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
+    data = apply_pwa_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
@@ -4390,7 +4462,7 @@ def show_new_settlement_page() -> None:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["Összes","Excel"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
-        status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
+        status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","TIG-re vár","Számlára vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         st.divider()
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
@@ -4824,6 +4896,7 @@ def show_new_settlement_page() -> None:
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
         ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("Számlára vár", "Futári számla hiányzik", "🔵"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
