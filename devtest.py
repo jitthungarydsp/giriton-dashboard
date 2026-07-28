@@ -2132,6 +2132,36 @@ def api_raw_overview_breakdown(period_start: date) -> pd.DataFrame:
     return pd.DataFrame(records).sort_values("Raktár")
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def load_api_import_diagnostics(session_id: str | None) -> dict[str, object]:
+    if not session_id:
+        return {"session_id": "", "jit_rows": 0, "summary_rows": 0, "calculated": 0, "missing_base_rate": 0}
+    try:
+        jit_rows = (
+            get_db().schema("settlement").table("jit_row")
+            .select("base_rate_status", count="exact")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        summary_rows = (
+            get_db().schema("settlement").table("courier_settlement_summary")
+            .select("courier_id", count="exact")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        statuses = pd.DataFrame(jit_rows.data or [])
+        status_counts = statuses["base_rate_status"].value_counts().to_dict() if not statuses.empty and "base_rate_status" in statuses else {}
+        return {
+            "session_id": session_id,
+            "jit_rows": int(jit_rows.count or 0),
+            "summary_rows": int(summary_rows.count or 0),
+            "calculated": int(status_counts.get("calculated", 0)),
+            "missing_base_rate": int(status_counts.get("missing_base_rate", 0)),
+        }
+    except BaseException as exc:
+        return {"session_id": session_id, "error": str(exc)}
+
+
 def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = None) -> pd.DataFrame:
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
@@ -4768,6 +4798,19 @@ def show_new_settlement_page() -> None:
             api_breakdown = api_raw_overview_breakdown(parse_month_option(selected_month))
             if not api_breakdown.empty:
                 st.dataframe(api_breakdown, hide_index=True, use_container_width=True, height=120)
+            selected_api_session_id = load_latest_api_jit_session_id(parse_month_option(selected_month), warehouse)
+            api_diagnostics = load_api_import_diagnostics(selected_api_session_id)
+            if api_diagnostics.get("error"):
+                st.caption(f"API számítás ellenőrzés hiba: {api_diagnostics['error']}")
+            else:
+                st.caption(
+                    "API számítás: "
+                    f"session={str(api_diagnostics.get('session_id') or '-')[:8]} | "
+                    f"jit_row={api_diagnostics.get('jit_rows', 0)} | "
+                    f"summary={api_diagnostics.get('summary_rows', 0)} | "
+                    f"számolt={api_diagnostics.get('calculated', 0)} | "
+                    f"hiányzó szabály={api_diagnostics.get('missing_base_rate', 0)}"
+                )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
                 st.toast(f"Betöltve: {selected_month}",icon="✅")
@@ -4791,6 +4834,7 @@ def show_new_settlement_page() -> None:
                     load_imported_balance_components.clear()
                     load_courier_settlement_summary.clear()
                     load_courier_master.clear()
+                    load_api_import_diagnostics.clear()
                     st.toast(f"API adatok betöltve és újraszámolva: {selected_month}", icon="✅")
                     st.rerun()
                 except Exception as exc:

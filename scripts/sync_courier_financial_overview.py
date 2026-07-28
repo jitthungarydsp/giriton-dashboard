@@ -262,6 +262,30 @@ def import_api_overview_to_jit(*, year: int, month: int, warehouse_id: int | Non
     return str(payload or "")
 
 
+def read_import_diagnostics(session_id: str) -> dict[str, int]:
+    if not session_id:
+        return {"jit_rows": 0, "summary_rows": 0}
+    url = os.environ["SUPABASE_URL"].rstrip("/")
+    jit_response = requests.get(
+        f"{url}/rest/v1/jit_row",
+        headers=supabase_headers("count=exact", schema="settlement"),
+        params={"select": "id", "session_id": f"eq.{session_id}", "limit": "1"},
+        timeout=60,
+    )
+    raise_for_response(jit_response, "jit_row import ellenőrzés")
+    summary_response = requests.get(
+        f"{url}/rest/v1/courier_settlement_summary",
+        headers=supabase_headers("count=exact", schema="settlement"),
+        params={"select": "courier_id", "session_id": f"eq.{session_id}", "limit": "1"},
+        timeout=60,
+    )
+    raise_for_response(summary_response, "courier_settlement_summary import ellenőrzés")
+    return {
+        "jit_rows": int(jit_response.headers.get("content-range", "0-0/0").split("/")[-1] or 0),
+        "summary_rows": int(summary_response.headers.get("content-range", "0-0/0").split("/")[-1] or 0),
+    }
+
+
 def make_db_payload(
     *,
     courier: dict[str, Any],
@@ -480,7 +504,13 @@ def main() -> int:
                 month=month,
                 warehouse_id=args.warehouse_id,
             )
-            print(f"API import + paraméter számítás OK: session_id={session_id}")
+            diagnostics = read_import_diagnostics(session_id)
+            print(
+                "API import + paraméter számítás OK: "
+                f"session_id={session_id} | "
+                f"jit_row={diagnostics['jit_rows']} | "
+                f"summary={diagnostics['summary_rows']}"
+            )
         except Exception as exc:
             failed += 1
             print(f"API import + paraméter számítás HIBA: {exc}", file=sys.stderr)
