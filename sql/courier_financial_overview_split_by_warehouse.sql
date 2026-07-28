@@ -252,6 +252,7 @@ begin
             lower(coalesce(j.normalized_data ->> 'route_type', 'normal')) as route_type,
             coalesce(nullif(j.normalized_data ->> 'Warehouse', ''), nullif(j.normalized_data ->> 'Location', '')) as warehouse_code,
             coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders,
+            max(nullif(item.value ->> 'matchedTier', '')) as matched_tier,
             coalesce(sum(
                 case
                     when jsonb_typeof(item.value -> 'amount') = 'object'
@@ -301,14 +302,20 @@ begin
               and d.route_type in (source.route_type, 'any')
               and (nullif(trim(d.warehouse_code), '') is null or lower(trim(d.warehouse_code)) = lower(trim(source.warehouse_code)))
               and (
-                  d.threshold_min is null
-                  or (d.threshold_min_inclusive and source.amount_huf >= d.threshold_min)
-                  or (not d.threshold_min_inclusive and source.amount_huf > d.threshold_min)
-              )
-              and (
-                  d.threshold_max is null
-                  or (d.threshold_max_inclusive and source.amount_huf <= d.threshold_max)
-                  or (not d.threshold_max_inclusive and source.amount_huf < d.threshold_max)
+                  (source.matched_tier is not null and lower(d.level_code) = lower(source.matched_tier))
+                  or (
+                      (d.threshold_min is not null or d.threshold_max is not null)
+                      and (
+                          d.threshold_min is null
+                          or (d.threshold_min_inclusive and source.amount_huf >= d.threshold_min)
+                          or (not d.threshold_min_inclusive and source.amount_huf > d.threshold_min)
+                      )
+                      and (
+                          d.threshold_max is null
+                          or (d.threshold_max_inclusive and source.amount_huf <= d.threshold_max)
+                          or (not d.threshold_max_inclusive and source.amount_huf < d.threshold_max)
+                      )
+                  )
               )
             order by d.priority, d.id
             limit 1
