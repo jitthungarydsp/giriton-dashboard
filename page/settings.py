@@ -11,6 +11,7 @@ from resources.discord_notifier import read_discord_status
 from resources.pwa_push_notifications import (
     load_setting as load_push_setting,
     load_vapid_private_key,
+    load_latest_delivery_message,
     send_push_to_courier,
 )
 from resources.users import load_users
@@ -207,6 +208,16 @@ def show_settings_page():
                         results[status] += 1
                     else:
                         results["other"] += 1
+                    if status in {"failed", "other"}:
+                        failed_rows.append(
+                            {
+                                "Futar": recipient["label"],
+                                "Hiba": load_latest_delivery_message(
+                                    courier_id=recipient["courier_id"],
+                                    notification_type="central_message",
+                                ) or status,
+                            }
+                        )
                     progress.progress(index / len(recipients))
 
                 st.success(

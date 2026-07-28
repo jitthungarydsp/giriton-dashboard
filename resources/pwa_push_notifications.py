@@ -192,6 +192,37 @@ def _log_delivery(
         return
 
 
+def load_latest_delivery_message(
+    *,
+    courier_id: str | int,
+    notification_type: str,
+) -> str:
+    clean_id = str(courier_id or "").strip()
+    clean_type = str(notification_type or "").strip()
+    if not clean_id or not clean_type:
+        return ""
+    try:
+        rows = _supabase_request(
+            "GET",
+            PUSH_DELIVERY_TABLE,
+            params={
+                "select": "status,message,sent_at",
+                "courier_id": f"eq.{int(clean_id)}",
+                "notification_type": f"eq.{clean_type}",
+                "order": "sent_at.desc",
+                "limit": "1",
+            },
+        )
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    row = rows[0]
+    status = str(row.get("status") or "").strip()
+    message = str(row.get("message") or "").strip()
+    return f"{status}: {message}" if status else message
+
+
 def send_push_to_courier(
     *,
     courier_id: str | int,
