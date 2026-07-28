@@ -2049,6 +2049,48 @@ def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def api_raw_overview_stats(period_start: date, warehouse_label: str | None) -> dict[str, int]:
+    warehouse_id = settlement_warehouse_id(warehouse_label)
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+    if rows.empty:
+        return {"couriers": 0, "routes": 0}
+    if warehouse_id is not None and "warehouse_id" in rows.columns:
+        rows = rows.loc[pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id]
+    route_count = 0
+    for payload in rows.get("response_json", pd.Series(dtype=object)):
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if isinstance(payload, dict):
+            route_count += len(payload.get("routes") or [])
+    return {"couriers": int(len(rows)), "routes": int(route_count)}
+
+
+def api_raw_overview_breakdown(period_start: date) -> pd.DataFrame:
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+    if rows.empty:
+        return pd.DataFrame(columns=["Raktár", "Futár", "Útvonal"])
+    records = []
+    for warehouse_id, group in rows.groupby("warehouse_id", dropna=False):
+        route_count = 0
+        for payload in group.get("response_json", pd.Series(dtype=object)):
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            if isinstance(payload, dict):
+                route_count += len(payload.get("routes") or [])
+        records.append({
+            "Raktár": "BUD2" if int(warehouse_id or 0) == 2 else "BUD1",
+            "Futár": int(len(group)),
+            "Útvonal": int(route_count),
+        })
+    return pd.DataFrame(records).sort_values("Raktár")
+
+
 def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = None) -> pd.DataFrame:
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
@@ -4648,12 +4690,26 @@ def show_new_settlement_page() -> None:
         status=st.selectbox("Elszámolás állapota",["Összes","Előkészítve","Ellenőrzés alatt","Jóváhagyva"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         st.divider()
+        if str(calculation_mode or "API").strip().casefold() != "excel":
+            api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)
+            st.caption(f"API raw adat: {api_stats['couriers']} futár, {api_stats['routes']} útvonal")
+            api_breakdown = api_raw_overview_breakdown(parse_month_option(selected_month))
+            if not api_breakdown.empty:
+                st.dataframe(api_breakdown, hide_index=True, use_container_width=True, height=120)
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
                 st.toast(f"Betöltve: {selected_month}",icon="✅")
             else:
                 try:
+                    load_api_financial_overview_rows.clear()
                     api_period_start = parse_month_option(selected_month)
+                    api_stats = api_raw_overview_stats(api_period_start, warehouse)
+                    if api_stats["routes"] == 0:
+                        st.error(
+                            "Nincs raw API adat erre a hónapra/raktárra. "
+                            "Előbb futtasd a Courier Hub API szinkront erre az időszakra."
+                        )
+                        st.stop()
                     api_session_id = import_api_financial_overview_to_jit(api_period_start, warehouse)
                     st.session_state["settlement_import_session_id"] = api_session_id
                     load_latest_api_jit_session_id.clear()
