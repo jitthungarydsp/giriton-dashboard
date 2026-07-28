@@ -2,7 +2,8 @@ begin;
 
 create table if not exists settlement.cfg_jitt_customer_rating_rules (
     id uuid primary key default gen_random_uuid(),
-    level_code text not null default 'Ügyfélértékelés',
+    level_code text not null default 'Customer rating',
+    route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
     rating_min_percent numeric,
     rating_max_percent numeric,
     courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
@@ -20,6 +21,10 @@ create table if not exists settlement.cfg_jitt_customer_rating_rules (
     check (valid_to is null or valid_to >= valid_from),
     check (rating_max_percent is null or rating_min_percent is null or rating_max_percent >= rating_min_percent)
 );
+
+alter table settlement.cfg_jitt_customer_rating_rules
+    add column if not exists route_type text not null default 'normal'
+    check (route_type in ('normal', 'express', 'regional', 'any'));
 
 grant select, insert, update, delete on settlement.cfg_jitt_customer_rating_rules to service_role;
 

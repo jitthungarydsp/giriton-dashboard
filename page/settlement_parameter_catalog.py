@@ -41,7 +41,8 @@ CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek szám
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 CUSTOMER_RATING_DEFAULT_RULES = [
     {
-        "level_code": "Customer rating 4.90-5.00",
+        "level_code": "Customer rating normal 4.90-5.00",
+        "route_type": "normal",
         "rating_min": 4.90,
         "rating_max": 5.00,
         "courier_amount_huf": 500,
@@ -52,7 +53,8 @@ CUSTOMER_RATING_DEFAULT_RULES = [
         "note": "Customer rating bonus: 4.90-5.00 average gives 500 HUF per route",
     },
     {
-        "level_code": "Customer rating 4.80-4.89",
+        "level_code": "Customer rating normal 4.80-4.89",
+        "route_type": "normal",
         "rating_min": 4.80,
         "rating_max": 4.89,
         "courier_amount_huf": 300,
@@ -63,7 +65,8 @@ CUSTOMER_RATING_DEFAULT_RULES = [
         "note": "Customer rating bonus: 4.80-4.89 average gives 300 HUF per route",
     },
     {
-        "level_code": "Customer rating 4.70-4.79",
+        "level_code": "Customer rating normal 4.70-4.79",
+        "route_type": "normal",
         "rating_min": 4.70,
         "rating_max": 4.79,
         "courier_amount_huf": 150,
@@ -72,6 +75,42 @@ CUSTOMER_RATING_DEFAULT_RULES = [
         "priority": 3,
         "is_active": True,
         "note": "Customer rating bonus: 4.70-4.79 average gives 150 HUF per route",
+    },
+    {
+        "level_code": "Customer rating express 4.90-5.00",
+        "route_type": "express",
+        "rating_min": 4.90,
+        "rating_max": 5.00,
+        "courier_amount_huf": 500,
+        "valid_from": date(2026, 5, 1),
+        "valid_to": None,
+        "priority": 1,
+        "is_active": True,
+        "note": "Customer rating bonus: 4.90-5.00 average gives 500 HUF per express route",
+    },
+    {
+        "level_code": "Customer rating express 4.80-4.89",
+        "route_type": "express",
+        "rating_min": 4.80,
+        "rating_max": 4.89,
+        "courier_amount_huf": 300,
+        "valid_from": date(2026, 5, 1),
+        "valid_to": None,
+        "priority": 2,
+        "is_active": True,
+        "note": "Customer rating bonus: 4.80-4.89 average gives 300 HUF per express route",
+    },
+    {
+        "level_code": "Customer rating express 4.70-4.79",
+        "route_type": "express",
+        "rating_min": 4.70,
+        "rating_max": 4.79,
+        "courier_amount_huf": 150,
+        "valid_from": date(2026, 5, 1),
+        "valid_to": None,
+        "priority": 3,
+        "is_active": True,
+        "note": "Customer rating bonus: 4.70-4.79 average gives 150 HUF per express route",
     },
 ]
 
@@ -419,12 +458,12 @@ def _show_customer_rating(client: Any) -> None:
     if st.button("Alap ügyfélértékelési sávok feltöltése 2026-05-01-től", key="customer_rating_seed_defaults"):
         try:
             existing = {
-                (_text(row.get("level_code")), _text(row.get("valid_from")))
+                (_text(row.get("level_code")), _text(row.get("route_type") or "normal"), _text(row.get("valid_from")))
                 for row in data.to_dict("records")
             } if not data.empty else set()
             inserted = 0
             for rule in CUSTOMER_RATING_DEFAULT_RULES:
-                marker = (_text(rule["level_code"]), rule["valid_from"].isoformat())
+                marker = (_text(rule["level_code"]), _text(rule["route_type"]), rule["valid_from"].isoformat())
                 if marker in existing:
                     continue
                 save_item(client, CUSTOMER_RATING_TABLE, validate_customer_rating_rule(rule), _actor())
@@ -439,25 +478,29 @@ def _show_customer_rating(client: Any) -> None:
             st.error(f"Az alap ügyfélértékelési sávok nem tölthetők fel: {exc}")
     if not data.empty:
         view = data.copy()
+        view["Túratípus"] = view.get("route_type", pd.Series("normal", index=view.index)).fillna("normal").map(ROUTE_LABELS)
         view["Értékelési sáv"] = [_range(a, b) for a, b in zip(view["rating_min_percent"], view["rating_max_percent"])]
         view["Futár összege"] = view["courier_amount_huf"].map(_money)
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["level_code", "Értékelési sáv", "Futár összege", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+        st.dataframe(view[["level_code", "Túratípus", "Értékelési sáv", "Futár összege", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "customer_rating", "level_code")
     with st.form(f"customer_rating_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
         level = left.text_input("Megnevezés", value=_text((row or {}).get("level_code")) or "Ügyfélértékelés")
-        rating_min = middle.number_input("Minimum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_min_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés alsó határa.")
-        rating_max = right.number_input("Maximum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_max_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés felső határa.")
+        routes = ["normal", "express"]
+        route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
+        courier_amount = right.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
+        rating_cols = st.columns(2)
+        rating_min = rating_cols[0].number_input("Minimum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_min_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés alsó határa.")
+        rating_max = rating_cols[1].number_input("Maximum értékelés", min_value=0.0, max_value=5.0, value=_number((row or {}).get("rating_max_percent")), step=0.01, help="Az Excelben szereplő 1-5 skálás átlagértékelés felső határa.")
         bounds = st.columns(2)
         has_min = bounds[0].checkbox("Van minimum", value=_clean((row or {}).get("rating_min_percent")) is not None)
         has_max = bounds[1].checkbox("Van maximum", value=_clean((row or {}).get("rating_max_percent")) is not None)
-        courier_amount = st.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "customer_rating")
         saved = st.form_submit_button("Módosítás mentése" if row else "Ügyfélértékelés mentése", type="primary")
     if saved:
         try:
-            save_item(client, CUSTOMER_RATING_TABLE, validate_customer_rating_rule({"level_code": level, "rating_min": rating_min if has_min else None, "rating_max": rating_max if has_max else None, "courier_amount_huf": courier_amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, CUSTOMER_RATING_TABLE, validate_customer_rating_rule({"level_code": level, "route_type": route_type, "rating_min": rating_min if has_min else None, "rating_max": rating_max if has_max else None, "courier_amount_huf": courier_amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             st.success("Az ügyfélértékelési szabály mentve.")
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")

@@ -1617,12 +1617,19 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
 def load_customer_rating_bonus_rows(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
-                .select("billing_month,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
+                .select("billing_month,worksheet_name,courier_id,driver_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
                 .eq("billing_month", period_start.replace(day=1).isoformat())
                 .order("driver_name").execute().data or [])
         return pd.DataFrame(rows)
     except BaseException:
-        return pd.DataFrame()
+        try:
+            rows = (get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE)
+                    .select("billing_month,worksheet_name,courier_id,driver_name,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf,source_row_number")
+                    .eq("billing_month", period_start.replace(day=1).isoformat())
+                    .order("driver_name").execute().data or [])
+            return pd.DataFrame(rows)
+        except BaseException:
+            return pd.DataFrame()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -1642,15 +1649,28 @@ def load_customer_rating_rules_for_month(period_start: date, period_end: date) -
     return result
 
 
-def customer_rating_rule_amount(average_rating: float, rules: pd.DataFrame) -> float:
+def normalize_customer_rating_route_type(value: object) -> str:
+    text = _normalized_field_key(value)
+    if "express" in text:
+        return "express"
+    if "regional" in text or "region" in text:
+        return "regional"
+    return "normal"
+
+
+def customer_rating_rule_amount(average_rating: float, rules: pd.DataFrame, route_type: str = "normal") -> float:
     if rules.empty:
         return 0.0
     rating_5 = float(average_rating or 0.0)
+    route_type = normalize_customer_rating_route_type(route_type)
     for _, rule in rules.iterrows():
         try:
             min_value = float(rule["rating_min_percent"]) if pd.notna(rule.get("rating_min_percent")) else None
             max_value = float(rule["rating_max_percent"]) if pd.notna(rule.get("rating_max_percent")) else None
         except (TypeError, ValueError):
+            continue
+        rule_route_type = normalize_customer_rating_route_type(rule.get("route_type") or "normal")
+        if rule_route_type not in {route_type, "any"}:
             continue
         if min_value is not None and rating_5 < min_value:
             continue
@@ -1658,6 +1678,54 @@ def customer_rating_rule_amount(average_rating: float, rules: pd.DataFrame) -> f
             continue
         return parse_huf_value(rule.get("courier_amount_huf"))
     return 0.0
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_customer_rating_route_type_counts(session_id: str | None) -> pd.DataFrame:
+    if not session_id:
+        return pd.DataFrame(columns=["driver_key", "route_type", "completed_routes"])
+    try:
+        rows = (
+            get_db().schema("settlement").table("jit_row")
+            .select("normalized_data,is_route_primary")
+            .eq("session_id", session_id)
+            .eq("is_route_primary", True)
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=["driver_key", "route_type", "completed_routes"])
+    records: list[dict[str, object]] = []
+    for row in rows:
+        payload = row.get("normalized_data") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        driver_name = (
+            payload.get("Driver")
+            or payload.get("driver_name")
+            or payload.get("Futár")
+            or payload.get("courier_name")
+            or ""
+        )
+        route_type = (
+            payload.get("Route Type")
+            or payload.get("route_type")
+            or payload.get("Túratípus")
+            or payload.get("Tipus")
+            or "normal"
+        )
+        records.append({
+            "driver_key": _courier_match_key(driver_name),
+            "route_type": normalize_customer_rating_route_type(route_type),
+            "completed_routes": 1,
+        })
+    if not records:
+        return pd.DataFrame(columns=["driver_key", "route_type", "completed_routes"])
+    return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)["completed_routes"].sum()
 
 
 def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
@@ -1738,8 +1806,34 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     )
     grouped["name_key"] = grouped["driver_name"].map(_courier_match_key)
     grouped["completed_routes"] = grouped["courier_id"].map(routes_by_id).fillna(grouped["name_key"].map(routes_by_name)).fillna(0).astype(int)
-    grouped["bonus_per_route_huf"] = grouped["average_rating"].map(lambda value: customer_rating_rule_amount(value, rules))
-    grouped["bonus_total_huf"] = grouped["bonus_per_route_huf"] * grouped["completed_routes"]
+    route_type_counts = load_customer_rating_route_type_counts(
+        str(st.session_state.get("settlement_import_session_id") or "").strip()
+    )
+    route_records: list[dict[str, object]] = []
+    for _, row in grouped.iterrows():
+        route_counts: dict[str, int] = {}
+        if not route_type_counts.empty:
+            matches = route_type_counts.loc[route_type_counts["driver_key"] == row["name_key"]]
+            route_counts = {
+                str(match["route_type"]): int(match["completed_routes"] or 0)
+                for _, match in matches.iterrows()
+            }
+        if not route_counts:
+            route_counts = {"normal": int(row["completed_routes"] or 0)}
+        for route_type, completed_routes in route_counts.items():
+            if completed_routes <= 0:
+                continue
+            bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, route_type)
+            route_records.append({
+                **row.to_dict(),
+                "route_type": route_type,
+                "completed_routes": completed_routes,
+                "bonus_per_route_huf": bonus_per_route,
+                "bonus_total_huf": bonus_per_route * completed_routes,
+            })
+    grouped = pd.DataFrame(route_records)
+    if grouped.empty:
+        raise ValueError("Nem található számolható Normál vagy Express túra az ügyfélértékeléshez.")
     grouped["billing_month"] = month_start.isoformat()
     grouped["worksheet_name"] = data[warehouse_column].astype(str).str.strip().mode().iloc[0] if warehouse_column else "Ügyfélértékelés"
     grouped["source_row_number"] = range(2, len(grouped) + 2)
@@ -1748,6 +1842,7 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
         lambda row: {
             "rating_count": int(row["rating_count"]),
             "average_rating": float(row["average_rating"]),
+            "route_type": str(row["route_type"]),
             "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
         },
         axis=1,
@@ -1757,7 +1852,7 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     grouped["updated_at"] = now
     return grouped[[
         "source_spreadsheet_id", "worksheet_name", "source_row_number", "billing_month",
-        "courier_id", "driver_name", "rating_count", "average_rating",
+        "courier_id", "driver_name", "route_type", "rating_count", "average_rating",
         "bonus_per_route_huf", "completed_routes", "bonus_total_huf", "row_data",
         "imported_at", "updated_at",
     ]]
@@ -1769,6 +1864,8 @@ def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None
     payload = rows.copy()
     for column in ["average_rating", "bonus_per_route_huf", "bonus_total_huf"]:
         payload[column] = pd.to_numeric(payload[column], errors="coerce").fillna(0).astype(float)
+    if "route_type" in payload.columns:
+        payload["route_type"] = payload["route_type"].map(normalize_customer_rating_route_type)
     payload["rating_count"] = pd.to_numeric(payload["rating_count"], errors="coerce").fillna(0).astype(int)
     payload["completed_routes"] = pd.to_numeric(payload["completed_routes"], errors="coerce").fillna(0).astype(int)
     records = payload.to_dict("records")
@@ -3841,13 +3938,14 @@ def show_new_settlement_page() -> None:
                 preview_view = rating_preview.rename(columns={
                     "courier_id": "Courier ID",
                     "driver_name": "Futár",
+                    "route_type": "Túratípus",
                     "rating_count": "Értékelés db",
                     "average_rating": "Átlag",
                     "bonus_per_route_huf": "Bónusz / kör",
                     "completed_routes": "Teljesített kör",
                     "bonus_total_huf": "Ügyfélértékelési bónusz",
                 })[[
-                    "Courier ID", "Futár", "Értékelés db", "Átlag",
+                    "Courier ID", "Futár", "Túratípus", "Értékelés db", "Átlag",
                     "Bónusz / kör", "Teljesített kör", "Ügyfélértékelési bónusz",
                 ]].head(20)
                 st.dataframe(preview_view, use_container_width=True, hide_index=True)

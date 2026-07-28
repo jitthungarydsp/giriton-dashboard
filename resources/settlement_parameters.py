@@ -212,6 +212,7 @@ def validate_customer_rating_rule(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Az ügyfélértékelés felső határa 0 és 5 között lehet.")
     return {
         "level_code": _optional_text(payload.get("level_code")) or "Ügyfélértékelés",
+        "route_type": _choice(payload.get("route_type") or "normal", ROUTE_TYPES, "túratípus"),
         "rating_min_percent": rating_min,
         "rating_max_percent": rating_max,
         "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),

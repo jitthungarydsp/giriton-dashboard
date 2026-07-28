@@ -102,12 +102,14 @@ class SettlementParameterValidationTests(unittest.TestCase):
     def test_customer_rating_rule_has_rating_band_and_courier_amount(self) -> None:
         row = validate_customer_rating_rule({
             "level_code": "Kiemelkedő értékelés",
+            "route_type": "express",
             "rating_min": 4.9,
             "rating_max": 5.0,
             "courier_amount_huf": 500,
             "valid_from": date(2026, 5, 1),
             "valid_to": None,
         })
+        self.assertEqual(row["route_type"], "express")
         self.assertEqual(row["rating_min_percent"], 4.9)
         self.assertEqual(row["courier_amount_huf"], 500)
 
