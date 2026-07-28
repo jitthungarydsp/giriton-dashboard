@@ -75,7 +75,7 @@ left join lateral (
     from settlement.cfg_jitt_delay_bonus_rules d
     where d.is_active
       and d.deleted_at is null
-      and d.calculation_mode = 'api'
+      and d.calculation_mode in ('api', 'excel')
       and source.route_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
       and d.day_type in (source.day_type, 'any')
       and d.route_type in (source.route_type, 'any')
@@ -96,7 +96,10 @@ left join lateral (
               )
           )
       )
-    order by d.priority, d.id
+    order by
+        case when d.calculation_mode = 'api' then 0 else 1 end,
+        d.priority,
+        d.id
     limit 1
 ) matched_rule on true
 where source.courier_id = '7644'
