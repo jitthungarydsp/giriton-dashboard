@@ -3060,6 +3060,29 @@ def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
     return detail.groupby(["Túratípus", "Naptípus"], as_index=False)[columns[2:]].sum()
 
 
+def build_amount_drilldown(route_detail: pd.DataFrame, amount_column: str) -> pd.DataFrame:
+    columns = ["Túratípus", "Naptípus", "Túrák", "Egységösszeg", "Összeg", "Számítás"]
+    if route_detail.empty or amount_column not in route_detail.columns:
+        return pd.DataFrame(columns=columns)
+    detail = route_detail.copy()
+    detail["_amount"] = pd.to_numeric(detail[amount_column], errors="coerce").fillna(0.0)
+    detail = detail[detail["_amount"].ne(0)].copy()
+    if detail.empty:
+        return pd.DataFrame(columns=columns)
+    grouped = (
+        detail.groupby(["Túratípus", "Naptípus", "_amount"], dropna=False)
+        .size()
+        .reset_index(name="Túrák")
+    )
+    grouped["Egységösszeg"] = grouped["_amount"]
+    grouped["Összeg"] = grouped["Túrák"] * grouped["Egységösszeg"]
+    grouped["Számítás"] = grouped.apply(
+        lambda item: f"{int(item['Túrák'])} x {format_huf(item['Egységösszeg'])}",
+        axis=1,
+    )
+    return grouped[columns].sort_values(["Túratípus", "Naptípus", "Egységösszeg"])
+
+
 def normalize_route_key(value: object) -> str:
     text = str(value or "").strip()
     if text.endswith(".0"):
@@ -3729,6 +3752,29 @@ def show_courier_dialog() -> None:
             """,
             unsafe_allow_html=True,
         )
+        source_options = ["API", "Excel"]
+        current_source = "Excel" if str(active_calculation_mode or "").strip().casefold() == "excel" else "API"
+        source_choice = st.radio(
+            "Adatforrás módosítása",
+            source_options,
+            index=source_options.index(current_source),
+            horizontal=True,
+            key=f"courier_data_source_choice_{courier_id}",
+            help="A futár részletező adatai API vagy Excel alapú elszámolásból olvashatók.",
+        )
+        if source_choice != current_source:
+            st.session_state["courier_requested_calculation_mode"] = source_choice
+            if source_choice == "Excel":
+                st.session_state["settlement_import_session_id"] = (
+                    st.session_state.get("settlement_excel_session_id")
+                    or load_latest_excel_jit_session_id()
+                )
+            else:
+                st.session_state["settlement_import_session_id"] = load_latest_api_jit_session_id(
+                    period_start,
+                    st.session_state.get("new_warehouse", "Összes"),
+                )
+            st.rerun()
         st.markdown("#### Útvonalak (legutóbbi 5)")
         if route_detail.empty:
             st.info("Nincs megjeleníthető útvonal az aktuális sessionben.")
@@ -3905,6 +3951,81 @@ def show_courier_dialog() -> None:
             + "</div></div>",
             unsafe_allow_html=True,
         )
+        detail_key = f"finance_detail_item_{courier_id}"
+        detail_buttons = [
+            "Késedelmi díj",
+            "Túramegfelelés",
+            "Lojalitás",
+            "Ügyfélértékelési bónusz",
+            "Havi bónusz/málusz",
+            "ATM hatás",
+            "Fizetés előleg",
+            "Céltartalék 10%",
+        ]
+        button_columns = st.columns(4)
+        for button_index, detail_label in enumerate(detail_buttons):
+            if button_columns[button_index % 4].button(
+                detail_label,
+                key=f"finance_detail_button_{courier_id}_{button_index}",
+                use_container_width=True,
+            ):
+                st.session_state[detail_key] = detail_label
+
+        selected_detail = st.session_state.get(detail_key)
+        if selected_detail:
+            st.markdown(f"#### {selected_detail} részletező")
+            if selected_detail == "Késedelmi díj":
+                detail_df = build_amount_drilldown(route_detail, "Késedelmi díj")
+            elif selected_detail == "Túramegfelelés":
+                detail_df = build_amount_drilldown(route_detail, "Túramegfelelés")
+            elif selected_detail == "Lojalitás":
+                unit_amount = loyalty_total / route_total if route_total else 0
+                detail_df = pd.DataFrame([{
+                    "Tétel": "Lojalitás",
+                    "Darab": route_total,
+                    "Egységösszeg": unit_amount,
+                    "Összeg": loyalty_total,
+                    "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(loyalty_total),
+                }])
+            elif selected_detail == "Ügyfélértékelési bónusz":
+                unit_amount = customer_rating_total / route_total if route_total else 0
+                detail_df = pd.DataFrame([{
+                    "Tétel": "Ügyfélértékelési bónusz",
+                    "Darab": route_total,
+                    "Egységösszeg": unit_amount,
+                    "Összeg": customer_rating_total,
+                    "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(customer_rating_total),
+                }])
+            elif selected_detail == "Havi bónusz/málusz":
+                detail_df = pd.DataFrame([
+                    {"Tétel": "Importált bónusz", "Összeg": imported_bonus_total},
+                    {"Tétel": "Manuális bónusz", "Összeg": manual_bonus_total},
+                    {"Tétel": "Lojalitás", "Összeg": loyalty_total},
+                    {"Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
+                    {"Tétel": "Importált málusz", "Összeg": -imported_malus_total},
+                    {"Tétel": "Manuális málusz", "Összeg": -manual_malus_total},
+                ])
+            elif selected_detail == "ATM hatás":
+                detail_df = pd.DataFrame([
+                    {"Tétel": "Importált ATM levonás", "Összeg": -imported_atm_total},
+                    {"Tétel": "Manuális ATM levonás", "Összeg": -manual_atm_total},
+                ])
+            elif selected_detail == "Fizetés előleg":
+                detail_df = pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
+            else:
+                detail_df = pd.DataFrame([
+                    {"Tétel": "Céltartalék feltöltés", "Összeg": -reserve_addition_total},
+                    {"Tétel": "Nyitó céltartalék", "Összeg": reserve_before_total},
+                    {"Tétel": "Záró céltartalék", "Összeg": reserve_after_total},
+                ])
+            if detail_df.empty:
+                st.info("Ehhez a tételhez nincs bontott adat az aktuális elszámolásban.")
+            else:
+                display_detail = detail_df.copy()
+                for amount_column in ["Egységösszeg", "Összeg"]:
+                    if amount_column in display_detail.columns:
+                        display_detail[amount_column] = display_detail[amount_column].map(format_huf)
+                st.dataframe(display_detail, hide_index=True, use_container_width=True)
 
         payable_sources = pd.DataFrame([
             {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
@@ -4809,6 +4930,9 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
 
 def show_new_settlement_page() -> None:
     apply_design()
+    requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
+    if requested_calculation_mode in {"API", "Excel"}:
+        st.session_state["new_calculation_mode"] = requested_calculation_mode
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     selected_month_label = st.session_state.get("new_month") or month_options()[0]
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
