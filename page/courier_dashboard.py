@@ -4495,6 +4495,7 @@ def render_route_road(row, details, show_route_popup=False):
                 planned_return=format_time(
                     open_route.get("realReturn") or open_route.get("plannedReturn")
                 ),
+                warehouse=get_courier_display_warehouse(row),
             )
         except Exception:
             pass
@@ -4573,6 +4574,7 @@ def render_route_road(row, details, show_route_popup=False):
             current_address_raw,
             planned_departure=format_time(open_route.get("plannedDeparture")),
             planned_return=format_time(route_return_at),
+            warehouse=get_courier_display_warehouse(row),
         )
     except Exception:
         pass

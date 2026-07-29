@@ -9,6 +9,7 @@ from resources.supabase_raw import (
 
 
 DISCORD_ROUTE_COLUMNS = [
+    "warehouse",
     "courier_id",
     "courier_name",
     "route_id",
@@ -21,35 +22,64 @@ DISCORD_ROUTE_COLUMNS = [
     "licence_plate"
 ]
 
+LEGACY_DISCORD_ROUTE_COLUMNS = [
+    column
+    for column in DISCORD_ROUTE_COLUMNS
+    if column != "warehouse"
+]
 
-@st.cache_data(show_spinner=False, ttl=300)
-def read_latest_discord_route(courier_id):
+
+def _read_discord_route_rows(params):
     supabase_url, service_role_key = get_supabase_config()
-    courier_id = str(courier_id or "").strip()
 
-    if not supabase_url or not service_role_key or not courier_id:
-        return {}
+    if not supabase_url or not service_role_key:
+        return []
 
-    endpoint = (
-        f"{supabase_url}/rest/v1/discord_route_notifications"
-        "?select="
-        f"{','.join(DISCORD_ROUTE_COLUMNS)}"
-        f"&courier_id=eq.{courier_id}"
-        "&order=notified_at.desc"
-        "&limit=1"
-    )
     headers = {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
     }
 
-    response = requests.get(
-        endpoint,
-        headers=headers,
-        timeout=30,
+    for columns in [DISCORD_ROUTE_COLUMNS, LEGACY_DISCORD_ROUTE_COLUMNS]:
+        endpoint = (
+            f"{supabase_url}/rest/v1/discord_route_notifications"
+            "?select="
+            f"{','.join(columns)}"
+            f"{params}"
+        )
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=30,
+        )
+
+        if response.status_code == 400 and columns == DISCORD_ROUTE_COLUMNS:
+            continue
+
+        raise_for_supabase_error(response)
+        rows = response.json() or []
+
+        if columns == LEGACY_DISCORD_ROUTE_COLUMNS:
+            for row in rows:
+                row.setdefault("warehouse", "")
+
+        return rows
+
+    return []
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def read_latest_discord_route(courier_id):
+    courier_id = str(courier_id or "").strip()
+
+    if not courier_id:
+        return {}
+
+    rows = _read_discord_route_rows(
+        f"&courier_id=eq.{courier_id}"
+        "&order=notified_at.desc"
+        "&limit=1"
     )
-    raise_for_supabase_error(response)
-    rows = response.json()
 
     if not rows:
         return {}
@@ -59,32 +89,16 @@ def read_latest_discord_route(courier_id):
 
 @st.cache_data(show_spinner=False, ttl=300)
 def read_discord_routes_for_courier(courier_id, limit=20):
-    supabase_url, service_role_key = get_supabase_config()
     courier_id = str(courier_id or "").strip()
 
-    if not supabase_url or not service_role_key or not courier_id:
+    if not courier_id:
         return pd.DataFrame(columns=DISCORD_ROUTE_COLUMNS)
 
-    endpoint = (
-        f"{supabase_url}/rest/v1/discord_route_notifications"
-        "?select="
-        f"{','.join(DISCORD_ROUTE_COLUMNS)}"
+    rows = _read_discord_route_rows(
         f"&courier_id=eq.{courier_id}"
         "&order=notified_at.desc"
         f"&limit={int(limit)}"
     )
-    headers = {
-        "apikey": service_role_key,
-        "Authorization": f"Bearer {service_role_key}",
-    }
-
-    response = requests.get(
-        endpoint,
-        headers=headers,
-        timeout=30,
-    )
-    raise_for_supabase_error(response)
-    rows = response.json()
 
     if not rows:
         return pd.DataFrame(columns=DISCORD_ROUTE_COLUMNS)

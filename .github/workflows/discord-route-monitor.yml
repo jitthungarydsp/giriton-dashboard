@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 20
 
     env:
+      DISCORD_WEBHOOK_URL_BUD1: ${{ secrets.DISCORD_WEBHOOK_URL_BUD1 }}
+      DISCORD_WEBHOOK_URL_BUD2: ${{ secrets.DISCORD_WEBHOOK_URL_BUD2 }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       DISCORD_NOTIFY_COURIER_IDS: ${{ secrets.DISCORD_NOTIFY_COURIER_IDS }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -48,7 +50,8 @@ jobs:
 
       - name: Validate monitor environment
         run: |
-          test -n "$DISCORD_WEBHOOK_URL" || (echo "Missing DISCORD_WEBHOOK_URL secret" && exit 1)
+          test -n "$DISCORD_WEBHOOK_URL_BUD1" || (echo "Missing DISCORD_WEBHOOK_URL_BUD1 secret" && exit 1)
+          test -n "$DISCORD_WEBHOOK_URL_BUD2" || (echo "Missing DISCORD_WEBHOOK_URL_BUD2 secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           echo "Discord courier filter: ${DISCORD_NOTIFY_COURIER_IDS:-disabled/all couriers}"

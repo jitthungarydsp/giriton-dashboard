@@ -95,6 +95,12 @@ def show_settings_page():
         f"Webhook állapot: {'beállítva' if discord_status['webhook_configured'] else 'nincs beállítva'}"
     )
 
+    st.caption(
+        "Raktar webhookok: "
+        f"BUD1 {'beallitva' if discord_status.get('bud1_webhook_configured') else 'hianyzik'}, "
+        f"BUD2 {'beallitva' if discord_status.get('bud2_webhook_configured') else 'hianyzik'}"
+    )
+
     allowed_ids = discord_status.get("allowed_courier_ids", [])
     if allowed_ids:
         st.caption(

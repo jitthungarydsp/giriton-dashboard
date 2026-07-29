@@ -45,6 +45,43 @@ def _normalize_id(value):
     )
 
 
+def _normalize_warehouse(value):
+    raw_value = str(value or "").strip().upper()
+    compact_value = "".join(
+        character
+        for character in raw_value
+        if character.isalnum()
+    )
+
+    if compact_value in {"1", "BUD1", "BUD1JIT"}:
+        return "BUD1"
+
+    if compact_value in {"2", "BUD2", "BUD2JIT"}:
+        return "BUD2"
+
+    if "BUD2" in compact_value:
+        return "BUD2"
+
+    if "BUD1" in compact_value or compact_value in {"BUD", "BUDAPEST"}:
+        return "BUD1"
+
+    return ""
+
+
+def _read_webhook_url(warehouse=""):
+    normalized_warehouse = _normalize_warehouse(warehouse)
+
+    if normalized_warehouse:
+        warehouse_webhook = str(
+            _read_setting(f"DISCORD_WEBHOOK_URL_{normalized_warehouse}") or ""
+        ).strip()
+        if warehouse_webhook:
+            return warehouse_webhook, normalized_warehouse
+
+    fallback_webhook = str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
+    return fallback_webhook, normalized_warehouse
+
+
 def _read_allowed_courier_ids(settings=None):
     settings = settings or {}
     setting_value = _read_setting("DISCORD_NOTIFY_COURIER_IDS")
@@ -66,11 +103,14 @@ def _read_allowed_courier_ids(settings=None):
 
 def read_discord_status():
     settings = load_app_settings()
+    bud1_webhook = str(_read_setting("DISCORD_WEBHOOK_URL_BUD1") or "").strip()
+    bud2_webhook = str(_read_setting("DISCORD_WEBHOOK_URL_BUD2") or "").strip()
+    legacy_webhook = str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
 
     return {
-        "webhook_configured": bool(
-            str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
-        ),
+        "webhook_configured": bool(bud1_webhook or bud2_webhook or legacy_webhook),
+        "bud1_webhook_configured": bool(bud1_webhook),
+        "bud2_webhook_configured": bool(bud2_webhook),
         "allowed_courier_ids": sorted(_read_allowed_courier_ids(settings)),
     }
 
@@ -89,7 +129,8 @@ def _build_route_notification_lines(
     planned_departure="",
     planned_return="",
     orders_in_route="",
-    licence_plate=""
+    licence_plate="",
+    warehouse=""
 ):
     content_lines = [
         "**Új túra érkezett**",
@@ -97,6 +138,9 @@ def _build_route_notification_lines(
         f"**{courier_name}** `#{courier_id}`",
         f"**Route ID:** `{route_id}`",
     ]
+
+    if warehouse:
+        content_lines.append(f"**Raktar:** `{warehouse}`")
 
     if order_id:
         content_lines.append(f"**Aktuális rendelés:** `{order_id}`")
@@ -127,14 +171,15 @@ def notify_route_assigned_once(
     planned_return="",
     ignore_courier_filter=False,
     orders_in_route="",
-    licence_plate=""
+    licence_plate="",
+    warehouse=""
 ):
     settings = load_app_settings()
 
     if not settings.get("discord_notifications_enabled", True):
         return "disabled"
 
-    webhook_url = str(_read_setting("DISCORD_WEBHOOK_URL") or "").strip()
+    webhook_url, normalized_warehouse = _read_webhook_url(warehouse)
 
     if not webhook_url or not route_id:
         return "skipped"
@@ -149,7 +194,7 @@ def notify_route_assigned_once(
     ):
         return "filtered"
 
-    notification_key = f"{courier_id}:{route_id}"
+    notification_key = f"{normalized_warehouse}:{courier_id}:{route_id}"
     sent_notifications = _sent_route_notifications()
 
     if notification_key in sent_notifications:
@@ -164,7 +209,8 @@ def notify_route_assigned_once(
         planned_departure=planned_departure,
         planned_return=planned_return,
         orders_in_route=orders_in_route,
-        licence_plate=licence_plate
+        licence_plate=licence_plate,
+        warehouse=normalized_warehouse or str(warehouse or "").strip()
     )
 
     response = requests.post(

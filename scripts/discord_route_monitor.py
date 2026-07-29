@@ -46,6 +46,69 @@ def normalize_id(value):
     )
 
 
+def normalize_warehouse(value):
+    raw_value = str(value or "").strip().upper()
+    compact_value = "".join(
+        character
+        for character in raw_value
+        if character.isalnum()
+    )
+
+    if compact_value in {"1", "BUD1", "BUD1JIT"}:
+        return "BUD1"
+
+    if compact_value in {"2", "BUD2", "BUD2JIT"}:
+        return "BUD2"
+
+    if "BUD2" in compact_value:
+        return "BUD2"
+
+    if "BUD1" in compact_value or compact_value in {"BUD", "BUDAPEST"}:
+        return "BUD1"
+
+    return ""
+
+
+def find_route_warehouse(*sources):
+    keys = (
+        "warehouse",
+        "warehouse_name",
+        "warehouseName",
+        "warehouse_code",
+        "warehouseCode",
+        "warehouse_id",
+        "warehouseId",
+    )
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key in keys:
+                normalized = normalize_warehouse(value.get(key))
+                if normalized:
+                    return normalized
+            for nested_value in value.values():
+                normalized = walk(nested_value)
+                if normalized:
+                    return normalized
+        elif isinstance(value, list):
+            for item in value:
+                normalized = walk(item)
+                if normalized:
+                    return normalized
+        else:
+            raw_value = str(value or "").upper()
+            if "BUD" in raw_value:
+                return normalize_warehouse(value)
+        return ""
+
+    for source in sources:
+        normalized = walk(source)
+        if normalized:
+            return normalized
+
+    return ""
+
+
 def parse_datetime(value):
     if not value:
         return None
@@ -215,7 +278,7 @@ def supabase_headers(service_role_key, prefer=None):
     return headers
 
 
-def notification_already_logged(courier_id, route_id):
+def notification_already_logged(courier_id, route_id, warehouse=""):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -226,13 +289,30 @@ def notification_already_logged(courier_id, route_id):
         "?select=route_id"
         f"&courier_id=eq.{courier_id}"
         f"&route_id=eq.{route_id}"
-        "&limit=1"
     )
+    normalized_warehouse = normalize_warehouse(warehouse)
+    if normalized_warehouse:
+        endpoint += f"&warehouse=eq.{normalized_warehouse}"
+    endpoint += "&limit=1"
     response = requests.get(
         endpoint,
         headers=supabase_headers(service_role_key),
         timeout=20,
     )
+
+    if response.status_code == 400 and normalized_warehouse:
+        endpoint = (
+            f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
+            "?select=route_id"
+            f"&courier_id=eq.{courier_id}"
+            f"&route_id=eq.{route_id}"
+            "&limit=1"
+        )
+        response = requests.get(
+            endpoint,
+            headers=supabase_headers(service_role_key),
+            timeout=20,
+        )
 
     if response.status_code in [404, 406]:
         return False
@@ -242,7 +322,16 @@ def notification_already_logged(courier_id, route_id):
     return bool(response.json())
 
 
-def log_notification(courier_id, courier_name, route_id, route, checkpoint, licence_plate, orders_in_route):
+def log_notification(
+    courier_id,
+    courier_name,
+    route_id,
+    route,
+    checkpoint,
+    licence_plate,
+    orders_in_route,
+    warehouse="",
+):
     supabase_url, service_role_key = get_supabase_config()
 
     if not supabase_url or not service_role_key:
@@ -257,8 +346,12 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint, lice
         "planned_departure": route.get("plannedDeparture"),
         "planned_return": route.get("plannedReturn"),
         "licence_plate": str(licence_plate),
-        "orders_in_route": str(orders_in_route)
+        "orders_in_route": str(orders_in_route),
     }
+    normalized_warehouse = normalize_warehouse(warehouse)
+    if normalized_warehouse:
+        payload["warehouse"] = normalized_warehouse
+
     endpoint = (
         f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
         "?on_conflict=courier_id,route_id"
@@ -275,6 +368,20 @@ def log_notification(courier_id, courier_name, route_id, route, checkpoint, lice
 
     if response.status_code in [404, 406]:
         return
+
+    if response.status_code == 400 and "warehouse" in payload:
+        payload.pop("warehouse", None)
+        response = requests.post(
+            endpoint,
+            headers=supabase_headers(
+                service_role_key,
+                "resolution=merge-duplicates,return=minimal",
+            ),
+            json=payload,
+            timeout=20,
+        )
+        if response.status_code in [404, 406]:
+            return
 
     raise_for_supabase_error(response)
 
@@ -603,7 +710,13 @@ def run_once(max_age_minutes, dry_run=False):
             skipped_count += 1
             continue
 
-        if notification_already_logged(courier_id, route_id):
+        route_warehouse = find_route_warehouse(
+            dashboard_route,
+            route,
+            driver_detail,
+        )
+
+        if notification_already_logged(courier_id, route_id, route_warehouse):
             counters["already_logged"] += 1
             skipped_count += 1
             continue
@@ -628,6 +741,7 @@ def run_once(max_age_minutes, dry_run=False):
             print(
                 "DRY RUN Discord route jelzes: "
                 f"#{courier_id} {courier_name} route {route_id} "
+                f"warehouse={route_warehouse or '-'} "
                 f"order {order_id or '-'} "
                 f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
                 f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'}",
@@ -647,7 +761,8 @@ def run_once(max_age_minutes, dry_run=False):
             ),
             ignore_courier_filter=True,
             licence_plate=licence_plate,
-            orders_in_route=orders_in_route
+            orders_in_route=orders_in_route,
+            warehouse=route_warehouse
         )
 
         if result == "sent":
@@ -658,11 +773,13 @@ def run_once(max_age_minutes, dry_run=False):
                 route,
                 checkpoint,
                 licence_plate,
-                orders_in_route
+                orders_in_route,
+                route_warehouse
             )
             sent_count += 1
             print(
-                f"Discord route jelzes elkuldve: #{courier_id} route {route_id}"
+                f"Discord route jelzes elkuldve: "
+                f"#{courier_id} route {route_id} warehouse={route_warehouse or '-'}"
             )
         else:
             counters[result or "not_sent"] += 1
