@@ -11,7 +11,17 @@ Bejelentkezes
     Wait Until Element Is Visible    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]    timeout=30s
     SeleniumLibrary.Input Text    locator=//*[@id="CompanyLoginPanel-tfUserLogin"]    text=%{GIRITON_USER}
     SeleniumLibrary.Input Text    locator=//*[@id="CompanyLoginPanel-pfUserPassword"]    text=%{GIRITON_PASSWORD}
-    Click Element    locator=//*[@id="ROOT-2521314"]/div/div[2]/div/div/div/div[3]/div/div[3]/div/div[1]/div
+    Press Keys    //*[@id="CompanyLoginPanel-pfUserPassword"]    ENTER
+    Sleep    2s
+    ${logged_in}=    Run Keyword And Return Status
+    ...    Wait Until Page Contains Element
+    ...    locator=//*[@id="layMenuItems"]
+    ...    timeout=8s
+    IF    not ${logged_in}
+        Execute Javascript
+        ...    const visible = el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0; const buttons = [...document.querySelectorAll('.v-button, [role="button"], button, input[type="submit"]')].filter(visible); const loginButton = buttons.find(el => /login|log in|sign in|bejelentkez/i.test((el.innerText || el.value || '').trim())) || buttons[buttons.length - 1]; if (!loginButton) { throw new Error('Visible login button not found'); } loginButton.click();
+    END
+    Wait Until Page Contains Element    locator=//*[@id="layMenuItems"]    timeout=30s
 
 
 Click Shift Subs
