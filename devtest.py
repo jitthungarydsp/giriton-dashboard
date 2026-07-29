@@ -4754,6 +4754,24 @@ def show_courier_dialog() -> None:
                 ),
                 key=f"custom_doc_note_{courier_id}",
             )
+            default_items = pd.DataFrame([
+                {"Kulcs": "Courier ID", "Érték": courier_id, "Törlés": False},
+                {"Kulcs": "Futár", "Érték": str(row["Futár"]), "Törlés": False},
+                {"Kulcs": "Időszak", "Érték": f"{custom_period:%Y-%m}", "Törlés": False},
+                {"Kulcs": "Fizetendő", "Érték": format_huf(custom_payable), "Törlés": False},
+            ])
+            custom_items = st.data_editor(
+                default_items,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic",
+                key=f"custom_doc_items_{courier_id}",
+                column_config={
+                    "Kulcs": st.column_config.TextColumn("Kulcs"),
+                    "Érték": st.column_config.TextColumn("Érték"),
+                    "Törlés": st.column_config.CheckboxColumn("Törlés"),
+                },
+            )
 
         custom_type = "tig" if custom_doc_label == "TIG" else "settlement"
         reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
@@ -4768,7 +4786,24 @@ def show_courier_dialog() -> None:
             f"Courier ID: {courier_id} | Dokumentum ID: {custom_reference} | "
             f"Időszak: {custom_period:%Y-%m} | Fizetendő: {format_huf(custom_payable)}"
         )
-        custom_pdf_bytes = build_demo_preview_pdf(custom_title, f"{custom_subtitle} | {custom_note[:160]}")
+        custom_item_rows = []
+        if isinstance(custom_items, pd.DataFrame):
+            for item in custom_items.to_dict("records"):
+                if bool(item.get("Törlés")):
+                    continue
+                key = str(item.get("Kulcs") or "").strip()
+                value = str(item.get("Érték") or "").strip()
+                if key or value:
+                    custom_item_rows.append((key or "-", value))
+        custom_item_rows = [
+            ("Dokumentum ID", custom_reference),
+            *custom_item_rows,
+        ]
+        custom_note_with_items = "\n".join(
+            [f"Dokumentum azonosító: {custom_reference}", custom_note.strip(), "Tételek:"]
+            + [f"{key}: {value}" for key, value in custom_item_rows if key != "Dokumentum ID"]
+        ).strip()
+        custom_pdf_bytes = build_demo_preview_pdf(custom_title, custom_subtitle, custom_item_rows)
         with custom_right:
             st.markdown("##### Dokumentum adatai")
             st.code(
@@ -4793,7 +4828,7 @@ def show_courier_dialog() -> None:
                         document_type=custom_type,
                         document_month=custom_period.replace(day=1),
                         title=custom_title,
-                        note=f"Dokumentum azonosító: {custom_reference}\n{custom_note}",
+                        note=custom_note_with_items,
                         file_name=custom_file_name,
                         mime_type="application/pdf",
                         file_bytes=custom_pdf_bytes,
@@ -5190,7 +5225,7 @@ def show_report_detail_dialog() -> None:
         st.success("A bejelentés lezárt állapotot kapna.")
 
 
-def build_demo_preview_pdf(title: str, subtitle: str) -> bytes:
+def build_demo_preview_pdf(title: str, subtitle: str, detail_lines: list[tuple[str, str]] | None = None) -> bytes:
     """
     Csak designer előnézeti PDF.
     Nincs mögötte üzleti logika vagy valódi elszámolási számítás.
@@ -5202,7 +5237,8 @@ def build_demo_preview_pdf(title: str, subtitle: str) -> bytes:
         from reportlab.pdfgen import canvas
     except ImportError:
         return (
-            f"{title}\n\n{subtitle}\n\nDesigner előnézet."
+            f"{title}\n\n{subtitle}\n\n"
+            + "\n".join(f"{key}: {value}" for key, value in (detail_lines or []))
         ).encode("utf-8")
 
     buffer = BytesIO()
@@ -5214,16 +5250,20 @@ def build_demo_preview_pdf(title: str, subtitle: str) -> bytes:
 
     pdf.setFont("Helvetica", 11)
     pdf.drawString(50, height - 100, subtitle)
-    pdf.drawString(50, height - 130, "Designer előnézet – nincs mögötte üzleti logika.")
+    pdf.drawString(50, height - 130, "Egyedi dokumentum")
 
     pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawString(50, height - 180, "Minta dokumentum")
+    pdf.drawString(50, height - 180, "Dokumentum adatok")
 
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(50, height - 210, "Futár: Kiss Péter")
-    pdf.drawString(50, height - 230, "Courier ID: 7486")
-    pdf.drawString(50, height - 250, "Branch: Kifli")
-    pdf.drawString(50, height - 270, "Összeg: 468 500 Ft")
+    y = height - 210
+    for key, value in detail_lines or []:
+        pdf.drawString(50, y, f"{key}: {value}")
+        y -= 20
+        if y < 60:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 10)
+            y = height - 60
 
     pdf.showPage()
     pdf.save()
