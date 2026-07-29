@@ -80,6 +80,11 @@ user = st.session_state["user"]
 st.sidebar.success(f"Felhasználó: {user['username']}")
 st.sidebar.info(f"Jogosultság: {user['role']}")
 logout_button()
+devtest_page = st.sidebar.radio(
+    "Devtest oldal",
+    ["Elszamolas", "PDF minta"],
+    key="devtest_page",
+)
 
 def apply_design() -> None:
     st.markdown(
@@ -5270,6 +5275,313 @@ def build_demo_preview_pdf(title: str, subtitle: str, detail_lines: list[tuple[s
     return buffer.getvalue()
 
 
+def build_settlement_detail_sample_pdf(
+    courier: dict[str, object],
+    summary_rows: list[tuple[str, int]],
+    rule_rows: list[dict[str, object]],
+    source_rows: list[tuple[str, str]],
+) -> bytes:
+    """Designer minta PDF a reszletes elszamolasi bontashoz."""
+    from io import BytesIO
+
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ImportError:
+        lines = [
+            "Elszamolasi reszletezo minta",
+            "",
+            *(f"{key}: {value}" for key, value in courier.items()),
+            "",
+            "Osszesito",
+            *(f"{label}: {format_huf(value)}" for label, value in summary_rows),
+            "",
+            "Szabaly szerinti bontas",
+            *(
+                f"{row['tetel']} | {row['szabaly']} | {row['keplet']} | {format_huf(row['osszeg'])}"
+                for row in rule_rows
+            ),
+        ]
+        return "\n".join(lines).encode("utf-8")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+    )
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle(
+        "SettlementSampleTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=19,
+        leading=24,
+        textColor=colors.HexColor("#17351F"),
+    )
+    section = ParagraphStyle(
+        "SettlementSampleSection",
+        parent=styles["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor("#17351F"),
+    )
+    body = ParagraphStyle(
+        "SettlementSampleBody",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+    )
+
+    story = [
+        Paragraph("Elszamolasi reszletezo minta", title),
+        Spacer(1, 3 * mm),
+        Paragraph("Designer elonezet az uj devtest elszamolasi modulhoz.", body),
+        Spacer(1, 5 * mm),
+    ]
+
+    header_rows = [
+        ["Futar", str(courier.get("name", "")), "Courier ID", str(courier.get("courier_id", ""))],
+        ["Raktar", str(courier.get("warehouse", "")), "Idoszak", str(courier.get("period", ""))],
+        ["Dokumentum ID", str(courier.get("document_id", "")), "Adatforras", str(courier.get("source", ""))],
+    ]
+    header_table = Table(header_rows, colWidths=[28 * mm, 62 * mm, 28 * mm, 58 * mm])
+    header_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F1F7F3")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#C9D8CC")),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story += [header_table, Spacer(1, 6 * mm), Paragraph("Havi osszesito", section), Spacer(1, 2 * mm)]
+
+    summary_table = Table(
+        [["Tetel", "Osszeg"]] + [[label, format_huf(value)] for label, value in summary_rows],
+        colWidths=[118 * mm, 58 * mm],
+    )
+    summary_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17351F")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#DFF1E4")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD8CF")),
+        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story += [summary_table, Spacer(1, 6 * mm), Paragraph("Szabaly szerinti reszletezo", section), Spacer(1, 2 * mm)]
+
+    rule_table_rows = [["Tetel", "Szabaly", "Keplet", "Osszeg"]]
+    for row in rule_rows:
+        rule_table_rows.append([
+            str(row["tetel"]),
+            str(row["szabaly"]),
+            str(row["keplet"]),
+            format_huf(row["osszeg"]),
+        ])
+    rule_table = Table(rule_table_rows, colWidths=[42 * mm, 48 * mm, 50 * mm, 36 * mm])
+    rule_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAF8F0")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD8CF")),
+        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story += [rule_table, Spacer(1, 6 * mm), Paragraph("Adatforras", section), Spacer(1, 2 * mm)]
+
+    source_table = Table(
+        [["Mezo", "Ertek"]] + [[label, value] for label, value in source_rows],
+        colWidths=[70 * mm, 106 * mm],
+    )
+    source_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F6F8FA")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#CBD8CF")),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story += [source_table]
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def show_settlement_pdf_sample_page() -> None:
+    apply_design()
+    st.markdown(
+        """
+        <div class="premium-hero">
+          <div class="hero-left">
+            <div class="badge">PDF MINTA</div>
+            <h1>Elszamolasi reszletezo PDF</h1>
+            <p>Designer elonezet: igy latszik majd a futarnak, mibol all ossze a havi fizetendo osszeg.</p>
+          </div>
+          <div class="month-pill"><div class="label">Modul</div><div class="value">Devtest</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    input_left, input_right = st.columns([1, 1])
+    with input_left:
+        st.markdown("#### Futar es idoszak")
+        courier_name = st.text_input("Futar neve", value="Gurzo Balazs", key="sample_pdf_courier_name")
+        courier_id = st.text_input("Courier ID", value="7644", key="sample_pdf_courier_id")
+        warehouse = st.selectbox("Raktar", ["BUD1", "BUD2"], index=1, key="sample_pdf_warehouse")
+        period = st.selectbox("Elszamolasi honap", month_options(), key="sample_pdf_month")
+        source = st.radio("Adatforras", ["API", "Excel"], horizontal=True, key="sample_pdf_source")
+
+    with input_right:
+        st.markdown("#### Szabaly parameterek")
+        level_code = st.selectbox("Szint", ["LEVEL-1", "LEVEL-2", "LEVEL-3"], key="sample_pdf_level")
+        express_days = st.number_input("Expressz napok / korok", min_value=0, value=15, step=1, key="sample_pdf_express_days")
+        express_rate = st.number_input("Expressz egységdíj (Ft)", min_value=0, value=3000, step=100, key="sample_pdf_express_rate")
+        normal_days = st.number_input("Normal napok / korok", min_value=0, value=10, step=1, key="sample_pdf_normal_days")
+        normal_rate = st.number_input("Normal egységdíj (Ft)", min_value=0, value=3000, step=100, key="sample_pdf_normal_rate")
+
+    extra_cols = st.columns(4)
+    tip_amount = extra_cols[0].number_input("Borravalo (Ft)", min_value=0, value=102750, step=500, key="sample_pdf_tip")
+    delay_bonus = extra_cols[1].number_input("Késedelmi díj / bonusz (Ft)", min_value=0, value=75000, step=500, key="sample_pdf_delay")
+    compliance_bonus = extra_cols[2].number_input("Turamegfeleles (Ft)", min_value=0, value=12500, step=500, key="sample_pdf_compliance")
+    customer_bonus = extra_cols[3].number_input("Ugyfelertekelesi bonusz (Ft)", min_value=0, value=7500, step=500, key="sample_pdf_rating")
+
+    deduction_cols = st.columns(4)
+    monthly_bonus = deduction_cols[0].number_input("Havi bonusz / malusz (Ft)", value=7500, step=500, key="sample_pdf_monthly_bonus")
+    atm_impact = deduction_cols[1].number_input("ATM hatas (Ft)", value=-18789, step=500, key="sample_pdf_atm")
+    salary_advance = deduction_cols[2].number_input("Fizetes eloleg (Ft)", value=0, step=500, key="sample_pdf_advance")
+    reserve = deduction_cols[3].number_input("Celtartalek 10% (Ft)", value=0, step=500, key="sample_pdf_reserve")
+
+    express_total = int(express_days) * int(express_rate)
+    normal_total = int(normal_days) * int(normal_rate)
+    base_fee = express_total + normal_total
+    total_revenue = base_fee + int(tip_amount) + int(delay_bonus) + int(compliance_bonus) + int(customer_bonus) + int(monthly_bonus)
+    total_deductions = abs(min(int(atm_impact), 0)) + abs(min(int(salary_advance), 0)) + abs(min(int(reserve), 0))
+    payable = total_revenue + int(atm_impact) + int(salary_advance) + int(reserve)
+
+    st.markdown('<div class="section-title">Elonezet</div>', unsafe_allow_html=True)
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Alapdij", format_huf(base_fee))
+    metric_cols[1].metric("Bonuszok", format_huf(delay_bonus + compliance_bonus + customer_bonus + monthly_bonus))
+    metric_cols[2].metric("Borravalo", format_huf(tip_amount))
+    metric_cols[3].metric("Levonas / hatas", format_huf(atm_impact + salary_advance + reserve))
+    metric_cols[4].metric("Fizetendo", format_huf(payable))
+
+    rule_rows = [
+        {
+            "tetel": "Expressz alapdij",
+            "szabaly": f"{level_code} + Expressz",
+            "darab": int(express_days),
+            "egysegar": int(express_rate),
+            "keplet": f"{int(express_days)} x {format_huf(express_rate)}",
+            "osszeg": express_total,
+        },
+        {
+            "tetel": "Normal alapdij",
+            "szabaly": f"{level_code} + Normal",
+            "darab": int(normal_days),
+            "egysegar": int(normal_rate),
+            "keplet": f"{int(normal_days)} x {format_huf(normal_rate)}",
+            "osszeg": normal_total,
+        },
+        {
+            "tetel": "Kesedelmi dij",
+            "szabaly": f"{level_code} + API/Excel delay",
+            "darab": 1,
+            "egysegar": int(delay_bonus),
+            "keplet": f"szabaly szerinti havi osszeg",
+            "osszeg": int(delay_bonus),
+        },
+        {
+            "tetel": "Turamegfeleles",
+            "szabaly": f"{level_code} + Compliance",
+            "darab": 1,
+            "egysegar": int(compliance_bonus),
+            "keplet": f"szabaly szerinti havi osszeg",
+            "osszeg": int(compliance_bonus),
+        },
+        {
+            "tetel": "Ugyfelertekeles",
+            "szabaly": "Rating bonusz",
+            "darab": 1,
+            "egysegar": int(customer_bonus),
+            "keplet": "ertekelesi sav alapjan",
+            "osszeg": int(customer_bonus),
+        },
+    ]
+    rule_df = pd.DataFrame(rule_rows).rename(columns={
+        "tetel": "Tétel",
+        "szabaly": "Szabály kulcs",
+        "darab": "Darab",
+        "egysegar": "Egységár",
+        "keplet": "Számítás",
+        "osszeg": "Összeg",
+    })
+    rule_view = rule_df.copy()
+    for column in ["Egységár", "Összeg"]:
+        rule_view[column] = rule_view[column].map(format_huf)
+    st.dataframe(rule_view, use_container_width=True, hide_index=True)
+
+    summary_rows = [
+        ("Alapdij", base_fee),
+        ("Borravalo", int(tip_amount)),
+        ("Kesedelmi dij / bonusz", int(delay_bonus)),
+        ("Turamegfeleles", int(compliance_bonus)),
+        ("Ugyfelertekelesi bonusz", int(customer_bonus)),
+        ("Havi bonusz / malusz", int(monthly_bonus)),
+        ("ATM hatas", int(atm_impact)),
+        ("Fizetes eloleg", int(salary_advance)),
+        ("Celtartalek 10%", int(reserve)),
+        ("Fizetendo", payable),
+    ]
+    source_rows = [
+        ("Elsodleges forras", source),
+        ("Szabaly kulcs", f"{level_code} + turatipus"),
+        ("Raktar", warehouse),
+        ("Adatminoseg", "Minta: megbizhato"),
+        ("Hianyzo adatok", "0"),
+    ]
+    document_id = f"{courier_id}-{parse_month_option(period):%Y%m}-DETAIL-SAMPLE"
+    courier = {
+        "name": courier_name,
+        "courier_id": courier_id,
+        "warehouse": warehouse,
+        "period": period,
+        "source": source,
+        "document_id": document_id,
+    }
+    pdf_bytes = build_settlement_detail_sample_pdf(
+        courier,
+        summary_rows,
+        rule_rows,
+        source_rows,
+    )
+
+    action_cols = st.columns([1, 1])
+    action_cols[0].download_button(
+        "Reszletezo PDF minta letoltese",
+        data=pdf_bytes,
+        file_name=f"elszamolasi_reszletezo_minta_{courier_id}_{parse_month_option(period):%Y_%m}.pdf",
+        mime="application/pdf",
+        type="primary",
+        use_container_width=True,
+    )
+    action_cols[1].code(
+        f"Dokumentum ID: {document_id}\nCourier ID: {courier_id}\nSzabaly: {level_code} + turatipus",
+        language="text",
+    )
+
+
 def build_excel_export(df: pd.DataFrame) -> bytes:
     from io import BytesIO
     output = BytesIO()
@@ -5858,4 +6170,7 @@ def show_new_settlement_page() -> None:
 
 
 if __name__ == "__main__":
-    show_new_settlement_page()
+    if devtest_page == "PDF minta":
+        show_settlement_pdf_sample_page()
+    else:
+        show_new_settlement_page()
