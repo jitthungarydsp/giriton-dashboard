@@ -803,6 +803,53 @@ div[data-testid="stDialog"] [role="dialog"] {
     background:#fff;
     box-shadow:0 7px 18px rgba(23,37,29,.035);
 }
+details.finance-kpi-detail-card {
+    min-height:96px;
+    padding:0;
+    border:1px solid var(--sp-border);
+    border-radius:8px;
+    background:#fff;
+    box-shadow:0 7px 18px rgba(23,37,29,.035);
+    overflow:hidden;
+}
+details.finance-kpi-detail-card > summary {
+    list-style:none;
+    cursor:pointer;
+}
+details.finance-kpi-detail-card > summary::-webkit-details-marker { display:none; }
+details.finance-kpi-detail-card .finance-kpi {
+    min-height:96px;
+    border:0;
+    box-shadow:none;
+}
+details.finance-kpi-detail-card[open] {
+    grid-column:span 2;
+}
+.finance-kpi-detail-body {
+    padding:0 14px 14px;
+}
+.finance-kpi-detail-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:12px;
+}
+.finance-kpi-detail-table th {
+    color:var(--sp-muted);
+    text-align:left;
+    font-weight:850;
+    border-bottom:1px solid var(--sp-border);
+    padding:8px 4px;
+}
+.finance-kpi-detail-table td {
+    border-bottom:1px solid #eef3ef;
+    padding:8px 4px;
+    color:var(--sp-ink);
+}
+.finance-kpi-detail-empty {
+    color:var(--sp-muted);
+    font-size:12px;
+    padding:10px 4px 2px;
+}
 .finance-kpi.payable {
     background:linear-gradient(135deg,#19a64d,#108138);
     border-color:#19a64d;
@@ -3942,62 +3989,32 @@ def show_courier_dialog() -> None:
             ("Biztosítási díj", format_huf(-insurance_fee_total), ""),
             ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", ""),
         ]
-        st.markdown(
-            '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
-            + "".join(
-                f'<div class="finance-kpi {css_class}"><div class="finance-kpi-label">{html.escape(label)}</div><div class="finance-kpi-value">{html.escape(value)}</div></div>'
-                for label, value, css_class in kpi_items
-            )
-            + "</div></div>",
-            unsafe_allow_html=True,
-        )
-        detail_key = f"finance_detail_item_{courier_id}"
-        detail_buttons = [
-            "Késedelmi díj",
-            "Túramegfelelés",
-            "Lojalitás",
-            "Ügyfélértékelési bónusz",
-            "Havi bónusz/málusz",
-            "ATM hatás",
-            "Fizetés előleg",
-            "Céltartalék 10%",
-        ]
-        button_columns = st.columns(4)
-        for button_index, detail_label in enumerate(detail_buttons):
-            if button_columns[button_index % 4].button(
-                detail_label,
-                key=f"finance_detail_button_{courier_id}_{button_index}",
-                use_container_width=True,
-            ):
-                st.session_state[detail_key] = detail_label
 
-        selected_detail = st.session_state.get(detail_key)
-        if selected_detail:
-            st.markdown(f"#### {selected_detail} részletező")
-            if selected_detail == "Késedelmi díj":
-                detail_df = build_amount_drilldown(route_detail, "Késedelmi díj")
-            elif selected_detail == "Túramegfelelés":
-                detail_df = build_amount_drilldown(route_detail, "Túramegfelelés")
-            elif selected_detail == "Lojalitás":
+        def finance_detail_frame(detail_label: str) -> pd.DataFrame:
+            if detail_label == "Késedelmi díj":
+                return build_amount_drilldown(route_detail, "Késedelmi díj")
+            if detail_label == "Túramegfelelés":
+                return build_amount_drilldown(route_detail, "Túramegfelelés")
+            if detail_label == "Lojalitás":
                 unit_amount = loyalty_total / route_total if route_total else 0
-                detail_df = pd.DataFrame([{
+                return pd.DataFrame([{
                     "Tétel": "Lojalitás",
                     "Darab": route_total,
                     "Egységösszeg": unit_amount,
                     "Összeg": loyalty_total,
                     "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(loyalty_total),
                 }])
-            elif selected_detail == "Ügyfélértékelési bónusz":
+            if detail_label == "Ügyfélértékelési bónusz":
                 unit_amount = customer_rating_total / route_total if route_total else 0
-                detail_df = pd.DataFrame([{
+                return pd.DataFrame([{
                     "Tétel": "Ügyfélértékelési bónusz",
                     "Darab": route_total,
                     "Egységösszeg": unit_amount,
                     "Összeg": customer_rating_total,
                     "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(customer_rating_total),
                 }])
-            elif selected_detail == "Havi bónusz/málusz":
-                detail_df = pd.DataFrame([
+            if detail_label == "Havi bónusz/málusz":
+                return pd.DataFrame([
                     {"Tétel": "Importált bónusz", "Összeg": imported_bonus_total},
                     {"Tétel": "Manuális bónusz", "Összeg": manual_bonus_total},
                     {"Tétel": "Lojalitás", "Összeg": loyalty_total},
@@ -4005,27 +4022,74 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Importált málusz", "Összeg": -imported_malus_total},
                     {"Tétel": "Manuális málusz", "Összeg": -manual_malus_total},
                 ])
-            elif selected_detail == "ATM hatás":
-                detail_df = pd.DataFrame([
+            if detail_label == "ATM hatás":
+                return pd.DataFrame([
                     {"Tétel": "Importált ATM levonás", "Összeg": -imported_atm_total},
                     {"Tétel": "Manuális ATM levonás", "Összeg": -manual_atm_total},
                 ])
-            elif selected_detail == "Fizetés előleg":
-                detail_df = pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
-            else:
-                detail_df = pd.DataFrame([
+            if detail_label == "Fizetés előleg":
+                return pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
+            if detail_label == "Céltartalék 10%":
+                return pd.DataFrame([
                     {"Tétel": "Céltartalék feltöltés", "Összeg": -reserve_addition_total},
                     {"Tétel": "Nyitó céltartalék", "Összeg": reserve_before_total},
                     {"Tétel": "Záró céltartalék", "Összeg": reserve_after_total},
                 ])
+            return pd.DataFrame()
+
+        def finance_detail_html(detail_label: str) -> str:
+            detail_df = finance_detail_frame(detail_label)
             if detail_df.empty:
-                st.info("Ehhez a tételhez nincs bontott adat az aktuális elszámolásban.")
-            else:
-                display_detail = detail_df.copy()
-                for amount_column in ["Egységösszeg", "Összeg"]:
-                    if amount_column in display_detail.columns:
-                        display_detail[amount_column] = display_detail[amount_column].map(format_huf)
-                st.dataframe(display_detail, hide_index=True, use_container_width=True)
+                return '<div class="finance-kpi-detail-empty">Nincs bontott adat.</div>'
+            display_detail = detail_df.copy()
+            for amount_column in ["Egységösszeg", "Összeg"]:
+                if amount_column in display_detail.columns:
+                    display_detail[amount_column] = display_detail[amount_column].map(format_huf)
+            headers = "".join(f"<th>{html.escape(str(column))}</th>" for column in display_detail.columns)
+            rows_html = []
+            for _, detail_row in display_detail.iterrows():
+                rows_html.append(
+                    "<tr>"
+                    + "".join(f"<td>{html.escape(str(detail_row.get(column, '')))}</td>" for column in display_detail.columns)
+                    + "</tr>"
+                )
+            return (
+                '<div class="finance-kpi-detail-body">'
+                '<table class="finance-kpi-detail-table">'
+                f"<thead><tr>{headers}</tr></thead><tbody>{''.join(rows_html)}</tbody>"
+                "</table></div>"
+            )
+
+        detail_labels = {
+            "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
+            "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
+        }
+
+        def render_finance_kpi(label: str, value: str, css_class: str) -> str:
+            card = (
+                f'<div class="finance-kpi {css_class}">'
+                f'<div class="finance-kpi-label">{html.escape(label)}</div>'
+                f'<div class="finance-kpi-value">{html.escape(value)}</div>'
+                "</div>"
+            )
+            if label not in detail_labels:
+                return card
+            return (
+                f'<details class="finance-kpi-detail-card {css_class}">'
+                f"<summary>{card}</summary>"
+                f"{finance_detail_html(label)}"
+                "</details>"
+            )
+
+        st.markdown(
+            '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
+            + "".join(
+                render_finance_kpi(label, value, css_class)
+                for label, value, css_class in kpi_items
+            )
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
 
         payable_sources = pd.DataFrame([
             {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
