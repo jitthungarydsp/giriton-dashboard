@@ -28,6 +28,7 @@ from resources.peopleforce_documents import (
     read_peopleforce_document_content,
     read_peopleforce_documents_for_courier,
     upload_peopleforce_document,
+    upload_peopleforce_document_bytes,
 )
 from page.settlement_parameter_catalog import render_parameter_catalog
 
@@ -1459,6 +1460,18 @@ def format_bank_account_4(value: object) -> str:
     if not digits:
         return ""
     return " ".join(digits[index:index + 4] for index in range(0, len(digits), 4))
+
+
+def slugify_filename(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
+    return text or "dokumentum"
+
+
+def make_document_reference(courier_id: str, document_type: str, document_month: date) -> str:
+    month_text = document_month.replace(day=1).strftime("%Y%m")
+    doc_type = re.sub(r"[^A-Z0-9]+", "", str(document_type or "DOC").upper()) or "DOC"
+    return f"{courier_id}-{month_text}-{doc_type}-{uuid.uuid4().hex[:8].upper()}"
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -3738,7 +3751,7 @@ def show_courier_dialog() -> None:
         st.session_state[menu_key] = menu_target
 
     selected_menu = st.radio(
-        "Futármenü", ["Áttekintés", "Pénzügy", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Reklamációk", "Profil"],
+        "Futármenü", ["Áttekintés", "Pénzügy", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
         horizontal=True, label_visibility="collapsed", key=menu_key,
     )
 
@@ -3954,14 +3967,23 @@ def show_courier_dialog() -> None:
             - imported_malus_total - manual_malus_total
         )
 
+        settlement_document_reference = make_document_reference(courier_id, "settlement", period_start)
+        tig_document_reference = make_document_reference(courier_id, "tig", period_start)
         pdf_bytes = build_settlement_pdf(
-            {"name": row["Futár"], "id": courier_id, "branch": row["Branch"], "warehouse": row["Raktár"], "status": row["Státusz"]},
+            {
+                "name": row["Futár"],
+                "id": courier_id,
+                "branch": row["Branch"],
+                "warehouse": row["Raktár"],
+                "status": row["Státusz"],
+                "document_reference": settlement_document_reference,
+            },
             route_breakdown.to_dict("records"),
             {"base": base_total, "tip": tip_total, "bonus": bonus_total + loyalty_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total + salary_advance_total, "customer_rating": customer_rating_total, "payable": payable_total},
         )
         tig_bytes = build_demo_preview_pdf(
             f"TIG - {row['Futár']}",
-            f"Courier ID: {courier_id} | Időszak: {period_start} - {period_end} | Fizetendő: {format_huf(payable_total)}",
+            f"Courier ID: {courier_id} | Dokumentum ID: {tig_document_reference} | Időszak: {period_start} - {period_end} | Fizetendő: {format_huf(payable_total)}",
         )
         st.markdown(
             f"""
@@ -3976,8 +3998,47 @@ def show_courier_dialog() -> None:
             unsafe_allow_html=True,
         )
         doc_a, doc_b = st.columns([0.18, 0.18])
-        doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=f"jitt_elszamolas_{courier_id}.pdf", mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
-        doc_b.download_button("TIG PDF", data=tig_bytes, file_name=f"tig_{courier_id}.pdf", mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+        settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
+        tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
+        doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
+        doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
+        upload_a, upload_b = st.columns([0.18, 0.18])
+        if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, key=f"finance_upload_settlement_pdf_{courier_id}"):
+            try:
+                upload_peopleforce_document_bytes(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    document_type="settlement",
+                    document_month=period_start.replace(day=1),
+                    title=f"Elszámolás - {period_start:%Y-%m}",
+                    note=f"Dokumentum azonosító: {settlement_document_reference}",
+                    file_name=settlement_file_name,
+                    mime_type="application/pdf",
+                    file_bytes=pdf_bytes,
+                    uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                st.success("Elszámolás PDF feltöltve a futár profiljába.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
+        if upload_b.button("TIG feltöltése profilba", use_container_width=True, key=f"finance_upload_tig_pdf_{courier_id}"):
+            try:
+                upload_peopleforce_document_bytes(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    document_type="tig",
+                    document_month=period_start.replace(day=1),
+                    title=f"TIG - {period_start:%Y-%m}",
+                    note=f"Dokumentum azonosító: {tig_document_reference}",
+                    file_name=tig_file_name,
+                    mime_type="application/pdf",
+                    file_bytes=tig_bytes,
+                    uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                st.success("TIG PDF feltöltve a futár profiljába.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A TIG feltöltése sikertelen: {exc}")
 
         kpi_items = [
             ("Rendelés", f"{order_total:,}".replace(",", " "), ""),
@@ -4651,6 +4712,97 @@ def show_courier_dialog() -> None:
                 st.rerun()
             except Exception as exc:
                 st.error(f"A dokumentum feltöltése sikertelen: {exc}")
+
+    if selected_menu == "Egyedi dokumentum":
+        st.markdown("#### Egyedi TIG / részletező összeállítása")
+        st.caption("Nulláról készíthető PDF a futárnak, majd egy kattintással feltölthető a profiljába.")
+        custom_left, custom_right = st.columns([0.45, 0.55], gap="medium")
+        with custom_left:
+            custom_doc_label = st.selectbox(
+                "Dokumentum típusa",
+                ["TIG", "Részletező / elszámolás"],
+                key=f"custom_doc_type_{courier_id}",
+            )
+            custom_period = st.date_input(
+                "Elszámolási időszak",
+                value=period_start.replace(day=1),
+                key=f"custom_doc_period_{courier_id}",
+            )
+            custom_title_default = (
+                f"TIG - {row['Futár']} - {custom_period:%Y-%m}"
+                if custom_doc_label == "TIG"
+                else f"Elszámolási részletező - {row['Futár']} - {custom_period:%Y-%m}"
+            )
+            custom_title = st.text_input(
+                "Cím",
+                value=custom_title_default,
+                key=f"custom_doc_title_{courier_id}",
+            )
+            custom_payable = st.number_input(
+                "Fizetendő összeg (Ft)",
+                value=float(payable_total or 0),
+                step=1000.0,
+                key=f"custom_doc_payable_{courier_id}",
+            )
+            custom_note = st.text_area(
+                "Megjegyzés / tartalom",
+                value=(
+                    f"Courier ID: {courier_id}\n"
+                    f"Futár: {row['Futár']}\n"
+                    f"Időszak: {custom_period:%Y-%m}\n"
+                    f"Fizetendő: {format_huf(custom_payable)}"
+                ),
+                key=f"custom_doc_note_{courier_id}",
+            )
+
+        custom_type = "tig" if custom_doc_label == "TIG" else "settlement"
+        reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
+        if reference_state_key not in st.session_state:
+            st.session_state[reference_state_key] = make_document_reference(courier_id, custom_type, custom_period)
+        custom_reference = st.session_state[reference_state_key]
+        custom_file_name = (
+            f"jitt_{custom_type}_{courier_id}_{slugify_filename(row['Futár'])}_"
+            f"{custom_period:%Y-%m}_{custom_reference}.pdf"
+        )
+        custom_subtitle = (
+            f"Courier ID: {courier_id} | Dokumentum ID: {custom_reference} | "
+            f"Időszak: {custom_period:%Y-%m} | Fizetendő: {format_huf(custom_payable)}"
+        )
+        custom_pdf_bytes = build_demo_preview_pdf(custom_title, f"{custom_subtitle} | {custom_note[:160]}")
+        with custom_right:
+            st.markdown("##### Dokumentum adatai")
+            st.code(
+                f"Dokumentum ID: {custom_reference}\n"
+                f"Courier ID: {courier_id}\n"
+                f"Fájl: {custom_file_name}",
+                language="text",
+            )
+            st.download_button(
+                "Egyedi PDF letöltése",
+                data=custom_pdf_bytes,
+                file_name=custom_file_name,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"custom_doc_download_{courier_id}",
+            )
+            if st.button("Egyedi dokumentum feltöltése profilba", type="primary", use_container_width=True, key=f"custom_doc_upload_{courier_id}"):
+                try:
+                    upload_peopleforce_document_bytes(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        document_type=custom_type,
+                        document_month=custom_period.replace(day=1),
+                        title=custom_title,
+                        note=f"Dokumentum azonosító: {custom_reference}\n{custom_note}",
+                        file_name=custom_file_name,
+                        mime_type="application/pdf",
+                        file_bytes=custom_pdf_bytes,
+                        uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                    )
+                    st.success("Egyedi dokumentum feltöltve a futár profiljába.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Az egyedi dokumentum feltöltése sikertelen: {exc}")
 
     if selected_menu == "Reklamációk":
         st.markdown("#### Reklamációk")

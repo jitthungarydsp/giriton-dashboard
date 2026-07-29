@@ -40,6 +40,9 @@ def build_settlement_pdf(courier: dict[str, Any], routes: list[dict[str, Any]], 
     section = ParagraphStyle("section", parent=body, fontName=bold, fontSize=12, textColor=colors.HexColor("#17351F"))
     story = [Paragraph("JITT - Futár elszámolás", title), Spacer(1, 4 * mm)]
     header = [[f"Futár: {courier.get('name', '')}", f"Courier ID: {courier.get('id', '')}"], [f"Branch: {courier.get('branch', 'JIT')} | Raktár: {courier.get('warehouse', '')}", f"Státusz: {courier.get('status', '')}"]]
+    document_reference = str(courier.get("document_reference") or "").strip()
+    if document_reference:
+        header.append(["Dokumentum azonosító", document_reference])
     table = Table(header, colWidths=[110 * mm, 65 * mm])
     table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, -1), regular), ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F1F7F3")), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#C9D8CC")), ("PADDING", (0, 0), (-1, -1), 7)]))
     story += [table, Spacer(1, 6 * mm), Paragraph("Teljesítés route-típus és naptípus szerint", section), Spacer(1, 2 * mm)]
