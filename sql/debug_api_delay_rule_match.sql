@@ -75,15 +75,20 @@ left join lateral (
     from settlement.cfg_jitt_delay_bonus_rules d
     where d.is_active
       and d.deleted_at is null
-      and d.calculation_mode in ('api', 'excel')
+      and d.calculation_mode in ('api', 'excel', 'custom')
       and source.route_date between d.valid_from and coalesce(d.valid_to, 'infinity'::date)
-      and d.day_type in (source.day_type, 'any')
-      and d.route_type in (source.route_type, 'any')
-      and (nullif(trim(d.warehouse_code), '') is null or lower(trim(d.warehouse_code)) = lower(trim(source.warehouse_code)))
       and (
-          (source.matched_tier is not null and lower(d.level_code) = lower(source.matched_tier))
+          (
+              source.matched_tier is not null
+              and regexp_replace(lower(d.level_code), '[^a-z0-9]+', '', 'g')
+                  = regexp_replace(lower(source.matched_tier), '[^a-z0-9]+', '', 'g')
+              and lower(d.route_type) = source.route_type
+          )
           or (
               (d.threshold_min is not null or d.threshold_max is not null)
+              and d.day_type in (source.day_type, 'any')
+              and d.route_type in (source.route_type, 'any')
+              and (nullif(trim(d.warehouse_code), '') is null or lower(trim(d.warehouse_code)) = lower(trim(source.warehouse_code)))
               and (
                   d.threshold_min is null
                   or (d.threshold_min_inclusive and source.kifli_delay_amount_huf >= d.threshold_min)
@@ -97,6 +102,13 @@ left join lateral (
           )
       )
     order by
+        case
+            when source.matched_tier is not null
+             and regexp_replace(lower(d.level_code), '[^a-z0-9]+', '', 'g')
+                 = regexp_replace(lower(source.matched_tier), '[^a-z0-9]+', '', 'g')
+             and lower(d.route_type) = source.route_type
+            then 0 else 1
+        end,
         case when d.calculation_mode = 'api' then 0 else 1 end,
         d.priority,
         d.id

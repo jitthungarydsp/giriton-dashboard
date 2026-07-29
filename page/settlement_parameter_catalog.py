@@ -36,7 +36,7 @@ from resources.settlement_parameters import (
 DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bármely nap"}
 ROUTE_LABELS = {"express": "Expressz", "normal": "Normál", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
-CALCULATION_MODE_LABELS = {"excel": "Excel", "api": "API", "custom": "Egyéni"}
+CALCULATION_MODE_LABELS = {"excel": "Közös / Excel", "api": "API előnyben", "custom": "Egyéni"}
 CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban"}
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 CUSTOMER_RATING_DEFAULT_RULES = [
@@ -313,7 +313,7 @@ def _show_base_rates(client: Any) -> None:
 
 
 def _show_performance(client: Any, table: str, title: str, key: str) -> None:
-    st.caption(f"{title}: szint, százalékos sáv, tervezett túrahossz és kétoldali díjazás külön paraméterezhető.")
+    st.caption(f"{title}: a szabály közös Excelhez és API-hoz is. API-nál az elsődleges kulcs a szint + túratípus, például LEVEL-1 + Normál.")
     data = read_items(client, table)
     if not data.empty:
         view = data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Számítás módja"] = view["calculation_mode"].map(CALCULATION_MODE_LABELS); view["Mutatósáv"] = [_range(a, b, "%") for a, b in zip(view["threshold_min"], view["threshold_max"])]; view["Túrahossz"] = [_range(a, b, " óra") for a, b in zip(view["duration_min_hours"], view["duration_max_hours"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
@@ -335,7 +335,7 @@ def _show_performance(client: Any, table: str, title: str, key: str) -> None:
             "Excel forrásmező",
             source_headers,
             index=_index(source_headers, default_source),
-            help="A feltöltött JITT Excelből beolvasott fejléc. Excel mód esetén ebből olvassuk a bónusz alapértékét.",
+            help="A feltöltött JITT Excelből beolvasott fejléc. API esetén a szabályt ugyanebből a sorból használjuk, a matchedTier + túratípus alapján.",
         )
         if len(source_headers) == 2 and source_headers[1] == default_source:
             st.info("A JITT Excel fejléc-lista még nem érhető el az adatbázisból. Ellenőrizd, hogy van-e betöltött settlement.jit_row adat.")
