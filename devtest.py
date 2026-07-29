@@ -23,6 +23,12 @@ from resources.settlement_processor import (
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf
 from resources.courier_master_db import update_courier_master_profile
+from resources.peopleforce_documents import (
+    decode_document_content,
+    read_peopleforce_document_content,
+    read_peopleforce_documents_for_courier,
+    upload_peopleforce_document,
+)
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 try:
@@ -4540,24 +4546,111 @@ def show_courier_dialog() -> None:
 
     if selected_menu == "Dokumentumok":
         st.markdown("#### Dokumentumok")
-        docs = pd.DataFrame(
-            [
-                {"Típus": "Elszámolás", "Fájl": "elszamolas_2026_07.pdf", "Feltöltve": "2026-07-10 09:12", "Státusz": "Aktív"},
-                {"Típus": "TIG", "Fájl": "tig_2026_07.pdf", "Feltöltve": "2026-07-11 10:35", "Státusz": "Aktív"},
-                {"Típus": "Számla", "Fájl": "szamla_2026_07.pdf", "Feltöltve": "2026-07-12 14:02", "Státusz": "Ellenőrzés alatt"},
-                {"Típus": "Szerződés", "Fájl": "szerzodes.pdf", "Feltöltve": "2026-01-15 08:20", "Státusz": "Aktív"},
-            ]
-        )
-        st.dataframe(docs, use_container_width=True, hide_index=True)
+        type_labels = {
+            "settlement": "Elszámolás",
+            "tig": "TIG",
+            "invoice": "Számla",
+            "contract": "Szerződés",
+            "complaint_response": "Reklamáció válasz",
+        }
+        try:
+            documents = read_peopleforce_documents_for_courier(courier_id)
+        except Exception as exc:
+            st.error(f"A régi dokumentumtár nem tölthető be: {exc}")
+            documents = pd.DataFrame()
 
-        doc1, doc2, doc3 = st.columns(3)
-        doc1.button("Megnyitás", use_container_width=True, key=f"ui_doc_open_{courier_id}")
-        doc2.button("Letöltés", use_container_width=True, key=f"ui_doc_download_{courier_id}")
-        doc3.file_uploader(
-            "Új dokumentum feltöltése",
-            type=["pdf", "png", "jpg", "jpeg"],
-            key=f"ui_doc_upload_{courier_id}",
+        if documents.empty:
+            st.info("Ehhez a futárhoz még nincs feltöltött dokumentum a régi dokumentumtárban.")
+        else:
+            document_view = documents.copy()
+            document_view["Típus"] = document_view.get("document_type", pd.Series("", index=document_view.index)).map(
+                lambda value: type_labels.get(str(value or "").strip().lower(), str(value or ""))
+            )
+            document_view["Elszámolási időszak"] = pd.to_datetime(
+                document_view.get("document_month"), errors="coerce"
+            ).dt.strftime("%Y-%m").fillna(document_view.get("document_month", ""))
+            document_view["Fájl"] = document_view.get("file_name", pd.Series("", index=document_view.index)).fillna("")
+            document_view["Megnevezés"] = document_view.get("title", pd.Series("", index=document_view.index)).fillna("")
+            document_view["Feltöltve"] = pd.to_datetime(
+                document_view.get("uploaded_at"), errors="coerce"
+            ).dt.strftime("%Y-%m-%d %H:%M").fillna(document_view.get("uploaded_at", ""))
+            document_view["Feltöltötte"] = document_view.get("uploaded_by", pd.Series("", index=document_view.index)).fillna("")
+            document_view["Megjegyzés"] = document_view.get("note", pd.Series("", index=document_view.index)).fillna("")
+            st.dataframe(
+                document_view[[
+                    "Elszámolási időszak", "Típus", "Megnevezés", "Fájl",
+                    "Feltöltve", "Feltöltötte", "Megjegyzés",
+                ]],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            rows_by_id = {str(item.get("id")): item for item in documents.to_dict("records") if item.get("id")}
+            selected_document_id = st.selectbox(
+                "Letöltendő dokumentum",
+                list(rows_by_id),
+                format_func=lambda value: (
+                    f"{pd.to_datetime(rows_by_id[value].get('document_month'), errors='coerce').strftime('%Y-%m')} · "
+                    f"{type_labels.get(str(rows_by_id[value].get('document_type') or '').lower(), rows_by_id[value].get('document_type') or '')} · "
+                    f"{rows_by_id[value].get('file_name') or rows_by_id[value].get('title') or 'dokumentum'}"
+                ),
+                key=f"new_doc_select_{courier_id}",
+            )
+            if selected_document_id:
+                try:
+                    content_row = read_peopleforce_document_content(selected_document_id)
+                    file_bytes = decode_document_content(content_row.get("file_content_base64"))
+                    st.download_button(
+                        "Dokumentum letöltése",
+                        data=file_bytes,
+                        file_name=str(content_row.get("file_name") or rows_by_id[selected_document_id].get("file_name") or "dokumentum"),
+                        mime=str(content_row.get("mime_type") or rows_by_id[selected_document_id].get("mime_type") or "application/octet-stream"),
+                        use_container_width=True,
+                        key=f"new_doc_download_{selected_document_id}",
+                    )
+                except Exception as exc:
+                    st.warning(f"A dokumentum tartalma nem tölthető le: {exc}")
+
+        st.markdown("##### Új dokumentum feltöltése")
+        upload_columns = st.columns([0.22, 0.22, 0.28, 0.28])
+        doc_type_label = upload_columns[0].selectbox(
+            "Típus",
+            ["Elszámolás", "TIG", "Számla", "Szerződés"],
+            key=f"new_doc_type_{courier_id}",
         )
+        doc_period = upload_columns[1].date_input(
+            "Elszámolási időszak",
+            value=period_start.replace(day=1),
+            key=f"new_doc_period_{courier_id}",
+        )
+        doc_title = upload_columns[2].text_input(
+            "Megnevezés",
+            value=f"{doc_type_label} - {doc_period:%Y-%m}",
+            key=f"new_doc_title_{courier_id}",
+        )
+        uploaded_file = upload_columns[3].file_uploader(
+            "Fájl",
+            type=["pdf", "png", "jpg", "jpeg"],
+            key=f"new_doc_upload_{courier_id}",
+        )
+        doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
+        reverse_type_labels = {"Elszámolás": "settlement", "TIG": "tig", "Számla": "invoice", "Szerződés": "contract"}
+        if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None, key=f"new_doc_save_{courier_id}"):
+            try:
+                upload_peopleforce_document(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    document_type=reverse_type_labels.get(doc_type_label, "settlement"),
+                    document_month=doc_period.replace(day=1),
+                    title=doc_title,
+                    note=doc_note,
+                    uploaded_file=uploaded_file,
+                    uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                st.success("Dokumentum feltöltve a régi dokumentumtárba, az új rendszerben is látszik.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A dokumentum feltöltése sikertelen: {exc}")
 
     if selected_menu == "Reklamációk":
         st.markdown("#### Reklamációk")
