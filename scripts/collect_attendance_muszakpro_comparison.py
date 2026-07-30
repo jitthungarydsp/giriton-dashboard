@@ -62,10 +62,29 @@ def normalize_time(value):
     return text
 
 
+def is_time_text(value):
+    text = clean(value)
+    parts = text.split(":")
+
+    if len(parts) < 2:
+        return False
+
+    try:
+        int(parts[0])
+        int(parts[1])
+    except ValueError:
+        return False
+
+    return True
+
+
 def db_time(value):
     text = normalize_time(value)
 
     if not text:
+        return None
+
+    if not is_time_text(text):
         return None
 
     if len(text) == 4:
@@ -126,12 +145,13 @@ def time_from_datetime(value):
 
 def make_match_key(work_date, courier_id, email, courier_name, warehouse, start):
     person = clean(courier_id) or clean(email).casefold() or clean(courier_name).casefold()
+    shift_key = normalize_time(start) if is_time_text(start) else clean(start).casefold()
 
     return "|".join([
         clean(work_date),
         person,
         normalize_warehouse(warehouse).casefold(),
-        normalize_time(start),
+        shift_key,
     ])
 
 
@@ -239,12 +259,13 @@ def read_muszakpro_rows(work_date):
         work_date_text = clean(row.get("work_date"))[:10]
         shift_text = clean(row.get("shift_text"))
         start = shift_start(shift_text)
+        shift_key = start if is_time_text(start) else shift_text
         courier_id = optional_int(row.get("courier_id"))
         email = clean(row.get("email")).casefold()
         courier_name = clean(row.get("courier_name"))
         warehouse = normalize_warehouse(row.get("warehouse"))
 
-        if not work_date_text or not start:
+        if not work_date_text or not shift_key:
             continue
 
         match_key = make_match_key(
@@ -253,7 +274,7 @@ def read_muszakpro_rows(work_date):
             email,
             courier_name,
             warehouse,
-            start,
+            shift_key,
         )
         rows.append({
             "match_key": match_key,
@@ -263,6 +284,7 @@ def read_muszakpro_rows(work_date):
             "email": email,
             "warehouse": warehouse,
             "shift_start": start,
+            "shift_key": shift_key,
             "shift_text": shift_text,
             "booking_code": clean(row.get("booking_code")),
         })
@@ -407,6 +429,9 @@ def main():
     args = parse_args()
     work_dates = resolve_dates(args)
     collection_id = str(uuid.uuid4())
+    collection_collected_at = datetime.now(
+        LOCAL_TIMEZONE
+    ).isoformat(timespec="seconds")
     all_attendance_rows = []
     all_comparison_rows = []
 
@@ -431,6 +456,13 @@ def main():
             attendance_rows,
             muszakpro_rows,
         )
+
+        for row in attendance_rows:
+            row["collected_at"] = collection_collected_at
+
+        for row in comparison_rows:
+            row["collected_at"] = collection_collected_at
+
         all_attendance_rows.extend(attendance_rows)
         all_comparison_rows.extend(comparison_rows)
         print(
