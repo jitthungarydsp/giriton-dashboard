@@ -133,11 +133,12 @@ def _build_route_notification_lines(
     warehouse="",
     current_shift_note="",
     next_shift_note="",
+    next_shift_delay_note="",
     queue_since_note="",
     queue_wait_note="",
 ):
     content_lines = [
-        "**Új túra érkezett**",
+        "**Uj tura erkezett**",
         "",
         f"**{courier_name}** `#{courier_id}`",
         f"**Route ID:** `{route_id}`",
@@ -152,22 +153,18 @@ def _build_route_notification_lines(
     if next_shift_note:
         content_lines.append(f"**Kovetkezo muszak:** {next_shift_note}")
 
+    if next_shift_delay_note:
+        content_lines.append(f"**Kovetkezo muszak keses:** {next_shift_delay_note}")
+
     if queue_since_note:
         content_lines.append(f"**Sorba allt:** {queue_since_note}")
 
     if queue_wait_note:
         content_lines.append(f"**Varakozott:** {queue_wait_note}")
 
-    if planned_departure:
-        content_lines.append(f"**Tervezett kiindulás:** {planned_departure}")
-
-    content_lines.append(
-        f"**Tervezett visszaérkezés:** {planned_return or 'nincs adat'}"
-    )
-
     if licence_plate:
-        content_lines.append(f"**Aktuális rendszám:** {licence_plate}")
-        
+        content_lines.append(f"**Aktualis rendszam:** {licence_plate}")
+
     return content_lines
 
 
@@ -185,6 +182,7 @@ def notify_route_assigned_once(
     warehouse="",
     current_shift_note="",
     next_shift_note="",
+    next_shift_delay_note="",
     queue_since_note="",
     queue_wait_note="",
 ):
@@ -227,6 +225,7 @@ def notify_route_assigned_once(
         warehouse=normalized_warehouse or str(warehouse or "").strip(),
         current_shift_note=current_shift_note,
         next_shift_note=next_shift_note,
+        next_shift_delay_note=next_shift_delay_note,
         queue_since_note=queue_since_note,
         queue_wait_note=queue_wait_note,
     )

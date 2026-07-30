@@ -319,6 +319,7 @@ def build_shift_notification_notes(courier_id, route):
         return {
             "current_shift_note": error_note,
             "next_shift_note": error_note,
+            "next_shift_delay_note": "",
             "queue_since_note": "",
             "queue_wait_note": "",
         }
@@ -329,6 +330,7 @@ def build_shift_notification_notes(courier_id, route):
         return {
             "current_shift_note": error_note,
             "next_shift_note": error_note,
+            "next_shift_delay_note": "",
             "queue_since_note": "",
             "queue_wait_note": "",
         }
@@ -362,6 +364,16 @@ def build_shift_notification_notes(courier_id, route):
         if next_shifts
         else "nincs kovetkezo muszak"
     )
+    next_shift_delay_note = ""
+    route_return_at = parse_datetime(route.get("realReturn") or route.get("plannedReturn"))
+
+    if next_shifts and route_return_at:
+        delay_minutes = int(
+            (route_return_at - next_shifts[0]["shift_start"]).total_seconds() // 60
+        )
+
+        if delay_minutes > 0:
+            next_shift_delay_note = f"{delay_minutes} perc"
 
     queue_shift = current_shift
     if not queue_shift:
@@ -385,6 +397,7 @@ def build_shift_notification_notes(courier_id, route):
     return {
         "current_shift_note": current_shift_note,
         "next_shift_note": next_shift_note,
+        "next_shift_delay_note": next_shift_delay_note,
         "queue_since_note": queue_since_note or "nincs adat",
         "queue_wait_note": queue_wait_note or "nincs adat",
     }
@@ -973,6 +986,7 @@ def run_once(max_age_minutes, dry_run=False):
                 f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'} "
                 f"current_shift={shift_notes.get('current_shift_note') or '-'} "
                 f"next_shift={shift_notes.get('next_shift_note') or '-'} "
+                f"next_shift_delay={shift_notes.get('next_shift_delay_note') or '-'} "
                 f"queue_since={shift_notes.get('queue_since_note') or '-'} "
                 f"queue_wait={shift_notes.get('queue_wait_note') or '-'}",
                 flush=True,
@@ -995,6 +1009,7 @@ def run_once(max_age_minutes, dry_run=False):
             warehouse=route_warehouse,
             current_shift_note=shift_notes.get("current_shift_note", ""),
             next_shift_note=shift_notes.get("next_shift_note", ""),
+            next_shift_delay_note=shift_notes.get("next_shift_delay_note", ""),
             queue_since_note=shift_notes.get("queue_since_note", ""),
             queue_wait_note=shift_notes.get("queue_wait_note", ""),
         )

@@ -34,6 +34,26 @@ def normalize_id(value):
     return int(text) if text else None
 
 
+def normalize_text(value):
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ö": "o",
+        "ő": "o",
+        "ú": "u",
+        "ü": "u",
+        "ű": "u",
+    }
+    text = str(value or "").strip().lower()
+
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+
+    return " ".join(text.split())
+
+
 def normalize_warehouse(value):
     raw_value = str(value or "").strip().upper()
     compact_value = "".join(character for character in raw_value if character.isalnum())
@@ -256,20 +276,46 @@ def shifts_overlap(first_start, first_end, second_start, second_end):
     return first_start < second_end and second_start < first_end
 
 
-def candidate_has_overlap(candidate, target_shift):
+def candidate_has_blocking_overlap(candidate, target_shift, replacement_return_at, now):
     for shift in candidate["shifts"]:
-        if shifts_overlap(
+        has_overlap = shifts_overlap(
             target_shift["shift_start"],
             target_shift["shift_end"],
             shift["shift_start"],
             shift["shift_end"],
+        )
+
+        if not has_overlap:
+            continue
+
+        if (
+            replacement_return_at
+            and replacement_return_at <= target_shift["shift_start"]
+            and shift["shift_start"] <= now
         ):
+            continue
+
             return True
 
     return False
 
 
-def free_gap_for_target(candidate, target_shift):
+def candidate_has_started_working(candidate, replacement_context, now):
+    if replacement_context.get("route_id"):
+        return True
+
+    for shift in candidate["shifts"]:
+        if shift.get("available_for_shift_since"):
+            return True
+
+        shift_start = shift.get("shift_start")
+        if shift_start and shift_start <= now:
+            return True
+
+    return False
+
+
+def free_gap_for_target(candidate, target_shift, replacement_return_at=None):
     before = [
         shift
         for shift in candidate["shifts"]
@@ -282,6 +328,13 @@ def free_gap_for_target(candidate, target_shift):
     ]
     available_from = before[-1]["shift_end"] if before else None
     available_until = after[0]["shift_start"] if after else None
+
+    if (
+        replacement_return_at
+        and replacement_return_at <= target_shift["shift_start"]
+        and (not available_from or replacement_return_at > available_from)
+    ):
+        available_from = replacement_return_at
 
     if available_from and available_until:
         free_gap_minutes = minutes_between(available_from, available_until)
@@ -401,17 +454,30 @@ def build_replacement_rows(
     detail_cache,
     max_candidates,
     minimum_gap_minutes,
+    debug_courier="",
 ):
     rows = []
+    debug_courier = normalize_text(debug_courier)
 
     for problem in problems:
         problem_courier = problem["courier"]
         target_shift = problem["target_shift"]
+        now = datetime.now(LOCAL_TIMEZONE)
 
         candidates = []
 
         for candidate in couriers:
+            debug_this_candidate = (
+                debug_courier
+                and (
+                    debug_courier in normalize_text(candidate["courier_name"])
+                    or debug_courier == str(candidate["courier_id"])
+                )
+            )
+
             if candidate["courier_id"] == problem_courier["courier_id"]:
+                if debug_this_candidate:
+                    print("DEBUG skip: sajat problem futar")
                 continue
 
             if (
@@ -419,17 +485,12 @@ def build_replacement_rows(
                 and candidate["warehouse"]
                 and candidate["warehouse"] != problem_courier["warehouse"]
             ):
-                continue
-
-            if candidate_has_overlap(candidate, target_shift):
-                continue
-
-            available_from, available_until, gap_minutes = free_gap_for_target(
-                candidate,
-                target_shift,
-            )
-
-            if gap_minutes is not None and gap_minutes < minimum_gap_minutes:
+                if debug_this_candidate:
+                    print(
+                        "DEBUG skip warehouse: "
+                        f"problem={problem_courier['warehouse']} "
+                        f"candidate={candidate['warehouse']}"
+                    )
                 continue
 
             replacement_context = build_route_context(
@@ -438,10 +499,65 @@ def build_replacement_rows(
                 detail_cache,
                 work_date,
             )
+
+            if not candidate_has_started_working(
+                candidate,
+                replacement_context,
+                now,
+            ):
+                if debug_this_candidate:
+                    print("DEBUG skip not started working")
+                continue
+
             replacement_return_at = replacement_context.get("expected_return_at")
 
             if replacement_return_at and replacement_return_at > target_shift["shift_start"]:
+                if debug_this_candidate:
+                    print(
+                        "DEBUG skip late return: "
+                        f"return={replacement_return_at} "
+                        f"target_start={target_shift['shift_start']}"
+                )
                 continue
+
+            if candidate_has_blocking_overlap(
+                candidate,
+                target_shift,
+                replacement_return_at,
+                now,
+            ):
+                if debug_this_candidate:
+                    print(
+                        "DEBUG skip overlap: "
+                        f"target={target_shift['shift_name']} "
+                        f"{target_shift['shift_start']} - {target_shift['shift_end']} "
+                        f"return={replacement_return_at}"
+                    )
+                continue
+
+            available_from, available_until, gap_minutes = free_gap_for_target(
+                candidate,
+                target_shift,
+                replacement_return_at=replacement_return_at,
+            )
+
+            if gap_minutes is not None and gap_minutes < minimum_gap_minutes:
+                if debug_this_candidate:
+                    print(
+                        "DEBUG skip small gap: "
+                        f"gap={gap_minutes} min required={minimum_gap_minutes}"
+                    )
+                continue
+
+            if debug_this_candidate:
+                print(
+                    "DEBUG candidate accepted: "
+                    f"{candidate['courier_name']} #{candidate['courier_id']} "
+                    f"problem={problem_courier['courier_name']} "
+                    f"target={target_shift['shift_name']} "
+                    f"gap={gap_minutes} "
+                    f"return={replacement_return_at}"
+                )
 
             if candidate["shifts"]:
                 reason = "nincs utkozo muszak"
@@ -640,7 +756,7 @@ def parse_args():
     parser.add_argument(
         "--max-candidates",
         type=int,
-        default=5,
+        default=10,
         help="Maximum hany jeloltet irjon egy veszelyes muszakhoz.",
     )
     parser.add_argument(
@@ -652,6 +768,11 @@ def parse_args():
         "--skip-ensure-table",
         action="store_true",
         help="Ne probalja DATABASE_URL alapjan letrehozni/ellenorizni a tablat.",
+    )
+    parser.add_argument(
+        "--debug-courier",
+        default="",
+        help="Nev vagy ID, amelynel kiirja, miert esik ki/kerul be jeloltkent.",
     )
     return parser.parse_args()
 
@@ -680,6 +801,7 @@ def main():
         detail_cache,
         args.max_candidates,
         args.minimum_gap_minutes,
+        debug_courier=args.debug_courier,
     )
 
     print(
@@ -690,6 +812,7 @@ def main():
 
     for row in rows[:50]:
         print(
+            f"[{row['warehouse'] or '-'}] "
             f"{row['problem_courier_name']} #{row['problem_courier_id']} "
             f"{row['problem_target_shift_name']} delay={row['delay_minutes']}p -> "
             f"{row['replacement_courier_name']} #{row['replacement_courier_id']} "
