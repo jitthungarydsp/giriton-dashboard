@@ -1,0 +1,55 @@
+name: Shift Rescue Suggestions
+
+concurrency:
+  group: shift-rescue-suggestions-${{ github.ref }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_date:
+        description: "Vizsgalt nap YYYY-MM-DD formatumban. Uresen: mai nap Europe/Budapest szerint."
+        required: false
+        default: ""
+  schedule:
+    - cron: "*/15 * * * *"
+
+jobs:
+  build-suggestions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+
+      - name: Build shift rescue suggestion table
+        env:
+          INPUT_WORK_DATE: ${{ github.event.inputs.work_date }}
+        run: |
+          WORK_DATE="$INPUT_WORK_DATE"
+          if [ -z "$WORK_DATE" ]; then
+            WORK_DATE="$(TZ=Europe/Budapest date +%F)"
+          fi
+
+          python scripts/build_shift_rescue_suggestions.py --work-date "$WORK_DATE"
