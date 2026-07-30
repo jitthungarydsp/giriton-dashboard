@@ -36,6 +36,7 @@ NOTIFICATION_TABLE = "discord_route_notifications"
 PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
 PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
 PUSH_NOTIFICATION_TYPE = "route_assigned"
+ATTENDANCE_CACHE = {}
 
 
 def normalize_id(value):
@@ -170,6 +171,148 @@ def load_driver_detail(courier_id):
     )
 
     return request_json("GET", url)
+
+
+def load_attendance_for_date(work_date):
+    if work_date in ATTENDANCE_CACHE:
+        return ATTENDANCE_CACHE[work_date]
+
+    url = (
+        f"{BASE_URL}/fetch-attendance/{DEPOT_ID}/{work_date}"
+        f"?organizationId={ORGANIZATION_ID}"
+    )
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+    }
+
+    attendance_data = request_json("GET", url, headers=headers)
+    ATTENDANCE_CACHE[work_date] = attendance_data
+    return attendance_data
+
+
+def route_work_date(route):
+    for key in ["assignedAt", "courierRegisteredAt", "plannedDeparture"]:
+        parsed = parse_datetime(route.get(key))
+        if parsed:
+            return parsed.date().isoformat()
+
+    return datetime.now(LOCAL_TIMEZONE).date().isoformat()
+
+
+def find_attendance_courier(attendance_data, courier_id):
+    normalized_courier_id = normalize_id(courier_id)
+
+    for courier in attendance_data.get("couriers", []) or []:
+        if normalize_id(courier.get("courierId")) == normalized_courier_id:
+            return courier
+
+    return {}
+
+
+def parse_shift_times(courier):
+    shifts = []
+
+    for shift in courier.get("shifts", []) or []:
+        shift_start = parse_datetime(shift.get("shiftStart"))
+        shift_end = parse_datetime(shift.get("shiftEnd"))
+
+        if not shift_start:
+            continue
+
+        shifts.append(
+            {
+                "shift_id": shift.get("shiftId"),
+                "shift_name": shift.get("shiftName") or "",
+                "shift_start": shift_start,
+                "shift_end": shift_end,
+                "available_for_shift_since": parse_datetime(
+                    shift.get("availableForShiftSince")
+                ),
+            }
+        )
+
+    return sorted(shifts, key=lambda item: item["shift_start"])
+
+
+def choose_current_shift(shifts, assigned_at, return_at):
+    if not shifts:
+        return None
+
+    if assigned_at:
+        for shift in shifts:
+            shift_start = shift["shift_start"]
+            shift_end = shift.get("shift_end")
+
+            if shift_end and shift_start <= assigned_at < shift_end:
+                return shift
+
+            if assigned_at < shift_start and return_at and return_at >= shift_start:
+                return shift
+
+        previous_shifts = [
+            shift
+            for shift in shifts
+            if shift["shift_start"] <= assigned_at
+        ]
+        if previous_shifts:
+            return previous_shifts[-1]
+
+    return shifts[0]
+
+
+def build_next_shift_note(courier_id, route):
+    work_date = route_work_date(route)
+
+    try:
+        attendance_data = load_attendance_for_date(work_date)
+    except Exception as exc:
+        return f"nem ellenorizheto (fetch-attendance hiba: {exc})"
+
+    courier = find_attendance_courier(attendance_data, courier_id)
+    if not courier:
+        return "nem ellenorizheto (nincs attendance adat)"
+
+    shifts = parse_shift_times(courier)
+    assigned_at = parse_datetime(route.get("assignedAt"))
+    return_at = parse_datetime(route.get("realReturn") or route.get("plannedReturn"))
+    current_shift = choose_current_shift(shifts, assigned_at, return_at)
+
+    if not current_shift:
+        return "nincs kovetkezo muszak"
+
+    next_shifts = [
+        shift
+        for shift in shifts
+        if shift["shift_start"] > current_shift["shift_start"]
+    ]
+
+    if not next_shifts:
+        return "nincs kovetkezo muszak"
+
+    next_shift = next_shifts[0]
+    next_shift_start = next_shift["shift_start"]
+    next_shift_label = next_shift.get("shift_name") or format_time(next_shift_start)
+
+    if not return_at:
+        return (
+            "van kovetkezo muszak, de nincs visszaerkezesi ido "
+            f"({next_shift_label} {format_time(next_shift_start)})"
+        )
+
+    delay_minutes = int((return_at - next_shift_start).total_seconds() // 60)
+
+    if delay_minutes > 0:
+        return (
+            f"kesni fog {delay_minutes} percet "
+            f"({next_shift_label}, kezd: {format_time(next_shift_start)}, "
+            f"vissza: {format_time(return_at)})"
+        )
+
+    return (
+        f"nem fog kesni "
+        f"({next_shift_label}, kezd: {format_time(next_shift_start)}, "
+        f"vissza: {format_time(return_at)})"
+    )
 
 
 def get_dashboard_routes(dashboard_data):
@@ -734,6 +877,7 @@ def run_once(max_age_minutes, dry_run=False):
             str(dashboard_route.get("courier_name") or "").strip()
             or get_courier_name(courier_id, driver_detail)
         )
+        next_shift_note = build_next_shift_note(courier_id, route)
 
         if dry_run:
             counters["dry_run_would_send"] += 1
@@ -744,7 +888,8 @@ def run_once(max_age_minutes, dry_run=False):
                 f"warehouse={route_warehouse or '-'} "
                 f"order {order_id or '-'} "
                 f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
-                f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'}",
+                f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'} "
+                f"next_shift={next_shift_note}",
                 flush=True,
             )
             continue
@@ -762,7 +907,8 @@ def run_once(max_age_minutes, dry_run=False):
             ignore_courier_filter=True,
             licence_plate=licence_plate,
             orders_in_route=orders_in_route,
-            warehouse=route_warehouse
+            warehouse=route_warehouse,
+            next_shift_note=next_shift_note
         )
 
         if result == "sent":

@@ -130,7 +130,8 @@ def _build_route_notification_lines(
     planned_return="",
     orders_in_route="",
     licence_plate="",
-    warehouse=""
+    warehouse="",
+    next_shift_note=""
 ):
     content_lines = [
         "**Új túra érkezett**",
@@ -158,6 +159,9 @@ def _build_route_notification_lines(
     if licence_plate:
         content_lines.append(f"**Aktuális rendszám:** {licence_plate}")
         
+    if next_shift_note:
+        content_lines.append(f"**Kovetkezo muszak:** {next_shift_note}")
+
     return content_lines
 
 
@@ -172,7 +176,8 @@ def notify_route_assigned_once(
     ignore_courier_filter=False,
     orders_in_route="",
     licence_plate="",
-    warehouse=""
+    warehouse="",
+    next_shift_note=""
 ):
     settings = load_app_settings()
 
@@ -210,7 +215,8 @@ def notify_route_assigned_once(
         planned_return=planned_return,
         orders_in_route=orders_in_route,
         licence_plate=licence_plate,
-        warehouse=normalized_warehouse or str(warehouse or "").strip()
+        warehouse=normalized_warehouse or str(warehouse or "").strip(),
+        next_shift_note=next_shift_note
     )
 
     response = requests.post(
