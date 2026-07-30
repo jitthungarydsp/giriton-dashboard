@@ -1,5 +1,6 @@
 import argparse
 import calendar
+import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta
@@ -99,13 +100,21 @@ def db_time(value):
 def normalize_warehouse(value):
     text = clean(value).upper()
 
-    if "BUD1" in text or text == "1":
+    if "BUDAPEST" in text or "BUD1" in text or text == "1":
         return "BUD1"
 
     if "BUD2" in text or text == "2":
         return "BUD2"
 
     return text
+
+
+def normalize_name(value):
+    return re.sub(
+        r"\s+",
+        " ",
+        clean(value).casefold(),
+    ).strip()
 
 
 def parse_datetime(value):
@@ -143,8 +152,46 @@ def time_from_datetime(value):
     return f"{parsed.hour}:{parsed.minute:02d}"
 
 
-def make_match_key(work_date, courier_id, email, courier_name, warehouse, start):
-    person = clean(courier_id) or clean(email).casefold() or clean(courier_name).casefold()
+def shift_time_from_text(value):
+    match = re.search(
+        r"(\d{1,2}):(\d{2})",
+        clean(value),
+    )
+
+    if not match:
+        return ""
+
+    return f"{int(match.group(1))}:{match.group(2)}"
+
+
+def normalize_shift_name(value, warehouse="", fallback_start=""):
+    text = clean(value)
+    normalized_warehouse = normalize_warehouse(warehouse)
+    upper_text = text.upper().replace("_", "-")
+
+    if "BUD1" in upper_text:
+        normalized_warehouse = "BUD1"
+    elif "BUD2" in upper_text:
+        normalized_warehouse = "BUD2"
+
+    shift_time = shift_time_from_text(text) or normalize_time(fallback_start)
+
+    if shift_time:
+        return f"{normalized_warehouse}-{shift_time}".casefold()
+
+    return f"{normalized_warehouse}-{text}".casefold()
+
+
+def make_match_key(work_date, courier_name, shift_name):
+    return "|".join([
+        clean(work_date),
+        normalize_name(courier_name),
+        clean(shift_name).casefold(),
+    ])
+
+
+def legacy_match_key(work_date, courier_id, email, courier_name, warehouse, start):
+    person = clean(courier_id) or clean(email).casefold() or normalize_name(courier_name)
     shift_key = normalize_time(start) if is_time_text(start) else clean(start).casefold()
 
     return "|".join([
@@ -207,13 +254,15 @@ def parse_attendance_shift_rows(collection_id, work_date, request_url, status_co
             if not start_text:
                 continue
 
-            match_key = make_match_key(
-                work_date_text,
-                courier_id,
-                "",
-                courier_name,
+            normalized_shift_name = normalize_shift_name(
+                shift.get("shiftName"),
                 warehouse,
                 start_text,
+            )
+            match_key = make_match_key(
+                work_date_text,
+                courier_name,
+                normalized_shift_name,
             )
             rows.append({
                 "collection_id": collection_id,
@@ -228,6 +277,7 @@ def parse_attendance_shift_rows(collection_id, work_date, request_url, status_co
                 "warehouse": warehouse,
                 "api_shift_id": clean(shift.get("shiftId")),
                 "shift_name": clean(shift.get("shiftName")),
+                "normalized_shift_name": normalized_shift_name,
                 "shift_start": iso_datetime(shift.get("shiftStart")),
                 "shift_end": iso_datetime(shift.get("shiftEnd")),
                 "available_for_shift_since": iso_datetime(
@@ -264,17 +314,19 @@ def read_muszakpro_rows(work_date):
         email = clean(row.get("email")).casefold()
         courier_name = clean(row.get("courier_name"))
         warehouse = normalize_warehouse(row.get("warehouse"))
+        normalized_shift_name = normalize_shift_name(
+            shift_text,
+            warehouse,
+            start,
+        )
 
-        if not work_date_text or not shift_key:
+        if not work_date_text or not shift_key or not courier_name:
             continue
 
         match_key = make_match_key(
             work_date_text,
-            courier_id,
-            email,
             courier_name,
-            warehouse,
-            shift_key,
+            normalized_shift_name,
         )
         rows.append({
             "match_key": match_key,
@@ -285,6 +337,7 @@ def read_muszakpro_rows(work_date):
             "warehouse": warehouse,
             "shift_start": start,
             "shift_key": shift_key,
+            "normalized_shift_name": normalized_shift_name,
             "shift_text": shift_text,
             "booking_code": clean(row.get("booking_code")),
         })

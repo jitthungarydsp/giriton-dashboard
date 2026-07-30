@@ -17,6 +17,7 @@ create table if not exists public.raw_fetch_attendance_shifts (
     warehouse text,
     api_shift_id text,
     shift_name text,
+    normalized_shift_name text,
     shift_start timestamptz,
     shift_end timestamptz,
     available_for_shift_since timestamptz,
@@ -25,6 +26,9 @@ create table if not exists public.raw_fetch_attendance_shifts (
     collected_at timestamptz not null default now(),
     created_at timestamptz not null default now()
 );
+
+alter table public.raw_fetch_attendance_shifts
+    add column if not exists normalized_shift_name text;
 
 create index if not exists idx_raw_fetch_attendance_shifts_collection
     on public.raw_fetch_attendance_shifts (collection_id);
