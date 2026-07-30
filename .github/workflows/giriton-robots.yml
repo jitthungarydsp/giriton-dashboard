@@ -245,6 +245,10 @@ jobs:
         run: |
           python update_shift_reconciliation.py
 
+      - name: Update shift comparison DB
+        run: |
+          python scripts/refresh_shift_comparison.py --start-date "$GIRITION_START_DATE" --days "$GIRITION_DAYS"
+
       - name: Upload robot artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -381,6 +385,10 @@ jobs:
       - name: Update shift reconciliation
         run: |
           python update_shift_reconciliation.py
+
+      - name: Update shift comparison DB
+        run: |
+          python scripts/refresh_shift_comparison.py --start-date "$GIRITION_START_DATE" --days "$GIRITION_DAYS"
 
       - name: Upload raw export artifacts
         if: always()

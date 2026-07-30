@@ -11,7 +11,7 @@ nyulnak. A prefixelt DB-atallas elott ezek a pontok a fontosak.
 | --- | --- | --- |
 | `jitt_invoice` | `scripts/load_jitt_invoice_workbook.py` | `jitt_invoice_*`, `jitt_workbook_*` |
 | `folgaltsag` | `folgaltsag_github.robot` | Google Sheet, majd `foglalasok_raw`/Giriton helper |
-| `girition` | `girition_github.robot`, `update_shift_reconciliation.py` | `giriton_shifts_raw`, `foglalasok_raw` |
+| `girition` | `girition_github.robot`, `update_shift_reconciliation.py`, `scripts/refresh_shift_comparison.py` | `giriton_shifts_raw`, `foglalasok_raw`, `ops_shift_comparison` |
 | `attendance` | `giriton_attendance_github.robot` | `giriton_attendance_raw` |
 | `dsp` | `dsp.py`, `scripts/build_courier_card_stats.py` | `dsp_*`, `courier_master`, `courier_card_stats` |
 
