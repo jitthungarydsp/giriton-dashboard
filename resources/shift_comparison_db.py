@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from resources.supabase_raw import (
+    format_date_filter,
     get_supabase_config,
     raise_for_supabase_error,
 )
@@ -11,6 +12,7 @@ from resources.supabase_raw import (
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 TABLE_NAME = "ops_shift_comparison"
+NEXT_5_DAY_VIEW_NAME = "vw_courier_next_5_day_shifts"
 
 
 def clean(value):
@@ -168,3 +170,77 @@ def delete_shift_comparison_range(start_date, end_date):
         "start_date": str(start_date),
         "end_date": str(end_date),
     }
+
+
+def read_shift_comparison_records(start_date=None, end_date=None, courier_id=None, limit=5000):
+    supabase_url, headers = get_headers()
+    filters = [
+        (
+            "select=work_date,courier_id,courier_name,email,warehouse,"
+            "shift_start,shift_end,giriton_status,muszakpro_status,"
+            "missing_source,giriton_check,muszakpro_booking_code,updated_at"
+        ),
+        "order=work_date.asc,shift_start.asc,courier_name.asc",
+        f"limit={int(limit)}",
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+
+    if start_date_text:
+        filters.append(
+            f"work_date=gte.{start_date_text}"
+        )
+
+    if end_date_text:
+        filters.append(
+            f"work_date=lte.{end_date_text}"
+        )
+
+    if courier_id not in [None, ""]:
+        filters.append(
+            f"courier_id=eq.{int(courier_id)}"
+        )
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{TABLE_NAME}"
+        f"?{'&'.join(filters)}"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+
+    return response.json()
+
+
+def read_next_5_day_shift_comparison(courier_id=None, limit=500):
+    supabase_url, headers = get_headers()
+    filters = [
+        (
+            "select=work_date,courier_id,courier_name,email,warehouse,"
+            "shift_start,shift_end,giriton_status,muszakpro_status,"
+            "missing_source,giriton_check,muszakpro_booking_code,updated_at"
+        ),
+        "order=work_date.asc,shift_start.asc,courier_name.asc",
+        f"limit={int(limit)}",
+    ]
+
+    if courier_id not in [None, ""]:
+        filters.append(
+            f"courier_id=eq.{int(courier_id)}"
+        )
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{NEXT_5_DAY_VIEW_NAME}"
+        f"?{'&'.join(filters)}"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+
+    return response.json()

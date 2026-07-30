@@ -45,3 +45,24 @@ from public.ops_shift_comparison
 where work_date >= current_date
   and work_date < current_date + interval '5 days'
 order by work_date, shift_start, courier_name;
+
+-- Ellenorzesek:
+-- 1) Giritonban fent van, de MuszakProban nincs:
+-- select *
+-- from public.ops_shift_comparison
+-- where giriton_status = 'OK'
+--   and muszakpro_status <> 'OK'
+-- order by work_date, shift_start, courier_name;
+
+-- 2) MuszakProban fent van, de Giritonban nincs:
+-- select *
+-- from public.ops_shift_comparison
+-- where muszakpro_status = 'OK'
+--   and giriton_status <> 'OK'
+-- order by work_date, shift_start, courier_name;
+
+-- 3) Teljes eltéréslista mindkét irányból:
+-- select *
+-- from public.ops_shift_comparison
+-- where missing_source <> ''
+-- order by work_date, shift_start, courier_name;
