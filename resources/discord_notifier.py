@@ -131,7 +131,10 @@ def _build_route_notification_lines(
     orders_in_route="",
     licence_plate="",
     warehouse="",
-    next_shift_note=""
+    current_shift_note="",
+    next_shift_note="",
+    queue_since_note="",
+    queue_wait_note="",
 ):
     content_lines = [
         "**Új túra érkezett**",
@@ -143,8 +146,17 @@ def _build_route_notification_lines(
     if warehouse:
         content_lines.append(f"**Raktar:** `{warehouse}`")
 
-    if order_id:
-        content_lines.append(f"**Aktuális rendelés:** `{order_id}`")
+    if current_shift_note:
+        content_lines.append(f"**Aktualis muszak:** {current_shift_note}")
+
+    if next_shift_note:
+        content_lines.append(f"**Kovetkezo muszak:** {next_shift_note}")
+
+    if queue_since_note:
+        content_lines.append(f"**Sorba allt:** {queue_since_note}")
+
+    if queue_wait_note:
+        content_lines.append(f"**Varakozott:** {queue_wait_note}")
 
     if planned_departure:
         content_lines.append(f"**Tervezett kiindulás:** {planned_departure}")
@@ -153,15 +165,9 @@ def _build_route_notification_lines(
         f"**Tervezett visszaérkezés:** {planned_return or 'nincs adat'}"
     )
 
-    if orders_in_route:
-        content_lines.append(f"**Aktuális megrendelés száma:** {orders_in_route}")
-    
     if licence_plate:
         content_lines.append(f"**Aktuális rendszám:** {licence_plate}")
         
-    if next_shift_note:
-        content_lines.append(f"**Kovetkezo muszak:** {next_shift_note}")
-
     return content_lines
 
 
@@ -177,7 +183,10 @@ def notify_route_assigned_once(
     orders_in_route="",
     licence_plate="",
     warehouse="",
-    next_shift_note=""
+    current_shift_note="",
+    next_shift_note="",
+    queue_since_note="",
+    queue_wait_note="",
 ):
     settings = load_app_settings()
 
@@ -216,7 +225,10 @@ def notify_route_assigned_once(
         orders_in_route=orders_in_route,
         licence_plate=licence_plate,
         warehouse=normalized_warehouse or str(warehouse or "").strip(),
-        next_shift_note=next_shift_note
+        current_shift_note=current_shift_note,
+        next_shift_note=next_shift_note,
+        queue_since_note=queue_since_note,
+        queue_wait_note=queue_wait_note,
     )
 
     response = requests.post(

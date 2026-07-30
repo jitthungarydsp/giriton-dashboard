@@ -2,6 +2,7 @@ import argparse
 import calendar
 import re
 import sys
+import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -18,7 +19,9 @@ if str(PROJECT_ROOT) not in sys.path:
         str(PROJECT_ROOT),
     )
 
+from google_client import open_spreadsheet
 from resources.foglalasok_db import read_foglalasok_raw, shift_start
+from resources.source_sheet_sync import SOURCE_SPREADSHEET_ID
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 
 
@@ -28,10 +31,22 @@ DSP_ID = "JIT"
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 RAW_TABLE = "raw_fetch_attendance_shifts"
 COMPARISON_TABLE = "ops_attendance_muszakpro_comparison"
+COURIER_LOOKUP_CACHE = None
+USER_SHEET_LOOKUP_CACHE = None
+SHIFT_MATCH_TOLERANCE_MINUTES = 30
+COURIER_TABLE_CANDIDATES = [
+    "core_couriers",
+    "courier_master",
+]
 
 
 def clean(value):
-    return str(value or "").strip()
+    text = str(value or "").strip()
+
+    if text.casefold() in {"nan", "none", "null", "<na>"}:
+        return ""
+
+    return text
 
 
 def optional_int(value):
@@ -110,10 +125,21 @@ def normalize_warehouse(value):
 
 
 def normalize_name(value):
+    text = clean(value).casefold()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        char for char in text
+        if not unicodedata.combining(char)
+    )
+    text = re.sub(
+        r"\b\d{4,6}\b",
+        " ",
+        text,
+    )
     return re.sub(
         r"\s+",
         " ",
-        clean(value).casefold(),
+        text,
     ).strip()
 
 
@@ -152,6 +178,16 @@ def time_from_datetime(value):
     return f"{parsed.hour}:{parsed.minute:02d}"
 
 
+def time_to_minutes(value):
+    text = normalize_time(value)
+
+    if not is_time_text(text):
+        return None
+
+    hour, minute = text.split(":", 1)
+    return int(hour) * 60 + int(minute)
+
+
 def shift_time_from_text(value):
     match = re.search(
         r"(\d{1,2}):(\d{2})",
@@ -187,6 +223,20 @@ def make_match_key(work_date, courier_name, shift_name):
         clean(work_date),
         normalize_name(courier_name),
         clean(shift_name).casefold(),
+    ])
+
+
+def make_person_day_warehouse_key(row):
+    person = (
+        clean(row.get("courier_id"))
+        or clean(row.get("email")).casefold()
+        or normalize_name(row.get("courier_name"))
+    )
+
+    return "|".join([
+        clean(row.get("work_date")),
+        person,
+        normalize_warehouse(row.get("warehouse")).casefold(),
     ])
 
 
@@ -233,6 +283,173 @@ def fetch_attendance(work_date):
     )
     response.raise_for_status()
     return url, response.status_code, response.json()
+
+
+def is_missing_table_response(response):
+    if response.status_code not in (400, 404):
+        return False
+
+    text = response.text.lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def read_courier_table_rows(supabase_url, headers, table_name):
+    endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        "?select=courier_id,courier_name,email,billing_email"
+        "&limit=5000"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+
+    if response.status_code == 400 and "billing_email" in response.text:
+        endpoint = (
+            f"{supabase_url}/rest/v1/{table_name}"
+            "?select=courier_id,courier_name,email"
+            "&limit=5000"
+        )
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=60,
+        )
+
+    return response
+
+
+def read_courier_lookup():
+    global COURIER_LOOKUP_CACHE
+
+    if COURIER_LOOKUP_CACHE is not None:
+        return COURIER_LOOKUP_CACHE
+
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        COURIER_LOOKUP_CACHE = {
+            "by_id": {},
+            "by_email": {},
+        }
+        return COURIER_LOOKUP_CACHE
+
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    responses = []
+    for table_name in COURIER_TABLE_CANDIDATES:
+        response = read_courier_table_rows(
+            supabase_url,
+            headers,
+            table_name,
+        )
+
+        if is_missing_table_response(response):
+            continue
+
+        raise_for_supabase_error(response)
+        responses.append(response.json())
+
+    if not responses:
+        COURIER_LOOKUP_CACHE = {
+            "by_id": {},
+            "by_email": {},
+        }
+        return COURIER_LOOKUP_CACHE
+
+    by_id = {}
+    by_email = {}
+
+    for rows in responses:
+        for row in rows:
+            courier_id = optional_int(row.get("courier_id"))
+            email = clean(row.get("email")).casefold()
+            billing_email = clean(row.get("billing_email")).casefold()
+            item = {
+                "courier_id": courier_id,
+                "courier_name": clean(row.get("courier_name")),
+                "email": email,
+                "billing_email": billing_email,
+            }
+
+            if courier_id:
+                by_id[courier_id] = {
+                    **by_id.get(courier_id, {}),
+                    **{
+                        key: value
+                        for key, value in item.items()
+                        if value not in [None, ""]
+                    },
+                }
+
+            if email:
+                by_email[email] = item
+
+            if billing_email:
+                by_email[billing_email] = item
+
+    COURIER_LOOKUP_CACHE = {
+        "by_id": by_id,
+        "by_email": by_email,
+    }
+    return COURIER_LOOKUP_CACHE
+
+
+def row_value(row, index):
+    if index is None or index >= len(row):
+        return ""
+
+    return clean(row[index])
+
+
+def read_user_sheet_lookup():
+    global USER_SHEET_LOOKUP_CACHE
+
+    if USER_SHEET_LOOKUP_CACHE is not None:
+        return USER_SHEET_LOOKUP_CACHE
+
+    lookup = {
+        "by_email": {},
+    }
+
+    try:
+        worksheet = open_spreadsheet(
+            SOURCE_SPREADSHEET_ID
+        ).worksheet("Felhasznalok")
+        rows = worksheet.get_all_values()
+    except Exception:
+        USER_SHEET_LOOKUP_CACHE = lookup
+        return lookup
+
+    for row in rows:
+        for name_index, email_index in [
+            (0, 3),
+            (6, 7),
+            (10, 11),
+        ]:
+            name = row_value(row, name_index)
+            email = row_value(row, email_index).casefold()
+
+            if not name or not email or "@" not in email:
+                continue
+
+            if normalize_name(name) in {"nev", "név"}:
+                continue
+
+            lookup["by_email"][email] = {
+                "courier_name": name,
+            }
+
+    USER_SHEET_LOOKUP_CACHE = lookup
+    return USER_SHEET_LOOKUP_CACHE
 
 
 def parse_attendance_shift_rows(collection_id, work_date, request_url, status_code, payload):
@@ -304,6 +521,8 @@ def read_muszakpro_rows(work_date):
         return []
 
     rows = []
+    courier_lookup = read_courier_lookup()
+    user_sheet_lookup = read_user_sheet_lookup()
 
     for _, row in df.iterrows():
         work_date_text = clean(row.get("work_date"))[:10]
@@ -314,6 +533,23 @@ def read_muszakpro_rows(work_date):
         email = clean(row.get("email")).casefold()
         courier_name = clean(row.get("courier_name"))
         warehouse = normalize_warehouse(row.get("warehouse"))
+        master = (
+            courier_lookup["by_id"].get(courier_id)
+            or courier_lookup["by_email"].get(email)
+            or {}
+        )
+        user_sheet = user_sheet_lookup["by_email"].get(
+            email,
+            {},
+        )
+        courier_name = (
+            courier_name
+            or clean(master.get("courier_name"))
+            or clean(user_sheet.get("courier_name"))
+        )
+        courier_id = courier_id or optional_int(
+            master.get("courier_id")
+        )
         normalized_shift_name = normalize_shift_name(
             shift_text,
             warehouse,
@@ -354,11 +590,111 @@ def build_comparison_rows(collection_id, attendance_rows, muszakpro_rows):
         row["match_key"]: row
         for row in muszakpro_rows
     }
+    exact_keys = set(attendance_by_key) & set(muszakpro_by_key)
+    paired_keys = [
+        (
+            match_key,
+            attendance_by_key[match_key],
+            muszakpro_by_key[match_key],
+        )
+        for match_key in sorted(exact_keys)
+    ]
+    used_attendance_keys = set(exact_keys)
+    used_muszakpro_keys = set(exact_keys)
+
+    remaining_attendance = [
+        row
+        for row in attendance_rows
+        if row["match_key"] not in used_attendance_keys
+    ]
+    remaining_muszakpro = [
+        row
+        for row in muszakpro_rows
+        if row["match_key"] not in used_muszakpro_keys
+    ]
+
+    for attendance in remaining_attendance:
+        attendance_start = time_to_minutes(
+            time_from_datetime(attendance.get("shift_start"))
+        )
+
+        if attendance_start is None:
+            continue
+
+        attendance_group_key = make_person_day_warehouse_key(
+            attendance
+        )
+        best_muszakpro = None
+        best_delta = None
+
+        for muszakpro in remaining_muszakpro:
+            if muszakpro["match_key"] in used_muszakpro_keys:
+                continue
+
+            if make_person_day_warehouse_key(muszakpro) != attendance_group_key:
+                continue
+
+            muszakpro_start = time_to_minutes(
+                muszakpro.get("shift_start")
+            )
+
+            if muszakpro_start is None:
+                continue
+
+            delta = abs(attendance_start - muszakpro_start)
+
+            if delta > SHIFT_MATCH_TOLERANCE_MINUTES:
+                continue
+
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_muszakpro = muszakpro
+
+        if not best_muszakpro:
+            continue
+
+        paired_keys.append(
+            (
+                attendance["match_key"],
+                attendance,
+                best_muszakpro,
+            )
+        )
+        used_attendance_keys.add(
+            attendance["match_key"]
+        )
+        used_muszakpro_keys.add(
+            best_muszakpro["match_key"]
+        )
+
     output = []
 
-    for match_key in sorted(set(attendance_by_key) | set(muszakpro_by_key)):
-        attendance = attendance_by_key.get(match_key, {})
-        muszakpro = muszakpro_by_key.get(match_key, {})
+    comparison_items = paired_keys
+
+    for row in attendance_rows:
+        if row["match_key"] not in used_attendance_keys:
+            comparison_items.append(
+                (
+                    row["match_key"],
+                    row,
+                    {},
+                )
+            )
+
+    for row in muszakpro_rows:
+        if row["match_key"] not in used_muszakpro_keys:
+            comparison_items.append(
+                (
+                    row["match_key"],
+                    {},
+                    row,
+                )
+            )
+
+    for match_key, attendance, muszakpro in sorted(
+        comparison_items,
+        key=lambda item: item[0],
+    ):
         source = attendance or muszakpro
         has_attendance = bool(attendance)
         has_muszakpro = bool(muszakpro)
@@ -400,6 +736,13 @@ def build_comparison_rows(collection_id, attendance_rows, muszakpro_rows):
                 "attendance": attendance,
                 "muszakpro": muszakpro,
                 "missing": missing,
+                "match_method": (
+                    "exact"
+                    if attendance and muszakpro and attendance.get("match_key") == muszakpro.get("match_key")
+                    else "time_tolerance"
+                    if attendance and muszakpro
+                    else "unmatched"
+                ),
             },
         })
 
@@ -458,6 +801,11 @@ def parse_args():
     parser.add_argument("--month", help="Honap YYYY-MM formatumban.")
     parser.add_argument("--start-date", help="Kezdo datum YYYY-MM-DD.")
     parser.add_argument("--end-date", help="Zaro datum YYYY-MM-DD.")
+    parser.add_argument(
+        "--debug-email",
+        default="",
+        help="Kiirja az adott email MuszakPro sorait es a hozza talalt nevet.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -504,6 +852,23 @@ def main():
         muszakpro_rows = read_muszakpro_rows(
             work_date
         )
+
+        if args.debug_email:
+            debug_email = clean(args.debug_email).casefold()
+            print(f"\nDEBUG_EMAIL={debug_email} DATE={work_date.isoformat()}")
+
+            for row in muszakpro_rows:
+                if clean(row.get("email")).casefold() == debug_email:
+                    print(
+                        "MUSZAKPRO "
+                        f"courier_id={row.get('courier_id')} "
+                        f"courier_name={row.get('courier_name')} "
+                        f"email={row.get('email')} "
+                        f"warehouse={row.get('warehouse')} "
+                        f"shift_text={row.get('shift_text')} "
+                        f"key={row.get('match_key')}"
+                    )
+
         comparison_rows = build_comparison_rows(
             collection_id,
             attendance_rows,

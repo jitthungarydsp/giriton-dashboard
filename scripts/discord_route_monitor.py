@@ -133,6 +133,55 @@ def format_time(value):
     return parsed.strftime("%H:%M")
 
 
+def format_datetime_time(value):
+    if not value:
+        return ""
+
+    return value.strftime("%H:%M")
+
+
+def format_wait_duration(start_at, end_at):
+    if not start_at or not end_at:
+        return ""
+
+    minutes = int((end_at - start_at).total_seconds() // 60)
+    minutes = max(minutes, 0)
+
+    if minutes < 60:
+        return f"{minutes} perc"
+
+    hours = minutes // 60
+    remainder = minutes % 60
+
+    if not remainder:
+        return f"{hours} ora"
+
+    return f"{hours} ora {remainder} perc"
+
+
+def format_shift_label(shift, include_times=True):
+    if not shift:
+        return ""
+
+    label = str(shift.get("shift_name") or "").strip()
+    start_at = shift.get("shift_start")
+    end_at = shift.get("shift_end")
+
+    if not label and start_at:
+        label = format_datetime_time(start_at)
+
+    if include_times and start_at:
+        if end_at:
+            time_part = f"{format_datetime_time(start_at)}-{format_datetime_time(end_at)}"
+        else:
+            time_part = format_datetime_time(start_at)
+
+        if label and time_part not in label:
+            return f"{label} ({time_part})"
+
+    return label or "nincs adat"
+
+
 def request_json(method, url, **kwargs):
     response = requests.request(
         method,
@@ -260,58 +309,91 @@ def choose_current_shift(shifts, assigned_at, return_at):
     return shifts[0]
 
 
-def build_next_shift_note(courier_id, route):
+def build_shift_notification_notes(courier_id, route):
     work_date = route_work_date(route)
 
     try:
         attendance_data = load_attendance_for_date(work_date)
     except Exception as exc:
-        return f"nem ellenorizheto (fetch-attendance hiba: {exc})"
+        error_note = f"nem ellenorizheto (fetch-attendance hiba: {exc})"
+        return {
+            "current_shift_note": error_note,
+            "next_shift_note": error_note,
+            "queue_since_note": "",
+            "queue_wait_note": "",
+        }
 
     courier = find_attendance_courier(attendance_data, courier_id)
     if not courier:
-        return "nem ellenorizheto (nincs attendance adat)"
+        error_note = "nem ellenorizheto (nincs attendance adat)"
+        return {
+            "current_shift_note": error_note,
+            "next_shift_note": error_note,
+            "queue_since_note": "",
+            "queue_wait_note": "",
+        }
 
     shifts = parse_shift_times(courier)
-    assigned_at = parse_datetime(route.get("assignedAt"))
-    return_at = parse_datetime(route.get("realReturn") or route.get("plannedReturn"))
-    current_shift = choose_current_shift(shifts, assigned_at, return_at)
+    now = datetime.now(LOCAL_TIMEZONE)
+    assigned_at = parse_datetime(route.get("assignedAt")) or now
+    current_shift = None
 
-    if not current_shift:
-        return "nincs kovetkezo muszak"
+    for shift in shifts:
+        shift_start = shift["shift_start"]
+        shift_end = shift.get("shift_end")
+
+        if shift_end and shift_start <= now < shift_end:
+            current_shift = shift
+            break
+
+    current_shift_note = (
+        format_shift_label(current_shift)
+        if current_shift
+        else "jelenleg nincs aktualis muszakban"
+    )
 
     next_shifts = [
         shift
         for shift in shifts
-        if shift["shift_start"] > current_shift["shift_start"]
+        if shift["shift_start"] > now
     ]
+    next_shift_note = (
+        format_shift_label(next_shifts[0], include_times=False)
+        if next_shifts
+        else "nincs kovetkezo muszak"
+    )
 
-    if not next_shifts:
-        return "nincs kovetkezo muszak"
+    queue_shift = current_shift
+    if not queue_shift:
+        checked_in_shifts = [
+            shift
+            for shift in shifts
+            if shift.get("available_for_shift_since")
+        ]
+        if checked_in_shifts:
+            queue_shift = checked_in_shifts[-1]
 
-    next_shift = next_shifts[0]
-    next_shift_start = next_shift["shift_start"]
-    next_shift_label = next_shift.get("shift_name") or format_time(next_shift_start)
+    queue_since = (
+        queue_shift.get("available_for_shift_since")
+        if queue_shift
+        else None
+    )
+    queue_until = assigned_at or now
+    queue_since_note = format_datetime_time(queue_since)
+    queue_wait_note = format_wait_duration(queue_since, queue_until)
 
-    if not return_at:
-        return (
-            "van kovetkezo muszak, de nincs visszaerkezesi ido "
-            f"({next_shift_label} {format_time(next_shift_start)})"
-        )
+    return {
+        "current_shift_note": current_shift_note,
+        "next_shift_note": next_shift_note,
+        "queue_since_note": queue_since_note or "nincs adat",
+        "queue_wait_note": queue_wait_note or "nincs adat",
+    }
 
-    delay_minutes = int((return_at - next_shift_start).total_seconds() // 60)
 
-    if delay_minutes > 0:
-        return (
-            f"kesni fog {delay_minutes} percet "
-            f"({next_shift_label}, kezd: {format_time(next_shift_start)}, "
-            f"vissza: {format_time(return_at)})"
-        )
-
-    return (
-        f"nem fog kesni "
-        f"({next_shift_label}, kezd: {format_time(next_shift_start)}, "
-        f"vissza: {format_time(return_at)})"
+def build_next_shift_note(courier_id, route):
+    return build_shift_notification_notes(courier_id, route).get(
+        "next_shift_note",
+        "",
     )
 
 
@@ -877,7 +959,7 @@ def run_once(max_age_minutes, dry_run=False):
             str(dashboard_route.get("courier_name") or "").strip()
             or get_courier_name(courier_id, driver_detail)
         )
-        next_shift_note = build_next_shift_note(courier_id, route)
+        shift_notes = build_shift_notification_notes(courier_id, route)
 
         if dry_run:
             counters["dry_run_would_send"] += 1
@@ -889,7 +971,10 @@ def run_once(max_age_minutes, dry_run=False):
                 f"order {order_id or '-'} "
                 f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
                 f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'} "
-                f"next_shift={next_shift_note}",
+                f"current_shift={shift_notes.get('current_shift_note') or '-'} "
+                f"next_shift={shift_notes.get('next_shift_note') or '-'} "
+                f"queue_since={shift_notes.get('queue_since_note') or '-'} "
+                f"queue_wait={shift_notes.get('queue_wait_note') or '-'}",
                 flush=True,
             )
             continue
@@ -898,7 +983,7 @@ def run_once(max_age_minutes, dry_run=False):
             courier_id,
             courier_name,
             route_id,
-            order_id=order_id,
+            order_id="",
             address=address,
             planned_departure=format_time(route.get("plannedDeparture")),
             planned_return=format_time(
@@ -906,9 +991,12 @@ def run_once(max_age_minutes, dry_run=False):
             ),
             ignore_courier_filter=True,
             licence_plate=licence_plate,
-            orders_in_route=orders_in_route,
+            orders_in_route="",
             warehouse=route_warehouse,
-            next_shift_note=next_shift_note
+            current_shift_note=shift_notes.get("current_shift_note", ""),
+            next_shift_note=shift_notes.get("next_shift_note", ""),
+            queue_since_note=shift_notes.get("queue_since_note", ""),
+            queue_wait_note=shift_notes.get("queue_wait_note", ""),
         )
 
         if result == "sent":

@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -99,6 +100,18 @@ def normalize_name(value):
     return " ".join(
         clean_text(value).casefold().split()
     )
+
+
+def extract_courier_id_from_text(value):
+    matches = re.findall(
+        r"\b\d{4,6}\b",
+        clean_text(value),
+    )
+
+    if not matches:
+        return ""
+
+    return matches[-1]
 
 
 def row_value(row, index):
@@ -260,6 +273,10 @@ def build_user_sheet_records(records):
         for courier_id, record in records.items()
         if normalize_name(record.get("courier_name"))
     }
+    by_id = {
+        str(courier_id): courier_id
+        for courier_id in records
+    }
 
     for row in rows:
         for name_index, email_index in [
@@ -280,7 +297,9 @@ def build_user_sheet_records(records):
                 continue
 
             courier_id = (
-                by_email.get(normalize_email(email))
+                by_id.get(extract_courier_id_from_text(name))
+                or by_id.get(extract_courier_id_from_text(email))
+                or by_email.get(normalize_email(email))
                 or by_name.get(normalize_name(name))
             )
 
@@ -401,6 +420,11 @@ def main():
         action="store_true",
         help="Csak API-t hiv, DB-be nem ir.",
     )
+    parser.add_argument(
+        "--find",
+        default="",
+        help="Dry-run ellenorzes: nev/email/id reszlet keresese a felepitett sorokban.",
+    )
     args = parser.parse_args()
     _url, status_code, response_json = fetch_drivers()
     rows = build_rows(
@@ -419,6 +443,26 @@ def main():
             f"MINTA #{row['courier_id']} {row['courier_name']} "
             f"{row['warehouse_name']} {row['phone_number']}"
         )
+
+    if args.find:
+        needle = normalize_name(args.find)
+        print(f"\nKERES={args.find}")
+
+        for row in rows:
+            haystack = normalize_name(
+                " ".join([
+                    str(row.get("courier_id") or ""),
+                    row.get("courier_name") or "",
+                    row.get("email") or "",
+                    row.get("phone_number") or "",
+                ])
+            )
+
+            if needle in haystack:
+                print(
+                    f"TALALAT #{row['courier_id']} {row['courier_name']} "
+                    f"email={row.get('email') or ''} phone={row.get('phone_number') or ''}"
+                )
 
     if args.dry_run:
         print(

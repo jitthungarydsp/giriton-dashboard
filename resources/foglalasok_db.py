@@ -314,6 +314,21 @@ def upsert_foglalasok_rows(values):
         supabase_url,
         headers,
     )
+    delete_endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        "?id=not.is.null"
+    )
+    delete_headers = {
+        **headers,
+        "Prefer": "return=minimal",
+    }
+    delete_response = requests.delete(
+        delete_endpoint,
+        headers=delete_headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(delete_response)
+
     endpoint = (
         f"{supabase_url}/rest/v1/{table_name}"
         "?on_conflict=source_name,work_date,email,shift_text,booking_code"

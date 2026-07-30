@@ -329,6 +329,7 @@ jobs:
           fi
 
           echo "DSP raw date range: $raw_start - $raw_end"
+          python scripts/load_courier_master.py
           python dsp.py "${dsp_args[@]}"
           python scripts/load_vehicle_assignments.py
           if [ -n "$DATABASE_URL" ]; then

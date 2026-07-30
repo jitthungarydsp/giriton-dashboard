@@ -117,3 +117,10 @@ order by work_date, shift_start, courier_name;
 -- where muszakpro_status = 'OK'
 --   and attendance_status <> 'OK'
 -- order by work_date, shift_start, courier_name;
+
+-- Regi hibas collection kezi torlese:
+-- delete from public.ops_attendance_muszakpro_comparison
+-- where collection_id = 'IDE_A_COLLECTION_ID';
+--
+-- delete from public.raw_fetch_attendance_shifts
+-- where collection_id = 'IDE_A_COLLECTION_ID';
