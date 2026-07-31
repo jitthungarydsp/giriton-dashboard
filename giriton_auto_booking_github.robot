@@ -419,12 +419,14 @@ Add Courier To Shift Subscription
     ${already_added}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim();
-    ...    const userNumber=courierId ? 'D' + courierId : '';
+    ...    const cleanCourierId=courierId.replace(/\.0$/, '');
+    ...    const userNumber=cleanCourierId ? 'D' + cleanCourierId : '';
+    ...    const normalize=value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     ...    const windows=[...document.querySelectorAll('.v-window')];
     ...    const win=windows[windows.length - 1] || document;
     ...    const text=win.innerText || '';
     ...    if(userNumber && text.includes(userNumber)){return 'YES';}
-    ...    if(courierName && text.toLowerCase().includes(courierName.toLowerCase())){return 'YES';}
+    ...    if(courierName && normalize(text).includes(normalize(courierName))){return 'YES';}
     ...    return 'NO';
     ...    ARGUMENTS
     ...    ${courier_id}
