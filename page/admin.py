@@ -3,6 +3,18 @@ import time
 import pandas as pd
 import streamlit as st
 
+from resources.giriton_shift_admin import (
+    can_run_robot_locally,
+    command_text,
+    delete_command,
+    filter_booked_shift_rows,
+    log_admin_action,
+    next_days_window,
+    raw_export_command,
+    read_admin_action_log,
+    read_next_giriton_shifts,
+    run_command,
+)
 from resources.courier_db_sheet import (
     sync_courier_db_from_drivers,
     upsert_couriers,
@@ -80,6 +92,292 @@ def send_existing_credentials(user, recipient_email):
     return send_login_credentials(recipient_email, username, password)
 
 
+def _admin_actor():
+    user = st.session_state.get("user", {})
+    return str(user.get("username") or "admin").strip()
+
+
+def _display_shift_admin_df(df):
+    columns = [
+        "Torles",
+        "work_date",
+        "warehouse",
+        "start_time",
+        "end_time",
+        "occupancy",
+        "booked",
+        "maximum",
+        "courier_id",
+        "courier_name",
+        "email",
+        "serial",
+        "fetched_at",
+    ]
+    columns = [column for column in columns if column in df.columns]
+    return df[columns].rename(
+        columns={
+            "Torles": "Torles",
+            "work_date": "Datum",
+            "warehouse": "Raktar",
+            "start_time": "Kezdes",
+            "end_time": "Vege",
+            "occupancy": "Foglaltsag",
+            "booked": "Foglalt",
+            "maximum": "Maximum",
+            "courier_id": "Courier ID",
+            "courier_name": "Futar",
+            "email": "E-mail",
+            "serial": "Serial",
+            "fetched_at": "DB frissites",
+        }
+    )
+
+
+def _run_and_log_admin_command(action, command, payload):
+    actor = _admin_actor()
+    log_admin_action(
+        action,
+        "STARTED",
+        actor=actor,
+        payload=payload,
+        message=command_text(command),
+    )
+    result = run_command(command)
+    status = "OK" if result.returncode == 0 else "FAILED"
+    log_admin_action(
+        action,
+        status,
+        actor=actor,
+        payload={
+            **payload,
+            "returncode": result.returncode,
+            "stdout_tail": result.stdout[-4000:],
+            "stderr_tail": result.stderr[-4000:],
+        },
+        message=f"exit_code={result.returncode}",
+    )
+    return result
+
+
+def show_giriton_shift_admin_section():
+    st.divider()
+    st.subheader("Giriton muszak admin")
+    st.caption(
+        "Kovetkezo 10 nap Shift Subscription adatai, frissites es Giriton torles audit loggal."
+    )
+
+    start_date, end_date = next_days_window(10)
+    can_run = can_run_robot_locally()
+    raw_command = raw_export_command(start_date=start_date.isoformat(), days=10)
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    c1.metric("Idoszak kezdete", start_date.isoformat())
+    c2.metric("Idoszak vege", end_date.isoformat())
+
+    if c3.button(
+        "Kovetkezo 10 nap Giriton lekerese",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_run,
+    ):
+        with st.spinner("Giriton raw export fut..."):
+            result = _run_and_log_admin_command(
+                "RAW_EXPORT_NEXT_10_DAYS",
+                raw_command,
+                {"start_date": start_date.isoformat(), "days": 10},
+            )
+        if result.returncode == 0:
+            st.success("Lekerdezes kesz, DB frissitve.")
+            st.cache_data.clear()
+        else:
+            st.error(f"Lekerdezes sikertelen, exit code: {result.returncode}")
+        st.text_area("Robot stdout", result.stdout, height=180)
+        st.text_area("Robot stderr", result.stderr, height=120)
+
+    if not can_run:
+        st.warning(
+            "Ezen a Streamlit hoston nem futtathato helyben a Giriton robot. "
+            "GitHub Actionsbol inditsd: Giriton Raw Export / Giriton Shift Delete."
+        )
+        st.code(command_text(raw_command), language="powershell")
+
+    try:
+        all_shifts = read_next_giriton_shifts(days=10)
+    except Exception as exc:
+        st.error(f"Giriton muszak DB olvasasi hiba: {exc}")
+        all_shifts = pd.DataFrame()
+
+    booked = filter_booked_shift_rows(all_shifts)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("DB sor", len(all_shifts))
+    m2.metric("Foglalt sor", len(booked))
+    m3.metric(
+        "Nap",
+        booked["work_date"].nunique()
+        if not booked.empty and "work_date" in booked.columns
+        else 0,
+    )
+    m4.metric(
+        "Futar",
+        booked["courier_id"].nunique()
+        if not booked.empty and "courier_id" in booked.columns
+        else 0,
+    )
+
+    if booked.empty:
+        st.info("Nincs foglalt Giriton muszak a kovetkezo 10 nap DB adatai kozott.")
+    else:
+        filters = st.columns(3)
+        warehouse_filter = filters[0].selectbox(
+            "Raktar",
+            ["Mind"] + sorted(str(x) for x in booked["warehouse"].dropna().unique()),
+            key="admin_giriton_shift_warehouse_filter",
+        )
+        date_filter = filters[1].selectbox(
+            "Datum",
+            ["Mind"] + sorted(str(x)[:10] for x in booked["work_date"].dropna().unique()),
+            key="admin_giriton_shift_date_filter",
+        )
+        courier_filter = filters[2].text_input(
+            "Futar / ID / serial szures",
+            key="admin_giriton_shift_courier_filter",
+        )
+
+        visible = booked.copy()
+        if warehouse_filter != "Mind":
+            visible = visible[visible["warehouse"].astype(str) == warehouse_filter]
+        if date_filter != "Mind":
+            visible = visible[visible["work_date"].astype(str).str[:10] == date_filter]
+        if courier_filter.strip():
+            needle = courier_filter.strip().casefold()
+            visible = visible[
+                visible["courier_name"].astype(str).str.casefold().str.contains(needle, na=False)
+                | visible["courier_id"].astype(str).str.contains(needle, na=False)
+                | visible["serial"].astype(str).str.casefold().str.contains(needle, na=False)
+            ]
+
+        editable = visible.copy()
+        editable.insert(0, "Torles", False)
+        display_df = _display_shift_admin_df(editable)
+        edited = st.data_editor(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[column for column in display_df.columns if column != "Torles"],
+            key="admin_giriton_shift_delete_editor",
+            height=420,
+        )
+
+        selected_rows = (
+            edited[edited["Torles"] == True]
+            if "Torles" in edited.columns
+            else pd.DataFrame()
+        )
+        st.caption(f"Kijelolt torlesre: {len(selected_rows)} sor")
+
+        confirm_bulk = st.checkbox(
+            "Megerősítem a kijelölt Giriton foglalások törlését.",
+            key="admin_giriton_bulk_delete_confirm",
+        )
+        if st.button(
+            "Kijeloltek torlese Giritonbol",
+            type="primary",
+            disabled=not can_run or not confirm_bulk or selected_rows.empty,
+            use_container_width=True,
+        ):
+            failures = []
+            progress = st.progress(0)
+            rows = selected_rows.to_dict("records")
+            for index, row in enumerate(rows, start=1):
+                cmd = delete_command(
+                    serial=row.get("Serial"),
+                    work_date=str(row.get("Datum"))[:10],
+                    warehouse=row.get("Raktar"),
+                    shift_start=row.get("Kezdes"),
+                    courier_id=row.get("Courier ID"),
+                    courier_name=row.get("Futar"),
+                )
+                result = _run_and_log_admin_command(
+                    "DELETE_SHIFT_SUBSCRIPTION",
+                    cmd,
+                    row,
+                )
+                if result.returncode != 0:
+                    failures.append({
+                        "Serial": row.get("Serial"),
+                        "Futar": row.get("Futar"),
+                        "Hiba": result.stderr[-1000:] or result.stdout[-1000:],
+                    })
+                progress.progress(index / len(rows))
+            if failures:
+                st.error(f"{len(failures)} torles hibas.")
+                st.dataframe(pd.DataFrame(failures), use_container_width=True, hide_index=True)
+            else:
+                st.success("Kijelolt torlesek lefutottak.")
+            st.cache_data.clear()
+
+        st.markdown("**Torles serial / ID alapjan**")
+        with st.form("admin_giriton_single_delete_form"):
+            s1, s2, s3 = st.columns(3)
+            serial = s1.text_input("Serial")
+            work_date = s2.date_input("Datum", value=start_date)
+            warehouse = s3.selectbox("Raktar", ["BUD1", "BUD2"])
+            s4, s5, s6 = st.columns(3)
+            shift_start = s4.text_input("Kezdes", placeholder="10:00")
+            courier_id = s5.text_input("Courier ID")
+            courier_name = s6.text_input("Futar nev")
+            confirm_text = st.text_input("Megerősítéshez írd be: TORLES")
+            submit_delete = st.form_submit_button(
+                "Egyedi torles inditasa",
+                type="primary",
+                disabled=not can_run,
+            )
+        if submit_delete:
+            if confirm_text != "TORLES":
+                st.error("A torleshez a megerosito mezobe ezt ird: TORLES")
+            elif not shift_start.strip() or (not courier_id.strip() and not courier_name.strip()):
+                st.error("Kezdes es legalabb Courier ID vagy futar nev kotelezo.")
+            else:
+                cmd = delete_command(
+                    serial=serial,
+                    work_date=work_date.isoformat(),
+                    warehouse=warehouse,
+                    shift_start=shift_start,
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                )
+                with st.spinner("Giriton torles fut..."):
+                    result = _run_and_log_admin_command(
+                        "DELETE_SHIFT_SUBSCRIPTION_MANUAL",
+                        cmd,
+                        {
+                            "serial": serial,
+                            "work_date": work_date.isoformat(),
+                            "warehouse": warehouse,
+                            "shift_start": shift_start,
+                            "courier_id": courier_id,
+                            "courier_name": courier_name,
+                        },
+                    )
+                if result.returncode == 0:
+                    st.success("Torles lefutott.")
+                else:
+                    st.error(f"Torles sikertelen, exit code: {result.returncode}")
+                st.text_area("Torles stdout", result.stdout, height=160)
+                st.text_area("Torles stderr", result.stderr, height=120)
+
+    st.markdown("**Admin muveleti log**")
+    try:
+        log_df = read_admin_action_log(limit=200)
+    except Exception as exc:
+        st.warning(f"Admin log nem olvashato: {exc}")
+        log_df = pd.DataFrame()
+    if log_df.empty:
+        st.info("Nincs admin action log, vagy meg nincs letrehozva a Supabase tabla.")
+    else:
+        st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+
 def show_admin_page():
     st.title("👑 Admin")
 
@@ -89,6 +387,8 @@ def show_admin_page():
             f"Felhasználó létrehozva: {created_user['username']} | "
             f"Jelszó: {created_user['password']}"
         )
+
+    show_giriton_shift_admin_section()
 
     data = load_users()
     users = data.get("users", [])
