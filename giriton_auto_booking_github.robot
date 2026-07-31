@@ -261,8 +261,8 @@ Find Giriton Shift Card
         ...    const start=String(arguments[1] || '').trim();
         ...    const dryRun=String(arguments[2] || 'true').toLowerCase() !== 'false';
         ...    const normalize=(value)=>String(value || '').replace(/\s+/g,' ').trim();
-        ...    const startVariants=[`${warehouse}_${start}`, `${start}:1k`, `${start}:`, `${start} -`, `${start}-`].map(normalize);
-        ...    const occupancyRegex=/(^|[^0-9])0\s*\/\s*[1-9][0-9]*([^0-9]|$)/;
+        ...    const startVariants=[warehouse + '_' + start, start + ':1k', start + ':', start + ' -', start + '-'].map(normalize);
+        ...    const occupancyRegex=/(^|[^0-9])0\/[1-9][0-9]*([^0-9]|$)/;
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    for(const title of titles){
         ...      let node=title;
@@ -270,7 +270,8 @@ Find Giriton Shift Card
         ...        const text=normalize(node.innerText || '');
         ...        if(!text.includes(warehouse)){continue;}
         ...        if(!startVariants.some(item => item && text.includes(item))){continue;}
-        ...        if(!occupancyRegex.test(text)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
+        ...        const compactText=text.replaceAll(' ', '');
+        ...        if(!occupancyRegex.test(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        title.click();
@@ -355,7 +356,7 @@ Add Courier To Shift Subscription
     ${already_added}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim();
-    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const userNumber=courierId ? 'D' + courierId : '';
     ...    const windows=[...document.querySelectorAll('.v-window')];
     ...    const win=windows[windows.length - 1] || document;
     ...    const text=win.innerText || '';
@@ -455,9 +456,9 @@ Add Courier To Shift Subscription
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
     ...    const email=String(arguments[2] || '').trim().toLowerCase();
-    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const userNumber=courierId ? 'D' + courierId : '';
     ...    const nameParts=courierName.split(/\s+/).filter(Boolean);
-    ...    const reversedName=nameParts.length > 1 ? `${nameParts.slice(1).join(' ')} ${nameParts[0]}` : courierName;
+    ...    const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
     ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const dialog=dialogs[dialogs.length - 1] || document;
@@ -530,7 +531,7 @@ Add Courier To Shift Subscription
     ${verify_result}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
-    ...    const userNumber=courierId ? `D${courierId}` : '';
+    ...    const userNumber=courierId ? 'D' + courierId : '';
     ...    const windows=[...document.querySelectorAll('.v-window')];
     ...    const win=windows[windows.length - 1] || document;
     ...    const text=(win.innerText || '').toLowerCase();
