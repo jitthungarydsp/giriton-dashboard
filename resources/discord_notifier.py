@@ -162,8 +162,20 @@ def _build_route_notification_lines(
     if queue_wait_note:
         content_lines.append(f"**Varakozott:** {queue_wait_note}")
 
+    if planned_departure:
+        content_lines.append(f"**Tervezett elindulas:** {planned_departure}")
+
+    if planned_return:
+        content_lines.append(f"**Tervezett visszaerkezes:** {planned_return}")
+
+    if orders_in_route:
+        content_lines.append(f"**Rendelesek:** {orders_in_route}")
+
     if licence_plate:
         content_lines.append(f"**Aktualis rendszam:** {licence_plate}")
+
+    if address:
+        content_lines.append(f"**Elso cim:** {address}")
 
     return content_lines
 

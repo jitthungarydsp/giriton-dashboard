@@ -48,7 +48,10 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$DATABASE_URL$SUPABASE_DB_URL" || (echo "Missing DATABASE_URL or SUPABASE_DB_URL secret" && exit 1)
+          if [ -z "$DATABASE_URL$SUPABASE_DB_URL" ]; then
+            echo "DATABASE_URL/SUPABASE_DB_URL nincs beallitva, a DB-SQL normalizalo lepes kimarad."
+            echo "A route story raw JSON forrasokbol epul."
+          fi
 
       - name: Resolve dates
         id: dates
@@ -101,7 +104,12 @@ jobs:
 
       - name: Refresh DSP normalized tables
         if: ${{ steps.dates.outputs.dry_run != 'true' }}
-        run: python scripts/dsp_refresh_all.py
+        run: |
+          if [ -n "$DATABASE_URL$SUPABASE_DB_URL" ]; then
+            python scripts/dsp_refresh_all.py
+          else
+            echo "Skipping dsp_refresh_all.py because DATABASE_URL/SUPABASE_DB_URL is not configured."
+          fi
 
       - name: Calculate route distance
         run: |
@@ -115,6 +123,9 @@ jobs:
       - name: Build route stories
         run: |
           CMD=(python scripts/build_dsp_route_stories.py --start-date "${{ steps.dates.outputs.work_date }}" --end-date "${{ steps.dates.outputs.work_date }}" --force)
+          if [ -z "$DATABASE_URL$SUPABASE_DB_URL" ]; then
+            CMD+=(--raw)
+          fi
           if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
             CMD+=(--dry-run)
           fi
