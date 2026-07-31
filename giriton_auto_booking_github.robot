@@ -23,9 +23,42 @@ ${AUTO_BOOK_EMAIL}
 Giriton Auto Booking From Foglalasok
     Log To Console    GIRITON_AUTO_BOOKING_VERSION=t_plus_3_foglalasok_dry_run
 
+    ${empty_candidate}=    Create Dictionary
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_LOGIN_START
+    ...    Giriton bejelentkezes indul.
+
     keywords_github.Bejelentkezes
+
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_LOGIN_DONE
+    ...    Giriton bejelentkezes kesz.
+
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_SHIFT_SUBS_OPEN_START
+    ...    Shift Subscription oldal megnyitasa indul.
+
     keywords_github.Click Shift Subs
+
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_SHIFT_SUBS_OPEN_DONE
+    ...    Shift Subscription oldal megnyitva.
+
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_DEPARTMENT_SELECT_START
+    ...    Osszes department/raktar kivalasztasa indul.
+
     keywords_github.Select All Departments
+
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_DEPARTMENT_SELECT_DONE
+    ...    Osszes department/raktar kivalasztva.
 
     Sleep    10s
 
@@ -41,6 +74,10 @@ Giriton Auto Booking From Foglalasok
 
     ${candidate_count}=    Get Length    ${candidates}
     Log To Console    AUTO_BOOK_CANDIDATES=${candidate_count}
+    Log Auto Booking Step
+    ...    ${empty_candidate}
+    ...    STEP_CANDIDATES_LOADED
+    ...    Feldolgozhato jeloltek szama: ${candidate_count}
 
     FOR    ${candidate}    IN    @{candidates}
         ${work_date}=       Set Variable    ${candidate}[work_date]
@@ -53,18 +90,48 @@ Giriton Auto Booking From Foglalasok
         Log To Console
         ...    AUTO_BOOK_ITEM ${work_date} ${warehouse} ${shift_start} ${courier_name} ${email}
 
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_CANDIDATE_START
+        ...    Jelolt feldolgozasa indul: ${work_date} ${warehouse} ${shift_start} ${courier_name} ${email}
+
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_DATE_SET_START
+        ...    Giriton datum beallitasa indul: ${giriton_date}
+
         Beallit Giriton Datum
         ...    ${giriton_date}
+
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_DATE_SET_DONE
+        ...    Giriton datum beallitva: ${giriton_date}
 
         ${loaded_screenshot}=    giriton_auto_booking.Build Screenshot Name
         ...    ${candidate}
         ...    page_loaded
         Capture Page Screenshot    ${loaded_screenshot}
 
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_PAGE_LOADED_SCREENSHOT_DONE
+        ...    Oldal betoltes utani screenshot kesz: ${loaded_screenshot}
+
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_SHIFT_SEARCH_START
+        ...    Muszakkartya keresese indul: ${warehouse} ${shift_start}
+
         ${result}=    Find Giriton Shift Card
         ...    ${warehouse}
         ...    ${shift_start}
         ...    ${AUTO_BOOK_DRY_RUN}
+
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_SHIFT_SEARCH_DONE
+        ...    Muszakkartya kereses eredmenye: ${result}
 
         IF    '${result}' == 'FOUND_DRY_RUN'
             ${found_screenshot}=    giriton_auto_booking.Build Screenshot Name
@@ -77,8 +144,18 @@ Giriton Auto Booking From Foglalasok
             ...    DRY_RUN_FOUND
             ...    A Giriton muszakkartya megvan, eles kattintas kihagyva. Screenshot: ${loaded_screenshot}, ${found_screenshot}
         ELSE IF    '${result}' == 'FOUND_CLICKED'
+            Log Auto Booking Step
+            ...    ${candidate}
+            ...    STEP_BOOKING_FLOW_START
+            ...    Eles foglalasi folyamat indul.
+
             ${add_result}=    Add Courier To Shift Subscription
             ...    ${candidate}
+
+            Log Auto Booking Step
+            ...    ${candidate}
+            ...    STEP_BOOKING_FLOW_DONE
+            ...    Eles foglalasi folyamat eredmenye: ${add_result}
 
             ${booking_screenshot}=    giriton_auto_booking.Build Screenshot Name
             ...    ${candidate}
@@ -108,6 +185,18 @@ Giriton Auto Booking From Foglalasok
 
 
 *** Keywords ***
+Log Auto Booking Step
+    [Arguments]    ${candidate}    ${status}    ${message}
+
+    ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
+    ...    ${candidate}
+    ...    ${status}
+    ...    ${message}
+
+    Log To Console    AUTO_BOOK_STEP=${status} LOG=${log_result}
+    RETURN    ${log_result}
+
+
 Beallit Giriton Datum
     [Arguments]    ${datum_giriton}
 
@@ -196,9 +285,24 @@ Add Courier To Shift Subscription
     ${courier_id}=      Set Variable    ${candidate}[courier_id]
     ${email}=           Set Variable    ${candidate}[email]
 
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_POPUP_WAIT_START
+    ...    Shift subscription popup betoltesere var.
+
     Wait Until Page Contains
     ...    Shift subscription
     ...    timeout=20s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_POPUP_WAIT_DONE
+    ...    Shift subscription popup betoltott.
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_SUBSCRIBED_TAB_START
+    ...    Subscribed users ful megnyitasa indul.
 
     ${tab_result}=    Execute Javascript
     ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"]')];
@@ -207,10 +311,24 @@ Add Courier To Shift Subscription
     ...    return 'NOT_FOUND';
 
     IF    '${tab_result}' != 'OK'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_SUBSCRIBED_TAB_FAILED
+        ...    Subscribed users ful nem talalhato.
         RETURN    SUBSCRIBED_TAB_NOT_FOUND
     END
 
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_SUBSCRIBED_TAB_DONE
+    ...    Subscribed users ful megnyitva.
+
     Sleep    1s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_ALREADY_BOOKED_CHECK_START
+    ...    Ellenorzes indul: futar mar szerepel-e a muszakon.
 
     ${already_added}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
@@ -226,8 +344,22 @@ Add Courier To Shift Subscription
     ...    ${courier_name}
 
     IF    '${already_added}' == 'YES'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_ALREADY_BOOKED_FOUND
+        ...    A futar mar szerepel a subscribed users listaban.
         RETURN    ALREADY_BOOKED
     END
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_ALREADY_BOOKED_CHECK_DONE
+    ...    A futar meg nincs a subscribed users listaban.
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_ADD_BUTTON_START
+    ...    Zold plusz gomb keresese/megnyomasa indul.
 
     ${plus_result}=    Execute Javascript
     ...    const windows=[...document.querySelectorAll('.v-window')];
@@ -243,12 +375,31 @@ Add Courier To Shift Subscription
     ...    return 'OK';
 
     IF    '${plus_result}' != 'OK'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_ADD_BUTTON_FAILED
+        ...    Zold plusz gomb nem talalhato.
         RETURN    ADD_BUTTON_NOT_FOUND
     END
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_ADD_BUTTON_DONE
+    ...    Zold plusz gomb megnyomva.
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_SEARCH_FIELD_WAIT_START
+    ...    Futar kereso mezo betoltesere var.
 
     Wait Until Element Is Visible
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    timeout=20s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_SEARCH_FIELD_WAIT_DONE
+    ...    Futar kereso mezo betoltott.
 
     Click Element
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
@@ -259,11 +410,21 @@ Add Courier To Shift Subscription
 
     ${search_text}=    Set Variable If    '${courier_name}' != ''    ${courier_name}    ${email}
 
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_COURIER_SEARCH_INPUT_START
+    ...    Futar keresesi szoveg beirasa indul: ${search_text}
+
     Input Text
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    ${search_text}
 
     Sleep    2s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_COURIER_SELECT_START
+    ...    Futar sor keresese es kivalasztasa indul.
 
     ${select_result}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
@@ -294,10 +455,24 @@ Add Courier To Shift Subscription
     ...    ${email}
 
     IF    '${select_result}' != 'OK'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_COURIER_SELECT_FAILED
+        ...    Futar sor nem talalhato vagy nem kivalaszthato.
         RETURN    COURIER_NOT_FOUND
     END
 
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_COURIER_SELECT_DONE
+    ...    Futar sor kivalasztva.
+
     Sleep    1s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_CHOOSE_BUTTON_START
+    ...    Choose/megerosito gomb keresese/megnyomasa indul.
 
     ${choose_result}=    Execute Javascript
     ...    const button=document.querySelector('#SelectionDialog-btn-confirm-selection') || [...document.querySelectorAll('.v-button')].find(el => (el.innerText || '').includes('Choose') && el.offsetWidth > 0 && el.offsetHeight > 0);
@@ -306,10 +481,24 @@ Add Courier To Shift Subscription
     ...    return 'OK';
 
     IF    '${choose_result}' != 'OK'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_CHOOSE_BUTTON_FAILED
+        ...    Choose/megerosito gomb nem talalhato.
         RETURN    CHOOSE_BUTTON_NOT_FOUND
     END
 
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_CHOOSE_BUTTON_DONE
+    ...    Choose/megerosito gomb megnyomva.
+
     Sleep    2s
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_VERIFY_START
+    ...    Foglalas eredmenyenek ellenorzese indul.
 
     ${verify_result}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
@@ -324,6 +513,11 @@ Add Courier To Shift Subscription
     ...    return 'COURIER_SELECTED_NOT_VERIFIED';
     ...    ${courier_id}
     ...    ${courier_name}
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_VERIFY_DONE
+    ...    Foglalas ellenorzes eredmenye: ${verify_result}
 
     RETURN    ${verify_result}
 
