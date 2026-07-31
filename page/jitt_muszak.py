@@ -173,25 +173,28 @@ def _render_styles():
     )
 
 
-def _preview_actions(selected_count):
+def _preview_actions(selected_count, key_prefix):
     left, middle, right = st.columns(3)
     left.button(
         "Kovetkezo 10 nap betoltese",
         type="primary",
         use_container_width=True,
         disabled=True,
+        key=f"{key_prefix}_load_next_10",
         help="Design fazis: kovetkezo korben kotjuk ra a raw export robotra.",
     )
     middle.button(
         f"Kijelolt torlese ({selected_count})",
         use_container_width=True,
         disabled=True,
+        key=f"{key_prefix}_delete_selected",
         help="Design fazis: itt indul majd a tomeges Giriton torles.",
     )
     right.button(
         "GitHub job inditasa",
         use_container_width=True,
         disabled=True,
+        key=f"{key_prefix}_github_job",
         help="Design fazis: kesobb innen indithato lesz a workflow.",
     )
 
@@ -290,7 +293,7 @@ def show_jitt_muszak_page():
                 """,
                 unsafe_allow_html=True,
             )
-            _preview_actions(0)
+            _preview_actions(0, "jitt_muszak_load_tab")
 
     with tabs[1]:
         st.subheader("Kovetkezo 10 nap muszakai")
@@ -407,7 +410,7 @@ def show_jitt_muszak_page():
         c3.selectbox("Raktar", ["BUD1", "BUD2"])
         c4.text_input("Kezdes", placeholder="10:00")
         st.text_input("Megeroses", placeholder="Eles torleshez majd TORLES szoveg kell")
-        _preview_actions(selected_count)
+        _preview_actions(selected_count, "jitt_muszak_delete_tab")
 
     with tabs[3]:
         st.subheader("Jogosultsag es audit")
