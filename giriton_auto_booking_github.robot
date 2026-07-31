@@ -353,10 +353,22 @@ Add Courier To Shift Subscription
     ${tab_result}=    Execute Javascript
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
     ...    const normalize=value => String(value || '').trim().split(' ').filter(Boolean).join(' ');
-    ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"], label, div')].filter(visible);
-    ...    const tab=tabs.find(el => normalize(el.innerText || el.textContent).includes('Subscribed users'));
-    ...    if(tab){tab.click(); return 'OK';}
-    ...    return 'NOT_FOUND';
+    ...    const clickReal=function(el){
+    ...      el.scrollIntoView({block:'center', inline:'center'});
+    ...      const rect=el.getBoundingClientRect();
+    ...      const x=rect.left + rect.width / 2;
+    ...      const y=rect.top + rect.height / 2;
+    ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
+    ...        el.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...      });
+    ...    };
+    ...    const labels=[...document.querySelectorAll('.v-window .v-captiontext, .v-window .v-tabsheet-tabitem, .v-window td, .v-window div, .v-window span')].filter(visible);
+    ...    const label=labels.find(el => normalize(el.innerText || el.textContent).startsWith('Subscribed users'));
+    ...    if(!label){return 'NOT_FOUND';}
+    ...    const tab=label.closest('.v-tabsheet-tabitemcell, .v-tabsheet-tabitem, td') || label;
+    ...    clickReal(tab);
+    ...    clickReal(label);
+    ...    return 'OK';
 
     IF    '${tab_result}' != 'OK'
         Log Auto Booking Step
@@ -366,12 +378,28 @@ Add Courier To Shift Subscription
         RETURN    SUBSCRIBED_TAB_NOT_FOUND
     END
 
+    Sleep    1s
+
+    ${tab_open}=    Execute Javascript
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const text=String((document.querySelector('.v-window') || document).innerText || '');
+    ...    if(document.querySelector('#SearchField-tfTextSearch')){return 'YES';}
+    ...    if(text.includes('Number of persons:') || text.includes('Automatically approve:') || text.includes('Subscribe since:')){return 'NO';}
+    ...    const buttons=[...document.querySelectorAll('.v-window .v-button, .v-window [role="button"], .v-window button')].filter(visible);
+    ...    return buttons.length > 0 ? 'YES' : 'NO';
+
+    IF    '${tab_open}' != 'YES'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_SUBSCRIBED_TAB_FAILED
+        ...    Subscribed users ful kattintas utan sem nyilt meg.
+        RETURN    SUBSCRIBED_TAB_NOT_OPEN
+    END
+
     Log Auto Booking Step
     ...    ${candidate}
     ...    STEP_SUBSCRIBED_TAB_DONE
     ...    Subscribed users ful megnyitva.
-
-    Sleep    1s
 
     Log Auto Booking Step
     ...    ${candidate}
