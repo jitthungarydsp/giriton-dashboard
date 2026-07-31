@@ -14,6 +14,9 @@ ${AUTO_BOOK_HORIZON_DAYS}    1
 ${AUTO_BOOK_START_DATE}
 ${AUTO_BOOK_END_DATE}
 ${AUTO_BOOK_DRY_RUN}         true
+${AUTO_BOOK_SERIAL}
+${AUTO_BOOK_COURIER_ID}
+${AUTO_BOOK_EMAIL}
 
 
 *** Test Cases ***
@@ -31,6 +34,10 @@ Giriton Auto Booking From Foglalasok
     ...    ${AUTO_BOOK_HORIZON_DAYS}
     ...    ${AUTO_BOOK_START_DATE}
     ...    ${AUTO_BOOK_END_DATE}
+    ...    10000
+    ...    ${AUTO_BOOK_SERIAL}
+    ...    ${AUTO_BOOK_COURIER_ID}
+    ...    ${AUTO_BOOK_EMAIL}
 
     ${candidate_count}=    Get Length    ${candidates}
     Log To Console    AUTO_BOOK_CANDIDATES=${candidate_count}
@@ -49,31 +56,51 @@ Giriton Auto Booking From Foglalasok
         Beallit Giriton Datum
         ...    ${giriton_date}
 
+        ${loaded_screenshot}=    giriton_auto_booking.Build Screenshot Name
+        ...    ${candidate}
+        ...    page_loaded
+        Capture Page Screenshot    ${loaded_screenshot}
+
         ${result}=    Find Giriton Shift Card
         ...    ${warehouse}
         ...    ${shift_start}
         ...    ${AUTO_BOOK_DRY_RUN}
 
         IF    '${result}' == 'FOUND_DRY_RUN'
+            ${found_screenshot}=    giriton_auto_booking.Build Screenshot Name
+            ...    ${candidate}
+            ...    dry_run_shift_found
+            Capture Page Screenshot    ${found_screenshot}
+
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
             ...    DRY_RUN_FOUND
-            ...    A Giriton muszakkartya megvan, eles kattintas kihagyva.
+            ...    A Giriton muszakkartya megvan, eles kattintas kihagyva. Screenshot: ${loaded_screenshot}, ${found_screenshot}
         ELSE IF    '${result}' == 'FOUND_CLICKED'
             ${add_result}=    Add Courier To Shift Subscription
             ...    ${candidate}
 
+            ${booking_screenshot}=    giriton_auto_booking.Build Screenshot Name
+            ...    ${candidate}
+            ...    booking_result
+            Capture Page Screenshot    ${booking_screenshot}
+
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
             ...    ${add_result}
-            ...    A Giriton muszakkartya megvan, a futar hozzaadasi folyamat lefutott.
+            ...    A Giriton muszakkartya megvan, a futar hozzaadasi folyamat lefutott. Screenshot: ${loaded_screenshot}, ${booking_screenshot}
 
             Close Giriton Popup
         ELSE
+            ${not_found_screenshot}=    giriton_auto_booking.Build Screenshot Name
+            ...    ${candidate}
+            ...    shift_not_found
+            Capture Page Screenshot    ${not_found_screenshot}
+
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
             ...    SHIFT_NOT_FOUND
-            ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra.
+            ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
         END
 
         Log To Console    AUTO_BOOK_RESULT=${result} LOG=${log_result}

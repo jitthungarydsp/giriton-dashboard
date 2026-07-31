@@ -22,7 +22,7 @@ def _date_text(value):
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
-def _robot_command(start_date, end_date, dry_run):
+def _robot_command(start_date, end_date, dry_run, serial=""):
     return [
         "robot",
         "--variable",
@@ -31,6 +31,8 @@ def _robot_command(start_date, end_date, dry_run):
         f"AUTO_BOOK_END_DATE:{_date_text(end_date)}",
         "--variable",
         f"AUTO_BOOK_DRY_RUN:{str(bool(dry_run)).lower()}",
+        "--variable",
+        f"AUTO_BOOK_SERIAL:{serial}",
         str(ROBOT_FILE),
     ]
 
@@ -42,8 +44,8 @@ def _command_text(command):
     )
 
 
-def _run_robot(start_date, end_date, dry_run):
-    command = _robot_command(start_date, end_date, dry_run)
+def _run_robot(start_date, end_date, dry_run, serial=""):
+    command = _robot_command(start_date, end_date, dry_run, serial=serial)
 
     completed = subprocess.run(
         command,
@@ -78,6 +80,14 @@ def _candidate_dataframe(candidates, log_df):
     df["last_message"] = messages
     df["last_log_at"] = logged_at
     return df
+
+
+def _candidate_label(row):
+    return (
+        f"{row.get('work_date', '')} | {row.get('warehouse', '')} "
+        f"{row.get('shift_start', '')} | {row.get('courier_name', '')} "
+        f"({row.get('courier_id', '')}) | {row.get('serial', '')}"
+    )
 
 
 def show_giriton_auto_booking_page():
@@ -166,9 +176,28 @@ def show_giriton_auto_booking_page():
         else 0,
     )
 
+    selected_serial = ""
+    selected_label = "Minden jelolt"
+
+    if not candidate_df.empty:
+        candidate_rows = candidate_df.to_dict("records")
+        candidate_options = {
+            "Minden jelolt": "",
+            **{
+                _candidate_label(row): str(row.get("serial") or "").strip()
+                for row in candidate_rows
+            },
+        }
+        selected_label = st.selectbox(
+            "Feldolgozando ember / foglalas",
+            list(candidate_options.keys()),
+            key="giriton_auto_booking_selected_candidate",
+        )
+        selected_serial = candidate_options.get(selected_label, "")
+
     st.subheader("Robot futtatas")
-    dry_command = _robot_command(start_date, end_date, True)
-    live_command = _robot_command(start_date, end_date, False)
+    dry_command = _robot_command(start_date, end_date, True, selected_serial)
+    live_command = _robot_command(start_date, end_date, False, selected_serial)
 
     st.code(_command_text(dry_command), language="powershell")
 
@@ -176,7 +205,7 @@ def show_giriton_auto_booking_page():
 
     if run_col1.button("Dry-run inditas", type="primary", use_container_width=True):
         with st.spinner("Giriton auto booking dry-run fut..."):
-            result = _run_robot(start_date, end_date, True)
+            result = _run_robot(start_date, end_date, True, selected_serial)
 
         if result.returncode == 0:
             st.success("Dry-run lefutott.")
@@ -187,13 +216,17 @@ def show_giriton_auto_booking_page():
         st.text_area("Robot stderr", result.stderr, height=160)
 
     enable_live = run_col2.checkbox(
-        "Eles foglalas engedelyezese erre a datumtartomanyra",
+        "Eles foglalas engedelyezese a kivalasztott emberre",
         key="giriton_auto_booking_enable_live",
     )
 
     if enable_live:
+        if not selected_serial:
+            st.error("Eles foglalashoz valassz ki egy konkret embert/foglalast.")
+            return
+
         st.warning(
-            "Eles modban a robot megprobalja hozzaadni a futarokat a Giriton muszakokhoz."
+            f"Eles modban a robot csak ezt a kivalasztott sort dolgozza fel: {selected_label}"
         )
         st.code(_command_text(live_command), language="powershell")
         confirmation = st.text_input(
@@ -206,7 +239,7 @@ def show_giriton_auto_booking_page():
                 st.error("Eles inditashoz a megerosito mezobe ezt ird: ELES")
             else:
                 with st.spinner("Giriton auto booking eles futas..."):
-                    result = _run_robot(start_date, end_date, False)
+                    result = _run_robot(start_date, end_date, False, selected_serial)
 
                 if result.returncode == 0:
                     st.success("Eles robot futas lefutott.")

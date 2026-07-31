@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
+import re
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -73,6 +74,23 @@ def _candidate_key(row):
     )
 
 
+def _matches_filter(candidate, serial="", courier_id="", email=""):
+    serial = clean(serial)
+    courier_id = clean(courier_id)
+    email = clean(email).casefold()
+
+    if serial and clean(candidate.get("serial")) != serial:
+        return False
+
+    if courier_id and clean(candidate.get("courier_id")) != courier_id:
+        return False
+
+    if email and clean(candidate.get("email")).casefold() != email:
+        return False
+
+    return True
+
+
 def _build_candidate(row):
     shift_text = clean(row.get("shift_text"))
     start = shift_start(shift_text)
@@ -98,6 +116,9 @@ def get_t_plus_booking_candidates(
     start_date="",
     end_date="",
     limit=10000,
+    serial="",
+    courier_id="",
+    email="",
 ):
     """Return Foglalasok rows that the Giriton auto-booking robot should process."""
 
@@ -138,6 +159,9 @@ def get_t_plus_booking_candidates(
         if not candidate["courier_id"] and not candidate["courier_name"]:
             continue
 
+        if not _matches_filter(candidate, serial=serial, courier_id=courier_id, email=email):
+            continue
+
         key = _candidate_key(candidate)
 
         if key in seen:
@@ -157,6 +181,23 @@ def get_t_plus_booking_candidates(
     )
 
     return candidates
+
+
+def build_screenshot_name(candidate, step):
+    candidate = candidate or {}
+    step = clean(step) or "screenshot"
+    parts = [
+        clean(candidate.get("work_date")),
+        clean(candidate.get("warehouse")),
+        clean(candidate.get("shift_start")).replace(":", ""),
+        clean(candidate.get("courier_id")) or clean(candidate.get("courier_name")),
+        step,
+        datetime.utcnow().strftime("%Y%m%d%H%M%S"),
+    ]
+    raw_name = "_".join(part for part in parts if part)
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_name).strip("._")
+
+    return f"{safe_name or 'giriton_auto_booking'}.png"
 
 
 def _supabase_headers():
