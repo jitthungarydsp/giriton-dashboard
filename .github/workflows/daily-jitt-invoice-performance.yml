@@ -1,0 +1,97 @@
+name: Daily JITT Invoice Performance
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Kezdo datum YYYY-MM-DD. Uresen: mai Budapest szerint."
+        required: false
+        default: ""
+      end_date:
+        description: "Zaro datum YYYY-MM-DD. Uresen: start_date vagy mai Budapest szerint."
+        required: false
+        default: ""
+      dry_run:
+        description: "true eseten nem ir DB-be."
+        required: false
+        default: "false"
+  schedule:
+    # GitHub cron UTC-ben fut. Nyari budapesti ido szerint 07:15.
+    - cron: "15 5 * * *"
+
+concurrency:
+  group: daily-jitt-invoice-performance
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      KIFLI_COURIER_HUB_COOKIE: ${{ secrets.KIFLI_COURIER_HUB_COOKIE || secrets.COURIER_HUB_COOKIE }}
+      KIFLI_COURIER_HUB_AUTHORIZATION: ${{ secrets.KIFLI_COURIER_HUB_AUTHORIZATION || secrets.COURIER_HUB_AUTHORIZATION }}
+      KIFLI_COURIER_HUB_API_KEY: ${{ secrets.KIFLI_COURIER_HUB_API_KEY || secrets.COURIER_HUB_API_KEY }}
+      KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON: ${{ secrets.KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$KIFLI_COURIER_HUB_COOKIE$KIFLI_COURIER_HUB_AUTHORIZATION" || (echo "Missing Courier Hub cookie or authorization secret" && exit 1)
+
+      - name: Resolve dates
+        id: dates
+        shell: bash
+        run: |
+          START_DATE="${{ inputs.start_date }}"
+          END_DATE="${{ inputs.end_date }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
+          END_DATE="${END_DATE:-$START_DATE}"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+          echo "START_DATE=$START_DATE"
+          echo "END_DATE=$END_DATE"
+          echo "DRY_RUN=$DRY_RUN"
+
+      - name: Sync daily Courier Hub performance raw
+        run: |
+          CMD=(python scripts/load_jitt_invoice_performance_raw.py --start-date "${{ steps.dates.outputs.start_date }}" --end-date "${{ steps.dates.outputs.end_date }}" --chunk-days 1 --only-missing)
+
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Build daily courier raw table
+        run: |
+          CMD=(python scripts/build_jitt_invoice_performance_daily_raw.py --start-date "${{ steps.dates.outputs.start_date }}" --end-date "${{ steps.dates.outputs.end_date }}")
+
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"

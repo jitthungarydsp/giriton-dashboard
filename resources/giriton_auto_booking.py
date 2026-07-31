@@ -1,8 +1,17 @@
 from datetime import datetime, timedelta
+from pathlib import Path
+import sys
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from resources.foglalasok_db import (
     clean,
@@ -224,3 +233,60 @@ def log_giriton_booking_result(candidate, status, message=""):
 
     raise_for_supabase_error(response)
     return "OK"
+
+
+def read_giriton_booking_log(start_date="", end_date="", limit=500):
+    supabase_url, headers = _supabase_headers()
+
+    if not supabase_url:
+        return pd.DataFrame()
+
+    params = {
+        "select": (
+            "created_at,work_date,courier_id,courier_name,email,warehouse,"
+            "shift_text,shift_start,booking_code,serial,status,message"
+        ),
+        "order": "created_at.desc",
+        "limit": str(int(limit)),
+    }
+
+    if start_date:
+        params["work_date"] = f"gte.{clean(start_date)}"
+
+    if end_date:
+        params["work_date"] = f"lte.{clean(end_date)}"
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{LOG_TABLE}",
+        headers=headers,
+        params=params,
+        timeout=30,
+    )
+
+    if _is_missing_table_response(response):
+        return pd.DataFrame()
+
+    raise_for_supabase_error(response)
+    return pd.DataFrame(response.json())
+
+
+def latest_log_by_serial(log_df):
+    if log_df is None or log_df.empty or "serial" not in log_df.columns:
+        return {}
+
+    rows = log_df.copy()
+    rows["serial"] = rows["serial"].fillna("").astype(str)
+    rows = rows[rows["serial"] != ""]
+
+    if "created_at" in rows.columns:
+        rows = rows.sort_values("created_at", ascending=False)
+
+    latest = {}
+
+    for row in rows.to_dict("records"):
+        serial = clean(row.get("serial"))
+
+        if serial and serial not in latest:
+            latest[serial] = row
+
+    return latest

@@ -13,6 +13,7 @@ scripts/*.bak
 scripts/target_reserve.csv
 
 # Local secret/key helper files
+girition-*.json
 show_vapid_public_key.py
 show_vapid_public_key.py.bak
 vapid_private.pem
