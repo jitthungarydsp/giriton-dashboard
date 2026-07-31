@@ -84,6 +84,9 @@ from page.foglalasok_db import (
 from page.giriton_auto_booking import (
     show_giriton_auto_booking_page,
 )
+from page.jitt_muszak import (
+    show_jitt_muszak_page,
+)
 from page.settings import (
     show_settings_page,
 )
@@ -136,6 +139,7 @@ if user["role"] == "admin":
         "Beállítások",
         "Robotok",
         "DB proba",
+        "JITT muszak admin",
         "Giriton Auto Booking",
         "Giriton muszakok DB",
         "Foglalasok DB",
@@ -223,6 +227,8 @@ elif page == "Robotok":
     show_robots_page()
 elif page == "DB proba":
     show_db_probe_page()
+elif page == "JITT muszak admin":
+    show_jitt_muszak_page()
 elif page == "Giriton Auto Booking":
     show_giriton_auto_booking_page()
 elif page == "Giriton muszakok DB":
