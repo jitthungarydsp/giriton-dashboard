@@ -350,25 +350,35 @@ Add Courier To Shift Subscription
     ...    STEP_SUBSCRIBED_TAB_START
     ...    Subscribed users ful megnyitasa indul.
 
-    ${tab_result}=    Execute Javascript
-    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
-    ...    const normalize=value => String(value || '').trim().split(' ').filter(Boolean).join(' ');
-    ...    const clickReal=function(el){
-    ...      el.scrollIntoView({block:'center', inline:'center'});
-    ...      const rect=el.getBoundingClientRect();
-    ...      const x=rect.left + rect.width / 2;
-    ...      const y=rect.top + rect.height / 2;
-    ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
-    ...        el.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
-    ...      });
-    ...    };
-    ...    const labels=[...document.querySelectorAll('.v-window .v-captiontext, .v-window .v-tabsheet-tabitem, .v-window td, .v-window div, .v-window span')].filter(visible);
-    ...    const label=labels.find(el => normalize(el.innerText || el.textContent).startsWith('Subscribed users'));
-    ...    if(!label){return 'NOT_FOUND';}
-    ...    const tab=label.closest('.v-tabsheet-tabitemcell, .v-tabsheet-tabitem, td') || label;
-    ...    clickReal(tab);
-    ...    clickReal(label);
-    ...    return 'OK';
+    ${selenium_tab_clicked}=    Run Keyword And Return Status
+    ...    Click Element
+    ...    xpath=(//div[contains(@class,'v-window')]//*[normalize-space(.)='Subscribed users (0)' or starts-with(normalize-space(.), 'Subscribed users')])[last()]
+    ${tab_result}=    Set Variable If    ${selenium_tab_clicked}    OK    NOT_FOUND
+
+    IF    '${tab_result}' != 'OK'
+        ${tab_result}=    Execute Javascript
+        ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+        ...    const normalize=value => String(value || '').trim().split(' ').filter(Boolean).join(' ');
+        ...    const area=el => el.getBoundingClientRect().width * el.getBoundingClientRect().height;
+        ...    const clickReal=function(el){
+        ...      el.scrollIntoView({block:'center', inline:'center'});
+        ...      const rect=el.getBoundingClientRect();
+        ...      const x=rect.left + rect.width / 2;
+        ...      const y=rect.top + rect.height / 2;
+        ...      const real=document.elementFromPoint(x, y) || el;
+        ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
+        ...        real.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+        ...      });
+        ...    };
+        ...    const labels=[...document.querySelectorAll('.v-window .v-captiontext, .v-window .v-tabsheet-tabitem, .v-window td, .v-window div, .v-window span')].filter(visible);
+        ...    labels.sort((a,b) => area(a) - area(b));
+        ...    const label=labels.find(el => normalize(el.innerText || el.textContent).startsWith('Subscribed users'));
+        ...    if(!label){return 'NOT_FOUND';}
+        ...    const tab=label.closest('.v-tabsheet-tabitemcell, .v-tabsheet-tabitem, td') || label;
+        ...    clickReal(tab);
+        ...    clickReal(label);
+        ...    return 'OK';
+    END
 
     IF    '${tab_result}' != 'OK'
         Log Auto Booking Step
