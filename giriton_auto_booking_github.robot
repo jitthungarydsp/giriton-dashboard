@@ -174,10 +174,19 @@ Giriton Auto Booking From Foglalasok
             ...    shift_not_found
             Capture Page Screenshot    ${not_found_screenshot}
 
+            ${final_status}=    Set Variable If
+            ...    '${result}' == 'SHIFT_NOT_EMPTY'
+            ...    SHIFT_NOT_EMPTY
+            ...    SHIFT_NOT_FOUND
+            ${final_message}=    Set Variable If
+            ...    '${result}' == 'SHIFT_NOT_EMPTY'
+            ...    Megtalaltam a muszakot, de nem 0/X foglaltsagu, ezert nem foglalok. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
+            ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
+
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
             ...    ${candidate}
-            ...    SHIFT_NOT_FOUND
-            ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
+            ...    ${final_status}
+            ...    ${final_message}
         END
 
         Log To Console    AUTO_BOOK_RESULT=${result} LOG=${log_result}
@@ -200,29 +209,39 @@ Log Auto Booking Step
 Beallit Giriton Datum
     [Arguments]    ${datum_giriton}
 
-    Click Element
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-
-    Press Keys
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    CTRL+A
-
-    Input Text
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ${set_result}=    Execute Javascript
+    ...    const expected=String(arguments[0] || '').trim();
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const inputs=[...document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"]')].filter(visible);
+    ...    const dateRegex=/^\d{1,2}\/\d{1,2}\/\d{4}$/;
+    ...    const candidates=inputs.filter(input => {
+    ...      const value=String(input.value || '').trim();
+    ...      const placeholder=String(input.getAttribute('placeholder') || '').trim();
+    ...      return dateRegex.test(value) || dateRegex.test(placeholder) || input.closest('.v-datefield');
+    ...    });
+    ...    const input=candidates.find(item => dateRegex.test(String(item.value || '').trim())) || candidates[0] || inputs[0];
+    ...    if(!input){return 'DATE_INPUT_NOT_FOUND';}
+    ...    input.scrollIntoView({block:'center', inline:'nearest'});
+    ...    input.focus();
+    ...    input.value=expected;
+    ...    input.dispatchEvent(new Event('input', {bubbles:true}));
+    ...    input.dispatchEvent(new Event('change', {bubbles:true}));
+    ...    input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', bubbles:true}));
+    ...    input.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter', code:'Enter', bubbles:true}));
+    ...    input.blur();
+    ...    input.setAttribute('data-auto-book-date-target','true');
+    ...    return input.value || '';
     ...    ${datum_giriton}
 
-    Press Keys
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    ENTER
-
-    Execute Javascript
-    ...    document.activeElement && document.activeElement.blur && document.activeElement.blur();
+    Should Not Be Equal As Strings
+    ...    ${set_result}
+    ...    DATE_INPUT_NOT_FOUND
 
     Sleep    4s
 
-    ${actual}=    Get Element Attribute
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    value
+    ${actual}=    Execute Javascript
+    ...    const input=document.querySelector('input[data-auto-book-date-target="true"]');
+    ...    return input ? String(input.value || '').trim() : '';
 
     Should Be Equal As Strings
     ...    ${actual}
@@ -244,6 +263,7 @@ Find Giriton Shift Card
         ...    const dryRun=String(arguments[2] || 'true').toLowerCase() !== 'false';
         ...    const normalize=(value)=>String(value || '').replace(/\s+/g,' ').trim();
         ...    const startVariants=[`${warehouse}_${start}`, `${start}:1k`, `${start}:`, `${start} -`, `${start}-`].map(normalize);
+        ...    const occupancyRegex=/(^|[^0-9])0\s*\/\s*[1-9][0-9]*([^0-9]|$)/;
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    for(const title of titles){
         ...      let node=title;
@@ -251,6 +271,7 @@ Find Giriton Shift Card
         ...        const text=normalize(node.innerText || '');
         ...        if(!text.includes(warehouse)){continue;}
         ...        if(!startVariants.some(item => item && text.includes(item))){continue;}
+        ...        if(!occupancyRegex.test(text)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        title.click();
@@ -305,8 +326,10 @@ Add Courier To Shift Subscription
     ...    Subscribed users ful megnyitasa indul.
 
     ${tab_result}=    Execute Javascript
-    ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"]')];
-    ...    const tab=tabs.find(el => (el.innerText || '').includes('Subscribed users') && el.offsetWidth >= 0);
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const normalize=value => String(value || '').replace(/\s+/g,' ').trim();
+    ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"], label, div')].filter(visible);
+    ...    const tab=tabs.find(el => normalize(el.innerText || el.textContent).includes('Subscribed users'));
     ...    if(tab){tab.click(); return 'OK';}
     ...    return 'NOT_FOUND';
 
@@ -419,6 +442,9 @@ Add Courier To Shift Subscription
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    ${search_text}
 
+    Execute Javascript
+    ...    const field=document.querySelector('#SearchField-tfTextSearch'); if(field){field.dispatchEvent(new Event('input',{bubbles:true})); field.dispatchEvent(new Event('change',{bubbles:true})); field.blur();}
+
     Sleep    2s
 
     Log Auto Booking Step
@@ -433,7 +459,8 @@ Add Courier To Shift Subscription
     ...    const userNumber=courierId ? `D${courierId}` : '';
     ...    const nameParts=courierName.split(/\s+/).filter(Boolean);
     ...    const reversedName=nameParts.length > 1 ? `${nameParts.slice(1).join(' ')} ${nameParts[0]}` : courierName;
-    ...    const dialogs=[...document.querySelectorAll('.v-window')];
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const dialog=dialogs[dialogs.length - 1] || document;
     ...    const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"]')];
     ...    const row=rows.find(item => {
@@ -446,6 +473,7 @@ Add Courier To Shift Subscription
     ...      return false;
     ...    });
     ...    if(!row){return 'NOT_FOUND';}
+    ...    row.scrollIntoView({block:'center', inline:'nearest'});
     ...    const checkbox=row.querySelector('input[type="checkbox"]');
     ...    if(checkbox){checkbox.click(); return 'OK';}
     ...    row.click();
