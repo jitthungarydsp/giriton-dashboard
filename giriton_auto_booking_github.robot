@@ -168,6 +168,13 @@ Giriton Auto Booking From Foglalasok
             ...    A Giriton muszakkartya megvan, a futar hozzaadasi folyamat lefutott. Screenshot: ${loaded_screenshot}, ${booking_screenshot}
 
             Close Giriton Popup
+
+            ${booking_ok}=    Evaluate
+            ...    '${add_result}' in ['COURIER_ADDED', 'ALREADY_BOOKED']
+            IF    not ${booking_ok}
+                Fail
+                ...    Eles Giriton foglalas sikertelen: ${add_result}
+            END
         ELSE
             ${not_found_screenshot}=    giriton_auto_booking.Build Screenshot Name
             ...    ${candidate}
@@ -274,7 +281,13 @@ Find Giriton Shift Card
         ...        if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
-        ...        title.click();
+        ...        const clickable=node || title;
+        ...        clickable.setAttribute('data-auto-book-clicked-shift','true');
+        ...        clickable.scrollIntoView({block:'center', inline:'nearest'});
+        ...        ['mouseover','mousedown','mouseup','click'].forEach(function(type){
+        ...          clickable.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+        ...        });
+        ...        if(title !== clickable){title.click();}
         ...        return 'FOUND_CLICKED';
         ...      }
         ...    }
@@ -312,9 +325,10 @@ Add Courier To Shift Subscription
     ...    STEP_POPUP_WAIT_START
     ...    Shift subscription popup betoltesere var.
 
-    Wait Until Page Contains
-    ...    Shift subscription
-    ...    timeout=20s
+    Wait Until Keyword Succeeds
+    ...    10x
+    ...    1s
+    ...    Giriton Shift Popup Should Be Open
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -387,15 +401,21 @@ Add Courier To Shift Subscription
     ...    Zold plusz gomb keresese/megnyomasa indul.
 
     ${plus_result}=    Execute Javascript
-    ...    const windows=[...document.querySelectorAll('.v-window')];
-    ...    const win=windows[windows.length - 1] || document;
-    ...    const buttons=[...win.querySelectorAll('.v-button')];
-    ...    const plus=buttons.find(button => {
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
+    ...    const textOf=function(el){return String(el.innerText || el.textContent || el.getAttribute('title') || el.getAttribute('aria-label') || el.id || el.className || '').trim();};
+    ...    const overlays=Array.from(document.querySelectorAll('.v-window, [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
+    ...    const win=overlays.find(function(el){return textOf(el).includes('Subscribed users') || textOf(el).includes('Available users') || textOf(el).includes('Search');}) || overlays[overlays.length - 1] || document;
+    ...    const xpathFirst=document.evaluate('//*[@id="gwt-uid-69"]/div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    ...    const candidates=[xpathFirst].filter(Boolean).concat(Array.from(win.querySelectorAll('.v-button, [role="button"], button, span, div')).filter(visible));
+    ...    const plus=candidates.find(function(button){
     ...      const style=getComputedStyle(button);
-    ...      const cls=String(button.className || '');
-    ...      return button.offsetWidth > 0 && button.offsetHeight > 0 && (cls.includes('friendly') || cls.includes('v-button-friendly') || style.backgroundColor.includes('76, 175, 80'));
+    ...      const cls=String(button.className || '').toLowerCase();
+    ...      const label=textOf(button).toLowerCase();
+    ...      const small=button.offsetWidth <= 80 && button.offsetHeight <= 80;
+    ...      return small && (label === '+' || label.includes('add') || label.includes('new') || label.includes('plus') || cls.includes('plus') || cls.includes('add') || cls.includes('friendly') || style.backgroundColor.includes('76, 175, 80'));
     ...    });
     ...    if(!plus){return 'NOT_FOUND';}
+    ...    plus.scrollIntoView({block:'center', inline:'nearest'});
     ...    plus.click();
     ...    return 'OK';
 
@@ -554,9 +574,23 @@ Add Courier To Shift Subscription
     RETURN    ${verify_result}
 
 
+Giriton Shift Popup Should Be Open
+    ${popup_state}=    Execute Javascript
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
+    ...    const textOf=function(el){return String(el.innerText || el.textContent || '').trim();};
+    ...    const overlays=Array.from(document.querySelectorAll('.v-window, [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
+    ...    const popup=overlays.find(function(el){const text=textOf(el); return text.includes('Subscribed users') || text.includes('Available users') || text.includes('Search');});
+    ...    if(popup){popup.setAttribute('data-auto-book-popup-root','true'); return 'POPUP_OPEN';}
+    ...    return 'POPUP_NOT_OPEN';
+
+    Should Be Equal As Strings
+    ...    ${popup_state}
+    ...    POPUP_OPEN
+
+
 Close Giriton Popup
     ${result}=    Execute Javascript
-    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const windows=[...document.querySelectorAll('.v-window, [data-auto-book-popup-root="true"]')];
     ...    const win=windows[windows.length - 1];
     ...    if(!win){return 'NO_WINDOW';}
     ...    const close=win.querySelector('.v-window-closebox');
