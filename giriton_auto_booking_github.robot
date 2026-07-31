@@ -210,18 +210,18 @@ Beallit Giriton Datum
     [Arguments]    ${datum_giriton}
 
     ${set_result}=    Execute Javascript
-    ...    const expected=String(arguments[0] || '').trim();
-    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
-    ...    const inputs=[...document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"]')].filter(visible);
-    ...    const dateRegex=/^\d{1,2}\/\d{1,2}\/\d{4}$/;
-    ...    const candidates=inputs.filter(input => {
+    ...    const expected=String('${datum_giriton}').trim();
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
+    ...    const looksLikeDate=function(value){value=String(value || '').trim(); return value.indexOf('/') > -1 && value.length >= 8 && value.length <= 10;};
+    ...    const inputs=Array.from(document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"]')).filter(visible);
+    ...    const candidates=inputs.filter(function(input){
     ...      const value=String(input.value || '').trim();
     ...      const placeholder=String(input.getAttribute('placeholder') || '').trim();
-    ...      return dateRegex.test(value) || dateRegex.test(placeholder) || input.closest('.v-datefield');
+    ...      return looksLikeDate(value) || looksLikeDate(placeholder) || input.closest('.v-datefield');
     ...    });
-    ...    const input=candidates.find(item => dateRegex.test(String(item.value || '').trim())) || candidates[0] || inputs[0];
+    ...    const input=candidates.find(function(item){return looksLikeDate(item.value);}) || candidates[0] || inputs[0];
     ...    if(!input){return 'DATE_INPUT_NOT_FOUND';}
-    ...    input.scrollIntoView({block:'center', inline:'nearest'});
+    ...    input.scrollIntoView();
     ...    input.focus();
     ...    input.value=expected;
     ...    input.dispatchEvent(new Event('input', {bubbles:true}));
@@ -231,7 +231,6 @@ Beallit Giriton Datum
     ...    input.blur();
     ...    input.setAttribute('data-auto-book-date-target','true');
     ...    return input.value || '';
-    ...    ${datum_giriton}
 
     Should Not Be Equal As Strings
     ...    ${set_result}
