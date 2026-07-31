@@ -577,7 +577,10 @@ Add Courier To Shift Subscription
 Giriton Shift Popup Should Be Open
     ${popup_state}=    Execute Javascript
     ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
-    ...    const textOf=function(el){return String(el.innerText || el.textContent || '').trim();};
+    ...    const textOf=function(el){return String(el.innerText || el.textContent || '').trim().split(' ').filter(Boolean).join(' ');};
+    ...    const bodyText=textOf(document.body);
+    ...    if(document.querySelector('#SearchField-tfTextSearch')){return 'POPUP_OPEN';}
+    ...    if(bodyText.includes('Shift subscription') || bodyText.includes('Subscribed users') || bodyText.includes('Available users')){return 'POPUP_OPEN';}
     ...    const overlays=Array.from(document.querySelectorAll('.v-window, [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
     ...    const popup=overlays.find(function(el){const text=textOf(el); return text.includes('Subscribed users') || text.includes('Available users') || text.includes('Search');});
     ...    if(popup){popup.setAttribute('data-auto-book-popup-root','true'); return 'POPUP_OPEN';}
