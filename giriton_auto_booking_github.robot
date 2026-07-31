@@ -273,12 +273,19 @@ Find Giriton Shift Card
         ...    const baseMinutes=toMinutes(start);
         ...    const offsets=[0,-15,15,-30,30];
         ...    const targetTimes=baseMinutes === null ? [start] : offsets.flatMap(function(offset){const minute=baseMinutes+offset; const padded=toTime(minute,true); const plain=toTime(minute,false); return padded === plain ? [plain] : [padded, plain];});
-        ...    const startVariants=targetTimes.flatMap(function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'];}).map(normalize);
+        ...    const exactTimes=baseMinutes === null ? [start] : (function(){const padded=toTime(baseMinutes,true); const plain=toTime(baseMinutes,false); return padded === plain ? [plain] : [padded, plain];})();
+        ...    const fallbackTimes=targetTimes.filter(function(time){return !exactTimes.includes(time);});
+        ...    const variantFor=function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'].map(normalize);};
         ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); for(let i=1;i<=99;i++){if(compact.includes('0/' + i)){return true;}} return false;};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
+        ...    const exactAvailable=titles.some(function(title){
+        ...      const titleText=normalize(title.innerText || '');
+        ...      return exactTimes.some(function(time){return variantFor(time).some(item => item && titleText.includes(item));});
+        ...    });
+        ...    const scanTimes=exactAvailable ? exactTimes : targetTimes;
         ...    for(const title of titles){
         ...      const titleText=normalize(title.innerText || '');
-        ...      if(!startVariants.some(item => item && titleText.includes(item))){continue;}
+        ...      if(!scanTimes.some(function(time){return variantFor(time).some(item => item && titleText.includes(item));})){continue;}
         ...      let card=null;
         ...      for(let node=title, depth=0; node && depth<8; depth++, node=node.parentElement){
         ...        const text=normalize(node.innerText || '');
@@ -287,7 +294,7 @@ Find Giriton Shift Card
         ...      }
         ...      if(!card){continue;}
         ...      const text=normalize(card.innerText || '');
-        ...      const matchedTime=targetTimes.find(function(time){return titleText.includes(time + ':1k') || titleText.includes(time + ':') || titleText.includes(time + ' -') || titleText.includes(time + '-');}) || start;
+        ...      const matchedTime=scanTimes.find(function(time){return titleText.includes(time + ':1k') || titleText.includes(time + ':') || titleText.includes(time + ' -') || titleText.includes(time + '-');}) || start;
         ...      const compactText=text.replaceAll(' ', '');
         ...      if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
