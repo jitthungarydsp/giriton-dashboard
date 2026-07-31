@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+import os
+import platform
 import subprocess
 
 import pandas as pd
@@ -13,6 +15,19 @@ from resources.giriton_auto_booking import (
 
 
 ROBOT_FILE = PROJECT_ROOT / "giriton_auto_booking_github.robot"
+
+
+def _can_run_robot_locally():
+    if os.getenv("ALLOW_STREAMLIT_ROBOT_RUN") == "true":
+        return True
+
+    system = platform.system().lower()
+    project_text = str(PROJECT_ROOT).replace("\\", "/")
+
+    if system == "linux" and project_text.startswith("/home/appuser"):
+        return False
+
+    return True
 
 
 def _date_text(value):
@@ -196,14 +211,30 @@ def show_giriton_auto_booking_page():
         selected_serial = candidate_options.get(selected_label, "")
 
     st.subheader("Robot futtatas")
+    can_run_robot = _can_run_robot_locally()
     dry_command = _robot_command(start_date, end_date, True, selected_serial)
     live_command = _robot_command(start_date, end_date, False, selected_serial)
 
     st.code(_command_text(dry_command), language="powershell")
 
+    if not can_run_robot:
+        st.error(
+            "Ez a Streamlit host nem tud Giriton robotot futtatni, mert nincs hasznalhato Chrome/ChromeDriver kornyezete. "
+            "A robotot helyi Windows gepen vagy GitHub Actionsbol inditsd."
+        )
+        st.info(
+            "GitHub Actions: Giriton Auto Booking workflow -> Run workflow. "
+            "Az oldal itt csak elokeszitesre, jeloltvalasztasra es log olvasasra hasznalhato."
+        )
+
     run_col1, run_col2 = st.columns([1, 2])
 
-    if run_col1.button("Dry-run inditas", type="primary", use_container_width=True):
+    if run_col1.button(
+        "Dry-run inditas",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_run_robot,
+    ):
         with st.spinner("Giriton auto booking dry-run fut..."):
             result = _run_robot(start_date, end_date, True, selected_serial)
 
@@ -218,6 +249,7 @@ def show_giriton_auto_booking_page():
     enable_live = run_col2.checkbox(
         "Eles foglalas engedelyezese a kivalasztott emberre",
         key="giriton_auto_booking_enable_live",
+        disabled=not can_run_robot,
     )
 
     if enable_live:
