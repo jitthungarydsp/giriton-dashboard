@@ -268,7 +268,12 @@ Find Giriton Shift Card
         ...    const start=String(arguments[1] || '').trim();
         ...    const dryRun=String(arguments[2] || 'true').toLowerCase() !== 'false';
         ...    const normalize=function(value){return String(value || '').trim().split(' ').filter(Boolean).join(' ');};
-        ...    const startVariants=[warehouse + '_' + start, start + ':1k', start + ':', start + ' -', start + '-'].map(normalize);
+        ...    const toMinutes=function(value){const parts=String(value || '').split(':'); if(parts.length<2){return null;} const h=parseInt(parts[0],10); const m=parseInt(parts[1],10); if(Number.isNaN(h) || Number.isNaN(m)){return null;} return h*60+m;};
+        ...    const toTime=function(total, padHour){total=(total+1440)%1440; const h=Math.floor(total/60); const m=total%60; const hh=padHour && h<10 ? '0'+h : String(h); const mm=m<10 ? '0'+m : String(m); return hh + ':' + mm;};
+        ...    const baseMinutes=toMinutes(start);
+        ...    const offsets=[0,-15,15,-30,30];
+        ...    const targetTimes=baseMinutes === null ? [start] : offsets.flatMap(function(offset){const minute=baseMinutes+offset; const padded=toTime(minute,true); const plain=toTime(minute,false); return padded === plain ? [plain] : [padded, plain];});
+        ...    const startVariants=targetTimes.flatMap(function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'];}).map(normalize);
         ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); for(let i=1;i<=99;i++){if(compact.includes('0/' + i)){return true;}} return false;};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    for(const title of titles){
@@ -277,12 +282,14 @@ Find Giriton Shift Card
         ...        const text=normalize(node.innerText || '');
         ...        if(!text.includes(warehouse)){continue;}
         ...        if(!startVariants.some(item => item && text.includes(item))){continue;}
+        ...        const matchedTime=targetTimes.find(function(time){return text.includes(warehouse + '_' + time) || text.includes(time + ':1k') || text.includes(time + ':') || text.includes(time + ' -') || text.includes(time + '-');}) || start;
         ...        const compactText=text.replaceAll(' ', '');
         ...        if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        const clickable=node || title;
         ...        clickable.setAttribute('data-auto-book-clicked-shift','true');
+        ...        clickable.setAttribute('data-auto-book-matched-shift-start', matchedTime);
         ...        clickable.scrollIntoView({block:'center', inline:'nearest'});
         ...        ['mouseover','mousedown','mouseup','click'].forEach(function(type){
         ...          clickable.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
