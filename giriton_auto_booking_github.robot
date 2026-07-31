@@ -260,9 +260,9 @@ Find Giriton Shift Card
         ...    const warehouse=String(arguments[0] || '').trim().toUpperCase();
         ...    const start=String(arguments[1] || '').trim();
         ...    const dryRun=String(arguments[2] || 'true').toLowerCase() !== 'false';
-        ...    const normalize=(value)=>String(value || '').replace(/\s+/g,' ').trim();
+        ...    const normalize=function(value){return String(value || '').trim().split(' ').filter(Boolean).join(' ');};
         ...    const startVariants=[warehouse + '_' + start, start + ':1k', start + ':', start + ' -', start + '-'].map(normalize);
-        ...    const occupancyRegex=/(^|[^0-9])0\/[1-9][0-9]*([^0-9]|$)/;
+        ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); for(let i=1;i<=99;i++){if(compact.includes('0/' + i)){return true;}} return false;};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    for(const title of titles){
         ...      let node=title;
@@ -271,7 +271,7 @@ Find Giriton Shift Card
         ...        if(!text.includes(warehouse)){continue;}
         ...        if(!startVariants.some(item => item && text.includes(item))){continue;}
         ...        const compactText=text.replaceAll(' ', '');
-        ...        if(!occupancyRegex.test(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
+        ...        if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        title.click();
@@ -285,6 +285,7 @@ Find Giriton Shift Card
         ...      return 'CONTINUE';
         ...    }
         ...    return 'NOT_FOUND';
+        ...    ARGUMENTS
         ...    ${warehouse}
         ...    ${shift_start}
         ...    ${dry_run}
@@ -327,7 +328,7 @@ Add Courier To Shift Subscription
 
     ${tab_result}=    Execute Javascript
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
-    ...    const normalize=value => String(value || '').replace(/\s+/g,' ').trim();
+    ...    const normalize=value => String(value || '').trim().split(' ').filter(Boolean).join(' ');
     ...    const tabs=[...document.querySelectorAll('.v-tabsheet-tabitem, .v-caption, .v-captiontext, td[role="tab"], label, div')].filter(visible);
     ...    const tab=tabs.find(el => normalize(el.innerText || el.textContent).includes('Subscribed users'));
     ...    if(tab){tab.click(); return 'OK';}
@@ -363,6 +364,7 @@ Add Courier To Shift Subscription
     ...    if(userNumber && text.includes(userNumber)){return 'YES';}
     ...    if(courierName && text.toLowerCase().includes(courierName.toLowerCase())){return 'YES';}
     ...    return 'NO';
+    ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
 
@@ -457,14 +459,14 @@ Add Courier To Shift Subscription
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
     ...    const email=String(arguments[2] || '').trim().toLowerCase();
     ...    const userNumber=courierId ? 'D' + courierId : '';
-    ...    const nameParts=courierName.split(/\s+/).filter(Boolean);
+    ...    const nameParts=courierName.split(' ').filter(Boolean);
     ...    const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
     ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const dialog=dialogs[dialogs.length - 1] || document;
     ...    const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"]')];
     ...    const row=rows.find(item => {
-    ...      const text=(item.innerText || '').replace(/\s+/g,' ').trim();
+    ...      const text=(item.innerText || '').trim().split(' ').filter(Boolean).join(' ');
     ...      const lower=text.toLowerCase();
     ...      if(userNumber && text.includes(userNumber)){return true;}
     ...      if(courierName && lower.includes(courierName)){return true;}
@@ -478,6 +480,7 @@ Add Courier To Shift Subscription
     ...    if(checkbox){checkbox.click(); return 'OK';}
     ...    row.click();
     ...    return 'OK';
+    ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
     ...    ${email}
@@ -539,6 +542,7 @@ Add Courier To Shift Subscription
     ...    if(userNumber && raw.includes(userNumber)){return 'COURIER_ADDED';}
     ...    if(courierName && text.includes(courierName)){return 'COURIER_ADDED';}
     ...    return 'COURIER_SELECTED_NOT_VERIFIED';
+    ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
 
