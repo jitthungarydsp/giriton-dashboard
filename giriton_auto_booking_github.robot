@@ -285,16 +285,19 @@ Find Giriton Shift Card
         ...        const matchedTime=targetTimes.find(function(time){return text.includes(warehouse + '_' + time) || text.includes(time + ':1k') || text.includes(time + ':') || text.includes(time + ' -') || text.includes(time + '-');}) || start;
         ...        const compactText=text.replaceAll(' ', '');
         ...        if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
+        ...        const card=node || title;
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
-        ...        const clickable=node || title;
-        ...        clickable.setAttribute('data-auto-book-clicked-shift','true');
-        ...        clickable.setAttribute('data-auto-book-matched-shift-start', matchedTime);
-        ...        clickable.scrollIntoView({block:'center', inline:'nearest'});
-        ...        ['mouseover','mousedown','mouseup','click'].forEach(function(type){
-        ...          clickable.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
-        ...        });
-        ...        if(title !== clickable){title.click();}
+        ...        card.setAttribute('data-auto-book-clicked-shift','true');
+        ...        card.setAttribute('data-auto-book-matched-shift-start', matchedTime);
+        ...        const clickables=[title].concat(Array.from(card.querySelectorAll('.subscribed-persons-label, .v-label, .v-progressbar, .v-progressbar-wrapper, .v-progressbar-indicator, div, span')).filter(function(el){return el.offsetWidth > 0 && el.offsetHeight > 0;}));
+        ...        for(const clickable of clickables.slice(0,12)){
+        ...          clickable.scrollIntoView({block:'center', inline:'nearest'});
+        ...          ['mouseover','mousemove','mousedown','mouseup','click','dblclick'].forEach(function(type){
+        ...            clickable.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+        ...          });
+        ...          if(document.querySelector('.v-window, [data-auto-book-popup-root="true"], #SearchField-tfTextSearch')){return 'FOUND_CLICKED';}
+        ...        }
         ...        return 'FOUND_CLICKED';
         ...      }
         ...    }
@@ -585,10 +588,8 @@ Giriton Shift Popup Should Be Open
     ${popup_state}=    Execute Javascript
     ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
     ...    const textOf=function(el){return String(el.innerText || el.textContent || '').trim().split(' ').filter(Boolean).join(' ');};
-    ...    const bodyText=textOf(document.body);
     ...    if(document.querySelector('#SearchField-tfTextSearch')){return 'POPUP_OPEN';}
-    ...    if(bodyText.includes('Shift subscription') || bodyText.includes('Subscribed users') || bodyText.includes('Available users')){return 'POPUP_OPEN';}
-    ...    const overlays=Array.from(document.querySelectorAll('.v-window, [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
+    ...    const overlays=Array.from(document.querySelectorAll('.v-window, [data-auto-book-popup-root="true"], [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
     ...    const popup=overlays.find(function(el){const text=textOf(el); return text.includes('Subscribed users') || text.includes('Available users') || text.includes('Search');});
     ...    if(popup){popup.setAttribute('data-auto-book-popup-root','true'); return 'POPUP_OPEN';}
     ...    return 'POPUP_NOT_OPEN';
