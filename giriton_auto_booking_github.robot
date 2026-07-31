@@ -277,15 +277,19 @@ Find Giriton Shift Card
         ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); for(let i=1;i<=99;i++){if(compact.includes('0/' + i)){return true;}} return false;};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    for(const title of titles){
-        ...      let node=title;
-        ...      for(let depth=0; node && depth<8; depth++, node=node.parentElement){
+        ...      const titleText=normalize(title.innerText || '');
+        ...      if(!startVariants.some(item => item && titleText.includes(item))){continue;}
+        ...      let card=null;
+        ...      for(let node=title, depth=0; node && depth<8; depth++, node=node.parentElement){
         ...        const text=normalize(node.innerText || '');
-        ...        if(!text.includes(warehouse)){continue;}
-        ...        if(!startVariants.some(item => item && text.includes(item))){continue;}
-        ...        const matchedTime=targetTimes.find(function(time){return text.includes(warehouse + '_' + time) || text.includes(time + ':1k') || text.includes(time + ':') || text.includes(time + ' -') || text.includes(time + '-');}) || start;
-        ...        const compactText=text.replaceAll(' ', '');
-        ...        if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
-        ...        const card=node || title;
+        ...        const panelCount=node.querySelectorAll ? node.querySelectorAll('div.panel-title').length : 0;
+        ...        if(text.includes(warehouse) && panelCount <= 1){card=node; break;}
+        ...      }
+        ...      if(!card){continue;}
+        ...      const text=normalize(card.innerText || '');
+        ...      const matchedTime=targetTimes.find(function(time){return titleText.includes(time + ':1k') || titleText.includes(time + ':') || titleText.includes(time + ' -') || titleText.includes(time + '-');}) || start;
+        ...      const compactText=text.replaceAll(' ', '');
+        ...      if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        card.setAttribute('data-auto-book-clicked-shift','true');
@@ -299,7 +303,6 @@ Find Giriton Shift Card
         ...          if(document.querySelector('.v-window, [data-auto-book-popup-root="true"], #SearchField-tfTextSearch')){return 'FOUND_CLICKED';}
         ...        }
         ...        return 'FOUND_CLICKED';
-        ...      }
         ...    }
         ...    const scrollables=[...document.querySelectorAll('*')].filter(e=>e.scrollHeight>e.clientHeight);
         ...    const biggest=scrollables.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0];
@@ -329,6 +332,7 @@ Add Courier To Shift Subscription
     ${courier_name}=    Set Variable    ${candidate}[courier_name]
     ${courier_id}=      Set Variable    ${candidate}[courier_id]
     ${email}=           Set Variable    ${candidate}[email]
+    ${shift_start}=     Set Variable    ${candidate}[shift_start]
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -344,6 +348,28 @@ Add Courier To Shift Subscription
     ...    ${candidate}
     ...    STEP_POPUP_WAIT_DONE
     ...    Shift subscription popup betoltott.
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_POPUP_SHIFT_VERIFY_START
+    ...    Popup muszak ellenorzese indul: ${shift_start}
+
+    ${popup_shift_result}=    Verify Giriton Popup Shift
+    ...    ${shift_start}
+
+    IF    '${popup_shift_result}' != 'OK'
+        Log Auto Booking Step
+        ...    ${candidate}
+        ...    STEP_POPUP_SHIFT_VERIFY_FAILED
+        ...    Rossz muszak popup nyilt meg: ${popup_shift_result}
+        Close Giriton Popup
+        RETURN    WRONG_SHIFT_POPUP
+    END
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_POPUP_SHIFT_VERIFY_DONE
+    ...    Popup muszak ellenorzes rendben.
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -645,6 +671,27 @@ Add Courier To Shift Subscription
     ...    Foglalas ellenorzes eredmenye: ${verify_result}
 
     RETURN    ${verify_result}
+
+
+Verify Giriton Popup Shift
+    [Arguments]    ${shift_start}
+    ${result}=    Execute Javascript
+    ...    const start=String(arguments[0] || '').trim();
+    ...    const toMinutes=function(value){const parts=String(value || '').split(':'); if(parts.length<2){return null;} const h=parseInt(parts[0],10); const m=parseInt(parts[1],10); if(Number.isNaN(h) || Number.isNaN(m)){return null;} return h*60+m;};
+    ...    const toTime=function(total, padHour){total=(total+1440)%1440; const h=Math.floor(total/60); const m=total%60; const hh=padHour && h<10 ? '0'+h : String(h); const mm=m<10 ? '0'+m : String(m); return hh + ':' + mm;};
+    ...    const base=toMinutes(start);
+    ...    const offsets=[0,-15,15,-30,30];
+    ...    const allowed=base === null ? [start] : offsets.flatMap(function(offset){const minute=base+offset; const padded=toTime(minute,true); const plain=toTime(minute,false); return padded === plain ? [plain] : [padded, plain];});
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const windows=[...document.querySelectorAll('.v-window')].filter(visible);
+    ...    const win=windows[windows.length - 1];
+    ...    if(!win){return 'NO_WINDOW';}
+    ...    const field=[...win.querySelectorAll('input, .v-filterselect-input, .v-select-select, .v-label, div, span')].filter(visible).map(el => String(el.value || el.innerText || el.textContent || '').trim()).find(text => text.includes('körös') || text.includes('koros') || allowed.some(time => text.includes(time + ':1k') || text.includes(time + '-1') || text.includes(time + ' -')));
+    ...    const text=field || String(win.innerText || '');
+    ...    return allowed.some(time => text.includes(time + ':1k') || text.includes(time + '-1') || text.includes(time + ' -') || text.includes(time + '-')) ? 'OK' : 'POPUP_SHIFT_MISMATCH=' + text.slice(0,120);
+    ...    ARGUMENTS
+    ...    ${shift_start}
+    RETURN    ${result}
 
 
 Giriton Shift Popup Should Be Open
