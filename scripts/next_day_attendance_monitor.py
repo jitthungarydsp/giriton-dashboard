@@ -267,6 +267,11 @@ def main():
         help="Snapshot modban hany napot toltsunk le a kezdodattol.",
     )
     parser.add_argument("--grace-minutes", type=int, default=30)
+    parser.add_argument(
+        "--allow-missing-snapshot",
+        action="store_true",
+        help="Compare modban ne hibazzon, ha meg nincs elozo snapshot az adott napra.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -343,6 +348,9 @@ def main():
     payload = fetch_attendance(target_date)
     snapshot_json = load_snapshot(target_date)
     if not snapshot_json:
+        if args.allow_missing_snapshot:
+            print(f"COMPARE_SKIPPED missing_snapshot date={target_date}")
+            return
         raise RuntimeError(f"Nincs elozo napi snapshot ehhez a naphoz: {target_date}")
     snapshot_rows = flatten_snapshot(
         snapshot_json.get("api_payload") or {},

@@ -1,0 +1,140 @@
+name: Daily DSP Data Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      work_date:
+        description: "Lezart DSP nap YYYY-MM-DD formatumban. Uresen: tegnap Budapest szerint."
+        required: false
+        default: ""
+      dry_run:
+        description: "Csak probafutas, DB iras nelkul ahol tamogatott."
+        required: false
+        default: "false"
+  schedule:
+    # GitHub cron UTC-ben fut. Nyari budapesti ido szerint 07:15.
+    - cron: "15 5 * * *"
+
+concurrency:
+  group: daily-dsp-data-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$DATABASE_URL$SUPABASE_DB_URL" || (echo "Missing DATABASE_URL or SUPABASE_DB_URL secret" && exit 1)
+
+      - name: Resolve dates
+        id: dates
+        shell: bash
+        run: |
+          WORK_DATE="${{ inputs.work_date }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          WORK_DATE="${WORK_DATE:-$(TZ=Europe/Budapest date -d 'yesterday' +%F)}"
+          TODAY="$(TZ=Europe/Budapest date +%F)"
+          TOMORROW="$(TZ=Europe/Budapest date -d 'tomorrow' +%F)"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          echo "work_date=$WORK_DATE" >> "$GITHUB_OUTPUT"
+          echo "today=$TODAY" >> "$GITHUB_OUTPUT"
+          echo "tomorrow=$TOMORROW" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+          echo "WORK_DATE=$WORK_DATE"
+          echo "TODAY=$TODAY"
+          echo "TOMORROW=$TOMORROW"
+          echo "DRY_RUN=$DRY_RUN"
+
+      - name: Store attendance raw for closed day and today
+        run: |
+          CMD=(python scripts/dsp_attendance_raw.py --start-date "${{ steps.dates.outputs.work_date }}" --end-date "${{ steps.dates.outputs.today }}")
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Refresh driver detail raw
+        run: |
+          CMD=(python scripts/load_driver_detail_raw.py --all-drivers --start-date "${{ steps.dates.outputs.work_date }}" --end-date "${{ steps.dates.outputs.work_date }}" --batch-size 20)
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Refresh vehicle assignments
+        run: |
+          CMD=(python scripts/load_vehicle_assignments.py)
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Refresh DSP normalized tables
+        if: ${{ steps.dates.outputs.dry_run != 'true' }}
+        run: python scripts/dsp_refresh_all.py
+
+      - name: Calculate route distance
+        run: |
+          CMD=(python scripts/calculate_route_distances.py --start-date "${{ steps.dates.outputs.work_date }}" --end-date "${{ steps.dates.outputs.work_date }}")
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Build route stories
+        run: |
+          CMD=(python scripts/build_dsp_route_stories.py --start-date "${{ steps.dates.outputs.work_date }}" --end-date "${{ steps.dates.outputs.work_date }}" --force)
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Store next day attendance snapshot
+        run: |
+          CMD=(python scripts/next_day_attendance_monitor.py --mode snapshot --date "${{ steps.dates.outputs.tomorrow }}" --days 1)
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Compare today's attendance with previous snapshot
+        run: |
+          CMD=(python scripts/next_day_attendance_monitor.py --mode compare --date "${{ steps.dates.outputs.today }}" --grace-minutes 30 --allow-missing-snapshot)
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
