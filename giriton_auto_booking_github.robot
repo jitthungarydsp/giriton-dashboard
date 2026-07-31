@@ -530,6 +530,17 @@ Add Courier To Shift Subscription
     ...    const nameParts=courierName.split(' ').filter(Boolean);
     ...    const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const clickReal=function(el){
+    ...      if(!el){return;}
+    ...      el.scrollIntoView({block:'center', inline:'nearest'});
+    ...      const rect=el.getBoundingClientRect();
+    ...      const x=rect.left + rect.width / 2;
+    ...      const y=rect.top + rect.height / 2;
+    ...      const real=document.elementFromPoint(x, y) || el;
+    ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
+    ...        real.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...      });
+    ...    };
     ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const dialog=dialogs[dialogs.length - 1] || document;
     ...    const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"]')];
@@ -543,11 +554,13 @@ Add Courier To Shift Subscription
     ...      return false;
     ...    });
     ...    if(!row){return 'NOT_FOUND';}
-    ...    row.scrollIntoView({block:'center', inline:'nearest'});
     ...    const checkbox=row.querySelector('input[type="checkbox"]');
-    ...    if(checkbox){checkbox.click(); return 'OK';}
-    ...    row.click();
-    ...    return 'OK';
+    ...    const firstCell=row.querySelector('td, .v-grid-cell');
+    ...    const vaadinCheck=row.querySelector('.v-checkbox, .v-grid-selection-checkbox, [class*="checkbox"], [class*="check"]');
+    ...    [checkbox, vaadinCheck, firstCell, row].filter(Boolean).forEach(clickReal);
+    ...    const selectedText=(dialog.innerText || '').toLowerCase();
+    ...    const selected=row.className.includes('selected') || row.getAttribute('aria-selected') === 'true' || (checkbox && checkbox.checked) || !selectedText.includes('no record selected');
+    ...    return selected ? 'OK' : 'NOT_SELECTED';
     ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
@@ -557,8 +570,8 @@ Add Courier To Shift Subscription
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_COURIER_SELECT_FAILED
-        ...    Futar sor nem talalhato vagy nem kivalaszthato.
-        RETURN    COURIER_NOT_FOUND
+        ...    Futar sor nem talalhato vagy nincs tenylegesen kijelolve: ${select_result}
+        RETURN    COURIER_NOT_SELECTED
     END
 
     Log Auto Booking Step
@@ -574,7 +587,11 @@ Add Courier To Shift Subscription
     ...    Choose/megerosito gomb keresese/megnyomasa indul.
 
     ${choose_result}=    Execute Javascript
-    ...    const button=document.querySelector('#SelectionDialog-btn-confirm-selection') || [...document.querySelectorAll('.v-button')].find(el => (el.innerText || '').includes('Choose') && el.offsetWidth > 0 && el.offsetHeight > 0);
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
+    ...    const dialog=dialogs[dialogs.length - 1] || document;
+    ...    if(String(dialog.innerText || '').toLowerCase().includes('no record selected')){return 'NO_RECORD_SELECTED';}
+    ...    const button=document.querySelector('#SelectionDialog-btn-confirm-selection') || [...document.querySelectorAll('.v-button')].find(el => (el.innerText || '').includes('Choose') && visible(el));
     ...    if(!button){return 'NOT_FOUND';}
     ...    button.click();
     ...    return 'OK';
@@ -603,8 +620,10 @@ Add Courier To Shift Subscription
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
     ...    const userNumber=courierId ? 'D' + courierId : '';
-    ...    const windows=[...document.querySelectorAll('.v-window')];
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    const windows=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const win=windows[windows.length - 1] || document;
+    ...    if((win.innerText || '').includes('Choose one or more entries')){return 'SELECTION_DIALOG_STILL_OPEN';}
     ...    const text=(win.innerText || '').toLowerCase();
     ...    const raw=win.innerText || '';
     ...    if(userNumber && raw.includes(userNumber)){return 'COURIER_ADDED';}
