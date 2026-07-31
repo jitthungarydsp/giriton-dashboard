@@ -619,15 +619,19 @@ Add Courier To Shift Subscription
     ${verify_result}=    Execute Javascript
     ...    const courierId=String(arguments[0] || '').trim();
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
-    ...    const userNumber=courierId ? 'D' + courierId : '';
+    ...    const cleanCourierId=courierId.replace(/\.0$/, '');
+    ...    const userNumber=cleanCourierId ? 'D' + cleanCourierId : '';
+    ...    const normalize=value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
     ...    const windows=[...document.querySelectorAll('.v-window')].filter(visible);
     ...    const win=windows[windows.length - 1] || document;
     ...    if((win.innerText || '').includes('Choose one or more entries')){return 'SELECTION_DIALOG_STILL_OPEN';}
     ...    const text=(win.innerText || '').toLowerCase();
     ...    const raw=win.innerText || '';
+    ...    const folded=normalize(raw);
+    ...    if(text.includes('were subscribed for selected shifts') || text.includes('subscribed users (1)')){return 'COURIER_ADDED';}
     ...    if(userNumber && raw.includes(userNumber)){return 'COURIER_ADDED';}
-    ...    if(courierName && text.includes(courierName)){return 'COURIER_ADDED';}
+    ...    if(courierName && folded.includes(normalize(courierName))){return 'COURIER_ADDED';}
     ...    return 'COURIER_SELECTED_NOT_VERIFIED';
     ...    ARGUMENTS
     ...    ${courier_id}
