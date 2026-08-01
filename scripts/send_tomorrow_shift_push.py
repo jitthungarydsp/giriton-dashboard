@@ -27,21 +27,40 @@ import os
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+import tomllib
 from pywebpush import WebPushException, webpush
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BUDAPEST = ZoneInfo("Europe/Budapest")
 
 
 def setting(name: str) -> str:
     value = os.getenv(name, "").strip()
-    if not value:
-        raise RuntimeError(f"Hiányzó környezeti változó: {name}")
-    return value
+    if value:
+        return value.replace("\\n", "\n")
+
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+    if secrets_path.exists():
+        try:
+            with secrets_path.open("rb") as file:
+                settings = tomllib.load(file)
+            value = (
+                settings.get(name)
+                or settings.get("supabase", {}).get(name)
+                or settings.get("pwa", {}).get(name)
+            )
+            if value:
+                return str(value).strip().replace("\\n", "\n")
+        except Exception:
+            pass
+
+    raise RuntimeError(f"Hiányzó környezeti változó: {name}")
 
 
 def supabase_headers(prefer: str = "") -> dict[str, str]:
@@ -101,19 +120,27 @@ def normalize_time(value: Any) -> str:
         return text[:5]
 
 
-def load_shift_rows(start_date: date, end_date: date) -> list[dict[str, Any]]:
+def load_shift_rows(
+    start_date: date,
+    end_date: date,
+    courier_id: int | None = None,
+) -> list[dict[str, Any]]:
+    params = {
+        "select": (
+            "courier_id,courier_name,warehouse,shift_start,shift_end,"
+            "attendance_status,muszakpro_status,muszakpro_booking_code,work_date"
+        ),
+        "work_date": f"gte.{start_date.isoformat()}",
+        "order": "courier_id.asc,shift_start.asc",
+        "limit": "5000",
+    }
+    if courier_id is not None:
+        params["courier_id"] = f"eq.{courier_id}"
+
     rows = supabase_request(
         "GET",
         "vw_attendance_muszakpro_latest_comparison",
-        params={
-            "select": (
-                "courier_id,courier_name,warehouse,shift_start,shift_end,"
-                "attendance_status,muszakpro_status,muszakpro_booking_code,work_date"
-            ),
-            "work_date": f"gte.{start_date.isoformat()}",
-            "order": "courier_id.asc,shift_start.asc",
-            "limit": "5000",
-        },
+        params=params,
     )
     return [
         row for row in rows
@@ -123,8 +150,11 @@ def load_shift_rows(start_date: date, end_date: date) -> list[dict[str, Any]]:
     ]
 
 
-def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
-    rows = load_shift_rows(work_date, work_date)
+def load_tomorrow_shifts(
+    work_date: date,
+    courier_id: int | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    rows = load_shift_rows(work_date, work_date, courier_id)
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[int(row["courier_id"])].append(row)
@@ -246,10 +276,15 @@ def send_push_payload(
     return success, errors
 
 
-def send_new_shift_notifications(days: int, dry_run: bool) -> int:
+def send_new_shift_notifications(
+    days: int,
+    dry_run: bool,
+    courier_id_filter: int | None = None,
+    force: bool = False,
+) -> int:
     start_date = datetime.now(BUDAPEST).date()
     end_date = start_date + timedelta(days=max(days, 1) - 1)
-    shift_rows = load_shift_rows(start_date, end_date)
+    shift_rows = load_shift_rows(start_date, end_date, courier_id_filter)
     courier_ids = sorted({int(row["courier_id"]) for row in shift_rows})
     subscriptions = load_subscriptions(courier_ids)
     subscriptions_by_courier: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -263,7 +298,7 @@ def send_new_shift_notifications(days: int, dry_run: bool) -> int:
         courier_id = int(row["courier_id"])
         work_date = date.fromisoformat(str(row.get("work_date") or "")[:10])
         notification_type = shift_notification_type(row)
-        if already_sent(courier_id, work_date, notification_type):
+        if not force and already_sent(courier_id, work_date, notification_type):
             skipped += 1
             continue
 
@@ -341,11 +376,18 @@ def main() -> int:
     parser.add_argument("--date", help="Célnap YYYY-MM-DD; alapértelmezett: holnap.")
     parser.add_argument("--mode", choices=["tomorrow", "new-shifts"], default="tomorrow")
     parser.add_argument("--days", type=int, default=5)
+    parser.add_argument("--courier-id", type=int, help="Csak ennek a futárnak küld.")
+    parser.add_argument("--force", action="store_true", help="Delivery log ellenőrzés kihagyása.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     if args.mode == "new-shifts":
-        return send_new_shift_notifications(args.days, args.dry_run)
+        return send_new_shift_notifications(
+            args.days,
+            args.dry_run,
+            args.courier_id,
+            args.force,
+        )
 
     target_date = (
         date.fromisoformat(args.date)
@@ -353,7 +395,7 @@ def main() -> int:
         else datetime.now(BUDAPEST).date() + timedelta(days=1)
     )
 
-    shifts_by_courier = load_tomorrow_shifts(target_date)
+    shifts_by_courier = load_tomorrow_shifts(target_date, args.courier_id)
     subscriptions = load_subscriptions(sorted(shifts_by_courier))
     subscriptions_by_courier: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for subscription in subscriptions:
@@ -364,7 +406,7 @@ def main() -> int:
     failed = 0
 
     for courier_id, shifts in sorted(shifts_by_courier.items()):
-        if already_sent(courier_id, target_date, "tomorrow_shift"):
+        if not args.force and already_sent(courier_id, target_date, "tomorrow_shift"):
             skipped += 1
             print(f"KIHAGYVA már elküldve: courier_id={courier_id}")
             continue
