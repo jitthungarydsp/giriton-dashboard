@@ -858,7 +858,7 @@ def save_route_delay_alert(
     if not message:
         raise HTTPException(
             status_code=422,
-            detail="Írd le röviden a késés okát.",
+            detail="Írd le röviden a problémát.",
         )
 
     supabase_rest(
@@ -869,7 +869,7 @@ def save_route_delay_alert(
             "courier_name": courier_name,
             "route_id": payload.route_id,
             "order_id": payload.order_id.strip(),
-            "alert_type": "delay",
+            "alert_type": "problem",
             "message": message,
             "dispatcher_notified": payload.dispatcher_notified,
             "current_address": payload.current_address.strip(),

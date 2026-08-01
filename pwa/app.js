@@ -143,23 +143,32 @@ function ensureRouteCard() {
 
   container = document.createElement("section");
   container.id = "current-route-container";
-  container.className = "process-card";
+  container.className = "route-panel";
   tours.appendChild(container);
   return container;
 }
 
-function routeAddressBlock(title, checkpoint, cssClass = "") {
+function routeTimeRange(start, end) {
+  if (start && end) return `${escapeHtml(start)}-${escapeHtml(end)}`;
+  return escapeHtml(start || end || "-");
+}
+
+function routeStopBlock(title, checkpoint, cssClass = "") {
   if (!checkpoint) return "";
 
   const windowText = checkpoint.windowFrom || checkpoint.windowTo
-    ? `<small>Időkapu: ${escapeHtml(checkpoint.windowFrom || "?")}–${escapeHtml(checkpoint.windowTo || "?")}</small>`
+    ? `<small>${routeTimeRange(checkpoint.windowFrom, checkpoint.windowTo)}</small>`
     : "";
+  const position = checkpoint.position ? `<span class="route-stop-index">${escapeHtml(checkpoint.position)}</span>` : `<span class="route-stop-index">-</span>`;
 
   return `
-    <div class="route-address ${cssClass}">
-      <span>${escapeHtml(title)}</span>
-      <strong>${escapeHtml(checkpoint.address || "Cím nincs megadva")}</strong>
-      ${windowText}
+    <div class="route-stop ${cssClass}">
+      ${position}
+      <div>
+        <span>${escapeHtml(title)}</span>
+        <strong>${escapeHtml(checkpoint.address || "Cím nincs megadva")}</strong>
+        ${windowText}
+      </div>
     </div>
   `;
 }
@@ -173,42 +182,50 @@ function renderCurrentRoute() {
 
   if (!payload?.found || !route) {
     container.innerHTML = `
-      <div class="process-title">
-        <span class="step-code">🚚</span>
+      <div class="route-empty">
+        <span class="route-empty-icon">+</span>
         <div>
-          <h3>Aktuális túra</h3>
-          <p>Jelenleg nincs aktív túra.</p>
+          <h3>Nincs aktív túra</h3>
+          <p>Amint túrát kapsz, itt látod a címszámot és az aktuális címet.</p>
         </div>
       </div>
     `;
     return;
   }
 
-  const returnText = route.realReturn
-    ? `Valós visszaérkezés: ${escapeHtml(route.realReturn)}`
-    : `Tervezett visszaérkezés: ${escapeHtml(route.plannedReturn || "–")}`;
+  const departure = route.realDeparture || route.plannedDeparture || "";
+  const returnTime = route.realReturn || route.plannedReturn || "";
+  const current = route.current;
 
   container.innerHTML = `
-    <div class="process-title">
-      <span class="step-code">🚚</span>
+    <div class="route-hero">
       <div>
-        <h3>Aktuális túra #${escapeHtml(route.routeId)}</h3>
-        <p>${escapeHtml(route.warehouse || "")} · ${escapeHtml(returnText)}</p>
+        <p class="eyebrow">AKTUÁLIS TÚRA</p>
+        <h3>#${escapeHtml(route.routeId)}</h3>
+        <p>${escapeHtml(route.warehouse || "Raktár nincs megadva")}</p>
       </div>
+      <span>${escapeHtml(route.status || "Folyamatban")}</span>
     </div>
 
     <div class="route-summary">
-      <div><span>Rendelések</span><strong>${Number(route.totalOrders || 0)}</strong></div>
-      <div><span>Kiszállítva</span><strong>${Number(route.deliveredOrders || 0)}</strong></div>
-      <div><span>Mai túrák</span><strong>${Number(payload.totalRoutes || 0)}</strong></div>
+      <div><span>Címek</span><strong>${Number(route.totalOrders || 0)}</strong></div>
+      <div><span>Indulás</span><strong>${escapeHtml(departure || "-")}</strong></div>
+      <div><span>Vissza</span><strong>${escapeHtml(returnTime || "-")}</strong></div>
     </div>
 
-    ${routeAddressBlock("Előző cím", route.previous)}
-    ${routeAddressBlock("Mostani cím", route.current, "current")}
-    ${routeAddressBlock("Következő cím", route.next)}
+    <div class="route-current">
+      <span>Mostani cím</span>
+      <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
+      <small>${current ? `#${escapeHtml(current.orderId || "-")} · ${routeTimeRange(current.windowFrom, current.windowTo)}` : "A túra még nem indult el."}</small>
+    </div>
 
-    <button id="delay-alert-button" class="primary" type="button">
-      Késés jelzése
+    <div class="route-stop-list">
+      ${routeStopBlock("Előző", route.previous)}
+      ${routeStopBlock("Következő", route.next)}
+    </div>
+
+    <button id="delay-alert-button" class="route-problem-button" type="button">
+      Problémám van
     </button>
   `;
 
@@ -242,10 +259,10 @@ function ensureDelayAlertDialog() {
   dialog.id = "delay-alert-dialog";
   dialog.innerHTML = `
     <form id="delay-alert-form" method="dialog" class="process-form">
-      <h3>Késés jelzése</h3>
+      <h3>Problémám van</h3>
 
       <label>
-        Mi okozza a késést?
+        Mi a probléma?
         <textarea
           id="delay-alert-message"
           rows="4"
@@ -255,7 +272,7 @@ function ensureDelayAlertDialog() {
 
       <label class="checkbox-row">
         <input id="dispatcher-notified" type="checkbox" />
-        Diszpécsernek jeleztem a gondot
+        Diszpécsernek jeleztem
       </label>
 
       <p id="delay-alert-status" class="updated-at"></p>
@@ -319,7 +336,7 @@ async function submitDelayAlert(event) {
       }),
     });
 
-    status.textContent = "A késésjelzés elküldve.";
+    status.textContent = "A jelzés rögzítve.";
     setTimeout(() => $("#delay-alert-dialog").close(), 700);
   } catch (error) {
     status.textContent = error.message;
@@ -729,7 +746,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=22");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=23");
   }
   return navigator.serviceWorker.ready;
 }
