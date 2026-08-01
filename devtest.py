@@ -881,6 +881,13 @@ details.finance-kpi-detail-card[open] {
     letter-spacing:0;
 }
 .finance-kpi.payable .finance-kpi-value { color:#fff; }
+.finance-kpi-note {
+    margin-top:8px;
+    color:var(--sp-muted);
+    font-size:12px;
+    font-weight:800;
+}
+.finance-kpi.payable .finance-kpi-note { color:rgba(255,255,255,.8); }
 .finance-work-grid {
     display:grid;
     grid-template-columns:minmax(360px,.55fr) minmax(560px,1fr);
@@ -1048,6 +1055,84 @@ def load_active_excel_bonus_rules(table_name: str) -> pd.DataFrame:
     if rules.empty or "calculation_mode" not in rules:
         return pd.DataFrame()
     return rules[rules["calculation_mode"].fillna("").str.casefold() == "excel"].copy()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_active_bonus_level_rules(table_name: str) -> pd.DataFrame:
+    """Read active performance level rules for UI drilldowns."""
+    try:
+        rows = (
+            get_db().schema("settlement").table(table_name).select("*")
+            .eq("is_active", True).is_("deleted_at", "null").execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def _performance_rule_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    match = re.search(r"(?:level|szint)[_\-\s]*(\d+)", text, flags=re.IGNORECASE)
+    if match:
+        return f"{match.group(1)}. szint"
+    return text.replace("_", " ").replace("-", " ").strip()
+
+
+def _performance_key_from_label(value: object, kind: str) -> str:
+    text = str(value or "").strip().casefold()
+    if kind == "day":
+        if "kiemelt" in text or "highlight" in text:
+            return "highlighted"
+        if "norm" in text:
+            return "normal"
+        return "any"
+    if "express" in text:
+        return "express"
+    if "region" in text:
+        return "regional"
+    if "norm" in text or "city" in text:
+        return "normal"
+    return "any"
+
+
+def performance_level_for_amount(
+    amount: object,
+    rules: pd.DataFrame,
+    route_type: object = None,
+    day_type: object = None,
+    route_date: object = None,
+) -> str:
+    if rules.empty:
+        return "-"
+    amount_value = parse_huf_value(amount)
+    if amount_value == 0:
+        return "-"
+    route_type_key = _performance_key_from_label(route_type, "route")
+    day_type_key = _performance_key_from_label(day_type, "day")
+    try:
+        work_date = date.fromisoformat(str(route_date)[:10])
+    except ValueError:
+        work_date = None
+    for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+        if parse_huf_value(rule.get("courier_amount_huf")) != amount_value:
+            continue
+        if str(rule.get("day_type") or "any").casefold() not in {"any", day_type_key}:
+            continue
+        if str(rule.get("route_type") or "any").casefold() not in {"any", route_type_key}:
+            continue
+        if work_date:
+            try:
+                valid_from = date.fromisoformat(str(rule.get("valid_from"))[:10])
+                valid_to_value = rule.get("valid_to")
+                valid_to = date.fromisoformat(str(valid_to_value)[:10]) if pd.notna(valid_to_value) else None
+            except ValueError:
+                continue
+            if work_date < valid_from or (valid_to and work_date > valid_to):
+                continue
+        return _performance_rule_label(rule.get("level_code"))
+    return "-"
 
 
 def _configured_excel_bonus_for_route(
@@ -3139,8 +3224,12 @@ def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
     return detail.groupby(["Túratípus", "Naptípus"], as_index=False)[columns[2:]].sum()
 
 
-def build_amount_drilldown(route_detail: pd.DataFrame, amount_column: str) -> pd.DataFrame:
-    columns = ["Túratípus", "Naptípus", "Túrák", "Egységösszeg", "Összeg", "Számítás"]
+def build_amount_drilldown(
+    route_detail: pd.DataFrame,
+    amount_column: str,
+    level_rules: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    columns = ["Túratípus", "Naptípus", "Szint", "Túrák", "Egységösszeg", "Összeg", "Számítás"]
     if route_detail.empty or amount_column not in route_detail.columns:
         return pd.DataFrame(columns=columns)
     detail = route_detail.copy()
@@ -3148,8 +3237,21 @@ def build_amount_drilldown(route_detail: pd.DataFrame, amount_column: str) -> pd
     detail = detail[detail["_amount"].ne(0)].copy()
     if detail.empty:
         return pd.DataFrame(columns=columns)
+    if level_rules is not None and not level_rules.empty:
+        detail["Szint"] = detail.apply(
+            lambda item: performance_level_for_amount(
+                item["_amount"],
+                level_rules,
+                item.get("Túratípus"),
+                item.get("Naptípus"),
+                item.get("Excel dátum"),
+            ),
+            axis=1,
+        )
+    else:
+        detail["Szint"] = "-"
     grouped = (
-        detail.groupby(["Túratípus", "Naptípus", "_amount"], dropna=False)
+        detail.groupby(["Túratípus", "Naptípus", "Szint", "_amount"], dropna=False)
         .size()
         .reset_index(name="Túrák")
     )
@@ -3529,6 +3631,7 @@ def refresh_settlement_profile_data() -> None:
     load_latest_api_jit_session_id.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
+    load_active_bonus_level_rules.clear()
     load_courier_route_detail.clear()
     load_imported_balance_components.clear()
     load_courier_settlement_summary.clear()
@@ -4092,28 +4195,14 @@ def show_courier_dialog() -> None:
             st.toast("Futárprofil adatok frissítve.", icon="✅")
             rerun_courier_profile("Pénzügy")
 
-        kpi_items = [
-            ("Rendelés", f"{order_total:,}".replace(",", " "), ""),
-            ("Kör", str(route_total), ""),
-            ("Késedelmi díj", format_huf(delay_total), ""),
-            ("Túramegfelelés", format_huf(compliance_total), ""),
-            ("Lojalitás", format_huf(loyalty_total), ""),
-            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), ""),
-            ("Fizetendő", format_huf(payable_total), "payable"),
-            ("Levonás / plusz", format_huf(-other_expense_total), ""),
-            ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), ""),
-            ("ATM hatás", format_huf(-atm_deduction_total), ""),
-            ("Fizetés előleg", format_huf(-salary_advance_total), ""),
-            ("Céltartalék 10%", format_huf(-reserve_addition_total), ""),
-            ("Biztosítási díj", format_huf(-insurance_fee_total), ""),
-            ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", ""),
-        ]
+        delay_level_rules = load_active_bonus_level_rules("cfg_jitt_delay_bonus_rules")
+        compliance_level_rules = load_active_bonus_level_rules("cfg_jitt_compliance_bonus_rules")
 
         def finance_detail_frame(detail_label: str) -> pd.DataFrame:
             if detail_label == "Késedelmi díj":
-                return build_amount_drilldown(route_detail, "Késedelmi díj")
+                return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
             if detail_label == "Túramegfelelés":
-                return build_amount_drilldown(route_detail, "Túramegfelelés")
+                return build_amount_drilldown(route_detail, "Túramegfelelés", compliance_level_rules)
             if detail_label == "Lojalitás":
                 unit_amount = loyalty_total / route_total if route_total else 0
                 return pd.DataFrame([{
@@ -4156,6 +4245,39 @@ def show_courier_dialog() -> None:
                 ])
             return pd.DataFrame()
 
+        def finance_level_note(detail_label: str) -> str:
+            detail_df = finance_detail_frame(detail_label)
+            if detail_df.empty or "Szint" not in detail_df.columns:
+                return ""
+            levels = [
+                str(level).strip()
+                for level in detail_df["Szint"].dropna().unique().tolist()
+                if str(level).strip() and str(level).strip() != "-"
+            ]
+            if not levels:
+                return ""
+            levels = sorted(levels)
+            if len(levels) == 1:
+                return f"Szint: {levels[0]}"
+            return f"Szintek: {', '.join(levels[:3])}" + ("..." if len(levels) > 3 else "")
+
+        kpi_items = [
+            ("Rendelés", f"{order_total:,}".replace(",", " "), "", ""),
+            ("Kör", str(route_total), "", ""),
+            ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
+            ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
+            ("Lojalitás", format_huf(loyalty_total), "", ""),
+            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
+            ("Fizetendő", format_huf(payable_total), "payable", ""),
+            ("Levonás / plusz", format_huf(-other_expense_total), "", ""),
+            ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), "", ""),
+            ("ATM hatás", format_huf(-atm_deduction_total), "", ""),
+            ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
+            ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
+            ("Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
+            ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", "", ""),
+        ]
+
         def finance_detail_html(detail_label: str) -> str:
             detail_df = finance_detail_frame(detail_label)
             if detail_df.empty:
@@ -4184,11 +4306,13 @@ def show_courier_dialog() -> None:
             "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
-        def render_finance_kpi(label: str, value: str, css_class: str) -> str:
+        def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
+            note_html = f'<div class="finance-kpi-note">{html.escape(note)}</div>' if note else ""
             card = (
                 f'<div class="finance-kpi {css_class}">'
                 f'<div class="finance-kpi-label">{html.escape(label)}</div>'
                 f'<div class="finance-kpi-value">{html.escape(value)}</div>'
+                f"{note_html}"
                 "</div>"
             )
             if label not in detail_labels:
@@ -4203,8 +4327,8 @@ def show_courier_dialog() -> None:
         st.markdown(
             '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
             + "".join(
-                render_finance_kpi(label, value, css_class)
-                for label, value, css_class in kpi_items
+                render_finance_kpi(label, value, css_class, note)
+                for label, value, css_class, note in kpi_items
             )
             + "</div></div>",
             unsafe_allow_html=True,
