@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=24" />
+    <link rel="stylesheet" href="/styles.css?v=25" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -175,6 +175,43 @@
 
           <p id="billing-profile-message" class="updated-at" aria-live="polite"></p>
         </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">TEL</span>
+            <div>
+              <h3>Telefon állapot</h3>
+              <p>Rögzítsd a telefon sorszámát és tölts fel képeket az aktuális állapotról.</p>
+            </div>
+          </div>
+          <form id="device-condition-form" class="process-form two-column">
+            <label>Telefon sorszám<input id="device-serial-number" name="serial_number" required /></label>
+            <label>IMEI / azonosító<input id="device-imei" name="imei" inputmode="numeric" /></label>
+            <label>Esemény
+              <select id="device-event-type" name="event_type">
+                <option value="inspection">Ellenőrzés</option>
+                <option value="handover">Átadás</option>
+                <option value="return">Visszavétel</option>
+                <option value="damage_report">Sérülés jelzés</option>
+              </select>
+            </label>
+            <label>Állapot
+              <select id="device-condition-status" name="condition_status">
+                <option value="ok">Rendben</option>
+                <option value="scratched">Karcos</option>
+                <option value="cracked">Törött</option>
+                <option value="broken">Hibás</option>
+                <option value="missing_accessory">Hiányzó tartozék</option>
+                <option value="other">Egyéb</option>
+              </select>
+            </label>
+            <label class="full-width">Megjegyzés<textarea id="device-condition-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Fotók<input id="device-condition-photos" name="photos" type="file" accept="image/png,image/jpeg,image/webp" multiple required /></label>
+            <button class="primary full-width" type="submit">Telefon állapot rögzítése</button>
+          </form>
+          <p id="device-condition-message" class="updated-at" aria-live="polite"></p>
+          <section id="device-condition-history" class="device-history"></section>
+        </section>
       </div>
       <div id="tours-content" class="hidden">
         <section class="workflow-header">
@@ -220,6 +257,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=34" defer></script>
+    <script src="/app.js?v=36" defer></script>
   </body>
 </html>

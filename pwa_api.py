@@ -36,6 +36,9 @@ LOCAL_SESSION_SECRET_FILE = PROJECT_ROOT / ".pwa_session_secret"
 LOCAL_VAPID_PRIVATE_FILE = PROJECT_ROOT / "vapid_private.pem"
 SESSION_COOKIE = "giriton_pwa_session"
 SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
+MAX_DEVICE_PHOTO_BYTES = 8 * 1024 * 1024
+MAX_DEVICE_PHOTOS = 8
+DEVICE_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 COURIER_DETAIL_API_BASE = (
     "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
@@ -903,6 +906,12 @@ def parse_month(value: str | date | None) -> date:
         raise HTTPException(status_code=422, detail="A hónap formátuma YYYY-MM legyen.") from exc
 
 
+def clean_text(value: Any, *, limit: int = 500) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text[:limit]
+
+
 def supabase_headers(*, prefer: str = "") -> dict[str, str]:
     key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
     if not load_setting("SUPABASE_URL") or not key:
@@ -1436,6 +1445,112 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None
         }
         raise HTTPException(status_code=409, detail=f"Előbb szükséges: {labels[prerequisite]}.")
 
+def normalize_device_serial(value: str) -> str:
+    serial = clean_text(value, limit=80).upper()
+    serial = re.sub(r"[^A-Z0-9._/-]", "", serial)
+    if len(serial) < 3:
+        raise HTTPException(status_code=422, detail="A telefon sorszama legalabb 3 karakter legyen.")
+    return serial
+
+
+def normalize_device_imei(value: str) -> str:
+    imei = re.sub(r"\D+", "", str(value or ""))
+    if imei and len(imei) not in {14, 15, 16}:
+        raise HTTPException(status_code=422, detail="Az IMEI formatuma nem megfelelo.")
+    return imei[:16]
+
+
+def normalize_device_status(value: str) -> str:
+    allowed = {"ok", "scratched", "cracked", "broken", "missing_accessory", "other"}
+    status = clean_text(value, limit=40).lower() or "ok"
+    if status not in allowed:
+        raise HTTPException(status_code=422, detail="Ismeretlen eszkozallapot.")
+    return status
+
+
+def normalize_device_event_type(value: str) -> str:
+    allowed = {"handover", "return", "inspection", "damage_report"}
+    event_type = clean_text(value, limit=40).lower() or "inspection"
+    if event_type not in allowed:
+        raise HTTPException(status_code=422, detail="Ismeretlen eszkozesemeny.")
+    return event_type
+
+
+def device_report_label(row: dict[str, Any]) -> str:
+    labels = {
+        "handover": "Atadas",
+        "return": "Visszavetel",
+        "inspection": "Ellenorzes",
+        "damage_report": "Serules jelzes",
+    }
+    statuses = {
+        "ok": "Rendben",
+        "scratched": "Karcos",
+        "cracked": "Torott",
+        "broken": "Hibas",
+        "missing_accessory": "Hianyzo tartozek",
+        "other": "Egyeb",
+    }
+    return f"{labels.get(row.get('event_type'), 'Ellenorzes')} - {statuses.get(row.get('condition_status'), 'Rendben')}"
+
+
+def safe_device_report(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "deviceId": row.get("device_id"),
+        "deviceType": row.get("device_type") or "phone",
+        "serialNumber": row.get("serial_number") or "",
+        "imei": row.get("imei") or "",
+        "courierId": row.get("courier_id"),
+        "courierName": row.get("courier_name") or "",
+        "eventType": row.get("event_type") or "inspection",
+        "conditionStatus": row.get("condition_status") or "ok",
+        "label": device_report_label(row),
+        "note": row.get("note") or "",
+        "photoCount": int(row.get("photo_count") or 0),
+        "reportedAt": row.get("reported_at") or "",
+    }
+
+
+def attach_device_report_photos(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    report_ids = [str(report.get("id")) for report in reports if report.get("id")]
+    if not report_ids:
+        return reports
+
+    try:
+        photos = supabase_rest(
+            "GET",
+            "pwa_device_condition_photos",
+            params={
+                "select": "id,report_id,file_name,mime_type,file_size,photo_label,uploaded_at",
+                "report_id": f"in.({','.join(report_ids)})",
+                "order": "uploaded_at.asc",
+                "limit": "200",
+            },
+        )
+    except HTTPException:
+        photos = []
+
+    photos_by_report: dict[str, list[dict[str, Any]]] = {}
+    for photo in photos or []:
+        report_id = str(photo.get("report_id") or "")
+        photos_by_report.setdefault(report_id, []).append(
+            {
+                "id": photo.get("id"),
+                "fileName": photo.get("file_name") or "",
+                "mimeType": photo.get("mime_type") or "",
+                "fileSize": int(photo.get("file_size") or 0),
+                "label": photo.get("photo_label") or "",
+                "uploadedAt": photo.get("uploaded_at") or "",
+                "url": f"/api/devices/photos/{quote(str(photo.get('id') or ''))}",
+            }
+        )
+
+    for report in reports:
+        report["photos"] = photos_by_report.get(str(report.get("id") or ""), [])
+    return reports
+
+
 def normalize_pem_private_key(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1739,6 +1854,175 @@ def update_billing_profile(
             "updated_at": now,
         },
     }
+
+
+@app.get("/api/devices/reports")
+def list_device_condition_reports(
+    serial_number: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    params = {
+        "select": "id,device_id,device_type,serial_number,imei,courier_id,courier_name,event_type,condition_status,note,photo_count,reported_at",
+        "courier_id": f"eq.{courier_id}",
+        "order": "reported_at.desc",
+        "limit": "20",
+    }
+    if clean_text(serial_number, limit=80):
+        params["serial_number"] = f"eq.{normalize_device_serial(serial_number)}"
+    rows = supabase_rest("GET", "pwa_device_condition_reports", params=params)
+    reports = [safe_device_report(row) for row in rows or []]
+    return {"reports": attach_device_report_photos(reports)}
+
+
+@app.post("/api/devices/reports")
+async def create_device_condition_report(
+    serial_number: str = Form(...),
+    imei: str = Form(default=""),
+    event_type: str = Form(default="inspection"),
+    condition_status: str = Form(default="ok"),
+    note: str = Form(default=""),
+    photos: list[UploadFile] = File(default=[]),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, courier_name = courier_identity(user)
+    serial = normalize_device_serial(serial_number)
+    clean_imei = normalize_device_imei(imei)
+    clean_event_type = normalize_device_event_type(event_type)
+    clean_status = normalize_device_status(condition_status)
+    clean_note = clean_text(note, limit=1200)
+    selected_photos = [photo for photo in photos if photo and photo.filename]
+    if not selected_photos:
+        raise HTTPException(status_code=422, detail="Legalabb egy fotot fel kell tolteni.")
+    if len(selected_photos) > MAX_DEVICE_PHOTOS:
+        raise HTTPException(status_code=422, detail=f"Legfeljebb {MAX_DEVICE_PHOTOS} foto toltheto fel egyszerre.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    device_rows = supabase_rest(
+        "POST",
+        "pwa_devices",
+        params={"on_conflict": "device_type,serial_number"},
+        payload={
+            "device_type": "phone",
+            "serial_number": serial,
+            "imei": clean_imei,
+            "status": "active",
+            "current_courier_id": int(courier_id),
+            "current_courier_name": courier_name,
+            "note": clean_note,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    device_id = (device_rows or [{}])[0].get("id")
+
+    report_rows = supabase_rest(
+        "POST",
+        "pwa_device_condition_reports",
+        payload={
+            "device_id": device_id,
+            "device_type": "phone",
+            "serial_number": serial,
+            "imei": clean_imei,
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "event_type": clean_event_type,
+            "condition_status": clean_status,
+            "note": clean_note,
+            "photo_count": len(selected_photos),
+            "reported_by": courier_name,
+            "reported_at": now,
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+    report = (report_rows or [{}])[0]
+    report_id = report.get("id")
+    if not report_id:
+        raise HTTPException(status_code=502, detail="Az eszkozellenorzes rogzitese nem sikerult.")
+
+    photo_payloads = []
+    for index, photo in enumerate(selected_photos, start=1):
+        content = await photo.read(MAX_DEVICE_PHOTO_BYTES + 1)
+        if len(content) > MAX_DEVICE_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail=f"A(z) {photo.filename} tul nagy. Maximum 8 MB lehet.")
+        mime_type = str(photo.content_type or "").lower()
+        if mime_type not in DEVICE_PHOTO_MIME_TYPES:
+            raise HTTPException(status_code=422, detail=f"Nem tamogatott kepformatum: {photo.filename}.")
+        photo_payloads.append(
+            {
+                "report_id": report_id,
+                "file_name": clean_text(photo.filename or f"telefon_{index}.jpg", limit=160),
+                "mime_type": mime_type,
+                "file_size": len(content),
+                "file_content_base64": base64.b64encode(content).decode("ascii"),
+                "photo_label": f"Foto {index}",
+            }
+        )
+
+    supabase_rest(
+        "POST",
+        "pwa_device_condition_photos",
+        payload=photo_payloads if len(photo_payloads) > 1 else photo_payloads[0],
+        prefer="return=minimal",
+        timeout=90,
+    )
+
+    safe_report = safe_device_report(report)
+    safe_report["photos"] = [
+        {
+            "fileName": payload["file_name"],
+            "mimeType": payload["mime_type"],
+            "fileSize": payload["file_size"],
+            "label": payload["photo_label"],
+        }
+        for payload in photo_payloads
+    ]
+    return {"stored": True, "report": safe_report}
+
+
+@app.get("/api/devices/photos/{photo_id}")
+def get_device_condition_photo(
+    photo_id: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    photo_rows = supabase_rest(
+        "GET",
+        "pwa_device_condition_photos",
+        params={
+            "select": "id,report_id,file_name,mime_type,file_content_base64",
+            "id": f"eq.{photo_id}",
+            "limit": "1",
+        },
+    )
+    if not photo_rows:
+        raise HTTPException(status_code=404, detail="A foto nem talalhato.")
+    photo = photo_rows[0]
+    report_rows = supabase_rest(
+        "GET",
+        "pwa_device_condition_reports",
+        params={
+            "select": "id,courier_id",
+            "id": f"eq.{photo.get('report_id')}",
+            "limit": "1",
+        },
+    )
+    if not report_rows or str(report_rows[0].get("courier_id") or "") != str(courier_id):
+        raise HTTPException(status_code=404, detail="A foto nem talalhato.")
+    try:
+        content = base64.b64decode(photo.get("file_content_base64") or "", validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A foto nem olvashato.") from exc
+    file_name = str(photo.get("file_name") or "telefon_foto").replace('"', "")
+    return Response(
+        content=content,
+        media_type=photo.get("mime_type") or "application/octet-stream",
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}"},
+    )
 
 
 @app.get("/api/shifts")

@@ -8,6 +8,7 @@ const state = {
   checkedInvoiceMonth: null,
   currentRoute: null,
   coordinatorSetup: null,
+  deviceReports: [],
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
@@ -123,6 +124,7 @@ function showSection(section) {
   if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
+    loadDeviceReports();
     refreshNotificationToggle();
   }
   if (section === "tours") {
@@ -759,7 +761,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=24");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=26");
   }
   return navigator.serviceWorker.ready;
 }
@@ -1109,6 +1111,94 @@ if (billingProfileForm) {
 }
 
 
+function setDeviceConditionMessage(message, isError = false) {
+  const target = $("#device-condition-message");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+function deviceReportPhotos(photos = []) {
+  if (!photos.length) return "";
+  return `<div class="device-photo-list">${photos.map((photo, index) => `
+    <a href="${escapeHtml(photo.url || "#")}" target="_blank" rel="noopener">
+      ${escapeHtml(photo.label || `Fotó ${index + 1}`)}
+    </a>
+  `).join("")}</div>`;
+}
+
+function renderDeviceReports() {
+  const target = $("#device-condition-history");
+  if (!target) return;
+  const reports = state.deviceReports || [];
+  if (!reports.length) {
+    target.innerHTML = `<div class="empty-card">Még nincs rögzített telefon állapot.</div>`;
+    return;
+  }
+
+  target.innerHTML = `
+    <div class="device-history-head">
+      <strong>Előzmények</strong>
+      <span>${reports.length} bejegyzés</span>
+    </div>
+    ${reports.map((report) => `
+      <article class="device-report">
+        <div>
+          <strong>${escapeHtml(report.serialNumber || "-")}</strong>
+          <small>${escapeHtml(report.label || "Ellenőrzés")} · ${report.reportedAt ? new Date(report.reportedAt).toLocaleString("hu-HU") : ""}</small>
+          ${report.imei ? `<small>IMEI: ${escapeHtml(report.imei)}</small>` : ""}
+        </div>
+        ${report.note ? `<p>${escapeHtml(report.note)}</p>` : ""}
+        <div class="device-report-meta">
+          <span>${Number(report.photoCount || 0)} fotó</span>
+        </div>
+        ${deviceReportPhotos(report.photos || [])}
+      </article>
+    `).join("")}
+  `;
+}
+
+async function loadDeviceReports() {
+  const target = $("#device-condition-history");
+  if (!target) return;
+  target.innerHTML = `<div class="empty-card">Telefon előzmények betöltése...</div>`;
+  try {
+    const payload = await api("/api/devices/reports");
+    state.deviceReports = payload.reports || [];
+    renderDeviceReports();
+  } catch (error) {
+    target.innerHTML = `<div class="notice error">A telefon előzmények nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+const deviceConditionForm = $("#device-condition-form");
+if (deviceConditionForm) {
+  deviceConditionForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = deviceConditionForm.querySelector('button[type="submit"]');
+    const photos = $("#device-condition-photos")?.files || [];
+    if (!photos.length) {
+      setDeviceConditionMessage("Legalább egy fotót fel kell tölteni.", true);
+      return;
+    }
+
+    const form = new FormData(deviceConditionForm);
+    setDeviceConditionMessage("Telefon állapot mentése...");
+    if (button) button.disabled = true;
+    try {
+      await api("/api/devices/reports", { method: "POST", body: form });
+      deviceConditionForm.reset();
+      setDeviceConditionMessage("Telefon állapot rögzítve.");
+      await loadDeviceReports();
+    } catch (error) {
+      setDeviceConditionMessage(`A telefon állapot mentése sikertelen: ${error.message}`, true);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+
 function renderValidation(target, validation, stored = null) {
   const summary = validation.ok
     ? stored === true ? "A számla ellenőrizve és eltárolva." : "Az ellenőrzés sikeres. A számlafeltöltés aktív."
@@ -1351,6 +1441,7 @@ $("#logout").addEventListener("click", async () => {
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   state.coordinatorSetup = null;
+  state.deviceReports = [];
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);

@@ -27,8 +27,8 @@ button { cursor: pointer; }
 .login-card h1 { margin: 0; font-size: 32px; letter-spacing: -.04em; }
 form { display: grid; gap: 16px; margin-top: 26px; }
 label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weight: 700; }
-input, textarea { width: 100%; padding: 15px 14px; border: 1px solid var(--line); border-radius: 14px; background: #f9faf8; color: var(--ink); outline: none; }
-input:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px #6f9d3d24; }
+input, textarea, select { width: 100%; padding: 15px 14px; border: 1px solid var(--line); border-radius: 14px; background: #f9faf8; color: var(--ink); outline: none; }
+input:focus, textarea:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 4px #6f9d3d24; }
 textarea { min-height: 96px; resize: vertical; }
 .primary { min-height: 52px; border: 0; border-radius: 15px; background: var(--ink); color: white; font-weight: 800; }
 .error { min-height: 18px; margin: 0; color: var(--danger); font-size: 13px; }
@@ -85,7 +85,7 @@ textarea { min-height: 96px; resize: vertical; }
 .workflow-step-state { font-size: 18px; }
 .process-card { margin-top: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
 .process-card.locked { opacity: .5; }
-.process-card.locked form, .process-card.locked button, .process-card.locked input, .process-card.locked textarea, .process-card.locked a { pointer-events: none; }
+.process-card.locked form, .process-card.locked button, .process-card.locked input, .process-card.locked textarea, .process-card.locked select, .process-card.locked a { pointer-events: none; }
 .process-title { display: flex; align-items: flex-start; gap: 12px; }
 .process-title h3 { margin: 2px 0 4px; font-size: 20px; }
 .process-title p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -148,6 +148,16 @@ textarea { min-height: 96px; resize: vertical; }
 .adjustment-amount { font-weight: 900; white-space: nowrap; }
 .adjustment-amount.bonus { color: #23823a; }
 .adjustment-amount.malus { color: var(--danger); }
+.device-history { display: grid; gap: 10px; margin-top: 16px; }
+.device-history-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+.device-history-head strong { color: var(--ink); font-size: 14px; }
+.device-report { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #f8faf6; }
+.device-report strong { display: block; font-size: 15px; }
+.device-report small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.device-report p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
+.device-report-meta { display: flex; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 800; }
+.device-photo-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.device-photo-list a { padding: 8px 10px; border-radius: 10px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 850; text-decoration: none; }
 
 @media (min-width: 760px) {
   .workflow-header { grid-template-columns: 1fr auto; }
