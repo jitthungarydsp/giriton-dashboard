@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -72,6 +73,15 @@ def load_setting(name: str) -> str:
 
 
 def load_vapid_private_key() -> str:
+    key_b64 = load_setting("VAPID_PRIVATE_KEY_B64")
+    if key_b64:
+        try:
+            return normalize_pem_private_key(
+                base64.b64decode(key_b64).decode("utf-8")
+            )
+        except Exception:
+            return ""
+
     key = load_setting("VAPID_PRIVATE_KEY")
     if key:
         return normalize_pem_private_key(key)

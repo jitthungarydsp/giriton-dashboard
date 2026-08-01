@@ -1,4 +1,5 @@
 import argparse
+import base64
 import json
 import os
 from collections import Counter
@@ -632,6 +633,16 @@ def env_setting(name):
     return value
 
 
+def vapid_private_key_setting():
+    value = str(os.getenv("VAPID_PRIVATE_KEY_B64") or "").strip()
+    if value:
+        try:
+            return base64.b64decode(value).decode("utf-8").strip()
+        except Exception as exc:
+            raise RuntimeError("Hibás VAPID_PRIVATE_KEY_B64 formátum.") from exc
+    return env_setting("VAPID_PRIVATE_KEY")
+
+
 def get_active_push_subscriptions(courier_id):
     supabase_url, service_role_key = get_supabase_config()
 
@@ -837,7 +848,7 @@ def send_route_push(
             webpush(
                 subscription_info=subscription_info,
                 data=payload,
-                vapid_private_key=env_setting("VAPID_PRIVATE_KEY"),
+                vapid_private_key=vapid_private_key_setting(),
                 vapid_claims={"sub": env_setting("VAPID_SUBJECT")},
                 ttl=60 * 60,
             )

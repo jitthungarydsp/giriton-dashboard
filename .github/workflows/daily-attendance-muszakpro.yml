@@ -33,6 +33,7 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_PRIVATE_KEY_B64: ${{ secrets.VAPID_PRIVATE_KEY_B64 }}
       VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
 
     steps:
@@ -57,7 +58,7 @@ jobs:
           DRY_RUN="${{ inputs.dry_run }}"
           DRY_RUN="${DRY_RUN:-false}"
           if [ "$DRY_RUN" != "true" ]; then
-            test -n "$VAPID_PRIVATE_KEY" || (echo "Missing VAPID_PRIVATE_KEY secret" && exit 1)
+            test -n "$VAPID_PRIVATE_KEY$VAPID_PRIVATE_KEY_B64" || (echo "Missing VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_B64 secret" && exit 1)
             test -n "$VAPID_SUBJECT" || (echo "Missing VAPID_SUBJECT secret" && exit 1)
           fi
 

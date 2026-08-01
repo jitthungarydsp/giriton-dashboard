@@ -21,6 +21,7 @@ Futtatás:
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -61,6 +62,19 @@ def setting(name: str) -> str:
             pass
 
     raise RuntimeError(f"Hiányzó környezeti változó: {name}")
+
+
+def vapid_private_key_setting() -> str:
+    try:
+        value = setting("VAPID_PRIVATE_KEY_B64")
+    except RuntimeError:
+        value = ""
+    if value:
+        try:
+            return base64.b64decode(value).decode("utf-8").strip()
+        except Exception as exc:
+            raise RuntimeError("Hibás VAPID_PRIVATE_KEY_B64 formátum.") from exc
+    return setting("VAPID_PRIVATE_KEY")
 
 
 def supabase_headers(prefer: str = "") -> dict[str, str]:
@@ -263,7 +277,7 @@ def send_push_payload(
             webpush(
                 subscription_info=info,
                 data=payload,
-                vapid_private_key=setting("VAPID_PRIVATE_KEY"),
+                vapid_private_key=vapid_private_key_setting(),
                 vapid_claims={"sub": setting("VAPID_SUBJECT")},
                 ttl=12 * 60 * 60,
             )
@@ -454,7 +468,7 @@ def main() -> int:
                 webpush(
                     subscription_info=info,
                     data=payload,
-                    vapid_private_key=setting("VAPID_PRIVATE_KEY"),
+                    vapid_private_key=vapid_private_key_setting(),
                     vapid_claims={"sub": setting("VAPID_SUBJECT")},
                     ttl=12 * 60 * 60,
                 )

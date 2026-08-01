@@ -1453,7 +1453,17 @@ def normalize_pem_private_key(value: str) -> str:
 
 def public_vapid_key() -> str:
     key = load_setting("VAPID_PUBLIC_KEY").strip()
-    private_key_text = normalize_pem_private_key(load_setting("VAPID_PRIVATE_KEY"))
+    private_key_b64 = load_setting("VAPID_PRIVATE_KEY_B64")
+    private_key_text = ""
+    if private_key_b64:
+        try:
+            private_key_text = normalize_pem_private_key(
+                base64.b64decode(private_key_b64).decode("utf-8")
+            )
+        except Exception:
+            private_key_text = ""
+    if not private_key_text:
+        private_key_text = normalize_pem_private_key(load_setting("VAPID_PRIVATE_KEY"))
     if not private_key_text and LOCAL_VAPID_PRIVATE_FILE.exists():
         try:
             private_key_text = normalize_pem_private_key(

@@ -319,8 +319,7 @@ def show_settings_page():
                 if results["missing_vapid"]:
                     st.error(
                         "A push kulcs nincs beallitva ezen a kornyezeten. "
-                        "Renderben add meg a VAPID_PRIVATE_KEY es VAPID_SUBJECT env valtozokat. "
-                        "A VAPID_PRIVATE_KEY lehet tobb soros PEM, vagy \\n jelekkel egy sorban."
+                        "Renderben/GitHubban add meg a VAPID_PRIVATE_KEY_B64 es VAPID_SUBJECT env valtozokat."
                     )
                 st.dataframe(result_rows, use_container_width=True, hide_index=True)
 

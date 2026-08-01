@@ -18,6 +18,7 @@ private_key = vapid.private_key.private_bytes(
 import base64
 
 public_key_b64 = base64.urlsafe_b64encode(public_key).rstrip(b"=").decode("utf-8")
+private_key_b64 = base64.b64encode(private_key).decode("ascii")
 
 print()
 print("=== Render Environment Variables ===")
@@ -26,5 +27,7 @@ print(f"VAPID_PUBLIC_KEY={public_key_b64}")
 print()
 print("VAPID_PRIVATE_KEY=")
 print(private_key.decode("utf-8"))
+print()
+print(f"VAPID_PRIVATE_KEY_B64={private_key_b64}")
 print()
 print("VAPID_SUBJECT=mailto:admin@jitt.hu")
