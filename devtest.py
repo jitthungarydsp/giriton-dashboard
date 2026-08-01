@@ -1302,7 +1302,7 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     rows = response.data or []
     columns = [
         "Courier ID", "Futár", "Branch", "Számítás módja",
-        "Raktár", "Státusz", "Nettó bevétel", "Bónusz",
+        "Raktár", "Vállalkozás", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Alvállalkozói összeg", "Levonás", "Kifizetendő",
         "Előző havi összeg", "KPI", "Munkakezdés",
     ]
@@ -1322,6 +1322,9 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     df["Branch"] = "JIT"
     df["Számítás módja"] = "API" if str(calculation_mode).casefold() == "api" else "Excel"
     df["Raktár"] = df["Raktár"].fillna("BUD1")
+    if "Vállalkozás" not in df.columns:
+        df["Vállalkozás"] = ""
+    df["Vállalkozás"] = df["Vállalkozás"].fillna("")
     if "Munkakezdés" not in df.columns:
         df["Munkakezdés"] = ""
 
@@ -2334,6 +2337,46 @@ def _api_route_other_bonus(route: dict[str, object]) -> float:
     return total
 
 
+API_REVENUE_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "Fix alap": ("fixed_base",),
+    "Megfelelés": ("compliance",),
+    "Kitöltési arány": ("fill_rate", "fill_rate_bonus"),
+    "Üzemanyag-felár": ("fuel_surcharge", "fuel_bonus", "fuel"),
+    "Hűtő mérete": ("car_fridge", "fridge", "car_fridge_bonus"),
+    "Branding": ("branding", "branding_bonus"),
+    "Késési teljesítmény (Dataport)": ("delay_performance", "dataport_delay_performance"),
+}
+
+
+def _api_route_revenue_components(route: dict[str, object]) -> dict[str, float]:
+    return {
+        component_name: _api_route_fee(route, *fee_types)
+        for component_name, fee_types in API_REVENUE_COMPONENTS.items()
+    }
+
+
+def _api_payload_routes(payload: object) -> list[dict[str, object]]:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    if not isinstance(payload, dict):
+        return []
+    return [route for route in payload.get("routes") or [] if isinstance(route, dict)]
+
+
+def _api_revenue_master_lookup() -> dict[str, dict[str, object]]:
+    master = load_courier_master("API")
+    if master.empty:
+        return {}
+    return {
+        _courier_id_key(row.get("Courier ID")): row
+        for row in master.to_dict("records")
+        if _courier_id_key(row.get("Courier ID"))
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
     target_tables = [
@@ -2500,8 +2543,23 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_api_received_amounts(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
-    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
     columns = ["Courier ID", "Alvállalkozói összeg"]
+    summary = load_api_monthly_courier_revenue_summary(period_start, warehouse_label)
+    if summary.empty:
+        return pd.DataFrame(columns=columns)
+    result = summary.rename(columns={"Nyers beérkezett összeg": "Alvállalkozói összeg"})
+    return result.groupby("Courier ID", as_index=False)["Alvállalkozói összeg"].sum()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_monthly_revenue_detail(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    component_columns = list(API_REVENUE_COMPONENTS.keys())
+    columns = [
+        "Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás", "Route ID",
+        "Dátum", "Túratípus", "Rendelések", "Nyers beérkezett összeg",
+        "Borravaló", "Komponensek összesen", *component_columns,
+    ]
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
     if rows.empty:
         return pd.DataFrame(columns=columns)
     warehouse_id = settlement_warehouse_id(warehouse_label)
@@ -2509,28 +2567,186 @@ def load_api_received_amounts(period_start: date, warehouse_label: str | None = 
         rows = rows.loc[
             pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
         ]
+    master_lookup = _api_revenue_master_lookup()
     records: list[dict[str, object]] = []
     for source in rows.to_dict("records"):
+        courier_id = str(source.get("courier_id") or "")
+        courier_key = _courier_id_key(courier_id)
+        master_row = master_lookup.get(courier_key, {})
+        warehouse_code = "BUD2" if int(source.get("warehouse_id") or 0) == 2 else "BUD1"
+        for route in _api_payload_routes(source.get("response_json") or {}):
+            components = _api_route_revenue_components(route)
+            delivery_date = str(route.get("deliveryDate") or "")
+            route_layer = str(route.get("routeLayer") or "NORMAL").strip().upper()
+            route_type = {"NORMAL": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_layer, route_layer.title())
+            records.append({
+                "Hónap": period_start.replace(day=1),
+                "Raktár": warehouse_code,
+                "Courier ID": courier_id,
+                "Futár": str(source.get("courier_name") or master_row.get("Futár") or "Ismeretlen futár"),
+                "Vállalkozás": str(master_row.get("Vállalkozás") or ""),
+                "Route ID": str(route.get("routeId") or "–"),
+                "Dátum": delivery_date,
+                "Túratípus": route_type,
+                "Rendelések": parse_huf_value(route.get("orderCount")),
+                "Nyers beérkezett összeg": _money_amount(route.get("totalAmount")),
+                "Borravaló": _money_amount(route.get("customerTipsTotal")),
+                "Komponensek összesen": sum(components.values()),
+                **components,
+            })
+    if not records:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(records)
+    for column in ["Rendelések", "Nyers beérkezett összeg", "Borravaló", "Komponensek összesen", *component_columns]:
+        result[column] = _numeric_series(result, column)
+    return result[columns].sort_values(["Raktár", "Futár", "Dátum", "Route ID"])
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_monthly_courier_payload_totals(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    columns = ["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás", "Nyers beérkezett összeg"]
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    warehouse_id = settlement_warehouse_id(warehouse_label)
+    if warehouse_id is not None and "warehouse_id" in rows.columns:
+        rows = rows.loc[
+            pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+        ]
+    master_lookup = _api_revenue_master_lookup()
+    records: list[dict[str, object]] = []
+    for source in rows.to_dict("records"):
+        courier_id = str(source.get("courier_id") or "")
+        courier_key = _courier_id_key(courier_id)
+        master_row = master_lookup.get(courier_key, {})
         payload = source.get("response_json") or {}
+        payload_total = 0.0
         if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
             except json.JSONDecodeError:
                 payload = {}
-        if not isinstance(payload, dict):
-            continue
-        received_total = 0.0
-        for route in payload.get("routes") or []:
-            if isinstance(route, dict):
-                received_total += _money_amount(route.get("totalAmount"))
+        if isinstance(payload, dict):
+            payload_total = _money_amount(payload.get("totalCost"))
+            if not payload_total:
+                payload_total = sum(_money_amount(route.get("totalAmount")) for route in _api_payload_routes(payload))
         records.append({
-            "Courier ID": str(source.get("courier_id") or ""),
-            "Alvállalkozói összeg": received_total,
+            "Hónap": period_start.replace(day=1),
+            "Raktár": "BUD2" if int(source.get("warehouse_id") or 0) == 2 else "BUD1",
+            "Courier ID": courier_id,
+            "Futár": str(source.get("courier_name") or master_row.get("Futár") or "Ismeretlen futár"),
+            "Vállalkozás": str(master_row.get("Vállalkozás") or ""),
+            "Nyers beérkezett összeg": payload_total,
         })
     if not records:
         return pd.DataFrame(columns=columns)
     result = pd.DataFrame(records)
-    return result.groupby("Courier ID", as_index=False)["Alvállalkozói összeg"].sum()
+    result["Nyers beérkezett összeg"] = _numeric_series(result, "Nyers beérkezett összeg")
+    return (
+        result.groupby(["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"], dropna=False)["Nyers beérkezett összeg"]
+        .sum()
+        .reset_index()
+        .sort_values(["Raktár", "Futár"])
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_monthly_courier_revenue_summary(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    detail = load_api_monthly_revenue_detail(period_start, warehouse_label)
+    component_columns = list(API_REVENUE_COMPONENTS.keys())
+    columns = [
+        "Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás", "Útvonalak",
+        "Rendelések", "Nyers beérkezett összeg", "Borravaló",
+        "Komponensek összesen", *component_columns,
+    ]
+    if detail.empty:
+        return pd.DataFrame(columns=columns)
+    summary = (
+        detail.groupby(["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"], dropna=False)
+        .agg(
+            Útvonalak=("Route ID", "count"),
+            Rendelések=("Rendelések", "sum"),
+            **{
+                column: (column, "sum")
+                for column in ["Nyers beérkezett összeg", "Borravaló", "Komponensek összesen", *component_columns]
+            },
+        )
+        .reset_index()
+    )
+    payload_totals = load_api_monthly_courier_payload_totals(period_start, warehouse_label)
+    if not payload_totals.empty:
+        summary = summary.merge(
+            payload_totals,
+            on=["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"],
+            how="left",
+            suffixes=("", " API"),
+        )
+        summary["Nyers beérkezett összeg"] = (
+            _numeric_series(summary, "Nyers beérkezett összeg API")
+            .where(_numeric_series(summary, "Nyers beérkezett összeg API") > 0, _numeric_series(summary, "Nyers beérkezett összeg"))
+        )
+        summary = summary.drop(columns=["Nyers beérkezett összeg API"], errors="ignore")
+    return summary[columns].sort_values(["Raktár", "Futár"])
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_monthly_subcontractor_revenue_summary(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    courier_summary = load_api_monthly_courier_revenue_summary(period_start, warehouse_label)
+    component_columns = list(API_REVENUE_COMPONENTS.keys())
+    columns = [
+        "Hónap", "Vállalkozás", "Futárok", "Útvonalak", "Rendelések",
+        "Nyers beérkezett összeg", "Borravaló", "Komponensek összesen",
+        *component_columns,
+    ]
+    if courier_summary.empty:
+        return pd.DataFrame(columns=columns)
+    summary_source = courier_summary.copy()
+    summary_source["Vállalkozás"] = summary_source["Vállalkozás"].replace("", "Nincs vállalkozás megadva")
+    summary = (
+        summary_source.groupby(["Hónap", "Vállalkozás"], dropna=False)
+        .agg(
+            Futárok=("Courier ID", "nunique"),
+            Útvonalak=("Útvonalak", "sum"),
+            Rendelések=("Rendelések", "sum"),
+            **{
+                column: (column, "sum")
+                for column in ["Nyers beérkezett összeg", "Borravaló", "Komponensek összesen", *component_columns]
+            },
+        )
+        .reset_index()
+    )
+    return summary[columns].sort_values("Vállalkozás")
+
+
+def api_monthly_growth(current: pd.DataFrame, previous: pd.DataFrame, key_columns: list[str]) -> pd.DataFrame:
+    value_columns = [
+        "Nyers beérkezett összeg", "Borravaló", "Komponensek összesen",
+        *API_REVENUE_COMPONENTS.keys(),
+    ]
+    current_values = current[key_columns + [column for column in value_columns if column in current.columns]].copy()
+    previous_values = previous[key_columns + [column for column in value_columns if column in previous.columns]].copy()
+    merged = current_values.merge(previous_values, on=key_columns, how="outer", suffixes=("", " előző hónap")).fillna(0)
+    for column in value_columns:
+        if column in merged.columns and f"{column} előző hónap" in merged.columns:
+            merged[f"{column} növekedés"] = merged[column] - merged[f"{column} előző hónap"]
+    return merged
+
+
+def api_monthly_profit_projection(courier_summary: pd.DataFrame, settlement_data: pd.DataFrame) -> pd.DataFrame:
+    if courier_summary.empty:
+        return courier_summary.copy()
+    result = courier_summary.copy()
+    payouts = settlement_data.copy() if isinstance(settlement_data, pd.DataFrame) else pd.DataFrame()
+    if payouts.empty:
+        result["Kifizetendő"] = 0.0
+    else:
+        payouts["_courier_id_lookup"] = payouts["Courier ID"].map(_courier_id_key)
+        payout_by_id = payouts.set_index("_courier_id_lookup")["Kifizetendő"]
+        result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+        result["Kifizetendő"] = result["_courier_id_lookup"].map(payout_by_id).fillna(0.0)
+        result = result.drop(columns=["_courier_id_lookup"])
+    result["Nyereség"] = _numeric_series(result, "Nyers beérkezett összeg") - _numeric_series(result, "Kifizetendő")
+    return result
 
 
 def apply_received_amounts(data: pd.DataFrame, calculation_mode: str, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
