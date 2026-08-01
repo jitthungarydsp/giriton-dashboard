@@ -17,6 +17,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv:
+    load_dotenv(PROJECT_ROOT / ".env")
+
 SOURCE_NAME = "courier_hub_performance_couriers"
 BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service/external/performance/dsp"
 DEFAULT_DSP_CODE = "JIT"
@@ -136,16 +144,31 @@ def normalize_authorization(value):
 def build_courier_hub_headers():
     headers = {
         "Accept": "application/json",
+        "Accept-Language": "hu-HU,hu;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Origin": "https://courier-hub.kifli.hu",
+        "Referer": "https://courier-hub.kifli.hu/",
         "User-Agent": "giriton-dashboard-jitt-invoice-import/1.0",
     }
     authorization = normalize_authorization(
         get_setting("KIFLI_COURIER_HUB_AUTHORIZATION")
         or get_setting("KIFLI_COURIER_HUB_BEARER_TOKEN")
+        or get_setting("COURIER_HUB_AUTHORIZATION")
+        or get_setting("COURIER_HUB_BEARER_TOKEN")
     )
-    cookie = str(get_setting("KIFLI_COURIER_HUB_COOKIE") or "").strip()
-    api_key = str(get_setting("KIFLI_COURIER_HUB_API_KEY") or "").strip()
+    cookie = str(
+        get_setting("KIFLI_COURIER_HUB_COOKIE")
+        or get_setting("COURIER_HUB_COOKIE")
+        or ""
+    ).strip()
+    api_key = str(
+        get_setting("KIFLI_COURIER_HUB_API_KEY")
+        or get_setting("COURIER_HUB_API_KEY")
+        or ""
+    ).strip()
     extra_headers_json = str(
-        get_setting("KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON") or ""
+        get_setting("KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON")
+        or get_setting("COURIER_HUB_EXTRA_HEADERS_JSON")
+        or ""
     ).strip()
 
     if authorization:
@@ -171,6 +194,25 @@ def build_courier_hub_headers():
         )
 
     return headers
+
+
+def describe_courier_hub_headers(headers):
+    auth = str(headers.get("Authorization") or "")
+    cookie = str(headers.get("Cookie") or "")
+    api_key = str(headers.get("x-api-key") or "")
+    return {
+        "has_authorization": bool(auth),
+        "authorization_scheme": auth.split(" ", 1)[0] if auth else "",
+        "has_cookie": bool(cookie),
+        "cookie_pairs": cookie.count("="),
+        "cookie_length": len(cookie),
+        "has_x_api_key": bool(api_key),
+        "extra_header_names": sorted(
+            key
+            for key in headers
+            if key not in {"Accept", "User-Agent", "Authorization", "Cookie", "x-api-key"}
+        ),
+    }
 
 
 def _parse_auth_command_output(output):
@@ -261,7 +303,9 @@ def _headers_from_auth_payload(payload):
 
 def refresh_courier_hub_headers():
     command = str(
-        get_setting("KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND") or ""
+        get_setting("KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND")
+        or get_setting("COURIER_HUB_AUTH_REFRESH_COMMAND")
+        or ""
     ).strip()
 
     if not command:
@@ -527,6 +571,11 @@ def main():
         action="store_true",
         help="Csak azokat a chunkokat hivja, ahol meg nincs sikeres 200-as raw sor.",
     )
+    parser.add_argument(
+        "--auth-debug",
+        action="store_true",
+        help="Kiirja, hogy milyen Courier Hub auth fejlecek vannak beallitva, ertekek nelkul.",
+    )
     args = parser.parse_args()
 
     start_date = parse_date(args.start_date)
@@ -537,6 +586,8 @@ def main():
 
     warehouse_ids = parse_warehouse_ids(args.warehouse_ids)
     headers = build_courier_hub_headers()
+    if args.auth_debug:
+        print("AUTH_DEBUG " + json.dumps(describe_courier_hub_headers(headers), ensure_ascii=False))
     fetch_batch_id = str(uuid4())
     rows_by_table = {
         tuple(table_names): []

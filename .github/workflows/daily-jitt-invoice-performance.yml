@@ -54,7 +54,8 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$KIFLI_COURIER_HUB_COOKIE$KIFLI_COURIER_HUB_AUTHORIZATION" || (echo "Missing Courier Hub cookie or authorization secret" && exit 1)
+          test -n "$KIFLI_COURIER_HUB_COOKIE" || (echo "Missing Courier Hub cookie secret" && exit 1)
+          test -n "$KIFLI_COURIER_HUB_AUTHORIZATION" || (echo "Missing Courier Hub authorization secret" && exit 1)
 
       - name: Resolve dates
         id: dates
