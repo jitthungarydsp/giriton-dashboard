@@ -88,14 +88,25 @@ def parse_iso(value: Any) -> datetime | None:
     return parsed
 
 
+def normalize_time(value: Any) -> str:
+    text = str(value or "").strip().replace(".", ":")
+    if not text:
+        return ""
+    parts = text.split(":")
+    try:
+        return f"{int(parts[0]):02d}:{int(parts[1]) if len(parts) > 1 else 0:02d}"
+    except ValueError:
+        return text[:5]
+
+
 def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
     rows = supabase_request(
         "GET",
-        "giriton_future_shifts_latest",
+        "vw_attendance_muszakpro_latest_comparison",
         params={
             "select": (
-                "courier_id,courier_name,warehouse_name,shift_id,"
-                "shift_name,shift_start,shift_end,work_date"
+                "courier_id,courier_name,warehouse,shift_start,shift_end,"
+                "attendance_status,muszakpro_status,muszakpro_booking_code,work_date"
             ),
             "work_date": f"eq.{work_date.isoformat()}",
             "order": "courier_id.asc,shift_start.asc",
@@ -104,6 +115,8 @@ def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
     )
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
+        if str(row.get("muszakpro_status") or "").strip().upper() != "OK":
+            continue
         grouped[int(row["courier_id"])].append(row)
     return grouped
 
@@ -142,11 +155,13 @@ def already_sent(courier_id: int, work_date: date) -> bool:
 
 
 def format_shift_line(row: dict[str, Any]) -> str:
-    start = parse_iso(row.get("shift_start"))
-    end = parse_iso(row.get("shift_end"))
-    local_start = start.astimezone(BUDAPEST).strftime("%H:%M") if start else "?"
-    local_end = end.astimezone(BUDAPEST).strftime("%H:%M") if end else "?"
-    warehouse = str(row.get("warehouse_name") or "Raktár")
+    start_text = str(row.get("shift_start") or "").strip()
+    end_text = str(row.get("shift_end") or "").strip()
+    start = parse_iso(start_text) if "T" in start_text else None
+    end = parse_iso(end_text) if "T" in end_text else None
+    local_start = start.astimezone(BUDAPEST).strftime("%H:%M") if start else normalize_time(start_text) or "?"
+    local_end = end.astimezone(BUDAPEST).strftime("%H:%M") if end else normalize_time(end_text) or "?"
+    warehouse = str(row.get("warehouse") or row.get("warehouse_name") or "Raktár")
     return f"{warehouse} · {local_start}–{local_end}"
 
 

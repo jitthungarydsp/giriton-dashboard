@@ -456,10 +456,86 @@ def latest_by_key(rows: list[dict], user: dict, source: str) -> dict[tuple, dict
     return result
 
 
+def comparison_shift_status(row: dict[str, Any]) -> tuple[str, str]:
+    attendance_ok = str(row.get("attendance_status") or "").strip().upper() == "OK"
+    muszakpro_ok = str(row.get("muszakpro_status") or "").strip().upper() == "OK"
+    if attendance_ok and muszakpro_ok:
+        return "confirmed", "Attendance-ben is rögzítve"
+    if muszakpro_ok:
+        return "waiting", "Attendance-feltöltésre vár"
+    if attendance_ok:
+        return "review", "MűszakProban nincs rögzítve"
+    return "review", "Eltérés – ellenőrzés szükséges"
+
+
+def read_attendance_muszakpro_shifts(
+    user: dict[str, Any],
+    start: date,
+    end: date,
+    days: int,
+) -> list[dict[str, Any]]:
+    table_name = (
+        "vw_attendance_muszakpro_next_5_days"
+        if days <= 5
+        else "vw_attendance_muszakpro_latest_comparison"
+    )
+    rows = supabase_rows(
+        table_name,
+        (
+            "work_date,courier_id,courier_name,warehouse,shift_start,shift_end,"
+            "attendance_status,muszakpro_status,missing_source,"
+            "attendance_shift_id,attendance_shift_name,muszakpro_shift_text,"
+            "muszakpro_booking_code,collected_at"
+        ),
+        start,
+        end,
+    )
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        if not belongs_to_user(row, user):
+            continue
+        status, status_label = comparison_shift_status(row)
+        attendance_ok = str(row.get("attendance_status") or "").strip().upper() == "OK"
+        muszakpro_ok = str(row.get("muszakpro_status") or "").strip().upper() == "OK"
+        items.append(
+            {
+                "date": str(row.get("work_date") or ""),
+                "start": normalize_time(row.get("shift_start")),
+                "end": normalize_time(row.get("shift_end")),
+                "warehouse": str(row.get("warehouse") or ""),
+                "bookingCode": str(row.get("muszakpro_booking_code") or ""),
+                "status": status,
+                "statusLabel": status_label,
+                "giriton": attendance_ok,
+                "attendance": attendance_ok,
+                "muszakpro": muszakpro_ok,
+                "missingSource": str(row.get("missing_source") or ""),
+                "attendanceShiftName": str(row.get("attendance_shift_name") or ""),
+                "muszakproShiftText": str(row.get("muszakpro_shift_text") or ""),
+            }
+        )
+    return sorted(items, key=lambda item: (item["date"], item["start"], item["warehouse"]))
+
+
 def read_shifts(user: dict, days: int) -> dict[str, Any]:
     start = date.today()
     end = start + timedelta(days=days - 1)
     source_errors: list[str] = []
+
+    try:
+        comparison_items = read_attendance_muszakpro_shifts(user, start, end, days)
+        return {
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "days": days,
+            "items": comparison_items,
+            "warnings": [],
+            "source": "attendance_muszakpro_comparison",
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+    except Exception as exc:
+        print("Attendance MuszakPro comparison shifts error:", exc)
+        source_errors.append("Az új Attendance/MűszakPro műszaknézet jelenleg nem érhető el, régi forrásból próbálom.")
 
     try:
         giriton_raw = read_giriton_future_shifts(user, start, end)

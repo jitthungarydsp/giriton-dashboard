@@ -325,7 +325,7 @@ function shiftCard(item) {
     </div>
     <div class="source-row">
       <span class="source ${item.muszakpro ? "ok" : ""}">MűszakPro ${item.muszakpro ? "✓" : "–"}</span>
-      <span class="source ${item.giriton ? "ok" : ""}">Giriton ${item.giriton ? "✓" : "–"}</span>
+      <span class="source ${item.attendance || item.giriton ? "ok" : ""}">Attendance ${item.attendance || item.giriton ? "✓" : "–"}</span>
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
     </div>
   </article>`;
@@ -1209,7 +1209,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=19");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=20");
 }
 
 start();

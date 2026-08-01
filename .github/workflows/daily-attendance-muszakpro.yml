@@ -32,6 +32,8 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
 
     steps:
       - name: Checkout
@@ -52,6 +54,12 @@ jobs:
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+          DRY_RUN="${{ inputs.dry_run }}"
+          DRY_RUN="${DRY_RUN:-false}"
+          if [ "$DRY_RUN" != "true" ]; then
+            test -n "$VAPID_PRIVATE_KEY" || (echo "Missing VAPID_PRIVATE_KEY secret" && exit 1)
+            test -n "$VAPID_SUBJECT" || (echo "Missing VAPID_SUBJECT secret" && exit 1)
+          fi
 
       - name: Refresh next day attendance MuszakPro comparison
         run: |
@@ -74,3 +82,8 @@ jobs:
 
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
+
+      - name: Send tomorrow shift push notifications
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          python scripts/send_tomorrow_shift_push.py
