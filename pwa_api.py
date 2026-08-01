@@ -1496,19 +1496,24 @@ def save_push_subscription(
 
     now = datetime.now(timezone.utc).isoformat()
 
-    supabase_rest(
-        "PATCH",
-        "pwa_push_subscriptions",
-        params={"courier_id": f"eq.{courier_id}"},
-        payload={"active": False, "updated_at": now},
-        prefer="return=minimal",
-    )
+    try:
+        supabase_rest(
+            "PATCH",
+            "pwa_push_subscriptions",
+            params={"courier_id": f"eq.{courier_id}"},
+            payload={"active": False, "updated_at": now},
+            prefer="return=minimal",
+        )
+    except HTTPException:
+        supabase_rest(
+            "PATCH",
+            "pwa_push_subscriptions",
+            params={"courier_id": f"eq.{courier_id}"},
+            payload={"active": False},
+            prefer="return=minimal",
+        )
 
-    supabase_rest(
-        "POST",
-        "pwa_push_subscriptions",
-        params={"on_conflict": "endpoint"},
-        payload={
+    full_payload = {
             "courier_id": int(courier_id),
             "courier_name": courier_name,
             "endpoint": endpoint,
@@ -1518,9 +1523,46 @@ def save_push_subscription(
             "active": True,
             "last_seen_at": now,
             "updated_at": now,
-        },
-        prefer="resolution=merge-duplicates,return=minimal",
-    )
+    }
+    try:
+        supabase_rest(
+            "POST",
+            "pwa_push_subscriptions",
+            params={"on_conflict": "endpoint"},
+            payload=full_payload,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+    except HTTPException:
+        minimal_payload = {
+            key: value
+            for key, value in full_payload.items()
+            if key not in {"user_agent", "last_seen_at", "updated_at"}
+        }
+        supabase_rest(
+            "POST",
+            "pwa_push_subscriptions",
+            params={"on_conflict": "endpoint"},
+            payload=minimal_payload,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+
+
+def active_push_subscription_count(user: dict[str, Any]) -> int:
+    courier_id, _courier_name = courier_identity(user)
+    try:
+        rows = supabase_rest(
+            "GET",
+            "pwa_push_subscriptions",
+            params={
+                "select": "id",
+                "courier_id": f"eq.{courier_id}",
+                "active": "eq.true",
+                "limit": "100",
+            },
+        )
+    except HTTPException:
+        return 0
+    return len(rows or [])
 
 
 def disable_push_subscription(
@@ -1587,6 +1629,25 @@ def get_push_public_key(
 ):
     require_user(giriton_pwa_session)
     return {"publicKey": public_vapid_key()}
+
+
+@app.get("/api/push/status")
+def get_push_status(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    configured = True
+    error = ""
+    try:
+        public_vapid_key()
+    except HTTPException as exc:
+        configured = False
+        error = str(exc.detail or "")
+    return {
+        "configured": configured,
+        "error": error,
+        "activeSubscriptions": active_push_subscription_count(user),
+    }
 
 
 @app.post("/api/push/subscribe")

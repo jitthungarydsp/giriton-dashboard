@@ -741,12 +741,16 @@ function urlBase64ToUint8Array(value) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
+function isPushSecureContext() {
+  return window.isSecureContext || ["localhost", "127.0.0.1"].includes(window.location.hostname);
+}
+
 async function ensureServiceWorkerRegistration() {
   if (!("serviceWorker" in navigator)) {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=23");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=24");
   }
   return navigator.serviceWorker.ready;
 }
@@ -806,8 +810,28 @@ async function refreshNotificationToggle() {
     setNotificationStatus("A push értesítés nem támogatott.", true);
     return;
   }
+  if (!isPushSecureContext()) {
+    toggle.checked = false;
+    toggle.disabled = true;
+    setNotificationStatus("A push értesítéshez HTTPS vagy localhost szükséges.", true);
+    return;
+  }
 
-  const subscription = await getPushSubscription();
+  let subscription = null;
+  try {
+    const status = await api("/api/push/status");
+    if (!status.configured) {
+      toggle.checked = false;
+      toggle.disabled = true;
+      setNotificationStatus(status.error || "A push értesítések még nincsenek konfigurálva.", true);
+      return;
+    }
+    subscription = await getPushSubscription();
+  } catch (error) {
+    toggle.checked = false;
+    setNotificationStatus(`Push állapot hiba: ${error.message}`, true);
+    return;
+  }
   toggle.checked = Notification.permission === "granted" && Boolean(subscription);
   toggle.disabled = Notification.permission === "denied";
 
@@ -821,6 +845,10 @@ async function refreshNotificationToggle() {
 }
 
 async function subscribeToPush() {
+  if (!isPushSecureContext()) {
+    throw new Error("A push értesítés csak HTTPS-en vagy localhoston kapcsolható be.");
+  }
+
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
     throw new Error("Az értesítési engedély nem lett megadva.");
@@ -840,11 +868,14 @@ async function subscribeToPush() {
     await existingSubscription.unsubscribe();
   }
 
+  const applicationServerKey = urlBase64ToUint8Array(keyPayload.publicKey);
+  if (applicationServerKey.byteLength !== 65) {
+    throw new Error("A VAPID publikus kulcs formátuma hibás.");
+  }
+
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(
-      keyPayload.publicKey
-    ),
+    applicationServerKey,
   });
 
   const serialized = subscription.toJSON();
@@ -887,6 +918,7 @@ async function unsubscribeFromPush() {
 async function handleNotificationToggleChange(event) {
   const toggle = event.currentTarget;
   toggle.disabled = true;
+  let hasError = false;
 
   setNotificationStatus(
     toggle.checked ? "Bekapcsolás…" : "Kikapcsolás…"
@@ -899,6 +931,7 @@ async function handleNotificationToggleChange(event) {
       await unsubscribeFromPush();
     }
   } catch (error) {
+    hasError = true;
     toggle.checked = !toggle.checked;
     setNotificationStatus(
       `Hiba: ${error.message}`,
@@ -906,7 +939,9 @@ async function handleNotificationToggleChange(event) {
     );
   } finally {
     toggle.disabled = false;
-    await refreshNotificationToggle();
+    if (!hasError) {
+      await refreshNotificationToggle();
+    }
   }
 }
 
