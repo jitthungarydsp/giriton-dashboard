@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Holnapi műszak push értesítések küldése.
+Műszak push értesítések küldése.
 
 Szükséges csomag:
     pip install pywebpush requests
@@ -15,11 +15,13 @@ Futtatás:
     python send_tomorrow_shift_push.py
     python send_tomorrow_shift_push.py --dry-run
     python send_tomorrow_shift_push.py --date 2026-07-16
+    python send_tomorrow_shift_push.py --mode new-shifts --days 5
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -99,7 +101,7 @@ def normalize_time(value: Any) -> str:
         return text[:5]
 
 
-def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
+def load_shift_rows(start_date: date, end_date: date) -> list[dict[str, Any]]:
     rows = supabase_request(
         "GET",
         "vw_attendance_muszakpro_latest_comparison",
@@ -108,15 +110,23 @@ def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
                 "courier_id,courier_name,warehouse,shift_start,shift_end,"
                 "attendance_status,muszakpro_status,muszakpro_booking_code,work_date"
             ),
-            "work_date": f"eq.{work_date.isoformat()}",
+            "work_date": f"gte.{start_date.isoformat()}",
             "order": "courier_id.asc,shift_start.asc",
             "limit": "5000",
         },
     )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "") <= end_date.isoformat()
+        and str(row.get("muszakpro_status") or "").strip().upper() == "OK"
+        and row.get("courier_id") is not None
+    ]
+
+
+def load_tomorrow_shifts(work_date: date) -> dict[int, list[dict[str, Any]]]:
+    rows = load_shift_rows(work_date, work_date)
     grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        if str(row.get("muszakpro_status") or "").strip().upper() != "OK":
-            continue
         grouped[int(row["courier_id"])].append(row)
     return grouped
 
@@ -138,7 +148,7 @@ def load_subscriptions(courier_ids: list[int]) -> list[dict[str, Any]]:
     )
 
 
-def already_sent(courier_id: int, work_date: date) -> bool:
+def already_sent(courier_id: int, work_date: date, notification_type: str) -> bool:
     rows = supabase_request(
         "GET",
         "pwa_push_delivery_log",
@@ -146,7 +156,7 @@ def already_sent(courier_id: int, work_date: date) -> bool:
             "select": "id",
             "courier_id": f"eq.{courier_id}",
             "work_date": f"eq.{work_date.isoformat()}",
-            "notification_type": "eq.tomorrow_shift",
+            "notification_type": f"eq.{notification_type}",
             "status": "eq.sent",
             "limit": "1",
         },
@@ -165,10 +175,26 @@ def format_shift_line(row: dict[str, Any]) -> str:
     return f"{warehouse} · {local_start}–{local_end}"
 
 
+def shift_notification_type(row: dict[str, Any]) -> str:
+    key = "|".join(
+        [
+            str(row.get("work_date") or ""),
+            str(row.get("courier_id") or ""),
+            normalize_time(row.get("shift_start")),
+            normalize_time(row.get("shift_end")),
+            str(row.get("warehouse") or row.get("warehouse_name") or ""),
+            str(row.get("muszakpro_booking_code") or ""),
+        ]
+    )
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"new_shift_{digest}"
+
+
 def save_delivery_log(
     *,
     courier_id: int,
     work_date: date,
+    notification_type: str,
     status: str,
     message: str,
 ) -> None:
@@ -178,13 +204,123 @@ def save_delivery_log(
         payload={
             "courier_id": courier_id,
             "work_date": work_date.isoformat(),
-            "notification_type": "tomorrow_shift",
+            "notification_type": notification_type,
             "status": status,
             "message": message[:2000],
             "sent_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
     )
+
+
+def send_push_payload(
+    *,
+    courier_id: int,
+    subscriptions: list[dict[str, Any]],
+    payload: str,
+) -> tuple[bool, list[str]]:
+    success = False
+    errors: list[str] = []
+    for subscription in subscriptions:
+        info = {
+            "endpoint": subscription["endpoint"],
+            "keys": {
+                "p256dh": subscription["p256dh"],
+                "auth": subscription["auth"],
+            },
+        }
+        try:
+            webpush(
+                subscription_info=info,
+                data=payload,
+                vapid_private_key=setting("VAPID_PRIVATE_KEY"),
+                vapid_claims={"sub": setting("VAPID_SUBJECT")},
+                ttl=12 * 60 * 60,
+            )
+            success = True
+        except WebPushException as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            errors.append(f"subscription={subscription['id']} status={status_code} error={exc}")
+            if status_code in {404, 410}:
+                deactivate_subscription(int(subscription["id"]))
+    return success, errors
+
+
+def send_new_shift_notifications(days: int, dry_run: bool) -> int:
+    start_date = datetime.now(BUDAPEST).date()
+    end_date = start_date + timedelta(days=max(days, 1) - 1)
+    shift_rows = load_shift_rows(start_date, end_date)
+    courier_ids = sorted({int(row["courier_id"]) for row in shift_rows})
+    subscriptions = load_subscriptions(courier_ids)
+    subscriptions_by_courier: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for subscription in subscriptions:
+        subscriptions_by_courier[int(subscription["courier_id"])].append(subscription)
+
+    sent = 0
+    skipped = 0
+    failed = 0
+    for row in shift_rows:
+        courier_id = int(row["courier_id"])
+        work_date = date.fromisoformat(str(row.get("work_date") or "")[:10])
+        notification_type = shift_notification_type(row)
+        if already_sent(courier_id, work_date, notification_type):
+            skipped += 1
+            continue
+
+        line = format_shift_line(row)
+        title = "Új műszak került fel"
+        body = f"{work_date:%Y. %m. %d.} · {line}"
+        payload = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "tag": notification_type,
+                "url": "/",
+                "renotify": False,
+                "data": {"section": "home", "workDate": work_date.isoformat()},
+            },
+            ensure_ascii=False,
+        )
+
+        courier_subscriptions = subscriptions_by_courier.get(courier_id, [])
+        if not courier_subscriptions:
+            skipped += 1
+            print(f"KIHAGYVA nincs feliratkozás: courier_id={courier_id} shift={body}")
+            continue
+
+        if dry_run:
+            print(f"DRY_RUN new_shift courier_id={courier_id} body={body!r}")
+            continue
+
+        success, errors = send_push_payload(
+            courier_id=courier_id,
+            subscriptions=courier_subscriptions,
+            payload=payload,
+        )
+        if success:
+            sent += 1
+            save_delivery_log(
+                courier_id=courier_id,
+                work_date=work_date,
+                notification_type=notification_type,
+                status="sent",
+                message=body,
+            )
+            print(f"ELKÜLDVE new_shift courier_id={courier_id}: {body}")
+        else:
+            failed += 1
+            error_text = " | ".join(errors) or "Ismeretlen küldési hiba."
+            save_delivery_log(
+                courier_id=courier_id,
+                work_date=work_date,
+                notification_type=notification_type,
+                status="failed",
+                message=error_text,
+            )
+            print(f"HIBA new_shift courier_id={courier_id}: {error_text}", file=sys.stderr)
+
+    print(f"Új műszak értesítés kész. elküldve={sent} kihagyva={skipped} hibás={failed}")
+    return 1 if failed else 0
 
 
 def deactivate_subscription(subscription_id: int) -> None:
@@ -203,8 +339,13 @@ def deactivate_subscription(subscription_id: int) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", help="Célnap YYYY-MM-DD; alapértelmezett: holnap.")
+    parser.add_argument("--mode", choices=["tomorrow", "new-shifts"], default="tomorrow")
+    parser.add_argument("--days", type=int, default=5)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if args.mode == "new-shifts":
+        return send_new_shift_notifications(args.days, args.dry_run)
 
     target_date = (
         date.fromisoformat(args.date)
@@ -223,7 +364,7 @@ def main() -> int:
     failed = 0
 
     for courier_id, shifts in sorted(shifts_by_courier.items()):
-        if already_sent(courier_id, target_date):
+        if already_sent(courier_id, target_date, "tomorrow_shift"):
             skipped += 1
             print(f"KIHAGYVA már elküldve: courier_id={courier_id}")
             continue
@@ -287,6 +428,7 @@ def main() -> int:
             save_delivery_log(
                 courier_id=courier_id,
                 work_date=target_date,
+                notification_type="tomorrow_shift",
                 status="sent",
                 message=body,
             )
@@ -297,6 +439,7 @@ def main() -> int:
             save_delivery_log(
                 courier_id=courier_id,
                 work_date=target_date,
+                notification_type="tomorrow_shift",
                 status="failed",
                 message=error_text,
             )

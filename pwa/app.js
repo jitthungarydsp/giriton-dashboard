@@ -53,6 +53,38 @@ function dateLabel(value, short = false) {
   ).format(date);
 }
 
+function shiftDateTime(item, field) {
+  const dateValue = item?.date;
+  const timeValue = item?.[field];
+  if (!dateValue || !timeValue) return null;
+  const value = new Date(`${dateValue}T${timeValue}:00`);
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+function activeOrNextShift(items = []) {
+  const now = new Date();
+  const sorted = [...items]
+    .filter((item) => item.date && item.start)
+    .sort((left, right) => {
+      const leftStart = shiftDateTime(left, "start")?.getTime() || 0;
+      const rightStart = shiftDateTime(right, "start")?.getTime() || 0;
+      return leftStart - rightStart;
+    });
+
+  const active = sorted.find((item) => {
+    const start = shiftDateTime(item, "start");
+    const end = shiftDateTime(item, "end");
+    if (!start) return false;
+    const effectiveEnd = end || new Date(start.getTime() + 8 * 60 * 60 * 1000);
+    return start <= now && now <= effectiveEnd;
+  });
+
+  return active || sorted.find((item) => {
+    const start = shiftDateTime(item, "start");
+    return start && start >= now;
+  }) || null;
+}
+
 function showLogin() {
   $("#login-view").classList.remove("hidden");
   $("#app-view").classList.add("hidden");
@@ -316,8 +348,11 @@ function renderTabs() {
   }
 }
 
-function shiftCard(item) {
+function shiftCard(item, index = 0) {
   const end = item.end ? `–${escapeHtml(item.end)}` : "";
+  const delayButton = index === 0
+    ? `<button class="shift-delay-button" type="button" data-shift-index="${index}">Kések a műszakból</button>`
+    : "";
   return `<article class="shift-card">
     <div class="shift-top">
       <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
@@ -328,20 +363,21 @@ function shiftCard(item) {
       <span class="source ${item.attendance || item.giriton ? "ok" : ""}">Attendance ${item.attendance || item.giriton ? "✓" : "–"}</span>
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
     </div>
+    ${delayButton}
   </article>`;
 }
 
 function renderShifts() {
   const items = (state.data?.items || []).filter((item) => item.date === state.selectedDate);
   $("#shift-list").innerHTML = items.length
-    ? items.map(shiftCard).join("")
+    ? items.map((item, index) => shiftCard(item, index)).join("")
     : `<div class="empty-card">Erre a napra nincs megjeleníthető műszak.</div>`;
 }
 
 function renderHero() {
-  const upcoming = (state.data?.items || []).find((item) => item.date >= localDate());
+  const upcoming = activeOrNextShift(state.data?.items || []);
   if (!upcoming) {
-    $("#next-shift").textContent = "Nincs közelgő műszak";
+    $("#next-shift").textContent = "Nincs aktuális műszak";
     $("#next-shift-detail").textContent = "A következő öt napban nincs foglalás.";
     $("#next-status").textContent = "Szabad";
     return;
@@ -360,7 +396,8 @@ async function loadShifts() {
   $("#refresh").disabled = true;
   try {
     state.data = await api("/api/shifts?days=5");
-    state.selectedDate ||= localDate();
+    const focusShift = activeOrNextShift(state.data?.items || []);
+    state.selectedDate = focusShift?.date || state.selectedDate || localDate();
     renderHero();
     renderTabs();
     renderWarnings();
@@ -372,6 +409,41 @@ async function loadShifts() {
     $("#refresh").disabled = false;
   }
 }
+
+async function sendShiftDelayAlert(item, button) {
+  if (!item) return;
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Küldés...";
+  try {
+    await api("/api/shifts/delay-alert", {
+      method: "POST",
+      body: JSON.stringify({
+        work_date: item.date || "",
+        start: item.start || "",
+        end: item.end || "",
+        warehouse: item.warehouse || "",
+        shift_name: item.attendanceShiftName || item.muszakproShiftText || "",
+        booking_code: item.bookingCode || "",
+        message: "",
+      }),
+    });
+    button.textContent = "Jelezve";
+    button.classList.add("sent");
+  } catch (error) {
+    button.textContent = originalText;
+    button.disabled = false;
+    $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+$("#shift-list").addEventListener("click", async (event) => {
+  const button = event.target.closest(".shift-delay-button");
+  if (!button) return;
+  const items = (state.data?.items || []).filter((item) => item.date === state.selectedDate);
+  const index = Number(button.dataset.shiftIndex || 0);
+  await sendShiftDelayAlert(items[index], button);
+});
 
 function workflowStep(key) {
   return state.workflow?.steps?.find((step) => step.key === key) || {};
@@ -1209,7 +1281,7 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=20");
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=21");
 }
 
 start();

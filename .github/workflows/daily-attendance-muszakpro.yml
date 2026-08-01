@@ -16,8 +16,8 @@ on:
         required: false
         default: "false"
   schedule:
-    # GitHub cron UTC-ben fut. Nyari budapesti ido szerint 06:30.
-    - cron: "30 4 * * *"
+    # GitHub cron UTC-ben fut. Az 5 napos műszakfrissítő óránként fut.
+    - cron: "0 * * * *"
 
 concurrency:
   group: daily-attendance-muszakpro-refresh
@@ -83,7 +83,7 @@ jobs:
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
 
-      - name: Send tomorrow shift push notifications
+      - name: Send new shift push notifications
         if: ${{ inputs.dry_run != 'true' }}
         run: |
-          python scripts/send_tomorrow_shift_push.py
+          python scripts/send_tomorrow_shift_push.py --mode new-shifts --days 5

@@ -70,6 +70,16 @@ class RouteDelayAlertRequest(BaseModel):
     current_checkpoint_position: int | None = None
 
 
+class ShiftDelayAlertRequest(BaseModel):
+    work_date: str
+    start: str = ""
+    end: str = ""
+    warehouse: str = ""
+    shift_name: str = ""
+    booking_code: str = ""
+    message: str = ""
+
+
 class BillingProfileUpdate(BaseModel):
     courier_id: str = ""
     courier_name: str = ""
@@ -127,7 +137,11 @@ def load_setting(name: str) -> str:
     try:
         with secrets_path.open("rb") as file:
             settings = tomllib.load(file)
-        value = settings.get(name) or settings.get("supabase", {}).get(name)
+        value = (
+            settings.get(name)
+            or settings.get("supabase", {}).get(name)
+            or settings.get("discord", {}).get(name)
+        )
         return clean(value)
     except Exception:
         return ""
@@ -289,6 +303,62 @@ def normalize_warehouse(value: Any) -> str:
         "bud2jit": "BUD2",
     }
     return aliases.get(text, str(value or "").strip().upper())
+
+
+def discord_webhook_for_shift(warehouse: str) -> str:
+    coordinator_webhook = load_setting("DISCORD_COORDINATOR_WEBHOOK_URL")
+    if coordinator_webhook:
+        return coordinator_webhook
+
+    normalized = normalize_warehouse(warehouse)
+    if normalized:
+        warehouse_webhook = load_setting(f"DISCORD_WEBHOOK_URL_{normalized}")
+        if warehouse_webhook:
+            return warehouse_webhook
+
+    return load_setting("DISCORD_WEBHOOK_URL")
+
+
+def send_shift_delay_discord_alert(user: dict[str, Any], payload: ShiftDelayAlertRequest) -> None:
+    courier_id, courier_name = courier_identity(user)
+    profile = read_billing_profile(user)
+    phone_number = str(profile.get("phone_number") or user.get("phone") or "-").strip() or "-"
+    warehouse = normalize_warehouse(payload.warehouse) or payload.warehouse.strip() or "-"
+    webhook_url = discord_webhook_for_shift(warehouse)
+    if not webhook_url:
+        raise HTTPException(
+            status_code=503,
+            detail="A koordinátori Discord webhook nincs beállítva.",
+        )
+
+    shift_time = payload.start.strip() or "?"
+    if payload.end.strip():
+        shift_time = f"{shift_time}-{payload.end.strip()}"
+    shift_name = payload.shift_name.strip() or payload.booking_code.strip() or "Műszak"
+    work_date = payload.work_date.strip() or date.today().isoformat()
+    message = payload.message.strip()
+
+    lines = [
+        "🚨 **ALERT: KÉSÉS A MŰSZAKBÓL** 🚨",
+        "",
+        f"**Futár:** {courier_name} `#{courier_id}`",
+        f"**Telefon:** `{phone_number}`",
+        f"**Raktár:** `{warehouse}`",
+        f"**Műszak:** {work_date} {shift_time} · {shift_name}",
+    ]
+    if message:
+        lines.append(f"**Megjegyzés:** {message}")
+
+    response = requests.post(
+        webhook_url,
+        json={"content": "\n".join(lines)},
+        timeout=15,
+    )
+    if not response.ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"A Discord értesítés nem ment ki: HTTP {response.status_code}",
+        )
 
 
 def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]:
@@ -1605,6 +1675,15 @@ def shifts(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     return read_shifts(require_user(giriton_pwa_session), days)
+
+
+@app.post("/api/shifts/delay-alert")
+def create_shift_delay_alert(
+    payload: ShiftDelayAlertRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    send_shift_delay_discord_alert(require_user(giriton_pwa_session), payload)
+    return {"ok": True}
 
 
 @app.get("/api/routes/current")
