@@ -859,6 +859,8 @@ def send_route_push(
 
             if status_code in [404, 410]:
                 deactivate_push_subscription(subscription.get("id"))
+        except Exception as exc:
+            errors.append(f"id={subscription.get('id')} error={exc}")
 
     if sent:
         log_push_delivery(

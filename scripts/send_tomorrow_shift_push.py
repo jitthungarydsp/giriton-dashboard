@@ -287,6 +287,8 @@ def send_push_payload(
             errors.append(f"subscription={subscription['id']} status={status_code} error={exc}")
             if status_code in {404, 410}:
                 deactivate_subscription(int(subscription["id"]))
+        except Exception as exc:
+            errors.append(f"subscription={subscription['id']} error={exc}")
     return success, errors
 
 

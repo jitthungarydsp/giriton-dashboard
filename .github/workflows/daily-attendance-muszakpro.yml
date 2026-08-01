@@ -86,5 +86,6 @@ jobs:
 
       - name: Send new shift push notifications
         if: ${{ inputs.dry_run != 'true' }}
+        continue-on-error: true
         run: |
           python scripts/send_tomorrow_shift_push.py --mode new-shifts --days 5
