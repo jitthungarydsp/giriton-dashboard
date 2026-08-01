@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tomllib
+from collections.abc import Mapping
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,8 +42,13 @@ def load_setting(name: str) -> str:
         if value:
             return clean(value)
         supabase_section = st.secrets.get("supabase", {})
-        if isinstance(supabase_section, dict):
+        if isinstance(supabase_section, Mapping):
             value = supabase_section.get(name, "")
+            if value:
+                return clean(value)
+        pwa_section = st.secrets.get("pwa", {})
+        if isinstance(pwa_section, Mapping):
+            value = pwa_section.get(name, "")
             if value:
                 return clean(value)
     except Exception:
@@ -55,7 +61,12 @@ def load_setting(name: str) -> str:
     try:
         with secrets_path.open("rb") as file:
             settings = tomllib.load(file)
-        return clean(settings.get(name) or settings.get("supabase", {}).get(name) or "")
+        return clean(
+            settings.get(name)
+            or settings.get("supabase", {}).get(name)
+            or settings.get("pwa", {}).get(name)
+            or ""
+        )
     except Exception:
         return ""
 
@@ -143,6 +154,42 @@ def _load_subscriptions(courier_id: str | int) -> list[dict[str, Any]]:
             "limit": "100",
         },
     )
+
+
+def load_active_push_subscribers() -> dict[str, dict[str, Any]]:
+    rows = _supabase_request(
+        "GET",
+        PUSH_SUBSCRIPTION_TABLE,
+        params={
+            "select": "courier_id,courier_name,updated_at,last_seen_at",
+            "active": "eq.true",
+            "order": "courier_id.asc,updated_at.desc",
+            "limit": "10000",
+        },
+    )
+    subscribers: dict[str, dict[str, Any]] = {}
+    for row in rows or []:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if not courier_id:
+            continue
+        item = subscribers.setdefault(
+            courier_id,
+            {
+                "courier_id": courier_id,
+                "courier_name": str(row.get("courier_name") or "").strip(),
+                "subscription_count": 0,
+                "last_seen_at": "",
+                "updated_at": "",
+            },
+        )
+        item["subscription_count"] += 1
+        for field in ("last_seen_at", "updated_at"):
+            value = str(row.get(field) or "").strip()
+            if value and value > str(item.get(field) or ""):
+                item[field] = value
+        if not item.get("courier_name") and row.get("courier_name"):
+            item["courier_name"] = str(row.get("courier_name") or "").strip()
+    return subscribers
 
 
 def _deactivate_subscription(subscription_id: Any) -> None:
