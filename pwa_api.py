@@ -141,6 +141,7 @@ def load_setting(name: str) -> str:
             settings.get(name)
             or settings.get("supabase", {}).get(name)
             or settings.get("discord", {}).get(name)
+            or settings.get("pwa", {}).get(name)
         )
         return clean(value)
     except Exception:

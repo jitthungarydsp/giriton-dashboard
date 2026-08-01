@@ -8,6 +8,7 @@ const state = {
   checkedInvoiceMonth: null,
   currentRoute: null,
   coordinatorSetup: null,
+  serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -723,6 +724,16 @@ function urlBase64ToUint8Array(value) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
+async function ensureServiceWorkerRegistration() {
+  if (!("serviceWorker" in navigator)) {
+    throw new Error("A service worker nem támogatott ezen az eszközön.");
+  }
+  if (!state.serviceWorkerRegistration) {
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=22");
+  }
+  return navigator.serviceWorker.ready;
+}
+
 function ensureNotificationToggle() {
   let card = $("#notification-settings-card");
   if (card) return card;
@@ -756,7 +767,7 @@ function ensureNotificationToggle() {
 
 async function getPushSubscription() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await ensureServiceWorkerRegistration();
   return registration.pushManager.getSubscription();
 }
 
@@ -803,7 +814,7 @@ async function subscribeToPush() {
     throw new Error("A VAPID publikus kulcs nem érhető el.");
   }
 
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await ensureServiceWorkerRegistration();
   const existingSubscription =
     await registration.pushManager.getSubscription();
 
@@ -1281,7 +1292,11 @@ async function start() {
   } catch (_) {
     showLogin();
   }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js?v=21");
+  if ("serviceWorker" in navigator) {
+    ensureServiceWorkerRegistration().catch((error) => {
+      console.warn("Service worker registration failed", error);
+    });
+  }
 }
 
 start();

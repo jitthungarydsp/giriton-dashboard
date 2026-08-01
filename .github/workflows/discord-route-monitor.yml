@@ -33,6 +33,8 @@ jobs:
       DISCORD_NOTIFY_COURIER_IDS: ${{ secrets.DISCORD_NOTIFY_COURIER_IDS }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
 
     steps:
       - name: Checkout
@@ -54,6 +56,8 @@ jobs:
           test -n "$DISCORD_WEBHOOK_URL_BUD2" || (echo "Missing DISCORD_WEBHOOK_URL_BUD2 secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$VAPID_PRIVATE_KEY" || (echo "Missing VAPID_PRIVATE_KEY secret" && exit 1)
+          test -n "$VAPID_SUBJECT" || (echo "Missing VAPID_SUBJECT secret" && exit 1)
           echo "Discord courier filter: ${DISCORD_NOTIFY_COURIER_IDS:-disabled/all couriers}"
 
       - name: Run Discord route monitor

@@ -766,7 +766,7 @@ def build_route_push_body(
     if planned_return:
         lines.append(f"Várható visszaérkezés: {planned_return}")
     if orders_in_route:
-        lines.append(f"Rendelések: {orders_in_route}")
+        lines.append(f"Címek: {orders_in_route} db")
     if licence_plate:
         lines.append(f"Rendszám: {licence_plate}")
     if address:
@@ -954,11 +954,6 @@ def run_once(max_age_minutes, dry_run=False):
             driver_detail,
         )
 
-        if notification_already_logged(courier_id, route_id, route_warehouse):
-            counters["already_logged"] += 1
-            skipped_count += 1
-            continue
-
         checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
@@ -966,7 +961,12 @@ def run_once(max_age_minutes, dry_run=False):
             str(dashboard_route.get("licence_plate") or "").strip()
         )
         orders_in_route = (
-            str(dashboard_route.get("orders_in_route") or "").strip()  
+            str(
+                dashboard_route.get("orders_in_route")
+                or route.get("numTotalOrders")
+                or len(route.get("checkpoints", []) or [])
+                or ""
+            ).strip()
         )
         courier_name = (
             str(dashboard_route.get("courier_name") or "").strip()
@@ -993,50 +993,57 @@ def run_once(max_age_minutes, dry_run=False):
             )
             continue
 
-        result = notify_route_assigned_once(
-            courier_id,
-            courier_name,
-            route_id,
-            order_id="",
-            address=address,
-            planned_departure=format_time(route.get("plannedDeparture")),
-            planned_return=format_time(
-                route.get("realReturn") or route.get("plannedReturn")
-            ),
-            ignore_courier_filter=True,
-            licence_plate=licence_plate,
-            orders_in_route="",
-            warehouse=route_warehouse,
-            current_shift_note=shift_notes.get("current_shift_note", ""),
-            next_shift_note=shift_notes.get("next_shift_note", ""),
-            next_shift_delay_note=shift_notes.get("next_shift_delay_note", ""),
-            queue_since_note=shift_notes.get("queue_since_note", ""),
-            queue_wait_note=shift_notes.get("queue_wait_note", ""),
-        )
-
-        if result == "sent":
-            log_notification(
+        if notification_already_logged(courier_id, route_id, route_warehouse):
+            counters["already_logged"] += 1
+            print(
+                f"Discord route jelzes kihagyva: "
+                f"#{courier_id} route {route_id} (already_logged)"
+            )
+        else:
+            result = notify_route_assigned_once(
                 courier_id,
                 courier_name,
                 route_id,
-                route,
-                checkpoint,
-                licence_plate,
-                orders_in_route,
-                route_warehouse
+                order_id="",
+                address=address,
+                planned_departure=format_time(route.get("plannedDeparture")),
+                planned_return=format_time(
+                    route.get("realReturn") or route.get("plannedReturn")
+                ),
+                ignore_courier_filter=True,
+                licence_plate=licence_plate,
+                orders_in_route="",
+                warehouse=route_warehouse,
+                current_shift_note=shift_notes.get("current_shift_note", ""),
+                next_shift_note=shift_notes.get("next_shift_note", ""),
+                next_shift_delay_note=shift_notes.get("next_shift_delay_note", ""),
+                queue_since_note=shift_notes.get("queue_since_note", ""),
+                queue_wait_note=shift_notes.get("queue_wait_note", ""),
             )
-            sent_count += 1
-            print(
-                f"Discord route jelzes elkuldve: "
-                f"#{courier_id} route {route_id} warehouse={route_warehouse or '-'}"
-            )
-        else:
-            counters[result or "not_sent"] += 1
-            skipped_count += 1
-            print(
-                f"Discord route jelzes kihagyva: "
-                f"#{courier_id} route {route_id} ({result})"
-            )
+
+            if result == "sent":
+                log_notification(
+                    courier_id,
+                    courier_name,
+                    route_id,
+                    route,
+                    checkpoint,
+                    licence_plate,
+                    orders_in_route,
+                    route_warehouse
+                )
+                sent_count += 1
+                print(
+                    f"Discord route jelzes elkuldve: "
+                    f"#{courier_id} route {route_id} warehouse={route_warehouse or '-'}"
+                )
+            else:
+                counters[result or "not_sent"] += 1
+                skipped_count += 1
+                print(
+                    f"Discord route jelzes kihagyva: "
+                    f"#{courier_id} route {route_id} ({result})"
+                )
 
         push_result = send_route_push(
             courier_id,
