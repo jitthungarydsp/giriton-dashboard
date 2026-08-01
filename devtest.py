@@ -1303,8 +1303,8 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     columns = [
         "Courier ID", "Futár", "Branch", "Számítás módja",
         "Raktár", "Státusz", "Nettó bevétel", "Bónusz",
-        "Borravaló", "Levonás", "Kifizetendő", "Előző havi összeg",
-        "KPI", "Munkakezdés",
+        "Borravaló", "Alvállalkozói összeg", "Levonás", "Kifizetendő",
+        "Előző havi összeg", "KPI", "Munkakezdés",
     ]
 
     if not rows:
@@ -1328,7 +1328,7 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     df["Státusz"] = "Elszámolásra vár"
 
     for column in [
-        "Nettó bevétel", "Bónusz", "Borravaló", "Levonás",
+        "Nettó bevétel", "Bónusz", "Borravaló", "Alvállalkozói összeg", "Levonás",
         "Kifizetendő", "Előző havi összeg", "KPI",
     ]:
         df[column] = 0.0
@@ -2447,7 +2447,7 @@ def load_api_import_diagnostics(session_id: str | None) -> dict[str, object]:
 def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = None) -> pd.DataFrame:
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
-        "Rendelések", "Alapdíj", "Borravaló", "Késedelmi díj",
+        "Rendelések", "Alapdíj", "Kapott összeg", "Borravaló", "Késedelmi díj",
         "Túramegfelelés", "Egyéb bónusz", "Bónuszok", "DB státusz",
     ]
     if rows.empty:
@@ -2485,6 +2485,7 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
                 "Naptípus": "Nincs besorolás",
                 "Rendelések": parse_huf_value(route.get("orderCount")),
                 "Alapdíj": _api_route_fee(route, "fixed_base"),
+                "Kapott összeg": _money_amount(route.get("totalAmount")),
                 "Borravaló": _money_amount(route.get("customerTipsTotal")),
                 "Késedelmi díj": delay_fee,
                 "Túramegfelelés": compliance_fee,
@@ -2495,6 +2496,56 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
     if not parsed:
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_received_amounts(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+    columns = ["Courier ID", "Alvállalkozói összeg"]
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    warehouse_id = settlement_warehouse_id(warehouse_label)
+    if warehouse_id is not None and "warehouse_id" in rows.columns:
+        rows = rows.loc[
+            pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+        ]
+    records: list[dict[str, object]] = []
+    for source in rows.to_dict("records"):
+        payload = source.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        received_total = 0.0
+        for route in payload.get("routes") or []:
+            if isinstance(route, dict):
+                received_total += _money_amount(route.get("totalAmount"))
+        records.append({
+            "Courier ID": str(source.get("courier_id") or ""),
+            "Alvállalkozói összeg": received_total,
+        })
+    if not records:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(records)
+    return result.groupby("Courier ID", as_index=False)["Alvállalkozói összeg"].sum()
+
+
+def apply_received_amounts(data: pd.DataFrame, calculation_mode: str, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+    result = data.copy()
+    result["Alvállalkozói összeg"] = _numeric_series(result, "Vállalkozói alapdíj")
+    if str(calculation_mode or "API").strip().casefold() != "api":
+        return result
+    received = load_api_received_amounts(period_start, warehouse_label)
+    if received.empty:
+        return result
+    result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+    received["_courier_id_lookup"] = received["Courier ID"].map(_courier_id_key)
+    amount_by_id = received.set_index("_courier_id_lookup")["Alvállalkozói összeg"]
+    result["Alvállalkozói összeg"] = result["_courier_id_lookup"].map(amount_by_id).fillna(result["Alvállalkozói összeg"])
+    return result.drop(columns=["_courier_id_lookup"])
 
 
 def apply_api_base_rates(data: pd.DataFrame, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
@@ -3830,6 +3881,7 @@ def show_courier_dialog() -> None:
             if dialog_api_session_id:
                 dialog_session_id = dialog_api_session_id
         data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
+        data = apply_received_amounts(data, dialog_calculation_mode, dialog_start, st.session_state.get("new_warehouse", "Összes"))
         data = apply_imported_balance_components(data, dialog_session_id)
         data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
         data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
@@ -3900,6 +3952,9 @@ def show_courier_dialog() -> None:
 
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
+    contractor_received_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
+    if not contractor_received_total and "Kapott összeg" in route_detail.columns:
+        contractor_received_total = float(route_detail["Kapott összeg"].sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     if str(active_calculation_mode or "").strip().casefold() == "api" and not route_breakdown.empty:
@@ -3960,7 +4015,7 @@ def show_courier_dialog() -> None:
             </div>
             <div class="settlement-top-kpis">
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
-              <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Összes bevétel</div><div class="settlement-kpi-value">{format_huf(total_income)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+              <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Kapott összeg</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon red">−</div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
               <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
             </div>
@@ -4807,11 +4862,11 @@ def show_courier_dialog() -> None:
         else:
             display_columns = [
                 "Route ID", "Excel dátum", "Hét napja", "Túratípus",
-                "Naptípus", "Rendelések", "Alapdíj", "Borravaló",
+                "Naptípus", "Rendelések", "Alapdíj", "Kapott összeg", "Borravaló",
                 "Késedelmi díj", "Túramegfelelés", "DB státusz",
             ]
             display_columns = [column for column in display_columns if column in route_view.columns]
-            for amount_column in ["Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]:
+            for amount_column in ["Alapdíj", "Kapott összeg", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]:
                 if amount_column in route_view.columns:
                     route_view[amount_column] = route_view[amount_column].map(format_huf)
             st.dataframe(route_view[display_columns], use_container_width=True, hide_index=True)
@@ -6048,6 +6103,7 @@ def show_new_settlement_page() -> None:
         if api_session_id:
             import_session_id = api_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
+    data = apply_received_amounts(data, selected_calculation_mode, balance_period_start, selected_warehouse_label)
     data = apply_imported_balance_components(data, import_session_id)
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
@@ -6514,7 +6570,7 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
-    total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
+    total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
 
     st.markdown(
         f"""
@@ -6532,12 +6588,12 @@ def show_new_settlement_page() -> None:
 
           <div class="summary-donut-card">
             <div>
-              <div class="summary-donut-title">Borravaló összesen</div>
-              <div class="summary-donut-value">{format_huf(total_tip)}</div>
+              <div class="summary-donut-title">Alvállalkozói összeg</div>
+              <div class="summary-donut-value">{format_huf(total_received)}</div>
               <div class="summary-donut-note">{html.escape(selected_month)}</div>
             </div>
             <div class="summary-donut summary-donut-secondary">
-              <div class="summary-donut-center"><strong>{total_tip / 1_000_000:.1f} M</strong><span>Ft</span></div>
+              <div class="summary-donut-center"><strong>{total_received / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
         </div>
