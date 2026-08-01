@@ -6514,7 +6514,6 @@ def show_new_settlement_page() -> None:
         unsafe_allow_html=True,
     )
 
-    total_bonus = int(filtered["Bónusz"].sum()) if not filtered.empty else 0
     total_tip = int(filtered["Borravaló"].sum()) if not filtered.empty else 0
 
     st.markdown(
@@ -6522,12 +6521,12 @@ def show_new_settlement_page() -> None:
         <div class="summary-donut-grid">
           <div class="summary-donut-card">
             <div>
-              <div class="summary-donut-title">Bónuszok összesen</div>
-              <div class="summary-donut-value">{format_huf(total_bonus)}</div>
+              <div class="summary-donut-title">Kifizetés összesen</div>
+              <div class="summary-donut-value">{format_huf(total_payable)}</div>
               <div class="summary-donut-note">{html.escape(selected_month)}</div>
             </div>
             <div class="summary-donut summary-donut-primary">
-              <div class="summary-donut-center"><strong>{total_bonus / 1_000_000:.1f} M</strong><span>Ft</span></div>
+              <div class="summary-donut-center"><strong>{total_payable / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
 
