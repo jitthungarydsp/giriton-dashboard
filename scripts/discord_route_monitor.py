@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
+from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -641,6 +642,38 @@ def vapid_private_key_setting():
         except Exception as exc:
             raise RuntimeError("Hibás VAPID_PRIVATE_KEY_B64 formátum.") from exc
     return env_setting("VAPID_PRIVATE_KEY")
+
+
+def normalize_pem_private_key(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    text = text.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    begin = "-----BEGIN PRIVATE KEY-----"
+    end = "-----END PRIVATE KEY-----"
+
+    if begin not in text or end not in text:
+        return text
+
+    body = text.split(begin, 1)[1].split(end, 1)[0]
+    body = "".join(body.split())
+    lines = [body[index:index + 64] for index in range(0, len(body), 64)]
+    return "\n".join([begin, *lines, end])
+
+
+def vapid_private_key_setting():
+    value = str(os.getenv("VAPID_PRIVATE_KEY_B64") or "").strip()
+    if value:
+        try:
+            key = normalize_pem_private_key(base64.b64decode(value).decode("utf-8"))
+        except Exception as exc:
+            raise RuntimeError("Hibas VAPID_PRIVATE_KEY_B64 formatum.") from exc
+    else:
+        key = normalize_pem_private_key(env_setting("VAPID_PRIVATE_KEY"))
+    if "-----BEGIN" in key:
+        return Vapid.from_pem(key.encode("utf-8"))
+    return key
 
 
 def get_active_push_subscriptions(courier_id):

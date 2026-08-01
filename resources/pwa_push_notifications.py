@@ -12,6 +12,7 @@ from typing import Any
 
 import requests
 import streamlit as st
+from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
@@ -93,6 +94,15 @@ def load_vapid_private_key() -> str:
         except Exception:
             return ""
     return ""
+
+
+def load_vapid_private_key_for_webpush() -> Any:
+    key = load_vapid_private_key()
+    if not key:
+        return ""
+    if "-----BEGIN" in key:
+        return Vapid.from_pem(key.encode("utf-8"))
+    return key
 
 
 def normalize_pem_private_key(value: str) -> str:
@@ -291,7 +301,18 @@ def send_push_to_courier(
     work_date: date | str | None = None,
     data: dict[str, Any] | None = None,
 ) -> str:
-    vapid_private_key = load_vapid_private_key()
+    try:
+        vapid_private_key = load_vapid_private_key_for_webpush()
+    except Exception as exc:
+        _log_delivery(
+            courier_id=courier_id,
+            notification_type=notification_type,
+            status="failed",
+            message=f"Hibas VAPID_PRIVATE_KEY/VAPID_PRIVATE_KEY_B64 beallitas: {exc}",
+            work_date=work_date,
+        )
+        return "missing_vapid"
+
     vapid_subject = load_setting("VAPID_SUBJECT") or "mailto:admin@giriton.local"
     if not vapid_private_key:
         _log_delivery(

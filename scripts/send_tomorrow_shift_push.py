@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 import tomllib
+from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 
@@ -75,6 +76,41 @@ def vapid_private_key_setting() -> str:
         except Exception as exc:
             raise RuntimeError("Hibás VAPID_PRIVATE_KEY_B64 formátum.") from exc
     return setting("VAPID_PRIVATE_KEY")
+
+
+def normalize_pem_private_key(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    text = text.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    begin = "-----BEGIN PRIVATE KEY-----"
+    end = "-----END PRIVATE KEY-----"
+
+    if begin not in text or end not in text:
+        return text
+
+    body = text.split(begin, 1)[1].split(end, 1)[0]
+    body = "".join(body.split())
+    lines = [body[index:index + 64] for index in range(0, len(body), 64)]
+    return "\n".join([begin, *lines, end])
+
+
+def vapid_private_key_setting() -> Any:
+    try:
+        value = setting("VAPID_PRIVATE_KEY_B64")
+    except RuntimeError:
+        value = ""
+    if value:
+        try:
+            key = normalize_pem_private_key(base64.b64decode(value).decode("utf-8"))
+        except Exception as exc:
+            raise RuntimeError("Hibas VAPID_PRIVATE_KEY_B64 formatum.") from exc
+    else:
+        key = normalize_pem_private_key(setting("VAPID_PRIVATE_KEY"))
+    if "-----BEGIN" in key:
+        return Vapid.from_pem(key.encode("utf-8"))
+    return key
 
 
 def supabase_headers(prefer: str = "") -> dict[str, str]:
