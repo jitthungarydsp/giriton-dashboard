@@ -2314,6 +2314,9 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
             parsed_date = pd.to_datetime(delivery_date, errors="coerce")
             route_layer = str(route.get("routeLayer") or "NORMAL").strip().upper()
             route_type = {"NORMAL": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_layer, route_layer.title())
+            delay_fee = _api_route_fee(route, "delay_performance", "dataport_delay_performance")
+            compliance_fee = _api_route_fee(route, "compliance")
+            other_bonus = _api_route_other_bonus(route)
             parsed.append({
                 "_courier_id": _courier_id_key(source.get("courier_id")),
                 "Route ID": str(route.get("routeId") or "–"),
@@ -2322,13 +2325,13 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
                 "Túratípus": route_type,
                 "Naptípus": "Nincs besorolás",
                 "Rendelések": parse_huf_value(route.get("orderCount")),
-                "Alapdíj": 0.0,
+                "Alapdíj": _api_route_fee(route, "fixed_base"),
                 "Borravaló": _money_amount(route.get("customerTipsTotal")),
-                "Késedelmi díj": 0.0,
-                "Túramegfelelés": 0.0,
-                "Egyéb bónusz": 0.0,
-                "Bónuszok": 0.0,
-                "DB státusz": "API nyers adat - paraméterezés szükséges",
+                "Késedelmi díj": delay_fee,
+                "Túramegfelelés": compliance_fee,
+                "Egyéb bónusz": other_bonus,
+                "Bónuszok": delay_fee + compliance_fee + other_bonus,
+                "DB státusz": "API nyers adat",
             })
     if not parsed:
         return pd.DataFrame(columns=columns)
@@ -3030,18 +3033,17 @@ def load_courier_route_detail(
         if str(calculation_mode).casefold() != "api" or period_start is None:
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
-        if not session_id:
-            api_session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
-            session_id = api_session_id
-        if not session_id:
-            api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
-            warehouse_id = settlement_warehouse_id(warehouse_label)
-            if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
-                api_rows = api_rows.loc[
-                    pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
-                ]
-            api_detail = api_financial_routes_to_detail(api_rows, courier_id)
+        api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+        warehouse_id = settlement_warehouse_id(warehouse_label)
+        if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
+            api_rows = api_rows.loc[
+                pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+            ]
+        api_detail = api_financial_routes_to_detail(api_rows, courier_id)
+        if not api_detail.empty:
             return api_detail.drop(columns=["_courier_id"], errors="ignore")
+        if not session_id:
+            session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
     try:
         rows = (
             get_db().schema("settlement").table("jit_row")
@@ -3522,6 +3524,24 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
     load_courier_adjustment_log.clear()
 
 
+def refresh_settlement_profile_data() -> None:
+    load_api_financial_overview_rows.clear()
+    load_latest_api_jit_session_id.clear()
+    load_excel_courier_base_rates.clear()
+    load_excel_base_rate_diagnostics.clear()
+    load_courier_route_detail.clear()
+    load_imported_balance_components.clear()
+    load_courier_settlement_summary.clear()
+    load_courier_adjustments.clear()
+    load_courier_adjustment_log.clear()
+    load_target_reserve_monthly.clear()
+    load_courier_monthly_closure.clear()
+    load_salary_advance_installments_for_month.clear()
+    load_courier_salary_advance_history.clear()
+    load_customer_rating_bonus_rows.clear()
+    load_courier_master.clear()
+
+
 def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
     """The Bonus and Malus menus use the same persistent, period-aware rows."""
     title = "Bónuszok" if adjustment_type == "bonus" else "Máluszok"
@@ -3613,6 +3633,13 @@ def render_table(df: pd.DataFrame) -> None:
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
+    def rerun_courier_profile(menu_name: str | None = None) -> None:
+        st.session_state["selected_courier_id"] = courier_id
+        st.session_state["reopen_courier_dialog"] = True
+        if menu_name:
+            st.session_state[f"courier_menu_target_{courier_id}"] = menu_name
+        st.rerun()
+
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
         dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
@@ -3698,6 +3725,9 @@ def show_courier_dialog() -> None:
     tip_total = settlement_amount("tip_huf", "Borravaló")
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
+    if str(active_calculation_mode or "").strip().casefold() == "api" and not route_breakdown.empty:
+        delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
+        compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
     imported_bonus_total = settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
@@ -3947,6 +3977,9 @@ def show_courier_dialog() -> None:
                 imported_bonus_total = amount("imported_bonus_huf")
                 order_total = int(amount("order_count"))
                 route_total = int(amount("route_count"))
+                if str(active_calculation_mode or "").strip().casefold() == "api" and not route_breakdown.empty:
+                    delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
+                    compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
 
         manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
         manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
@@ -4017,7 +4050,7 @@ def show_courier_dialog() -> None:
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
         doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
         doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
-        upload_a, upload_b = st.columns([0.18, 0.18])
+        upload_a, upload_b, refresh_col = st.columns([0.18, 0.18, 0.18])
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
@@ -4033,7 +4066,7 @@ def show_courier_dialog() -> None:
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
                 st.success("Elszámolás PDF feltöltve a futár profiljába.")
-                st.rerun()
+                rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
         if upload_b.button("TIG feltöltése profilba", use_container_width=True, key=f"finance_upload_tig_pdf_{courier_id}"):
@@ -4051,9 +4084,13 @@ def show_courier_dialog() -> None:
                     uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                 )
                 st.success("TIG PDF feltöltve a futár profiljába.")
-                st.rerun()
+                rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"A TIG feltöltése sikertelen: {exc}")
+        if refresh_col.button("Adatok frissítése", use_container_width=True, key=f"finance_refresh_data_{courier_id}"):
+            refresh_settlement_profile_data()
+            st.toast("Futárprofil adatok frissítve.", icon="✅")
+            rerun_courier_profile("Pénzügy")
 
         kpi_items = [
             ("Rendelés", f"{order_total:,}".replace(",", " "), ""),
@@ -4390,8 +4427,9 @@ def show_courier_dialog() -> None:
                         save_courier_adjustment(session_id, courier_id, adjustment_type, amount, note, valid_from, valid_to)
                         saved_changes += 1
                 if saved_changes:
+                    refresh_settlement_profile_data()
                     st.success(f"{saved_changes} módosítás mentve és naplózva.")
-                    st.rerun()
+                    rerun_courier_profile("Pénzügy")
                 else:
                     st.info("Nem volt mentendő változás.")
             except Exception as exc:
@@ -4400,7 +4438,8 @@ def show_courier_dialog() -> None:
         if reset_clicked:
             try:
                 reset_courier_adjustments(session_id, courier_id, period_start, period_end)
-                st.rerun()
+                refresh_settlement_profile_data()
+                rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"A visszaállítás nem menthető. Részlet: {exc}")
 
@@ -6159,6 +6198,8 @@ def show_new_settlement_page() -> None:
         st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
 
     render_table(filtered)
+    if st.session_state.pop("reopen_courier_dialog", False) and st.session_state.get("selected_courier_id"):
+        show_courier_dialog()
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d,e=st.columns(5)
