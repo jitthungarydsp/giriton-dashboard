@@ -890,7 +890,7 @@ def send_route_push(
             status_code = getattr(exc.response, "status_code", None)
             errors.append(f"id={subscription.get('id')} status={status_code} {exc}")
 
-            if status_code in [404, 410]:
+            if status_code in [403, 404, 410]:
                 deactivate_push_subscription(subscription.get("id"))
         except Exception as exc:
             errors.append(f"id={subscription.get('id')} error={exc}")

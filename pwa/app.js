@@ -741,6 +741,15 @@ function urlBase64ToUint8Array(value) {
   return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
 }
 
+function uint8ArrayToUrlBase64(value) {
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value || []);
+  let raw = "";
+  bytes.forEach((byte) => {
+    raw += String.fromCharCode(byte);
+  });
+  return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
 function isPushSecureContext() {
   return window.isSecureContext || ["localhost", "127.0.0.1"].includes(window.location.hostname);
 }
@@ -792,6 +801,28 @@ async function getPushSubscription() {
   return registration.pushManager.getSubscription();
 }
 
+function subscriptionUsesPublicKey(subscription, publicKey) {
+  const currentKey = subscription?.options?.applicationServerKey;
+  if (!currentKey || !publicKey) return true;
+  return uint8ArrayToUrlBase64(currentKey) === publicKey;
+}
+
+async function removeBrowserPushSubscription(subscription) {
+  if (!subscription) return;
+  const serialized = subscription.toJSON();
+  if (serialized.endpoint) {
+    await api("/api/push/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint: serialized.endpoint,
+        keys: serialized.keys || {},
+        user_agent: navigator.userAgent,
+      }),
+    }).catch(() => {});
+  }
+  await subscription.unsubscribe();
+}
+
 function setNotificationStatus(message, isError = false) {
   const target = $("#notification-status");
   if (!target) return;
@@ -826,7 +857,18 @@ async function refreshNotificationToggle() {
       setNotificationStatus(status.error || "A push értesítések még nincsenek konfigurálva.", true);
       return;
     }
+    const keyPayload = await api("/api/push/public-key");
     subscription = await getPushSubscription();
+    if (
+      Notification.permission === "granted" &&
+      subscription &&
+      !subscriptionUsesPublicKey(subscription, keyPayload.publicKey)
+    ) {
+      setNotificationStatus("Push kulcsváltás frissítése...");
+      await removeBrowserPushSubscription(subscription);
+      await subscribeToPush();
+      subscription = await getPushSubscription();
+    }
   } catch (error) {
     toggle.checked = false;
     setNotificationStatus(`Push állapot hiba: ${error.message}`, true);
@@ -865,7 +907,7 @@ async function subscribeToPush() {
 
   // A korábbi VAPID kulccsal készült feliratkozást újra kell létrehozni.
   if (existingSubscription) {
-    await existingSubscription.unsubscribe();
+    await removeBrowserPushSubscription(existingSubscription);
   }
 
   const applicationServerKey = urlBase64ToUint8Array(keyPayload.publicKey);
@@ -901,18 +943,7 @@ async function subscribeToPush() {
 async function unsubscribeFromPush() {
   const subscription = await getPushSubscription();
   if (!subscription) return;
-
-  const serialized = subscription.toJSON();
-  await api("/api/push/unsubscribe", {
-    method: "POST",
-    body: JSON.stringify({
-      endpoint: serialized.endpoint,
-      keys: serialized.keys,
-      user_agent: navigator.userAgent,
-    }),
-  });
-
-  await subscription.unsubscribe();
+  await removeBrowserPushSubscription(subscription);
 }
 
 async function handleNotificationToggleChange(event) {

@@ -321,7 +321,7 @@ def send_push_payload(
         except WebPushException as exc:
             status_code = getattr(exc.response, "status_code", None)
             errors.append(f"subscription={subscription['id']} status={status_code} error={exc}")
-            if status_code in {404, 410}:
+            if status_code in {403, 404, 410}:
                 deactivate_subscription(int(subscription["id"]))
         except Exception as exc:
             errors.append(f"subscription={subscription['id']} error={exc}")
@@ -514,7 +514,7 @@ def main() -> int:
             except WebPushException as exc:
                 status_code = getattr(exc.response, "status_code", None)
                 errors.append(f"subscription={subscription['id']} status={status_code} error={exc}")
-                if status_code in {404, 410}:
+                if status_code in {403, 404, 410}:
                     deactivate_subscription(int(subscription["id"]))
             except Exception as exc:
                 errors.append(f"subscription={subscription['id']} error={exc}")

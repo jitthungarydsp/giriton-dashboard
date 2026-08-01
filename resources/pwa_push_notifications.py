@@ -369,7 +369,7 @@ def send_push_to_courier(
         except WebPushException as exc:
             status_code = getattr(exc.response, "status_code", None)
             errors.append(f"subscription={subscription.get('id')} status={status_code} error={exc}")
-            if status_code in {404, 410}:
+            if status_code in {403, 404, 410}:
                 _deactivate_subscription(subscription.get("id"))
         except Exception as exc:
             errors.append(f"subscription={subscription.get('id')} error={exc}")
