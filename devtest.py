@@ -3011,6 +3011,7 @@ def load_courier_route_detail(
     session_id: str | None,
     calculation_mode: str = "Excel",
     period_start: date | None = None,
+    warehouse_label: str | None = None,
 ) -> pd.DataFrame:
     """Return auditable, unique Route ID rows for one courier.
 
@@ -3029,11 +3030,16 @@ def load_courier_route_detail(
         if str(calculation_mode).casefold() != "api" or period_start is None:
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
-        api_session_id = load_latest_api_jit_session_id(period_start)
-        if api_session_id:
+        if not session_id:
+            api_session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
             session_id = api_session_id
-        else:
+        if not session_id:
             api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+            warehouse_id = settlement_warehouse_id(warehouse_label)
+            if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
+                api_rows = api_rows.loc[
+                    pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+                ]
             api_detail = api_financial_routes_to_detail(api_rows, courier_id)
             return api_detail.drop(columns=["_courier_id"], errors="ignore")
     try:
@@ -3651,7 +3657,14 @@ def show_courier_dialog() -> None:
     month_label = f"{period_end:%Y. %B}" if period_end else "Aktuális hónap"
     last_settlement_label = f"{period_end:%Y. %m. %d.}" if period_end else "-"
 
-    route_detail = load_courier_route_detail(courier_id, courier_name, session_id, active_calculation_mode, period_start)
+    route_detail = load_courier_route_detail(
+        courier_id,
+        courier_name,
+        session_id,
+        active_calculation_mode,
+        period_start,
+        st.session_state.get("new_warehouse", "Összes"),
+    )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
@@ -3874,9 +3887,6 @@ def show_courier_dialog() -> None:
             )
 
     if selected_menu == "Pénzügy":
-        session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
-        period_start, period_end = load_settlement_month(session_id)
-        route_detail = load_courier_route_detail(courier_id, str(row["Futár"]), session_id, active_calculation_mode, period_start)
         route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
