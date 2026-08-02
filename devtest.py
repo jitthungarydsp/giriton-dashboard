@@ -1939,7 +1939,7 @@ def create_salary_advance_plan(
     installment_months: int,
     start_date: date,
     note: str,
-) -> None:
+) -> str:
     plan_id = str(uuid.uuid4())
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     start_month, _ = month_bounds(start_date)
@@ -1979,6 +1979,153 @@ def create_salary_advance_plan(
         get_db().schema("settlement").table("courier_salary_advance_installment").insert(installment_payloads).execute()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
+    return plan_id
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_courier_salary_advance_requests(courier_id: str) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_salary_advance_request")
+            .select("*")
+            .eq("courier_id", str(courier_id or "").strip())
+            .order("requested_at", desc=True)
+            .limit(100)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def create_salary_advance_request(
+    courier_id: str,
+    courier_name: str,
+    requested_amount_huf: float,
+    installment_months: int,
+    start_date: date,
+    note: str,
+) -> None:
+    start_month, _ = month_bounds(start_date)
+    amounts = salary_advance_installment_amounts(requested_amount_huf, installment_months)
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    get_db().schema("settlement").table("courier_salary_advance_request").insert({
+        "courier_id": str(courier_id or "").strip(),
+        "courier_name": str(courier_name or "").strip(),
+        "requested_amount_huf": int(round(parse_huf_value(requested_amount_huf))),
+        "installment_months": len(amounts),
+        "monthly_amount_huf": amounts[0] if amounts else 0,
+        "start_date": start_month.isoformat(),
+        "status": "requested",
+        "note": str(note or "").strip(),
+        "requested_by": actor,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).execute()
+    load_courier_salary_advance_requests.clear()
+
+
+def salary_advance_process_id(request_id: str, courier_id: str, start_date: date) -> str:
+    short_id = re.sub(r"[^a-zA-Z0-9]+", "", str(request_id or ""))[:8].lower()
+    return f"eloleg-{_courier_id_key(courier_id)}-{start_date:%Y%m}-{short_id or uuid.uuid4().hex[:8]}"
+
+
+def approve_salary_advance_request(request_row: dict, courier_name: str) -> str:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    start_date = pd.to_datetime(request_row.get("start_date"), errors="coerce").date()
+    process_id = salary_advance_process_id(request_id, courier_id, start_date)
+    requested_amount = int(round(parse_huf_value(request_row.get("requested_amount_huf"))))
+    months = int(round(parse_huf_value(request_row.get("installment_months"))))
+    monthly_amount = int(round(parse_huf_value(request_row.get("monthly_amount_huf"))))
+    document_month = start_date.replace(day=1)
+    item_rows = [
+        ("Folyamat azonosító", process_id),
+        ("Courier ID", courier_id),
+        ("Futár", courier_name),
+        ("Kezdés", f"{document_month:%Y-%m}"),
+        ("Előleg összege", format_huf(requested_amount)),
+        ("Havi bontás", f"{months} hónap"),
+        ("Havi levonás", format_huf(monthly_amount)),
+        ("Megjegyzés", str(request_row.get("note") or "")),
+    ]
+    for document_type, title_prefix in [("settlement", "Előleg elszámolás"), ("tig", "Előleg TIG")]:
+        reference = make_document_reference(courier_id, document_type, document_month)
+        pdf_bytes = build_demo_preview_pdf(
+            f"{title_prefix} - {courier_name}",
+            f"Courier ID: {courier_id} | Dokumentum ID: {reference} | Folyamat: {process_id}",
+            [("Dokumentum ID", reference), *item_rows],
+        )
+        upload_peopleforce_document_bytes(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            document_type=document_type,
+            document_month=document_month,
+            title=f"{title_prefix} - {document_month:%Y-%m}",
+            note=f"Dokumentum azonosító: {reference}\nFolyamat azonosító: {process_id}",
+            file_name=f"jitt_{document_type}_{courier_id}_{slugify_filename(courier_name)}_{document_month:%Y-%m}_{reference}.pdf",
+            mime_type="application/pdf",
+            file_bytes=pdf_bytes,
+            uploaded_by=actor,
+        )
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=f"process:{process_id}:{document_type}",
+            document_month=document_month,
+            status="open",
+            status_note=f"Fizetés előleg folyamat indítva: {process_id}",
+            updated_by=actor,
+        )
+    get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "status": "approved",
+        "process_id": process_id,
+        "approved_by": actor,
+        "approved_at": pd.Timestamp.utcnow().isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    load_courier_salary_advance_requests.clear()
+    return process_id
+
+
+def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> str:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    start_date = pd.to_datetime(request_row.get("start_date"), errors="coerce").date()
+    document_month = start_date.replace(day=1)
+    plan_id = str(request_row.get("plan_id") or "").strip()
+    if not plan_id:
+        plan_id = create_salary_advance_plan(
+            courier_id,
+            courier_name,
+            parse_huf_value(request_row.get("requested_amount_huf")),
+            int(round(parse_huf_value(request_row.get("installment_months")))),
+            start_date,
+            str(request_row.get("note") or ""),
+        )
+    process_id = str(request_row.get("process_id") or "") or salary_advance_process_id(request_id, courier_id, start_date)
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key=f"process:{process_id}:invoice_payment",
+        document_month=document_month,
+        status="done",
+        status_note="Fizetés előleg kifizetve és lezárva.",
+        updated_by=actor,
+    )
+    get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "status": "closed",
+        "process_id": process_id,
+        "plan_id": plan_id,
+        "paid_by": actor,
+        "paid_at": pd.Timestamp.utcnow().isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    load_courier_salary_advance_requests.clear()
+    load_salary_advance_installments_for_month.clear()
+    load_courier_salary_advance_history.clear()
+    return plan_id
 
 
 def close_salary_advance_installments(courier_id: str, period_start: date, period_end: date) -> int:
@@ -3781,6 +3928,25 @@ def load_route_issue_reviews(courier_id: str, period_start: date, period_end: da
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_route_alerts(courier_id: str, limit: int = 20) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("courier_route_alerts")
+            .select("id,courier_id,courier_name,route_id,alert_type,message,status,created_at")
+            .eq("courier_id", int(clean_id))
+            .order("created_at", desc=True)
+            .limit(int(limit))
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
 def save_route_issue_review(
     session_id: str | None,
     courier_id: str,
@@ -4248,14 +4414,22 @@ def show_courier_dialog() -> None:
     month_label = f"{period_end:%Y. %B}" if period_end else "Aktuális hónap"
     last_settlement_label = f"{period_end:%Y. %m. %d.}" if period_end else "-"
 
-    route_detail = load_courier_route_detail(
-        courier_id,
-        courier_name,
-        session_id,
-        active_calculation_mode,
-        period_start,
-        st.session_state.get("new_warehouse", "Összes"),
-    )
+    menu_key = f"courier_menu_{courier_id}"
+    menu_target_key = f"courier_menu_target_{courier_id}"
+    menu_target = st.session_state.pop(menu_target_key, None)
+    if menu_target:
+        st.session_state[menu_key] = menu_target
+    selected_menu_hint = str(st.session_state.get(menu_key) or "Áttekintés")
+    route_detail = pd.DataFrame()
+    if selected_menu_hint in {"Pénzügy", "Útvonalak"}:
+        route_detail = load_courier_route_detail(
+            courier_id,
+            courier_name,
+            session_id,
+            active_calculation_mode,
+            period_start,
+            st.session_state.get("new_warehouse", "Összes"),
+        )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
@@ -4295,13 +4469,8 @@ def show_courier_dialog() -> None:
             api_match = api_received.loc[api_received["_courier_id_lookup"].eq(_courier_id_key(courier_id))]
             if not api_match.empty:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
-    if not contractor_received_total and "Kapott összeg" in route_detail.columns:
-        contractor_received_total = float(route_detail["Kapott összeg"].sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    if str(active_calculation_mode or "").strip().casefold() == "api" and not route_breakdown.empty:
-        delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
-        compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
     imported_bonus_total = settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
@@ -4332,14 +4501,20 @@ def show_courier_dialog() -> None:
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
-    order_total = int(settlement_amount("order_count") or route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
-    route_total = int(settlement_amount("route_count") or len(route_detail))
-    route_day_type = route_detail.get("Naptípus", pd.Series(dtype=str)).astype(str).str.casefold()
-    route_type = route_detail.get("Túratípus", pd.Series(dtype=str)).astype(str).str.casefold()
-    highlighted_route_total = int(route_day_type.str.contains("kiemelt", na=False).sum())
-    normal_route_total = int(route_day_type.str.contains("norm", na=False).sum())
-    express_highlighted_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("kiemelt", na=False)).sum())
-    express_normal_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("norm", na=False)).sum())
+    order_total = int(settlement_amount("order_count", "Rendelések") or 0)
+    route_total = int(settlement_amount("route_count", "Útvonalak") or 0)
+    if not route_detail.empty:
+        route_day_type = route_detail.get("Naptípus", pd.Series(dtype=str)).astype(str).str.casefold()
+        route_type = route_detail.get("Túratípus", pd.Series(dtype=str)).astype(str).str.casefold()
+        highlighted_route_total = int(route_day_type.str.contains("kiemelt", na=False).sum())
+        normal_route_total = int(route_day_type.str.contains("norm", na=False).sum())
+        express_highlighted_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("kiemelt", na=False)).sum())
+        express_normal_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("norm", na=False)).sum())
+    else:
+        highlighted_route_total = int(parse_huf_value(summary_row.get("highlighted_routes")))
+        normal_route_total = int(parse_huf_value(summary_row.get("normal_routes")))
+        express_highlighted_total = int(parse_huf_value(summary_row.get("express_highlighted_routes")))
+        express_normal_total = int(parse_huf_value(summary_row.get("express_normal_routes")))
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
@@ -4372,12 +4547,6 @@ def show_courier_dialog() -> None:
         """,
         unsafe_allow_html=True,
     )
-    menu_key = f"courier_menu_{courier_id}"
-    menu_target_key = f"courier_menu_target_{courier_id}"
-    menu_target = st.session_state.pop(menu_target_key, None)
-    if menu_target:
-        st.session_state[menu_key] = menu_target
-
     selected_menu = st.radio(
         "Futármenü", ["Áttekintés", "Pénzügy", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
         horizontal=True, label_visibility="collapsed", key=menu_key,
@@ -4389,8 +4558,6 @@ def show_courier_dialog() -> None:
     if selected_menu == "Áttekintés":
         missing_data_count = 0
         if not summary_row:
-            missing_data_count += 1
-        if route_detail.empty:
             missing_data_count += 1
 
         st.markdown(
@@ -4474,34 +4641,37 @@ def show_courier_dialog() -> None:
                     st.session_state.get("new_warehouse", "Összes"),
                 )
             st.rerun()
-        st.markdown("#### Útvonalak (legutóbbi 5)")
-        if route_detail.empty:
-            st.info("Nincs megjeleníthető útvonal az aktuális sessionben.")
+        st.markdown("#### Bejelentések")
+        route_alerts = load_courier_route_alerts(courier_id, limit=5)
+        if route_alerts.empty:
+            st.info("Nincs bejelentés ennél a futárnál.")
         else:
-            route_preview = route_detail.head(5).copy()
-            route_preview["Kör"] = 1
-            route_preview["Bevétel"] = route_preview.apply(
-                lambda route: sum(
-                    parse_huf_value(route.get(column))
-                    for column in ["Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]
-                ),
-                axis=1,
-            )
-            route_preview["Bevétel"] = route_preview["Bevétel"].map(format_huf)
-            route_preview["Státusz"] = "Elszámolva"
-            route_preview = route_preview.rename(
-                columns={
-                    "Route ID": "Útvonal azonosító",
-                    "Excel dátum": "Dátum",
-                }
-            )
+            alert_type_labels = {
+                "problem": "Probléma",
+                "delay": "Késés",
+                "bag_missing": "Táska hiány",
+            }
+            alert_view = route_alerts.copy()
+            alert_view["Dátum"] = pd.to_datetime(alert_view.get("created_at"), errors="coerce").dt.strftime("%Y. %m. %d. %H:%M")
+            alert_view["Route ID"] = alert_view.get("route_id", pd.Series(dtype=str)).astype(str)
+            alert_view["Típus"] = alert_view.get("alert_type", pd.Series(dtype=str)).map(alert_type_labels).fillna(alert_view.get("alert_type", "-"))
+            alert_view["Státusz"] = alert_view.get("status", pd.Series(dtype=str)).fillna("-")
             st.dataframe(
-                route_preview[["Útvonal azonosító", "Dátum", "Kör", "Rendelések", "Bevétel", "Státusz"]],
+                alert_view[["Dátum", "Route ID", "Típus", "Státusz"]],
                 use_container_width=True,
                 hide_index=True,
             )
 
     if selected_menu == "Pénzügy":
+        if route_detail.empty:
+            route_detail = load_courier_route_detail(
+                courier_id,
+                courier_name,
+                session_id,
+                active_calculation_mode,
+                period_start,
+                st.session_state.get("new_warehouse", "Összes"),
+            )
         route_breakdown = summarize_courier_route_detail(route_detail)
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
@@ -5094,21 +5264,66 @@ def show_courier_dialog() -> None:
                 preview_amounts = salary_advance_installment_amounts(requested_amount, int(installment_months))
                 preview_monthly = preview_amounts[0] if preview_amounts else 0
                 st.info(f"Havi levonás: {format_huf(preview_monthly)}")
-                save_advance = st.form_submit_button("Fizetés előleg mentése", type="primary", use_container_width=True)
+                save_advance = st.form_submit_button("Admin előleg igény indítása", type="primary", use_container_width=True)
             if save_advance:
                 if requested_amount <= 0:
                     st.error("Az igényelt összegnek pozitívnak kell lennie.")
                 else:
                     try:
-                        create_salary_advance_plan(courier_id, courier_name, requested_amount, int(installment_months), start_date, note)
-                        st.success("A fizetés előleg havi részletei létrejöttek.")
+                        create_salary_advance_request(courier_id, courier_name, requested_amount, int(installment_months), start_date, note)
+                        st.success("A fizetés előleg igény rögzítve. Jóváhagyás után indul a folyamat.")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A fizetés előleg nem menthető. Futtasd le az előleg DB migrációt. Részlet: {exc}")
 
         with form_right:
+            requests = load_courier_salary_advance_requests(courier_id)
+            st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Előleg igények</div></div>', unsafe_allow_html=True)
+            if requests.empty:
+                st.info("Nincs nyitott vagy korábbi előleg igény ennél a futárnál.")
+            else:
+                status_labels = {
+                    "requested": "Jóváhagyásra vár",
+                    "approved": "Jóváhagyva",
+                    "paid": "Kifizetve",
+                    "closed": "Lezárva",
+                    "rejected": "Elutasítva",
+                }
+                for request_item in requests.to_dict("records"):
+                    request_status = str(request_item.get("status") or "requested").strip().lower()
+                    request_id = str(request_item.get("id") or "")
+                    process_id = str(request_item.get("process_id") or "")
+                    amount = parse_huf_value(request_item.get("requested_amount_huf"))
+                    months = int(round(parse_huf_value(request_item.get("installment_months"))))
+                    monthly = parse_huf_value(request_item.get("monthly_amount_huf"))
+                    request_start = pd.to_datetime(request_item.get("start_date"), errors="coerce")
+                    start_text = request_start.strftime("%Y. %m.") if not pd.isna(request_start) else "-"
+                    with st.container(border=True):
+                        c1, c2, c3, c4 = st.columns([0.28, 0.2, 0.22, 0.3])
+                        c1.markdown(f"**{status_labels.get(request_status, request_status)}**")
+                        c1.caption(f"Kezdés: {start_text}")
+                        c2.metric("Összeg", format_huf(amount))
+                        c3.metric("Havi levonás", format_huf(monthly), f"{months} hó")
+                        c4.caption(f"Folyamat: {process_id or '-'}")
+                        if request_status == "requested":
+                            if c4.button("Jóváhagyás és folyamat indítása", type="primary", use_container_width=True, key=f"salary_advance_approve_{request_id}"):
+                                try:
+                                    approved_process = approve_salary_advance_request(request_item, courier_name)
+                                    st.success(f"Előleg folyamat elindítva: {approved_process}")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Az előleg igény jóváhagyása sikertelen. Részlet: {exc}")
+                        elif request_status == "approved":
+                            if c4.button("Kifizetve / lezárás", type="primary", use_container_width=True, key=f"salary_advance_paid_{request_id}"):
+                                try:
+                                    mark_salary_advance_request_paid(request_item, courier_name)
+                                    st.success("Az előleg lezárva, a részletek bekerültek az aktuális előleg táblába.")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Az előleg lezárása sikertelen. Részlet: {exc}")
+
             history = load_courier_salary_advance_history(courier_id)
-            st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Részletek</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Levonási részletek</div></div>', unsafe_allow_html=True)
             if history.empty:
                 st.info("Még nincs rögzített fizetés előleg ennél a futárnál.")
             else:
@@ -5127,6 +5342,16 @@ def show_courier_dialog() -> None:
                 )
 
     if selected_menu == "Útvonalak":
+        if route_detail.empty:
+            route_detail = load_courier_route_detail(
+                courier_id,
+                courier_name,
+                session_id,
+                active_calculation_mode,
+                period_start,
+                st.session_state.get("new_warehouse", "Összes"),
+            )
+            route_breakdown = summarize_courier_route_detail(route_detail)
         st.markdown("#### Problémás útvonalak és rendelések")
         stories = load_courier_route_stories(courier_id, period_start, period_end)
         route_ids = route_detail.get("Route ID", pd.Series(dtype=str)).dropna().astype(str).map(normalize_route_key).tolist()

@@ -146,6 +146,38 @@
         <section id="statistics-breakdown" class="process-card"></section>
       </div>
 
+      <div id="salary-advance-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">FIZETÉS ELŐLEG</p>
+            <h2>Fizetés előleg</h2>
+            <p class="muted">Itt tudsz előleg igényt indítani. Jóváhagyás után külön folyamatként jelenik meg az elszámolásban.</p>
+          </div>
+          <button id="salary-advance-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">Ft</span>
+            <div>
+              <h3>Előleg kalkulátor</h3>
+              <p>Add meg a kezdő hónapot, az összeget és a havi bontást.</p>
+            </div>
+          </div>
+          <form id="salary-advance-form" class="process-form two-column">
+            <label>Kezdés időpontja<input id="salary-advance-start-date" name="start_date" type="month" required /></label>
+            <label>Összeg (Ft)<input id="salary-advance-amount" name="requested_amount_huf" type="number" min="1" step="1000" required /></label>
+            <label>Hány hónapra<input id="salary-advance-months" name="installment_months" type="number" min="1" max="60" step="1" value="1" required /></label>
+            <label>Havi levonás<input id="salary-advance-monthly" disabled /></label>
+            <label class="full-width">Megjegyzés<textarea id="salary-advance-note" name="note" rows="3"></textarea></label>
+            <button class="primary full-width" type="submit">Igény elindítása</button>
+          </form>
+          <p id="salary-advance-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="salary-advance-list" class="process-card"></section>
+      </div>
+
       <div id="documents-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -316,6 +348,7 @@
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
         <button id="nav-statistics"><span>∑</span>Statisztika</button>
+        <button id="nav-salary-advance"><span>Ft</span>Előleg</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-device"><span>□</span>Telefon</button>
@@ -324,6 +357,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=42" defer></script>
+    <script src="/app.js?v=44" defer></script>
   </body>
 </html>

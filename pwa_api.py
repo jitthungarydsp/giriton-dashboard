@@ -7,6 +7,8 @@ import re
 import secrets
 import time
 import unicodedata
+from email.message import EmailMessage
+from email.utils import formataddr
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from resources.email_sender import send_login_credentials, validate_email
+from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password
 from resources.security import hash_password, verify_password
@@ -76,6 +78,13 @@ class PasswordChangeRequest(BaseModel):
 class WorkflowActionRequest(BaseModel):
     month: str
     process: str = ""
+
+
+class SalaryAdvanceRequest(BaseModel):
+    start_date: str
+    requested_amount_huf: int
+    installment_months: int
+    note: str = ""
 
 
 class ComplaintRequest(BaseModel):
@@ -783,6 +792,30 @@ def local_iso_time(value: Any) -> str:
     return parsed.astimezone(LOCAL_TIMEZONE).strftime("%H:%M")
 
 
+def local_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(LOCAL_TIMEZONE)
+
+
+def minutes_until_route_return(route: dict[str, Any]) -> int | None:
+    if route.get("realReturn"):
+        return 0
+    planned = local_datetime(route.get("plannedReturn"))
+    if not planned:
+        return None
+    return max(0, int((planned - datetime.now(LOCAL_TIMEZONE)).total_seconds() // 60))
+
+
 def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
@@ -905,6 +938,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "realDeparture": local_iso_time(route.get("realDeparture")),
             "plannedReturn": local_iso_time(route.get("plannedReturn")),
             "realReturn": local_iso_time(route.get("realReturn")),
+            "minutesUntilReturn": minutes_until_route_return(route),
             "previous": {
                 "orderId": str((previous_checkpoint or {}).get("orderId") or ""),
                 "position": (previous_checkpoint or {}).get("position"),
@@ -963,6 +997,111 @@ def save_route_delay_alert(
         },
         prefer="return=minimal",
     )
+
+
+def route_alert_email_recipient() -> str:
+    return (
+        load_setting("ROUTE_ALERT_EMAIL_TO")
+        or load_setting("CENTRAL_ALERT_EMAIL_TO")
+        or load_setting("SMTP_ALERT_TO")
+        or ""
+    ).strip()
+
+
+def send_bag_missing_email(
+    *,
+    courier_id: str,
+    courier_name: str,
+    route_id: str,
+    warehouse: str,
+    departure: str,
+    return_time: str,
+    message_text: str,
+    photo: UploadFile,
+    photo_content: bytes,
+) -> None:
+    recipient = route_alert_email_recipient()
+    if not recipient:
+        raise HTTPException(status_code=503, detail="A központi route alert e-mail cím nincs beállítva.")
+    config = smtp_config()
+    message = EmailMessage()
+    message["Subject"] = f"Táska hiány jelzés - route {route_id}"
+    message["From"] = formataddr(("JITT rendszer", "system@jitt.hu"))
+    message["To"] = validate_email(recipient)
+    message.set_content(
+        "Táska hiány jelzés érkezett a futár mobil appból.\n\n"
+        f"Route ID: {route_id}\n"
+        f"Futár: {courier_name} #{courier_id}\n"
+        f"Raktár: {warehouse or '-'}\n"
+        f"Időpont: indulás {departure or '-'} / vissza {return_time or '-'}\n"
+        f"Megjegyzés: {message_text or '-'}\n"
+    )
+    message.add_attachment(
+        photo_content,
+        maintype="image",
+        subtype=(photo.content_type or "image/jpeg").split("/", 1)[-1],
+        filename=(photo.filename or "taska_foto.jpg").replace('"', ""),
+    )
+    send_message(message, config)
+
+
+def route_alert_payload(
+    *,
+    user: dict[str, Any],
+    route_id: str,
+    order_id: str,
+    alert_type: str,
+    message: str,
+    dispatcher_notified: bool,
+    current_address: str,
+    current_checkpoint_position: int | None,
+    warehouse: str,
+    route_departure: str,
+    route_return: str,
+) -> dict[str, Any]:
+    courier_id, courier_name = courier_identity(user)
+    return {
+        "courier_id": int(courier_id),
+        "courier_name": courier_name,
+        "route_id": str(route_id or "").strip(),
+        "order_id": str(order_id or "").strip(),
+        "alert_type": alert_type,
+        "message": str(message or "").strip(),
+        "dispatcher_notified": bool(dispatcher_notified),
+        "current_address": str(current_address or "").strip(),
+        "current_checkpoint_position": current_checkpoint_position,
+        "warehouse": str(warehouse or "").strip(),
+        "route_departure": str(route_departure or "").strip(),
+        "route_return": str(route_return or "").strip(),
+        "status": "new",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def save_route_alert_photo(alert_id: str, photo: UploadFile, content: bytes) -> None:
+    supabase_rest(
+        "POST",
+        "courier_route_alert_photos",
+        payload={
+            "alert_id": alert_id,
+            "file_name": (photo.filename or "route_alert_photo").replace('"', ""),
+            "mime_type": photo.content_type or "application/octet-stream",
+            "file_size": len(content),
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def save_route_alert(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = supabase_rest(
+        "POST",
+        "courier_route_alerts",
+        payload=payload,
+        prefer="return=representation",
+    )
+    return rows[0] if rows else {}
 
 
 
@@ -1028,6 +1167,41 @@ def parse_month(value: str | date | None) -> date:
 def month_end(value: date) -> date:
     next_month = (value.replace(day=28) + timedelta(days=4)).replace(day=1)
     return next_month - timedelta(days=1)
+
+
+def salary_advance_installment_amounts(total_huf: int, months: int) -> list[int]:
+    total = max(0, int(total_huf or 0))
+    count = max(1, min(60, int(months or 1)))
+    base_amount = total // count
+    amounts = [base_amount for _ in range(count)]
+    if amounts:
+        amounts[-1] += total - sum(amounts)
+    return amounts
+
+
+def normalize_salary_advance_request(row: dict[str, Any]) -> dict[str, Any]:
+    status_labels = {
+        "requested": "Jóváhagyásra vár",
+        "approved": "Jóváhagyva",
+        "paid": "Kifizetve",
+        "closed": "Lezárva",
+        "rejected": "Elutasítva",
+    }
+    clean_status = str(row.get("status") or "requested").strip().lower()
+    return {
+        "id": str(row.get("id") or ""),
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or ""),
+        "requestedAmountHuf": int(float(row.get("requested_amount_huf") or 0)),
+        "installmentMonths": int(float(row.get("installment_months") or 0)),
+        "monthlyAmountHuf": int(float(row.get("monthly_amount_huf") or 0)),
+        "startDate": str(row.get("start_date") or ""),
+        "status": clean_status,
+        "statusLabel": status_labels.get(clean_status, clean_status or "-"),
+        "processId": str(row.get("process_id") or ""),
+        "note": str(row.get("note") or ""),
+        "requestedAt": str(row.get("requested_at") or ""),
+    }
 
 
 def clean_text(value: Any, *, limit: int = 500) -> str:
@@ -2727,6 +2901,82 @@ def create_route_delay_alert(
     return {"ok": True}
 
 
+@app.post("/api/routes/alert")
+async def create_route_alert(
+    route_id: str = Form(...),
+    order_id: str = Form(default=""),
+    alert_type: str = Form(default="problem"),
+    message: str = Form(default=""),
+    dispatcher_notified: bool = Form(default=False),
+    current_address: str = Form(default=""),
+    current_checkpoint_position: int | None = Form(default=None),
+    warehouse: str = Form(default=""),
+    route_departure: str = Form(default=""),
+    route_return: str = Form(default=""),
+    photo: UploadFile | None = File(default=None),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    clean_type = str(alert_type or "problem").strip().lower()
+    if clean_type not in {"problem", "delay", "bag_missing"}:
+        clean_type = "problem"
+    clean_message = str(message or "").strip()
+    if clean_type in {"problem", "delay"} and not clean_message:
+        raise HTTPException(status_code=422, detail="Írj egy rövid megjegyzést.")
+
+    photo_content = b""
+    if photo:
+        photo_content = await photo.read()
+        if len(photo_content) > MAX_DEVICE_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail="A fotó túl nagy. Maximum 8 MB lehet.")
+        if photo.content_type not in DEVICE_PHOTO_MIME_TYPES:
+            raise HTTPException(status_code=422, detail="Csak JPG, PNG vagy WEBP fotó tölthető fel.")
+    if clean_type == "bag_missing" and not photo_content:
+        raise HTTPException(status_code=422, detail="Táska hiány jelzéshez kötelező fotót feltölteni.")
+
+    payload = route_alert_payload(
+        user=user,
+        route_id=route_id,
+        order_id=order_id,
+        alert_type=clean_type,
+        message=clean_message,
+        dispatcher_notified=dispatcher_notified,
+        current_address=current_address,
+        current_checkpoint_position=current_checkpoint_position,
+        warehouse=warehouse,
+        route_departure=route_departure,
+        route_return=route_return,
+    )
+    alert = save_route_alert(payload)
+    alert_id = str(alert.get("id") or "")
+    if photo and photo_content and alert_id:
+        save_route_alert_photo(alert_id, photo, photo_content)
+
+    if clean_type == "bag_missing" and photo and photo_content:
+        courier_id, courier_name = courier_identity(user)
+        send_bag_missing_email(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            route_id=str(route_id or "").strip(),
+            warehouse=warehouse,
+            departure=route_departure,
+            return_time=route_return,
+            message_text=clean_message,
+            photo=photo,
+            photo_content=photo_content,
+        )
+        if alert_id:
+            supabase_rest(
+                "PATCH",
+                "courier_route_alerts",
+                params={"id": f"eq.{alert_id}"},
+                payload={"email_sent_at": datetime.now(timezone.utc).isoformat()},
+                prefer="return=minimal",
+            )
+
+    return {"ok": True, "alert": {"id": alert_id, "type": clean_type}}
+
+
 @app.get("/api/workflow")
 def workflow(
     month: str = Query(default=""),
@@ -3210,6 +3460,69 @@ def delete_coordinator_adjustment(
         prefer="return=minimal",
     )
     return {"ok": True, "setup": coordinator_adjustment_setup()}
+
+
+@app.get("/api/salary-advance/requests")
+def salary_advance_requests(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "courier_salary_advance_request",
+        params={
+            "select": "*",
+            "courier_id": f"eq.{courier_id}",
+            "order": "requested_at.desc",
+            "limit": "100",
+        },
+        schema="settlement",
+    )
+    return {"requests": [normalize_salary_advance_request(row) for row in rows]}
+
+
+@app.post("/api/salary-advance/requests")
+def create_salary_advance_request(
+    payload: SalaryAdvanceRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, courier_name = courier_identity(user)
+    try:
+        start_date = date.fromisoformat(str(payload.start_date or "")[:10]).replace(day=1)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="A kezdő dátum hibás.") from exc
+    requested_amount = int(payload.requested_amount_huf or 0)
+    months = int(payload.installment_months or 0)
+    if requested_amount <= 0:
+        raise HTTPException(status_code=422, detail="Az igényelt összegnek pozitívnak kell lennie.")
+    if months < 1 or months > 60:
+        raise HTTPException(status_code=422, detail="A hónapok száma 1 és 60 között lehet.")
+    amounts = salary_advance_installment_amounts(requested_amount, months)
+    rows = supabase_rest(
+        "POST",
+        "courier_salary_advance_request",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "requested_amount_huf": requested_amount,
+            "installment_months": len(amounts),
+            "monthly_amount_huf": amounts[0] if amounts else 0,
+            "start_date": start_date.isoformat(),
+            "status": "requested",
+            "note": clean_text(payload.note, limit=1000),
+            "requested_by": courier_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=representation",
+        schema="settlement",
+    )
+    requests = salary_advance_requests(giriton_pwa_session)
+    return {
+        "request": normalize_salary_advance_request(rows[0] if rows else {}),
+        "requests": requests["requests"],
+    }
 
 
 @app.get("/api/health")

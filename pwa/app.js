@@ -9,6 +9,7 @@ const state = {
   currentRoute: null,
   coordinatorSetup: null,
   deviceReports: [],
+  salaryAdvanceRequests: [],
   statistics: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
@@ -104,7 +105,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
 }
 
@@ -113,6 +114,7 @@ function showSection(section) {
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
+  $("#salary-advance-content").classList.toggle("hidden", section !== "salary-advance");
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#device-content").classList.toggle("hidden", section !== "device");
@@ -122,6 +124,7 @@ function showSection(section) {
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-statistics").classList.toggle("active", section === "statistics");
+  $("#nav-salary-advance").classList.toggle("active", section === "salary-advance");
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-device").classList.toggle("active", section === "device");
@@ -130,6 +133,7 @@ function showSection(section) {
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "statistics" && !state.statistics) loadStatistics();
+  if (section === "salary-advance") loadSalaryAdvanceRequests();
   if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
@@ -154,6 +158,66 @@ function formatAverage(value) {
 
 function formatHuf(value) {
   return `${formatCount(value)} Ft`;
+}
+
+function updateSalaryAdvancePreview() {
+  const amount = Number($("#salary-advance-amount")?.value || 0);
+  const months = Math.max(1, Number($("#salary-advance-months")?.value || 1));
+  const monthly = months ? Math.floor(amount / months) : 0;
+  const lastMonthly = monthly + (amount - monthly * months);
+  const target = $("#salary-advance-monthly");
+  if (target) {
+    target.value = lastMonthly !== monthly
+      ? `${formatHuf(monthly)} (utolsó: ${formatHuf(lastMonthly)})`
+      : formatHuf(monthly);
+  }
+}
+
+function renderSalaryAdvanceRequests() {
+  const target = $("#salary-advance-list");
+  if (!target) return;
+  const rows = state.salaryAdvanceRequests || [];
+  if (!rows.length) {
+    target.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">Ft</span>
+        <div><h3>Előleg kérelmek</h3><p>Még nincs rögzített előleg igényed.</p></div>
+      </div>
+    `;
+    return;
+  }
+  target.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">Ft</span>
+      <div><h3>Előleg kérelmek</h3><p>A jóváhagyott igény külön elszámolási folyamatként választható ki.</p></div>
+    </div>
+    <div class="stat-breakdown-list">
+      ${rows.map((item) => `
+        <div class="stat-row">
+          <span>${escapeHtml(item.statusLabel || item.status)} · ${escapeHtml(item.startDate || "-")}</span>
+          <strong>${formatHuf(item.requestedAmountHuf)} / ${formatCount(item.installmentMonths)} hó</strong>
+        </div>
+        <div class="stat-row">
+          <span>Havi levonás</span>
+          <strong>${formatHuf(item.monthlyAmountHuf)}</strong>
+        </div>
+        ${item.processId ? `<div class="notice">Folyamat: ${escapeHtml(item.processId)}. Az Elszámolásom menüben válaszd ki ezt a folyamatot.</div>` : ""}
+      `).join("")}
+    </div>
+  `;
+}
+
+async function loadSalaryAdvanceRequests() {
+  const message = $("#salary-advance-message");
+  if (message) message.textContent = "Előleg kérelmek betöltése...";
+  try {
+    const payload = await api("/api/salary-advance/requests");
+    state.salaryAdvanceRequests = payload.requests || [];
+    renderSalaryAdvanceRequests();
+    if (message) message.textContent = "";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
 }
 
 function statisticCard(label, value, note = "") {
@@ -274,6 +338,15 @@ function routeTimeRange(start, end) {
   return escapeHtml(start || end || "-");
 }
 
+function returnCountdownText(minutes) {
+  if (minutes === null || minutes === undefined || Number.isNaN(Number(minutes))) {
+    return "Nincs visszaérkezési adat";
+  }
+  const value = Math.max(0, Number(minutes));
+  if (value === 0) return "Most / lejárt";
+  return `${formatCount(value)} perc van még`;
+}
+
 function routeStopBlock(title, checkpoint, cssClass = "") {
   if (!checkpoint) return "";
 
@@ -335,6 +408,11 @@ function renderCurrentRoute() {
     </div>
 
     <div class="route-current">
+      <span>Visszaérkezésig</span>
+      <strong>${escapeHtml(returnCountdownText(route.minutesUntilReturn))}</strong>
+    </div>
+
+    <div class="route-current">
       <span>Mostani cím</span>
       <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
       <small>${current ? `#${escapeHtml(current.orderId || "-")} · ${routeTimeRange(current.windowFrom, current.windowTo)}` : "A túra még nem indult el."}</small>
@@ -379,16 +457,29 @@ function ensureDelayAlertDialog() {
   dialog = document.createElement("dialog");
   dialog.id = "delay-alert-dialog";
   dialog.innerHTML = `
-    <form id="delay-alert-form" method="dialog" class="process-form">
+    <form id="delay-alert-form" class="process-form">
       <h3>Problémám van</h3>
 
       <label>
-        Mi a probléma?
+        Jelzés típusa
+        <select id="route-alert-type">
+          <option value="delay">Kések</option>
+          <option value="bag_missing">Táska hiány</option>
+        </select>
+      </label>
+
+      <label>
+        Megjegyzés
         <textarea
           id="delay-alert-message"
           rows="4"
           required
         ></textarea>
+      </label>
+
+      <label id="route-alert-photo-label" class="hidden">
+        Táska fotója
+        <input id="route-alert-photo" type="file" accept="image/png,image/jpeg,image/webp" />
       </label>
 
       <label class="checkbox-row">
@@ -415,6 +506,7 @@ function ensureDelayAlertDialog() {
     "click",
     () => dialog.close()
   );
+  $("#route-alert-type").addEventListener("change", updateRouteAlertDialogMode);
   $("#delay-alert-form").addEventListener(
     "submit",
     submitDelayAlert
@@ -423,11 +515,31 @@ function ensureDelayAlertDialog() {
   return dialog;
 }
 
+function updateRouteAlertDialogMode() {
+  const type = $("#route-alert-type")?.value || "delay";
+  const photoLabel = $("#route-alert-photo-label");
+  const photoInput = $("#route-alert-photo");
+  const messageInput = $("#delay-alert-message");
+  const isBagMissing = type === "bag_missing";
+  photoLabel?.classList.toggle("hidden", !isBagMissing);
+  if (photoInput) photoInput.required = isBagMissing;
+  if (messageInput) {
+    messageInput.required = type !== "bag_missing";
+    messageInput.placeholder = isBagMissing
+      ? "Opcionális megjegyzés a táska hiányhoz"
+      : "Írd le röviden, miért késel";
+  }
+}
+
 function openDelayAlertDialog() {
   const dialog = ensureDelayAlertDialog();
+  $("#route-alert-type").value = "delay";
   $("#delay-alert-message").value = "";
+  $("#route-alert-photo").value = "";
   $("#dispatcher-notified").checked = false;
   $("#delay-alert-status").textContent = "";
+  $("#delay-alert-status").classList.remove("error");
+  updateRouteAlertDialogMode();
   dialog.showModal();
 }
 
@@ -445,16 +557,26 @@ async function submitDelayAlert(event) {
   status.textContent = "Küldés…";
 
   try {
-    await api("/api/routes/delay-alert", {
+    const alertType = $("#route-alert-type").value || "delay";
+    const form = new FormData();
+    form.append("route_id", route.routeId);
+    form.append("order_id", current?.orderId || "");
+    form.append("alert_type", alertType);
+    form.append("message", $("#delay-alert-message").value.trim());
+    form.append("dispatcher_notified", $("#dispatcher-notified").checked ? "true" : "false");
+    form.append("current_address", current?.address || "");
+    if (current?.position !== null && current?.position !== undefined) {
+      form.append("current_checkpoint_position", current.position);
+    }
+    form.append("warehouse", route.warehouse || "");
+    form.append("route_departure", route.realDeparture || route.plannedDeparture || "");
+    form.append("route_return", route.realReturn || route.plannedReturn || "");
+    const photo = $("#route-alert-photo")?.files?.[0];
+    if (photo) form.append("photo", photo);
+
+    await api("/api/routes/alert", {
       method: "POST",
-      body: JSON.stringify({
-        route_id: route.routeId,
-        order_id: current?.orderId || "",
-        message: $("#delay-alert-message").value.trim(),
-        dispatcher_notified: $("#dispatcher-notified").checked,
-        current_address: current?.address || "",
-        current_checkpoint_position: current?.position ?? null,
-      }),
+      body: form,
     });
 
     status.textContent = "A jelzés rögzítve.";
@@ -1620,6 +1742,44 @@ $("#statistics-refresh").addEventListener("click", () => {
   loadStatistics();
 });
 
+$("#salary-advance-start-date").value = state.workflowMonth;
+updateSalaryAdvancePreview();
+["#salary-advance-amount", "#salary-advance-months"].forEach((selector) => {
+  $(selector)?.addEventListener("input", updateSalaryAdvancePreview);
+});
+$("#salary-advance-refresh")?.addEventListener("click", loadSalaryAdvanceRequests);
+$("#salary-advance-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const message = $("#salary-advance-message");
+  if (button) button.disabled = true;
+  if (message) message.textContent = "Igény mentése...";
+  try {
+    const month = $("#salary-advance-start-date").value || state.workflowMonth;
+    const payload = await api("/api/salary-advance/requests", {
+      method: "POST",
+      body: JSON.stringify({
+        start_date: `${month}-01`,
+        requested_amount_huf: Number($("#salary-advance-amount").value || 0),
+        installment_months: Number($("#salary-advance-months").value || 1),
+        note: $("#salary-advance-note").value || "",
+      }),
+    });
+    state.salaryAdvanceRequests = payload.requests || [];
+    renderSalaryAdvanceRequests();
+    form.reset();
+    $("#salary-advance-start-date").value = state.workflowMonth;
+    $("#salary-advance-months").value = "1";
+    updateSalaryAdvancePreview();
+    if (message) message.textContent = "Az előleg igény rögzítve, jóváhagyásra vár.";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 function showAuthPanel(panel) {
   const loginForm = $("#login-form");
   const registerForm = $("#register-form");
@@ -1742,6 +1902,7 @@ $("#logout").addEventListener("click", async () => {
   state.checkedInvoiceMonth = null;
   state.coordinatorSetup = null;
   state.deviceReports = [];
+  state.salaryAdvanceRequests = [];
   state.statistics = null;
   showLogin();
 });
@@ -1749,6 +1910,7 @@ $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));
+$("#nav-salary-advance").addEventListener("click", () => showSection("salary-advance"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
