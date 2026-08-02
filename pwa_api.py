@@ -1940,7 +1940,7 @@ def combine_invoice_validation_results(
 
 def has_open_complaint(complaints: list[dict], action: str) -> bool:
     for row in complaints:
-        if row.get("document_type") != action:
+        if base_action_key(str(row.get("document_type") or "")) != action:
             continue
         if str(row.get("status") or "").strip().lower() == "resolved":
             continue
@@ -3025,6 +3025,16 @@ def create_workflow_complaint(
     month = parse_month(payload.month)
     process_id = normalize_process_id(payload.process)
     courier_id, courier_name = courier_identity(user)
+    _documents, _status_rows, complaints = read_workflow_rows(user, month)
+    complaints = [
+        row for row in complaints
+        if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
+    ]
+    if has_open_complaint(complaints, payload.action):
+        raise HTTPException(
+            status_code=409,
+            detail="Ehhez a lepeshez mar van nyitott reklamacio. Ujat akkor tudsz kuldeni, ha az admin lezarja az elozo rekordot.",
+        )
     supabase_rest(
         "POST",
         "peopleforce_complaints",

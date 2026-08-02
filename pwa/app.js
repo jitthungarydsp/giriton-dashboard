@@ -809,13 +809,8 @@ function complaintResponseList(responses) {
   `).join("")}</div>`;
 }
 
-function renderDocumentPanel(action, title, stepNumber) {
-  const panel = $(`#${action}-panel`);
-  const documents = state.workflow?.documents?.[action] || [];
-  const complaints = state.workflow?.complaints?.[action] || [];
-  const complaintResponses = state.workflow?.complaintResponses?.[action] || [];
-  const ignoreComplaints = Boolean(state.workflow?.ignoreComplaintsForBilling);
-  const hasOpenComplaint = !ignoreComplaints && complaints.some((complaint) => {
+function hasOpenComplaint(complaints) {
+  return complaints.some((complaint) => {
     const status = String(complaint.status || "").trim().toLowerCase();
     const hasAdminAnswer = Boolean(
       String(complaint.admin_response || "").trim()
@@ -823,6 +818,16 @@ function renderDocumentPanel(action, title, stepNumber) {
     );
     return status !== "resolved" && !hasAdminAnswer;
   });
+}
+
+function renderDocumentPanel(action, title, stepNumber) {
+  const panel = $(`#${action}-panel`);
+  const documents = state.workflow?.documents?.[action] || [];
+  const complaints = state.workflow?.complaints?.[action] || [];
+  const complaintResponses = state.workflow?.complaintResponses?.[action] || [];
+  const ignoreComplaints = Boolean(state.workflow?.ignoreComplaintsForBilling);
+  const hasOpenComplaintForAction = hasOpenComplaint(complaints);
+  const blocksAcceptance = !ignoreComplaints && hasOpenComplaintForAction;
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);
@@ -841,16 +846,18 @@ function renderDocumentPanel(action, title, stepNumber) {
     ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
     ${accepted
       ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
-      : documents.length && !locked && !hasOpenComplaint
+      : documents.length && !locked && !blocksAcceptance
         ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
-        : documents.length && !locked && hasOpenComplaint
+        : documents.length && !locked && blocksAcceptance
           ? `<div class="accept-row"><button class="primary" disabled>Reklamacio lezarasaig nem fogadhato el</button></div>`
           : ""}
     ${documents.length && !locked ? `<div class="complaint-box">
       <strong>Reklamáció</strong>
       ${complaintList(complaints)}
       ${complaintResponseList(complaintResponses)}
-      <form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>
+      ${hasOpenComplaintForAction
+        ? `<div class="notice">Mar van nyitott reklamacio ehhez a lepeshez. Uj rekordot az elozo lezarasa utan tudsz kuldeni.</div>`
+        : `<form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>`}
     </div>` : ""}`;
 
   const acceptButton = $(`#accept-${action}`);
