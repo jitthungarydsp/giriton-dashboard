@@ -239,13 +239,14 @@ def _delete_control(client: Any, table_name: str, row: dict[str, Any] | None, ke
 
 
 def _common_period(row: dict[str, Any], key: str) -> tuple[date, date, bool, int, bool, str]:
+    row_key = f"{key}_{_text(row.get('id')) or 'new'}"
     col1, col2, col3 = st.columns(3)
-    valid_from = col1.date_input("Érvényes ettől", value=_date(row.get("valid_from")), key=f"{key}_from")
-    has_end = col2.checkbox("Van záródátum", value=_clean(row.get("valid_to")) is not None, key=f"{key}_has_end")
-    valid_to = col2.date_input("Érvényes eddig", value=_date(row.get("valid_to")), key=f"{key}_to")
-    priority = col3.number_input("Prioritás", value=_int(row.get("priority"), 100), step=1, key=f"{key}_priority")
-    is_active = st.checkbox("Engedélyezett", value=bool(row.get("is_active", True)), key=f"{key}_active")
-    note = st.text_area("Megjegyzés", value=_text(row.get("note")), key=f"{key}_note", height=70)
+    valid_from = col1.date_input("Érvényes ettől", value=_date(row.get("valid_from")), key=f"{row_key}_from")
+    has_end = col2.checkbox("Van záródátum", value=_clean(row.get("valid_to")) is not None, key=f"{row_key}_has_end")
+    valid_to = col2.date_input("Érvényes eddig", value=_date(row.get("valid_to")), key=f"{row_key}_to")
+    priority = col3.number_input("Prioritás", value=_int(row.get("priority"), 100), step=1, key=f"{row_key}_priority")
+    is_active = st.checkbox("Engedélyezett", value=bool(row.get("is_active", True)), key=f"{row_key}_active")
+    note = st.text_area("Megjegyzés", value=_text(row.get("note")), key=f"{row_key}_note", height=70)
     return valid_from, valid_to, has_end, priority, is_active, note
 
 

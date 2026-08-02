@@ -1232,6 +1232,12 @@ def safe_int(value: Any) -> int:
         return 0
 
 
+def safe_money_amount(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value.get("amount")
+    return safe_int(value)
+
+
 def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     routes: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1264,6 +1270,7 @@ def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "work_date": work_date,
                     "route_type": "express" if "express" in route_layer else "regional" if "region" in route_layer else "normal",
                     "orders": safe_int(route.get("orderCount") or route.get("orders")),
+                    "tips_huf": safe_money_amount(route.get("customerTipsTotal")),
                 }
             )
     return routes
@@ -1347,6 +1354,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
     route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
+    route_tips = sum(safe_int(route.get("tips_huf")) for route in route_rows)
     route_count = len(route_rows)
     total_routes = route_count or daily_routes
     total_orders = route_orders or daily_orders
@@ -1377,7 +1385,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         "month": period_start.strftime("%Y-%m"),
         "courier": {"id": courier_id, "name": courier_name},
         "amountsHidden": True,
-        "amountsNote": "A mobil statisztikaban a forint osszegek egyelore rejtve vannak.",
+        "amountsNote": "A teljes bevetel mobilon rejtve van, a borravalo megjelenik.",
         "summary": {
             "routes": total_routes,
             "orders": total_orders,
@@ -1386,6 +1394,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "lateCount": late_count,
             "noShowCount": no_show_count,
             "shiftCount": shift_count,
+            "tipsTotalHuf": route_tips,
         },
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,

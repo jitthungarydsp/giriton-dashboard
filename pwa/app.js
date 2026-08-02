@@ -148,6 +148,10 @@ function formatAverage(value) {
   return new Intl.NumberFormat("hu-HU", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value || 0));
 }
 
+function formatHuf(value) {
+  return `${formatCount(value)} Ft`;
+}
+
 function statisticCard(label, value, note = "") {
   return `
     <article class="stat-card">
@@ -183,7 +187,7 @@ function renderStatistics() {
 
   message.innerHTML = `
     <div class="notice">
-      ${escapeHtml(payload.month || state.statisticsMonth)} havi adatok. ${escapeHtml(payload.amountsNote || "Összegek rejtve a mobil nézetben.")}
+      ${escapeHtml(payload.month || state.statisticsMonth)} havi adatok. ${escapeHtml(payload.amountsNote || "A teljes bevétel rejtve a mobil nézetben.")}
     </div>
   `;
   grid.innerHTML = [
@@ -194,7 +198,7 @@ function renderStatistics() {
     statisticCard("Késés", formatCount(summary.lateCount), "műszak"),
     statisticCard("No-show", formatCount(summary.noShowCount), "műszak"),
     statisticCard("Műszak", formatCount(summary.shiftCount), "összes"),
-    statisticCard("Borravaló", "Rejtve", "mobil nézetben"),
+    statisticCard("Borravaló", formatHuf(summary.tipsTotalHuf), "összesen"),
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
@@ -862,7 +866,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=28");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=29");
   }
   return navigator.serviceWorker.ready;
 }
