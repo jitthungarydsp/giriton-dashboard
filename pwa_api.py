@@ -1942,7 +1942,7 @@ def has_open_complaint(complaints: list[dict], action: str) -> bool:
     for row in complaints:
         if base_action_key(str(row.get("document_type") or "")) != action:
             continue
-        if str(row.get("status") or "").strip().lower() == "resolved":
+        if str(row.get("status") or "").strip().lower() in {"resolved", "closed"}:
             continue
         if str(row.get("admin_response") or "").strip() or str(row.get("responded_at") or "").strip():
             continue

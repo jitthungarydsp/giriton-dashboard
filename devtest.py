@@ -2197,6 +2197,45 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
     return plan_id
 
 
+def reject_salary_advance_request(request_row: dict, courier_name: str, response_message: str) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    start_date = pd.to_datetime(request_row.get("start_date"), errors="coerce").date()
+    document_month = start_date.replace(day=1)
+    process_id = normalize_process_id(
+        str(request_row.get("process_id") or "")
+        or salary_advance_process_id(request_id, courier_id, start_date)
+    )
+    response = str(response_message or "").strip()
+    existing_note = str(request_row.get("note") or "").strip()
+    updated_note = "\n\n".join(
+        part for part in [
+            existing_note,
+            f"Elutasítás válasz ({actor}): {response}" if response else f"Elutasítva: {actor}",
+        ]
+        if part
+    )
+    get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "status": "rejected",
+        "process_id": process_id,
+        "note": updated_note,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    if process_id:
+        for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+            upsert_peopleforce_card_status(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                action_key=process_action_key(action, process_id),
+                document_month=document_month,
+                status="done",
+                status_note=f"Fizetés előleg elutasítva. {response}".strip(),
+                updated_by=actor,
+            )
+    load_courier_salary_advance_requests.clear()
+
+
 def close_salary_advance_installments(courier_id: str, period_start: date, period_end: date) -> int:
     current = load_courier_salary_advance_current(courier_id, period_start, period_end)
     if current.empty:
@@ -5562,22 +5601,45 @@ def show_courier_dialog() -> None:
                         c2.metric("Összeg", format_huf(amount))
                         c3.metric("Havi levonás", format_huf(monthly), f"{months} hó")
                         c4.caption(f"Folyamat: {process_id or '-'}")
+                        reject_response = ""
+                        if request_status in {"requested", "approved"}:
+                            reject_response = st.text_area(
+                                "Elutasítás szöveges válasz",
+                                key=f"salary_advance_reject_note_{request_id}",
+                                placeholder="Írd le röviden, miért lett elutasítva.",
+                            )
                         if request_status == "requested":
-                            if c4.button("Jóváhagyás és folyamat indítása", type="primary", use_container_width=True, key=f"salary_advance_approve_{request_id}"):
+                            approve_col, reject_col = st.columns(2)
+                            if approve_col.button("Jóváhagyás és folyamat indítása", type="primary", use_container_width=True, key=f"salary_advance_approve_{request_id}"):
                                 try:
                                     approved_process = approve_salary_advance_request(request_item, courier_name)
                                     st.success(f"Előleg folyamat elindítva: {approved_process}")
                                     st.rerun()
                                 except Exception as exc:
                                     st.error(f"Az előleg igény jóváhagyása sikertelen. Részlet: {exc}")
+                            if reject_col.button("Elutasítás", use_container_width=True, key=f"salary_advance_reject_{request_id}"):
+                                try:
+                                    reject_salary_advance_request(request_item, courier_name, reject_response)
+                                    st.success("Az előleg igény elutasítva.")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Az előleg igény elutasítása sikertelen. Részlet: {exc}")
                         elif request_status == "approved":
-                            if c4.button("Kifizetve / lezárás", type="primary", use_container_width=True, key=f"salary_advance_paid_{request_id}"):
+                            paid_col, reject_col = st.columns(2)
+                            if paid_col.button("Kifizetve / lezárás", type="primary", use_container_width=True, key=f"salary_advance_paid_{request_id}"):
                                 try:
                                     mark_salary_advance_request_paid(request_item, courier_name)
                                     st.success("Az előleg lezárva, a részletek bekerültek az aktuális előleg táblába.")
                                     st.rerun()
                                 except Exception as exc:
                                     st.error(f"Az előleg lezárása sikertelen. Részlet: {exc}")
+                            if reject_col.button("Elutasítás és folyamat lezárása", use_container_width=True, key=f"salary_advance_reject_approved_{request_id}"):
+                                try:
+                                    reject_salary_advance_request(request_item, courier_name, reject_response)
+                                    st.success("Az előleg elutasítva, a kapcsolódó folyamat lezárva.")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Az előleg elutasítása sikertelen. Részlet: {exc}")
 
             history = load_courier_salary_advance_history(courier_id)
             st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Levonási részletek</div></div>', unsafe_allow_html=True)
@@ -6107,6 +6169,13 @@ def show_courier_dialog() -> None:
         reverse_complaint_status_labels = {
             label: key for key, label in complaint_status_labels.items()
         }
+        def complaint_type_label(value: object) -> str:
+            action_key = str(value or "").strip()
+            base_key = base_action_key(action_key)
+            label = complaint_type_labels.get(base_key, base_key or action_key)
+            process_id = process_id_from_action_key(action_key)
+            return f"{label} ({process_id})" if process_id else label
+
         actor = str(st.session_state.get("user", {}).get("username") or "unknown")
         try:
             complaints = read_peopleforce_complaints_for_month(period_start.replace(day=1))
@@ -6129,9 +6198,7 @@ def show_courier_dialog() -> None:
                 complaint_view["Dátum"] = pd.to_datetime(
                     complaint_view.get("created_at"), errors="coerce"
                 ).dt.strftime("%Y-%m-%d %H:%M").fillna(complaint_view.get("created_at", ""))
-                complaint_view["Típus"] = complaint_view.get("document_type", pd.Series("", index=complaint_view.index)).map(
-                    lambda value: complaint_type_labels.get(str(value or "").strip(), str(value or ""))
-                )
+                complaint_view["Típus"] = complaint_view.get("document_type", pd.Series("", index=complaint_view.index)).map(complaint_type_label)
                 complaint_view["Státusz"] = complaint_view.get("status", pd.Series("", index=complaint_view.index)).map(
                     lambda value: complaint_status_labels.get(str(value or "").strip(), str(value or ""))
                 )
@@ -6186,7 +6253,7 @@ def show_courier_dialog() -> None:
                     "Reklamáció",
                     list(complaint_rows_by_id),
                     format_func=lambda value: (
-                        f"{complaint_type_labels.get(str(complaint_rows_by_id[value].get('document_type') or ''), complaint_rows_by_id[value].get('document_type') or '')} · "
+                        f"{complaint_type_label(complaint_rows_by_id[value].get('document_type'))} · "
                         f"{str(complaint_rows_by_id[value].get('message') or '')[:48]}"
                     ),
                     key=f"ui_complaint_select_{courier_id}",
@@ -6237,6 +6304,13 @@ def show_courier_dialog() -> None:
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A státusz mentése sikertelen: {exc}")
+                if st.button("Reklamáció lezárása", type="primary", use_container_width=True, key=f"ui_complaint_close_{courier_id}_{selected_complaint_id}"):
+                    try:
+                        update_peopleforce_complaint_status(selected_complaint_id, "closed")
+                        st.success("Reklamáció lezárva.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A reklamáció lezárása sikertelen: {exc}")
 
     if selected_menu == "Profil":
         profile = load_courier_profile(courier_id)

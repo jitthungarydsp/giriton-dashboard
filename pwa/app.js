@@ -816,7 +816,7 @@ function hasOpenComplaint(complaints) {
       String(complaint.admin_response || "").trim()
       || String(complaint.responded_at || "").trim()
     );
-    return status !== "resolved" && !hasAdminAnswer;
+    return !["resolved", "closed"].includes(status) && !hasAdminAnswer;
   });
 }
 
