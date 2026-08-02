@@ -4,7 +4,7 @@ import re
 import traceback
 import unicodedata
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
@@ -1336,6 +1336,73 @@ def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | No
         return str(grouped.iloc[0]["session_id"]) if not grouped.empty else None
     except BaseException:
         return None
+
+
+def settlement_mobile_session_for_mode(calculation_mode: str, period_start: date, warehouse_label: str | None) -> str | None:
+    normalized_mode = str(calculation_mode or "API").strip().casefold()
+    if normalized_mode == "excel":
+        _, period_end = month_bounds(period_start)
+        try:
+            rows = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select("session_id,source_sheet,created_at")
+                .gte("route_date", period_start.isoformat())
+                .lte("route_date", period_end.isoformat())
+                .order("created_at", desc=True)
+                .limit(10000)
+                .execute()
+                .data
+                or []
+            )
+            for row in rows:
+                source_sheet = str(row.get("source_sheet") or "")
+                if not source_sheet.lower().startswith("api financial overview"):
+                    return str(row["session_id"])
+            return None
+        except BaseException:
+            return None
+    if normalized_mode == "api":
+        return load_latest_api_jit_session_id(period_start, warehouse_label)
+    return None
+
+
+def save_mobile_settlement_period_config(
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+    updated_by: str,
+) -> bool:
+    normalized_mode = "Excel" if str(calculation_mode or "").strip().casefold() == "excel" else "API"
+    if str(calculation_mode or "").strip() not in {"API", "Excel"}:
+        return False
+    try:
+        get_db().schema("settlement").table("mobile_settlement_period_config").upsert(
+            {
+                "period_start": period_start.replace(day=1).isoformat(),
+                "calculation_mode": normalized_mode,
+                "warehouse_label": str(warehouse_label or "Összes"),
+                "session_id": str(session_id or ""),
+                "source_note": f"{normalized_mode} elszámolási forrás publikálva mobilra.",
+                "updated_by": updated_by,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="period_start",
+        ).execute()
+        return True
+    except BaseException:
+        return False
+
+
+def clear_mobile_settlement_period_config(period_start: date) -> bool:
+    try:
+        get_db().schema("settlement").table("mobile_settlement_period_config").delete() \
+            .eq("period_start", period_start.replace(day=1).isoformat()).execute()
+        return True
+    except BaseException:
+        return False
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -7232,6 +7299,23 @@ def show_new_settlement_page() -> None:
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
         status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","TIG-re vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
+        mobile_period_start = parse_month_option(selected_month)
+        mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
+        if calculation_mode in {"API", "Excel"}:
+            mobile_config_saved = save_mobile_settlement_period_config(
+                mobile_period_start,
+                calculation_mode,
+                warehouse,
+                mobile_source_session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
+            if mobile_config_saved:
+                st.caption(f"Mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
+            else:
+                st.caption("Mobil forrás nincs mentve: futtasd a settlement_mobile_period_config SQL-t.")
+        else:
+            clear_mobile_settlement_period_config(mobile_period_start)
+            st.caption("Mobil forrás: nincs publikálva, mert a Számítás módja Összes.")
         st.divider()
         if str(calculation_mode or "API").strip().casefold() != "excel":
             api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)

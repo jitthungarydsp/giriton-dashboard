@@ -1471,36 +1471,68 @@ def count_item(key: str, label: str, count: int) -> dict[str, Any]:
     return item
 
 
-def latest_settlement_session_for_month(courier_id: str, month: date) -> dict[str, str]:
+def read_mobile_settlement_period_config(month: date) -> dict[str, Any]:
+    rows = optional_supabase_rows(
+        "mobile_settlement_period_config",
+        schema="settlement",
+        params={
+            "select": "period_start,calculation_mode,warehouse_label,session_id,source_note,updated_by,updated_at",
+            "period_start": f"eq.{month.isoformat()}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    return dict(rows[0]) if rows else {}
+
+
+def latest_settlement_session_for_month(courier_id: str, month: date, config: dict[str, Any]) -> dict[str, str]:
+    config_mode = str(config.get("calculation_mode") or "").strip()
+    if config_mode not in {"API", "Excel"}:
+        return {"sessionId": "", "sourceMode": "", "sourceSheet": "", "message": "Az admin még nem publikálta a havi mobil elszámolási forrást."}
+    configured_session_id = str(config.get("session_id") or "").strip()
+    if configured_session_id:
+        return {
+            "sessionId": configured_session_id,
+            "sourceMode": config_mode,
+            "sourceSheet": str(config.get("source_note") or ""),
+            "message": "",
+        }
     period_end = month_end(month)
+    params = {
+        "select": "session_id,source_sheet,route_date,created_at",
+        "courier_id": f"eq.{courier_id}",
+        "and": f"(route_date.gte.{month.isoformat()},route_date.lte.{period_end.isoformat()})",
+        "order": "created_at.desc",
+        "limit": "200",
+    }
+    if config_mode == "API":
+        params["source_sheet"] = "ilike.API financial overview%"
     rows = optional_supabase_rows(
         "jit_row",
         schema="settlement",
-        params={
-            "select": "session_id,source_sheet,route_date,created_at",
-            "courier_id": f"eq.{courier_id}",
-            "and": f"(route_date.gte.{month.isoformat()},route_date.lte.{period_end.isoformat()})",
-            "order": "created_at.desc",
-            "limit": "1",
-        },
+        params=params,
         timeout=60,
     )
-    if rows:
-        source_sheet = str(rows[0].get("source_sheet") or "").strip()
+    for row in rows:
+        source_sheet = str(row.get("source_sheet") or "").strip()
         source_mode = "API" if source_sheet.lower().startswith("api financial overview") else "Excel"
+        if source_mode != config_mode:
+            continue
         return {
-            "sessionId": str(rows[0].get("session_id") or "").strip(),
+            "sessionId": str(row.get("session_id") or "").strip(),
             "sourceMode": source_mode,
             "sourceSheet": source_sheet,
+            "message": "",
         }
-    return {"sessionId": "", "sourceMode": "", "sourceSheet": ""}
+    return {"sessionId": "", "sourceMode": config_mode, "sourceSheet": "", "message": f"Nincs {config_mode} session ehhez a hónaphoz."}
 
 
 def read_courier_settlement_summary_row(courier_id: str, month: date) -> dict[str, Any]:
-    session = latest_settlement_session_for_month(courier_id, month)
+    config = read_mobile_settlement_period_config(month)
+    session = latest_settlement_session_for_month(courier_id, month, config)
     session_id = session.get("sessionId") or ""
     if not session_id:
-        return {}
+        return {"_mobile_unavailable_message": session.get("message") or "Nincs publikált havi mobil elszámolási forrás."}
     rows = optional_supabase_rows(
         "courier_settlement_summary",
         schema="settlement",
@@ -1524,7 +1556,7 @@ def read_courier_settlement_summary_row(courier_id: str, month: date) -> dict[st
 def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     row = read_courier_settlement_summary_row(courier_id, month)
-    if not row:
+    if not row or row.get("_mobile_unavailable_message"):
         return {
             "available": False,
             "month": month.strftime("%Y-%m"),
@@ -1532,7 +1564,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, An
             "cards": [],
             "complaintOptions": [],
             "source": "settlement.courier_settlement_summary",
-            "message": "Ehhez a hónaphoz még nincs mentett pénzügyi bontás.",
+            "message": str(row.get("_mobile_unavailable_message") if row else "") or "Ehhez a hónaphoz még nincs mentett pénzügyi bontás.",
         }
 
     base = money_from(row, "fixed_rate_huf", "courier_base_rate_huf")
