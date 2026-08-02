@@ -1078,6 +1078,54 @@ def load_active_bonus_level_rules(table_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_jitt_day_definitions_for_period(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_day_definitions").select("*")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", period_end.isoformat())
+            .order("priority")
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    rules = pd.DataFrame(rows)
+    if rules.empty:
+        return rules
+    valid_to = pd.to_datetime(rules.get("valid_to"), errors="coerce")
+    return rules.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+
+
+def resolve_jitt_day_type_label(work_date: object, rules: pd.DataFrame) -> str:
+    parsed = pd.to_datetime(work_date, errors="coerce")
+    if pd.isna(parsed):
+        return "Nincs besorolás"
+    route_date = parsed.date()
+    weekday_iso = int(parsed.dayofweek) + 1
+    if not rules.empty:
+        for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+            try:
+                valid_from = date.fromisoformat(str(rule.get("valid_from"))[:10])
+                valid_to_value = rule.get("valid_to")
+                valid_to = date.fromisoformat(str(valid_to_value)[:10]) if pd.notna(valid_to_value) else None
+            except ValueError:
+                continue
+            if route_date < valid_from or (valid_to and route_date > valid_to):
+                continue
+            weekdays = rule.get("weekdays") or []
+            if isinstance(weekdays, str):
+                weekdays = [int(item) for item in re.findall(r"\d+", weekdays)]
+            if weekday_iso not in set(int(item) for item in weekdays):
+                continue
+            return {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(
+                str(rule.get("day_type") or "").casefold(),
+                "Nincs besorolás",
+            )
+    return "Normál nap"
+
+
 def _performance_rule_label(value: object) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1795,6 +1843,24 @@ def add_months(value: date, months: int) -> date:
     return (pd.Timestamp(value.replace(day=1)) + pd.DateOffset(months=months)).date()
 
 
+def previous_month_delta_note(current_total: float, previous_total: float) -> str:
+    current_value = parse_huf_value(current_total)
+    previous_value = parse_huf_value(previous_total)
+    if previous_value <= 0:
+        return "Előző hónap: nincs adat"
+    difference = current_value - previous_value
+    if difference >= 0:
+        return f"{format_huf(difference)} túlteljesítés az előző hónaphoz képest"
+    return f"{format_huf(abs(difference))} hiányzik az előző hónaphoz"
+
+
+def donut_percent(current_total: float, previous_total: float) -> int:
+    previous_value = parse_huf_value(previous_total)
+    if previous_value <= 0:
+        return 100 if parse_huf_value(current_total) > 0 else 0
+    return max(0, min(100, int(round(parse_huf_value(current_total) / previous_value * 100))))
+
+
 def salary_advance_installment_amounts(total_huf: float, months: int) -> list[int]:
     total = int(round(parse_huf_value(total_huf)))
     count = max(1, int(months or 1))
@@ -2487,7 +2553,12 @@ def load_api_import_diagnostics(session_id: str | None) -> dict[str, object]:
         return {"session_id": session_id, "error": str(exc)}
 
 
-def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = None) -> pd.DataFrame:
+def api_financial_routes_to_detail(
+    rows: pd.DataFrame,
+    courier_id: str | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+) -> pd.DataFrame:
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
         "Rendelések", "Alapdíj", "Kapott összeg", "Borravaló", "Késedelmi díj",
@@ -2495,6 +2566,10 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
     ]
     if rows.empty:
         return pd.DataFrame(columns=columns)
+    if period_start is None or period_end is None:
+        period_start = period_start or date.today().replace(day=1)
+        _, period_end = month_bounds(period_start)
+    day_rules = load_jitt_day_definitions_for_period(period_start, period_end)
     target_id = _courier_id_key(courier_id)
     weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
     parsed: list[dict[str, object]] = []
@@ -2525,7 +2600,7 @@ def api_financial_routes_to_detail(rows: pd.DataFrame, courier_id: str | None = 
                 "Excel dátum": delivery_date or "–",
                 "Hét napja": weekday_names.get(int(parsed_date.dayofweek) + 1, "–") if pd.notna(parsed_date) else "–",
                 "Túratípus": route_type,
-                "Naptípus": "Nincs besorolás",
+                "Naptípus": resolve_jitt_day_type_label(parsed_date, day_rules),
                 "Rendelések": parse_huf_value(route.get("orderCount")),
                 "Alapdíj": _api_route_fee(route, "fixed_base"),
                 "Kapott összeg": _money_amount(route.get("totalAmount")),
@@ -3465,7 +3540,7 @@ def load_courier_route_detail(
             api_rows = api_rows.loc[
                 pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
             ]
-        api_detail = api_financial_routes_to_detail(api_rows, courier_id)
+        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, period_end)
         if not api_detail.empty:
             return api_detail.drop(columns=["_courier_id"], errors="ignore")
         if not session_id:
@@ -4169,6 +4244,13 @@ def show_courier_dialog() -> None:
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_received_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
+    if str(active_calculation_mode or "").strip().casefold() == "api":
+        api_received = load_api_received_amounts(period_start, st.session_state.get("new_warehouse", "Összes")).copy()
+        if not api_received.empty:
+            api_received["_courier_id_lookup"] = api_received["Courier ID"].map(_courier_id_key)
+            api_match = api_received.loc[api_received["_courier_id_lookup"].eq(_courier_id_key(courier_id))]
+            if not api_match.empty:
+                contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     if not contractor_received_total and "Kapott összeg" in route_detail.columns:
         contractor_received_total = float(route_detail["Kapott összeg"].sum())
     delay_total = settlement_amount("delay_bonus_huf")
@@ -4208,6 +4290,12 @@ def show_courier_dialog() -> None:
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
     order_total = int(settlement_amount("order_count") or route_detail.get("Rendelések", pd.Series(dtype=float)).sum())
     route_total = int(settlement_amount("route_count") or len(route_detail))
+    route_day_type = route_detail.get("Naptípus", pd.Series(dtype=str)).astype(str).str.casefold()
+    route_type = route_detail.get("Túratípus", pd.Series(dtype=str)).astype(str).str.casefold()
+    highlighted_route_total = int(route_day_type.str.contains("kiemelt", na=False).sum())
+    normal_route_total = int(route_day_type.str.contains("norm", na=False).sum())
+    express_highlighted_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("kiemelt", na=False)).sum())
+    express_normal_total = int((route_type.str.contains("express", na=False) & route_day_type.str.contains("norm", na=False)).sum())
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
@@ -4278,7 +4366,8 @@ def show_courier_dialog() -> None:
                       <div class="settlement-ledger-row"><span>Alapdíj</span><strong>{format_huf(base_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
                       <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
-                      <div class="settlement-ledger-row"><span>Túramegfelelés / egyéb bónusz</span><strong>{format_huf(compliance_total + other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total)}</strong></div>
+                      <div class="settlement-ledger-row"><span>Túramegfelelés</span><strong>{format_huf(compliance_total)}</strong></div>
+                      <div class="settlement-ledger-row"><span>Egyéb bónusz</span><strong>{format_huf(other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total)}</strong></div>
                       <div class="settlement-ledger-row total"><span>Összesen</span><strong>{format_huf(total_income)}</strong></div>
                     </div>
                     <div class="settlement-ledger outcome">
@@ -4299,6 +4388,10 @@ def show_courier_dialog() -> None:
                       <div class="settlement-mini-kpi"><div class="settlement-kpi-icon">□</div><div class="settlement-kpi-label">Rendelés</div><div class="settlement-mini-value">{order_total}</div><div class="settlement-mini-note">aktuális hónap</div></div>
                       <div class="settlement-mini-kpi"><div class="settlement-kpi-icon blue">↔</div><div class="settlement-kpi-label">Kör</div><div class="settlement-mini-value">{route_total}</div><div class="settlement-mini-note">route detail</div></div>
                       <div class="settlement-mini-kpi"><div class="settlement-kpi-icon">Ft</div><div class="settlement-kpi-label">Bevétel</div><div class="settlement-mini-value">{format_huf(total_income)}</div><div class="settlement-mini-note">jóváírások</div></div>
+                      <div class="settlement-mini-kpi"><div class="settlement-kpi-icon blue">N</div><div class="settlement-kpi-label">Normál</div><div class="settlement-mini-value">{normal_route_total}</div><div class="settlement-mini-note">túra</div></div>
+                      <div class="settlement-mini-kpi"><div class="settlement-kpi-icon">K</div><div class="settlement-kpi-label">Kiemelt</div><div class="settlement-mini-value">{highlighted_route_total}</div><div class="settlement-mini-note">túra</div></div>
+                      <div class="settlement-mini-kpi"><div class="settlement-kpi-icon blue">E</div><div class="settlement-kpi-label">Express normál</div><div class="settlement-mini-value">{express_normal_total}</div><div class="settlement-mini-note">túra</div></div>
+                      <div class="settlement-mini-kpi"><div class="settlement-kpi-icon">E</div><div class="settlement-kpi-label">Express kiemelt</div><div class="settlement-mini-value">{express_highlighted_total}</div><div class="settlement-mini-note">túra</div></div>
                     </div>
                   </div>
                   <div class="settlement-card">
@@ -4609,6 +4702,10 @@ def show_courier_dialog() -> None:
         kpi_items = [
             ("Rendelés", f"{order_total:,}".replace(",", " "), "", ""),
             ("Kör", str(route_total), "", ""),
+            ("Normál túra", str(normal_route_total), "", ""),
+            ("Kiemelt túra", str(highlighted_route_total), "", ""),
+            ("Express normál", str(express_normal_total), "", ""),
+            ("Express kiemelt", str(express_highlighted_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", ""),
@@ -6775,6 +6872,49 @@ def show_new_settlement_page() -> None:
     total_gross=int(filtered["Nettó bevétel"].sum()) if not filtered.empty else 0
     total_deduction=int(filtered["Levonás"].sum()) if not filtered.empty else 0
     total_payable=int(filtered["Kifizetendő"].sum()) if not filtered.empty else 0
+    previous_period_start = add_months(balance_period_start, -1)
+    previous_period_start, previous_period_end = month_bounds(previous_period_start)
+    previous_filtered = pd.DataFrame(columns=filtered.columns)
+    try:
+        previous_session_id = None
+        if str(selected_calculation_mode or "API").strip().casefold() == "api":
+            previous_session_id = load_latest_api_jit_session_id(previous_period_start, selected_warehouse_label)
+            if not previous_session_id:
+                raise RuntimeError("Nincs előző havi API session")
+        previous_data = build_settlement_working_data(
+            selected_calculation_mode,
+            previous_session_id,
+            previous_period_start,
+            selected_warehouse_label,
+        )
+        previous_data = apply_received_amounts(previous_data, selected_calculation_mode, previous_period_start, selected_warehouse_label)
+        previous_data = apply_imported_balance_components(previous_data, previous_session_id)
+        previous_data = apply_loyalty_bonus(previous_data, previous_period_start, previous_period_end, previous_session_id)
+        previous_data = apply_customer_rating_bonus(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_salary_advance_deduction(previous_data, previous_period_start, previous_period_end)
+        previous_data = recompute_payable_total(previous_data)
+        previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
+        previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
+        previous_filtered = previous_data.copy()
+        if branch!="Összes":
+            previous_filtered=previous_filtered[previous_filtered["Branch"]==branch]
+        if calculation_mode!="Összes":
+            previous_filtered=previous_filtered[previous_filtered["Számítás módja"]==calculation_mode]
+        if warehouse!="Összes":
+            previous_filtered=previous_filtered[previous_filtered["Raktár"]==warehouse]
+        if status!="Összes":
+            previous_filtered=previous_filtered[previous_filtered["Státusz"]==status]
+        if search.strip():
+            query=search.strip()
+            previous_filtered=previous_filtered[
+                previous_filtered["Futár"].str.contains(query,case=False,na=False)
+                | previous_filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
+            ]
+        if active_workflow_filter:
+            previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
+    except BaseException:
+        previous_filtered = pd.DataFrame(columns=filtered.columns)
 
     st.markdown(
         f"""
@@ -6787,6 +6927,12 @@ def show_new_settlement_page() -> None:
     )
 
     total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
+    previous_total_payable = int(_numeric_series(previous_filtered, "Kifizetendő").sum()) if not previous_filtered.empty else 0
+    previous_total_received = int(_numeric_series(previous_filtered, "Alvállalkozói összeg").sum()) if not previous_filtered.empty else 0
+    payable_note = previous_month_delta_note(total_payable, previous_total_payable)
+    received_note = previous_month_delta_note(total_received, previous_total_received)
+    payable_percent = donut_percent(total_payable, previous_total_payable)
+    received_percent = donut_percent(total_received, previous_total_received)
 
     st.markdown(
         f"""
@@ -6795,9 +6941,9 @@ def show_new_settlement_page() -> None:
             <div>
               <div class="summary-donut-title">Kifizetés összesen</div>
               <div class="summary-donut-value">{format_huf(total_payable)}</div>
-              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+              <div class="summary-donut-note">{html.escape(payable_note)}</div>
             </div>
-            <div class="summary-donut summary-donut-primary">
+            <div class="summary-donut summary-donut-primary" style="background: conic-gradient(#1FA64A 0 {payable_percent}%, #DDF5E4 {payable_percent}% 100%);">
               <div class="summary-donut-center"><strong>{total_payable / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
@@ -6806,9 +6952,9 @@ def show_new_settlement_page() -> None:
             <div>
               <div class="summary-donut-title">Alvállalkozói összeg</div>
               <div class="summary-donut-value">{format_huf(total_received)}</div>
-              <div class="summary-donut-note">{html.escape(selected_month)}</div>
+              <div class="summary-donut-note">{html.escape(received_note)}</div>
             </div>
-            <div class="summary-donut summary-donut-secondary">
+            <div class="summary-donut summary-donut-secondary" style="background: conic-gradient(#17853B 0 {received_percent}%, #DDF5E4 {received_percent}% 100%);">
               <div class="summary-donut-center"><strong>{total_received / 1_000_000:.1f} M</strong><span>Ft</span></div>
             </div>
           </div>
