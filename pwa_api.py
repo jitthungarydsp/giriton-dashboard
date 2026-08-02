@@ -1225,6 +1225,37 @@ def day_type_for_date(value: date | None, day_rules: list[dict[str, Any]]) -> st
     return "normal"
 
 
+def parse_date_value(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except ValueError:
+        return None
+
+
+def weekday_labels(values: Any) -> str:
+    labels = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+    try:
+        days = [int(day) for day in (values or [])]
+    except TypeError:
+        days = []
+    return ", ".join(labels.get(day, str(day)) for day in days)
+
+
+def serialize_day_rules(day_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for rule in day_rules:
+        result.append(
+            {
+                "dayType": str(rule.get("day_type") or "normal"),
+                "weekdays": weekday_labels(rule.get("weekdays")),
+                "validFrom": str(rule.get("valid_from") or "")[:10],
+                "validTo": str(rule.get("valid_to") or "")[:10] if rule.get("valid_to") else "",
+                "priority": safe_int(rule.get("priority")),
+            }
+        )
+    return result
+
+
 def safe_int(value: Any) -> int:
     try:
         return int(float(str(value or "0").replace(",", ".")))
@@ -1258,11 +1289,7 @@ def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
-            work_date_text = str(route.get("deliveryDate") or route.get("date") or "")[:10]
-            try:
-                work_date = date.fromisoformat(work_date_text)
-            except ValueError:
-                work_date = None
+            work_date = parse_date_value(route.get("deliveryDate") or route.get("date"))
             route_layer = str(route.get("routeLayer") or route.get("routeType") or "normal").strip().lower()
             routes.append(
                 {
@@ -1365,16 +1392,24 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     express_routes = 0
     express_orders = 0
     route_types = {"normal": 0, "express": 0, "regional": 0}
-    for route in route_rows:
-        route_type = route.get("route_type") or "normal"
-        route_types[route_type] = route_types.get(route_type, 0) + 1
-        if route_type == "express":
-            express_routes += 1
-            express_orders += safe_int(route.get("orders"))
-        if day_type_for_date(route.get("work_date"), day_rules) == "highlighted":
-            highlighted_routes += 1
-        else:
-            normal_day_routes += 1
+    if route_rows:
+        for route in route_rows:
+            route_type = route.get("route_type") or "normal"
+            route_types[route_type] = route_types.get(route_type, 0) + 1
+            if route_type == "express":
+                express_routes += 1
+                express_orders += safe_int(route.get("orders"))
+            if day_type_for_date(route.get("work_date"), day_rules) == "highlighted":
+                highlighted_routes += 1
+            else:
+                normal_day_routes += 1
+    else:
+        for row in daily_rows:
+            route_count_for_day = safe_int(row.get("route_count"))
+            if day_type_for_date(parse_date_value(row.get("work_date")), day_rules) == "highlighted":
+                highlighted_routes += route_count_for_day
+            else:
+                normal_day_routes += route_count_for_day
 
     delayed_orders = sum(safe_int(row.get("delayed_order_count")) for row in daily_rows)
     late_count = sum(safe_int(row.get("late_count")) for row in daily_rows)
@@ -1410,6 +1445,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "routeRows": len(route_rows),
             "routeSource": route_source or "nincs route raw adat",
             "dayRuleSource": day_rule_source,
+            "dayRules": serialize_day_rules(day_rules),
         },
     }
 

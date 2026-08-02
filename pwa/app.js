@@ -31,7 +31,7 @@ async function api(path, options = {}) {
   if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const response = await fetch(path, { credentials: "same-origin", ...options, headers });
+  const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...options, headers });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload.detail;
@@ -205,6 +205,12 @@ function renderStatistics() {
 
   const routeBreakdown = payload.routeBreakdown || {};
   const quality = payload.dataQuality || {};
+  const ruleRows = (quality.dayRules || []).map((rule) => `
+    <div class="stat-row">
+      <span>${escapeHtml(rule.dayType === "highlighted" ? "Kiemelt" : "Normál")} · ${escapeHtml(rule.weekdays || "-")}</span>
+      <strong>${escapeHtml(rule.validFrom || "-")} - ${escapeHtml(rule.validTo || "folyamatos")}</strong>
+    </div>
+  `).join("");
   breakdown.innerHTML = `
     <div class="process-title">
       <span class="step-code">∑</span>
@@ -222,6 +228,10 @@ function renderStatistics() {
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
     </div>
     <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
+    <div class="stat-rule-list">
+      <h4>Alkalmazott napbesorolás</h4>
+      ${ruleRows || `<div class="stat-row"><span>Nincs aktív szabály</span><strong>-</strong></div>`}
+    </div>
   `;
 }
 
@@ -230,7 +240,7 @@ async function loadStatistics() {
   if (monthInput?.value) state.statisticsMonth = monthInput.value;
   $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
   try {
-    state.statistics = await api(`/api/statistics/monthly?month=${encodeURIComponent(state.statisticsMonth)}`);
+    state.statistics = await api(`/api/statistics/monthly?month=${encodeURIComponent(state.statisticsMonth)}&_=${Date.now()}`);
     renderStatistics();
   } catch (error) {
     state.statistics = null;
@@ -866,7 +876,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=29");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=30");
   }
   return navigator.serviceWorker.ready;
 }
