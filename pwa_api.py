@@ -1441,6 +1441,192 @@ def optional_supabase_rows(
         return []
 
 
+def money_int(value: Any) -> int:
+    try:
+        return int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def money_from(row: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        if key in row and row.get(key) not in (None, ""):
+            return money_int(row.get(key))
+    return 0
+
+
+def signed_item(key: str, label: str, amount: int, *, source: str = "settlement.courier_settlement_summary", note: str = "") -> dict[str, Any]:
+    return {
+        "key": key,
+        "label": label,
+        "amountHuf": int(amount),
+        "source": source,
+        "note": note,
+    }
+
+
+def count_item(key: str, label: str, count: int) -> dict[str, Any]:
+    item = signed_item(key, label, count, note="darab")
+    item["amountKind"] = "count"
+    return item
+
+
+def latest_settlement_session_for_month(courier_id: str, month: date) -> dict[str, str]:
+    period_end = month_end(month)
+    rows = optional_supabase_rows(
+        "jit_row",
+        schema="settlement",
+        params={
+            "select": "session_id,source_sheet,route_date,created_at",
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(route_date.gte.{month.isoformat()},route_date.lte.{period_end.isoformat()})",
+            "order": "created_at.desc",
+            "limit": "1",
+        },
+        timeout=60,
+    )
+    if rows:
+        source_sheet = str(rows[0].get("source_sheet") or "").strip()
+        source_mode = "API" if source_sheet.lower().startswith("api financial overview") else "Excel"
+        return {
+            "sessionId": str(rows[0].get("session_id") or "").strip(),
+            "sourceMode": source_mode,
+            "sourceSheet": source_sheet,
+        }
+    return {"sessionId": "", "sourceMode": "", "sourceSheet": ""}
+
+
+def read_courier_settlement_summary_row(courier_id: str, month: date) -> dict[str, Any]:
+    session = latest_settlement_session_for_month(courier_id, month)
+    session_id = session.get("sessionId") or ""
+    if not session_id:
+        return {}
+    rows = optional_supabase_rows(
+        "courier_settlement_summary",
+        schema="settlement",
+        params={
+            "select": "*",
+            "session_id": f"eq.{session_id}",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+        timeout=60,
+    )
+    if rows:
+        row = dict(rows[0])
+        row["_mobile_session_id"] = session_id
+        row["_mobile_source_mode"] = session.get("sourceMode") or ""
+        row["_mobile_source_sheet"] = session.get("sourceSheet") or ""
+        return row
+    return {}
+
+
+def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
+    courier_id, _courier_name = courier_identity(user)
+    row = read_courier_settlement_summary_row(courier_id, month)
+    if not row:
+        return {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "totalPayableHuf": 0,
+            "cards": [],
+            "complaintOptions": [],
+            "source": "settlement.courier_settlement_summary",
+            "message": "Ehhez a hónaphoz még nincs mentett pénzügyi bontás.",
+        }
+
+    base = money_from(row, "fixed_rate_huf", "courier_base_rate_huf")
+    tip = money_from(row, "tip_huf")
+    delay = money_from(row, "delay_bonus_huf")
+    compliance = money_from(row, "compliance_bonus_huf")
+    loyalty = money_from(row, "loyalty_bonus_huf")
+    customer_rating = money_from(row, "customer_rating_bonus_huf")
+    monthly_bonus = money_from(row, "monthly_bonus_huf")
+    monthly_malus = abs(money_from(row, "monthly_malus_huf"))
+    returned_route = abs(money_from(row, "monthly_returned_route_huf"))
+    accepted_route = money_from(row, "monthly_accepted_route_huf")
+    atm_effect = money_from(row, "atm_effect_huf")
+    reserve_topup = money_from(row, "target_reserve_topup_huf")
+    fuel = money_from(row, "fuel_huf")
+    damage = money_from(row, "damage_huf")
+    cash_missing = money_from(row, "cash_missing_huf")
+    other_income = money_from(row, "other_income_huf")
+    other_deduction = money_from(row, "other_deduction_huf")
+    instructor_fee = money_from(row, "instructor_fee_huf")
+    payable = money_from(row, "payable_total_huf")
+
+    income_items = [
+        signed_item("base", "Alapdíj", base),
+        signed_item("tip", "Borravaló", tip),
+        signed_item("delay_bonus", "Késedelmi díj", delay),
+        signed_item("compliance_bonus", "Túramegfelelés", compliance),
+        signed_item("loyalty_bonus", "Lojalitás", loyalty),
+        signed_item("customer_rating", "Ügyfélértékelési bónusz", customer_rating),
+        signed_item("monthly_bonus", "Havi bónusz", monthly_bonus),
+        signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
+        signed_item("other_income", "Egyéb jóváírás", other_income),
+    ]
+    deduction_items = [
+        signed_item("monthly_malus", "Havi málusz", -monthly_malus),
+        signed_item("returned_route", "Visszavett kör", -returned_route),
+        signed_item("atm_effect", "ATM hatás", atm_effect),
+        signed_item("reserve", "Céltartalék", reserve_topup),
+        signed_item("fuel", "Üzemanyag", fuel),
+        signed_item("damage", "Kár / levonás", damage),
+        signed_item("cash_missing", "KP hiány", cash_missing),
+        signed_item("other_deduction", "Egyéb levonás", other_deduction),
+        signed_item("instructor_fee", "Oktatói díj", instructor_fee),
+    ]
+    income_items = [item for item in income_items if item["amountHuf"]]
+    deduction_items = [item for item in deduction_items if item["amountHuf"]]
+    income_total = sum(item["amountHuf"] for item in income_items)
+    deduction_total = sum(item["amountHuf"] for item in deduction_items)
+    if not payable:
+        payable = income_total + deduction_total
+
+    route_items = [
+        count_item("orders", "Cím", money_from(row, "orders", "order_count")),
+        count_item("routes", "Kör", money_from(row, "route_count", "routes")),
+        count_item("highlighted_routes", "Kiemelt kör", money_from(row, "kiemelt_routes", "highlighted_routes")),
+        count_item("normal_routes", "Normál kör", money_from(row, "sima_routes", "normal_routes")),
+    ]
+    route_items = [item for item in route_items if item["amountHuf"]]
+    cards = [
+        {
+            "key": "payable",
+            "label": "Teljes összeg",
+            "amountHuf": payable,
+            "tone": "total",
+            "items": [
+                signed_item("income_total", "Jóváírások összesen", income_total),
+                signed_item("deduction_total", "Levonások / korrekciók összesen", deduction_total),
+                signed_item("payable_total", "Kifizetendő", payable),
+            ],
+        },
+        {"key": "income", "label": "Jóváírások", "amountHuf": income_total, "tone": "income", "items": income_items},
+        {"key": "deductions", "label": "Levonások / korrekciók", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
+    ]
+    complaint_options = [
+        {"key": item["key"], "label": item["label"], "amountHuf": item["amountHuf"], "amountKind": item.get("amountKind", "huf")}
+        for card in cards
+        for item in card["items"]
+        if item["key"] not in {"income_total", "deduction_total", "payable_total"}
+    ]
+    return {
+        "available": True,
+        "month": month.strftime("%Y-%m"),
+        "sessionId": str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+        "sourceMode": str(row.get("_mobile_source_mode") or ""),
+        "sourceSheet": str(row.get("_mobile_source_sheet") or ""),
+        "totalPayableHuf": payable,
+        "cards": cards,
+        "complaintOptions": complaint_options,
+        "source": "settlement.courier_settlement_summary",
+        "message": "",
+    }
+
+
 def load_month_day_rules(period_start: date, period_end: date) -> tuple[list[dict[str, Any]], str]:
     rows = optional_supabase_rows(
         "cfg_jitt_day_definitions",
@@ -1981,6 +2167,15 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
     process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
+    financial_breakdown = build_financial_breakdown(user, month) if not process_id else {
+        "available": False,
+        "month": month.strftime("%Y-%m"),
+        "totalPayableHuf": 0,
+        "cards": [],
+        "complaintOptions": [],
+        "source": "settlement.courier_settlement_summary",
+        "message": "Egyedi folyamatnál a havi pénzügyi bontás a havi folyamatnál látható.",
+    }
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
     complaints = [
         row for row in complaints
@@ -1998,6 +2193,8 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
         if document_groups[action] and action not in states:
             states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
 
+    settlement_ready = bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
+
     steps = [
         {
             "key": "settlement_document",
@@ -2006,14 +2203,14 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
                 if document_groups["settlement"]
                 else "Várakozás az elszámolás elkészítésére"
             ),
-            "done": bool(document_groups["settlement"]),
+            "done": settlement_ready,
             "locked": False,
         },
         {
             "key": "settlement",
             "title": "Elszámolás elfogadása",
             "done": workflow_done(states, "settlement"),
-            "locked": not bool(document_groups["settlement"]),
+            "locked": not settlement_ready,
         },
         {
             "key": "tig_document",
@@ -2054,6 +2251,8 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
             "locked": not workflow_done(states, "invoice_check"),
         },
     ]
+    if financial_breakdown.get("available") and not document_groups["settlement"]:
+        steps[0]["title"] = "Havi pénzügyi adatok elkészültek"
     safe_documents: dict[str, list[dict[str, Any]]] = {}
     for document_type, rows in document_groups.items():
         safe_documents[document_type] = [
@@ -2112,6 +2311,7 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
         "steps": steps,
         "states": states,
         "documents": safe_documents,
+        "financialBreakdown": financial_breakdown,
         "complaints": complaints_by_action,
         "complaintResponses": response_documents_by_action,
         "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
@@ -2993,7 +3193,9 @@ def accept_workflow_document(
         row for row in complaints
         if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
     ]
-    if not any(base_action_key(str(row.get("document_type") or "")) == action for row in documents):
+    has_action_document = any(base_action_key(str(row.get("document_type") or "")) == action for row in documents)
+    has_financial_breakdown = action == "settlement" and bool(build_financial_breakdown(user, month).get("available"))
+    if not has_action_document and not has_financial_breakdown:
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
     if has_open_complaint(complaints, action) and not complaints_ignored_for_billing(states):
         raise HTTPException(

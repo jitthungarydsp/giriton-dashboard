@@ -820,6 +820,91 @@ function hasOpenComplaint(complaints) {
   });
 }
 
+function formatSignedHuf(value) {
+  const amount = Number(value || 0);
+  if (amount < 0) return `-${formatHuf(Math.abs(amount))}`;
+  if (amount > 0) return `+${formatHuf(amount)}`;
+  return formatHuf(0);
+}
+
+function formatFinancialValue(item) {
+  if (item?.amountKind === "count") return formatCount(item.amountHuf);
+  return formatSignedHuf(item?.amountHuf);
+}
+
+function financialDetailRows(items = []) {
+  if (!items.length) return `<div class="empty-card">Nincs bontott adat ehhez a kártyához.</div>`;
+  return `<div class="financial-detail-list">${items.map((item) => `
+    <div class="financial-detail-row">
+      <div>
+        <strong>${escapeHtml(item.label)}</strong>
+        <small>${escapeHtml(item.note || item.source || "")}</small>
+      </div>
+      <span>${formatFinancialValue(item)}</span>
+    </div>
+  `).join("")}</div>`;
+}
+
+function financialComplaintOptions(options = []) {
+  if (!options.length) return `<div class="empty-card">Nincs választható altétel.</div>`;
+  return `<div class="financial-complaint-options">${options.map((item) => `
+    <label class="checkbox-line">
+      <input type="checkbox" name="item" value="${escapeHtml(item.key)}" data-label="${escapeHtml(item.label)}" data-amount="${Number(item.amountHuf || 0)}" data-kind="${escapeHtml(item.amountKind || "huf")}" />
+      <span>${escapeHtml(item.label)} <strong>${formatFinancialValue(item)}</strong></span>
+    </label>
+  `).join("")}</div>`;
+}
+
+function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const complaints = state.workflow?.complaints?.settlement || [];
+  const hasOpenComplaintForAction = hasOpenComplaint(complaints);
+  if (!breakdown.available) {
+    return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
+  }
+  const cards = breakdown.cards || [];
+  return `
+    <section class="financial-total-card">
+      <span>Teljes kifizetendő összeg</span>
+      <strong>${formatHuf(breakdown.totalPayableHuf)}</strong>
+      <small>${escapeHtml(breakdown.month || state.workflowMonth)} · ${escapeHtml(breakdown.sourceMode || "DB")} · ${escapeHtml(breakdown.source || "DB")}</small>
+    </section>
+    <div class="financial-card-grid">
+      ${cards.map((card) => `
+        <details class="financial-card ${escapeHtml(card.tone || "")}" ${card.key === "payable" ? "open" : ""}>
+          <summary>
+            <span>${escapeHtml(card.label)}</span>
+            <strong>${formatFinancialValue(card)}</strong>
+          </summary>
+          ${financialDetailRows(card.items || [])}
+        </details>
+      `).join("")}
+    </div>
+    <div class="accept-row">
+      ${accepted
+        ? `<div class="accept-row done">✓ Az elszámolási összeget elfogadtad.</div>`
+        : !locked && !blocksAcceptance
+          ? `<button class="primary" id="accept-settlement">✓ Elfogadom az összeget</button>`
+          : !locked
+            ? `<button class="primary" disabled>Reklamáció lezárásáig nem fogadható el</button>`
+            : ""}
+    </div>
+    <div class="complaint-box">
+      <strong>Reklamáció</strong>
+      ${complaintList(complaints)}
+      ${hasOpenComplaintForAction
+        ? `<div class="notice">Már van nyitott reklamáció ehhez a hónaphoz. Új rekordot az előző lezárása után tudsz küldeni.</div>`
+        : `<form id="complaint-settlement">
+            <label>Melyik értékkel van gond?
+              ${financialComplaintOptions(breakdown.complaintOptions || [])}
+            </label>
+            <label>Rövid leírás<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label>
+            <button class="secondary" type="submit">Reklamáció küldése</button>
+          </form>`}
+    </div>
+  `;
+}
+
 function renderDocumentPanel(action, title, stepNumber) {
   const panel = $(`#${action}-panel`);
   const documents = state.workflow?.documents?.[action] || [];
@@ -841,6 +926,18 @@ function renderDocumentPanel(action, title, stepNumber) {
       ? "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."
       : "Amint az admin elkészíti és elküldi, itt automatikusan megjelenik.";
   panel.classList.toggle("locked", locked);
+  if (action === "settlement") {
+    panel.innerHTML = `
+      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>
+      ${locked ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>` : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}
+      ${(state.workflow?.documents?.settlement || []).length ? `<div class="complaint-box"><strong>Dokumentumok</strong>${documentList(state.workflow.documents.settlement)}</div>` : ""}
+    `;
+    const acceptButton = $(`#accept-${action}`);
+    if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
+    const complaintForm = $(`#complaint-${action}`);
+    if (complaintForm) complaintForm.addEventListener("submit", (event) => submitComplaint(event, action));
+    return;
+  }
   panel.innerHTML = `
     <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>${visibleTitle}</h3><p>${description}</p></div></div>
     ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
@@ -971,7 +1068,18 @@ async function acceptDocument(action) {
 
 async function submitComplaint(event, action) {
   event.preventDefault();
-  const message = new FormData(event.currentTarget).get("message");
+  const form = event.currentTarget;
+  const selectedItems = [...form.querySelectorAll("input[name='item']:checked")]
+    .map((input) => {
+      const label = input.dataset.label || input.value;
+      const amount = Number(input.dataset.amount || 0);
+      const value = input.dataset.kind === "count" ? formatCount(amount) : formatSignedHuf(amount);
+      return `${label}: ${value}`;
+    });
+  const rawMessage = String(new FormData(form).get("message") || "").trim();
+  const message = selectedItems.length
+    ? `Érintett tétel(ek): ${selectedItems.join("; ")}\n\n${rawMessage}`
+    : rawMessage;
   showWorkflowMessage("Reklamáció küldése…");
   try {
     const payload = await api("/api/workflow/complaints", {

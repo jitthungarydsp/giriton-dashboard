@@ -128,6 +128,28 @@ textarea { min-height: 96px; resize: vertical; }
 .secondary { min-height: 46px; border: 1px solid var(--ink); border-radius: 14px; background: transparent; color: var(--ink); font-weight: 800; }
 .complaint-box { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .complaint-box form { margin-top: 10px; }
+.financial-total-card { display: grid; gap: 6px; margin-top: 18px; padding: 20px; border-radius: 18px; background: var(--ink); color: #fff; text-align: center; box-shadow: 0 14px 32px #17231c26; }
+.financial-total-card span { color: #cfe88f; font-size: 11px; font-weight: 850; text-transform: uppercase; }
+.financial-total-card strong { font-size: 34px; line-height: 1; overflow-wrap: anywhere; }
+.financial-total-card small { color: #d8e0d9; font-size: 11px; font-weight: 750; }
+.financial-card-grid { display: grid; gap: 10px; margin-top: 12px; }
+.financial-card { border: 1px solid var(--line); border-radius: 16px; background: #f9faf8; overflow: hidden; }
+.financial-card summary { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; min-height: 68px; padding: 14px; cursor: pointer; list-style: none; }
+.financial-card summary::-webkit-details-marker { display: none; }
+.financial-card summary span { color: var(--muted); font-size: 12px; font-weight: 850; text-transform: uppercase; }
+.financial-card summary strong { font-size: 19px; overflow-wrap: anywhere; text-align: right; }
+.financial-card.total { border-color: #bad9b7; background: #eff8ed; }
+.financial-card.income summary strong { color: var(--green-dark); }
+.financial-card.deduction summary strong { color: var(--danger); }
+.financial-detail-list { display: grid; gap: 1px; padding: 0 12px 12px; }
+.financial-detail-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.financial-detail-row strong { display: block; font-size: 13px; }
+.financial-detail-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.financial-detail-row span { font-weight: 900; overflow-wrap: anywhere; text-align: right; }
+.financial-complaint-options { display: grid; gap: 8px; margin: 10px 0; }
+.financial-complaint-options .checkbox-line { align-items: flex-start; }
+.financial-complaint-options span { display: grid; gap: 2px; }
+.financial-complaint-options strong { color: var(--ink); font-size: 12px; }
 .process-form { margin-top: 18px; }
 .process-form.two-column { grid-template-columns: 1fr; }
 .full-width { grid-column: 1 / -1; }

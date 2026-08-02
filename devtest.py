@@ -21,7 +21,7 @@ from resources.settlement_processor import (
     report_as_dict,
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
-from resources.settlement_pdf import build_settlement_pdf
+from resources.settlement_pdf import build_settlement_pdf, build_tig_pdf
 from resources.courier_master_db import update_courier_master_profile
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
@@ -4906,13 +4906,38 @@ def show_courier_dialog() -> None:
                 "warehouse": row["Raktár"],
                 "status": row["Státusz"],
                 "document_reference": settlement_document_reference,
+                "document_month": period_start,
+                "email": profile.get("email") or "",
             },
             route_breakdown.to_dict("records"),
-            {"base": base_total, "tip": tip_total, "bonus": bonus_total + loyalty_total, "malus": malus_total, "atm": atm_deduction_total, "other": other_expense_total + salary_advance_total, "customer_rating": customer_rating_total, "payable": payable_total},
+            {
+                "base": base_total,
+                "tip": tip_total,
+                "bonus": bonus_total + loyalty_total,
+                "malus": malus_total,
+                "atm": atm_deduction_total,
+                "other": other_expense_total,
+                "salary_advance": salary_advance_total,
+                "customer_rating": customer_rating_total,
+                "reserve": reserve_addition_total,
+                "reserve_before": reserve_before_total,
+                "reserve_after": reserve_after_total,
+                "insurance": insurance_fee_total,
+                "payable": payable_total,
+            },
         )
-        tig_bytes = build_demo_preview_pdf(
-            f"TIG - {row['Futár']}",
-            f"Courier ID: {courier_id} | Dokumentum ID: {tig_document_reference} | Időszak: {period_start} - {period_end} | Fizetendő: {format_huf(payable_total)}",
+        tig_bytes = build_tig_pdf(
+            {
+                "name": row["Futár"],
+                "company_name": profile.get("company_name") or row["Futár"],
+                "address": profile.get("address") or "",
+                "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                "email": profile.get("email") or "",
+                "id": courier_id,
+                "document_reference": tig_document_reference,
+                "document_month": period_start,
+            },
+            {"payable": payable_total},
         )
         st.markdown(
             f"""
@@ -4932,7 +4957,9 @@ def show_courier_dialog() -> None:
         doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
         doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
         upload_a, upload_b, refresh_col = st.columns([0.18, 0.18, 0.18])
-        if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, key=f"finance_upload_settlement_pdf_{courier_id}"):
+        if closure_done:
+            st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
+        if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
@@ -4950,7 +4977,7 @@ def show_courier_dialog() -> None:
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"Az elszámolás feltöltése sikertelen: {exc}")
-        if upload_b.button("TIG feltöltése profilba", use_container_width=True, key=f"finance_upload_tig_pdf_{courier_id}"):
+        if upload_b.button("TIG feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_tig_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
@@ -5970,12 +5997,20 @@ def show_courier_dialog() -> None:
         )
         doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
         reverse_type_labels = {"Elszámolás": "settlement", "TIG": "tig", "Számla": "invoice", "Szerződés": "contract"}
-        if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None, key=f"new_doc_save_{courier_id}"):
+        selected_upload_type = reverse_type_labels.get(doc_type_label, "settlement")
+        upload_month_closed = (
+            closure_done
+            and doc_period.replace(day=1) == period_start.replace(day=1)
+            and selected_upload_type in {"settlement", "tig", "invoice"}
+        )
+        if upload_month_closed:
+            st.warning("Ez a havi folyamat már le van zárva, új elszámolás/TIG/számla nem tölthető fel rá.")
+        if st.button("Dokumentum feltöltése", type="primary", use_container_width=True, disabled=uploaded_file is None or upload_month_closed, key=f"new_doc_save_{courier_id}"):
             try:
                 upload_peopleforce_document(
                     courier_id=courier_id,
                     courier_name=str(row["Futár"]),
-                    document_type=reverse_type_labels.get(doc_type_label, "settlement"),
+                    document_type=selected_upload_type,
                     document_month=doc_period.replace(day=1),
                     title=doc_title,
                     note=doc_note,
@@ -6067,6 +6102,9 @@ def show_courier_dialog() -> None:
             custom_process_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", custom_process_id).strip("-").lower()[:80]
             if not custom_process_id:
                 custom_process_id = f"egyeb-{custom_period:%Y%m%d}"
+        custom_month_closed = closure_done and custom_period.replace(day=1) == period_start.replace(day=1)
+        if custom_month_closed:
+            st.warning("Ez a havi folyamat már le van zárva, új egyedi TIG/elszámolási folyamat nem indítható rá.")
         reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
         if reference_state_key not in st.session_state:
             st.session_state[reference_state_key] = make_document_reference(courier_id, custom_type, custom_period)
@@ -6118,7 +6156,7 @@ def show_courier_dialog() -> None:
                 use_container_width=True,
                 key=f"custom_doc_download_{courier_id}",
             )
-            if st.button("Egyedi dokumentum feltöltése profilba", type="primary", use_container_width=True, key=f"custom_doc_upload_{courier_id}"):
+            if st.button("Egyedi dokumentum feltöltése profilba", type="primary", use_container_width=True, disabled=custom_month_closed, key=f"custom_doc_upload_{courier_id}"):
                 try:
                     upload_peopleforce_document_bytes(
                         courier_id=courier_id,
@@ -7071,6 +7109,87 @@ def build_excel_export(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False, sheet_name="Elszámolások")
     return output.getvalue()
 
+def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
+    if data.empty:
+        return []
+    planned: list[dict[str, object]] = []
+    for item in data.to_dict("records"):
+        courier_id = str(item.get("Courier ID") or "").strip()
+        courier_name = str(item.get("Futár") or "").strip()
+        if not courier_id or not courier_name:
+            continue
+        amount_huf = parse_huf_value(item.get("Kifizetendő"))
+        reference_base = make_document_reference(courier_id, "monthly", period_start)
+        planned.append({
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "period_start": period_start,
+            "period_end": period_end,
+            "settlement_reference": f"{reference_base}-SETTLEMENT",
+            "tig_reference": f"{reference_base}-TIG",
+            "settlement_file": f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
+            "tig_file": f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}.pdf",
+            "payable_huf": amount_huf,
+        })
+    return planned
+
+
+def monthly_period_start_already_clicked(period_start: date) -> bool:
+    return bool(st.session_state.get(f"monthly_period_start_clicked_{period_start:%Y%m}"))
+
+
+def build_monthly_period_documents(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
+    documents: list[dict[str, object]] = []
+    for plan in build_monthly_period_document_plan(data, period_start, period_end):
+        courier_id = str(plan["courier_id"])
+        courier_name = str(plan["courier_name"])
+        matching = data[data["Courier ID"].astype(str).eq(courier_id)]
+        row = matching.iloc[0].to_dict() if not matching.empty else {}
+        payable = parse_huf_value(plan.get("payable_huf"))
+        base = parse_huf_value(row.get("Nettó bevétel"))
+        tip = parse_huf_value(row.get("Borravaló"))
+        bonus = parse_huf_value(row.get("Bónusz"))
+        malus = parse_huf_value(row.get("Levonás"))
+        routes = [{
+            "Túratípus": "Havi összesen",
+            "Naptípus": "Összes nap",
+            "Túrák": parse_huf_value(row.get("Számolt túrák")),
+            "Rendelések": parse_huf_value(row.get("Rendelések")),
+        }]
+        courier_payload = {
+            "name": courier_name,
+            "company_name": str(row.get("Vállalkozás neve") or row.get("Futár") or courier_name),
+            "address": str(row.get("Cím") or ""),
+            "tax_number": str(row.get("Adószám") or ""),
+            "email": str(row.get("Email") or ""),
+            "id": courier_id,
+            "branch": str(row.get("Branch") or ""),
+            "warehouse": str(row.get("Raktár") or ""),
+            "status": str(row.get("Státusz") or ""),
+            "document_month": period_start,
+        }
+        settlement_bytes = build_settlement_pdf(
+            {**courier_payload, "document_reference": plan["settlement_reference"]},
+            routes,
+            {
+                "base": base,
+                "tip": tip,
+                "bonus": bonus,
+                "malus": malus,
+                "payable": payable,
+            },
+        )
+        tig_bytes = build_tig_pdf(
+            {**courier_payload, "document_reference": plan["tig_reference"]},
+            {"payable": payable},
+        )
+        documents.extend([
+            {**plan, "document_type": "settlement", "file_name": plan["settlement_file"], "file_bytes": settlement_bytes},
+            {**plan, "document_type": "tig", "file_name": plan["tig_file"], "file_bytes": tig_bytes},
+        ])
+    return documents
+
+
 def show_new_settlement_page() -> None:
     apply_design()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
@@ -7598,11 +7717,29 @@ def show_new_settlement_page() -> None:
         f"""
         <div class="premium-hero">
           <div class="hero-left"><div class="badge">ÚJ MODUL</div><h1>Új Elszámolási oldal</h1><p>Gyors, átlátható és biztonságos futárelszámolási felület.</p></div>
-          <div class="month-pill"><div class="label">Elszámolási hónap</div><div class="value">{html.escape(selected_month)}</div></div>
+          <div class="month-pill"><div class="label">Havi indítás</div><div class="value">{html.escape(selected_month)}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    monthly_document_plan = build_monthly_period_document_plan(filtered, balance_period_start, balance_period_end)
+    period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
+    start_label = (
+        f"Havi elszámolási időszak indítása - {selected_month} "
+        f"({len(monthly_document_plan)} futár, {len(monthly_document_plan) * 2} PDF)"
+    )
+    if st.button(
+        start_label,
+        disabled=True,
+        use_container_width=True,
+        key=f"monthly_period_start_{balance_period_start:%Y%m}",
+        help="Inaktív. A mögöttes logika előkészítve: egyszeri indítás után futáronként összesítő és TIG PDF készülne.",
+    ):
+        st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True
+    if period_start_clicked:
+        st.info("Ez a havi elszámolási időszak már el lett indítva.")
+    else:
+        st.caption("A havi indító gomb jelenleg inaktív; élesítéskor egyszer nyomható meg, és automatikusan elkészíti az összesítő + TIG PDF-eket.")
 
     total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
     previous_total_payable = int(_numeric_series(previous_filtered, "Kifizetendő").sum()) if not previous_filtered.empty else 0
