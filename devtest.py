@@ -2481,6 +2481,49 @@ def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_financial_overview_rows_for_courier(year: int, month: int, courier_id: str) -> pd.DataFrame:
+    courier_key = _courier_id_key(courier_id)
+    if not courier_key:
+        return pd.DataFrame()
+    target_tables = [
+        "courier_financial_overview_raw_bud1",
+        "courier_financial_overview_raw_bud2",
+    ]
+    frames = []
+    for table_name in target_tables:
+        try:
+            rows = (
+                get_db().schema("public").table(table_name)
+                .select("courier_id,courier_name,warehouse_id,year,month,response_json,fetched_at")
+                .eq("year", int(year))
+                .eq("month", int(month))
+                .eq("status_code", 200)
+                .eq("courier_id", courier_key)
+                .execute().data or []
+            )
+            if rows:
+                frames.append(pd.DataFrame(rows))
+        except BaseException:
+            continue
+    if frames:
+        return pd.concat(frames, ignore_index=True)
+
+    try:
+        rows = (
+            get_db().schema("public").table("courier_financial_overview_raw")
+            .select("courier_id,courier_name,warehouse_id,year,month,response_json,fetched_at")
+            .eq("year", int(year))
+            .eq("month", int(month))
+            .eq("status_code", 200)
+            .eq("courier_id", courier_key)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
 def api_raw_overview_stats(period_start: date, warehouse_label: str | None) -> dict[str, int]:
     warehouse_id = settlement_warehouse_id(warehouse_label)
     rows = load_api_financial_overview_rows(period_start.year, period_start.month)
@@ -3535,7 +3578,7 @@ def load_courier_route_detail(
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
         _, api_period_end = month_bounds(period_start)
-        api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+        api_rows = load_api_financial_overview_rows_for_courier(period_start.year, period_start.month, courier_id)
         warehouse_id = settlement_warehouse_id(warehouse_label)
         if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
             api_rows = api_rows.loc[
