@@ -244,6 +244,8 @@ def _common_period(row: dict[str, Any], key: str) -> tuple[date, date, bool, int
     valid_from = col1.date_input("Érvényes ettől", value=_date(row.get("valid_from")), key=f"{row_key}_from")
     has_end = col2.checkbox("Van záródátum", value=_clean(row.get("valid_to")) is not None, key=f"{row_key}_has_end")
     valid_to = col2.date_input("Érvényes eddig", value=_date(row.get("valid_to")), key=f"{row_key}_to")
+    if valid_to < date.today():
+        has_end = True
     priority = col3.number_input("Prioritás", value=_int(row.get("priority"), 100), step=1, key=f"{row_key}_priority")
     is_active = st.checkbox("Engedélyezett", value=bool(row.get("is_active", True)), key=f"{row_key}_active")
     note = st.text_area("Megjegyzés", value=_text(row.get("note")), key=f"{row_key}_note", height=70)
@@ -253,13 +255,20 @@ def _common_period(row: dict[str, Any], key: str) -> tuple[date, date, bool, int
 def _show_days(client: Any) -> None:
     st.caption("Itt állítható be, hogy az egyes időszakokban mely hétköznapok számítanak kiemeltnek vagy normálnak.")
     data = read_items(client, DAY_TABLE)
-    if not data.empty:
-        view = data.copy()
+    table_slot = st.empty()
+
+    def render_day_table(table_data: pd.DataFrame) -> None:
+        if table_data.empty:
+            table_slot.info("Még nincs mentett napbesorolás.")
+            return
+        view = table_data.copy()
         view["Naptípus"] = view["day_type"].map(DAY_LABELS)
         view["Napok"] = view["weekdays"].apply(lambda values: ", ".join(WEEKDAY_LABELS.get(int(value), str(value)) for value in (values or [])))
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
         view["Státusz"] = [parameter_status(a, b, c) for a, b, c in zip(view["valid_from"], view["valid_to"], view["is_active"])]
-        st.dataframe(view[["Naptípus", "Napok", "valid_from", "Vége", "Státusz", "note"]], use_container_width=True, hide_index=True)
+        table_slot.dataframe(view[["Naptípus", "Napok", "valid_from", "Vége", "Státusz", "note"]], use_container_width=True, hide_index=True)
+
+    render_day_table(data)
     row = _editor_row(data, "day", "day_type")
     form_key = f"day_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
@@ -272,6 +281,7 @@ def _show_days(client: Any) -> None:
         try:
             save_item(client, DAY_TABLE, validate_day_definition({"day_type": day_type, "weekdays": weekdays, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             _mark_parameters_changed(client)
+            render_day_table(read_items(client, DAY_TABLE))
             st.success("A napbesorolás mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")
