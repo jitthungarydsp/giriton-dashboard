@@ -1553,6 +1553,41 @@ def read_courier_settlement_summary_row(courier_id: str, month: date) -> dict[st
     return {}
 
 
+def read_mobile_breakdown_overrides(courier_id: str, month: date) -> dict[str, dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "mobile_settlement_breakdown_overrides",
+        schema="settlement",
+        params={
+            "select": "item_key,item_label,amount_value,amount_kind,note,updated_at",
+            "courier_id": f"eq.{courier_id}",
+            "period_start": f"eq.{month.isoformat()}",
+            "limit": "200",
+        },
+        timeout=30,
+    )
+    return {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
+
+
+def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    for card in cards:
+        card["amountHuf"] = 0
+        card_override = overrides.get(str(card.get("key") or ""))
+        if card_override:
+            card["amountHuf"] = money_int(card_override.get("amount_value"))
+            card["amountKind"] = str(card_override.get("amount_kind") or card.get("amountKind") or "huf")
+            card["overrideNote"] = str(card_override.get("note") or "Admin által módosítva")
+        for item in card.get("items") or []:
+            item["amountHuf"] = 0
+            override = overrides.get(str(item.get("key") or ""))
+            if not override:
+                continue
+            item["amountHuf"] = money_int(override.get("amount_value"))
+            item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
+            item["label"] = str(override.get("item_label") or item.get("label") or "")
+            item["note"] = str(override.get("note") or "Admin által módosítva")
+    return cards
+
+
 def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     row = read_courier_settlement_summary_row(courier_id, month)
@@ -1566,6 +1601,20 @@ def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, An
             "source": "settlement.courier_settlement_summary",
             "message": str(row.get("_mobile_unavailable_message") if row else "") or "Ehhez a hónaphoz még nincs mentett pénzügyi bontás.",
         }
+
+    period_end = month_end(month)
+    daily_performance_rows = load_daily_performance_for_courier(courier_id, month, period_end)
+    delayed_orders = sum(safe_int(item.get("delayed_order_count")) for item in daily_performance_rows)
+    late_count = sum(safe_int(item.get("late_count")) for item in daily_performance_rows)
+    no_show_count = sum(safe_int(item.get("did_not_come_count")) for item in daily_performance_rows)
+    shift_count = sum(safe_int(item.get("shift_count")) for item in daily_performance_rows)
+    performance_note = "DB napi teljesítmény"
+    if not daily_performance_rows:
+        delayed_orders = 0
+        late_count = 0
+        no_show_count = 0
+        shift_count = 0
+        performance_note = "Dummy adat"
 
     base = money_from(row, "fixed_rate_huf", "courier_base_rate_huf")
     tip = money_from(row, "tip_huf")
@@ -1621,8 +1670,14 @@ def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, An
         count_item("routes", "Kör", money_from(row, "route_count", "routes")),
         count_item("highlighted_routes", "Kiemelt kör", money_from(row, "kiemelt_routes", "highlighted_routes")),
         count_item("normal_routes", "Normál kör", money_from(row, "sima_routes", "normal_routes")),
+        count_item("shift_count", "Műszak", shift_count),
+        count_item("late_count", "Késések száma", late_count),
+        count_item("delayed_orders", "Késéses cím", delayed_orders),
+        count_item("no_show_count", "Nem jelent meg műszakban", no_show_count),
     ]
-    route_items = [item for item in route_items if item["amountHuf"]]
+    for item in route_items:
+        item["note"] = performance_note
+    route_items = [item for item in route_items if item.get("amountKind") == "count" or item["amountHuf"]]
     cards = [
         {
             "key": "payable",
@@ -1639,6 +1694,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, An
         {"key": "deductions", "label": "Levonások / korrekciók", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
+    overrides = read_mobile_breakdown_overrides(courier_id, month)
+    cards = apply_mobile_overrides(cards, overrides)
+    payable_card = next((card for card in cards if card.get("key") == "payable"), {})
+    payable = money_int(payable_card.get("amountHuf")) if payable_card else payable
     complaint_options = [
         {"key": item["key"], "label": item["label"], "amountHuf": item["amountHuf"], "amountKind": item.get("amountKind", "huf")}
         for card in cards

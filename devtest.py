@@ -1405,6 +1405,128 @@ def clear_mobile_settlement_period_config(period_start: date) -> bool:
         return False
 
 
+def load_mobile_breakdown_overrides(courier_id: str, period_start: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("mobile_settlement_breakdown_overrides")
+            .select("item_key,item_label,amount_value,amount_kind,note")
+            .eq("courier_id", str(courier_id))
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=["item_key", "item_label", "amount_value", "amount_kind", "note"])
+    return pd.DataFrame(rows)
+
+
+def save_mobile_breakdown_overrides(
+    courier_id: str,
+    period_start: date,
+    rows: list[dict[str, object]],
+    updated_by: str,
+) -> bool:
+    payloads = []
+    for row in rows:
+        item_key = str(row.get("item_key") or row.get("Kulcs") or "").strip()
+        if not item_key:
+            continue
+        amount_kind = str(row.get("amount_kind") or row.get("Típus") or "huf").strip()
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        payloads.append({
+            "period_start": period_start.replace(day=1).isoformat(),
+            "courier_id": str(courier_id),
+            "item_key": item_key,
+            "item_label": str(row.get("item_label") or row.get("Megnevezés") or item_key),
+            "amount_value": parse_huf_value(row.get("amount_value") if "amount_value" in row else row.get("Érték")),
+            "amount_kind": amount_kind,
+            "note": str(row.get("note") or row.get("Megjegyzés") or "").strip() or None,
+            "updated_by": updated_by,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+    if not payloads:
+        return False
+    try:
+        get_db().schema("settlement").table("mobile_settlement_breakdown_overrides").upsert(
+            payloads,
+            on_conflict="period_start,courier_id,item_key",
+        ).execute()
+        return True
+    except BaseException:
+        return False
+
+
+def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[dict[str, object]]:
+    base = parse_huf_value(row.get("Nettó bevétel"))
+    tip = parse_huf_value(row.get("Borravaló"))
+    bonus = parse_huf_value(row.get("Bónusz")) + parse_huf_value(row.get("Importált bónusz"))
+    deduction = parse_huf_value(row.get("Levonás"))
+    payable = parse_huf_value(row.get("Kifizetendő"))
+    orders = parse_huf_value(row.get("Rendelések"))
+    routes = parse_huf_value(row.get("Útvonalak") or row.get("Számolt túrák"))
+    highlighted = parse_huf_value(row.get("Kiemelt túrák"))
+    normal = parse_huf_value(row.get("Normál túrák"))
+    delay = parse_huf_value(row.get("Késedelmi díj"))
+    compliance = parse_huf_value(row.get("Túramegfelelés"))
+    customer_rating = parse_huf_value(row.get("Ügyfélértékelés"))
+    salary_advance = parse_huf_value(row.get("Fizetés előleg"))
+    income = base + tip + bonus + delay + compliance + customer_rating
+    return [
+        {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": income, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": orders, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": base, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -abs(salary_advance), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": orders, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": routes, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "highlighted_routes", "item_label": "Kiemelt kör", "amount_kind": "count", "amount_value": highlighted, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "normal_routes", "item_label": "Normál kör", "amount_kind": "count", "amount_value": normal, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
+    ]
+
+
+def publish_mobile_settlement_snapshot(
+    data: pd.DataFrame,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+    updated_by: str,
+) -> tuple[int, int]:
+    if str(calculation_mode or "") not in {"API", "Excel"}:
+        return 0, 0
+    config_saved = save_mobile_settlement_period_config(
+        period_start,
+        calculation_mode,
+        warehouse_label,
+        session_id,
+        updated_by,
+    )
+    if not config_saved:
+        return 0, 0
+    courier_count = 0
+    row_count = 0
+    for item in data.to_dict("records"):
+        courier_id = str(item.get("Courier ID") or "").strip()
+        if not courier_id:
+            continue
+        rows = mobile_breakdown_rows_from_settlement_row(item)
+        if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
+            courier_count += 1
+            row_count += len(rows)
+    return courier_count, row_count
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     response = (
@@ -5210,6 +5332,74 @@ def show_courier_dialog() -> None:
             unsafe_allow_html=True,
         )
 
+        mobile_default_rows = pd.DataFrame([
+            {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "loyalty_bonus", "item_label": "Lojalitás", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": 0, "note": ""},
+            {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "highlighted_routes", "item_label": "Kiemelt kör", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "normal_routes", "item_label": "Normál kör", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": ""},
+        ])
+        mobile_overrides = load_mobile_breakdown_overrides(courier_id, period_start)
+        if not mobile_overrides.empty:
+            mobile_default_rows = mobile_default_rows.set_index("item_key")
+            for _, override_row in mobile_overrides.iterrows():
+                item_key = str(override_row.get("item_key") or "")
+                if item_key in mobile_default_rows.index:
+                    for column in ["item_label", "amount_value", "amount_kind", "note"]:
+                        mobile_default_rows.loc[item_key, column] = override_row.get(column)
+            mobile_default_rows = mobile_default_rows.reset_index()
+        mobile_editor = mobile_default_rows.rename(columns={
+            "item_key": "Kulcs",
+            "item_label": "Megnevezés",
+            "amount_kind": "Típus",
+            "amount_value": "Érték",
+            "note": "Megjegyzés",
+        })
+        st.markdown("#### Mobilon látható értékek")
+        edited_mobile = st.data_editor(
+            mobile_editor,
+            hide_index=True,
+            use_container_width=True,
+            key=f"mobile_breakdown_editor_{courier_id}_{period_start:%Y%m}",
+            disabled=["Kulcs"],
+            column_config={
+                "Kulcs": st.column_config.TextColumn("Kulcs"),
+                "Megnevezés": st.column_config.TextColumn("Megnevezés"),
+                "Típus": st.column_config.SelectboxColumn("Típus", options=["huf", "count"], required=True),
+                "Érték": st.column_config.NumberColumn("Érték", step=1, format="%d"),
+                "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
+            },
+        )
+        if st.button("Mobil értékek mentése", type="primary", use_container_width=True, key=f"save_mobile_breakdown_{courier_id}_{period_start:%Y%m}"):
+            saved = save_mobile_breakdown_overrides(
+                courier_id,
+                period_start,
+                edited_mobile.to_dict("records"),
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
+            if saved:
+                st.success("Mobilon látható értékek mentve.")
+                st.rerun()
+            else:
+                st.error("A mobil értékek mentése sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
+
         payable_sources = pd.DataFrame([
             {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
@@ -7202,7 +7392,19 @@ def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, p
 
 
 def monthly_period_start_already_clicked(period_start: date) -> bool:
-    return bool(st.session_state.get(f"monthly_period_start_clicked_{period_start:%Y%m}"))
+    if st.session_state.get(f"monthly_period_start_clicked_{period_start:%Y%m}"):
+        return True
+    try:
+        rows = (
+            get_db().schema("settlement").table("mobile_settlement_period_config")
+            .select("period_start")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute().data or []
+        )
+        return bool(rows)
+    except BaseException:
+        return False
 
 
 def build_monthly_period_documents(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
@@ -7302,20 +7504,9 @@ def show_new_settlement_page() -> None:
         mobile_period_start = parse_month_option(selected_month)
         mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
-            mobile_config_saved = save_mobile_settlement_period_config(
-                mobile_period_start,
-                calculation_mode,
-                warehouse,
-                mobile_source_session_id,
-                str(st.session_state.get("user", {}).get("username") or "unknown"),
-            )
-            if mobile_config_saved:
-                st.caption(f"Mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
-            else:
-                st.caption("Mobil forrás nincs mentve: futtasd a settlement_mobile_period_config SQL-t.")
+            st.caption(f"Kiválasztott mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
         else:
-            clear_mobile_settlement_period_config(mobile_period_start)
-            st.caption("Mobil forrás: nincs publikálva, mert a Számítás módja Összes.")
+            st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
         if str(calculation_mode or "API").strip().casefold() != "excel":
             api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)
@@ -7814,16 +8005,34 @@ def show_new_settlement_page() -> None:
     )
     if st.button(
         start_label,
-        disabled=True,
+        disabled=period_start_clicked or selected_calculation_mode not in {"API", "Excel"},
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
         help="Inaktív. A mögöttes logika előkészítve: egyszeri indítás után futáronként összesítő és TIG PDF készülne.",
     ):
-        st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True
+        snapshot_session_id = settlement_mobile_session_for_mode(
+            selected_calculation_mode,
+            balance_period_start,
+            selected_warehouse_label,
+        )
+        courier_count, row_count = publish_mobile_settlement_snapshot(
+            filtered,
+            balance_period_start,
+            selected_calculation_mode,
+            selected_warehouse_label,
+            snapshot_session_id,
+            str(st.session_state.get("user", {}).get("username") or "unknown"),
+        )
+        if courier_count:
+            st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True
+            st.success(f"Havi elszámolási időszak elindítva: {courier_count} futár, {row_count} mobil érték publikálva.")
+            st.rerun()
+        else:
+            st.error("A havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
     if period_start_clicked:
         st.info("Ez a havi elszámolási időszak már el lett indítva.")
     else:
-        st.caption("A havi indító gomb jelenleg inaktív; élesítéskor egyszer nyomható meg, és automatikusan elkészíti az összesítő + TIG PDF-eket.")
+        st.caption("A havi nyitás a kiválasztott API/Excel forrásból publikálja ugyanazokat az értékeket az admin és futár mobil nézetbe.")
 
     total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
     previous_total_payable = int(_numeric_series(previous_filtered, "Kifizetendő").sum()) if not previous_filtered.empty else 0
