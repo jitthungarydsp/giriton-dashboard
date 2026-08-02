@@ -615,6 +615,21 @@ def update_peopleforce_complaint_status(complaint_id, status):
     return response.json()
 
 
+def delete_peopleforce_complaint(complaint_id):
+    supabase_url = require_supabase()
+    response = requests.delete(
+        f"{supabase_url}/rest/v1/peopleforce_complaints",
+        headers=supabase_headers(prefer_return=True),
+        params={"id": f"eq.{str(complaint_id or '').strip()}"},
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    read_peopleforce_complaints.clear()
+    read_peopleforce_complaints_for_month.clear()
+    read_peopleforce_complaint_markers.clear()
+    return response.json()
+
+
 def respond_to_peopleforce_complaint(
     complaint_id,
     response_message,

@@ -25,6 +25,7 @@ from resources.settlement_pdf import build_settlement_pdf
 from resources.courier_master_db import update_courier_master_profile
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
+    delete_peopleforce_complaint,
     decode_document_content,
     read_peopleforce_document_content,
     read_peopleforce_documents_for_courier,
@@ -6268,14 +6269,28 @@ def show_courier_dialog() -> None:
                     list(complaint_status_labels.values()),
                     index=list(complaint_status_labels.values()).index(current_status_label)
                     if current_status_label in complaint_status_labels.values() else 0,
-                    key=f"ui_complaint_status_{courier_id}",
+                    key=f"ui_complaint_status_{courier_id}_{selected_complaint_id}",
                 )
                 response_message = st.text_area(
                     "Admin válasz",
                     value=str(selected_complaint.get("admin_response") or ""),
-                    key=f"ui_complaint_response_{courier_id}",
+                    key=f"ui_complaint_response_{courier_id}_{selected_complaint_id}",
                 )
-                response_actions = st.columns(2)
+                response_actions = st.columns(3)
+                if response_actions[2].button("Lezaras", type="primary", use_container_width=True, key=f"ui_complaint_close_top_{courier_id}_{selected_complaint_id}"):
+                    try:
+                        update_peopleforce_complaint_status(selected_complaint_id, "closed")
+                        st.success("Reklamacio lezarva.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A reklamacio lezarasa sikertelen: {exc}")
+                if st.button("Reklamacio torlese", use_container_width=True, key=f"ui_complaint_delete_{courier_id}_{selected_complaint_id}"):
+                    try:
+                        delete_peopleforce_complaint(selected_complaint_id)
+                        st.success("Reklamacio torolve.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A reklamacio torlese sikertelen: {exc}")
                 if response_actions[0].button("Válasz küldése", type="primary", use_container_width=True, key=f"ui_complaint_response_save_{courier_id}"):
                     if not response_message.strip():
                         st.error("A válasz szövege nem lehet üres.")
