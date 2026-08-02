@@ -220,6 +220,33 @@
 
         <section class="process-card">
           <div class="process-title">
+            <span class="step-code">PW</span>
+            <div>
+              <h3>Jelszó módosítása</h3>
+              <p>A belépéshez használt jelszavadat itt tudod lecserélni.</p>
+            </div>
+          </div>
+          <form id="password-change-form" class="process-form">
+            <label>Jelenlegi jelszó<input id="current-password" name="current_password" type="password" autocomplete="current-password" required /></label>
+            <label>Új jelszó<input id="new-password" name="new_password" type="password" autocomplete="new-password" minlength="8" required /></label>
+            <label>Új jelszó újra<input id="new-password-confirm" name="new_password_confirm" type="password" autocomplete="new-password" minlength="8" required /></label>
+            <button class="primary" type="submit">Jelszó módosítása</button>
+          </form>
+          <p id="password-change-message" class="updated-at" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <div id="device-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TELEFON</p>
+            <h2>Telefon ellenőrzés</h2>
+            <p class="muted">Rögzítsd a telefon sorszámát és tölts fel képeket az aktuális állapotról.</p>
+          </div>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
             <span class="step-code">TEL</span>
             <div>
               <h3>Telefon állapot</h3>
@@ -295,11 +322,12 @@
         <button id="nav-statistics"><span>∑</span>Statisztika</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
+        <button id="nav-device"><span>□</span>Telefon</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=40" defer></script>
+    <script src="/app.js?v=41" defer></script>
   </body>
 </html>

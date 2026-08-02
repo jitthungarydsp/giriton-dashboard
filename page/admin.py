@@ -23,10 +23,10 @@ from resources.courier_db_sheet import (
     )
 from resources.courier_master_db import read_courier_master
 from resources.email_sender import send_login_credentials, validate_email
+from resources.pwa_users_db import sync_pwa_users_from_json_users, upsert_pwa_user_with_password
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 from resources.users import (
     USERS_FILE,
-    approve_pwa_registration_user,
     build_courier_master_sync_preview,
     load_users,
     create_user,
@@ -152,7 +152,17 @@ def show_pwa_registration_admin_section():
         "A futár mobil regisztrációs kérelmek jóváhagyása. Jóváhagyáskor "
         "PWA felhasználó készül vagy frissül, majd e-mailben kimegy a belépés."
     )
-    st.caption(f"Felhasználói fájl: `{USERS_FILE}`")
+    st.caption(f"Belépési DB tábla: `public.pwa_users` · legacy fájl tartaléknak: `{USERS_FILE}`")
+
+    if st.button("users.json → pwa_users szinkron", key="sync_users_json_to_pwa_users"):
+        try:
+            sync_result = sync_pwa_users_from_json_users(load_users().get("users", []))
+            st.success(
+                f"PWA user szinkron kész. Átvitt: {sync_result['synced']}, "
+                f"kihagyott: {sync_result['skipped']}."
+            )
+        except Exception as exc:
+            st.error(f"A pwa_users szinkron sikertelen: {exc}")
 
     try:
         requests_df = read_pwa_registration_requests()
@@ -244,12 +254,12 @@ def show_pwa_registration_admin_section():
             return
         try:
             recipient_email = validate_email(recipient_email)
-            result = approve_pwa_registration_user(
-                courier_id,
-                courier_name,
-                recipient_email,
-                send_login_credentials,
+            result = upsert_pwa_user_with_password(
+                courier_id=courier_id,
+                username=courier_name,
+                recipient_email=recipient_email,
             )
+            send_login_credentials(recipient_email, result["username"], result["password"])
             try:
                 upsert_couriers(
                     [{

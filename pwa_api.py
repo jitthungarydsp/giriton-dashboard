@@ -22,7 +22,8 @@ from pydantic import BaseModel
 
 from resources.email_sender import send_login_credentials, validate_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
-from resources.security import verify_password
+from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password
+from resources.security import hash_password, verify_password
 
 try:
     from cryptography.hazmat.primitives import serialization
@@ -65,6 +66,11 @@ class RegistrationRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     courier_id: str
     email: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class WorkflowActionRequest(BaseModel):
@@ -197,6 +203,14 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
+    try:
+        db_user = authenticate_pwa_db_user(username, password)
+        if db_user:
+            return db_user
+    except Exception:
+        # If the DB user table is not deployed yet, keep the legacy users.json login working.
+        pass
+
     wanted = str(username or "").strip().casefold()
     for user in load_users():
         if not user.get("active", True):
@@ -224,6 +238,37 @@ def find_user_by_courier_id(courier_id: str) -> dict[str, Any] | None:
         if user_courier_id(user) == clean_id:
             return user
     return None
+
+
+def save_legacy_users_data(data: dict[str, Any]) -> None:
+    USERS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
+
+
+def change_legacy_user_password(user: dict[str, Any], current_password: str, new_password: str) -> bool:
+    target_courier_id = user_courier_id(user)
+    target_username = str(user.get("username") or "").strip()
+    if not target_courier_id and not target_username:
+        return False
+    with USERS_FILE.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+    for row in data.get("users", []):
+        same_courier = target_courier_id and user_courier_id(row) == target_courier_id
+        same_username = target_username and str(row.get("username") or "").strip() == target_username
+        if not (same_courier or same_username):
+            continue
+        password_hash = str(row.get("passwordHash") or "")
+        password_ok = bool(password_hash and verify_password(current_password, password_hash))
+        if not password_ok:
+            password_ok = row.get("password") == current_password
+        if not password_ok:
+            raise HTTPException(status_code=403, detail="A jelenlegi jelszó nem megfelelő.")
+        row["password"] = new_password
+        row["passwordHash"] = hash_password(new_password)
+        row["token"] = ""
+        row["passwordUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+        save_legacy_users_data(data)
+        return True
+    return False
 
 
 def normalize_email_address(value: str) -> str:
@@ -2279,6 +2324,31 @@ def get_billing_profile(
 ):
     user = require_user(giriton_pwa_session)
     return {"billing": read_billing_profile(user)}
+
+
+@app.put("/api/profile/password")
+def update_profile_password(
+    payload: PasswordChangeRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    current_password = str(payload.current_password or "")
+    new_password = str(payload.new_password or "")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=422, detail="Az új jelszó legalább 8 karakter legyen.")
+    if current_password == new_password:
+        raise HTTPException(status_code=422, detail="Az új jelszó legyen eltérő a jelenlegitől.")
+
+    try:
+        if change_pwa_user_password(user_courier_id(user), current_password, new_password):
+            return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if change_legacy_user_password(user, current_password, new_password):
+        return {"ok": True}
+
+    raise HTTPException(status_code=404, detail="A felhasználó nem található a jelszómódosításhoz.")
 
 
 @app.get("/api/statistics/monthly")

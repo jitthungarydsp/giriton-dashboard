@@ -102,7 +102,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-documents", "#nav-profile", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
 }
 
@@ -113,6 +113,7 @@ function showSection(section) {
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
+  $("#device-content").classList.toggle("hidden", section !== "device");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
 
@@ -121,6 +122,7 @@ function showSection(section) {
   $("#nav-statistics").classList.toggle("active", section === "statistics");
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
+  $("#nav-device").classList.toggle("active", section === "device");
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
 
@@ -129,9 +131,9 @@ function showSection(section) {
   if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
-    loadDeviceReports();
     refreshNotificationToggle();
   }
+  if (section === "device") loadDeviceReports();
   if (section === "tours") {
     loadCurrentRoute();
   }
@@ -876,7 +878,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=30");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=31");
   }
   return navigator.serviceWorker.ready;
 }
@@ -1313,6 +1315,35 @@ if (deviceConditionForm) {
   });
 }
 
+const passwordChangeForm = $("#password-change-form");
+if (passwordChangeForm) {
+  passwordChangeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = $("#password-change-message");
+    const currentPassword = $("#current-password").value;
+    const newPassword = $("#new-password").value;
+    const confirmPassword = $("#new-password-confirm").value;
+    if (newPassword !== confirmPassword) {
+      message.textContent = "Az új jelszavak nem egyeznek.";
+      return;
+    }
+    message.textContent = "Jelszó módosítása...";
+    try {
+      await api("/api/profile/password", {
+        method: "PUT",
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      passwordChangeForm.reset();
+      message.textContent = "A jelszó módosítva.";
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  });
+}
+
 
 function renderValidation(target, validation, stored = null) {
   const summary = validation.ok
@@ -1674,6 +1705,7 @@ $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
+$("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 
