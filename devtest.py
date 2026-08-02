@@ -5412,6 +5412,19 @@ def show_courier_dialog() -> None:
                 value=period_start.replace(day=1),
                 key=f"custom_doc_period_{courier_id}",
             )
+            custom_is_other_process = st.checkbox(
+                "Egyéb folyamat indítása",
+                value=False,
+                key=f"custom_doc_other_process_{courier_id}",
+                help="Hónap közepi vagy egyedi elszámolási/TIG folyamat. A PWA-n külön választható lesz.",
+            )
+            process_default = f"eloleg-{custom_period:%Y-%m-%d}" if custom_is_other_process else ""
+            custom_process_label = st.text_input(
+                "Folyamat azonosító",
+                value=process_default,
+                disabled=not custom_is_other_process,
+                key=f"custom_doc_process_label_{courier_id}",
+            )
             custom_title_default = (
                 f"TIG - {row['Futár']} - {custom_period:%Y-%m}"
                 if custom_doc_label == "TIG"
@@ -5458,6 +5471,12 @@ def show_courier_dialog() -> None:
             )
 
         custom_type = "tig" if custom_doc_label == "TIG" else "settlement"
+        custom_process_id = ""
+        if custom_is_other_process:
+            custom_process_id = unicodedata.normalize("NFKD", str(custom_process_label or "")).encode("ascii", "ignore").decode("ascii")
+            custom_process_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", custom_process_id).strip("-").lower()[:80]
+            if not custom_process_id:
+                custom_process_id = f"egyeb-{custom_period:%Y%m%d}"
         reference_state_key = f"custom_doc_reference_{courier_id}_{custom_type}_{custom_period:%Y%m}"
         if reference_state_key not in st.session_state:
             st.session_state[reference_state_key] = make_document_reference(courier_id, custom_type, custom_period)
@@ -5484,7 +5503,12 @@ def show_courier_dialog() -> None:
             *custom_item_rows,
         ]
         custom_note_with_items = "\n".join(
-            [f"Dokumentum azonosító: {custom_reference}", custom_note.strip(), "Tételek:"]
+            [
+                f"Dokumentum azonosító: {custom_reference}",
+                f"Folyamat azonosító: {custom_process_id}" if custom_process_id else "",
+                custom_note.strip(),
+                "Tételek:",
+            ]
             + [f"{key}: {value}" for key, value in custom_item_rows if key != "Dokumentum ID"]
         ).strip()
         custom_pdf_bytes = build_demo_preview_pdf(custom_title, custom_subtitle, custom_item_rows)
@@ -5518,6 +5542,17 @@ def show_courier_dialog() -> None:
                         file_bytes=custom_pdf_bytes,
                         uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                     )
+                    if custom_process_id:
+                        process_action_key = f"process:{custom_process_id}:{custom_type}"
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=str(row["Futár"]),
+                            action_key=process_action_key,
+                            document_month=custom_period.replace(day=1),
+                            status="open",
+                            status_note=f"Egyéb folyamat indítva: {custom_process_id}",
+                            updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                        )
                     st.success("Egyedi dokumentum feltöltve a futár profiljába.")
                     st.rerun()
                 except Exception as exc:

@@ -1,5 +1,6 @@
 __pycache__/
 venv/
+node_modules/
 .streamlit/secrets.toml
 .pwa_session_secret
 muszakpro/Kod_gs_*.txt

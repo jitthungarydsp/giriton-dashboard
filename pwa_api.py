@@ -75,12 +75,14 @@ class PasswordChangeRequest(BaseModel):
 
 class WorkflowActionRequest(BaseModel):
     month: str
+    process: str = ""
 
 
 class ComplaintRequest(BaseModel):
     month: str
     action: str
     message: str
+    process: str = ""
 
 
 class RouteDelayAlertRequest(BaseModel):
@@ -966,11 +968,49 @@ def save_route_delay_alert(
 
 WORKFLOW_PREREQUISITES = {
     "tig": "settlement",
-    "invoice_check": "tig",
-    "invoice_submit": "invoice_check",
-    "invoice_payment": "invoice_submit",
+    "invoice_submit": "tig",
+    "invoice_check": "invoice_submit",
+    "invoice_payment": "invoice_check",
 }
 WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
+PROCESS_NOTE_PREFIX = "Folyamat azonosító:"
+
+
+def normalize_process_id(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-z0-9_-]+", "-", text).strip("-")
+    if text in {"", "havi", "monthly", "alap"}:
+        return ""
+    return text[:80]
+
+
+def process_action_key(action: str, process_id: str | None = "") -> str:
+    clean_process = normalize_process_id(process_id)
+    return f"process:{clean_process}:{action}" if clean_process else action
+
+
+def base_action_key(action_key: str) -> str:
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    return match.group(2) if match else str(action_key or "").strip()
+
+
+def process_id_from_action_key(action_key: str) -> str:
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    return match.group(1) if match else ""
+
+
+def process_note_marker(process_id: str | None) -> str:
+    clean_process = normalize_process_id(process_id)
+    return f"{PROCESS_NOTE_PREFIX} {clean_process}" if clean_process else ""
+
+
+def document_belongs_to_process(document: dict[str, Any], process_id: str | None) -> bool:
+    clean_process = normalize_process_id(process_id)
+    note = str(document.get("note") or "")
+    match = re.search(r"Folyamat azonosító:\s*([a-z0-9_-]+)", note, flags=re.IGNORECASE)
+    document_process = normalize_process_id(match.group(1)) if match else ""
+    return document_process == clean_process
 
 
 def parse_month(value: str | date | None) -> date:
@@ -1248,6 +1288,13 @@ def load_month_day_rules(period_start: date, period_end: date) -> tuple[list[dic
             "day_type": "highlighted",
             "weekdays": [1, 5, 6, 7],
             "valid_from": "1900-01-01",
+            "valid_to": "2026-06-30",
+            "priority": 999,
+        },
+        {
+            "day_type": "highlighted",
+            "weekdays": [1, 5, 6],
+            "valid_from": "2026-07-01",
             "valid_to": None,
             "priority": 999,
         }
@@ -1257,13 +1304,25 @@ def load_month_day_rules(period_start: date, period_end: date) -> tuple[list[dic
 def day_type_for_date(value: date | None, day_rules: list[dict[str, Any]]) -> str:
     if not value:
         return "unknown"
-    for rule in day_rules:
+    def rule_sort_key(rule: dict[str, Any]) -> tuple[int, int]:
+        try:
+            valid_from = date.fromisoformat(str(rule.get("valid_from") or "1900-01-01")[:10])
+            valid_from_order = -valid_from.toordinal()
+        except ValueError:
+            valid_from_order = 0
+        return safe_int(rule.get("priority")), valid_from_order
+
+    sorted_rules = sorted(
+        day_rules,
+        key=rule_sort_key,
+    )
+    for rule in sorted_rules:
         try:
             valid_from = date.fromisoformat(str(rule.get("valid_from") or "1900-01-01")[:10])
             valid_to_raw = str(rule.get("valid_to") or "").strip()
             valid_to = date.fromisoformat(valid_to_raw[:10]) if valid_to_raw else date.max
-            weekdays = rule.get("weekdays") or []
-            if valid_from <= value <= valid_to and value.isoweekday() in [int(day) for day in weekdays]:
+            weekdays = parse_weekdays(rule.get("weekdays"))
+            if valid_from <= value <= valid_to and value.isoweekday() in weekdays:
                 return str(rule.get("day_type") or "normal")
         except Exception:
             continue
@@ -1279,11 +1338,29 @@ def parse_date_value(value: Any) -> date | None:
 
 def weekday_labels(values: Any) -> str:
     labels = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
-    try:
-        days = [int(day) for day in (values or [])]
-    except TypeError:
-        days = []
+    days = parse_weekdays(values)
     return ", ".join(labels.get(day, str(day)) for day in days)
+
+
+def parse_weekdays(values: Any) -> list[int]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        raw_days = re.findall(r"\d+", values)
+    else:
+        try:
+            raw_days = list(values)
+        except TypeError:
+            raw_days = [values]
+    days: list[int] = []
+    for raw_day in raw_days:
+        try:
+            day = int(raw_day)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= day <= 7 and day not in days:
+            days.append(day)
+    return days
 
 
 def serialize_day_rules(day_rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1572,12 +1649,15 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
     return documents, statuses, complaints
 
 
-def status_map(rows: list[dict]) -> dict[str, dict]:
+def status_map(rows: list[dict], process_id: str | None = "") -> dict[str, dict]:
     result: dict[str, dict] = {}
     for row in rows:
         key = str(row.get("action_key") or "")
-        if key and key not in result:
-            result[key] = row
+        if process_id_from_action_key(key) != normalize_process_id(process_id):
+            continue
+        clean_key = base_action_key(key)
+        if clean_key and clean_key not in result:
+            result[clean_key] = row
     return result
 
 
@@ -1702,6 +1782,7 @@ def upsert_workflow_status(
     action: str,
     status: str,
     note: str,
+    process_id: str | None = "",
 ) -> None:
     courier_id, courier_name = courier_identity(user)
     supabase_rest(
@@ -1711,7 +1792,7 @@ def upsert_workflow_status(
         payload={
             "courier_id": courier_id,
             "courier_name": courier_name,
-            "action_key": action,
+            "action_key": process_action_key(action, process_id),
             "document_month": month.isoformat(),
             "status": "done" if status == "done" else "open",
             "status_note": note,
@@ -1722,11 +1803,17 @@ def upsert_workflow_status(
     )
 
 
-def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
+def build_workflow(user: dict[str, Any], month: date, process: str | None = "") -> dict[str, Any]:
+    process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
-    states = status_map(status_rows)
+    states = status_map(status_rows, process_id)
+    documents = [row for row in documents if document_belongs_to_process(row, process_id)]
+    complaints = [
+        row for row in complaints
+        if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
+    ]
     document_groups = {
-        document_type: [row for row in documents if row.get("document_type") == document_type]
+        document_type: [row for row in documents if base_action_key(str(row.get("document_type") or "")) == document_type]
         for document_type in WORKFLOW_DOCUMENT_TYPES
     }
     response_documents = [
@@ -1771,16 +1858,16 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
             "locked": not workflow_done(states, "settlement") or not bool(document_groups["tig"]),
         },
         {
-            "key": "invoice_check",
-            "title": "Számlaellenőrzés",
-            "done": workflow_done(states, "invoice_check"),
-            "locked": not workflow_done(states, "tig"),
-        },
-        {
             "key": "invoice_submit",
             "title": "Számlafeltöltés",
             "done": workflow_done(states, "invoice_submit"),
-            "locked": not workflow_done(states, "invoice_check"),
+            "locked": not workflow_done(states, "tig"),
+        },
+        {
+            "key": "invoice_check",
+            "title": "Számlaellenőrzés",
+            "done": workflow_done(states, "invoice_check"),
+            "locked": not workflow_done(states, "invoice_submit"),
         },
         {
             "key": "invoice_payment",
@@ -1790,7 +1877,7 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
                 else "Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s"
             ),
             "done": workflow_done(states, "invoice_payment"),
-            "locked": not workflow_done(states, "invoice_submit"),
+            "locked": not workflow_done(states, "invoice_check"),
         },
     ]
     safe_documents: dict[str, list[dict[str, Any]]] = {}
@@ -1811,7 +1898,7 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
     ]
     complaint_actions = ("settlement", "tig", "invoice_check", "invoice_submit")
     complaints_by_action = {
-        action: [row for row in complaints if row.get("document_type") == action]
+        action: [row for row in complaints if base_action_key(str(row.get("document_type") or "")) == action]
         for action in complaint_actions
     }
     response_documents_by_action = {
@@ -1846,6 +1933,8 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
 
     return {
         "month": month.strftime("%Y-%m"),
+        "process": process_id,
+        "processLabel": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
         "steps": steps,
         "states": states,
         "documents": safe_documents,
@@ -1855,6 +1944,27 @@ def build_workflow(user: dict[str, Any], month: date) -> dict[str, Any]:
         "invoiceValidationOverride": invoice_validation_override_enabled(states),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def list_workflow_processes(user: dict[str, Any], month: date) -> list[dict[str, str]]:
+    documents, status_rows, complaints = read_workflow_rows(user, month)
+    process_ids: set[str] = {""}
+    for row in status_rows:
+        process_ids.add(process_id_from_action_key(str(row.get("action_key") or "")))
+    for row in complaints:
+        process_ids.add(process_id_from_action_key(str(row.get("document_type") or "")))
+    for row in documents:
+        note = str(row.get("note") or "")
+        match = re.search(r"Folyamat azonosító:\s*([a-z0-9_-]+)", note, flags=re.IGNORECASE)
+        if match:
+            process_ids.add(normalize_process_id(match.group(1)))
+    return [
+        {
+            "id": process_id,
+            "label": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+        }
+        for process_id in sorted(process_ids, key=lambda item: (item != "", item))
+    ]
 
 
 def expected_tig_amount(user: dict[str, Any], month: date) -> int:
@@ -1882,12 +1992,12 @@ def expected_tig_amount(user: dict[str, Any], month: date) -> int:
     return 0
 
 
-def require_prerequisite(user: dict[str, Any], month: date, action: str) -> None:
+def require_prerequisite(user: dict[str, Any], month: date, action: str, process_id: str | None = "") -> None:
     prerequisite = WORKFLOW_PREREQUISITES.get(action)
     if not prerequisite:
         return
     _documents, status_rows, _complaints = read_workflow_rows(user, month)
-    if not workflow_done(status_map(status_rows), prerequisite):
+    if not workflow_done(status_map(status_rows, process_id), prerequisite):
         labels = {
             "settlement": "az elszámolás elfogadása",
             "tig": "a TIG elfogadása",
@@ -2620,9 +2730,19 @@ def create_route_delay_alert(
 @app.get("/api/workflow")
 def workflow(
     month: str = Query(default=""),
+    process: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    return build_workflow(require_user(giriton_pwa_session), parse_month(month))
+    return build_workflow(require_user(giriton_pwa_session), parse_month(month), process)
+
+
+@app.get("/api/workflow/processes")
+def workflow_processes(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    return {"processes": list_workflow_processes(user, parse_month(month))}
 
 
 @app.post("/api/workflow/{action}/accept")
@@ -2635,11 +2755,17 @@ def accept_workflow_document(
         raise HTTPException(status_code=404, detail="Ismeretlen elfogadási lépés.")
     user = require_user(giriton_pwa_session)
     month = parse_month(payload.month)
+    process_id = normalize_process_id(payload.process)
     if action == "tig":
-        require_prerequisite(user, month, "tig")
+        require_prerequisite(user, month, "tig", process_id)
     documents, status_rows, complaints = read_workflow_rows(user, month)
-    states = status_map(status_rows)
-    if not any(row.get("document_type") == action for row in documents):
+    states = status_map(status_rows, process_id)
+    documents = [row for row in documents if document_belongs_to_process(row, process_id)]
+    complaints = [
+        row for row in complaints
+        if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
+    ]
+    if not any(base_action_key(str(row.get("document_type") or "")) == action for row in documents):
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
     if has_open_complaint(complaints, action) and not complaints_ignored_for_billing(states):
         raise HTTPException(
@@ -2652,8 +2778,9 @@ def accept_workflow_document(
         action,
         "done",
         "A futár elfogadta a dokumentumot.",
+        process_id,
     )
-    return {"ok": True, "workflow": build_workflow(user, month)}
+    return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 
 @app.post("/api/workflow/complaints")
@@ -2668,6 +2795,7 @@ def create_workflow_complaint(
         raise HTTPException(status_code=422, detail="Írd le röviden a reklamációt.")
     user = require_user(giriton_pwa_session)
     month = parse_month(payload.month)
+    process_id = normalize_process_id(payload.process)
     courier_id, courier_name = courier_identity(user)
     supabase_rest(
         "POST",
@@ -2675,7 +2803,7 @@ def create_workflow_complaint(
         payload={
             "courier_id": courier_id,
             "courier_name": courier_name,
-            "document_type": payload.action,
+            "document_type": process_action_key(payload.action, process_id),
             "document_month": month.isoformat(),
             "message": message,
             "status": "new",
@@ -2683,8 +2811,8 @@ def create_workflow_complaint(
         },
         prefer="return=representation",
     )
-    upsert_workflow_status(user, month, payload.action, "open", "Új reklamáció érkezett.")
-    return {"ok": True, "workflow": build_workflow(user, month)}
+    upsert_workflow_status(user, month, payload.action, "open", "Új reklamáció érkezett.", process_id)
+    return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 
 @app.get("/api/documents/{document_id}")
@@ -2723,17 +2851,19 @@ def download_document(
 @app.post("/api/invoices/check")
 async def check_invoice(
     month: str = Form(...),
+    process: str = Form(default=""),
     invoice_file: UploadFile = File(...),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     month_value = parse_month(month)
-    require_prerequisite(user, month_value, "invoice_check")
+    process_id = normalize_process_id(process)
+    require_prerequisite(user, month_value, "invoice_check", process_id)
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     courier_id, courier_name = courier_identity(user)
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
-    override_enabled = invoice_validation_override_enabled(status_map(status_rows))
+    override_enabled = invoice_validation_override_enabled(status_map(status_rows, process_id))
     result = validate_invoice(
         file_name=invoice_file.filename or "szamla",
         content=content,
@@ -2753,6 +2883,7 @@ async def check_invoice(
             "invoice_check",
             "done",
             "A számla automatikus ellenőrzése sikeres.",
+            process_id,
         )
     else:
         error_details = [
@@ -2769,13 +2900,15 @@ async def check_invoice(
             "invoice_check",
             "open",
             failure_note[:1500],
+            process_id,
         )
-    return {"validation": result, "workflow": build_workflow(user, month_value)}
+    return {"validation": result, "workflow": build_workflow(user, month_value, process_id)}
 
 
 @app.post("/api/invoices/submit")
 async def submit_invoice(
     month: str = Form(...),
+    process: str = Form(default=""),
     invoice_number: str = Form(...),
     gross_amount: int = Form(...),
     tig_reference: str = Form(default=""),
@@ -2787,7 +2920,8 @@ async def submit_invoice(
 ):
     user = require_user(giriton_pwa_session)
     month_value = parse_month(month)
-    require_prerequisite(user, month_value, "invoice_submit")
+    process_id = normalize_process_id(process)
+    require_prerequisite(user, month_value, "invoice_submit", process_id)
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     cash_content = b""
     if cash_invoice_file is not None and cash_invoice_file.filename:
@@ -2795,7 +2929,7 @@ async def submit_invoice(
     courier_id, courier_name = courier_identity(user)
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
-    override_enabled = invoice_validation_override_enabled(status_map(status_rows))
+    override_enabled = invoice_validation_override_enabled(status_map(status_rows, process_id))
     expected_amount = expected_tig_amount(user, month_value)
     if cash_content:
         shared_validation = {
@@ -2842,23 +2976,6 @@ async def submit_invoice(
             expected_seller_address=billing_profile["company_address"],
         )
     result = apply_invoice_validation_override(result, override_enabled)
-    if not result["ok"]:
-        error_details = [
-            f"{check.get('title')}: {check.get('detail')}"
-            for check in result.get("checks", [])
-            if check.get("status") == "error"
-        ]
-        failure_note = "Számlafeltöltési hiba: " + (
-            " | ".join(error_details) if error_details else "Ismeretlen feltöltési hiba."
-        )
-        upsert_workflow_status(
-            user,
-            month_value,
-            "invoice_submit",
-            "open",
-            failure_note[:1500],
-        )
-        return {"stored": False, "validation": result, "workflow": build_workflow(user, month_value)}
 
     upload_documents = [
         {
@@ -2891,6 +3008,8 @@ async def submit_invoice(
             "file_size": len(document["content"]),
             "file_content_base64": base64.b64encode(document["content"]).decode("ascii"),
             "note": (
+                (process_note_marker(process_id) + "; " if process_note_marker(process_id) else "")
+                +
                 f"Fizetési mód: {document['payment_type']}; bruttó összesen: {gross_amount} Ft; "
                 f"TIG/elszámolás: {tig_reference}. {note}"
             ).strip(),
@@ -2907,20 +3026,51 @@ async def submit_invoice(
     )
     stored_count = len(document_payloads)
     stored_label = "A két számla" if stored_count == 2 else "A számla"
-    upsert_workflow_status(user, month_value, "invoice_submit", "done", f"{stored_label} ellenőrizve és eltárolva.")
-    upsert_workflow_status(user, month_value, "my_invoices", "open", f"{stored_label} admin ellenőrzésre és kifizetésre vár.")
+    upsert_workflow_status(user, month_value, "invoice_submit", "done", f"{stored_label} feltöltve és eltárolva.", process_id)
+    if result["ok"]:
+        upsert_workflow_status(user, month_value, "invoice_check", "done", f"{stored_label} automatikus ellenőrzése sikeres.", process_id)
+    else:
+        error_details = [
+            f"{check.get('title')}: {check.get('detail')}"
+            for check in result.get("checks", [])
+            if check.get("status") == "error"
+        ]
+        failure_note = "Automatikus számlaellenőrzési hiba: " + (
+            " | ".join(error_details) if error_details else "Ismeretlen ellenőrzési hiba."
+        )
+        upsert_workflow_status(user, month_value, "invoice_check", "open", failure_note[:1500], process_id)
+        supabase_rest(
+            "POST",
+            "peopleforce_complaints",
+            payload={
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "document_type": process_action_key("invoice_check", process_id),
+                "document_month": month_value.isoformat(),
+                "message": (
+                    "A számla automatikus ellenőrzése hibára futott, manuális ellenőrzés szükséges. "
+                    + failure_note
+                )[:1800],
+                "status": "new",
+                "created_by": "PWA automata",
+            },
+            prefer="return=representation",
+        )
+    upsert_workflow_status(user, month_value, "my_invoices", "open", f"{stored_label} admin ellenőrzésre és kifizetésre vár.", process_id)
     upsert_workflow_status(
         user,
         month_value,
         "invoice_payment",
         "open",
         "Admin szamlaelfogadasra es kifizetesre var.",
+        process_id,
     )
     return {
         "stored": True,
         "storedCount": stored_count,
+        "manualReview": not result["ok"],
         "validation": result,
-        "workflow": build_workflow(user, month_value),
+        "workflow": build_workflow(user, month_value, process_id),
     }
 
 

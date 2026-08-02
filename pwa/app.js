@@ -12,6 +12,8 @@ const state = {
   statistics: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
+  workflowProcess: "",
+  workflowProcesses: [{ id: "", label: "Havi folyamat" }],
   statisticsMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -586,6 +588,23 @@ function workflowStep(key) {
   return state.workflow?.steps?.find((step) => step.key === key) || {};
 }
 
+function workflowQuery() {
+  const params = new URLSearchParams({ month: state.workflowMonth });
+  if (state.workflowProcess) params.set("process", state.workflowProcess);
+  return params.toString();
+}
+
+function renderWorkflowProcessPicker() {
+  const picker = $("#workflow-process");
+  if (!picker) return;
+  const processes = state.workflowProcesses.length
+    ? state.workflowProcesses
+    : [{ id: "", label: "Havi folyamat" }];
+  picker.innerHTML = processes.map((process) => (
+    `<option value="${escapeHtml(process.id || "")}" ${process.id === state.workflowProcess ? "selected" : ""}>${escapeHtml(process.label || "Havi folyamat")}</option>`
+  )).join("");
+}
+
 function renderWorkflowSteps() {
   $("#workflow-steps").innerHTML = (state.workflow?.steps || []).map((step, index) => {
     const waiting = step.key.endsWith("_document") && !step.done && !step.locked;
@@ -640,7 +659,7 @@ async function loadDocuments() {
     state.workflow = waitingWorkflow();
     renderDocumentsSection();
     try {
-      state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
+      state.workflow = await api(`/api/workflow?${workflowQuery()}`);
     } catch (error) {
       $("#documents-list").innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
       return;
@@ -723,13 +742,17 @@ function renderWorkflow() {
   renderWorkflowSteps();
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
-  setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
   setPanelLocked("#invoice-submit-panel", Boolean(workflowStep("invoice_submit").locked));
+  setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
   const overrideNotice = state.workflow?.invoiceValidationOverride
     ? `<div class="notice">Admin továbbengedés aktív: a számlaellenőrzési hibák figyelmeztetésként kezelődnek.</div>`
     : "";
   const checkInfo = $("#invoice-check-info");
-  if (checkInfo) checkInfo.innerHTML = `${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
+  if (checkInfo) {
+    const checkDone = state.workflow?.states?.invoice_check?.status === "done";
+    const checkOpen = state.workflow?.states?.invoice_check?.status === "open";
+    checkInfo.innerHTML = `${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
+  }
   const submitInfo = $("#invoice-submit-info");
   if (submitInfo) submitInfo.innerHTML = `${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
   $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
@@ -749,8 +772,8 @@ function waitingWorkflow() {
     ["settlement", "Elszámolás elfogadása", true],
     ["tig_document", "Várakozás a TIG elkészítésére", true],
     ["tig", "TIG elfogadása", true],
-    ["invoice_check", "Számlaellenőrzés", true],
     ["invoice_submit", "Számlafeltöltés", true],
+    ["invoice_check", "Számlaellenőrzés", true],
     ["invoice_payment", "Admin számlaelfogadás és kifizetés", true],
   ];
   return {
@@ -758,8 +781,10 @@ function waitingWorkflow() {
     steps: titles.map(([key, title, locked]) => ({ key, title, locked, done: false })),
     states: {},
     documents: { settlement: [], tig: [], invoice: [] },
-    complaints: { settlement: [], tig: [], invoice_check: [], invoice_submit: [] },
-    complaintResponses: { settlement: [], tig: [], invoice_check: [], invoice_submit: [] },
+    process: state.workflowProcess,
+    processLabel: state.workflowProcess ? `Egyéb folyamat: ${state.workflowProcess}` : "Havi folyamat",
+    complaints: { settlement: [], tig: [], invoice_submit: [], invoice_check: [] },
+    complaintResponses: { settlement: [], tig: [], invoice_submit: [], invoice_check: [] },
     updatedAt: new Date().toISOString(),
   };
 }
@@ -774,7 +799,13 @@ async function loadWorkflow() {
   renderWorkflow();
   showWorkflowMessage("Folyamat betöltése…");
   try {
-    state.workflow = await api(`/api/workflow?month=${encodeURIComponent(state.workflowMonth)}`);
+    const processPayload = await api(`/api/workflow/processes?month=${encodeURIComponent(state.workflowMonth)}`);
+    state.workflowProcesses = processPayload.processes || [{ id: "", label: "Havi folyamat" }];
+    if (!state.workflowProcesses.some((process) => process.id === state.workflowProcess)) {
+      state.workflowProcess = "";
+    }
+    renderWorkflowProcessPicker();
+    state.workflow = await api(`/api/workflow?${workflowQuery()}`);
     renderWorkflow();
     showWorkflowMessage("");
   } catch (error) {
@@ -794,7 +825,7 @@ async function acceptDocument(action) {
   try {
     const payload = await api(`/api/workflow/${action}/accept`, {
       method: "POST",
-      body: JSON.stringify({ month: state.workflowMonth }),
+      body: JSON.stringify({ month: state.workflowMonth, process: state.workflowProcess }),
     });
     state.workflow = payload.workflow;
     renderWorkflow();
@@ -811,7 +842,7 @@ async function submitComplaint(event, action) {
   try {
     const payload = await api("/api/workflow/complaints", {
       method: "POST",
-      body: JSON.stringify({ month: state.workflowMonth, action, message }),
+      body: JSON.stringify({ month: state.workflowMonth, process: state.workflowProcess, action, message }),
     });
     state.workflow = payload.workflow;
     renderWorkflow();
@@ -831,7 +862,7 @@ async function requestInvoiceHelp(action) {
   try {
     const payload = await api("/api/workflow/complaints", {
       method: "POST",
-      body: JSON.stringify({ month: state.workflowMonth, action, message }),
+      body: JSON.stringify({ month: state.workflowMonth, process: state.workflowProcess, action, message }),
     });
     state.workflow = payload.workflow;
     renderWorkflow();
@@ -878,7 +909,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=31");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=32");
   }
   return navigator.serviceWorker.ready;
 }
@@ -1346,9 +1377,10 @@ if (passwordChangeForm) {
 
 
 function renderValidation(target, validation, stored = null) {
+  if (!target) return;
   const summary = validation.ok
-    ? stored === true ? "A számla ellenőrizve és eltárolva." : "Az ellenőrzés sikeres. A számlafeltöltés aktív."
-    : `Javítandó számla (${validation.score}%).`;
+    ? stored === true ? "A számla feltöltve, ellenőrizve és eltárolva." : "Az ellenőrzés sikeres."
+    : stored === true ? "A számla feltöltve, manuális ellenőrzésre került. Kérlek légy türelemmel." : `Manuális ellenőrzés szükséges (${validation.score}%).`;
   target.innerHTML = `<div class="result-box">
     <div class="result-summary ${validation.ok ? "ok" : "error"}">${escapeHtml(summary)}</div>
     ${(validation.checks || []).map((check) => `<div class="check-row ${escapeHtml(check.status)}"><strong>${escapeHtml(check.title)}</strong><br>${escapeHtml(check.detail)}</div>`).join("")}
@@ -1375,11 +1407,13 @@ function fillInvoiceSubmitFromValidation(validation) {
   }
 }
 
-$("#invoice-check-form").addEventListener("submit", async (event) => {
+const invoiceCheckForm = $("#invoice-check-form");
+if (invoiceCheckForm) invoiceCheckForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   const checkedFile = form.get("invoice_file");
   form.append("month", state.workflowMonth);
+  form.append("process", state.workflowProcess);
   showWorkflowMessage("A számla ellenőrzése folyamatban…");
   try {
     const payload = await api("/api/invoices/check", { method: "POST", body: form });
@@ -1406,10 +1440,11 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   if (!hasSelectedInvoiceFile && state.checkedInvoiceFile && state.checkedInvoiceMonth === state.workflowMonth) {
     form.set("invoice_file", state.checkedInvoiceFile);
   } else if (!hasSelectedInvoiceFile) {
-    showWorkflowMessage("Előbb ellenőrizd a számlát az 5. lépésben, vagy válassz PDF-et a 6. lépésnél.", true);
+    showWorkflowMessage("Válaszd ki a feltöltendő számla PDF-et.", true);
     return;
   }
   form.append("month", state.workflowMonth);
+  form.append("process", state.workflowProcess);
   const selectedCashInvoiceFile = form.get("cash_invoice_file");
   const hasCashInvoiceFile =
     selectedCashInvoiceFile instanceof File && Boolean(selectedCashInvoiceFile.name);
@@ -1424,8 +1459,10 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     renderWorkflow();
     renderValidation($("#invoice-submit-result"), payload.validation, payload.stored);
     showWorkflowMessage(
-      payload.stored
-        ? `${payload.storedCount || 1} számla bekerült a dokumentumtárba.`
+      payload.manualReview
+        ? `${payload.storedCount || 1} számla bekerült hozzánk, manuális ellenőrzésre ment. Kérlek légy türelemmel.`
+        : payload.stored
+          ? `${payload.storedCount || 1} számla bekerült a dokumentumtárba és az ellenőrzés sikeres.`
         : "A számla nem került eltárolásra, mert hibát találtunk.",
       !payload.stored
     );
@@ -1549,10 +1586,19 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
 });
 
 $("#workflow-month").value = state.workflowMonth;
+renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
 $("#workflow-month").addEventListener("change", (event) => {
   state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  state.workflow = null;
+  state.checkedInvoiceFile = null;
+  state.checkedInvoiceMonth = null;
+  loadWorkflow();
+});
+
+$("#workflow-process").addEventListener("change", (event) => {
+  state.workflowProcess = event.target.value || "";
   state.workflow = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;

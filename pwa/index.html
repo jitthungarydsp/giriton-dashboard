@@ -90,6 +90,7 @@
           </div>
           <div class="workflow-controls">
             <label class="month-picker">Hónap<input id="workflow-month" type="month" /></label>
+            <label class="month-picker">Folyamat<select id="workflow-process"></select></label>
             <button id="workflow-refresh" class="secondary" type="button">Frissítés</button>
           </div>
         </section>
@@ -100,19 +101,8 @@
         <section id="settlement-panel" class="process-card"></section>
         <section id="tig-panel" class="process-card"></section>
 
-        <section id="invoice-check-panel" class="process-card">
-          <div class="process-title"><span class="step-code">5</span><div><h3>Számlaellenőrzés</h3><p>A TIG elfogadása után válik aktívvá.</p></div></div>
-          <form id="invoice-check-form" class="process-form">
-            <label>PDF számla<input id="invoice-check-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
-            <button class="primary" type="submit">Számla ellenőrzése</button>
-          </form>
-          <button id="invoice-check-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>
-          <div id="invoice-check-info"></div>
-          <div id="invoice-check-result"></div>
-        </section>
-
         <section id="invoice-submit-panel" class="process-card">
-          <div class="process-title"><span class="step-code">6</span><div><h3>Számlafeltöltés</h3><p>Csak sikeres ellenőrzés után küldhető be.</p></div></div>
+          <div class="process-title"><span class="step-code">5</span><div><h3>Számlafeltöltés</h3><p>A TIG elfogadása után válik aktívvá. A dokumentum mindenképpen beérkezik hozzánk.</p></div></div>
           <form id="invoice-submit-form" class="process-form two-column">
             <label>Számlaszám<input id="invoice-number" name="invoice_number" required /></label>
             <label>Számlák bruttó összege összesen (Ft)<input id="gross-amount" name="gross_amount" type="number" min="1" step="1" required /></label>
@@ -127,6 +117,12 @@
           <div id="invoice-submit-info"></div>
           <div id="invoice-submit-result"></div>
           <div id="invoice-document-list"></div>
+        </section>
+
+        <section id="invoice-check-panel" class="process-card">
+          <div class="process-title"><span class="step-code">6</span><div><h3>Számlaellenőrzés</h3><p>A feltöltött számlát automatikusan ellenőrizzük, hibánál manuális ágra kerül.</p></div></div>
+          <div id="invoice-check-info"></div>
+          <div id="invoice-check-result"></div>
         </section>
 
         <p id="workflow-updated-at" class="updated-at"></p>
@@ -328,6 +324,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=41" defer></script>
+    <script src="/app.js?v=42" defer></script>
   </body>
 </html>
