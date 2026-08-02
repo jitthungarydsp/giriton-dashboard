@@ -5257,7 +5257,7 @@ def show_courier_dialog() -> None:
         form_left, form_right = st.columns([0.42, 0.58], gap="medium")
         with form_left:
             with st.form(f"salary_advance_form_{courier_id}", clear_on_submit=False):
-                requested_amount = st.number_input("Igényelt összeg (Ft)", min_value=0, step=1000, value=0, key=f"salary_advance_amount_{courier_id}")
+                requested_amount = st.number_input("Igényelt összeg (Ft)", min_value=0, max_value=10_000_000, step=1000, value=0, key=f"salary_advance_amount_{courier_id}")
                 installment_months = st.number_input("Havi bontás (hónap)", min_value=1, max_value=60, step=1, value=1, key=f"salary_advance_months_{courier_id}")
                 start_date = st.date_input("Kezdő dátum", value=period_start, key=f"salary_advance_start_{courier_id}")
                 note = st.text_area("Megjegyzés", key=f"salary_advance_note_{courier_id}")

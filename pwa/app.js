@@ -160,8 +160,13 @@ function formatHuf(value) {
   return `${formatCount(value)} Ft`;
 }
 
+function parseHufInput(value) {
+  const digits = String(value || "").replace(/[^\d]/g, "");
+  return Number(digits || 0);
+}
+
 function updateSalaryAdvancePreview() {
-  const amount = Number($("#salary-advance-amount")?.value || 0);
+  const amount = parseHufInput($("#salary-advance-amount")?.value);
   const months = Math.max(1, Number($("#salary-advance-months")?.value || 1));
   const monthly = months ? Math.floor(amount / months) : 0;
   const lastMonthly = monthly + (amount - monthly * months);
@@ -1761,7 +1766,7 @@ $("#salary-advance-form")?.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({
         start_date: `${month}-01`,
-        requested_amount_huf: Number($("#salary-advance-amount").value || 0),
+        requested_amount_huf: parseHufInput($("#salary-advance-amount").value),
         installment_months: Number($("#salary-advance-months").value || 1),
         note: $("#salary-advance-note").value || "",
       }),
