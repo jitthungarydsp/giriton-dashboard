@@ -1,6 +1,8 @@
 import time
+from datetime import datetime, timezone
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from resources.giriton_shift_admin import (
@@ -21,7 +23,9 @@ from resources.courier_db_sheet import (
     )
 from resources.courier_master_db import read_courier_master
 from resources.email_sender import send_login_credentials, validate_email
+from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 from resources.users import (
+    approve_pwa_registration_user,
     build_courier_master_sync_preview,
     load_users,
     create_user,
@@ -32,6 +36,9 @@ from resources.users import (
     update_trainer,
     delete_user,
 )
+
+
+PWA_REGISTRATION_TABLE = "pwa_registration_requests"
 
 
 def normalize_courier_id(value):
@@ -92,9 +99,202 @@ def send_existing_credentials(user, recipient_email):
     return send_login_credentials(recipient_email, username, password)
 
 
+def _supabase_headers(prefer=""):
+    _supabase_url, service_role_key = get_supabase_config()
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def read_pwa_registration_requests(limit=100):
+    supabase_url, _service_role_key = get_supabase_config()
+    response = requests.get(
+        f"{supabase_url.rstrip('/')}/rest/v1/{PWA_REGISTRATION_TABLE}",
+        headers=_supabase_headers(),
+        params={
+            "select": "id,courier_id,courier_name,phone_number,email,status,admin_note,created_at,updated_at",
+            "order": "updated_at.desc",
+            "limit": str(limit),
+        },
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+    return pd.DataFrame(response.json() or [])
+
+
+def update_pwa_registration_request(request_id, payload):
+    supabase_url, _service_role_key = get_supabase_config()
+    response = requests.patch(
+        f"{supabase_url.rstrip('/')}/rest/v1/{PWA_REGISTRATION_TABLE}",
+        headers=_supabase_headers("return=minimal"),
+        params={"id": f"eq.{int(request_id)}"},
+        json={**payload, "updated_at": datetime.now(timezone.utc).isoformat()},
+        timeout=30,
+    )
+    raise_for_supabase_error(response)
+
+
 def _admin_actor():
     user = st.session_state.get("user", {})
     return str(user.get("username") or "admin").strip()
+
+
+def show_pwa_registration_admin_section():
+    st.divider()
+    st.subheader("PWA admin - regisztrációk")
+    st.caption(
+        "A futár mobil regisztrációs kérelmek jóváhagyása. Jóváhagyáskor "
+        "PWA felhasználó készül vagy frissül, majd e-mailben kimegy a belépés."
+    )
+
+    try:
+        requests_df = read_pwa_registration_requests()
+    except Exception as exc:
+        st.error(f"A PWA regisztrációk nem olvashatók: {exc}")
+        return
+
+    if requests_df.empty:
+        st.info("Nincs PWA regisztrációs kérelem.")
+        return
+
+    status_filter = st.selectbox(
+        "Státusz szűrő",
+        ["new", "approved", "rejected", "mind"],
+        key="pwa_registration_status_filter",
+    )
+    visible = requests_df.copy()
+    if status_filter != "mind" and "status" in visible.columns:
+        visible = visible[visible["status"].astype(str) == status_filter]
+
+    metrics = requests_df["status"].fillna("").astype(str).value_counts().to_dict()
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Új", metrics.get("new", 0))
+    m2.metric("Jóváhagyott", metrics.get("approved", 0))
+    m3.metric("Elutasított", metrics.get("rejected", 0))
+    m4.metric("Összes", len(requests_df))
+
+    st.dataframe(
+        visible[
+            [
+                column
+                for column in [
+                    "id",
+                    "courier_id",
+                    "courier_name",
+                    "phone_number",
+                    "email",
+                    "status",
+                    "admin_note",
+                    "created_at",
+                    "updated_at",
+                ]
+                if column in visible.columns
+            ]
+        ],
+        use_container_width=True,
+        hide_index=True,
+        height=260,
+    )
+
+    pending = requests_df[requests_df["status"].fillna("").astype(str).isin(["new", "pending"])]
+    if pending.empty:
+        st.info("Nincs jóváhagyásra váró regisztráció.")
+        return
+
+    labels = []
+    by_label = {}
+    for row in pending.to_dict("records"):
+        label = (
+            f"{row.get('courier_name')} · {row.get('courier_id')} · "
+            f"{row.get('email')} · #{row.get('id')}"
+        )
+        labels.append(label)
+        by_label[label] = row
+
+    selected_label = st.selectbox(
+        "Jóváhagyandó kérelem",
+        labels,
+        key="pwa_registration_approval_select",
+    )
+    selected = by_label[selected_label]
+
+    with st.form(f"pwa_registration_decision_{selected.get('id')}"):
+        c1, c2, c3 = st.columns(3)
+        courier_name = c1.text_input("Futár neve", value=str(selected.get("courier_name") or ""))
+        courier_id = c2.text_input("Courier ID", value=str(selected.get("courier_id") or ""))
+        recipient_email = c3.text_input("E-mail", value=str(selected.get("email") or ""))
+        admin_note = st.text_area("Admin megjegyzés", value=str(selected.get("admin_note") or ""), height=80)
+        confirm_approve = st.checkbox(
+            "Megerősítem: PWA user létrehozása/frissítése és belépési e-mail küldése.",
+            key=f"pwa_registration_confirm_approve_{selected.get('id')}",
+        )
+        approve = st.form_submit_button("Jóváhagyás + e-mail küldése", type="primary")
+        reject = st.form_submit_button("Elutasítás")
+
+    if approve:
+        if not confirm_approve:
+            st.error("A jóváhagyáshoz jelöld be a megerősítést.")
+            return
+        try:
+            recipient_email = validate_email(recipient_email)
+            result = approve_pwa_registration_user(
+                courier_id,
+                courier_name,
+                recipient_email,
+                send_login_credentials,
+            )
+            try:
+                upsert_couriers(
+                    [{
+                        "courier_id": int(normalize_courier_id(courier_id)),
+                        "name": courier_name,
+                        "email": recipient_email,
+                        "phone": selected.get("phone_number"),
+                        "source": "pwa_registration",
+                        "active": "True",
+                    }]
+                )
+                load_courier_email_lookup.clear()
+            except Exception as exc:
+                st.warning(f"A user elkészült, de a CourierDB_JITT frissítés nem sikerült: {exc}")
+
+            update_pwa_registration_request(
+                selected.get("id"),
+                {
+                    "status": "approved",
+                    "admin_note": (
+                        f"{admin_note.strip()}\n"
+                        f"Jóváhagyta: {_admin_actor()}; e-mail: {result['recipient']}; action: {result['action']}"
+                    ).strip(),
+                },
+            )
+            st.success(
+                f"Jóváhagyva. {result['username']} belépési adatai elküldve: {result['recipient']}"
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"A jóváhagyás sikertelen: {exc}")
+
+    if reject:
+        try:
+            update_pwa_registration_request(
+                selected.get("id"),
+                {
+                    "status": "rejected",
+                    "admin_note": (
+                        f"{admin_note.strip()}\nElutasította: {_admin_actor()}"
+                    ).strip(),
+                },
+            )
+            st.success("A regisztrációs kérelem elutasítva.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Az elutasítás sikertelen: {exc}")
 
 
 def _display_shift_admin_df(df):
@@ -389,6 +589,7 @@ def show_admin_page():
         )
 
     show_giriton_shift_admin_section()
+    show_pwa_registration_admin_section()
 
     data = load_users()
     users = data.get("users", [])

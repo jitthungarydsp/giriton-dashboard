@@ -137,6 +137,107 @@ def reset_password_and_send(username, recipient_email, send_function):
     return result
 
 
+def approve_pwa_registration_user(courier_id, courier_name, recipient_email, send_function):
+    data = load_users()
+    users = data.setdefault("users", [])
+    courier_id = normalize_courier_id(courier_id)
+    courier_name = str(courier_name or "").strip()
+    recipient_email = str(recipient_email or "").strip()
+
+    if not courier_id:
+        raise ValueError("A Courier ID megadása kötelező.")
+    if not courier_name:
+        raise ValueError("A futár neve kötelező.")
+    if not recipient_email:
+        raise ValueError("Az e-mail cím kötelező.")
+
+    matching_index = None
+    for index, user in enumerate(users):
+        if normalize_courier_id(user.get("courierId")) == courier_id:
+            matching_index = index
+            break
+
+    if matching_index is None:
+        for user in users:
+            if normalize_name(user.get("username")) == normalize_name(courier_name):
+                raise ValueError(
+                    "Ilyen nevű felhasználó már létezik más Courier ID-val. "
+                    "Előbb rendezd a users.json felhasználót."
+                )
+
+    previous_user = deepcopy(users[matching_index]) if matching_index is not None else None
+    password = generate_password()
+    now = datetime.now().isoformat(timespec="seconds")
+
+    if matching_index is None:
+        user = {
+            "username": courier_name,
+            "password": password,
+            "passwordHash": hash_password(password),
+            "role": "user",
+            "courierId": int(courier_id),
+            "trainer": "",
+            "active": True,
+            "token": "",
+            "createdAt": now,
+            "passwordUpdatedAt": now,
+        }
+        users.append(user)
+        action = "created"
+    else:
+        user = users[matching_index]
+        if is_protected_user(user):
+            raise ValueError("Védett felhasználó nem módosítható PWA jóváhagyásból.")
+        user["username"] = courier_name
+        user["courierId"] = int(courier_id)
+        user["role"] = user.get("role") or "user"
+        user["trainer"] = user.get("trainer") or ""
+        user["active"] = True
+        user["password"] = password
+        user["passwordHash"] = hash_password(password)
+        user["token"] = ""
+        user["updatedAt"] = now
+        user["passwordUpdatedAt"] = now
+        action = "updated"
+
+    save_users(data)
+
+    try:
+        result = send_function(recipient_email, courier_name, password)
+    except Exception:
+        rollback_data = load_users()
+        rollback_users = rollback_data.setdefault("users", [])
+        if matching_index is None:
+            rollback_data["users"] = [
+                current
+                for current in rollback_users
+                if normalize_courier_id(current.get("courierId")) != courier_id
+            ]
+        else:
+            for index, current in enumerate(rollback_users):
+                if normalize_courier_id(current.get("courierId")) == courier_id:
+                    rollback_users[index] = previous_user
+                    break
+        save_users(rollback_data)
+        raise
+
+    final_data = load_users()
+    for current_user in final_data.get("users", []):
+        if normalize_courier_id(current_user.get("courierId")) == courier_id:
+            current_user["credentialEmail"] = recipient_email
+            current_user["credentialEmailSentAt"] = datetime.now().isoformat(timespec="seconds")
+            current_user["registrationApprovedAt"] = now
+            break
+    save_users(final_data)
+
+    return {
+        "action": action,
+        "username": courier_name,
+        "password": password,
+        "recipient": result.get("recipient", recipient_email) if isinstance(result, dict) else recipient_email,
+    }
+
+
 def build_courier_master_sync_preview(courier_rows):
     data = load_users()
     users = data.get("users", [])
