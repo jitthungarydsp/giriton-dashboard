@@ -2952,28 +2952,6 @@ async def create_route_alert(
     if photo and photo_content and alert_id:
         save_route_alert_photo(alert_id, photo, photo_content)
 
-    if clean_type == "bag_missing" and photo and photo_content:
-        courier_id, courier_name = courier_identity(user)
-        send_bag_missing_email(
-            courier_id=courier_id,
-            courier_name=courier_name,
-            route_id=str(route_id or "").strip(),
-            warehouse=warehouse,
-            departure=route_departure,
-            return_time=route_return,
-            message_text=clean_message,
-            photo=photo,
-            photo_content=photo_content,
-        )
-        if alert_id:
-            supabase_rest(
-                "PATCH",
-                "courier_route_alerts",
-                params={"id": f"eq.{alert_id}"},
-                payload={"email_sent_at": datetime.now(timezone.utc).isoformat()},
-                prefer="return=minimal",
-            )
-
     return {"ok": True, "alert": {"id": alert_id, "type": clean_type}}
 
 
