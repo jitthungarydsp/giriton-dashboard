@@ -6133,11 +6133,11 @@ def show_courier_dialog() -> None:
                         uploaded_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
                     )
                     if custom_process_id:
-                        process_action_key = f"process:{custom_process_id}:{custom_type}"
+                        custom_action_key = f"process:{custom_process_id}:{custom_type}"
                         upsert_peopleforce_card_status(
                             courier_id=courier_id,
                             courier_name=str(row["Futár"]),
-                            action_key=process_action_key,
+                            action_key=custom_action_key,
                             document_month=custom_period.replace(day=1),
                             status="open",
                             status_note=f"Egyéb folyamat indítva: {custom_process_id}",
@@ -6251,13 +6251,21 @@ def show_courier_dialog() -> None:
                     for item in complaints.to_dict("records")
                     if item.get("id")
                 }
+                complaint_ids = list(complaint_rows_by_id)
+                selected_index = 0
+                for index, complaint_id in enumerate(complaint_ids):
+                    status = str(complaint_rows_by_id[complaint_id].get("status") or "").strip().lower()
+                    if status not in {"resolved", "closed"}:
+                        selected_index = index
+                        break
                 selected_complaint_id = st.selectbox(
                     "Reklamáció",
-                    list(complaint_rows_by_id),
+                    complaint_ids,
                     format_func=lambda value: (
                         f"{complaint_type_label(complaint_rows_by_id[value].get('document_type'))} · "
                         f"{str(complaint_rows_by_id[value].get('message') or '')[:48]}"
                     ),
+                    index=selected_index,
                     key=f"ui_complaint_select_{courier_id}",
                 )
                 selected_complaint = complaint_rows_by_id.get(selected_complaint_id, {})
