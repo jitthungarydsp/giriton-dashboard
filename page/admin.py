@@ -25,6 +25,7 @@ from resources.courier_master_db import read_courier_master
 from resources.email_sender import send_login_credentials, validate_email
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 from resources.users import (
+    USERS_FILE,
     approve_pwa_registration_user,
     build_courier_master_sync_preview,
     load_users,
@@ -151,6 +152,7 @@ def show_pwa_registration_admin_section():
         "A futár mobil regisztrációs kérelmek jóváhagyása. Jóváhagyáskor "
         "PWA felhasználó készül vagy frissül, majd e-mailben kimegy a belépés."
     )
+    st.caption(f"Felhasználói fájl: `{USERS_FILE}`")
 
     try:
         requests_df = read_pwa_registration_requests()
@@ -201,9 +203,9 @@ def show_pwa_registration_admin_section():
         height=260,
     )
 
-    pending = requests_df[requests_df["status"].fillna("").astype(str).isin(["new", "pending"])]
+    pending = requests_df[requests_df["status"].fillna("").astype(str).isin(["new", "pending", "approved"])]
     if pending.empty:
-        st.info("Nincs jóváhagyásra váró regisztráció.")
+        st.info("Nincs jóváhagyható vagy újraküldhető regisztráció.")
         return
 
     labels = []
@@ -217,7 +219,7 @@ def show_pwa_registration_admin_section():
         by_label[label] = row
 
     selected_label = st.selectbox(
-        "Jóváhagyandó kérelem",
+        "Jóváhagyandó / újraküldendő kérelem",
         labels,
         key="pwa_registration_approval_select",
     )
@@ -233,7 +235,7 @@ def show_pwa_registration_admin_section():
             "Megerősítem: PWA user létrehozása/frissítése és belépési e-mail küldése.",
             key=f"pwa_registration_confirm_approve_{selected.get('id')}",
         )
-        approve = st.form_submit_button("Jóváhagyás + e-mail küldése", type="primary")
+        approve = st.form_submit_button("Jóváhagyás / újraküldés + e-mail", type="primary")
         reject = st.form_submit_button("Elutasítás")
 
     if approve:

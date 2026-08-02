@@ -3,19 +3,21 @@ import secrets
 import unicodedata
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 
 from resources.security import hash_password
 
-USERS_FILE = "data/users.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+USERS_FILE = PROJECT_ROOT / "data" / "users.json"
 
 
 def load_users():
-    with open(USERS_FILE, "r", encoding="utf-8") as file:
+    with USERS_FILE.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def save_users(data):
-    with open(USERS_FILE, "w", encoding="utf-8") as file:
+    with USERS_FILE.open("w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
 
 
