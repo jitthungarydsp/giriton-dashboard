@@ -1440,7 +1440,7 @@ def save_mobile_breakdown_overrides(
             "item_label": str(row.get("item_label") or row.get("Megnevezés") or item_key),
             "amount_value": parse_huf_value(row.get("amount_value") if "amount_value" in row else row.get("Érték")),
             "amount_kind": amount_kind,
-            "note": str(row.get("note") or row.get("Megjegyzés") or "").strip() or None,
+            "note": str(row.get("note") or row.get("Megjegyzés") or "").strip() or "Admin felülírás",
             "updated_by": updated_by,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
@@ -5332,34 +5332,45 @@ def show_courier_dialog() -> None:
             unsafe_allow_html=True,
         )
 
+        mobile_income_total = (
+            base_total + tip_total + delay_total + compliance_total
+            + bonus_total + loyalty_total + customer_rating_total
+        )
+        mobile_deduction_total = -(
+            malus_total + atm_deduction_total + other_expense_total
+            + salary_advance_total + reserve_addition_total + insurance_fee_total
+        )
         mobile_default_rows = pd.DataFrame([
-            {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "loyalty_bonus", "item_label": "Lojalitás", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": 0, "note": ""},
-            {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "highlighted_routes", "item_label": "Kiemelt kör", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "normal_routes", "item_label": "Normál kör", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": ""},
-            {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": ""},
+            {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable_total, "note": "Valós elszámolási adat"},
+            {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": mobile_income_total, "note": "Valós elszámolási adat"},
+            {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
+            {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
+            {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": base_total, "note": "Valós elszámolási adat"},
+            {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
+            {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay_total, "note": "Valós elszámolási adat"},
+            {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
+            {"item_key": "loyalty_bonus", "item_label": "Lojalitás", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
+            {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
+            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus_total, "note": "Valós elszámolási adat"},
+            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -malus_total, "note": "Valós elszámolási adat"},
+            {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
+            {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve_addition_total, "note": "Valós elszámolási adat"},
+            {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
+            {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": route_total, "note": "Valós elszámolási adat"},
+            {"item_key": "highlighted_routes", "item_label": "Kiemelt kör", "amount_kind": "count", "amount_value": highlighted_route_total, "note": "Valós elszámolási adat"},
+            {"item_key": "normal_routes", "item_label": "Normál kör", "amount_kind": "count", "amount_value": normal_route_total, "note": "Valós elszámolási adat"},
+            {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
+            {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
+            {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
+            {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
         ])
         mobile_overrides = load_mobile_breakdown_overrides(courier_id, period_start)
         if not mobile_overrides.empty:
             mobile_default_rows = mobile_default_rows.set_index("item_key")
             for _, override_row in mobile_overrides.iterrows():
+                override_note_key = _normalized_field_key(override_row.get("note"))
+                if not override_note_key or "snapshot" in override_note_key or "publikalt" in override_note_key:
+                    continue
                 item_key = str(override_row.get("item_key") or "")
                 if item_key in mobile_default_rows.index:
                     for column in ["item_label", "amount_value", "amount_kind", "note"]:

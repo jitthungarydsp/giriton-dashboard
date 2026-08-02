@@ -1616,17 +1616,22 @@ def read_mobile_breakdown_overrides(courier_id: str, month: date) -> dict[str, d
 
 
 def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    def is_manual_override(row: dict[str, Any] | None) -> bool:
+        note = str((row or {}).get("note") or "").strip()
+        if not note:
+            return False
+        note_key = normalize_text(note)
+        return "snapshot" not in note_key and "publikalt" not in note_key
+
     for card in cards:
-        card["amountHuf"] = 0
         card_override = overrides.get(str(card.get("key") or ""))
-        if card_override:
+        if is_manual_override(card_override):
             card["amountHuf"] = money_int(card_override.get("amount_value"))
             card["amountKind"] = str(card_override.get("amount_kind") or card.get("amountKind") or "huf")
             card["overrideNote"] = str(card_override.get("note") or "Admin által módosítva")
         for item in card.get("items") or []:
-            item["amountHuf"] = 0
             override = overrides.get(str(item.get("key") or ""))
-            if not override:
+            if not is_manual_override(override):
                 continue
             item["amountHuf"] = money_int(override.get("amount_value"))
             item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
