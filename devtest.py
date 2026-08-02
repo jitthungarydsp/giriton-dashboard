@@ -1689,6 +1689,35 @@ def make_document_reference(courier_id: str, document_type: str, document_month:
     return f"{courier_id}-{month_text}-{doc_type}-{uuid.uuid4().hex[:8].upper()}"
 
 
+def normalize_process_id(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-z0-9_-]+", "-", text).strip("-")
+    if text in {"", "havi", "monthly", "alap"}:
+        return ""
+    return text[:80]
+
+
+def process_action_key(action: str, process_id: object = "") -> str:
+    clean_process = normalize_process_id(process_id)
+    return f"process:{clean_process}:{action}" if clean_process else action
+
+
+def base_action_key(action_key: object) -> str:
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    return match.group(2) if match else str(action_key or "").strip()
+
+
+def process_id_from_action_key(action_key: object) -> str:
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    return match.group(1) if match else ""
+
+
+def process_id_from_note(note: object) -> str:
+    match = re.search(r"Folyamat azonos[íi]t[óo]:\s*([a-z0-9_-]+)", str(note or ""), flags=re.IGNORECASE)
+    return normalize_process_id(match.group(1)) if match else ""
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_invoice_number(courier_id: str, period_start: date) -> str:
     month_text = period_start.strftime("%Y-%m")
@@ -1719,6 +1748,43 @@ def load_latest_invoice_number(courier_id: str, period_start: date) -> str:
             if match:
                 return match.group(1).strip()
     return ""
+
+
+def invoice_number_from_document(document: dict[str, object]) -> str:
+    haystack = " ".join(str(document.get(column) or "") for column in ["note", "title", "file_name"])
+    for pattern in [
+        r"(?:számlaszám|szamlaszam|sorszám|sorszam)\s*:?\s*([A-Za-z0-9/_-]{3,})",
+        r"\b([A-Z]{1,5}[-_/]?\d{3,})\b",
+    ]:
+        match = re.search(pattern, haystack, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def invoice_amount_from_document(document: dict[str, object]) -> float:
+    note = str(document.get("note") or "")
+    for pattern in [
+        r"brutt[óo]\s+[öo]sszesen\s*:?\s*([0-9\s.,]+)\s*Ft",
+        r"[öo]sszeg\s*:?\s*([0-9\s.,]+)\s*Ft",
+    ]:
+        match = re.search(pattern, note, flags=re.IGNORECASE)
+        if match:
+            return parse_huf_value(match.group(1))
+    return 0.0
+
+
+def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.DataFrame:
+    try:
+        documents = read_peopleforce_documents_for_month(period_start.replace(day=1), "invoice")
+    except Exception:
+        return pd.DataFrame()
+    if documents.empty:
+        return documents
+    return documents[
+        documents.get("courier_id", pd.Series("", index=documents.index))
+        .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
+    ].copy()
 
 
 def copy_cards_html(items: list[tuple[str, str]]) -> None:
@@ -4548,7 +4614,7 @@ def show_courier_dialog() -> None:
         unsafe_allow_html=True,
     )
     selected_menu = st.radio(
-        "Futármenü", ["Áttekintés", "Pénzügy", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
+        "Futármenü", ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
         horizontal=True, label_visibility="collapsed", key=menu_key,
     )
 
@@ -5233,6 +5299,178 @@ def show_courier_dialog() -> None:
             log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
             log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
             st.dataframe(log_view, use_container_width=True, hide_index=True)
+
+    if selected_menu == "Kifizetés":
+        st.markdown("#### Kifizetés")
+        payment_month = period_start.replace(day=1)
+        actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+        try:
+            workflow_statuses = read_peopleforce_card_statuses(courier_id, payment_month)
+        except Exception as exc:
+            st.warning(f"A mobilos folyamat státuszok nem tölthetők be: {exc}")
+            workflow_statuses = pd.DataFrame()
+        invoice_documents = load_courier_payment_documents(courier_id, payment_month)
+        advance_requests = load_courier_salary_advance_requests(courier_id)
+
+        process_ids = {""}
+        if not workflow_statuses.empty:
+            process_ids.update(
+                process_id_from_action_key(item.get("action_key"))
+                for item in workflow_statuses.to_dict("records")
+            )
+        if not invoice_documents.empty:
+            process_ids.update(
+                process_id_from_note(item.get("note"))
+                for item in invoice_documents.to_dict("records")
+            )
+        if not advance_requests.empty:
+            current_requests = advance_requests[
+                pd.to_datetime(advance_requests.get("start_date"), errors="coerce").dt.date.eq(payment_month)
+            ].copy()
+            process_ids.update(
+                normalize_process_id(item.get("process_id"))
+                for item in current_requests.to_dict("records")
+                if normalize_process_id(item.get("process_id"))
+            )
+
+        status_by_key = {
+            str(item.get("action_key") or ""): item
+            for item in workflow_statuses.to_dict("records")
+        } if not workflow_statuses.empty else {}
+        invoice_rows_by_process: dict[str, list[dict[str, object]]] = {}
+        if not invoice_documents.empty:
+            for item in invoice_documents.to_dict("records"):
+                invoice_rows_by_process.setdefault(process_id_from_note(item.get("note")), []).append(item)
+        request_by_process = {
+            normalize_process_id(item.get("process_id")): item
+            for item in advance_requests.to_dict("records")
+            if normalize_process_id(item.get("process_id"))
+        } if not advance_requests.empty else {}
+
+        process_options = []
+        for process_id in sorted(process_ids, key=lambda value: (bool(value), value)):
+            invoice_rows = invoice_rows_by_process.get(process_id, [])
+            latest_invoice = invoice_rows[0] if invoice_rows else {}
+            invoice_number = invoice_number_from_document(latest_invoice) if latest_invoice else ""
+            invoice_amount = sum(invoice_amount_from_document(item) for item in invoice_rows)
+            request_item = request_by_process.get(process_id, {})
+            request_amount = parse_huf_value(request_item.get("requested_amount_huf")) if request_item else 0
+            action_key = process_action_key("invoice_payment", process_id)
+            payment_status = str((status_by_key.get(action_key) or {}).get("status") or "").casefold()
+            process_options.append({
+                "process_id": process_id,
+                "label": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+                "invoice_number": invoice_number,
+                "invoice_file": str(latest_invoice.get("file_name") or ""),
+                "invoice_title": str(latest_invoice.get("title") or ""),
+                "amount": invoice_amount or (payable_total if not process_id else request_amount),
+                "status": "Lezárva" if payment_status == "done" or (not process_id and closure_done) else "Nyitott",
+                "request": request_item,
+            })
+
+        if not process_options:
+            st.info("Nincs kifizethető folyamat az aktuális hónapban.")
+        else:
+            option_labels = [item["label"] for item in process_options]
+            selected_payment_label = st.selectbox(
+                "Folyamat",
+                option_labels,
+                key=f"payment_process_{courier_id}_{payment_month:%Y%m}",
+            )
+            payment_item = process_options[option_labels.index(selected_payment_label)]
+            process_id = str(payment_item["process_id"])
+            invoice_number_default = str(payment_item.get("invoice_number") or "")
+            if not invoice_number_default and not process_id:
+                invoice_number_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
+            invoice_number = st.text_input(
+                "Feltöltött számla sorszáma",
+                value=invoice_number_default,
+                key=f"payment_invoice_{courier_id}_{process_id or 'monthly'}",
+            )
+            recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
+            bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
+            amount_huf = parse_huf_value(payment_item.get("amount"))
+            payment_note = f"{courier_id}-{invoice_number}".strip("-")
+
+            st.markdown(
+                f"""
+                <div class="settlement-profile-shell">
+                  <div class="finance-kpi-grid">
+                    <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
+                    <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(str(payment_item['status']))}</div></div>
+                    <div class="finance-kpi payable"><div class="finance-kpi-label">Összeg</div><div class="finance-kpi-value">{format_huf(amount_huf)}</div></div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            copy_cards_html([
+                ("Bankszámlaszám", bank_account),
+                ("Közlemény", payment_note),
+                ("Név", recipient_name),
+                ("Összeg", format_huf(amount_huf)),
+            ])
+            if payment_item.get("invoice_file"):
+                st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
+
+            close_disabled = str(payment_item.get("status")) == "Lezárva"
+            if st.button("Havi zárás" if not process_id else "Folyamat lezárása", type="primary", use_container_width=True, disabled=close_disabled, key=f"payment_close_{courier_id}_{process_id or 'monthly'}"):
+                try:
+                    if process_id:
+                        request_item = payment_item.get("request") or {}
+                        if str(request_item.get("status") or "").casefold() == "approved":
+                            mark_salary_advance_request_paid(request_item, courier_name)
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=str(row["Futár"]),
+                            action_key=process_action_key("invoice_payment", process_id),
+                            document_month=payment_month,
+                            status="done",
+                            status_note=f"Kifizetve: {format_huf(amount_huf)}; közlemény: {payment_note}",
+                            updated_by=actor,
+                        )
+                    else:
+                        close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
+                        close_salary_advance_installments(courier_id, period_start, period_end)
+                        save_courier_monthly_closure(
+                            session_id,
+                            courier_id,
+                            str(row["Futár"]),
+                            period_start,
+                            period_end,
+                            {
+                                "bank_account_number": bank_account,
+                                "recipient_name": recipient_name,
+                                "payment_note": payment_note,
+                                "invoice_number": invoice_number,
+                                "payable_huf": amount_huf,
+                            },
+                            {
+                                "base_huf": base_total,
+                                "tip_huf": tip_total,
+                                "bonus_huf": other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total,
+                                "malus_huf": malus_total,
+                                "atm_deduction_huf": atm_deduction_total,
+                                "other_expense_huf": other_expense_total,
+                                "salary_advance_huf": salary_advance_total,
+                                "reserve_addition_huf": reserve_addition_total,
+                                "insurance_fee_huf": insurance_fee_total,
+                                "payable_huf": amount_huf,
+                            },
+                        )
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=str(row["Futár"]),
+                            action_key="invoice_payment",
+                            document_month=payment_month,
+                            status="done",
+                            status_note=f"Havi zárás és kifizetés megtörtént: {format_huf(amount_huf)}",
+                            updated_by=actor,
+                        )
+                    st.success("Kifizetés lezárva.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A kifizetés lezárása sikertelen: {exc}")
 
     if selected_menu == "Fizetés előleg":
         st.markdown("#### Fizetés előleg")
