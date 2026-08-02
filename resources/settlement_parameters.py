@@ -34,6 +34,11 @@ def _table(client: Any, name: str) -> Any:
 
 
 def _text(value: Any) -> str:
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
     return str(value or "").strip()
 
 
@@ -43,6 +48,11 @@ def _optional_text(value: Any) -> str | None:
 
 
 def _date(value: Any, label: str) -> date:
+    try:
+        if pd.isna(value):
+            raise ValueError(f"A(z) {label} dátuma érvénytelen.")
+    except TypeError:
+        pass
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -232,7 +242,7 @@ def parameter_status(valid_from: Any, valid_to: Any, is_active: bool, today: dat
     today = today or date.today()
     if today < _date(valid_from, "kezdő"):
         return "Jövőbeni"
-    if valid_to not in (None, "") and today > _date(valid_to, "záró"):
+    if _text(valid_to) and today > _date(valid_to, "záró"):
         return "Lejárt"
     return "Aktív"
 

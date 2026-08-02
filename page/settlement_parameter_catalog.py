@@ -541,5 +541,7 @@ def render_parameter_catalog(client: Any) -> None:
         with tabs[6]: _show_loyalty_bonus(client)
         with tabs[7]: _show_life_insurance(client)
         with tabs[8]: _show_customer_rating(client)
+    except ValueError as exc:
+        st.error(f"A paraméter értéke hibás: {exc}")
     except Exception as exc:
-        st.error("A settlement paramétertáblák még nem érhetők el. Futtasd a `sql/settlement_parameterized_base_rate.sql` fájlt a Supabase SQL Editorban. Részlet: " + str(exc))
+        st.error("A settlement paramétertáblák nem olvashatók. Ha most telepíted először, futtasd a `sql/settlement_parameterized_base_rate.sql` fájlt a Supabase SQL Editorban. Részlet: " + str(exc))
