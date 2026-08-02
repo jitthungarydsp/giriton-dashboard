@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from resources.email_sender import send_login_credentials, validate_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.security import verify_password
 
@@ -52,6 +53,18 @@ LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegistrationRequest(BaseModel):
+    courier_id: str
+    courier_name: str
+    phone_number: str
+    email: str
+
+
+class PasswordResetRequest(BaseModel):
+    courier_id: str
+    email: str
 
 
 class WorkflowActionRequest(BaseModel):
@@ -197,6 +210,27 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
         if user.get("password") == password:
             return user
     return None
+
+
+def user_courier_id(user: dict[str, Any]) -> str:
+    return str(user.get("courierId") or user.get("courier_id") or "").strip()
+
+
+def find_user_by_courier_id(courier_id: str) -> dict[str, Any] | None:
+    clean_id = normalize_profile_courier_id(courier_id)
+    for user in load_users():
+        if not user.get("active", True):
+            continue
+        if user_courier_id(user) == clean_id:
+            return user
+    return None
+
+
+def normalize_email_address(value: str) -> str:
+    try:
+        return validate_email(str(value or "").strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Az e-mail cim formatuma hibas.") from exc
 
 
 def create_session(user: dict[str, Any]) -> str:
@@ -906,6 +940,11 @@ def parse_month(value: str | date | None) -> date:
         raise HTTPException(status_code=422, detail="A hónap formátuma YYYY-MM legyen.") from exc
 
 
+def month_end(value: date) -> date:
+    next_month = (value.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return next_month - timedelta(days=1)
+
+
 def clean_text(value: Any, *, limit: int = 500) -> str:
     text = str(value or "").strip()
     text = re.sub(r"\s+", " ", text)
@@ -922,6 +961,16 @@ def supabase_headers(*, prefer: str = "") -> dict[str, str]:
         headers["Prefer"] = prefer
     return headers
 
+
+def supabase_schema_headers(*, prefer: str = "", schema: str = "public") -> dict[str, str]:
+    headers = supabase_headers(prefer=prefer)
+    clean_schema = str(schema or "public").strip()
+    if clean_schema and clean_schema != "public":
+        headers["Accept-Profile"] = clean_schema
+        headers["Content-Profile"] = clean_schema
+    return headers
+
+
 def supabase_rest(
     method: str,
     table: str,
@@ -930,13 +979,14 @@ def supabase_rest(
     payload: dict[str, Any] | None = None,
     prefer: str = "",
     timeout: int = 30,
+    schema: str = "public",
 ) -> Any:
     url = load_setting("SUPABASE_URL").rstrip("/")
 
     response = requests.request(
         method,
         f"{url}/rest/v1/{table}",
-        headers=supabase_headers(prefer=prefer),
+        headers=supabase_schema_headers(prefer=prefer, schema=schema),
         params=params,
         json=payload,
         timeout=timeout,
@@ -1070,6 +1120,316 @@ def validate_bank_account_number(value: str) -> str:
     if compact and len(compact) not in {16, 24, 32}:
         raise HTTPException(status_code=422, detail="A bankszámlaszám hossza nem megfelelő.")
     return bank_account_number
+
+
+def read_master_auth_row(courier_id: str) -> dict[str, Any] | None:
+    clean_id = normalize_profile_courier_id(courier_id)
+    rows = supabase_rest(
+        "GET",
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name,phone_number,email,billing_email,billing_data_updated_at,updated_at",
+            "courier_id": f"eq.{clean_id}",
+            "limit": "1",
+        },
+    )
+    return rows[0] if rows else None
+
+
+def master_email(row: dict[str, Any] | None) -> str:
+    if not row:
+        return ""
+    return str(row.get("email") or row.get("billing_email") or "").strip()
+
+
+def update_master_email_if_missing(row: dict[str, Any], email: str) -> bool:
+    existing_email = master_email(row)
+    if existing_email:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+    supabase_rest(
+        "PATCH",
+        "courier_master",
+        params={"courier_id": f"eq.{row.get('courier_id')}"},
+        payload={
+            "email": email,
+            "billing_email": email,
+            "billing_data_updated_at": now,
+            "updated_at": now,
+        },
+        prefer="return=minimal",
+    )
+    return True
+
+
+def optional_supabase_rows(
+    table: str,
+    *,
+    params: dict[str, str],
+    schema: str = "public",
+    timeout: int = 30,
+) -> list[dict[str, Any]]:
+    try:
+        return supabase_rest(
+            "GET",
+            table,
+            params=params,
+            schema=schema,
+            timeout=timeout,
+        ) or []
+    except HTTPException:
+        return []
+
+
+def load_month_day_rules(period_start: date, period_end: date) -> tuple[list[dict[str, Any]], str]:
+    rows = optional_supabase_rows(
+        "cfg_jitt_day_definitions",
+        schema="settlement",
+        params={
+            "select": "day_type,weekdays,valid_from,valid_to,priority",
+            "is_active": "eq.true",
+            "deleted_at": "is.null",
+            "valid_from": f"lte.{period_end.isoformat()}",
+            "or": f"(valid_to.is.null,valid_to.gte.{period_start.isoformat()})",
+            "order": "priority.asc,valid_from.desc",
+            "limit": "100",
+        },
+    )
+    if rows:
+        return rows, "rules"
+    return [
+        {
+            "day_type": "highlighted",
+            "weekdays": [1, 5, 6, 7],
+            "valid_from": "1900-01-01",
+            "valid_to": None,
+            "priority": 999,
+        }
+    ], "fallback"
+
+
+def day_type_for_date(value: date | None, day_rules: list[dict[str, Any]]) -> str:
+    if not value:
+        return "unknown"
+    for rule in day_rules:
+        try:
+            valid_from = date.fromisoformat(str(rule.get("valid_from") or "1900-01-01")[:10])
+            valid_to_raw = str(rule.get("valid_to") or "").strip()
+            valid_to = date.fromisoformat(valid_to_raw[:10]) if valid_to_raw else date.max
+            weekdays = rule.get("weekdays") or []
+            if valid_from <= value <= valid_to and value.isoweekday() in [int(day) for day in weekdays]:
+                return str(rule.get("day_type") or "normal")
+        except Exception:
+            continue
+    return "normal"
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(float(str(value or "0").replace(",", ".")))
+    except Exception:
+        return 0
+
+
+def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    routes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        response_json = row.get("response_json") or {}
+        if isinstance(response_json, str):
+            try:
+                response_json = json.loads(response_json)
+            except json.JSONDecodeError:
+                response_json = {}
+        if not isinstance(response_json, dict):
+            continue
+        for route in response_json.get("routes") or []:
+            if not isinstance(route, dict):
+                continue
+            route_id = str(route.get("routeId") or route.get("id") or "").strip()
+            key = f"{row.get('warehouse_id')}|{route_id or len(routes)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            work_date_text = str(route.get("deliveryDate") or route.get("date") or "")[:10]
+            try:
+                work_date = date.fromisoformat(work_date_text)
+            except ValueError:
+                work_date = None
+            route_layer = str(route.get("routeLayer") or route.get("routeType") or "normal").strip().lower()
+            routes.append(
+                {
+                    "route_id": route_id,
+                    "work_date": work_date,
+                    "route_type": "express" if "express" in route_layer else "regional" if "region" in route_layer else "normal",
+                    "orders": safe_int(route.get("orderCount") or route.get("orders")),
+                }
+            )
+    return routes
+
+
+def load_api_financial_routes_for_courier(
+    courier_id: str,
+    period_start: date,
+) -> tuple[list[dict[str, Any]], str]:
+    params = {
+        "select": "courier_id,courier_name,warehouse_id,response_json,status_code",
+        "courier_id": f"eq.{courier_id}",
+        "year": f"eq.{period_start.year}",
+        "month": f"eq.{period_start.month}",
+        "status_code": "eq.200",
+        "limit": "20",
+    }
+    rows: list[dict[str, Any]] = []
+    source_tables: list[str] = []
+    for table in ("courier_financial_overview_raw_bud1", "courier_financial_overview_raw_bud2"):
+        table_rows = optional_supabase_rows(table, params=params, timeout=60)
+        if table_rows:
+            rows.extend(table_rows)
+            source_tables.append(table)
+    if not rows:
+        rows = optional_supabase_rows("courier_financial_overview_raw", params=params, timeout=60)
+        if rows:
+            source_tables.append("courier_financial_overview_raw")
+    return parse_api_routes(rows), ", ".join(source_tables) if source_tables else ""
+
+
+def load_daily_performance_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "raw_jitt_invoice_perf_couriers_daily",
+        params={
+            "select": "work_date,warehouse_code,order_count,route_count,delayed_order_count,shift_count,late_count,did_not_come_count,pct_late_evaluation,pct_did_not_come_evaluation",
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.asc",
+            "limit": "1000",
+        },
+        timeout=60,
+    )
+
+
+def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
+    rows = optional_supabase_rows(
+        "bill_jitt_invoice_customer_rating_bonus",
+        params={
+            "select": "rating_count,average_rating,completed_routes",
+            "courier_id": f"eq.{courier_id}",
+            "billing_month": f"eq.{period_start.isoformat()}",
+            "limit": "10",
+        },
+    )
+    if not rows:
+        return {"available": False, "ratingCount": 0, "averageRating": None, "completedRoutes": 0}
+    rating_count = sum(safe_int(row.get("rating_count")) for row in rows)
+    completed_routes = sum(safe_int(row.get("completed_routes")) for row in rows)
+    averages = [float(row.get("average_rating")) for row in rows if row.get("average_rating") not in (None, "")]
+    return {
+        "available": True,
+        "ratingCount": rating_count,
+        "averageRating": round(sum(averages) / len(averages), 2) if averages else None,
+        "completedRoutes": completed_routes,
+    }
+
+
+def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) -> dict[str, Any]:
+    courier_id, courier_name = courier_identity(user)
+    period_start = month_value.replace(day=1)
+    period_end = month_end(period_start)
+    daily_rows = load_daily_performance_for_courier(courier_id, period_start, period_end)
+    route_rows, route_source = load_api_financial_routes_for_courier(courier_id, period_start)
+    day_rules, day_rule_source = load_month_day_rules(period_start, period_end)
+
+    daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
+    daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
+    route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
+    route_count = len(route_rows)
+    total_routes = route_count or daily_routes
+    total_orders = route_orders or daily_orders
+    average_orders = round(total_orders / total_routes, 1) if total_routes else 0
+
+    highlighted_routes = 0
+    normal_day_routes = 0
+    express_routes = 0
+    express_orders = 0
+    route_types = {"normal": 0, "express": 0, "regional": 0}
+    for route in route_rows:
+        route_type = route.get("route_type") or "normal"
+        route_types[route_type] = route_types.get(route_type, 0) + 1
+        if route_type == "express":
+            express_routes += 1
+            express_orders += safe_int(route.get("orders"))
+        if day_type_for_date(route.get("work_date"), day_rules) == "highlighted":
+            highlighted_routes += 1
+        else:
+            normal_day_routes += 1
+
+    delayed_orders = sum(safe_int(row.get("delayed_order_count")) for row in daily_rows)
+    late_count = sum(safe_int(row.get("late_count")) for row in daily_rows)
+    no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
+    shift_count = sum(safe_int(row.get("shift_count")) for row in daily_rows)
+
+    return {
+        "month": period_start.strftime("%Y-%m"),
+        "courier": {"id": courier_id, "name": courier_name},
+        "amountsHidden": True,
+        "amountsNote": "A mobil statisztikaban a forint osszegek egyelore rejtve vannak.",
+        "summary": {
+            "routes": total_routes,
+            "orders": total_orders,
+            "averageOrdersPerRoute": average_orders,
+            "delayedOrders": delayed_orders,
+            "lateCount": late_count,
+            "noShowCount": no_show_count,
+            "shiftCount": shift_count,
+        },
+        "routeBreakdown": {
+            "highlightedRoutes": highlighted_routes,
+            "normalDayRoutes": normal_day_routes,
+            "expressRoutes": express_routes,
+            "expressOrders": express_orders,
+            "normalRoutes": route_types.get("normal", 0),
+            "regionalRoutes": route_types.get("regional", 0),
+        },
+        "customerRating": load_customer_rating_stats(courier_id, period_start),
+        "dataQuality": {
+            "dailyRows": len(daily_rows),
+            "routeRows": len(route_rows),
+            "routeSource": route_source or "nincs route raw adat",
+            "dayRuleSource": day_rule_source,
+        },
+    }
+
+
+def save_registration_request(payload: RegistrationRequest) -> dict[str, Any]:
+    courier_id = normalize_profile_courier_id(payload.courier_id)
+    email = normalize_email_address(payload.email)
+    courier_name = clean_text(payload.courier_name, limit=160)
+    phone_number = clean_text(payload.phone_number, limit=60)
+    if not courier_name:
+        raise HTTPException(status_code=422, detail="A nev megadasa kotelezo.")
+    if not phone_number:
+        raise HTTPException(status_code=422, detail="A telefonszam megadasa kotelezo.")
+
+    rows = supabase_rest(
+        "POST",
+        "pwa_registration_requests",
+        params={"on_conflict": "courier_id"},
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "phone_number": phone_number,
+            "email": email,
+            "status": "new",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    return rows[0] if rows else {}
 
 
 def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
@@ -1743,6 +2103,79 @@ def logout(response: Response):
     return {"ok": True}
 
 
+@app.post("/api/register")
+def register(payload: RegistrationRequest):
+    courier_id = normalize_profile_courier_id(payload.courier_id)
+    email = normalize_email_address(payload.email)
+    master_row = read_master_auth_row(courier_id)
+    if master_row:
+        existing_email = master_email(master_row)
+        email_updated = False
+        if not existing_email:
+            email_updated = update_master_email_if_missing(master_row, email)
+        return {
+            "ok": False,
+            "redirect": "password_reset",
+            "message": (
+                "Ez a futar ID mar szerepel a torzsben, ezert regisztracio helyett "
+                "jelszo-visszaallitast kell inditani."
+            ),
+            "emailUpdated": email_updated,
+        }
+
+    request_row = save_registration_request(payload)
+    return {
+        "ok": True,
+        "message": "A regisztracios kerelmet rogzitettuk. Admin jovahagyas utan lesz belepesed.",
+        "request": request_row,
+    }
+
+
+@app.post("/api/password-reset")
+def password_reset(payload: PasswordResetRequest):
+    courier_id = normalize_profile_courier_id(payload.courier_id)
+    email = normalize_email_address(payload.email)
+    user = find_user_by_courier_id(courier_id)
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="Ehhez a futar ID-hoz nincs aktiv mobil felhasznalo. Kerj admin segitseget.",
+        )
+
+    master_row = read_master_auth_row(courier_id)
+    if not master_row:
+        raise HTTPException(status_code=404, detail="Ez a futar ID nincs a futar torzsben.")
+
+    existing_email = master_email(master_row)
+    email_updated = False
+    if existing_email and existing_email.casefold() != email.casefold():
+        raise HTTPException(
+            status_code=403,
+            detail="A megadott e-mail cim nem egyezik a torzsben rogzitett e-mail cimmel.",
+        )
+    if not existing_email:
+        email_updated = update_master_email_if_missing(master_row, email)
+
+    password = str(user.get("password") or "").strip()
+    if not password:
+        raise HTTPException(
+            status_code=409,
+            detail="Ehhez a felhasznalohoz nincs olvashato jelszo, admin jelszoreset szukseges.",
+        )
+
+    try:
+        result = send_login_credentials(email, str(user.get("username") or "").strip(), password)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Az e-mail kuldese sikertelen: {exc}") from exc
+
+    return {
+        "ok": True,
+        "message": "Elkuldtem a belepesi adatokat a megadott e-mail cimre.",
+        "emailUpdated": email_updated,
+        "recipient": result.get("recipient"),
+    }
+
+
 @app.get("/api/me")
 def me(giriton_pwa_session: str | None = Cookie(default=None)):
     return {"user": public_user(require_user(giriton_pwa_session))}
@@ -1801,6 +2234,15 @@ def get_billing_profile(
 ):
     user = require_user(giriton_pwa_session)
     return {"billing": read_billing_profile(user)}
+
+
+@app.get("/api/statistics/monthly")
+def monthly_statistics(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    return build_monthly_courier_statistics(user, parse_month(month))
 
 
 @app.put("/api/profile/billing")

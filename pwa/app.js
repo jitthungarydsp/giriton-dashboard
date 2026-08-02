@@ -9,8 +9,10 @@ const state = {
   currentRoute: null,
   coordinatorSetup: null,
   deviceReports: [],
+  statistics: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
+  statisticsMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
 const $ = (selector) => document.querySelector(selector);
@@ -100,7 +102,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-documents", "#nav-profile", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-documents", "#nav-profile", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
 }
 
@@ -108,6 +110,7 @@ function showSection(section) {
   state.section = section;
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
+  $("#statistics-content").classList.toggle("hidden", section !== "statistics");
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
@@ -115,12 +118,14 @@ function showSection(section) {
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
+  $("#nav-statistics").classList.toggle("active", section === "statistics");
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
+  if (section === "statistics" && !state.statistics) loadStatistics();
   if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
@@ -133,6 +138,102 @@ function showSection(section) {
   if (section === "coordinator") loadCoordinatorAdjustments();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function formatCount(value) {
+  return new Intl.NumberFormat("hu-HU", { maximumFractionDigits: 0 }).format(Number(value || 0));
+}
+
+function formatAverage(value) {
+  return new Intl.NumberFormat("hu-HU", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value || 0));
+}
+
+function statisticCard(label, value, note = "") {
+  return `
+    <article class="stat-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${note ? `<small>${escapeHtml(note)}</small>` : ""}
+    </article>
+  `;
+}
+
+function renderStatistics() {
+  const payload = state.statistics;
+  const grid = $("#statistics-grid");
+  const message = $("#statistics-message");
+  const breakdown = $("#statistics-breakdown");
+  if (!grid || !message || !breakdown) return;
+
+  if (!payload) {
+    grid.innerHTML = "";
+    breakdown.innerHTML = "";
+    message.innerHTML = `<div class="notice">Válassz hónapot, majd frissítsd a statisztikát.</div>`;
+    return;
+  }
+
+  const summary = payload.summary || {};
+  const routes = Number(summary.routes || 0);
+  const orders = Number(summary.orders || 0);
+  const average = Number(summary.averageOrdersPerRoute || 0);
+  const rating = payload.customerRating || {};
+  const ratingValue = rating.available && rating.averageRating !== null
+    ? formatAverage(rating.averageRating)
+    : "Előkészítve";
+
+  message.innerHTML = `
+    <div class="notice">
+      ${escapeHtml(payload.month || state.statisticsMonth)} havi adatok. ${escapeHtml(payload.amountsNote || "Összegek rejtve a mobil nézetben.")}
+    </div>
+  `;
+  grid.innerHTML = [
+    statisticCard("Kör", formatCount(routes), "kivitt túrák"),
+    statisticCard("Cím", formatCount(orders), "rendelések"),
+    statisticCard("Átlag", formatAverage(average), "cím / kör"),
+    statisticCard("Késéses cím", formatCount(summary.delayedOrders), "Dataport"),
+    statisticCard("Késés", formatCount(summary.lateCount), "műszak"),
+    statisticCard("No-show", formatCount(summary.noShowCount), "műszak"),
+    statisticCard("Műszak", formatCount(summary.shiftCount), "összes"),
+    statisticCard("Borravaló", "Rejtve", "mobil nézetben"),
+    statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
+    statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
+  ].join("");
+
+  const routeBreakdown = payload.routeBreakdown || {};
+  const quality = payload.dataQuality || {};
+  breakdown.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">∑</span>
+      <div>
+        <h3>Túra bontás</h3>
+        <p>A besorolás az érvényes szabályokat figyeli, ha vannak szabályok a DB-ben.</p>
+      </div>
+    </div>
+    <div class="stat-breakdown-list">
+      <div class="stat-row"><span>Kiemelt napi kör</span><strong>${formatCount(routeBreakdown.highlightedRoutes)}</strong></div>
+      <div class="stat-row"><span>Nem kiemelt napi kör</span><strong>${formatCount(routeBreakdown.normalDayRoutes)}</strong></div>
+      <div class="stat-row"><span>Express kör</span><strong>${formatCount(routeBreakdown.expressRoutes)}</strong></div>
+      <div class="stat-row"><span>Express cím</span><strong>${formatCount(routeBreakdown.expressOrders)}</strong></div>
+      <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
+      <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
+    </div>
+    <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
+  `;
+}
+
+async function loadStatistics() {
+  const monthInput = $("#statistics-month");
+  if (monthInput?.value) state.statisticsMonth = monthInput.value;
+  $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
+  try {
+    state.statistics = await api(`/api/statistics/monthly?month=${encodeURIComponent(state.statisticsMonth)}`);
+    renderStatistics();
+  } catch (error) {
+    state.statistics = null;
+    $("#statistics-grid").innerHTML = "";
+    $("#statistics-breakdown").innerHTML = "";
+    $("#statistics-message").innerHTML = `<div class="notice error">A statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 
@@ -761,7 +862,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=26");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=28");
   }
   return navigator.serviceWorker.ready;
 }
@@ -1403,6 +1504,7 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
 });
 
 $("#workflow-month").value = state.workflowMonth;
+$("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
 $("#workflow-month").addEventListener("change", (event) => {
   state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
@@ -1414,6 +1516,47 @@ $("#workflow-month").addEventListener("change", (event) => {
 
 $("#workflow-refresh").addEventListener("click", () => {
   loadWorkflow();
+});
+
+$("#statistics-month").addEventListener("change", (event) => {
+  state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  state.statistics = null;
+  loadStatistics();
+});
+
+$("#statistics-refresh").addEventListener("click", () => {
+  state.statistics = null;
+  loadStatistics();
+});
+
+function showAuthPanel(panel) {
+  const loginForm = $("#login-form");
+  const registerForm = $("#register-form");
+  const resetForm = $("#password-reset-form");
+  const links = document.querySelector(".auth-links");
+  if (loginForm) loginForm.classList.toggle("hidden", panel !== "login");
+  if (registerForm) registerForm.classList.toggle("hidden", panel !== "register");
+  if (resetForm) resetForm.classList.toggle("hidden", panel !== "reset");
+  if (links) links.classList.toggle("hidden", panel !== "login");
+  $("#login-error").textContent = "";
+  const registerMessage = $("#register-message");
+  const resetMessage = $("#password-reset-message");
+  if (registerMessage) registerMessage.textContent = "";
+  if (resetMessage) resetMessage.textContent = "";
+}
+
+function setAuthMessage(selector, message, isError = false) {
+  const target = $(selector);
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("success", !isError && Boolean(message));
+  target.classList.toggle("error", Boolean(isError));
+}
+
+$("#show-register")?.addEventListener("click", () => showAuthPanel("register"));
+$("#show-password-reset")?.addEventListener("click", () => showAuthPanel("reset"));
+document.querySelectorAll("[data-auth-back]").forEach((button) => {
+  button.addEventListener("click", () => showAuthPanel("login"));
 });
 
 $("#login-form").addEventListener("submit", async (event) => {
@@ -1433,6 +1576,72 @@ $("#login-form").addEventListener("submit", async (event) => {
   }
 });
 
+$("#register-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  setAuthMessage("#register-message", "Regisztracio ellenorzese...");
+  if (button) button.disabled = true;
+  const payload = {
+    courier_id: $("#register-courier-id").value,
+    courier_name: $("#register-name").value,
+    phone_number: $("#register-phone").value,
+    email: $("#register-email").value,
+  };
+  try {
+    const response = await api("/api/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (response.redirect === "password_reset") {
+      $("#reset-courier-id").value = payload.courier_id;
+      $("#reset-email").value = payload.email;
+      showAuthPanel("reset");
+      setAuthMessage(
+        "#password-reset-message",
+        response.emailUpdated
+          ? "A futar ID mar szerepel a torzsben. Az e-mail cimet frissitettuk, innen tudsz jelszot kerni."
+          : "A futar ID mar szerepel a torzsben. Innen tudsz jelszot kerni."
+      );
+      return;
+    }
+    form.reset();
+    setAuthMessage("#register-message", response.message || "Regisztracio rogzitve.");
+  } catch (error) {
+    setAuthMessage("#register-message", error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
+$("#password-reset-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  setAuthMessage("#password-reset-message", "Belepesi adatok kuldese...");
+  if (button) button.disabled = true;
+  try {
+    const response = await api("/api/password-reset", {
+      method: "POST",
+      body: JSON.stringify({
+        courier_id: $("#reset-courier-id").value,
+        email: $("#reset-email").value,
+      }),
+    });
+    form.reset();
+    setAuthMessage(
+      "#password-reset-message",
+      response.emailUpdated
+        ? "E-mail cim frissitve, a belepesi adatokat elkuldtuk."
+        : response.message || "A belepesi adatokat elkuldtuk."
+    );
+  } catch (error) {
+    setAuthMessage("#password-reset-message", error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   state.user = null;
@@ -1442,11 +1651,13 @@ $("#logout").addEventListener("click", async () => {
   state.checkedInvoiceMonth = null;
   state.coordinatorSetup = null;
   state.deviceReports = [];
+  state.statistics = null;
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
+$("#nav-statistics").addEventListener("click", () => showSection("statistics"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));

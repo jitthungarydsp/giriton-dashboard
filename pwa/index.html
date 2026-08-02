@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=25" />
+    <link rel="stylesheet" href="/styles.css?v=27" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -23,6 +23,30 @@
           <label>Jelszó<input id="password" type="password" autocomplete="current-password" required /></label>
           <p id="login-error" class="error" role="alert"></p>
           <button class="primary" type="submit">Belépés</button>
+        </form>
+        <div class="auth-links">
+          <button id="show-password-reset" type="button">Elfelejtettem a jelszavam</button>
+          <button id="show-register" type="button">Regisztracio</button>
+        </div>
+
+        <form id="password-reset-form" class="hidden">
+          <h2>Jelszo visszaallitas</h2>
+          <label>Futar ID<input id="reset-courier-id" name="courier_id" inputmode="numeric" required /></label>
+          <label>E-mail cim<input id="reset-email" name="email" type="email" autocomplete="email" required /></label>
+          <p id="password-reset-message" class="error" role="alert"></p>
+          <button class="primary" type="submit">Belepesi adatok kuldese</button>
+          <button class="secondary" data-auth-back type="button">Vissza a belepeshez</button>
+        </form>
+
+        <form id="register-form" class="hidden">
+          <h2>Regisztracio</h2>
+          <label>Futar ID<input id="register-courier-id" name="courier_id" inputmode="numeric" required /></label>
+          <label>Nev<input id="register-name" name="courier_name" autocomplete="name" required /></label>
+          <label>Telefonszam<input id="register-phone" name="phone_number" inputmode="tel" autocomplete="tel" required /></label>
+          <label>E-mail cim<input id="register-email" name="email" type="email" autocomplete="email" required /></label>
+          <p id="register-message" class="error" role="alert"></p>
+          <button class="primary" type="submit">Regisztracio elkuldese</button>
+          <button class="secondary" data-auth-back type="button">Vissza a belepeshez</button>
         </form>
       </section>
     </main>
@@ -106,6 +130,24 @@
         </section>
 
         <p id="workflow-updated-at" class="updated-at"></p>
+      </div>
+
+      <div id="statistics-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">STATISZTIKA</p>
+            <h2>Havi teljesítmény</h2>
+            <p class="muted">Körök, címek és teljesítmény mutatók. Forint összegeket itt még nem mutatunk.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="statistics-month" type="month" /></label>
+            <button id="statistics-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+
+        <section id="statistics-message" aria-live="polite"></section>
+        <section id="statistics-grid" class="statistics-grid"></section>
+        <section id="statistics-breakdown" class="process-card"></section>
       </div>
 
       <div id="documents-content" class="hidden">
@@ -250,6 +292,7 @@
       <nav class="bottom-nav" aria-label="Főmenü">
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
+        <button id="nav-statistics"><span>∑</span>Statisztika</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
@@ -257,6 +300,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=36" defer></script>
+    <script src="/app.js?v=38" defer></script>
   </body>
 </html>
