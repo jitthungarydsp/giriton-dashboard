@@ -3534,13 +3534,14 @@ def load_courier_route_detail(
         if str(calculation_mode).casefold() != "api" or period_start is None:
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
+        _, api_period_end = month_bounds(period_start)
         api_rows = load_api_financial_overview_rows(period_start.year, period_start.month)
         warehouse_id = settlement_warehouse_id(warehouse_label)
         if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
             api_rows = api_rows.loc[
                 pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
             ]
-        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, period_end)
+        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
         if not api_detail.empty:
             return api_detail.drop(columns=["_courier_id"], errors="ignore")
         if not session_id:
