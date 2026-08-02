@@ -210,7 +210,14 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "username": str(user.get("username") or ""),
         "courierId": str(user.get("courierId") or ""),
         "role": str(user.get("role") or "user"),
+        "canPreviewCouriers": can_preview_couriers(user),
     }
+
+
+def can_preview_couriers(user: dict[str, Any]) -> bool:
+    username_key = normalize_text(user.get("username"))
+    role = str(user.get("role") or "").strip().lower()
+    return role == "admin" or username_key == normalize_text("Bagoly Zoltán")
 
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
@@ -1278,6 +1285,32 @@ def courier_identity(user: dict[str, Any]) -> tuple[str, str]:
     return courier_id, courier_name
 
 
+def read_courier_display_name(courier_id: str) -> str:
+    rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "courier_name",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+    )
+    return str((rows[0] if rows else {}).get("courier_name") or "").strip()
+
+
+def workflow_view_user(user: dict[str, Any], courier_id: str | None = "") -> tuple[dict[str, Any], bool]:
+    target_id = str(courier_id or "").strip()
+    if not target_id:
+        return user, False
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="Másik futár mobil nézetéhez admin jogosultság szükséges.")
+    target_name = read_courier_display_name(target_id) or f"Futár {target_id}"
+    preview_user = dict(user)
+    preview_user["courierId"] = target_id
+    preview_user["username"] = target_name
+    preview_user["_previewedBy"] = str(user.get("username") or "")
+    return preview_user, True
+
+
 def profile_identity(user: dict[str, Any]) -> tuple[str, str]:
     return (
         str(user.get("courierId") or "").strip(),
@@ -1485,9 +1518,22 @@ def read_mobile_settlement_period_config(month: date) -> dict[str, Any]:
     return dict(rows[0]) if rows else {}
 
 
-def latest_settlement_session_for_month(courier_id: str, month: date, config: dict[str, Any]) -> dict[str, str]:
+def latest_settlement_session_for_month(
+    courier_id: str,
+    month: date,
+    config: dict[str, Any],
+    *,
+    allow_unpublished: bool = False,
+) -> dict[str, str]:
     config_mode = str(config.get("calculation_mode") or "").strip()
     if config_mode not in {"API", "Excel"}:
+        if allow_unpublished:
+            config_mode = ""
+        else:
+            return {"sessionId": "", "sourceMode": "", "sourceSheet": "", "message": "Az admin még nem publikálta a havi mobil elszámolási forrást."}
+    if config_mode not in {"API", "Excel"}:
+        config_mode = ""
+    if not allow_unpublished and config_mode not in {"API", "Excel"}:
         return {"sessionId": "", "sourceMode": "", "sourceSheet": "", "message": "Az admin még nem publikálta a havi mobil elszámolási forrást."}
     configured_session_id = str(config.get("session_id") or "").strip()
     if configured_session_id:
@@ -1516,7 +1562,7 @@ def latest_settlement_session_for_month(courier_id: str, month: date, config: di
     for row in rows:
         source_sheet = str(row.get("source_sheet") or "").strip()
         source_mode = "API" if source_sheet.lower().startswith("api financial overview") else "Excel"
-        if source_mode != config_mode:
+        if config_mode and source_mode != config_mode:
             continue
         return {
             "sessionId": str(row.get("session_id") or "").strip(),
@@ -1524,12 +1570,13 @@ def latest_settlement_session_for_month(courier_id: str, month: date, config: di
             "sourceSheet": source_sheet,
             "message": "",
         }
-    return {"sessionId": "", "sourceMode": config_mode, "sourceSheet": "", "message": f"Nincs {config_mode} session ehhez a hónaphoz."}
+    source_label = config_mode or "API/Excel"
+    return {"sessionId": "", "sourceMode": config_mode, "sourceSheet": "", "message": f"Nincs {source_label} session ehhez a hónaphoz."}
 
 
-def read_courier_settlement_summary_row(courier_id: str, month: date) -> dict[str, Any]:
+def read_courier_settlement_summary_row(courier_id: str, month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     config = read_mobile_settlement_period_config(month)
-    session = latest_settlement_session_for_month(courier_id, month, config)
+    session = latest_settlement_session_for_month(courier_id, month, config, allow_unpublished=allow_unpublished)
     session_id = session.get("sessionId") or ""
     if not session_id:
         return {"_mobile_unavailable_message": session.get("message") or "Nincs publikált havi mobil elszámolási forrás."}
@@ -1588,9 +1635,9 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     return cards
 
 
-def build_financial_breakdown(user: dict[str, Any], month: date) -> dict[str, Any]:
+def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
-    row = read_courier_settlement_summary_row(courier_id, month)
+    row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     if not row or row.get("_mobile_unavailable_message"):
         return {
             "available": False,
@@ -2254,11 +2301,18 @@ def upsert_workflow_status(
     )
 
 
-def build_workflow(user: dict[str, Any], month: date, process: str | None = "") -> dict[str, Any]:
+def build_workflow(
+    user: dict[str, Any],
+    month: date,
+    process: str | None = "",
+    *,
+    preview_read_only: bool = False,
+    allow_unpublished: bool = False,
+) -> dict[str, Any]:
     process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
-    financial_breakdown = build_financial_breakdown(user, month) if not process_id else {
+    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=allow_unpublished) if not process_id else {
         "available": False,
         "month": month.strftime("%Y-%m"),
         "totalPayableHuf": 0,
@@ -2399,6 +2453,8 @@ def build_workflow(user: dict[str, Any], month: date, process: str | None = "") 
         "month": month.strftime("%Y-%m"),
         "process": process_id,
         "processLabel": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+        "viewerReadOnly": preview_read_only,
+        "viewingAs": public_user(user) if preview_read_only else None,
         "steps": steps,
         "states": states,
         "documents": safe_documents,
@@ -3250,18 +3306,29 @@ async def create_route_alert(
 def workflow(
     month: str = Query(default=""),
     process: str = Query(default=""),
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    return build_workflow(require_user(giriton_pwa_session), parse_month(month), process)
+    user = require_user(giriton_pwa_session)
+    view_user, preview = workflow_view_user(user, courier)
+    return build_workflow(
+        view_user,
+        parse_month(month),
+        process,
+        preview_read_only=preview,
+        allow_unpublished=preview,
+    )
 
 
 @app.get("/api/workflow/processes")
 def workflow_processes(
     month: str = Query(default=""),
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    return {"processes": list_workflow_processes(user, parse_month(month))}
+    view_user, _preview = workflow_view_user(user, courier)
+    return {"processes": list_workflow_processes(view_user, parse_month(month))}
 
 
 @app.post("/api/workflow/{action}/accept")

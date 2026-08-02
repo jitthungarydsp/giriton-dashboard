@@ -15,6 +15,7 @@ const state = {
   workflowMonth: new Date().toISOString().slice(0, 7),
   workflowProcess: "",
   workflowProcesses: [{ id: "", label: "Havi folyamat" }],
+  workflowPreviewCourierId: "",
   statisticsMonth: new Date().toISOString().slice(0, 7),
   section: "home",
 };
@@ -107,6 +108,8 @@ function showApp() {
   const coordinatorOnly = role === "coordinator";
   ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
+  const previewWrapper = $("#workflow-preview-wrapper");
+  if (previewWrapper) previewWrapper.classList.toggle("hidden", !state.user.canPreviewCouriers);
 }
 
 function showSection(section) {
@@ -718,6 +721,17 @@ function workflowStep(key) {
 function workflowQuery() {
   const params = new URLSearchParams({ month: state.workflowMonth });
   if (state.workflowProcess) params.set("process", state.workflowProcess);
+  if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+    params.set("courier", state.workflowPreviewCourierId);
+  }
+  return params.toString();
+}
+
+function workflowProcessQuery() {
+  const params = new URLSearchParams({ month: state.workflowMonth });
+  if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+    params.set("courier", state.workflowPreviewCourierId);
+  }
   return params.toString();
 }
 
@@ -838,7 +852,7 @@ function financialDetailRows(items = []) {
     <div class="financial-detail-row">
       <div>
         <strong>${escapeHtml(item.label)}</strong>
-        <small>${escapeHtml(item.note || item.source || "")}</small>
+        <small>${escapeHtml(item.note || "")}</small>
       </div>
       <span>${formatFinancialValue(item)}</span>
     </div>
@@ -859,15 +873,21 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   const breakdown = state.workflow?.financialBreakdown || {};
   const complaints = state.workflow?.complaints?.settlement || [];
   const hasOpenComplaintForAction = hasOpenComplaint(complaints);
+  const readOnly = Boolean(state.workflow?.viewerReadOnly);
   if (!breakdown.available) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
   const cards = breakdown.cards || [];
+  const viewedUser = state.workflow?.viewingAs || {};
+  const previewNotice = readOnly
+    ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
+    : "";
   return `
+    ${previewNotice}
     <section class="financial-total-card">
       <span>Teljes kifizetendő összeg</span>
       <strong>${formatHuf(breakdown.totalPayableHuf)}</strong>
-      <small>${escapeHtml(breakdown.month || state.workflowMonth)} · ${escapeHtml(breakdown.sourceMode || "DB")} · ${escapeHtml(breakdown.source || "DB")}</small>
+      <small>${escapeHtml(breakdown.month || state.workflowMonth)}</small>
     </section>
     <div class="financial-card-grid">
       ${cards.map((card) => `
@@ -883,6 +903,8 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     <div class="accept-row">
       ${accepted
         ? `<div class="accept-row done">✓ Az elszámolási összeget elfogadtad.</div>`
+        : readOnly
+          ? `<button class="primary" disabled>Előnézeti módban nem módosítható</button>`
         : !locked && !blocksAcceptance
           ? `<button class="primary" id="accept-settlement">✓ Elfogadom az összeget</button>`
           : !locked
@@ -894,6 +916,8 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       ${complaintList(complaints)}
       ${hasOpenComplaintForAction
         ? `<div class="notice">Már van nyitott reklamáció ehhez a hónaphoz. Új rekordot az előző lezárása után tudsz küldeni.</div>`
+        : readOnly
+          ? `<div class="notice">Előnézeti módban reklamáció nem küldhető.</div>`
         : `<form id="complaint-settlement">
             <label>Melyik értékkel van gond?
               ${financialComplaintOptions(breakdown.complaintOptions || [])}
@@ -913,6 +937,7 @@ function renderDocumentPanel(action, title, stepNumber) {
   const ignoreComplaints = Boolean(state.workflow?.ignoreComplaintsForBilling);
   const hasOpenComplaintForAction = hasOpenComplaint(complaints);
   const blocksAcceptance = !ignoreComplaints && hasOpenComplaintForAction;
+  const readOnly = Boolean(state.workflow?.viewerReadOnly);
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);
@@ -943,6 +968,8 @@ function renderDocumentPanel(action, title, stepNumber) {
     ${locked ? `<div class="empty-card">🔒 Az előző lépés még nincs lezárva.</div>` : documentList(documents)}
     ${accepted
       ? `<div class="accept-row done">✓ A dokumentumot elfogadtad.</div>`
+      : documents.length && readOnly
+        ? `<div class="accept-row"><button class="primary" disabled>Előnézeti módban nem módosítható</button></div>`
       : documents.length && !locked && !blocksAcceptance
         ? `<div class="accept-row"><button class="primary" id="accept-${action}">✓ Elfogadom a dokumentumot</button></div>`
         : documents.length && !locked && blocksAcceptance
@@ -954,6 +981,8 @@ function renderDocumentPanel(action, title, stepNumber) {
       ${complaintResponseList(complaintResponses)}
       ${hasOpenComplaintForAction
         ? `<div class="notice">Mar van nyitott reklamacio ehhez a lepeshez. Uj rekordot az elozo lezarasa utan tudsz kuldeni.</div>`
+        : readOnly
+          ? `<div class="notice">Előnézeti módban reklamáció nem küldhető.</div>`
         : `<form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>`}
     </div>` : ""}`;
 
@@ -969,12 +998,37 @@ function setPanelLocked(id, locked) {
   panel.querySelectorAll("input, textarea, button").forEach((control) => { control.disabled = locked; });
 }
 
+function activeWorkflowPanel() {
+  const steps = state.workflow?.steps || [];
+  const firstActive = steps.find((step) => !step.done && !step.locked) || steps.find((step) => !step.done);
+  if (!firstActive && state.workflow?.states?.invoice_payment?.status === "done") return "invoice-check-panel";
+  const key = firstActive?.key || "";
+  if (key.startsWith("settlement")) return "settlement-panel";
+  if (key.startsWith("tig")) return "tig-panel";
+  if (key === "invoice_submit") return "invoice-submit-panel";
+  if (key === "invoice_check" || key === "invoice_payment") return "invoice-check-panel";
+  return "settlement-panel";
+}
+
+function showOnlyWorkflowPanel(panelId) {
+  ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel"].forEach((id) => {
+    const panel = $(`#${id}`);
+    if (panel) panel.classList.toggle("hidden", id !== panelId);
+  });
+}
+
 function renderWorkflow() {
   renderWorkflowSteps();
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
-  setPanelLocked("#invoice-submit-panel", Boolean(workflowStep("invoice_submit").locked));
-  setPanelLocked("#invoice-check-panel", Boolean(workflowStep("invoice_check").locked));
+  const readOnly = Boolean(state.workflow?.viewerReadOnly);
+  setPanelLocked("#invoice-submit-panel", readOnly || Boolean(workflowStep("invoice_submit").locked));
+  setPanelLocked("#invoice-check-panel", readOnly || Boolean(workflowStep("invoice_check").locked));
+  showOnlyWorkflowPanel(activeWorkflowPanel());
+  const viewedUser = state.workflow?.viewingAs;
+  const previewNotice = readOnly && viewedUser
+    ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
+    : "";
   const overrideNotice = state.workflow?.invoiceValidationOverride
     ? `<div class="notice">Admin továbbengedés aktív: a számlaellenőrzési hibák figyelmeztetésként kezelődnek.</div>`
     : "";
@@ -982,10 +1036,10 @@ function renderWorkflow() {
   if (checkInfo) {
     const checkDone = state.workflow?.states?.invoice_check?.status === "done";
     const checkOpen = state.workflow?.states?.invoice_check?.status === "open";
-    checkInfo.innerHTML = `${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
+    checkInfo.innerHTML = `${previewNotice}${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
   }
   const submitInfo = $("#invoice-submit-info");
-  if (submitInfo) submitInfo.innerHTML = `${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
+  if (submitInfo) submitInfo.innerHTML = `${previewNotice}${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
   $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
@@ -1030,7 +1084,7 @@ async function loadWorkflow() {
   renderWorkflow();
   showWorkflowMessage("Folyamat betöltése…");
   try {
-    const processPayload = await api(`/api/workflow/processes?month=${encodeURIComponent(state.workflowMonth)}`);
+    const processPayload = await api(`/api/workflow/processes?${workflowProcessQuery()}`);
     state.workflowProcesses = processPayload.processes || [{ id: "", label: "Havi folyamat" }];
     if (!state.workflowProcesses.some((process) => process.id === state.workflowProcess)) {
       state.workflowProcess = "";
@@ -1828,6 +1882,8 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
 });
 
 $("#workflow-month").value = state.workflowMonth;
+const workflowPreviewCourierInput = $("#workflow-preview-courier");
+if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
 renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
@@ -1841,6 +1897,15 @@ $("#workflow-month").addEventListener("change", (event) => {
 
 $("#workflow-process").addEventListener("change", (event) => {
   state.workflowProcess = event.target.value || "";
+  state.workflow = null;
+  state.checkedInvoiceFile = null;
+  state.checkedInvoiceMonth = null;
+  loadWorkflow();
+});
+
+workflowPreviewCourierInput?.addEventListener("change", (event) => {
+  state.workflowPreviewCourierId = String(event.target.value || "").trim();
+  state.workflowProcess = "";
   state.workflow = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
