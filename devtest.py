@@ -34,6 +34,7 @@ from resources.peopleforce_documents import (
     read_peopleforce_card_statuses_for_month,
     read_peopleforce_complaints_for_month,
     respond_to_peopleforce_complaint,
+    update_peopleforce_complaints_status_for_process,
     update_peopleforce_complaint_status,
     upsert_peopleforce_card_status,
     upload_peopleforce_document,
@@ -6279,7 +6280,12 @@ def show_courier_dialog() -> None:
                 response_actions = st.columns(3)
                 if response_actions[2].button("Lezaras", type="primary", use_container_width=True, key=f"ui_complaint_close_top_{courier_id}_{selected_complaint_id}"):
                     try:
-                        update_peopleforce_complaint_status(selected_complaint_id, "closed")
+                        update_peopleforce_complaints_status_for_process(
+                            courier_id,
+                            period_start.replace(day=1),
+                            str(selected_complaint.get("document_type") or ""),
+                            "closed",
+                        )
                         st.success("Reklamacio lezarva.")
                         st.rerun()
                     except Exception as exc:
@@ -6311,17 +6317,31 @@ def show_courier_dialog() -> None:
                             st.error(f"A válasz mentése sikertelen: {exc}")
                 if response_actions[1].button("Státusz mentése", use_container_width=True, key=f"ui_complaint_status_save_{courier_id}"):
                     try:
-                        update_peopleforce_complaint_status(
-                            selected_complaint_id,
-                            reverse_complaint_status_labels.get(response_status_label, "open"),
-                        )
+                        next_status = reverse_complaint_status_labels.get(response_status_label, "open")
+                        if next_status == "closed":
+                            update_peopleforce_complaints_status_for_process(
+                                courier_id,
+                                period_start.replace(day=1),
+                                str(selected_complaint.get("document_type") or ""),
+                                "closed",
+                            )
+                        else:
+                            update_peopleforce_complaint_status(
+                                selected_complaint_id,
+                                next_status,
+                            )
                         st.success("Reklamáció státusz frissítve.")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A státusz mentése sikertelen: {exc}")
                 if st.button("Reklamáció lezárása", type="primary", use_container_width=True, key=f"ui_complaint_close_{courier_id}_{selected_complaint_id}"):
                     try:
-                        update_peopleforce_complaint_status(selected_complaint_id, "closed")
+                        update_peopleforce_complaints_status_for_process(
+                            courier_id,
+                            period_start.replace(day=1),
+                            str(selected_complaint.get("document_type") or ""),
+                            "closed",
+                        )
                         st.success("Reklamáció lezárva.")
                         st.rerun()
                     except Exception as exc:
