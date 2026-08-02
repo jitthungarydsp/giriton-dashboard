@@ -1400,10 +1400,13 @@ def load_courier_profile(courier_id: str) -> dict[str, object]:
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
+    clean_courier_id = str(courier_id or "").strip()
     try:
-        rows = (get_db().schema("public").table("courier_target_reserve")
-                .select("*").limit(10000).execute().data or [])
+        query = get_db().schema("public").table("courier_target_reserve").select("*").limit(1)
+        rows = query.eq("courier_ID", clean_courier_id).execute().data or []
     except BaseException:
+        return {"insurance_active": False, "row": {}}
+    if not rows:
         return {"insurance_active": False, "row": {}}
     def id_key(value: object) -> str:
         text = str(value or "").strip().casefold()
@@ -2287,7 +2290,6 @@ def resolve_target_reserve_month(
             "insurance_active_after": bool(saved.get("insurance_active_after")),
             "status": "done",
         }
-    save_target_reserve_monthly(session_id, courier_id, period_start, period_end, calculation)
     return {**calculation, "status": "in_progress"}
 
 
@@ -2476,6 +2478,45 @@ def load_courier_settlement_summary(session_id: str | None) -> pd.DataFrame:
     except BaseException:
         return pd.DataFrame()
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_settlement_summary_row(
+    session_id: str | None,
+    courier_id: str,
+    courier_name: str,
+) -> dict[str, object]:
+    """Read one persisted settlement summary row; avoid loading the whole session in a profile."""
+    if not session_id:
+        return {}
+    clean_courier_id = str(courier_id or "").strip()
+    clean_courier_name = str(courier_name or "").strip()
+    try:
+        if clean_courier_id:
+            rows = (
+                get_db().schema("settlement").table("courier_settlement_summary")
+                .select("*")
+                .eq("session_id", session_id)
+                .eq("courier_id", clean_courier_id)
+                .limit(1)
+                .execute().data or []
+            )
+            if rows:
+                return rows[0]
+        if clean_courier_name:
+            rows = (
+                get_db().schema("settlement").table("courier_settlement_summary")
+                .select("*")
+                .eq("session_id", session_id)
+                .eq("driver_name", clean_courier_name)
+                .limit(1)
+                .execute().data or []
+            )
+            if rows:
+                return rows[0]
+    except BaseException:
+        return {}
+    return {}
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -4327,6 +4368,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_route_detail.clear()
     load_imported_balance_components.clear()
     load_courier_settlement_summary.clear()
+    load_courier_settlement_summary_row.clear()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_target_reserve_monthly.clear()
@@ -4499,19 +4541,7 @@ def show_courier_dialog() -> None:
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
-    persisted_summary = load_courier_settlement_summary(session_id)
-    summary_row: dict[str, object] = {}
-    if not persisted_summary.empty:
-        summary_match = persisted_summary[
-            persisted_summary.get("courier_id", pd.Series("", index=persisted_summary.index))
-            .map(_courier_id_key).eq(_courier_id_key(courier_id))
-        ]
-        if summary_match.empty and "driver_name" in persisted_summary:
-            summary_match = persisted_summary[
-                persisted_summary["driver_name"].map(_courier_match_key).eq(_courier_match_key(courier_name))
-            ]
-        if not summary_match.empty:
-            summary_row = summary_match.iloc[0].to_dict()
+    summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name)
     profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     profile_adjustment_totals = (
         profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
@@ -4528,7 +4558,10 @@ def show_courier_dialog() -> None:
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_received_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
-    if str(active_calculation_mode or "").strip().casefold() == "api":
+    if (
+        str(active_calculation_mode or "").strip().casefold() == "api"
+        and (not summary_row or contractor_received_total == 0)
+    ):
         api_received = load_api_received_amounts(period_start, st.session_state.get("new_warehouse", "Összes")).copy()
         if not api_received.empty:
             api_received["_courier_id_lookup"] = api_received["Courier ID"].map(_courier_id_key)
@@ -4777,30 +4810,16 @@ def show_courier_dialog() -> None:
         # The profile cards are a direct projection of the persisted central
         # settlement row.  Route detail is drill-down only and must never
         # overwrite the authoritative summary amounts.
-        persisted_summary = load_courier_settlement_summary(session_id)
-        if not persisted_summary.empty:
-            summary_match = persisted_summary[
-                persisted_summary.get("courier_id", pd.Series("", index=persisted_summary.index))
-                .map(_courier_id_key).eq(_courier_id_key(courier_id))
-            ]
-            if summary_match.empty and "driver_name" in persisted_summary:
-                summary_match = persisted_summary[
-                    persisted_summary["driver_name"].map(_courier_match_key).eq(_courier_match_key(row["Futár"]))
-                ]
-            if not summary_match.empty:
-                persisted = summary_match.iloc[0]
-                amount = lambda field: parse_huf_value(persisted.get(field))
-                base_total = amount("courier_base_rate_huf")
-                tip_total = amount("tip_huf")
-                delay_total = amount("delay_bonus_huf")
-                compliance_total = amount("compliance_bonus_huf")
-                route_other_bonus_total = amount("other_route_bonus_huf")
-                imported_bonus_total = amount("imported_bonus_huf")
-                order_total = int(amount("order_count"))
-                route_total = int(amount("route_count"))
-                if str(active_calculation_mode or "").strip().casefold() == "api" and not route_breakdown.empty:
-                    delay_total = float(route_breakdown.get("Késedelmi díj", pd.Series(dtype=float)).sum())
-                    compliance_total = float(route_breakdown.get("Túramegfelelés", pd.Series(dtype=float)).sum())
+        if summary_row:
+            amount = lambda field: parse_huf_value(summary_row.get(field))
+            base_total = amount("courier_base_rate_huf")
+            tip_total = amount("tip_huf")
+            delay_total = amount("delay_bonus_huf")
+            compliance_total = amount("compliance_bonus_huf")
+            route_other_bonus_total = amount("other_route_bonus_huf")
+            imported_bonus_total = amount("imported_bonus_huf")
+            order_total = int(amount("order_count"))
+            route_total = int(amount("route_count"))
 
         manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
         manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
