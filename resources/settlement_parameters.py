@@ -201,9 +201,16 @@ def validate_loyalty_bonus_rule(payload: dict[str, Any]) -> dict[str, Any]:
     required_months = int(payload.get("loyalty_months_required") or 0)
     if required_months < 0:
         raise ValueError("A lojalitási hónapok száma nem lehet negatív.")
+    previous_normal_routes_min = int(payload.get("previous_normal_routes_min") or 0)
+    if previous_normal_routes_min < 0:
+        raise ValueError("Az előző havi normál kör minimum nem lehet negatív.")
     return {
         "loyalty_start_date": _date(payload.get("loyalty_start_date") or payload.get("valid_from"), "lojalitási kezdő").isoformat(),
         "loyalty_months_required": required_months,
+        "previous_normal_routes_min": previous_normal_routes_min,
+        "require_acceptance": bool(payload.get("require_acceptance", False)),
+        "require_advance_booking": bool(payload.get("require_advance_booking", True)),
+        "require_active_relationship": bool(payload.get("require_active_relationship", True)),
         "route_type": _choice(payload.get("route_type") or "normal", ROUTE_TYPES, "túratípus"),
         "calculation_unit": _choice(payload.get("calculation_unit") or "per_route", {"per_route", "per_order"}, "elszámolási egység"),
         "bonus_amount_huf": _amount(payload.get("bonus_amount_huf"), "lojalitási bónusz összege"),

@@ -427,25 +427,31 @@ def _show_loyalty_bonus(client: Any) -> None:
     if not data.empty:
         view = data.copy()
         view["Hónapok"] = pd.to_numeric(view.get("loyalty_months_required", 0), errors="coerce").fillna(0).astype(int)
+        view["Előző havi normál min."] = pd.to_numeric(view.get("previous_normal_routes_min", 0), errors="coerce").fillna(0).astype(int)
         view["Túratípus"] = view.get("route_type", pd.Series("normal", index=view.index)).fillna("normal").map(ROUTE_LABELS)
         view["Egység"] = view.get("calculation_unit", pd.Series("per_route", index=view.index)).fillna("per_route").map(UNIT_LABELS)
         view["Összeg"] = view["bonus_amount_huf"].map(_money)
+        view["Előfoglalás kell"] = view.get("require_advance_booking", pd.Series(True, index=view.index)).fillna(True).astype(bool)
+        view["Aktív jogviszony kell"] = view.get("require_active_relationship", pd.Series(True, index=view.index)).fillna(True).astype(bool)
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["Hónapok", "Túratípus", "Egység", "Összeg", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+        st.dataframe(view[["Hónapok", "Előző havi normál min.", "Túratípus", "Egység", "Összeg", "Előfoglalás kell", "Aktív jogviszony kell", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "loyalty", "valid_from")
     with st.form(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
         required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1)
+        previous_normal_routes_min = left.number_input("Előző havi normál kör minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1)
         routes = ["normal", "express", "regional", "any"]
         route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
         units = ["per_route", "per_order"]
         unit = right.selectbox("Elszámolási egység", units, index=_index(units, (row or {}).get("calculation_unit") or "per_route"), format_func=UNIT_LABELS.get)
+        require_advance_booking = middle.checkbox("Előfoglalás szükséges", value=bool((row or {}).get("require_advance_booking", True)))
+        require_active_relationship = right.checkbox("Aktív jogviszony szükséges", value=bool((row or {}).get("require_active_relationship", True)))
         amount = st.number_input("Lojalitási bónusz összege (Ft)", min_value=0, value=_int((row or {}).get("bonus_amount_huf")), step=100)
         valid_from, valid_to, has_end, priority, is_active, note = _common_period(row or {}, "loyalty")
         saved = st.form_submit_button("Módosítás mentése" if row else "Lojalitási bónusz mentése", type="primary")
     if saved:
         try:
-            save_item(client, LOYALTY_BONUS_TABLE, validate_loyalty_bonus_rule({"loyalty_months_required": required_months, "route_type": route_type, "calculation_unit": unit, "bonus_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
+            save_item(client, LOYALTY_BONUS_TABLE, validate_loyalty_bonus_rule({"loyalty_months_required": required_months, "previous_normal_routes_min": previous_normal_routes_min, "require_acceptance": False, "require_advance_booking": require_advance_booking, "require_active_relationship": require_active_relationship, "route_type": route_type, "calculation_unit": unit, "bonus_amount_huf": amount, "valid_from": valid_from, "valid_to": valid_to if has_end else None, "priority": priority, "is_active": is_active, "note": note}), _actor(), _text((row or {}).get("id")) or None)
             st.success("A lojalitási bónusz mentve.")
         except Exception as exc:
             st.error(f"Nem menthető: {exc}")
