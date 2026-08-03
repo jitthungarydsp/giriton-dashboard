@@ -4284,6 +4284,80 @@ def load_courier_route_alerts(courier_id: str, limit: int = 20) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_route_alerts_for_period(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("courier_route_alerts")
+            .select("id,courier_id,courier_name,route_id,order_id,alert_type,message,status,created_at")
+            .eq("courier_id", int(clean_id))
+            .gte("created_at", period_start.isoformat())
+            .lt("created_at", (period_end + timedelta(days=1)).isoformat())
+            .order("created_at", desc=True)
+            .limit(1000)
+            .execute().data or []
+        )
+        data = pd.DataFrame(rows)
+        if not data.empty:
+            data["route_id_key"] = data["route_id"].map(normalize_route_key)
+        return data
+    except BaseException:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_financial_delay_rows(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("courier_financial_overview_delay")
+            .select("delivery_date,route_id,warehouse_id,route_order_count,stops_count,delayed_stops_count,total_delay_minutes,max_delay_minutes,slot_miss_projected_count,rejected_stops_count")
+            .eq("courier_id", int(clean_id))
+            .gte("delivery_date", period_start.isoformat())
+            .lte("delivery_date", period_end.isoformat())
+            .or_("total_delay_minutes.gt.0,delayed_stops_count.gt.0")
+            .order("delivery_date")
+            .limit(1000)
+            .execute().data or []
+        )
+        data = pd.DataFrame(rows)
+        if not data.empty:
+            data["route_id_key"] = data["route_id"].map(normalize_route_key)
+        return data
+    except BaseException:
+        return pd.DataFrame()
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_financial_compliance_rows(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("courier_financial_overview_compliance")
+            .select("shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,warehouse_arrived_at,vehicle_plate,planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes")
+            .eq("courier_id", int(clean_id))
+            .gte("shift_date", period_start.isoformat())
+            .lte("shift_date", period_end.isoformat())
+            .or_("planned_start_delay_minutes.gt.0,departure_delay_minutes.gt.0,actual_start_at.is.null,shift_available_at.is.null")
+            .order("shift_date")
+            .limit(1000)
+            .execute().data or []
+        )
+        data = pd.DataFrame(rows)
+        if not data.empty:
+            data["route_id_key"] = data["route_id"].map(normalize_route_key)
+        return data
+    except BaseException:
+        return pd.DataFrame()
+
+
 def save_route_issue_review(
     session_id: str | None,
     courier_id: str,
@@ -4332,12 +4406,19 @@ def build_route_issue_rows(
     order_details: pd.DataFrame,
     reviews: pd.DataFrame,
     courier_id: str,
+    delay_rows: pd.DataFrame | None = None,
+    compliance_rows: pd.DataFrame | None = None,
+    route_alerts: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     columns = [
         "issue_key", "Route ID", "Order ID", "Dátum", "Probléma", "Eltérés perc",
-        "Rendelések", "Késedelmi díj", "Túramegfelelés", "Story", "Státusz", "Megjegyzés",
+        "Rendelések", "Késedelmi díj", "Túramegfelelés", "Futár jelzett",
+        "Bejelentés", "Story", "Státusz", "Megjegyzés",
     ]
-    if route_detail.empty and stories.empty and order_details.empty:
+    delay_rows = delay_rows if delay_rows is not None else pd.DataFrame()
+    compliance_rows = compliance_rows if compliance_rows is not None else pd.DataFrame()
+    route_alerts = route_alerts if route_alerts is not None else pd.DataFrame()
+    if route_detail.empty and stories.empty and order_details.empty and delay_rows.empty and compliance_rows.empty and route_alerts.empty:
         return pd.DataFrame(columns=columns)
 
     route_lookup: dict[str, dict[str, object]] = {}
@@ -4355,6 +4436,24 @@ def build_route_issue_rows(
             normalize_route_key(row.get("route_id")): row
             for row in stories.to_dict("records")
         }
+
+    alert_lookup: dict[str, list[dict[str, object]]] = {}
+    if not route_alerts.empty:
+        for alert in route_alerts.to_dict("records"):
+            alert_lookup.setdefault(normalize_route_key(alert.get("route_id")), []).append(alert)
+
+    def alert_summary(route_id: object) -> tuple[str, str]:
+        alerts = alert_lookup.get(normalize_route_key(route_id), [])
+        if not alerts:
+            return "Nem", ""
+        type_labels = {"delay": "Késés", "problem": "Probléma", "bag_missing": "Táska hiány"}
+        parts = []
+        for alert in alerts[:3]:
+            label = type_labels.get(str(alert.get("alert_type") or ""), str(alert.get("alert_type") or "Bejelentés"))
+            message = str(alert.get("message") or "").strip()
+            created = str(alert.get("created_at") or "")[:16]
+            parts.append(f"{created} {label}: {message}" if message else f"{created} {label}")
+        return "Igen", " | ".join(parts)
 
     rows: list[dict[str, object]] = []
 
@@ -4380,6 +4479,8 @@ def build_route_issue_rows(
                 "Rendelések": parse_huf_value(route_row.get("Rendelések")),
                 "Késedelmi díj": parse_huf_value(route_row.get("Késedelmi díj")),
                 "Túramegfelelés": parse_huf_value(route_row.get("Túramegfelelés")),
+                "Futár jelzett": alert_summary(route_id)[0],
+                "Bejelentés": alert_summary(route_id)[1],
                 "Story": str(story_row.get("story_text") or order.get("time_window_status") or ""),
                 "Státusz": "Nincs reklamáció",
                 "Megjegyzés": "",
@@ -4415,10 +4516,58 @@ def build_route_issue_rows(
                 "Rendelések": parse_huf_value(route_row.get("Rendelések") or story_row.get("address_count")),
                 "Késedelmi díj": delay_fee,
                 "Túramegfelelés": compliance_fee,
+                "Futár jelzett": alert_summary(route_id)[0],
+                "Bejelentés": alert_summary(route_id)[1],
                 "Story": str(story_row.get("story_text") or ""),
                 "Státusz": "Nincs reklamáció",
                 "Megjegyzés": "",
             })
+
+    for _, delay_row in delay_rows.iterrows():
+        route_id = normalize_route_key(delay_row.get("route_id"))
+        route_row = route_lookup.get(route_id, {})
+        alerted, alert_text = alert_summary(route_id)
+        rows.append({
+            "issue_key": route_issue_key(courier_id, route_id, "", "API késés"),
+            "Route ID": route_id,
+            "Order ID": "",
+            "Dátum": str(delay_row.get("delivery_date") or route_row.get("Excel dátum") or ""),
+            "Probléma": "API késés",
+            "Eltérés perc": int(parse_huf_value(delay_row.get("total_delay_minutes"))),
+            "Rendelések": parse_huf_value(delay_row.get("route_order_count") or route_row.get("Rendelések")),
+            "Késedelmi díj": parse_huf_value(route_row.get("Késedelmi díj")),
+            "Túramegfelelés": parse_huf_value(route_row.get("Túramegfelelés")),
+            "Futár jelzett": alerted,
+            "Bejelentés": alert_text,
+            "Story": f"{int(parse_huf_value(delay_row.get('delayed_stops_count')))} késéses cím, max {int(parse_huf_value(delay_row.get('max_delay_minutes')))} perc",
+            "Státusz": "Nincs reklamáció",
+            "Megjegyzés": "",
+        })
+
+    for _, compliance_row in compliance_rows.iterrows():
+        route_id = normalize_route_key(compliance_row.get("route_id"))
+        route_row = route_lookup.get(route_id, {})
+        start_delay = parse_huf_value(compliance_row.get("planned_start_delay_minutes"))
+        departure_delay = parse_huf_value(compliance_row.get("departure_delay_minutes"))
+        has_checkin = str(compliance_row.get("actual_start_at") or compliance_row.get("shift_available_at") or "").strip()
+        issue_type = "No-show / nincs bejelentkezés" if not has_checkin else "Késő bejelentkezés"
+        alerted, alert_text = alert_summary(route_id)
+        rows.append({
+            "issue_key": route_issue_key(courier_id, route_id, "", issue_type),
+            "Route ID": route_id,
+            "Order ID": "",
+            "Dátum": str(compliance_row.get("shift_date") or route_row.get("Excel dátum") or ""),
+            "Probléma": issue_type,
+            "Eltérés perc": int(max(start_delay, departure_delay, 0)),
+            "Rendelések": parse_huf_value(route_row.get("Rendelések")),
+            "Késedelmi díj": parse_huf_value(route_row.get("Késedelmi díj")),
+            "Túramegfelelés": parse_huf_value(route_row.get("Túramegfelelés")),
+            "Futár jelzett": alerted,
+            "Bejelentés": alert_text,
+            "Story": f"Tervezett kezdés: {compliance_row.get('planned_start_at') or '-'} | Elérhető: {compliance_row.get('shift_available_at') or compliance_row.get('actual_start_at') or '-'} | Indulás eltérés: {int(departure_delay)} perc",
+            "Státusz": "Nincs reklamáció",
+            "Megjegyzés": "",
+        })
 
     result = pd.DataFrame(rows, columns=columns).drop_duplicates("issue_key")
     if result.empty:
@@ -5981,7 +6130,19 @@ def show_courier_dialog() -> None:
         else:
             order_details = pd.DataFrame()
         reviews = load_route_issue_reviews(courier_id, period_start, period_end)
-        issue_rows = build_route_issue_rows(route_detail, stories, order_details, reviews, courier_id)
+        delay_issue_rows = load_courier_financial_delay_rows(courier_id, period_start, period_end)
+        compliance_issue_rows = load_courier_financial_compliance_rows(courier_id, period_start, period_end)
+        route_alert_rows = load_courier_route_alerts_for_period(courier_id, period_start, period_end)
+        issue_rows = build_route_issue_rows(
+            route_detail,
+            stories,
+            order_details,
+            reviews,
+            courier_id,
+            delay_issue_rows,
+            compliance_issue_rows,
+            route_alert_rows,
+        )
 
         open_count = 0 if reviews.empty or "status" not in reviews.columns else int(reviews["status"].isin(["Vizsgálat", "Elfogadva"]).sum())
         metric1, metric2, metric3, metric4 = st.columns(4)
@@ -5989,6 +6150,10 @@ def show_courier_dialog() -> None:
         metric2.metric("Késő rendelés", int((issue_rows.get("Probléma", pd.Series(dtype=str)) == "Késő rendelés").sum()))
         metric3.metric("Sorba állási gond", int(issue_rows.get("Probléma", pd.Series(dtype=str)).astype(str).str.contains("sorba", case=False, na=False).sum()))
         metric4.metric("Aktív reklamáció", open_count)
+        extra1, extra2, extra3 = st.columns(3)
+        extra1.metric("API késés", int((issue_rows.get("Probléma", pd.Series(dtype=str)) == "API késés").sum()))
+        extra2.metric("Bejelentkezési gond", int(issue_rows.get("Probléma", pd.Series(dtype=str)).astype(str).str.contains("bejelentkezés|No-show", case=False, na=False).sum()))
+        extra3.metric("Futár jelzett", int((issue_rows.get("Futár jelzett", pd.Series(dtype=str)) == "Igen").sum()))
 
         if issue_rows.empty:
             st.success("Az aktuális hónapban nincs késésből vagy sorba állásból látható probléma ennél a futárnál.")
@@ -6001,11 +6166,11 @@ def show_courier_dialog() -> None:
                 key=editor_key,
                 disabled=[
                     "issue_key", "Route ID", "Order ID", "Dátum", "Probléma", "Eltérés perc",
-                    "Rendelések", "Késedelmi díj", "Túramegfelelés", "Story",
+                    "Rendelések", "Késedelmi díj", "Túramegfelelés", "Futár jelzett", "Bejelentés", "Story",
                 ],
                 column_order=[
                     "Dátum", "Route ID", "Order ID", "Probléma", "Eltérés perc",
-                    "Rendelések", "Késedelmi díj", "Túramegfelelés", "Státusz", "Megjegyzés", "Story",
+                    "Rendelések", "Késedelmi díj", "Túramegfelelés", "Futár jelzett", "Státusz", "Megjegyzés", "Bejelentés", "Story",
                 ],
                 column_config={
                     "Dátum": st.column_config.TextColumn("Dátum", width="small"),
@@ -6016,6 +6181,8 @@ def show_courier_dialog() -> None:
                     "Rendelések": st.column_config.NumberColumn("Rendelések", step=1, format="%d"),
                     "Késedelmi díj": st.column_config.NumberColumn("Késedelmi díj", step=100, format="%d Ft"),
                     "Túramegfelelés": st.column_config.NumberColumn("Túramegfelelés", step=100, format="%d Ft"),
+                    "Futár jelzett": st.column_config.TextColumn("Futár jelzett", width="small"),
+                    "Bejelentés": st.column_config.TextColumn("Futár bejelentése", width="large"),
                     "Státusz": st.column_config.SelectboxColumn("Reklamáció státusz", options=ROUTE_ISSUE_STATUSES, required=True),
                     "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
                     "Story": st.column_config.TextColumn("DSP magyarázat", width="large"),

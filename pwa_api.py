@@ -7,6 +7,7 @@ import re
 import secrets
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import formataddr
 from datetime import date, datetime, timedelta, timezone
@@ -1656,17 +1657,23 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
 
     period_end = month_end(month)
     daily_performance_rows = load_daily_performance_for_courier(courier_id, month, period_end)
+    delay_rows = load_route_delay_rows_for_courier(courier_id, month, period_end)
+    compliance_rows = load_route_compliance_rows_for_courier(courier_id, month, period_end)
     delayed_orders = sum(safe_int(item.get("delayed_order_count")) for item in daily_performance_rows)
     late_count = sum(safe_int(item.get("late_count")) for item in daily_performance_rows)
     no_show_count = sum(safe_int(item.get("did_not_come_count")) for item in daily_performance_rows)
     shift_count = sum(safe_int(item.get("shift_count")) for item in daily_performance_rows)
+    route_delayed_stops = sum(safe_int(item.get("delayed_stops_count")) for item in delay_rows)
+    route_delay_minutes = sum(safe_int(item.get("total_delay_minutes")) for item in delay_rows)
     performance_note = "DB napi teljesítmény"
     if not daily_performance_rows:
         delayed_orders = 0
         late_count = 0
         no_show_count = 0
         shift_count = 0
-        performance_note = "Dummy adat"
+        performance_note = "DB route performance"
+    if route_delayed_stops:
+        delayed_orders = route_delayed_stops
 
     base = money_from(row, "fixed_rate_huf", "courier_base_rate_huf")
     tip = money_from(row, "tip_huf")
@@ -1725,10 +1732,38 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         count_item("shift_count", "Műszak", shift_count),
         count_item("late_count", "Késések száma", late_count),
         count_item("delayed_orders", "Késéses cím", delayed_orders),
+        count_item("delay_minutes", "Késés összesen", route_delay_minutes),
         count_item("no_show_count", "Nem jelent meg műszakban", no_show_count),
     ]
     for item in route_items:
         item["note"] = performance_note
+    for delay_row in delay_rows[:30]:
+        minutes = safe_int(delay_row.get("total_delay_minutes"))
+        delayed_stops = safe_int(delay_row.get("delayed_stops_count"))
+        if minutes <= 0 and delayed_stops <= 0:
+            continue
+        route_items.append({
+            "key": f"delay_route_{delay_row.get('route_id')}",
+            "label": f"Késés: {str(delay_row.get('delivery_date') or '')[:10]} / Route {delay_row.get('route_id')}",
+            "amountHuf": minutes,
+            "amountKind": "count",
+            "note": f"{delayed_stops} késéses cím, max {safe_int(delay_row.get('max_delay_minutes'))} perc",
+            "source": "courier_financial_overview_delay",
+        })
+    for compliance_row in compliance_rows[:30]:
+        start_delay = safe_int(compliance_row.get("planned_start_delay_minutes"))
+        departure_delay = safe_int(compliance_row.get("departure_delay_minutes"))
+        has_checkin = str(compliance_row.get("actual_start_at") or compliance_row.get("shift_available_at") or "").strip()
+        if start_delay <= 0 and departure_delay <= 0 and has_checkin:
+            continue
+        route_items.append({
+            "key": f"compliance_route_{compliance_row.get('route_id')}",
+            "label": f"Bejelentkezés: {str(compliance_row.get('shift_date') or '')[:10]} / Route {compliance_row.get('route_id')}",
+            "amountHuf": max(start_delay, 0),
+            "amountKind": "count",
+            "note": f"Indulás eltérés: {departure_delay} perc",
+            "source": "courier_financial_overview_compliance",
+        })
     route_items = [item for item in route_items if item.get("amountKind") == "count" or item["amountHuf"]]
     cards = [
         {
@@ -1987,8 +2022,9 @@ def load_route_delay_rows_for_courier(
             ),
             "courier_id": f"eq.{courier_id}",
             "and": f"(delivery_date.gte.{period_start.isoformat()},delivery_date.lte.{period_end.isoformat()})",
+            "or": "(total_delay_minutes.gt.0,delayed_stops_count.gt.0)",
             "order": "delivery_date.asc,route_id.asc",
-            "limit": "2000",
+            "limit": "200",
         },
         timeout=60,
     )
@@ -2010,8 +2046,9 @@ def load_route_compliance_rows_for_courier(
             ),
             "courier_id": f"eq.{courier_id}",
             "and": f"(shift_date.gte.{period_start.isoformat()},shift_date.lte.{period_end.isoformat()})",
+            "or": "(planned_start_delay_minutes.gt.0,departure_delay_minutes.gt.0,actual_start_at.is.null,shift_available_at.is.null)",
             "order": "shift_date.asc,route_id.asc",
-            "limit": "2000",
+            "limit": "200",
         },
         timeout=60,
     )
@@ -2044,11 +2081,17 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    daily_rows = load_daily_performance_for_courier(courier_id, period_start, period_end)
-    route_rows, route_source = load_api_financial_routes_for_courier(courier_id, period_start)
-    delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
-    compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end)
-    day_rules, day_rule_source = load_month_day_rules(period_start, period_end)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
+        route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
+        delay_future = executor.submit(load_route_delay_rows_for_courier, courier_id, period_start, period_end)
+        compliance_future = executor.submit(load_route_compliance_rows_for_courier, courier_id, period_start, period_end)
+        day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
+        daily_rows = daily_future.result()
+        route_rows, route_source = route_future.result()
+        delay_rows = delay_future.result()
+        compliance_rows = compliance_future.result()
+        day_rules, day_rule_source = day_rules_future.result()
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2234,27 +2277,17 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
         },
     )
     complaint_params = {
-        "select": "id,document_type,message,status,created_at,admin_response,responded_by,responded_at",
+        "select": "id,document_type,message,status,created_at",
         "courier_id": f"eq.{courier_id}",
         "document_month": f"eq.{month_value}",
         "order": "created_at.desc",
         "limit": "100",
     }
-    try:
-        complaints = supabase_rest(
-            "GET",
-            "peopleforce_complaints",
-            params=complaint_params,
-        )
-    except HTTPException as exc:
-        if exc.status_code != 502:
-            raise
-        complaint_params["select"] = "id,document_type,message,status,created_at"
-        complaints = supabase_rest(
-            "GET",
-            "peopleforce_complaints",
-            params=complaint_params,
-        )
+    complaints = supabase_rest(
+        "GET",
+        "peopleforce_complaints",
+        params=complaint_params,
+    )
     return documents, statuses, complaints
 
 

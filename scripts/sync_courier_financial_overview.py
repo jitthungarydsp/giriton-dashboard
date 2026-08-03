@@ -856,7 +856,12 @@ def main() -> int:
     parser.add_argument("--courier-id", type=int)
     parser.add_argument("--warehouse-id", type=int, choices=[1, 2])
     parser.add_argument("--skip-month-overview", action="store_true")
-    parser.add_argument("--skip-route-details", action="store_true")
+    parser.add_argument(
+        "--with-route-details",
+        action="store_true",
+        help="Also fetch slow route performance details. Default: skip; use sync_courier_route_performance_details.py instead.",
+    )
+    parser.add_argument("--skip-route-details", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--sleep", type=float, default=0.15)
     args = parser.parse_args()
 
@@ -1015,7 +1020,7 @@ def main() -> int:
                 upsert_financial_overview(db_payload)
 
             route_refs = extract_route_refs(response_json)
-            if args.skip_route_details:
+            if not args.with_route_details:
                 route_detail_skipped += len(route_refs)
             else:
                 if route_refs:
@@ -1119,12 +1124,19 @@ def main() -> int:
     print(
         f"\nKész. Sikeres: {success}, kihagyva: {skipped}, hibás: {failed}"
     )
-    print(
-        "Route detail: "
-        f"sikeres={route_detail_success}, "
-        f"hibas={route_detail_failed}, "
-        f"kihagyva={route_detail_skipped}"
-    )
+    if args.with_route_details:
+        print(
+            "Route detail: "
+            f"sikeres={route_detail_success}, "
+            f"hibas={route_detail_failed}, "
+            f"kihagyva={route_detail_skipped}"
+        )
+    else:
+        print(
+            "Route detail: kihagyva alapbol "
+            f"({route_detail_skipped} route). "
+            "Reszletekhez: scripts/sync_courier_route_performance_details.py"
+        )
 
     if args.apply and success > 0:
         try:
