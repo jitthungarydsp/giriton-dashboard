@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Courier Hub route performance detail sync for one courier/month/day.
+"""Courier Hub route performance detail sync.
 
 This script intentionally runs separately from sync_courier_financial_overview.py.
 Use the financial overview sync for the two main monthly API calls, then use this
@@ -11,8 +11,9 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import date
 from typing import Any
+
+import requests
 
 from sync_courier_financial_overview import (
     COURIER_TARGET_TABLES,
@@ -27,8 +28,6 @@ from sync_courier_financial_overview import (
     upsert_flat_table,
     upsert_route_performance_detail,
 )
-
-import requests
 
 
 def month_day(value: str | None) -> str:
@@ -45,7 +44,7 @@ def month_day(value: str | None) -> str:
 
 def read_route_refs(
     *,
-    courier_id: int,
+    courier_id: int | None,
     year: int,
     month: int,
     warehouse_id: int | None,
@@ -58,56 +57,78 @@ def read_route_refs(
         else COURIER_TARGET_TABLES
     )
     refs: list[dict[str, Any]] = []
-    seen: set[tuple[int, int]] = set()
+    seen: set[tuple[int, int, int]] = set()
     wanted_day = month_day(day)
+
     for wh_id, table_name in target_tables.items():
+        params = {
+            "select": "courier_id,warehouse_id,response_json,status_code",
+            "year": f"eq.{year}",
+            "month": f"eq.{month}",
+            "status_code": "eq.200",
+            "limit": "5000",
+        }
+        if courier_id:
+            params["courier_id"] = f"eq.{courier_id}"
+
         response = requests.get(
             f"{url}/rest/v1/{table_name}",
             headers=supabase_headers(),
-            params={
-                "select": "courier_id,warehouse_id,response_json,status_code",
-                "courier_id": f"eq.{courier_id}",
-                "year": f"eq.{year}",
-                "month": f"eq.{month}",
-                "status_code": "eq.200",
-                "limit": "10",
-            },
+            params=params,
             timeout=60,
         )
         raise_for_response(response, f"{table_name} route refs")
+
         for row in response.json() or []:
+            row_courier_id = safe_int(row.get("courier_id"))
+            if row_courier_id <= 0:
+                continue
+
             payload = row.get("response_json") or {}
             routes = payload.get("routes") if isinstance(payload, dict) else []
             if not isinstance(routes, list):
                 continue
+
             for route in routes:
                 if not isinstance(route, dict):
                     continue
                 route_id = safe_int(route.get("routeId") or route.get("route_id") or route.get("id"))
                 if route_id <= 0:
                     continue
+
                 delivery_date = clean_text(route.get("deliveryDate"))
                 if wanted_day and delivery_date[8:10] != wanted_day:
                     continue
-                key = (int(wh_id), route_id)
+
+                key = (int(wh_id), row_courier_id, route_id)
                 if key in seen:
                     continue
                 seen.add(key)
                 refs.append(
                     {
+                        "courier_id": row_courier_id,
                         "route_id": route_id,
                         "delivery_date": delivery_date,
                         "order_count": safe_int(route.get("orderCount")),
                         "warehouse_id": int(wh_id),
                     }
                 )
-    return sorted(refs, key=lambda item: (item.get("delivery_date") or "", item["warehouse_id"], item["route_id"]))
+
+    return sorted(
+        refs,
+        key=lambda item: (
+            item.get("delivery_date") or "",
+            item["warehouse_id"],
+            item["courier_id"],
+            item["route_id"],
+        ),
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--courier-id", type=int, required=True)
+    parser.add_argument("--courier-id", type=int)
     parser.add_argument("--year", type=int, required=True)
     parser.add_argument("--month", type=int, required=True)
     parser.add_argument("--day", help="Optional day filter, e.g. 05 or 2026-07-05.")
@@ -116,7 +137,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.month < 1 or args.month > 12:
-        raise RuntimeError("A hónap 1 és 12 közötti szám legyen.")
+        raise RuntimeError("Month must be between 1 and 12.")
 
     refs = read_route_refs(
         courier_id=args.courier_id,
@@ -126,25 +147,27 @@ def main() -> int:
         day=args.day or "",
     )
     period_label = f"{args.year}-{args.month:02d}" + (f"-{month_day(args.day)}" if args.day else "")
-    print(f"Route detail cél: courier={args.courier_id} | időszak={period_label} | routes={len(refs)}")
-    print("Mód:", "MENTÉS" if args.apply else "DRY-RUN")
+    courier_label = str(args.courier_id) if args.courier_id else "all"
+    print(f"Route detail target: courier={courier_label} | period={period_label} | routes={len(refs)}")
+    print("Mode:", "APPLY" if args.apply else "DRY-RUN")
     if not refs:
-        print("Nincs route a raw financial overview táblákban ehhez a szűréshez.")
+        print("No routes found in raw financial overview tables for this filter.")
         return 0
 
     success = 0
     failed = 0
     for index, route_ref in enumerate(refs, start=1):
+        courier_id = int(route_ref["courier_id"])
         route_id = int(route_ref["route_id"])
         warehouse_id = int(route_ref["warehouse_id"])
         try:
             detail_url, status_code, detail_json = fetch_route_performance_detail(
-                courier_id=args.courier_id,
+                courier_id=courier_id,
                 route_id=route_id,
                 warehouse_id=warehouse_id,
             )
             detail_payload = make_route_performance_detail_payload(
-                courier_id=args.courier_id,
+                courier_id=courier_id,
                 route_id=route_id,
                 warehouse_id=warehouse_id,
                 request_url=detail_url,
@@ -159,7 +182,7 @@ def main() -> int:
                     upsert_flat_table(
                         "courier_financial_overview_delay",
                         build_delay_row(
-                            courier_id=args.courier_id,
+                            courier_id=courier_id,
                             route_ref=route_ref,
                             warehouse_id=warehouse_id,
                             response_json=detail_json,
@@ -171,7 +194,7 @@ def main() -> int:
                     upsert_flat_table(
                         "courier_financial_overview_compliance",
                         build_compliance_row(
-                            courier_id=args.courier_id,
+                            courier_id=courier_id,
                             route_ref=route_ref,
                             warehouse_id=warehouse_id,
                             response_json=detail_json,
@@ -180,20 +203,22 @@ def main() -> int:
                             month=args.month,
                         ),
                     )
+
             if status_code == 200:
                 success += 1
             else:
                 failed += 1
-                print(f"DETAIL HTTP {status_code}: route={route_id} | WH={warehouse_id}")
+                print(f"DETAIL HTTP {status_code}: courier={courier_id} | route={route_id} | WH={warehouse_id}")
         except Exception as exc:
             failed += 1
-            print(f"DETAIL HIBA: route={route_id} | WH={warehouse_id} | {exc}")
+            print(f"DETAIL ERROR: courier={courier_id} | route={route_id} | WH={warehouse_id} | {exc}")
+
         if index == len(refs) or index % 10 == 0:
             print(f"DETAIL PROGRESS: {index}/{len(refs)}")
         if args.sleep > 0:
             time.sleep(args.sleep)
 
-    print(f"Kész. Route detail sikeres={success}, hibás={failed}")
+    print(f"Done. Route detail success={success}, failed={failed}")
     return 1 if failed else 0
 
 

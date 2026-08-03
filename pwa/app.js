@@ -288,6 +288,7 @@ function renderStatistics() {
   const routes = Number(summary.routes || 0);
   const orders = Number(summary.orders || 0);
   const average = Number(summary.averageOrdersPerRoute || 0);
+  const amountsHidden = Boolean(payload.amountsHidden);
   const rating = payload.customerRating || {};
   const ratingValue = rating.available && rating.averageRating !== null
     ? formatAverage(rating.averageRating)
@@ -302,11 +303,8 @@ function renderStatistics() {
     statisticCard("Kör", formatCount(routes), "kivitt túrák"),
     statisticCard("Cím", formatCount(orders), "rendelések"),
     statisticCard("Átlag", formatAverage(average), "cím / kör"),
-    statisticCard("Késéses cím", formatCount(summary.delayedOrders), "Dataport"),
-    statisticCard("Késés", formatCount(summary.lateCount), "műszak"),
-    statisticCard("No-show", formatCount(summary.noShowCount), "műszak"),
     statisticCard("Műszak", formatCount(summary.shiftCount), "összes"),
-    statisticCard("Borravaló", formatHuf(summary.tipsTotalHuf), "összesen"),
+    statisticCard("Borravaló", amountsHidden ? "Rejtve" : formatHuf(summary.tipsTotalHuf), amountsHidden ? "havi nyitás után" : "összesen"),
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
@@ -336,14 +334,6 @@ function renderStatistics() {
       <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
     </div>
-    <details class="stat-detail-section" ${details.delayRows?.length ? "open" : ""}>
-      <summary>Hol késett?</summary>
-      <div class="stat-breakdown-list">${renderDelayDetailRows(details.delayRows || [])}</div>
-    </details>
-    <details class="stat-detail-section" ${details.complianceRows?.length ? "open" : ""}>
-      <summary>Műszak bejelentkezés / no-show</summary>
-      <div class="stat-breakdown-list">${renderComplianceDetailRows(details.complianceRows || [])}</div>
-    </details>
     <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
     <div class="stat-rule-list">
       <h4>Alkalmazott napbesorolás</h4>

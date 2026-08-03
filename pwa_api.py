@@ -221,6 +221,10 @@ def can_preview_couriers(user: dict[str, Any]) -> bool:
     return role == "admin" or username_key == normalize_text("Bagoly Zoltán")
 
 
+def can_view_financial_amounts(user: dict[str, Any]) -> bool:
+    return can_preview_couriers(user)
+
+
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
     try:
         db_user = authenticate_pwa_db_user(username, password)
@@ -1519,6 +1523,13 @@ def read_mobile_settlement_period_config(month: date) -> dict[str, Any]:
     return dict(rows[0]) if rows else {}
 
 
+def mobile_settlement_period_is_open(month: date) -> bool:
+    config = read_mobile_settlement_period_config(month)
+    config_mode = str(config.get("calculation_mode") or "").strip()
+    session_id = str(config.get("session_id") or "").strip()
+    return config_mode in {"API", "Excel"} or bool(session_id)
+
+
 def latest_settlement_session_for_month(
     courier_id: str,
     month: date,
@@ -1641,6 +1652,19 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     return cards
 
 
+def hidden_financial_breakdown(month: date) -> dict[str, Any]:
+    return {
+        "available": False,
+        "amountsHidden": True,
+        "month": month.strftime("%Y-%m"),
+        "totalPayableHuf": 0,
+        "cards": [],
+        "complaintOptions": [],
+        "source": "settlement.courier_settlement_summary",
+        "message": "A havi elszámolási összegeket csak admin és Bagoly Zoltán láthatja.",
+    }
+
+
 def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
@@ -1665,6 +1689,13 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     shift_count = sum(safe_int(item.get("shift_count")) for item in daily_performance_rows)
     route_delayed_stops = sum(safe_int(item.get("delayed_stops_count")) for item in delay_rows)
     route_delay_minutes = sum(safe_int(item.get("total_delay_minutes")) for item in delay_rows)
+    delay_rows = []
+    compliance_rows = []
+    delayed_orders = 0
+    late_count = 0
+    no_show_count = 0
+    route_delayed_stops = 0
+    route_delay_minutes = 0
     performance_note = "DB napi teljesítmény"
     if not daily_performance_rows:
         delayed_orders = 0
@@ -1764,7 +1795,12 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             "note": f"Indulás eltérés: {departure_delay} perc",
             "source": "courier_financial_overview_compliance",
         })
-    route_items = [item for item in route_items if item.get("amountKind") == "count" or item["amountHuf"]]
+    hidden_performance_keys = {"late_count", "delayed_orders", "delay_minutes", "no_show_count"}
+    route_items = [
+        item for item in route_items
+        if item.get("key") not in hidden_performance_keys
+        and (item.get("amountKind") == "count" or item["amountHuf"])
+    ]
     cards = [
         {
             "key": "payable",
@@ -2081,22 +2117,19 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
         route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
-        delay_future = executor.submit(load_route_delay_rows_for_courier, courier_id, period_start, period_end)
-        compliance_future = executor.submit(load_route_compliance_rows_for_courier, courier_id, period_start, period_end)
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
-        delay_rows = delay_future.result()
-        compliance_rows = compliance_future.result()
         day_rules, day_rule_source = day_rules_future.result()
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
     route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
     route_tips = sum(safe_int(route.get("tips_huf")) for route in route_rows)
+    can_show_amounts = can_view_financial_amounts(user) or mobile_settlement_period_is_open(period_start)
     route_count = len(route_rows)
     total_routes = route_count or daily_routes
     total_orders = route_orders or daily_orders
@@ -2126,12 +2159,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             else:
                 normal_day_routes += route_count_for_day
 
-    delayed_orders = sum(safe_int(row.get("delayed_order_count")) for row in daily_rows)
-    late_count = sum(safe_int(row.get("late_count")) for row in daily_rows)
-    no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
     shift_count = sum(safe_int(row.get("shift_count")) for row in daily_rows)
-    route_delay_minutes = sum(safe_int(row.get("total_delay_minutes")) for row in delay_rows)
-    route_delayed_stops = sum(safe_int(row.get("delayed_stops_count")) for row in delay_rows)
 
     def compact_delay_row(row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -2169,41 +2197,30 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "isLateDeparture": departure_delay > 0,
         }
 
-    delay_detail_rows = [
-        compact_delay_row(row)
-        for row in delay_rows
-        if safe_int(row.get("total_delay_minutes")) > 0 or safe_int(row.get("delayed_stops_count")) > 0
-    ][:100]
-    compliance_detail_rows = [
-        compact_compliance_row(row)
-        for row in compliance_rows
-        if safe_int(row.get("planned_start_delay_minutes")) > 0
-        or safe_int(row.get("departure_delay_minutes")) > 0
-        or not str(row.get("actual_start_at") or row.get("shift_available_at") or "").strip()
-    ][:100]
+    delay_detail_rows: list[dict[str, Any]] = []
+    compliance_detail_rows: list[dict[str, Any]] = []
 
     return {
         "month": period_start.strftime("%Y-%m"),
         "courier": {"id": courier_id, "name": courier_name},
-        "amountsHidden": True,
-        "amountsNote": "A teljes bevetel mobilon rejtve van, a borravalo megjelenik.",
+        "amountsHidden": not can_show_amounts,
+        "amountsNote": (
+            "A havi elszamolasi idoszak meg van nyitva, a publikalt osszegek megjelenhetnek."
+            if can_show_amounts
+            else "A forint osszegek csak havi nyitas utan jelennek meg a futaroknak."
+        ),
         "summary": {
             "routes": total_routes,
             "orders": total_orders,
             "averageOrdersPerRoute": average_orders,
-            "delayedOrders": delayed_orders,
-            "routeDelayedStops": route_delayed_stops,
-            "routeDelayMinutes": route_delay_minutes,
-            "lateCount": late_count,
-            "noShowCount": no_show_count,
             "shiftCount": shift_count,
-            "tipsTotalHuf": route_tips,
+            "tipsTotalHuf": route_tips if can_show_amounts else 0,
         },
         "performanceDetails": {
             "delayRows": delay_detail_rows,
             "complianceRows": compliance_detail_rows,
-            "delaySourceRows": len(delay_rows),
-            "complianceSourceRows": len(compliance_rows),
+            "delaySourceRows": 0,
+            "complianceSourceRows": 0,
         },
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
@@ -2452,10 +2469,12 @@ def build_workflow(
     *,
     preview_read_only: bool = False,
     allow_unpublished: bool = False,
+    can_view_amounts: bool | None = None,
 ) -> dict[str, Any]:
     process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
+    amount_access = can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts)
     financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=allow_unpublished) if not process_id else {
         "available": False,
         "month": month.strftime("%Y-%m"),
@@ -2465,6 +2484,8 @@ def build_workflow(
         "source": "settlement.courier_settlement_summary",
         "message": "Egyedi folyamatnál a havi pénzügyi bontás a havi folyamatnál látható.",
     }
+    if not process_id and not amount_access:
+        financial_breakdown = hidden_financial_breakdown(month)
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
     complaints = [
         row for row in complaints
@@ -3455,12 +3476,14 @@ def workflow(
 ):
     user = require_user(giriton_pwa_session)
     view_user, preview = workflow_view_user(user, courier)
+    privileged_viewer = can_view_financial_amounts(user)
     return build_workflow(
         view_user,
         parse_month(month),
         process,
         preview_read_only=preview,
-        allow_unpublished=preview,
+        allow_unpublished=preview or privileged_viewer,
+        can_view_amounts=privileged_viewer or mobile_settlement_period_is_open(parse_month(month)),
     )
 
 
