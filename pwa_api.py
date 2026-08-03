@@ -1494,6 +1494,10 @@ def money_from(row: dict[str, Any], *keys: str) -> int:
     return 0
 
 
+def money_sum_from(row: dict[str, Any], *keys: str) -> int:
+    return sum(money_int(row.get(key)) for key in keys if key in row and row.get(key) not in (None, ""))
+
+
 def signed_item(key: str, label: str, amount: int, *, source: str = "settlement.courier_settlement_summary", note: str = "") -> dict[str, Any]:
     return {
         "key": key,
@@ -1697,13 +1701,11 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     no_show_count = 0
     route_delayed_stops = 0
     route_delay_minutes = 0
-    performance_note = "DB napi teljesítmény"
     if not daily_performance_rows:
         delayed_orders = 0
         late_count = 0
         no_show_count = 0
         shift_count = 0
-        performance_note = "DB route performance"
     if route_delayed_stops:
         delayed_orders = route_delayed_stops
 
@@ -1712,9 +1714,14 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     delay = money_from(row, "delay_bonus_huf")
     compliance = money_from(row, "compliance_bonus_huf")
     loyalty = money_from(row, "loyalty_bonus_huf")
-    customer_rating = money_from(row, "customer_rating_bonus_huf")
-    monthly_bonus = money_from(row, "monthly_bonus_huf")
-    monthly_malus = abs(money_from(row, "monthly_malus_huf"))
+    customer_rating = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
+    monthly_bonus = money_from(row, "monthly_bonus_huf") or money_sum_from(
+        row,
+        "other_route_bonus_huf",
+        "imported_bonus_huf",
+        "manual_bonus_huf",
+    )
+    monthly_malus = abs(money_from(row, "monthly_malus_huf") or money_from(row, "malus_huf"))
     returned_route = abs(money_from(row, "monthly_returned_route_huf"))
     accepted_route = money_from(row, "monthly_accepted_route_huf")
     atm_effect = money_from(row, "atm_effect_huf")
@@ -1732,7 +1739,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("tip", "Borravaló", tip),
         signed_item("delay_bonus", "Késedelmi díj", delay),
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
-        signed_item("loyalty_bonus", "Lojalitás", loyalty),
+        signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélértékelési bónusz", customer_rating),
         signed_item("monthly_bonus", "Havi bónusz", monthly_bonus),
         signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
@@ -1770,8 +1777,6 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         count_item("delay_minutes", "Késés összesen", route_delay_minutes),
         count_item("no_show_count", "Nem jelent meg műszakban", no_show_count),
     ]
-    for item in route_items:
-        item["note"] = performance_note
     for delay_row in delay_rows[:30]:
         minutes = safe_int(delay_row.get("total_delay_minutes"))
         delayed_stops = safe_int(delay_row.get("delayed_stops_count"))

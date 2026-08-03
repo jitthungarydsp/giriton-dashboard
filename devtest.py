@@ -1468,9 +1468,10 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     normal = parse_huf_value(row.get("Normál túrák"))
     delay = parse_huf_value(row.get("Késedelmi díj"))
     compliance = parse_huf_value(row.get("Túramegfelelés"))
+    loyalty = parse_huf_value(row.get("Lojalitás"))
     customer_rating = parse_huf_value(row.get("Ügyfélértékelés"))
     salary_advance = parse_huf_value(row.get("Fizetés előleg"))
-    income = base + tip + bonus + delay + compliance + customer_rating
+    income = base + tip + bonus + delay + compliance + loyalty + customer_rating
     return [
         {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": income, "note": "Havi nyitáskor publikált snapshot"},
@@ -1480,6 +1481,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
@@ -5873,7 +5875,7 @@ def show_courier_dialog() -> None:
             {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
             {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay_total, "note": "Valós elszámolási adat"},
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
-            {"item_key": "loyalty_bonus", "item_label": "Lojalitás", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
+            {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
             {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus_total, "note": "Valós elszámolási adat"},
             {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -malus_total, "note": "Valós elszámolási adat"},
@@ -5886,10 +5888,10 @@ def show_courier_dialog() -> None:
             {"item_key": "loyalty_previous_normal_routes", "item_label": "Lojalitás: előző havi normál kör", "amount_kind": "count", "amount_value": loyalty_previous_routes, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_current_normal_routes", "item_label": "Lojalitás: aktuális normál kör", "amount_kind": "count", "amount_value": loyalty_current_routes, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_advance_booking_days", "item_label": "Lojalitás: előre foglalt nap", "amount_kind": "count", "amount_value": loyalty_advance_booking_days, "note": "Valós elszámolási adat"},
-            {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
-            {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
-            {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
-            {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "DB napi teljesítmény"},
+            {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
+            {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
+            {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
+            {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
         ])
         mobile_overrides = load_mobile_breakdown_overrides(courier_id, period_start)
         if not mobile_overrides.empty:
