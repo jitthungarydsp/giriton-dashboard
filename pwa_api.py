@@ -1642,13 +1642,14 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
 
     for card in cards:
         card_override = overrides.get(str(card.get("key") or ""))
-        if is_manual_override(card_override):
+        if card_override:
             card["amountHuf"] = money_int(card_override.get("amount_value"))
             card["amountKind"] = str(card_override.get("amount_kind") or card.get("amountKind") or "huf")
-            card["overrideNote"] = str(card_override.get("note") or "Admin által módosítva")
+            if is_manual_override(card_override):
+                card["overrideNote"] = str(card_override.get("note") or "Admin által módosítva")
         for item in card.get("items") or []:
             override = overrides.get(str(item.get("key") or ""))
-            if not is_manual_override(override):
+            if not override:
                 continue
             item["amountHuf"] = money_int(override.get("amount_value"))
             item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
