@@ -993,7 +993,7 @@ function renderDocumentPanel(action, title, stepNumber) {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>
       ${isExtraWorkflow()
-        ? `<div class="notice">Ez egy egyéb folyamat. Itt nincs külön havi elszámolás PDF; a következő teendő a TIG, majd a számla feltöltése.</div>`
+        ? `<div class="notice">Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy TIG; a következő teendő a számla feltöltése.</div>`
         : locked
           ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>`
           : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}

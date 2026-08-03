@@ -1268,20 +1268,19 @@ def load_latest_jit_session_id() -> str | None:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_latest_excel_jit_session_id() -> str | None:
+def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | None:
     """Find the latest non-API JIT session for Excel calculation mode."""
     try:
-        rows = (
+        query = (
             get_db()
             .schema("settlement")
             .table("jit_row")
             .select("session_id,source_sheet,created_at")
-            .order("created_at", desc=True)
-            .limit(10000)
-            .execute()
-            .data
-            or []
         )
+        if period_start:
+            _, period_end = month_bounds(period_start)
+            query = query.gte("route_date", period_start.isoformat()).lte("route_date", period_end.isoformat())
+        rows = query.order("created_at", desc=True).limit(10000).execute().data or []
         for row in rows:
             source_sheet = str(row.get("source_sheet") or "")
             if not source_sheet.lower().startswith("api financial overview"):
@@ -1289,6 +1288,30 @@ def load_latest_excel_jit_session_id() -> str | None:
         return None
     except BaseException:
         return None
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def jit_session_has_rows_in_month(session_id: str | None, period_start: date) -> bool:
+    if not session_id:
+        return False
+    try:
+        _, period_end = month_bounds(period_start)
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("session_id")
+            .eq("session_id", session_id)
+            .gte("route_date", period_start.isoformat())
+            .lte("route_date", period_end.isoformat())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return bool(rows)
+    except BaseException:
+        return False
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -5478,10 +5501,11 @@ def show_courier_dialog() -> None:
         if source_choice != current_source:
             st.session_state["courier_requested_calculation_mode"] = source_choice
             if source_choice == "Excel":
-                st.session_state["settlement_import_session_id"] = (
-                    st.session_state.get("settlement_excel_session_id")
-                    or load_latest_excel_jit_session_id()
-                )
+                state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+                if jit_session_has_rows_in_month(state_excel_session_id, period_start):
+                    st.session_state["settlement_import_session_id"] = state_excel_session_id
+                else:
+                    st.session_state["settlement_import_session_id"] = load_latest_excel_jit_session_id(period_start)
             else:
                 st.session_state["settlement_import_session_id"] = load_latest_api_jit_session_id(
                     period_start,
@@ -8122,15 +8146,15 @@ def show_new_settlement_page() -> None:
     selected_month_label = st.session_state.get("new_month") or month_options()[0]
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
+    balance_period_start = selected_period_start
+    _, balance_period_end = month_bounds(balance_period_start)
     if str(selected_calculation_mode or "API").strip().casefold() == "excel":
-        import_session_id = (
-            st.session_state.get("settlement_excel_session_id")
-            or load_latest_excel_jit_session_id()
-        )
-        balance_period_start, balance_period_end = load_settlement_month(import_session_id)
+        state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+        if jit_session_has_rows_in_month(state_excel_session_id, balance_period_start):
+            import_session_id = state_excel_session_id
+        else:
+            import_session_id = load_latest_excel_jit_session_id(balance_period_start)
     else:
-        balance_period_start = selected_period_start
-        _, balance_period_end = month_bounds(balance_period_start)
         api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
         import_session_id = api_session_id
         if api_session_id:
@@ -8603,6 +8627,8 @@ def show_new_settlement_page() -> None:
     previous_filtered = pd.DataFrame(columns=filtered.columns)
     try:
         previous_session_id = None
+        if str(selected_calculation_mode or "API").strip().casefold() == "excel":
+            previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
         if str(selected_calculation_mode or "API").strip().casefold() == "api":
             previous_session_id = load_latest_api_jit_session_id(previous_period_start, selected_warehouse_label)
             if not previous_session_id:
