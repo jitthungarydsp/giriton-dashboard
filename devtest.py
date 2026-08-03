@@ -2284,6 +2284,116 @@ def create_salary_advance_request(
     load_courier_salary_advance_requests.clear()
 
 
+def update_salary_advance_schedule(
+    request_row: dict,
+    courier_name: str,
+    new_start_date: date,
+    new_installment_months: int,
+    change_note: str = "",
+) -> str:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    requested_amount = int(round(parse_huf_value(request_row.get("requested_amount_huf"))))
+    start_month, _ = month_bounds(new_start_date)
+    requested_months = max(1, int(new_installment_months or 1))
+    request_amounts = salary_advance_installment_amounts(requested_amount, requested_months)
+    existing_note = str(request_row.get("note") or "").strip()
+    response = str(change_note or "").strip()
+    updated_note = "\n\n".join(
+        part for part in [
+            existing_note,
+            f"Ütemezés módosítva ({actor}): kezdés {start_month:%Y-%m}, {requested_months} hónap. {response}".strip(),
+        ]
+        if part
+    )
+    get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "installment_months": requested_months,
+        "monthly_amount_huf": request_amounts[0] if request_amounts else 0,
+        "start_date": start_month.isoformat(),
+        "note": updated_note,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+
+    plan_id = str(request_row.get("plan_id") or "").strip()
+    if not plan_id:
+        load_courier_salary_advance_requests.clear()
+        return "Az igény ütemezése módosítva. Részlet-terv még nem jött létre."
+
+    existing_installments = (
+        get_db().schema("settlement").table("courier_salary_advance_installment")
+        .select("*")
+        .eq("plan_id", plan_id)
+        .order("installment_no", desc=False)
+        .execute().data or []
+    )
+    done_rows = [
+        row for row in existing_installments
+        if str(row.get("status") or "").casefold() == "done"
+    ]
+    done_amount = sum(parse_huf_value(row.get("amount_huf")) for row in done_rows)
+    remaining_amount = max(0, requested_amount - int(round(done_amount)))
+    remaining_months = max(1, requested_months - len(done_rows))
+    if done_rows:
+        done_starts = [
+            parsed.date()
+            for parsed in (pd.to_datetime(row.get("period_start"), errors="coerce") for row in done_rows)
+            if not pd.isna(parsed)
+        ]
+        if done_starts:
+            latest_done_start = max(done_starts)
+            min_next_month, _ = month_bounds(add_months(latest_done_start, 1))
+            if start_month < min_next_month:
+                start_month = min_next_month
+    open_ids = [
+        str(row.get("id")) for row in existing_installments
+        if row.get("id") and str(row.get("status") or "").casefold() != "done"
+    ]
+    if open_ids:
+        get_db().schema("settlement").table("courier_salary_advance_installment").delete().in_("id", open_ids).execute()
+
+    new_amounts = salary_advance_installment_amounts(remaining_amount, remaining_months) if remaining_amount else []
+    get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "installment_months": len(done_rows) + len(new_amounts),
+        "monthly_amount_huf": new_amounts[0] if new_amounts else 0,
+        "start_date": start_month.isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    insert_rows = []
+    for index, amount in enumerate(new_amounts):
+        period_start, period_end = month_bounds(add_months(start_month, index))
+        insert_rows.append({
+            "id": str(uuid.uuid4()),
+            "plan_id": plan_id,
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "installment_no": len(done_rows) + index + 1,
+            "installment_count": len(done_rows) + len(new_amounts),
+            "amount_huf": amount,
+            "status": "open",
+            "updated_at": pd.Timestamp.utcnow().isoformat(),
+        })
+    if insert_rows:
+        get_db().schema("settlement").table("courier_salary_advance_installment").insert(insert_rows).execute()
+
+    get_db().schema("settlement").table("courier_salary_advance_plan").update({
+        "installment_months": len(done_rows) + len(new_amounts),
+        "monthly_amount_huf": new_amounts[0] if new_amounts else 0,
+        "start_date": start_month.isoformat(),
+        "status": "done" if not new_amounts else "open",
+        "note": updated_note,
+        "closed_at": pd.Timestamp.utcnow().isoformat() if not new_amounts else None,
+        "closed_by": actor if not new_amounts else None,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", plan_id).execute()
+    load_courier_salary_advance_requests.clear()
+    load_salary_advance_installments_for_month.clear()
+    load_courier_salary_advance_history.clear()
+    return f"Az ütemezés módosítva. Lezárt részletek: {len(done_rows)}, új nyitott részletek: {len(new_amounts)}."
+
+
 def salary_advance_process_id(request_id: str, courier_id: str, start_date: date) -> str:
     short_id = re.sub(r"[^a-zA-Z0-9]+", "", str(request_id or ""))[:8].lower()
     return f"eloleg-{_courier_id_key(courier_id)}-{start_date:%Y%m}-{short_id or uuid.uuid4().hex[:8]}"
@@ -2388,6 +2498,46 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
     return plan_id
 
 
+def cancel_salary_advance_plan_for_request(request_row: dict, response_message: str = "") -> int:
+    plan_id = str(request_row.get("plan_id") or "").strip()
+    if not plan_id:
+        return 0
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    response = str(response_message or "").strip()
+    existing_note = str(request_row.get("note") or "").strip()
+    updated_note = "\n\n".join(
+        part for part in [
+            existing_note,
+            f"Visszavonva ({actor}): {response}" if response else f"Visszavonva: {actor}",
+        ]
+        if part
+    )
+    rows = (
+        get_db().schema("settlement").table("courier_salary_advance_installment")
+        .select("id")
+        .eq("plan_id", plan_id)
+        .execute().data or []
+    )
+    installment_ids = [str(row.get("id")) for row in rows if row.get("id")]
+    if installment_ids:
+        get_db().schema("settlement").table("courier_salary_advance_installment").update({
+            "status": "cancelled",
+            "closed_at": pd.Timestamp.utcnow().isoformat(),
+            "closed_by": actor,
+            "updated_at": pd.Timestamp.utcnow().isoformat(),
+        }).in_("id", installment_ids).execute()
+    get_db().schema("settlement").table("courier_salary_advance_plan").update({
+        "status": "cancelled",
+        "note": updated_note,
+        "closed_at": pd.Timestamp.utcnow().isoformat(),
+        "closed_by": actor,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", plan_id).execute()
+    load_salary_advance_installments_for_month.clear()
+    load_courier_salary_advance_history.clear()
+    return len(installment_ids)
+
+
 def reject_salary_advance_request(request_row: dict, courier_name: str, response_message: str) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     request_id = str(request_row.get("id") or "").strip()
@@ -2413,6 +2563,7 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
         "note": updated_note,
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", request_id).execute()
+    cancel_salary_advance_plan_for_request(request_row, response)
     if process_id:
         for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
             upsert_peopleforce_card_status(
@@ -2425,6 +2576,8 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
                 updated_by=actor,
             )
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_installments_for_month.clear()
+    load_courier_salary_advance_history.clear()
 
 
 def close_salary_advance_installments(courier_id: str, period_start: date, period_end: date) -> int:
@@ -6092,7 +6245,7 @@ def show_courier_dialog() -> None:
                 "invoice_number": invoice_number,
                 "invoice_file": str(latest_invoice.get("file_name") or ""),
                 "invoice_title": str(latest_invoice.get("title") or ""),
-                "amount": invoice_amount or (payable_total if not process_id else request_amount),
+                "amount": request_amount if request_item else (invoice_amount or (payable_total if not process_id else 0)),
                 "status": "Lezárva" if payment_status == "done" or (not process_id and closure_done) else "Nyitott",
                 "request": request_item,
             })
@@ -6142,8 +6295,14 @@ def show_courier_dialog() -> None:
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
 
+            reject_note = st.text_area(
+                "Elutasítás megjegyzés",
+                key=f"payment_reject_note_{courier_id}_{process_id or 'monthly'}",
+                placeholder="Röviden írd le, miért utasítjuk el / vonjuk vissza.",
+            )
             close_disabled = str(payment_item.get("status")) == "Lezárva"
-            if st.button("Havi zárás" if not process_id else "Folyamat lezárása", type="primary", use_container_width=True, disabled=close_disabled, key=f"payment_close_{courier_id}_{process_id or 'monthly'}"):
+            close_col, reject_col = st.columns(2)
+            if close_col.button("Havi zárás" if not process_id else "Folyamat lezárása", type="primary", use_container_width=True, disabled=close_disabled, key=f"payment_close_{courier_id}_{process_id or 'monthly'}"):
                 try:
                     if process_id:
                         request_item = payment_item.get("request") or {}
@@ -6200,6 +6359,42 @@ def show_courier_dialog() -> None:
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A kifizetés lezárása sikertelen: {exc}")
+            reject_label = "Havi kifizetés elutasítása / visszanyitás" if not process_id else "Elutasítás / folyamat visszavonása"
+            if reject_col.button(reject_label, use_container_width=True, key=f"payment_reject_{courier_id}_{process_id or 'monthly'}"):
+                try:
+                    response = str(reject_note or "").strip()
+                    if process_id:
+                        request_item = payment_item.get("request") or {}
+                        if request_item:
+                            reject_salary_advance_request(request_item, courier_name, response)
+                        else:
+                            for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+                                upsert_peopleforce_card_status(
+                                    courier_id=courier_id,
+                                    courier_name=str(row["Futár"]),
+                                    action_key=process_action_key(action, process_id),
+                                    document_month=payment_month,
+                                    status="done",
+                                    status_note=f"Folyamat elutasítva / visszavonva. {response}".strip(),
+                                    updated_by=actor,
+                                )
+                    else:
+                        reopen_courier_monthly_closure(courier_id, period_start, period_end)
+                        reopen_target_reserve_month(courier_id, period_start, period_end)
+                        reopen_salary_advance_installments(courier_id, period_start, period_end)
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=str(row["Futár"]),
+                            action_key="invoice_payment",
+                            document_month=payment_month,
+                            status="open",
+                            status_note=f"Havi kifizetés elutasítva / visszanyitva. {response}".strip(),
+                            updated_by=actor,
+                        )
+                    st.success("A kifizetés elutasítva, a kapcsolódó folyamat visszavonva.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A kifizetés elutasítása sikertelen: {exc}")
 
     if selected_menu == "Fizetés előleg":
         st.markdown("#### Fizetés előleg")
@@ -6272,6 +6467,45 @@ def show_courier_dialog() -> None:
                         c2.metric("Összeg", format_huf(amount))
                         c3.metric("Havi levonás", format_huf(monthly), f"{months} hó")
                         c4.caption(f"Folyamat: {process_id or '-'}")
+                        if request_status != "rejected":
+                            default_start = request_start.date() if not pd.isna(request_start) else period_start
+                            with st.form(f"salary_advance_schedule_form_{request_id}", clear_on_submit=False):
+                                st.caption("Ütemezés módosítása")
+                                schedule_cols = st.columns([0.34, 0.22, 0.44])
+                                new_start_date = schedule_cols[0].date_input(
+                                    "Új kezdés",
+                                    value=default_start,
+                                    key=f"salary_advance_schedule_start_{request_id}",
+                                )
+                                new_months = schedule_cols[1].number_input(
+                                    "Hónap",
+                                    min_value=1,
+                                    max_value=60,
+                                    step=1,
+                                    value=max(1, months),
+                                    key=f"salary_advance_schedule_months_{request_id}",
+                                )
+                                schedule_note = schedule_cols[2].text_input(
+                                    "Módosítás oka",
+                                    key=f"salary_advance_schedule_note_{request_id}",
+                                    placeholder="Pl. +1 hónapot kér",
+                                )
+                                preview_schedule = salary_advance_installment_amounts(amount, int(new_months))
+                                st.caption(f"Új tervezett havi levonás: {format_huf(preview_schedule[0] if preview_schedule else 0)}")
+                                save_schedule = st.form_submit_button("Ütemezés mentése", use_container_width=True)
+                            if save_schedule:
+                                try:
+                                    result_message = update_salary_advance_schedule(
+                                        request_item,
+                                        courier_name,
+                                        new_start_date,
+                                        int(new_months),
+                                        schedule_note,
+                                    )
+                                    st.success(result_message)
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Az előleg ütemezés módosítása sikertelen. Részlet: {exc}")
                         reject_response = ""
                         if request_status in {"requested", "approved"}:
                             reject_response = st.text_area(
