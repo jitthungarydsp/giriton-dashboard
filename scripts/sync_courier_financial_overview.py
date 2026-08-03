@@ -413,6 +413,20 @@ def upsert_route_performance_detail(payload: dict[str, Any]) -> None:
     raise_for_response(response, f"{table_name} upsert")
 
 
+def upsert_flat_table(table_name: str, payload: dict[str, Any]) -> None:
+    url = os.environ["SUPABASE_URL"].rstrip("/")
+    response = requests.post(
+        f"{url}/rest/v1/{table_name}",
+        headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+        params={
+            "on_conflict": "courier_id,route_id,year,month,dsp_id,warehouse_id",
+        },
+        json=payload,
+        timeout=60,
+    )
+    raise_for_response(response, f"{table_name} upsert")
+
+
 def import_api_overview_to_jit(*, year: int, month: int, warehouse_id: int | None = None) -> str:
     url = os.environ["SUPABASE_URL"].rstrip("/")
     response = requests.post(
@@ -605,6 +619,202 @@ def extract_route_ids(payload: Any) -> list[int]:
         seen.add(route_id)
         route_ids.append(route_id)
     return route_ids
+
+
+def extract_route_refs(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    refs: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    routes = payload.get("routes")
+    if not isinstance(routes, list):
+        return []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        raw_route_id = route.get("routeId") or route.get("route_id") or route.get("id")
+        try:
+            route_id = int(raw_route_id)
+        except (TypeError, ValueError):
+            continue
+        if route_id <= 0 or route_id in seen:
+            continue
+        seen.add(route_id)
+        refs.append(
+            {
+                "route_id": route_id,
+                "delivery_date": clean_text(route.get("deliveryDate")),
+                "order_count": safe_int(route.get("orderCount")),
+            }
+        )
+    return refs
+
+
+def safe_int(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def iso_date(value: Any) -> str:
+    text = clean_text(value)
+    return text[:10] if len(text) >= 10 else ""
+
+
+def minutes_between(later: Any, earlier: Any) -> int | None:
+    later_text = clean_text(later)
+    earlier_text = clean_text(earlier)
+    if not later_text or not earlier_text:
+        return None
+    try:
+        later_dt = datetime.fromisoformat(later_text.replace("Z", "+00:00"))
+        earlier_dt = datetime.fromisoformat(earlier_text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return int(round((later_dt - earlier_dt).total_seconds() / 60))
+
+
+def first_log_event_at(payload: Any, event_type: str) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    events = payload.get("log")
+    if not isinstance(events, list):
+        return None
+    for event in events:
+        if isinstance(event, dict) and clean_text(event.get("type")) == event_type:
+            return clean_text(event.get("occurredAt")) or None
+    return None
+
+
+def build_delay_row(
+    *,
+    courier_id: int,
+    route_ref: dict[str, Any],
+    warehouse_id: int,
+    response_json: Any,
+    status_code: int,
+    year: int,
+    month: int,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    route_id = int(route_ref["route_id"])
+    stops = response_json.get("stops") if isinstance(response_json, dict) else []
+    stops = stops if isinstance(stops, list) else []
+    delay_minutes: list[int] = []
+    slot_miss_projected_count = 0
+    rejected_stops_count = 0
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        delay = max(safe_int(stop.get("deltaMinutes")), 0)
+        if delay > 0:
+            delay_minutes.append(delay)
+        if bool(stop.get("slotMissProjected")):
+            slot_miss_projected_count += 1
+        if clean_text(stop.get("rejectedByCourierReason")):
+            rejected_stops_count += 1
+    delivery_date = (
+        clean_text(route_ref.get("delivery_date"))
+        or iso_date((stops[0] if stops else {}).get("plannedArrivalAt"))
+        or iso_date((response_json.get("shift") if isinstance(response_json, dict) else {}).get("plannedStartAt"))
+        or f"{year}-{month:02d}-01"
+    )
+    return {
+        "courier_id": courier_id,
+        "route_id": route_id,
+        "delivery_date": delivery_date,
+        "year": year,
+        "month": month,
+        "dsp_id": int(os.getenv("COURIER_HUB_DSP_ID", "8")),
+        "warehouse_id": warehouse_id,
+        "route_order_count": safe_int(route_ref.get("order_count")) or len(stops),
+        "stops_count": len(stops),
+        "delayed_stops_count": len(delay_minutes),
+        "total_delay_minutes": sum(delay_minutes),
+        "max_delay_minutes": max(delay_minutes) if delay_minutes else 0,
+        "slot_miss_projected_count": slot_miss_projected_count,
+        "rejected_stops_count": rejected_stops_count,
+        "response_status_code": status_code,
+        "source_raw_updated_at": now,
+        "updated_at": now,
+    }
+
+
+def build_compliance_row(
+    *,
+    courier_id: int,
+    route_ref: dict[str, Any],
+    warehouse_id: int,
+    response_json: Any,
+    status_code: int,
+    year: int,
+    month: int,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    route_id = int(route_ref["route_id"])
+    shift = response_json.get("shift") if isinstance(response_json, dict) else {}
+    shift = shift if isinstance(shift, dict) else {}
+    planned_start_at = clean_text(shift.get("plannedStartAt")) or None
+    actual_start_at = clean_text(shift.get("actualStartAt")) or None
+    planned_departure_at = clean_text(shift.get("plannedDepartureAt")) or None
+    departed_at = clean_text(shift.get("departedAt")) or first_log_event_at(response_json, "DEPARTED")
+    route_assigned_at = first_log_event_at(response_json, "ROUTE_ASSIGNED")
+    shift_available_at = first_log_event_at(response_json, "SHIFT_AVAILABLE") or actual_start_at
+    last_order_finished_at = first_log_event_at(response_json, "LAST_ORDER_FINISHED")
+    warehouse_arrived_at = first_log_event_at(response_json, "WAREHOUSE_ARRIVED")
+    event_summary = {
+        "route_assigned_at": route_assigned_at,
+        "shift_available_at": shift_available_at,
+        "departed_at": departed_at,
+        "last_order_finished_at": last_order_finished_at,
+        "warehouse_arrived_at": warehouse_arrived_at,
+    }
+    shift_date = (
+        clean_text(route_ref.get("delivery_date"))
+        or iso_date(planned_start_at)
+        or iso_date(actual_start_at)
+        or f"{year}-{month:02d}-01"
+    )
+    return {
+        "courier_id": courier_id,
+        "route_id": route_id,
+        "shift_date": shift_date,
+        "year": year,
+        "month": month,
+        "dsp_id": int(os.getenv("COURIER_HUB_DSP_ID", "8")),
+        "warehouse_id": warehouse_id,
+        "planned_start_at": planned_start_at,
+        "actual_start_at": actual_start_at,
+        "route_assigned_at": route_assigned_at,
+        "shift_available_at": shift_available_at,
+        "planned_departure_at": planned_departure_at,
+        "departed_at": departed_at,
+        "last_order_finished_at": last_order_finished_at,
+        "warehouse_arrived_at": warehouse_arrived_at,
+        "vehicle_model": clean_text(shift.get("vehicleModel")) or None,
+        "vehicle_plate": clean_text(shift.get("vehiclePlate")) or None,
+        "mileage_km": safe_float(shift.get("mileageKm")),
+        "vehicle_ownership": clean_text(shift.get("vehicleOwnership")) or None,
+        "fridge_config": clean_text(shift.get("fridgeConfig")) or None,
+        "delay_reference": clean_text(shift.get("delayReference")) or None,
+        "returnables_status": clean_text(shift.get("returnablesStatus")) or None,
+        "returnables_note": clean_text(shift.get("returnablesNote")) or None,
+        "planned_start_delay_minutes": minutes_between(actual_start_at, planned_start_at),
+        "departure_delay_minutes": minutes_between(departed_at, planned_departure_at),
+        "return_delay_minutes": minutes_between(warehouse_arrived_at, last_order_finished_at),
+        "event_summary": event_summary,
+        "response_status_code": status_code,
+        "source_raw_updated_at": now,
+        "updated_at": now,
+    }
 
 
 def make_route_performance_detail_payload(
@@ -804,11 +1014,12 @@ def main() -> int:
             if args.apply:
                 upsert_financial_overview(db_payload)
 
-            route_ids = extract_route_ids(response_json)
+            route_refs = extract_route_refs(response_json)
             if args.skip_route_details:
-                route_detail_skipped += len(route_ids)
+                route_detail_skipped += len(route_refs)
             else:
-                for route_id in route_ids:
+                for route_ref in route_refs:
+                    route_id = int(route_ref["route_id"])
                     try:
                         detail_url, detail_status_code, detail_json = fetch_route_performance_detail(
                             courier_id=courier_id,
@@ -827,6 +1038,31 @@ def main() -> int:
                         )
                         if args.apply:
                             upsert_route_performance_detail(detail_payload)
+                            if detail_status_code == 200:
+                                upsert_flat_table(
+                                    "courier_financial_overview_delay",
+                                    build_delay_row(
+                                        courier_id=courier_id,
+                                        route_ref=route_ref,
+                                        warehouse_id=warehouse_id,
+                                        response_json=detail_json,
+                                        status_code=detail_status_code,
+                                        year=year,
+                                        month=month,
+                                    ),
+                                )
+                                upsert_flat_table(
+                                    "courier_financial_overview_compliance",
+                                    build_compliance_row(
+                                        courier_id=courier_id,
+                                        route_ref=route_ref,
+                                        warehouse_id=warehouse_id,
+                                        response_json=detail_json,
+                                        status_code=detail_status_code,
+                                        year=year,
+                                        month=month,
+                                    ),
+                                )
                         if detail_status_code == 200:
                             route_detail_success += 1
                         else:
