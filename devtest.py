@@ -8179,14 +8179,14 @@ def show_new_settlement_page() -> None:
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
     start_label = (
         f"Havi elszámolási időszak indítása - {selected_month} "
-        f"({len(monthly_document_plan)} futár, {len(monthly_document_plan) * 2} PDF)"
+        f"({len(monthly_document_plan)} futár)"
     )
     if st.button(
         start_label,
         disabled=period_start_clicked or selected_calculation_mode not in {"API", "Excel"},
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
-        help="Inaktív. A mögöttes logika előkészítve: egyszeri indítás után futáronként összesítő és TIG PDF készülne.",
+        help="Egyszeri inditas: a futar PWA-ban megkapja az elszamolasi idoszakot. TIG csak elszamolas elfogadasa utan keszul.",
     ):
         snapshot_session_id = settlement_mobile_session_for_mode(
             selected_calculation_mode,

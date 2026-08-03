@@ -27,6 +27,7 @@ from resources.email_sender import send_login_credentials, send_message, smtp_co
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password
 from resources.security import hash_password, verify_password
+from resources.settlement_pdf import build_tig_pdf
 
 try:
     from cryptography.hazmat.primitives import serialization
@@ -2129,7 +2130,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
     route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
     route_tips = sum(safe_int(route.get("tips_huf")) for route in route_rows)
-    can_show_amounts = can_view_financial_amounts(user) or mobile_settlement_period_is_open(period_start)
+    can_show_amounts = can_view_financial_amounts(user)
     route_count = len(route_rows)
     total_routes = route_count or daily_routes
     total_orders = route_orders or daily_orders
@@ -2676,6 +2677,89 @@ def expected_tig_amount(user: dict[str, Any], month: date) -> int:
         if amount:
             return amount
     return 0
+
+
+def slugify_filename(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-._")
+    return text[:80] or "futar"
+
+
+def make_document_reference(courier_id: str, document_type: str, document_month: date) -> str:
+    month_text = document_month.replace(day=1).strftime("%Y%m")
+    digest = hashlib.sha1(f"{courier_id}:{document_type}:{month_text}".encode("utf-8")).hexdigest()[:8]
+    return f"{courier_id}-{document_type.upper()}-{month_text}-{digest}"
+
+
+def workflow_tig_document_exists(user: dict[str, Any], month: date, process_id: str | None = "") -> bool:
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id,note",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month.isoformat()}",
+            "document_type": "eq.tig",
+            "order": "uploaded_at.desc",
+            "limit": "20",
+        },
+        timeout=60,
+    )
+    return any(document_belongs_to_process(row, process_id) for row in rows)
+
+
+def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, process_id: str | None = "") -> bool:
+    clean_process_id = normalize_process_id(process_id)
+    if clean_process_id:
+        return False
+    if workflow_tig_document_exists(user, month, clean_process_id):
+        return False
+    breakdown = build_financial_breakdown(user, month, allow_unpublished=True)
+    if not breakdown.get("available"):
+        return False
+    courier_id, courier_name = courier_identity(user)
+    payable = money_int(breakdown.get("totalPayableHuf"))
+    if payable <= 0:
+        return False
+    reference = make_document_reference(courier_id, "tig", month)
+    pdf_bytes = build_tig_pdf(
+        {
+            "name": courier_name,
+            "company_name": courier_name,
+            "id": courier_id,
+            "document_month": month,
+            "document_reference": reference,
+        },
+        {"payable": payable},
+    )
+    note_parts = [
+        "Automatikus TIG generálás elszámolás elfogadása után.",
+        f"Elszámolási összeg: {payable} Ft.",
+    ]
+    process_marker = process_note_marker(clean_process_id)
+    if process_marker:
+        note_parts.insert(0, process_marker)
+    supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "document_type": "tig",
+            "document_month": month.isoformat(),
+            "title": f"TIG - {month:%Y-%m}",
+            "file_name": f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{month:%Y-%m}_{reference}.pdf",
+            "mime_type": "application/pdf",
+            "file_size": len(pdf_bytes),
+            "file_content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "note": " ".join(note_parts),
+            "uploaded_by": "PWA automata",
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+    return True
 
 
 def require_prerequisite(user: dict[str, Any], month: date, action: str, process_id: str | None = "") -> None:
@@ -3483,7 +3567,7 @@ def workflow(
         process,
         preview_read_only=preview,
         allow_unpublished=preview or privileged_viewer,
-        can_view_amounts=privileged_viewer or mobile_settlement_period_is_open(parse_month(month)),
+        can_view_amounts=privileged_viewer,
     )
 
 
@@ -3535,6 +3619,8 @@ def accept_workflow_document(
         "A futár elfogadta a dokumentumot.",
         process_id,
     )
+    if action == "settlement":
+        generate_tig_after_settlement_accept(user, month, process_id)
     return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 
@@ -3553,6 +3639,12 @@ def create_workflow_complaint(
     process_id = normalize_process_id(payload.process)
     courier_id, courier_name = courier_identity(user)
     _documents, _status_rows, complaints = read_workflow_rows(user, month)
+    states = status_map(_status_rows, process_id)
+    if payload.action == "settlement" and workflow_done(states, "settlement"):
+        raise HTTPException(
+            status_code=409,
+            detail="Az elszamolast mar elfogadtad, reklamaciot elotte lehet kuldeni.",
+        )
     complaints = [
         row for row in complaints
         if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
