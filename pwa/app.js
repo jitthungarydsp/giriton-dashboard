@@ -199,17 +199,20 @@ function renderSalaryAdvanceRequests() {
       <span class="step-code">Ft</span>
       <div><h3>Előleg kérelmek</h3><p>A jóváhagyott igény külön elszámolási folyamatként választható ki.</p></div>
     </div>
-    <div class="stat-breakdown-list">
+    <div class="financial-card-grid salary-advance-grid">
       ${rows.map((item) => `
-        <div class="stat-row">
-          <span>${escapeHtml(item.statusLabel || item.status)} · ${escapeHtml(item.startDate || "-")}</span>
-          <strong>${formatHuf(item.requestedAmountHuf)} / ${formatCount(item.installmentMonths)} hó</strong>
-        </div>
-        <div class="stat-row">
-          <span>Havi levonás</span>
-          <strong>${formatHuf(item.monthlyAmountHuf)}</strong>
-        </div>
-        ${item.processId ? `<div class="notice">Folyamat: ${escapeHtml(item.processId)}. Az Elszámolásom menüben válaszd ki ezt a folyamatot.</div>` : ""}
+        <article class="financial-card">
+          <summary>
+            <span>${escapeHtml(item.statusLabel || item.status)}</span>
+            <strong>${formatHuf(item.requestedAmountHuf)}</strong>
+          </summary>
+          <div class="stat-breakdown-list">
+            <div class="stat-row"><span>Kezdés</span><strong>${escapeHtml(item.startDate || "-")}</strong></div>
+            <div class="stat-row"><span>Havi bontás</span><strong>${formatCount(item.installmentMonths)} hó</strong></div>
+            <div class="stat-row"><span>Havi levonás</span><strong>${formatHuf(item.monthlyAmountHuf)}</strong></div>
+            ${item.processId ? `<div class="stat-row"><span>Folyamat</span><strong>${escapeHtml(item.processId)}</strong></div>` : ""}
+          </div>
+        </article>
       `).join("")}
     </div>
   `;
@@ -960,6 +963,10 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   `;
 }
 
+function isExtraWorkflow() {
+  return Boolean(state.workflow?.process);
+}
+
 function renderDocumentPanel(action, title, stepNumber) {
   const panel = $(`#${action}-panel`);
   const documents = state.workflow?.documents?.[action] || [];
@@ -985,8 +992,11 @@ function renderDocumentPanel(action, title, stepNumber) {
   if (action === "settlement") {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>
-      ${locked ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>` : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}
-      ${(state.workflow?.documents?.settlement || []).length ? `<div class="complaint-box"><strong>Dokumentumok</strong>${documentList(state.workflow.documents.settlement)}</div>` : ""}
+      ${isExtraWorkflow()
+        ? `<div class="notice">Ez egy egyéb folyamat. Itt nincs külön havi elszámolás PDF; a következő teendő a TIG, majd a számla feltöltése.</div>`
+        : locked
+          ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>`
+          : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}
     `;
     const acceptButton = $(`#accept-${action}`);
     if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
@@ -1033,6 +1043,10 @@ function activeWorkflowPanel() {
   const steps = state.workflow?.steps || [];
   const firstActive = steps.find((step) => !step.done && !step.locked) || steps.find((step) => !step.done);
   if (!firstActive && state.workflow?.states?.invoice_payment?.status === "done") return "invoice-check-panel";
+  if (isExtraWorkflow() && (firstActive?.key?.startsWith("settlement") || firstActive?.key?.startsWith("tig"))) {
+    const invoiceStep = workflowStep("invoice_submit");
+    if (!invoiceStep.locked && !invoiceStep.done) return "invoice-submit-panel";
+  }
   const key = firstActive?.key || "";
   if (key.startsWith("settlement")) return "settlement-panel";
   if (key.startsWith("tig")) return "tig-panel";

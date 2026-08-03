@@ -133,6 +133,7 @@ create table if not exists settlement.cfg_jitt_reserve_insurance_rules (
     id uuid primary key default gen_random_uuid(),
     insurance_fee_huf integer not null default 0 check (insurance_fee_huf >= 0),
     base_insurance_total_huf integer not null default 0 check (base_insurance_total_huf >= 0),
+    reserve_target_huf integer not null default 50000 check (reserve_target_huf >= 0),
     deduction_percent numeric not null check (deduction_percent between 0 and 100),
     valid_from date not null,
     valid_to date,

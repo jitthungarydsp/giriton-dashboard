@@ -1655,6 +1655,15 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
             item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
             item["label"] = str(override.get("item_label") or item.get("label") or "")
             item["note"] = str(override.get("note") or "Admin által módosítva")
+    performance = next((card for card in cards if card.get("key") == "performance"), None)
+    if performance:
+        items = performance.get("items") or []
+        by_key = {str(item.get("key") or ""): item for item in items}
+        routes = money_int((by_key.get("routes") or {}).get("amountHuf"))
+        normal = money_int((by_key.get("normal_routes") or {}).get("amountHuf"))
+        highlighted = money_int((by_key.get("highlighted_routes") or {}).get("amountHuf"))
+        if routes > 0 and normal + highlighted == 0 and by_key.get("normal_routes"):
+            by_key["normal_routes"]["amountHuf"] = routes
     return cards
 
 
@@ -2513,7 +2522,19 @@ def build_workflow(
         if document_groups[action] and action not in states:
             states[action] = {"status": "open", "status_note": "Új dokumentum érkezett."}
 
-    settlement_ready = bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
+    process_invoice_flow_ready = bool(process_id) and (
+        bool(document_groups["tig"])
+        or bool(document_groups["settlement"])
+        or bool(states.get("settlement"))
+        or bool(states.get("tig"))
+        or bool(states.get("invoice_submit"))
+        or bool(states.get("invoice_check"))
+        or bool(states.get("invoice_payment"))
+    )
+    process_settlement_ready = process_invoice_flow_ready
+    settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
+    settlement_done = workflow_done(states, "settlement") or process_settlement_ready
+    tig_done = workflow_done(states, "tig") or process_invoice_flow_ready
 
     steps = [
         {
@@ -2529,30 +2550,30 @@ def build_workflow(
         {
             "key": "settlement",
             "title": "Elszámolás elfogadása",
-            "done": workflow_done(states, "settlement"),
+            "done": settlement_done,
             "locked": not settlement_ready,
         },
         {
             "key": "tig_document",
-            "title": (
+            "title": "TIG nem szükséges ehhez a folyamathoz" if process_id else (
                 "TIG elkészült"
                 if document_groups["tig"]
                 else "Várakozás a TIG elkészítésére"
             ),
-            "done": bool(document_groups["tig"]),
-            "locked": not workflow_done(states, "settlement"),
+            "done": bool(document_groups["tig"]) or process_invoice_flow_ready,
+            "locked": not settlement_done,
         },
         {
             "key": "tig",
             "title": "TIG elfogadása",
-            "done": workflow_done(states, "tig"),
-            "locked": not workflow_done(states, "settlement") or not bool(document_groups["tig"]),
+            "done": tig_done,
+            "locked": not settlement_done or (not process_id and not bool(document_groups["tig"])),
         },
         {
             "key": "invoice_submit",
             "title": "Számlafeltöltés",
             "done": workflow_done(states, "invoice_submit"),
-            "locked": not workflow_done(states, "tig"),
+            "locked": not tig_done,
         },
         {
             "key": "invoice_check",
@@ -2792,7 +2813,28 @@ def require_prerequisite(user: dict[str, Any], month: date, action: str, process
     prerequisite = WORKFLOW_PREREQUISITES.get(action)
     if not prerequisite:
         return
-    _documents, status_rows, _complaints = read_workflow_rows(user, month)
+    documents, status_rows, _complaints = read_workflow_rows(user, month)
+    clean_process_id = normalize_process_id(process_id)
+    if clean_process_id and prerequisite in {"settlement", "tig"}:
+        process_documents = [row for row in documents if document_belongs_to_process(row, clean_process_id)]
+        process_document_groups = {
+            document_type: [
+                row for row in process_documents
+                if base_action_key(str(row.get("document_type") or "")) == document_type
+            ]
+            for document_type in WORKFLOW_DOCUMENT_TYPES
+        }
+        process_states = status_map(status_rows, clean_process_id)
+        if (
+            process_document_groups.get("tig")
+            or process_document_groups.get("settlement")
+            or process_states.get("settlement")
+            or process_states.get("tig")
+            or process_states.get("invoice_submit")
+            or process_states.get("invoice_check")
+            or process_states.get("invoice_payment")
+        ):
+            return
     if not workflow_done(status_map(status_rows, process_id), prerequisite):
         labels = {
             "settlement": "az elszámolás elfogadása",

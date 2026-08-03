@@ -51,7 +51,7 @@ except Exception:
     read_order_details_for_routes = None
     read_route_stories = None
 
-RESERVE_TARGET_HUF = 350_000
+RESERVE_TARGET_HUF = 50_000
 RESERVE_RATE = 0.10
 INSURANCE_FEE_HUF = 10_000
 ROUTE_ISSUE_STATUSES = ["Nincs reklamáció", "Vizsgálat", "Elfogadva", "Elutasítva", "Lezárva"]
@@ -1466,6 +1466,8 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     routes = parse_huf_value(row.get("Útvonalak") or row.get("Számolt túrák"))
     highlighted = parse_huf_value(row.get("Kiemelt túrák"))
     normal = parse_huf_value(row.get("Normál túrák"))
+    if routes > 0 and highlighted + normal == 0:
+        normal = routes
     delay = parse_huf_value(row.get("Késedelmi díj"))
     compliance = parse_huf_value(row.get("Túramegfelelés"))
     loyalty = parse_huf_value(row.get("Lojalitás"))
@@ -1635,21 +1637,50 @@ def reserve_row_amount(reserve_row: dict[str, object], column: str) -> float:
     return parse_huf_value(value)
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_active_reserve_insurance_rule(period_start: date) -> dict[str, object]:
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_reserve_insurance_rules")
+            .select("*")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", period_start.isoformat())
+            .order("priority", desc=False)
+            .order("valid_from", desc=True)
+            .limit(20)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    for row in rows:
+        valid_to = str(row.get("valid_to") or "").strip()
+        if not valid_to or valid_to[:10] >= period_start.isoformat():
+            return row
+    return {}
+
+
 def calculate_target_reserve_month(
     reserve_status: dict[str, object],
     payable_before_insurance: float,
+    period_start: date | None = None,
 ) -> dict[str, object]:
     reserve_row = reserve_status.get("row") or {}
     insurance_active_before = bool(reserve_status.get("insurance_active"))
+    rule = load_active_reserve_insurance_rule(period_start or date.today().replace(day=1))
+    reserve_target = parse_huf_value(rule.get("reserve_target_huf")) or RESERVE_TARGET_HUF
+    reserve_rate = (parse_huf_value(rule.get("deduction_percent")) / 100.0) if rule else RESERVE_RATE
+    insurance_fee_rule = parse_huf_value(rule.get("insurance_fee_huf")) if rule else INSURANCE_FEE_HUF
     reserve_before = reserve_row_amount(reserve_row, "current_reserve_huf")
     if reserve_before == 0:
         reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
 
-    should_charge = insurance_active_before and reserve_before < RESERVE_TARGET_HUF
-    reserve_addition = round(max(float(payable_before_insurance), 0.0) * RESERVE_RATE) if should_charge else 0
-    insurance_fee = INSURANCE_FEE_HUF if should_charge else 0
+    should_charge = insurance_active_before and reserve_before < reserve_target
+    calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_charge else 0
+    reserve_addition = min(calculated_addition, max(0, int(round(reserve_target - reserve_before)))) if should_charge else 0
+    insurance_fee = insurance_fee_rule if should_charge else 0
     reserve_after = reserve_before + reserve_addition
-    insurance_active_after = bool(insurance_active_before and reserve_after < RESERVE_TARGET_HUF)
+    insurance_active_after = bool(insurance_active_before and reserve_after < reserve_target)
     payable_after = float(payable_before_insurance) - reserve_addition - insurance_fee
     return {
         "payable_before_insurance_huf": float(payable_before_insurance),
@@ -2411,42 +2442,18 @@ def approve_salary_advance_request(request_row: dict, courier_name: str) -> str:
     months = int(round(parse_huf_value(request_row.get("installment_months"))))
     monthly_amount = int(round(parse_huf_value(request_row.get("monthly_amount_huf"))))
     document_month = start_date.replace(day=1)
-    item_rows = [
-        ("Folyamat azonosító", process_id),
-        ("Courier ID", courier_id),
-        ("Futár", courier_name),
-        ("Kezdés", f"{document_month:%Y-%m}"),
-        ("Előleg összege", format_huf(requested_amount)),
-        ("Havi bontás", f"{months} hónap"),
-        ("Havi levonás", format_huf(monthly_amount)),
-        ("Megjegyzés", str(request_row.get("note") or "")),
-    ]
-    for document_type, title_prefix in [("settlement", "Előleg elszámolás"), ("tig", "Előleg TIG")]:
-        reference = make_document_reference(courier_id, document_type, document_month)
-        pdf_bytes = build_demo_preview_pdf(
-            f"{title_prefix} - {courier_name}",
-            f"Courier ID: {courier_id} | Dokumentum ID: {reference} | Folyamat: {process_id}",
-            [("Dokumentum ID", reference), *item_rows],
-        )
-        upload_peopleforce_document_bytes(
-            courier_id=courier_id,
-            courier_name=courier_name,
-            document_type=document_type,
-            document_month=document_month,
-            title=f"{title_prefix} - {document_month:%Y-%m}",
-            note=f"Dokumentum azonosító: {reference}\nFolyamat azonosító: {process_id}",
-            file_name=f"jitt_{document_type}_{courier_id}_{slugify_filename(courier_name)}_{document_month:%Y-%m}_{reference}.pdf",
-            mime_type="application/pdf",
-            file_bytes=pdf_bytes,
-            uploaded_by=actor,
-        )
+    for action in ["settlement", "tig"]:
         upsert_peopleforce_card_status(
             courier_id=courier_id,
             courier_name=courier_name,
-            action_key=f"process:{process_id}:{document_type}",
+            action_key=process_action_key(action, process_id),
             document_month=document_month,
-            status="open",
-            status_note=f"Fizetés előleg folyamat indítva: {process_id}",
+            status="done",
+            status_note=(
+                f"Fizetés előleg jóváhagyva, számlafeltöltésre vár. "
+                f"Összeg: {format_huf(requested_amount)}; havi bontás: {months} hónap; "
+                f"havi levonás: {format_huf(monthly_amount)}"
+            ),
             updated_by=actor,
         )
     get_db().schema("settlement").table("courier_salary_advance_request").update({
@@ -2661,7 +2668,7 @@ def resolve_target_reserve_month(
     reserve_status: dict[str, object],
     payable_before_insurance: float,
 ) -> dict[str, object]:
-    calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance)
+    calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start)
     saved = load_target_reserve_monthly(courier_id, period_start, period_end)
     if saved.get("status") == "done":
         return {
@@ -5353,6 +5360,8 @@ def show_courier_dialog() -> None:
         normal_route_total = int(parse_huf_value(summary_row.get("normal_routes")))
         express_highlighted_total = int(parse_huf_value(summary_row.get("express_highlighted_routes")))
         express_normal_total = int(parse_huf_value(summary_row.get("express_normal_routes")))
+    if route_total > 0 and highlighted_route_total + normal_route_total == 0:
+        normal_route_total = route_total
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")

@@ -192,6 +192,7 @@ def validate_reserve_insurance_rule(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "insurance_fee_huf": _amount(payload.get("insurance_fee_huf"), "biztosítási díj"),
         "base_insurance_total_huf": _amount(payload.get("base_insurance_total_huf"), "alap biztosítási végösszeg"),
+        "reserve_target_huf": _amount(payload.get("reserve_target_huf", 50_000), "céltartalék maximum"),
         "deduction_percent": deduction_percent,
         **_common(payload),
     }
