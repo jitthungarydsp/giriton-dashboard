@@ -1165,6 +1165,14 @@ def document_belongs_to_process(document: dict[str, Any], process_id: str | None
     return document_process == clean_process
 
 
+def invoice_document_exists_for_process(documents: list[dict[str, Any]], process_id: str | None) -> bool:
+    return any(
+        base_action_key(str(document.get("document_type") or "")) == "invoice"
+        and document_belongs_to_process(document, process_id)
+        for document in documents
+    )
+
+
 def parse_month(value: str | date | None) -> date:
     if isinstance(value, date):
         return value.replace(day=1)
@@ -2316,6 +2324,7 @@ def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], l
         "select": "id,document_type,message,status,created_at",
         "courier_id": f"eq.{courier_id}",
         "document_month": f"eq.{month_value}",
+        "status": "neq.deleted",
         "order": "created_at.desc",
         "limit": "100",
     }
@@ -3847,13 +3856,18 @@ async def submit_invoice(
     month_value = parse_month(month)
     process_id = normalize_process_id(process)
     require_prerequisite(user, month_value, "invoice_submit", process_id)
+    courier_id, courier_name = courier_identity(user)
+    billing_profile = read_billing_profile(user)
+    _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
+    if invoice_document_exists_for_process(_documents, process_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Ehhez a folyamathoz már érkezett számla. Új feltöltéshez kérj admin segítséget.",
+        )
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
     cash_content = b""
     if cash_invoice_file is not None and cash_invoice_file.filename:
         cash_content = await cash_invoice_file.read(MAX_INVOICE_BYTES + 1)
-    courier_id, courier_name = courier_identity(user)
-    billing_profile = read_billing_profile(user)
-    _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     override_enabled = invoice_validation_override_enabled(status_map(status_rows, process_id))
     expected_amount = expected_tig_amount(user, month_value)
     if cash_content:

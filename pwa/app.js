@@ -1067,7 +1067,9 @@ function renderWorkflow() {
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
-  setPanelLocked("#invoice-submit-panel", readOnly || Boolean(workflowStep("invoice_submit").locked));
+  const invoiceAlreadySubmitted = Boolean(workflowStep("invoice_submit").done)
+    || Boolean((state.workflow?.documents?.invoice || []).length);
+  setPanelLocked("#invoice-submit-panel", readOnly || invoiceAlreadySubmitted || Boolean(workflowStep("invoice_submit").locked));
   setPanelLocked("#invoice-check-panel", readOnly || Boolean(workflowStep("invoice_check").locked));
   showOnlyWorkflowPanel(activeWorkflowPanel());
   const viewedUser = state.workflow?.viewingAs;
@@ -1084,7 +1086,11 @@ function renderWorkflow() {
     checkInfo.innerHTML = `${previewNotice}${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
   }
   const submitInfo = $("#invoice-submit-info");
-  if (submitInfo) submitInfo.innerHTML = `${previewNotice}${overrideNotice}${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
+  if (submitInfo) {
+    submitInfo.innerHTML = `${previewNotice}${overrideNotice}${
+      invoiceAlreadySubmitted ? `<div class="notice">A számla már beérkezett ehhez a folyamathoz, új feltöltés nem indítható.</div>` : ""
+    }${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
+  }
   $("#invoice-document-list").innerHTML = (state.workflow?.documents?.invoice || []).length
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
@@ -1774,6 +1780,12 @@ if (invoiceCheckForm) invoiceCheckForm.addEventListener("submit", async (event) 
 
 $("#invoice-submit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (workflowStep("invoice_submit").done || (state.workflow?.documents?.invoice || []).length) {
+    showWorkflowMessage("Ehhez a folyamathoz már érkezett számla, új feltöltés nem indítható.", true);
+    return;
+  }
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
   const form = new FormData(event.currentTarget);
   const selectedInvoiceFile = form.get("invoice_file");
   const hasSelectedInvoiceFile =
@@ -1814,6 +1826,10 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     }
   } catch (error) {
     showWorkflowMessage(error.message, true);
+  } finally {
+    if (submitButton && !workflowStep("invoice_submit").done && !(state.workflow?.documents?.invoice || []).length) {
+      submitButton.disabled = false;
+    }
   }
 });
 

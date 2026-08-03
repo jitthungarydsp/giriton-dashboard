@@ -7241,13 +7241,13 @@ def show_courier_dialog() -> None:
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A reklamacio lezarasa sikertelen: {exc}")
-                if st.button("Reklamacio torlese", use_container_width=True, key=f"ui_complaint_delete_{courier_id}_{selected_complaint_id}"):
+                if st.button("Reklamáció elrejtése", use_container_width=True, key=f"ui_complaint_delete_{courier_id}_{selected_complaint_id}"):
                     try:
                         delete_peopleforce_complaint(selected_complaint_id)
-                        st.success("Reklamacio torolve.")
+                        st.success("Reklamáció elrejtve. DB-ből visszanyitható.")
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"A reklamacio torlese sikertelen: {exc}")
+                        st.error(f"A reklamáció elrejtése sikertelen: {exc}")
                 if response_actions[0].button("Válasz küldése", type="primary", use_container_width=True, key=f"ui_complaint_response_save_{courier_id}"):
                     if not response_message.strip():
                         st.error("A válasz szövege nem lehet üres.")

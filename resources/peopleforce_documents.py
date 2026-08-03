@@ -263,6 +263,7 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
             "courier_id": f"eq.{courier_id}",
             "document_month": f"eq.{format_month(document_month)}",
             "document_type": f"eq.{document_type}",
+            "status": "neq.deleted",
             "order": "created_at.desc",
             "limit": "100",
         },
@@ -277,6 +278,7 @@ def read_peopleforce_complaints(courier_id, document_month, document_type):
                 "courier_id": f"eq.{courier_id}",
                 "document_month": f"eq.{format_month(document_month)}",
                 "document_type": f"eq.{document_type}",
+                "status": "neq.deleted",
                 "order": "created_at.desc",
                 "limit": "100",
             },
@@ -297,6 +299,7 @@ def read_peopleforce_complaints_for_month(document_month, document_type=None, li
     params = {
         "select": ",".join(COMPLAINT_COLUMNS),
         "document_month": f"eq.{format_month(document_month)}",
+        "status": "neq.deleted",
         "order": "created_at.desc",
         "limit": str(int(limit)),
     }
@@ -638,10 +641,11 @@ def update_peopleforce_complaints_status_for_process(courier_id, document_month,
 
 def delete_peopleforce_complaint(complaint_id):
     supabase_url = require_supabase()
-    response = requests.delete(
+    response = requests.patch(
         f"{supabase_url}/rest/v1/peopleforce_complaints",
         headers=supabase_headers(prefer_return=True),
         params={"id": f"eq.{str(complaint_id or '').strip()}"},
+        json={"status": "deleted"},
         timeout=30,
     )
     raise_for_supabase_error(response)
