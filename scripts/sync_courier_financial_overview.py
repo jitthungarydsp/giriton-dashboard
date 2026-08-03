@@ -275,6 +275,23 @@ def build_month_request_url(*, warehouse_id: int, year: int, month: int) -> str:
     return f"{base_request_url(warehouse_id)}/courier-overview?year={year}&month={month}"
 
 
+def build_route_performance_detail_url(
+    *,
+    courier_id: int,
+    route_id: int,
+    warehouse_id: int,
+) -> str:
+    base_url = os.getenv(
+        "COURIER_HUB_BASE_URL",
+        "https://courier-hub.kifli.hu/services/courier-hub-service",
+    ).rstrip("/")
+    dsp_id = int(os.getenv("COURIER_HUB_DSP_ID", "8"))
+    return (
+        f"{base_url}/external/performance/courier/{courier_id}/routes/{route_id}"
+        f"?dspId={dsp_id}&warehouseId={warehouse_id}"
+    )
+
+
 def fetch_financial_overview(
     *,
     courier_id: int,
@@ -308,6 +325,26 @@ def fetch_financial_overview(
 
 def fetch_month_overview(*, warehouse_id: int, year: int, month: int) -> tuple[str, int, Any]:
     request_url = build_month_request_url(warehouse_id=warehouse_id, year=year, month=month)
+    timeout = int(os.getenv("COURIER_HUB_TIMEOUT", "60"))
+    response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"_non_json_response": response.text[:5000]}
+    return request_url, response.status_code, payload
+
+
+def fetch_route_performance_detail(
+    *,
+    courier_id: int,
+    route_id: int,
+    warehouse_id: int,
+) -> tuple[str, int, Any]:
+    request_url = build_route_performance_detail_url(
+        courier_id=courier_id,
+        route_id=route_id,
+        warehouse_id=warehouse_id,
+    )
     timeout = int(os.getenv("COURIER_HUB_TIMEOUT", "60"))
     response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
     try:
@@ -355,6 +392,21 @@ def upsert_month_overview(payload: dict[str, Any]) -> None:
         f"{url}/rest/v1/{table_name}",
         headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
         params={"on_conflict": "year,month,route_layer,dsp_id,warehouse_id"},
+        json=payload,
+        timeout=60,
+    )
+    raise_for_response(response, f"{table_name} upsert")
+
+
+def upsert_route_performance_detail(payload: dict[str, Any]) -> None:
+    url = os.environ["SUPABASE_URL"].rstrip("/")
+    table_name = "courier_route_performance_detail_raw"
+    response = requests.post(
+        f"{url}/rest/v1/{table_name}",
+        headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+        params={
+            "on_conflict": "courier_id,route_id,year,month,dsp_id,warehouse_id",
+        },
         json=payload,
         timeout=60,
     )
@@ -532,6 +584,60 @@ def make_month_db_payload(
     }
 
 
+def extract_route_ids(payload: Any) -> list[int]:
+    if not isinstance(payload, dict):
+        return []
+    route_ids: list[int] = []
+    seen: set[int] = set()
+    routes = payload.get("routes")
+    if not isinstance(routes, list):
+        return []
+    for route in routes:
+        if not isinstance(route, dict):
+            continue
+        raw_route_id = route.get("routeId") or route.get("route_id") or route.get("id")
+        try:
+            route_id = int(raw_route_id)
+        except (TypeError, ValueError):
+            continue
+        if route_id <= 0 or route_id in seen:
+            continue
+        seen.add(route_id)
+        route_ids.append(route_id)
+    return route_ids
+
+
+def make_route_performance_detail_payload(
+    *,
+    courier_id: int,
+    route_id: int,
+    warehouse_id: int,
+    request_url: str,
+    status_code: int,
+    response_json: Any,
+    year: int,
+    month: int,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    stops_count = 0
+    if isinstance(response_json, dict) and isinstance(response_json.get("stops"), list):
+        stops_count = len(response_json["stops"])
+    return {
+        "courier_id": courier_id,
+        "route_id": route_id,
+        "year": year,
+        "month": month,
+        "dsp_id": int(os.getenv("COURIER_HUB_DSP_ID", "8")),
+        "warehouse_id": warehouse_id,
+        "request_url": request_url,
+        "status_code": status_code,
+        "response_json": response_json,
+        "stops_count": stops_count,
+        "fetched_at": now,
+        "updated_at": now,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
@@ -540,6 +646,7 @@ def main() -> int:
     parser.add_argument("--courier-id", type=int)
     parser.add_argument("--warehouse-id", type=int, choices=[1, 2])
     parser.add_argument("--skip-month-overview", action="store_true")
+    parser.add_argument("--skip-route-details", action="store_true")
     parser.add_argument("--sleep", type=float, default=0.15)
     args = parser.parse_args()
 
@@ -561,6 +668,9 @@ def main() -> int:
     success = 0
     skipped = target_skipped
     failed = 0
+    route_detail_success = 0
+    route_detail_failed = 0
+    route_detail_skipped = 0
     auth_failed = False
     discovered_targets = 0
     warehouse_ids = [args.warehouse_id] if args.warehouse_id else [1, 2]
@@ -694,6 +804,47 @@ def main() -> int:
             if args.apply:
                 upsert_financial_overview(db_payload)
 
+            route_ids = extract_route_ids(response_json)
+            if args.skip_route_details:
+                route_detail_skipped += len(route_ids)
+            else:
+                for route_id in route_ids:
+                    try:
+                        detail_url, detail_status_code, detail_json = fetch_route_performance_detail(
+                            courier_id=courier_id,
+                            route_id=route_id,
+                            warehouse_id=warehouse_id,
+                        )
+                        detail_payload = make_route_performance_detail_payload(
+                            courier_id=courier_id,
+                            route_id=route_id,
+                            warehouse_id=warehouse_id,
+                            request_url=detail_url,
+                            status_code=detail_status_code,
+                            response_json=detail_json,
+                            year=year,
+                            month=month,
+                        )
+                        if args.apply:
+                            upsert_route_performance_detail(detail_payload)
+                        if detail_status_code == 200:
+                            route_detail_success += 1
+                        else:
+                            route_detail_failed += 1
+                            print(
+                                f"DETAIL HTTP {detail_status_code}: "
+                                f"{courier_id} | route={route_id} | WH={warehouse_id}"
+                            )
+                    except Exception as detail_exc:
+                        route_detail_failed += 1
+                        print(
+                            f"DETAIL HIBA: {courier_id} | route={route_id} | "
+                            f"WH={warehouse_id} | {detail_exc}",
+                            file=sys.stderr,
+                        )
+                    if args.sleep > 0:
+                        time.sleep(args.sleep)
+
             success += 1
             print(
                 f"OK: {courier_id} | {courier_name} | "
@@ -714,6 +865,13 @@ def main() -> int:
     print(
         f"\nKész. Sikeres: {success}, kihagyva: {skipped}, hibás: {failed}"
     )
+    print(
+        "Route detail: "
+        f"sikeres={route_detail_success}, "
+        f"hibas={route_detail_failed}, "
+        f"kihagyva={route_detail_skipped}"
+    )
+
     if args.apply and success > 0:
         try:
             raw_stats = read_raw_overview_stats(year=year, month=month)
