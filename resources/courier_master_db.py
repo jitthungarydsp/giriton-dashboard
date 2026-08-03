@@ -14,7 +14,7 @@ from resources.supabase_raw import (
 SELECT_FIELDS = (
     "courier_id,courier_name,phone_number,email,warehouse_name,"
     "company_name,company_address,tax_number,"
-    "bank_account_number,billing_email,"
+    "bank_account_number,billing_email,vat_status,"
     "work_start_date,active,fetched_at,updated_at"
 )
 
@@ -193,6 +193,7 @@ def _build_billing_patch(staging_row, master_row):
         "company_name",
         "company_address",
         "tax_number",
+        "vat_status",
         "bank_account_number",
         "billing_email",
     ):

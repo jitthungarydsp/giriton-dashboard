@@ -2725,16 +2725,33 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
     payable = money_int(breakdown.get("totalPayableHuf"))
     if payable <= 0:
         return False
+    profile_rows = optional_supabase_rows(
+        "courier_master",
+        params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
+        timeout=30,
+    )
+    profile = profile_rows[0] if profile_rows else {}
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in breakdown.get("cards") or []
+        for item in card.get("items") or []
+    }
+    tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
+    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
     reference = make_document_reference(courier_id, "tig", month)
     pdf_bytes = build_tig_pdf(
         {
             "name": courier_name,
-            "company_name": courier_name,
+            "company_name": profile.get("company_name") or courier_name,
+            "address": profile.get("company_address") or profile.get("address") or "",
+            "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+            "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+            "vat_status": profile.get("vat_status") or "",
             "id": courier_id,
             "document_month": month,
             "document_reference": reference,
         },
-        {"payable": payable},
+        {"payable": payable, "cash": cash_amount, "tip": tip_amount},
     )
     note_parts = [
         "Automatikus TIG generálás elszámolás elfogadása után.",

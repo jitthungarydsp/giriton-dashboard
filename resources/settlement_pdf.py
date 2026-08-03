@@ -40,6 +40,75 @@ def _money(value: Any) -> str:
     return f"{float(value or 0):,.0f} Ft".replace(",", " ")
 
 
+def _int_money(value: Any) -> int:
+    try:
+        return int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tax_number_is_vat_payer(value: Any) -> bool:
+    parts = str(value or "").replace(" ", "").split("-")
+    return len(parts) >= 2 and parts[1] == "2"
+
+
+def _tig_kind(courier: dict[str, Any]) -> str:
+    fields = [
+        courier.get("tig_type"),
+        courier.get("tig_mode"),
+        courier.get("invoice_type"),
+        courier.get("invoice_vat_type"),
+        courier.get("vat_status"),
+        courier.get("afa_status"),
+    ]
+    text = " ".join(str(value or "") for value in fields).casefold()
+    text = (
+        text.replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ö", "o")
+        .replace("ő", "o")
+        .replace("ú", "u")
+        .replace("ü", "u")
+        .replace("ű", "u")
+    )
+    if any(token in text for token in ["aam", "alanyi", "nem afas", "nem afa", "non vat"]):
+        return "aam"
+    if any(token in text for token in ["afas", "afa", "vat", "27"]):
+        return "vat"
+    return "vat" if _tax_number_is_vat_payer(courier.get("tax_number")) else "aam"
+
+
+def _split_gross_vat_amount(gross: Any) -> tuple[int, int, int]:
+    gross_value = max(_int_money(gross), 0)
+    net = int(round(gross_value / 1.27))
+    vat = gross_value - net
+    return net, vat, gross_value
+
+
+def _add_vat_to_net(net: Any) -> tuple[int, int, int]:
+    net_value = max(_int_money(net), 0)
+    vat = int(round(net_value * 0.27))
+    return net_value, vat, net_value + vat
+
+
+def _tig_cash_net_deduction(cash_amount_huf: Any, courier: dict[str, Any]) -> int:
+    cash = max(_int_money(cash_amount_huf), 0)
+    if _tig_kind(courier) == "vat":
+        return _split_gross_vat_amount(cash)[0]
+    return cash
+
+
+def _tig_service_amount_without_cash_and_tip(amounts: dict[str, float], courier: dict[str, Any]) -> int:
+    payable = max(_int_money(amounts.get("payable")), 0)
+    cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
+    tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
+    cash_net = _tig_cash_net_deduction(cash, courier)
+    cash_vat_adjustment = cash_net if _tig_kind(courier) == "vat" else 0
+    return max(payable + cash - tip - cash_vat_adjustment, 0)
+
+
 def _month_label(value: Any) -> str:
     if isinstance(value, date):
         months = [
@@ -265,7 +334,11 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
         bottomMargin=12 * mm,
     )
     period = _month_label(courier.get("document_month"))
-    gross = float(amounts.get("payable") or 0)
+    service = _tig_service_amount_without_cash_and_tip(amounts, courier)
+    cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
+    tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
+    vat_payer = _tig_kind(courier) == "vat"
+    cash_net, cash_vat, cash_gross = _split_gross_vat_amount(cash) if vat_payer else (cash, 0, cash)
     courier_id = str(courier.get("id") or "")
     story: list[Any] = []
     _document_header(story, f"TIG {period}-ra", courier, period, styles, regular, bold)
@@ -331,12 +404,30 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
         ],
     ))
     story.append(Spacer(1, 6 * mm))
+    amount_rows: list[list[Any]] = [["Tétel megnevezése", "Nettó (Ft)", "ÁFA (Ft)", "Bruttó (Ft)"]]
+    if vat_payer:
+        service_net, service_vat, service_gross = _add_vat_to_net(service)
+        amount_rows.append([
+            f"Szállítási díj - átutalás ({courier.get('document_reference') or courier_id})",
+            _money(service_net),
+            _money(service_vat),
+            _money(service_gross),
+        ])
+    else:
+        service_net, service_vat, service_gross = service, 0, service
+        amount_rows.append([
+            f"Szállítási díj - átutalás ({courier.get('document_reference') or courier_id})",
+            _money(service),
+            "AAM",
+            _money(service),
+        ])
+    if tip:
+        amount_rows.append(["Borravaló - adómentes", _money(tip), "Adómentes", _money(tip)])
+    final_total = service_gross + tip
+    total_row_index = len(amount_rows)
+    amount_rows.append(["", "", "VÉGÖSSZEG:", _money(final_total)])
     story.append(_table(
-        [
-            ["Tétel megnevezése", "Nettó (Ft)", "ÁFA (Ft)", "Bruttó (Ft)"],
-            [f"Szállítási díj ({courier.get('document_reference') or courier_id})", _money(gross), "AAM", _money(gross)],
-            ["", "", "VÉGÖSSZEG:", _money(gross)],
-        ],
+        amount_rows,
         [90 * mm, 50 * mm, 42 * mm, 48 * mm],
         [
             ("FONTNAME", (0, 0), (-1, -1), regular),
@@ -345,18 +436,49 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#999999")),
             ("TEXTCOLOR", (3, -1), (3, -1), RED),
             ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#333333")),
+            ("SPAN", (0, total_row_index), (1, total_row_index)),
             ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
             ("PADDING", (0, 0), (-1, -1), 8),
         ],
     ))
     story.append(Spacer(1, 5 * mm))
+    if cash_gross:
+        story.append(_table(
+            [
+                ["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"],
+                [
+                    "Szállítási díj - KP (494107)",
+                    _money(cash_net),
+                    _money(cash_vat) if vat_payer else "AAM",
+                    _money(cash_gross),
+                ],
+            ],
+            [90 * mm, 50 * mm, 42 * mm, 48 * mm],
+            [
+                ("FONTNAME", (0, 0), (-1, -1), regular),
+                ("FONTNAME", (0, 0), (-1, 0), bold),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf7ea")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
+                ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#b7c7b7")),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 8),
+            ],
+        ))
+        story.append(Spacer(1, 5 * mm))
     story.append(_table(
         [[Paragraph(f"<b>Megjegyzésbe kötelező az azonosító:</b> <font color='red'><b>{courier_id}</b></font>", styles["body"])]],
         [230 * mm],
         [("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#777777")), ("PADDING", (0, 0), (-1, -1), 9)],
     ))
     story.append(Spacer(1, 7 * mm))
-    story.append(Paragraph("<b>SZÁMLÁZÁSI SZABÁLYOK:</b><br/>- A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd!<br/>- Hibás számla esetén nettó 5.000 Ft adminisztrációs költséget érvényesítünk.", styles["body"]))
+    tax_label = "27%-os ÁFA" if vat_payer else "AAM"
+    story.append(Paragraph(
+        "<b>SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
+        "- A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd!<br/>"
+        f"- Adózási mód a master TIG beállítás/adószám alapján: <b>{tax_label}</b>.<br/>"
+        "- A borravaló külön, adómentes tétel.",
+        styles["body"],
+    ))
     story.append(Spacer(1, 7 * mm))
     story.append(Paragraph("Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/><b>Just in Time Transport Hungary Kft.</b><br/>Észrevétel és kifogások: elszamolas@jitt.hu", styles["center"]))
     doc.build(story)

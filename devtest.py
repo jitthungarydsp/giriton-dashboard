@@ -5480,12 +5480,18 @@ def show_courier_dialog() -> None:
                 "company_name": profile.get("company_name") or row["Futár"],
                 "address": profile.get("address") or "",
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                "vat_status": profile.get("vat_status") or "",
                 "email": profile.get("email") or "",
                 "id": courier_id,
                 "document_reference": tig_document_reference,
                 "document_month": period_start,
             },
-            {"payable": payable_total},
+            {
+                "payable": payable_total,
+                "cash": abs(atm_deduction_total),
+                "tip": tip_total,
+            },
         )
         st.markdown(
             f"""
@@ -7827,6 +7833,8 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
             "company_name": str(row.get("Vállalkozás neve") or row.get("Futár") or courier_name),
             "address": str(row.get("Cím") or ""),
             "tax_number": str(row.get("Adószám") or ""),
+            "tig_type": str(row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("ÁFA státusz") or row.get("vat_status") or ""),
+            "vat_status": str(row.get("ÁFA státusz") or row.get("vat_status") or ""),
             "email": str(row.get("Email") or ""),
             "id": courier_id,
             "branch": str(row.get("Branch") or ""),
@@ -7847,7 +7855,11 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
         )
         tig_bytes = build_tig_pdf(
             {**courier_payload, "document_reference": plan["tig_reference"]},
-            {"payable": payable},
+            {
+                "payable": payable,
+                "cash": abs(parse_huf_value(row.get("ATM hatás"))),
+                "tip": tip,
+            },
         )
         documents.extend([
             {**plan, "document_type": "settlement", "file_name": plan["settlement_file"], "file_bytes": settlement_bytes},
