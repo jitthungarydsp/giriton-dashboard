@@ -238,6 +238,38 @@ function statisticCard(label, value, note = "") {
   `;
 }
 
+function shortDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return new Intl.DateTimeFormat("hu-HU", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function renderDelayDetailRows(rows = []) {
+  if (!rows.length) return `<div class="stat-row"><span>Nincs route szintű késés adat</span><strong>-</strong></div>`;
+  return rows.map((row) => `
+    <div class="stat-row">
+      <span>${escapeHtml(row.date || "-")} · Route ${escapeHtml(row.routeId || "-")} · WH${escapeHtml(row.warehouseId || "-")}</span>
+      <strong>${formatCount(row.delayMinutes)} perc · ${formatCount(row.delayedStops)} cím</strong>
+    </div>
+  `).join("");
+}
+
+function renderComplianceDetailRows(rows = []) {
+  if (!rows.length) return `<div class="stat-row"><span>Nincs késő bejelentkezés / no-show részlet</span><strong>-</strong></div>`;
+  return rows.map((row) => `
+    <div class="stat-row">
+      <span>${escapeHtml(row.date || "-")} · Route ${escapeHtml(row.routeId || "-")} · ${escapeHtml(row.vehiclePlate || "")}</span>
+      <strong>${formatCount(row.plannedStartDelayMinutes)} perc · ${shortDateTime(row.actualStartAt || row.shiftAvailableAt)}</strong>
+    </div>
+  `).join("");
+}
+
 function renderStatistics() {
   const payload = state.statistics;
   const grid = $("#statistics-grid");
@@ -280,6 +312,7 @@ function renderStatistics() {
   ].join("");
 
   const routeBreakdown = payload.routeBreakdown || {};
+  const details = payload.performanceDetails || {};
   const quality = payload.dataQuality || {};
   const ruleRows = (quality.dayRules || []).map((rule) => `
     <div class="stat-row">
@@ -303,6 +336,14 @@ function renderStatistics() {
       <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
     </div>
+    <details class="stat-detail-section" ${details.delayRows?.length ? "open" : ""}>
+      <summary>Hol késett?</summary>
+      <div class="stat-breakdown-list">${renderDelayDetailRows(details.delayRows || [])}</div>
+    </details>
+    <details class="stat-detail-section" ${details.complianceRows?.length ? "open" : ""}>
+      <summary>Műszak bejelentkezés / no-show</summary>
+      <div class="stat-breakdown-list">${renderComplianceDetailRows(details.complianceRows || [])}</div>
+    </details>
     <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
     <div class="stat-rule-list">
       <h4>Alkalmazott napbesorolás</h4>

@@ -1018,7 +1018,18 @@ def main() -> int:
             if args.skip_route_details:
                 route_detail_skipped += len(route_refs)
             else:
-                for route_ref in route_refs:
+                if route_refs:
+                    print(
+                        f"DETAIL START: {courier_id} | {courier_name} | "
+                        f"WH={warehouse_id} | routes={len(route_refs)}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"DETAIL NINCS ROUTE: {courier_id} | {courier_name} | WH={warehouse_id}",
+                        flush=True,
+                    )
+                for detail_index, route_ref in enumerate(route_refs, start=1):
                     route_id = int(route_ref["route_id"])
                     try:
                         detail_url, detail_status_code, detail_json = fetch_route_performance_detail(
@@ -1077,6 +1088,13 @@ def main() -> int:
                             f"DETAIL HIBA: {courier_id} | route={route_id} | "
                             f"WH={warehouse_id} | {detail_exc}",
                             file=sys.stderr,
+                            flush=True,
+                        )
+                    if detail_index == len(route_refs) or detail_index % 10 == 0:
+                        print(
+                            f"DETAIL PROGRESS: {courier_id} | WH={warehouse_id} | "
+                            f"{detail_index}/{len(route_refs)}",
+                            flush=True,
                         )
                     if args.sleep > 0:
                         time.sleep(args.sleep)

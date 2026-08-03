@@ -1972,6 +1972,51 @@ def load_daily_performance_for_courier(
     )
 
 
+def load_route_delay_rows_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "courier_financial_overview_delay",
+        params={
+            "select": (
+                "delivery_date,route_id,warehouse_id,route_order_count,stops_count,"
+                "delayed_stops_count,total_delay_minutes,max_delay_minutes,"
+                "slot_miss_projected_count,rejected_stops_count"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(delivery_date.gte.{period_start.isoformat()},delivery_date.lte.{period_end.isoformat()})",
+            "order": "delivery_date.asc,route_id.asc",
+            "limit": "2000",
+        },
+        timeout=60,
+    )
+
+
+def load_route_compliance_rows_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "courier_financial_overview_compliance",
+        params={
+            "select": (
+                "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,"
+                "route_assigned_at,shift_available_at,planned_departure_at,departed_at,"
+                "last_order_finished_at,warehouse_arrived_at,vehicle_plate,"
+                "planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(shift_date.gte.{period_start.isoformat()},shift_date.lte.{period_end.isoformat()})",
+            "order": "shift_date.asc,route_id.asc",
+            "limit": "2000",
+        },
+        timeout=60,
+    )
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -2001,6 +2046,8 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     period_end = month_end(period_start)
     daily_rows = load_daily_performance_for_courier(courier_id, period_start, period_end)
     route_rows, route_source = load_api_financial_routes_for_courier(courier_id, period_start)
+    delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
+    compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end)
     day_rules, day_rule_source = load_month_day_rules(period_start, period_end)
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
@@ -2040,6 +2087,57 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     late_count = sum(safe_int(row.get("late_count")) for row in daily_rows)
     no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
     shift_count = sum(safe_int(row.get("shift_count")) for row in daily_rows)
+    route_delay_minutes = sum(safe_int(row.get("total_delay_minutes")) for row in delay_rows)
+    route_delayed_stops = sum(safe_int(row.get("delayed_stops_count")) for row in delay_rows)
+
+    def compact_delay_row(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": str(row.get("delivery_date") or "")[:10],
+            "routeId": str(row.get("route_id") or ""),
+            "warehouseId": safe_int(row.get("warehouse_id")),
+            "orders": safe_int(row.get("route_order_count")),
+            "stops": safe_int(row.get("stops_count")),
+            "delayedStops": safe_int(row.get("delayed_stops_count")),
+            "delayMinutes": safe_int(row.get("total_delay_minutes")),
+            "maxDelayMinutes": safe_int(row.get("max_delay_minutes")),
+            "slotMissProjected": safe_int(row.get("slot_miss_projected_count")),
+            "rejectedStops": safe_int(row.get("rejected_stops_count")),
+        }
+
+    def compact_compliance_row(row: dict[str, Any]) -> dict[str, Any]:
+        start_delay = safe_int(row.get("planned_start_delay_minutes"))
+        departure_delay = safe_int(row.get("departure_delay_minutes"))
+        return {
+            "date": str(row.get("shift_date") or "")[:10],
+            "routeId": str(row.get("route_id") or ""),
+            "warehouseId": safe_int(row.get("warehouse_id")),
+            "plannedStartAt": str(row.get("planned_start_at") or ""),
+            "actualStartAt": str(row.get("actual_start_at") or ""),
+            "shiftAvailableAt": str(row.get("shift_available_at") or ""),
+            "routeAssignedAt": str(row.get("route_assigned_at") or ""),
+            "plannedDepartureAt": str(row.get("planned_departure_at") or ""),
+            "departedAt": str(row.get("departed_at") or ""),
+            "warehouseArrivedAt": str(row.get("warehouse_arrived_at") or ""),
+            "vehiclePlate": str(row.get("vehicle_plate") or ""),
+            "plannedStartDelayMinutes": start_delay,
+            "departureDelayMinutes": departure_delay,
+            "returnDelayMinutes": safe_int(row.get("return_delay_minutes")),
+            "isLateStart": start_delay > 0,
+            "isLateDeparture": departure_delay > 0,
+        }
+
+    delay_detail_rows = [
+        compact_delay_row(row)
+        for row in delay_rows
+        if safe_int(row.get("total_delay_minutes")) > 0 or safe_int(row.get("delayed_stops_count")) > 0
+    ][:100]
+    compliance_detail_rows = [
+        compact_compliance_row(row)
+        for row in compliance_rows
+        if safe_int(row.get("planned_start_delay_minutes")) > 0
+        or safe_int(row.get("departure_delay_minutes")) > 0
+        or not str(row.get("actual_start_at") or row.get("shift_available_at") or "").strip()
+    ][:100]
 
     return {
         "month": period_start.strftime("%Y-%m"),
@@ -2051,10 +2149,18 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "orders": total_orders,
             "averageOrdersPerRoute": average_orders,
             "delayedOrders": delayed_orders,
+            "routeDelayedStops": route_delayed_stops,
+            "routeDelayMinutes": route_delay_minutes,
             "lateCount": late_count,
             "noShowCount": no_show_count,
             "shiftCount": shift_count,
             "tipsTotalHuf": route_tips,
+        },
+        "performanceDetails": {
+            "delayRows": delay_detail_rows,
+            "complianceRows": compliance_detail_rows,
+            "delaySourceRows": len(delay_rows),
+            "complianceSourceRows": len(compliance_rows),
         },
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
