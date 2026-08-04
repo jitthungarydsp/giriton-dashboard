@@ -963,6 +963,31 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   `;
 }
 
+function renderLegacySettlementDocumentPanel(documents, complaints, accepted, locked, blocksAcceptance, readOnly) {
+  return `
+    <div class="notice">Régi elszámolási dokumentum alapján kezelhető folyamat. Nyisd meg a PDF-et, majd fogadd el vagy küldj reklamációt.</div>
+    ${documentList(documents)}
+    ${accepted
+      ? `<div class="accept-row done">✓ Az elszámolást elfogadtad.</div>`
+      : readOnly
+        ? `<div class="accept-row"><button class="primary" disabled>Előnézeti módban nem módosítható</button></div>`
+      : documents.length && !locked && !blocksAcceptance
+        ? `<div class="accept-row"><button class="primary" id="accept-settlement">✓ Elfogadom az elszámolást</button></div>`
+        : documents.length && !locked && blocksAcceptance
+          ? `<div class="accept-row"><button class="primary" disabled>Reklamáció lezárásáig nem fogadható el</button></div>`
+          : ""}
+    <div class="complaint-box">
+      <strong>Reklamáció</strong>
+      ${complaintList(complaints)}
+      ${hasOpenComplaint(complaints)
+        ? `<div class="notice">Már van nyitott reklamáció ehhez a hónaphoz. Új rekordot az előző lezárása után tudsz küldeni.</div>`
+        : readOnly
+          ? `<div class="notice">Előnézeti módban reklamáció nem küldhető.</div>`
+        : `<form id="complaint-settlement"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>`}
+    </div>
+  `;
+}
+
 function isExtraWorkflow() {
   return Boolean(state.workflow?.process);
 }
@@ -979,6 +1004,8 @@ function renderDocumentPanel(action, title, stepNumber) {
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
   const locked = Boolean(documentStep.locked);
+  const breakdown = state.workflow?.financialBreakdown || {};
+  const useLegacySettlementDocument = action === "settlement" && !breakdown.available && documents.length > 0;
   const waitingTitle = action === "settlement"
     ? "Várakozás az elszámolás elkészítésére"
     : "Várakozás a TIG elkészítésére";
@@ -996,6 +1023,8 @@ function renderDocumentPanel(action, title, stepNumber) {
         ? `<div class="notice">Ez egy egyéb folyamat. Itt nincs külön havi elszámolás vagy TIG; a következő teendő a számla feltöltése.</div>`
         : locked
           ? `<div class="empty-card">🔒 Az elszámolási adatok még nem aktívak.</div>`
+          : useLegacySettlementDocument
+            ? renderLegacySettlementDocumentPanel(documents, complaints, accepted, locked, blocksAcceptance, readOnly)
           : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}
     `;
     const acceptButton = $(`#accept-${action}`);
