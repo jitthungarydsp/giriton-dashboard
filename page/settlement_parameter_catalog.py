@@ -13,6 +13,7 @@ from resources.settlement_parameters import (
     CUSTOMER_RATING_TABLE,
     DAY_TABLE,
     DELAY_TABLE,
+    EFO_ASSIGNMENT_TABLE,
     LIFE_INSURANCE_TABLE,
     LOYALTY_BONUS_TABLE,
     PERIODIC_FEE_TABLE,
@@ -25,6 +26,7 @@ from resources.settlement_parameters import (
     validate_base_rate,
     validate_customer_rating_rule,
     validate_day_definition,
+    validate_efo_assignment,
     validate_performance_rule,
     validate_periodic_fee,
     validate_life_insurance_rule,
@@ -462,6 +464,59 @@ def _show_loyalty_bonus(client: Any) -> None:
     _delete_control(client, LOYALTY_BONUS_TABLE, row, "loyalty")
 
 
+def _show_efo_assignments(client: Any) -> None:
+    st.caption("EFO-s kollégák időszakos nyilvántartása. Itt tartható karban, mettől meddig volt bejelentve és mennyi a napi díj levonása.")
+    data = read_items(client, EFO_ASSIGNMENT_TABLE)
+    if not data.empty:
+        view = data.copy()
+        view["Napi levonás"] = view["daily_deduction_huf"].map(_money)
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        view["Státusz"] = [parameter_status(a, b, c) for a, b, c in zip(view["valid_from"], view["valid_to"], view["is_active"])]
+        st.dataframe(
+            view[["courier_id", "courier_name", "valid_from", "Vége", "Napi levonás", "Státusz", "note"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+    row = _editor_row(data, "efo", "courier_id")
+    with st.form(f"efo_form_{_text((row or {}).get('id')) or 'new'}"):
+        left, middle, right = st.columns(3)
+        courier_id = left.text_input("Futár azonosító", value=_text((row or {}).get("courier_id")))
+        courier_name = middle.text_input("Futár neve", value=_text((row or {}).get("courier_name")))
+        daily_deduction = right.number_input("Napi díj levonása (Ft)", min_value=0, value=_int((row or {}).get("daily_deduction_huf")), step=100)
+
+        row_key = f"efo_{_text((row or {}).get('id')) or 'new'}"
+        period_cols = st.columns(3)
+        valid_from = period_cols[0].date_input("Bejelentve ettől", value=_date((row or {}).get("valid_from")), key=f"{row_key}_from")
+        has_end = period_cols[1].checkbox("Van záródátum", value=_clean((row or {}).get("valid_to")) is not None, key=f"{row_key}_has_end")
+        valid_to = period_cols[1].date_input("Bejelentve eddig", value=_date((row or {}).get("valid_to")), key=f"{row_key}_to")
+        is_active = period_cols[2].checkbox("Aktív", value=bool((row or {}).get("is_active", True)), key=f"{row_key}_active")
+        note = st.text_area("Megjegyzés", value=_text((row or {}).get("note")), height=70, key=f"{row_key}_note")
+        saved = st.form_submit_button("Módosítás mentése" if row else "EFO időszak mentése", type="primary")
+    if saved:
+        try:
+            save_item(
+                client,
+                EFO_ASSIGNMENT_TABLE,
+                validate_efo_assignment(
+                    {
+                        "courier_id": courier_id,
+                        "courier_name": courier_name,
+                        "valid_from": valid_from,
+                        "valid_to": valid_to if has_end else None,
+                        "daily_deduction_huf": daily_deduction,
+                        "is_active": is_active,
+                        "note": note,
+                    }
+                ),
+                _actor(),
+                _text((row or {}).get("id")) or None,
+            )
+            st.success("Az EFO időszak mentve.")
+        except Exception as exc:
+            st.error(f"Nem menthető: {exc}")
+    _delete_control(client, EFO_ASSIGNMENT_TABLE, row, "efo")
+
+
 def _show_life_insurance(client: Any) -> None:
     st.caption("Életbiztosítási összeg verziózott érvényességi idővel.")
     data = read_items(client, LIFE_INSURANCE_TABLE)
@@ -541,7 +596,7 @@ def render_parameter_catalog(client: Any) -> None:
     st.subheader("Paraméterértékek")
     st.caption("Minden szabály külön menüpontban kezelhető. A dátum nélküli zárás folyamatos érvényességet jelent.")
     try:
-        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "Életbiztosítás", "Ügyfélértékelés"])
+        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "EFO", "Életbiztosítás", "Ügyfélértékelés"])
         with tabs[0]: _show_days(client)
         with tabs[1]: _show_base_rates(client)
         with tabs[2]: _show_performance(client, DELAY_TABLE, "Delay bónusz", "delay")
@@ -549,8 +604,9 @@ def render_parameter_catalog(client: Any) -> None:
         with tabs[4]: _show_periodic(client)
         with tabs[5]: _show_reserve_insurance(client)
         with tabs[6]: _show_loyalty_bonus(client)
-        with tabs[7]: _show_life_insurance(client)
-        with tabs[8]: _show_customer_rating(client)
+        with tabs[7]: _show_efo_assignments(client)
+        with tabs[8]: _show_life_insurance(client)
+        with tabs[9]: _show_customer_rating(client)
     except ValueError as exc:
         st.error(f"A paraméter értéke hibás: {exc}")
     except Exception as exc:

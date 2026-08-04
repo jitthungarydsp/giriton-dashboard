@@ -21,6 +21,7 @@ from sync_courier_financial_overview import (
     build_daily_route_history_row,
     build_delay_row,
     clean_text,
+    courier_hub_auth_configured,
     fetch_route_performance_detail,
     make_route_performance_detail_payload,
     raise_for_response,
@@ -155,9 +156,16 @@ def main() -> int:
     if not refs:
         print("No routes found in raw financial overview tables for this filter.")
         return 0
+    if not courier_hub_auth_configured():
+        print(
+            "Courier Hub auth nincs beallitva. Allitsd be a COURIER_HUB_AUTHORIZATION, "
+            "COURIER_HUB_COOKIE vagy COURIER_HUB_API_KEY kornyezeti valtozot, majd futtasd ujra."
+        )
+        return 1
 
     success = 0
     failed = 0
+    unauthorized = 0
     for index, route_ref in enumerate(refs, start=1):
         courier_id = int(route_ref["courier_id"])
         route_id = int(route_ref["route_id"])
@@ -222,6 +230,13 @@ def main() -> int:
             else:
                 failed += 1
                 print(f"DETAIL HTTP {status_code}: courier={courier_id} | route={route_id} | WH={warehouse_id}")
+                if status_code == 401:
+                    unauthorized += 1
+                    print(
+                        "Courier Hub 401: az auth hianyzik vagy lejart. Friss COURIER_HUB_AUTHORIZATION/"
+                        "COURIER_HUB_COOKIE kell a route detail API-hoz."
+                    )
+                    break
         except Exception as exc:
             failed += 1
             print(f"DETAIL ERROR: courier={courier_id} | route={route_id} | WH={warehouse_id} | {exc}")
@@ -231,6 +246,8 @@ def main() -> int:
         if args.sleep > 0:
             time.sleep(args.sleep)
 
+    if unauthorized:
+        print("Megjegyzes: a havi overview raw adatok ettol meg hasznalhatok, de auto/rendszam/km csak sikeres detail sync utan lesz.")
     print(f"Done. Route detail success={success}, failed={failed}")
     return 1 if failed else 0
 

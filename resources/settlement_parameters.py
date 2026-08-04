@@ -15,6 +15,7 @@ RESERVE_INSURANCE_TABLE = "cfg_jitt_reserve_insurance_rules"
 LOYALTY_BONUS_TABLE = "cfg_jitt_loyalty_bonus_rules"
 LIFE_INSURANCE_TABLE = "cfg_jitt_life_insurance_rules"
 CUSTOMER_RATING_TABLE = "cfg_jitt_customer_rating_rules"
+EFO_ASSIGNMENT_TABLE = "courier_efo_assignment"
 
 DAY_TYPES = {"highlighted", "normal", "any"}
 ROUTE_TYPES = {"express", "normal", "regional", "any"}
@@ -241,6 +242,23 @@ def validate_customer_rating_rule(payload: dict[str, Any]) -> dict[str, Any]:
         "rating_max_percent": rating_max,
         "courier_amount_huf": _amount(payload.get("courier_amount_huf"), "futárösszeg"),
         **_common(payload),
+    }
+
+
+def validate_efo_assignment(payload: dict[str, Any]) -> dict[str, Any]:
+    courier_id = _text(payload.get("courier_id"))
+    if not courier_id:
+        raise ValueError("A futár azonosító megadása kötelező.")
+    daily_deduction = _amount(payload.get("daily_deduction_huf"), "napi díj levonása")
+    valid_from, valid_to = _period(payload)
+    return {
+        "courier_id": courier_id,
+        "courier_name": _optional_text(payload.get("courier_name")),
+        "valid_from": valid_from,
+        "valid_to": valid_to,
+        "daily_deduction_huf": daily_deduction,
+        "is_active": bool(payload.get("is_active", True)),
+        "note": _optional_text(payload.get("note")),
     }
 
 

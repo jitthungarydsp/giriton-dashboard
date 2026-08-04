@@ -1615,6 +1615,59 @@ def load_courier_profile(courier_id: str) -> dict[str, object]:
         return {}
 
 
+EMPLOYMENT_TYPE_LABELS = {
+    "efo": "EFO",
+    "egyeni_vallalkozo": "Egyéni vállalkozó",
+    "bejelentett": "Bejelentett",
+}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_active_efo_assignment(courier_id: str, as_of: date) -> dict[str, object]:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_efo_assignment")
+            .select("*")
+            .eq("courier_id", str(courier_id or "").strip())
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", as_of.isoformat())
+            .order("valid_from", desc=True)
+            .limit(20)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    for row in rows:
+        valid_to = pd.to_datetime(row.get("valid_to"), errors="coerce")
+        if pd.isna(valid_to) or valid_to.date() >= as_of:
+            return row
+    return {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_loyalty_month_requirement_for_date(as_of: date) -> int:
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_loyalty_bonus_rules")
+            .select("loyalty_months_required,valid_from,valid_to,is_active,deleted_at,priority")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", as_of.isoformat())
+            .order("priority")
+            .limit(20)
+            .execute().data or []
+        )
+    except BaseException:
+        return 0
+    valid_requirements: list[int] = []
+    for row in rows:
+        valid_to = pd.to_datetime(row.get("valid_to"), errors="coerce")
+        if pd.isna(valid_to) or valid_to.date() >= as_of:
+            valid_requirements.append(int(parse_huf_value(row.get("loyalty_months_required"))))
+    return min(valid_requirements) if valid_requirements else 0
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
@@ -7325,6 +7378,18 @@ def show_courier_dialog() -> None:
     if selected_menu == "Profil":
         profile = load_courier_profile(courier_id)
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
+        efo_assignment = load_active_efo_assignment(courier_id, date.today())
+        loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
+        work_months = completed_months_between(profile.get("work_start_date"), period_start)
+        employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
+        if employment_type not in EMPLOYMENT_TYPE_LABELS:
+            employment_type = "egyeni_vallalkozo"
+        if work_months < 0:
+            loyalty_status = "Hiányzik a munkakezdés"
+        elif work_months >= loyalty_required_months:
+            loyalty_status = "Beleszámít"
+        else:
+            loyalty_status = f"Még nem jogosult ({work_months}/{loyalty_required_months} hónap)"
         st.markdown("#### Profil")
         st.caption("Forrás: public.courier_master. A biztosítási tagság forrása: public.courier_target_reserve.")
         edit_key = f"profile_edit_mode_{courier_id}"
@@ -7354,6 +7419,17 @@ def show_courier_dialog() -> None:
                 disabled=not is_editing,
                 key=f"ui_profile_work_start_{courier_id}",
             )
+            employment_options = list(EMPLOYMENT_TYPE_LABELS)
+            employment_type = st.selectbox(
+                "Jogviszony",
+                employment_options,
+                index=employment_options.index(employment_type),
+                format_func=lambda value: EMPLOYMENT_TYPE_LABELS.get(value, value),
+                disabled=not is_editing,
+                key=f"ui_profile_employment_type_{courier_id}",
+            )
+            employment_note = st.text_input("Jogviszony megjegyzés", value=str(profile.get("employment_note") or ""), disabled=not is_editing, key=f"ui_profile_employment_note_{courier_id}")
+            st.text_input("Lojalitási bónusz", value=loyalty_status, disabled=True, key=f"ui_profile_loyalty_status_{courier_id}")
 
         with profile2:
             st.text_input("Számítás módja", value=str(row["Számítás módja"]), disabled=True, key=f"ui_profile_calc_{courier_id}")
@@ -7362,6 +7438,11 @@ def show_courier_dialog() -> None:
             tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"ui_profile_tax_{courier_id}")
             bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"ui_profile_bank_{courier_id}")
             vat_status = st.text_input("ÁFA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"ui_profile_vat_status_{courier_id}")
+            efo_status = "Bejelentve" if efo_assignment else "Nincs aktuális EFO bejelentés"
+            if efo_assignment:
+                efo_end = str(efo_assignment.get("valid_to") or "folyamatos")
+                efo_status = f"Bejelentve: {efo_assignment.get('valid_from')} - {efo_end}, napi levonás {format_huf(parse_huf_value(efo_assignment.get('daily_deduction_huf')))}"
+            st.text_input("EFO státusz", value=efo_status, disabled=True, key=f"ui_profile_efo_status_{courier_id}")
             st.text_input("Biztosítás", value="Van" if reserve_status["insurance_active"] else "Nincs", disabled=True, key=f"ui_profile_insurance_{courier_id}")
             st.text_input("Profil státusz", value="Aktív" if bool(profile.get("active", True)) else "Inaktív", disabled=True, key=f"ui_profile_status_{courier_id}")
 
@@ -7375,7 +7456,21 @@ def show_courier_dialog() -> None:
                 on_click=enable_profile_edit,
             )
         if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"ui_profile_save_{courier_id}"):
-            new_fields = {"courier_name": courier_name, "phone_number": phone_number, "email": email, "warehouse_name": warehouse_name, "billing_email": billing_email, "work_start_date": work_start_date.isoformat() if work_start_date else "", "company_name": company_name, "company_address": company_address, "tax_number": tax_number, "bank_account_number": bank_account_number, "vat_status": vat_status}
+            new_fields = {
+                "courier_name": courier_name,
+                "phone_number": phone_number,
+                "email": email,
+                "warehouse_name": warehouse_name,
+                "billing_email": billing_email,
+                "work_start_date": work_start_date.isoformat() if work_start_date else "",
+                "employment_type": employment_type,
+                "employment_note": employment_note,
+                "company_name": company_name,
+                "company_address": company_address,
+                "tax_number": tax_number,
+                "bank_account_number": bank_account_number,
+                "vat_status": vat_status,
+            }
             changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
             try:
                 if changes:
@@ -7384,6 +7479,8 @@ def show_courier_dialog() -> None:
                 st.session_state[edit_key] = False
                 keep_courier_menu("Profil")
                 load_courier_profile.clear()
+                load_active_efo_assignment.clear()
+                load_loyalty_month_requirement_for_date.clear()
                 load_courier_master.clear()
                 st.success("A profil mentve, a változás naplózva.")
                 st.rerun()
@@ -7399,6 +7496,8 @@ def show_courier_dialog() -> None:
         if profile_actions[2].button("↻ Profiladatok újratöltése", use_container_width=True, key=f"ui_profile_refresh_{courier_id}"):
             keep_courier_menu("Profil")
             load_courier_profile.clear()
+            load_active_efo_assignment.clear()
+            load_loyalty_month_requirement_for_date.clear()
             load_target_reserve_status.clear()
             st.rerun()
         profile_log = load_profile_change_log(courier_id)

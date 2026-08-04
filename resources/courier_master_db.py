@@ -15,7 +15,7 @@ SELECT_FIELDS = (
     "courier_id,courier_name,phone_number,email,warehouse_name,"
     "company_name,company_address,tax_number,"
     "bank_account_number,billing_email,vat_status,"
-    "work_start_date,active,fetched_at,updated_at"
+    "work_start_date,employment_type,employment_note,active,fetched_at,updated_at"
 )
 
 DEFAULT_ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
@@ -440,7 +440,10 @@ def update_courier_master_profile(courier_id, profile_fields):
         "tax_number",
         "bank_account_number",
         "billing_email",
+        "vat_status",
         "work_start_date",
+        "employment_type",
+        "employment_note",
     }
 
     patch = {}
@@ -453,6 +456,10 @@ def update_courier_master_profile(courier_id, profile_fields):
             cleaned = _normalize_tax_number(cleaned)
         if field == "work_start_date":
             cleaned = cleaned or None
+        if field == "employment_type":
+            cleaned = cleaned or "egyeni_vallalkozo"
+            if cleaned not in {"efo", "egyeni_vallalkozo", "bejelentett"}:
+                continue
 
         patch[field] = cleaned
 

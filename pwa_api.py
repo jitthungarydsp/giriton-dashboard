@@ -2300,7 +2300,31 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "delaySourceRows": 0,
             "complianceSourceRows": 0,
         },
-        "dailyHistory": [compact_history_row(row) for row in history_rows],
+        "dailyHistory": (
+            [compact_history_row(row) for row in history_rows]
+            or [
+                {
+                    "date": str(route.get("work_date") or "")[:10],
+                    "routeId": str(route.get("route_id") or ""),
+                    "warehouseId": safe_int(route.get("warehouse_id")),
+                    "orders": safe_int(route.get("orders")),
+                    "stops": safe_int(route.get("orders")),
+                    "plannedStartAt": "",
+                    "actualStartAt": "",
+                    "shiftAvailableAt": "",
+                    "routeAssignedAt": "",
+                    "plannedDepartureAt": "",
+                    "departedAt": "",
+                    "lastOrderFinishedAt": "",
+                    "warehouseArrivedAt": "",
+                    "vehicleModel": "",
+                    "vehiclePlate": "",
+                    "mileageKm": 0,
+                    "vehicleOwnership": "",
+                }
+                for route in route_rows
+            ]
+        ),
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
             "normalDayRoutes": normal_day_routes,

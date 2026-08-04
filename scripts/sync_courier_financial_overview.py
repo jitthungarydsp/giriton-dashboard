@@ -248,6 +248,14 @@ def courier_hub_headers() -> dict[str, str]:
     return headers
 
 
+def courier_hub_auth_configured() -> bool:
+    return bool(
+        clean_text(os.getenv("COURIER_HUB_AUTHORIZATION"))
+        or clean_text(os.getenv("COURIER_HUB_COOKIE"))
+        or clean_text(os.getenv("COURIER_HUB_API_KEY"))
+    )
+
+
 def base_request_url(warehouse_id: int) -> str:
     base_url = os.getenv(
         "COURIER_HUB_BASE_URL",
