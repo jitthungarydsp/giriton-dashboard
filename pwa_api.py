@@ -226,6 +226,10 @@ def can_view_financial_amounts(user: dict[str, Any]) -> bool:
     return can_preview_couriers(user)
 
 
+def is_unrestricted_legacy_settlement_month(month: date) -> bool:
+    return month.replace(day=1) == date(2026, 6, 1)
+
+
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
     try:
         db_user = authenticate_pwa_db_user(username, password)
@@ -1690,6 +1694,7 @@ def hidden_financial_breakdown(month: date) -> dict[str, Any]:
 
 def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
+    allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     if not row or row.get("_mobile_unavailable_message"):
         return {
@@ -2502,8 +2507,16 @@ def build_workflow(
     process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
-    amount_access = can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts)
-    financial_breakdown = build_financial_breakdown(user, month, allow_unpublished=allow_unpublished) if not process_id else {
+    legacy_unrestricted_month = is_unrestricted_legacy_settlement_month(month)
+    amount_access = (
+        legacy_unrestricted_month
+        or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
+    )
+    financial_breakdown = build_financial_breakdown(
+        user,
+        month,
+        allow_unpublished=allow_unpublished or legacy_unrestricted_month,
+    ) if not process_id else {
         "available": False,
         "month": month.strftime("%Y-%m"),
         "totalPayableHuf": 0,
