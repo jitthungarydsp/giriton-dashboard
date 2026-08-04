@@ -1668,6 +1668,102 @@ def load_loyalty_month_requirement_for_date(as_of: date) -> int:
     return min(valid_requirements) if valid_requirements else 0
 
 
+def _parse_booking_timestamp_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for date_format in ("%Y.%m.%d. %H:%M:%S", "%Y.%m.%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        parsed = pd.to_datetime(text, format=date_format, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.date()
+    parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
+
+    rows: list[dict[str, object]] = []
+    source_table = ""
+    for table_name in ["raw_muszakpro_bookings", "foglalasok_raw"]:
+        try:
+            rows = (
+                get_db().schema("public").table(table_name)
+                .select("work_date,timestamp_text,shift_text,booking_code,serial,courier_id")
+                .eq("courier_id", clean_courier_id)
+                .gte("work_date", period_start.isoformat())
+                .lte("work_date", period_end.isoformat())
+                .limit(1000)
+                .execute().data or []
+            )
+            source_table = table_name
+            break
+        except BaseException:
+            rows = []
+
+    if not rows:
+        try:
+            log_rows = (
+                get_db().schema("settlement").table("courier_loyalty_booking_log")
+                .select("shift_date,shift_time,booked_at,source_key,courier_id")
+                .eq("courier_id", clean_courier_id)
+                .gte("shift_date", period_start.isoformat())
+                .lte("shift_date", period_end.isoformat())
+                .limit(1000)
+                .execute().data or []
+            )
+        except BaseException:
+            log_rows = []
+        previous_month_end = period_start - timedelta(days=1)
+        unique_keys = {
+            (
+                str(row.get("shift_date") or ""),
+                str(row.get("shift_time") or ""),
+                str(row.get("source_key") or ""),
+            )
+            for row in log_rows
+        }
+        advance_keys = set()
+        for row in log_rows:
+            booked_at = pd.to_datetime(row.get("booked_at"), errors="coerce")
+            if pd.notna(booked_at) and booked_at.date() <= previous_month_end:
+                advance_keys.add((
+                    str(row.get("shift_date") or ""),
+                    str(row.get("shift_time") or ""),
+                    str(row.get("source_key") or ""),
+                ))
+        return {
+            "booked_shift_count": len(unique_keys),
+            "advance_booked_shift_count": len(advance_keys),
+            "source": "courier_loyalty_booking_log",
+        }
+
+    previous_month_end = period_start - timedelta(days=1)
+    unique_keys = set()
+    advance_keys = set()
+    for row in rows:
+        key = (
+            str(row.get("work_date") or ""),
+            str(row.get("shift_text") or ""),
+            str(row.get("booking_code") or row.get("serial") or ""),
+        )
+        unique_keys.add(key)
+        booking_date = _parse_booking_timestamp_date(row.get("timestamp_text"))
+        if booking_date and booking_date <= previous_month_end:
+            advance_keys.add(key)
+
+    return {
+        "booked_shift_count": len(unique_keys),
+        "advance_booked_shift_count": len(advance_keys),
+        "source": source_table,
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
@@ -5289,6 +5385,178 @@ def render_table(df: pd.DataFrame) -> None:
     )
 
 
+def render_fast_courier_profile(
+    *,
+    courier_id: str,
+    courier_name: str,
+    row: pd.Series,
+    period_start: date,
+    menu_key: str,
+    menu_target_key: str,
+) -> None:
+    profile = load_courier_profile(courier_id)
+    reserve_status = load_target_reserve_status(courier_id, courier_name)
+    efo_assignment = load_active_efo_assignment(courier_id, date.today())
+    _, period_end = month_bounds(period_start)
+    booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
+    loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
+    work_months = completed_months_between(profile.get("work_start_date"), period_start)
+    employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
+    if employment_type not in EMPLOYMENT_TYPE_LABELS:
+        employment_type = "egyeni_vallalkozo"
+    if work_months < 0:
+        loyalty_status = "Hiányzik a munkakezdés"
+    elif work_months >= loyalty_required_months:
+        loyalty_status = "Beleszámít"
+    else:
+        loyalty_status = f"Még nem jogosult ({work_months}/{loyalty_required_months} hónap)"
+
+    initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
+    st.markdown(
+        f"""
+        <div class="settlement-profile-shell">
+          <div class="settlement-profile-top">
+            <div class="settlement-driver">
+              <div class="settlement-avatar">{html.escape(initials)}</div>
+              <div>
+                <div class="settlement-name">{html.escape(courier_name)}</div>
+                <div class="settlement-meta-grid">
+                  <div class="settlement-meta-item"><div class="settlement-meta-label">Futár azonosító</div><div class="settlement-meta-value">{html.escape(courier_id)}</div></div>
+                  <div class="settlement-meta-item"><div class="settlement-meta-label">Raktár</div><div class="settlement-meta-value">{html.escape(str(row.get('Raktár') or profile.get('warehouse_name') or '-'))}</div></div>
+                  <div class="settlement-meta-item"><div class="settlement-meta-label">Jogviszony</div><div class="settlement-chip">{html.escape(EMPLOYMENT_TYPE_LABELS.get(employment_type, employment_type))}</div></div>
+                  <div class="settlement-meta-item"><div class="settlement-meta-label">Biztosítás</div><div class="settlement-meta-value">{'Van' if reserve_status.get('insurance_active') else 'Nincs'}</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    selected_menu = st.radio(
+        "Futármenü",
+        ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=menu_key,
+    )
+    if selected_menu != "Profil":
+        st.session_state[menu_target_key] = selected_menu
+        st.rerun()
+
+    st.markdown("#### Profil")
+    st.caption("Gyors profilnézet: csak a profilhoz szükséges DB adatok töltődnek be.")
+    edit_key = f"profile_edit_mode_{courier_id}"
+    is_editing = bool(st.session_state.get(edit_key, False))
+
+    def enable_profile_edit() -> None:
+        st.session_state[edit_key] = True
+        st.session_state[menu_target_key] = "Profil"
+
+    def cancel_profile_edit() -> None:
+        st.session_state[edit_key] = False
+        st.session_state[menu_target_key] = "Profil"
+
+    profile1, profile2 = st.columns(2)
+    with profile1:
+        profile_courier_name = st.text_input("Név", value=str(profile.get("courier_name") or courier_name), disabled=not is_editing, key=f"fast_profile_name_{courier_id}")
+        st.text_input("Courier ID", value=courier_id, disabled=True, key=f"fast_profile_id_{courier_id}")
+        phone_number = st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=not is_editing, key=f"fast_profile_phone_{courier_id}")
+        email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"fast_profile_email_{courier_id}")
+        warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row.get("Raktár") or ""), disabled=not is_editing, key=f"fast_profile_warehouse_{courier_id}")
+        billing_email = st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=not is_editing, key=f"fast_profile_billing_email_{courier_id}")
+        current_work_start = pd.to_datetime(profile.get("work_start_date"), errors="coerce")
+        work_start_date = st.date_input(
+            "Munkakezdés dátuma",
+            value=current_work_start.date() if pd.notna(current_work_start) else date.today(),
+            disabled=not is_editing,
+            key=f"fast_profile_work_start_{courier_id}",
+        )
+        employment_options = list(EMPLOYMENT_TYPE_LABELS)
+        employment_type = st.selectbox(
+            "Jogviszony",
+            employment_options,
+            index=employment_options.index(employment_type),
+            format_func=lambda value: EMPLOYMENT_TYPE_LABELS.get(value, value),
+            disabled=not is_editing,
+            key=f"fast_profile_employment_type_{courier_id}",
+        )
+        employment_note = st.text_input("Jogviszony megjegyzés", value=str(profile.get("employment_note") or ""), disabled=not is_editing, key=f"fast_profile_employment_note_{courier_id}")
+        st.text_input("Lojalitási bónusz", value=loyalty_status, disabled=True, key=f"fast_profile_loyalty_status_{courier_id}")
+        shift_cols = st.columns(2)
+        shift_cols[0].metric("MűszakPro foglalt műszak", int(booking_summary.get("booked_shift_count") or 0))
+        shift_cols[1].metric("Előre foglalt műszak", int(booking_summary.get("advance_booked_shift_count") or 0))
+
+    with profile2:
+        st.text_input("Számítás módja", value=str(row.get("Számítás módja") or ""), disabled=True, key=f"fast_profile_calc_{courier_id}")
+        company_name = st.text_input("Vállalkozás neve", value=str(profile.get("company_name") or ""), disabled=not is_editing, key=f"fast_profile_company_{courier_id}")
+        company_address = st.text_input("Vállalkozás címe", value=str(profile.get("company_address") or ""), disabled=not is_editing, key=f"fast_profile_company_address_{courier_id}")
+        tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"fast_profile_tax_{courier_id}")
+        bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"fast_profile_bank_{courier_id}")
+        vat_status = st.text_input("ÁFA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"fast_profile_vat_status_{courier_id}")
+        efo_status = "Nincs aktuális EFO bejelentés"
+        if efo_assignment:
+            efo_end = str(efo_assignment.get("valid_to") or "folyamatos")
+            efo_status = f"Bejelentve: {efo_assignment.get('valid_from')} - {efo_end}, napi levonás {format_huf(parse_huf_value(efo_assignment.get('daily_deduction_huf')))}"
+        st.text_input("EFO státusz", value=efo_status, disabled=True, key=f"fast_profile_efo_status_{courier_id}")
+        st.text_input("Biztosítás", value="Van" if reserve_status.get("insurance_active") else "Nincs", disabled=True, key=f"fast_profile_insurance_{courier_id}")
+        st.text_input("Profil státusz", value="Aktív" if bool(profile.get("active", True)) else "Inaktív", disabled=True, key=f"fast_profile_status_{courier_id}")
+
+    profile_actions = st.columns(3)
+    if not is_editing:
+        profile_actions[0].button("Profil szerkesztése", type="primary", use_container_width=True, key=f"fast_profile_edit_{courier_id}", on_click=enable_profile_edit)
+    if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"fast_profile_save_{courier_id}"):
+        new_fields = {
+            "courier_name": profile_courier_name,
+            "phone_number": phone_number,
+            "email": email,
+            "warehouse_name": warehouse_name,
+            "billing_email": billing_email,
+            "work_start_date": work_start_date.isoformat() if work_start_date else "",
+            "employment_type": employment_type,
+            "employment_note": employment_note,
+            "company_name": company_name,
+            "company_address": company_address,
+            "tax_number": tax_number,
+            "bank_account_number": bank_account_number,
+            "vat_status": vat_status,
+        }
+        changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
+        try:
+            if changes:
+                update_courier_master_profile(courier_id, new_fields)
+                log_profile_change(courier_id, changes)
+            st.session_state[edit_key] = False
+            st.session_state[menu_target_key] = "Profil"
+            load_courier_profile.clear()
+            load_active_efo_assignment.clear()
+            load_muszakpro_booking_summary.clear()
+            load_loyalty_month_requirement_for_date.clear()
+            load_courier_master.clear()
+            st.success("A profil mentve, a változás naplózva.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"A profil nem menthető: {exc}")
+    if is_editing:
+        profile_actions[1].button("Mégse", use_container_width=True, key=f"fast_profile_cancel_{courier_id}", on_click=cancel_profile_edit)
+    if profile_actions[2].button("Profiladatok újratöltése", use_container_width=True, key=f"fast_profile_refresh_{courier_id}"):
+        st.session_state[menu_target_key] = "Profil"
+        load_courier_profile.clear()
+        load_active_efo_assignment.clear()
+        load_muszakpro_booking_summary.clear()
+        load_loyalty_month_requirement_for_date.clear()
+        load_target_reserve_status.clear()
+        st.rerun()
+
+    if st.checkbox("Profil módosítási napló megjelenítése", key=f"fast_profile_log_toggle_{courier_id}"):
+        profile_log = load_profile_change_log(courier_id)
+        if profile_log.empty:
+            st.info("Nincs profil módosítási napló.")
+        else:
+            st.dataframe(profile_log.rename(columns={"changed_fields": "Változások", "changed_by": "Módosította", "created_at": "Időpont"}), use_container_width=True, hide_index=True)
+
+
 @st.dialog("Futár részletei", width="large")
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
@@ -5350,6 +5618,16 @@ def show_courier_dialog() -> None:
     if menu_target:
         st.session_state[menu_key] = menu_target
     selected_menu_hint = str(st.session_state.get(menu_key) or "Áttekintés")
+    if selected_menu_hint == "Profil":
+        render_fast_courier_profile(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            row=row,
+            period_start=period_start,
+            menu_key=menu_key,
+            menu_target_key=menu_target_key,
+        )
+        return
     route_detail = pd.DataFrame()
     if selected_menu_hint in {"Pénzügy", "Útvonalak"}:
         route_detail = load_courier_route_detail(
