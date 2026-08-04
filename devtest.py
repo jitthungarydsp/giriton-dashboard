@@ -1764,6 +1764,42 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
     }
 
 
+def save_monthly_workload_summary(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    period_end: date,
+    booked_shift_count: int,
+    advance_booked_shift_count: int,
+    completed_route_count: int,
+    order_count: int,
+    muszakpro_source: str,
+    route_source: str,
+) -> None:
+    try:
+        get_db().schema("settlement").table("courier_monthly_workload_summary").upsert(
+            {
+                "courier_id": str(courier_id or "").strip(),
+                "courier_name": str(courier_name or "").strip(),
+                "period_start": period_start.isoformat(),
+                "period_end": period_end.isoformat(),
+                "booked_shift_count": max(int(booked_shift_count or 0), 0),
+                "advance_booked_shift_count": max(int(advance_booked_shift_count or 0), 0),
+                "completed_route_count": max(int(completed_route_count or 0), 0),
+                "order_count": max(int(order_count or 0), 0),
+                "muszakpro_source": str(muszakpro_source or ""),
+                "route_source": str(route_source or ""),
+                "updated_by": str(st.session_state.get("user", {}).get("username") or "unknown"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="courier_id,period_start",
+        ).execute()
+    except BaseException:
+        # The finance UI remains usable even before the DB migration is deployed.
+        pass
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
@@ -5397,8 +5433,6 @@ def render_fast_courier_profile(
     profile = load_courier_profile(courier_id)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     efo_assignment = load_active_efo_assignment(courier_id, date.today())
-    _, period_end = month_bounds(period_start)
-    booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
     loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
     work_months = completed_months_between(profile.get("work_start_date"), period_start)
     employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
@@ -5484,9 +5518,6 @@ def render_fast_courier_profile(
         )
         employment_note = st.text_input("Jogviszony megjegyzés", value=str(profile.get("employment_note") or ""), disabled=not is_editing, key=f"fast_profile_employment_note_{courier_id}")
         st.text_input("Lojalitási bónusz", value=loyalty_status, disabled=True, key=f"fast_profile_loyalty_status_{courier_id}")
-        shift_cols = st.columns(2)
-        shift_cols[0].metric("MűszakPro foglalt műszak", int(booking_summary.get("booked_shift_count") or 0))
-        shift_cols[1].metric("Előre foglalt műszak", int(booking_summary.get("advance_booked_shift_count") or 0))
 
     with profile2:
         st.text_input("Számítás módja", value=str(row.get("Számítás módja") or ""), disabled=True, key=f"fast_profile_calc_{courier_id}")
@@ -5962,6 +5993,21 @@ def show_courier_dialog() -> None:
             imported_bonus_total + manual_bonus_total + loyalty_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
         )
+        booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
+        booked_shift_count = int(booking_summary.get("booked_shift_count") or 0)
+        advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
+        save_monthly_workload_summary(
+            courier_id=courier_id,
+            courier_name=str(row["Futár"]),
+            period_start=period_start,
+            period_end=period_end,
+            booked_shift_count=booked_shift_count,
+            advance_booked_shift_count=advance_booked_shift_count,
+            completed_route_count=route_total,
+            order_count=order_total,
+            muszakpro_source=str(booking_summary.get("source") or ""),
+            route_source="courier_settlement_summary" if summary_row else "route_detail",
+        )
 
         settlement_document_reference = make_document_reference(courier_id, "settlement", period_start)
         tig_document_reference = make_document_reference(courier_id, "tig", period_start)
@@ -6024,6 +6070,11 @@ def show_courier_dialog() -> None:
             """,
             unsafe_allow_html=True,
         )
+        workload_cols = st.columns(4)
+        workload_cols[0].metric("MűszakPro foglalt műszak", booked_shift_count)
+        workload_cols[1].metric("Előre foglalt műszak", advance_booked_shift_count)
+        workload_cols[2].metric("Kifutott túra", route_total)
+        workload_cols[3].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
