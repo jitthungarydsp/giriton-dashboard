@@ -179,6 +179,24 @@ textarea { min-height: 96px; resize: vertical; }
 .stat-detail-section .stat-row { align-items: flex-start; }
 .stat-detail-section .stat-row span { min-width: 0; overflow-wrap: anywhere; }
 .stat-detail-section .stat-row strong { white-space: nowrap; }
+.daily-history-card { display: grid; gap: 14px; margin-bottom: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: #f9faf8; touch-action: pan-y; }
+.daily-history-head { display: grid; grid-template-columns: 44px 1fr 44px; gap: 10px; align-items: center; text-align: center; }
+.daily-history-head h3 { margin: 0; font-size: 19px; }
+.daily-history-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; font-weight: 800; }
+.icon-button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--ink); font-size: 25px; font-weight: 900; }
+.icon-button:disabled { opacity: .35; }
+.daily-history-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.daily-history-summary div { display: grid; gap: 5px; min-height: 70px; padding: 12px; border-radius: 14px; background: #eff8ed; }
+.daily-history-summary span { color: var(--muted); font-size: 11px; font-weight: 850; text-transform: uppercase; }
+.daily-history-summary strong { font-size: 24px; line-height: 1; }
+.vehicle-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.vehicle-chip-row span { padding: 9px 11px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 850; }
+.daily-route-list { display: grid; gap: 8px; }
+.daily-route-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.daily-route-row strong,
+.daily-route-row span { display: block; font-size: 14px; font-weight: 900; }
+.daily-route-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.daily-route-row > div:last-child { text-align: right; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }

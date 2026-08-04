@@ -2122,6 +2122,29 @@ def load_route_compliance_rows_for_courier(
     )
 
 
+def load_daily_route_history_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "courier_daily_route_history",
+        params={
+            "select": (
+                "work_date,route_id,warehouse_id,order_count,stops_count,"
+                "planned_start_at,actual_start_at,route_assigned_at,shift_available_at,"
+                "planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,"
+                "vehicle_model,vehicle_plate,mileage_km,vehicle_ownership"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.desc,route_id.desc",
+            "limit": "500",
+        },
+        timeout=60,
+    )
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -2149,13 +2172,15 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=4) as executor:
         daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
         route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
+        history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
+        history_rows = history_future.result()
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2229,6 +2254,27 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "isLateDeparture": departure_delay > 0,
         }
 
+    def compact_history_row(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": str(row.get("work_date") or "")[:10],
+            "routeId": str(row.get("route_id") or ""),
+            "warehouseId": safe_int(row.get("warehouse_id")),
+            "orders": safe_int(row.get("order_count")),
+            "stops": safe_int(row.get("stops_count")),
+            "plannedStartAt": str(row.get("planned_start_at") or ""),
+            "actualStartAt": str(row.get("actual_start_at") or ""),
+            "shiftAvailableAt": str(row.get("shift_available_at") or ""),
+            "routeAssignedAt": str(row.get("route_assigned_at") or ""),
+            "plannedDepartureAt": str(row.get("planned_departure_at") or ""),
+            "departedAt": str(row.get("departed_at") or ""),
+            "lastOrderFinishedAt": str(row.get("last_order_finished_at") or ""),
+            "warehouseArrivedAt": str(row.get("warehouse_arrived_at") or ""),
+            "vehicleModel": str(row.get("vehicle_model") or ""),
+            "vehiclePlate": str(row.get("vehicle_plate") or ""),
+            "mileageKm": float(row.get("mileage_km") or 0),
+            "vehicleOwnership": str(row.get("vehicle_ownership") or ""),
+        }
+
     delay_detail_rows: list[dict[str, Any]] = []
     compliance_detail_rows: list[dict[str, Any]] = []
 
@@ -2254,6 +2300,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "delaySourceRows": 0,
             "complianceSourceRows": 0,
         },
+        "dailyHistory": [compact_history_row(row) for row in history_rows],
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
             "normalDayRoutes": normal_day_routes,

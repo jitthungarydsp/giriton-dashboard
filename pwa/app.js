@@ -17,6 +17,7 @@ const state = {
   workflowProcesses: [{ id: "", label: "Havi folyamat" }],
   workflowPreviewCourierId: "",
   statisticsMonth: new Date().toISOString().slice(0, 7),
+  statisticsHistoryDate: "",
   section: "home",
 };
 const $ = (selector) => document.querySelector(selector);
@@ -273,6 +274,109 @@ function renderComplianceDetailRows(rows = []) {
   `).join("");
 }
 
+function dailyHistoryByDate(rows = []) {
+  return rows.reduce((acc, row) => {
+    const date = String(row.date || "").slice(0, 10);
+    if (!date) return acc;
+    if (!acc[date]) acc[date] = [];
+    acc[date].push(row);
+    return acc;
+  }, {});
+}
+
+function uniqueText(values = []) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function renderDailyHistory(payload) {
+  const rows = payload.dailyHistory || [];
+  const byDate = dailyHistoryByDate(rows);
+  const dates = Object.keys(byDate).sort().reverse();
+  if (!dates.length) {
+    state.statisticsHistoryDate = "";
+    return `
+      <section class="daily-history-card" id="daily-history-card">
+        <div class="daily-history-head">
+          <div><h3>Elmúlt napok</h3><p>Nincs még DB-be mentett napi autó/túra történet.</p></div>
+        </div>
+      </section>
+    `;
+  }
+  if (!dates.includes(state.statisticsHistoryDate)) {
+    state.statisticsHistoryDate = dates[0];
+  }
+  const index = Math.max(0, dates.indexOf(state.statisticsHistoryDate));
+  const selectedRows = byDate[state.statisticsHistoryDate] || [];
+  const plates = uniqueText(selectedRows.map((row) => row.vehiclePlate));
+  const models = uniqueText(selectedRows.map((row) => row.vehicleModel));
+  const orders = selectedRows.reduce((sum, row) => sum + Number(row.orders || 0), 0);
+  const stops = selectedRows.reduce((sum, row) => sum + Number(row.stops || 0), 0);
+  const mileage = selectedRows.reduce((sum, row) => sum + Number(row.mileageKm || 0), 0);
+  const routes = selectedRows.length;
+  const routeRows = selectedRows.map((row) => `
+    <div class="daily-route-row">
+      <div>
+        <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
+        <small>WH${escapeHtml(row.warehouseId || "-")} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
+      </div>
+      <div>
+        <span>${escapeHtml(row.vehiclePlate || "-")}</span>
+        <small>${escapeHtml(row.vehicleModel || "")}</small>
+      </div>
+    </div>
+  `).join("");
+  return `
+    <section class="daily-history-card" id="daily-history-card">
+      <div class="daily-history-head">
+        <button class="icon-button" id="daily-history-next" type="button" ${index >= dates.length - 1 ? "disabled" : ""}>‹</button>
+        <div>
+          <h3>${escapeHtml(dateLabel(state.statisticsHistoryDate))}</h3>
+          <p>${escapeHtml(state.statisticsHistoryDate)} · ${index + 1}/${dates.length}</p>
+        </div>
+        <button class="icon-button" id="daily-history-prev" type="button" ${index <= 0 ? "disabled" : ""}>›</button>
+      </div>
+      <div class="daily-history-summary">
+        <div><span>Kör</span><strong>${formatCount(routes)}</strong></div>
+        <div><span>Cím</span><strong>${formatCount(orders)}</strong></div>
+        <div><span>Km</span><strong>${formatAverage(mileage)}</strong></div>
+      </div>
+      <div class="vehicle-chip-row">
+        ${(plates.length ? plates : ["Nincs rendszám"]).map((plate) => `<span>${escapeHtml(plate)}</span>`).join("")}
+      </div>
+      ${models.length ? `<p class="updated-at">${escapeHtml(models.join(" · "))}</p>` : ""}
+      <div class="daily-route-list">${routeRows}</div>
+    </section>
+  `;
+}
+
+function changeDailyHistoryDate(offset) {
+  const rows = state.statistics?.dailyHistory || [];
+  const dates = Object.keys(dailyHistoryByDate(rows)).sort().reverse();
+  if (!dates.length) return;
+  const currentIndex = Math.max(0, dates.indexOf(state.statisticsHistoryDate));
+  const nextIndex = Math.min(dates.length - 1, Math.max(0, currentIndex + offset));
+  if (nextIndex === currentIndex) return;
+  state.statisticsHistoryDate = dates[nextIndex];
+  renderStatistics();
+}
+
+function bindDailyHistoryControls() {
+  $("#daily-history-prev")?.addEventListener("click", () => changeDailyHistoryDate(-1));
+  $("#daily-history-next")?.addEventListener("click", () => changeDailyHistoryDate(1));
+  const card = $("#daily-history-card");
+  if (!card) return;
+  let startX = 0;
+  card.addEventListener("touchstart", (event) => {
+    startX = event.touches?.[0]?.clientX || 0;
+  }, { passive: true });
+  card.addEventListener("touchend", (event) => {
+    const endX = event.changedTouches?.[0]?.clientX || 0;
+    const delta = endX - startX;
+    if (Math.abs(delta) < 45) return;
+    changeDailyHistoryDate(delta < 0 ? 1 : -1);
+  }, { passive: true });
+}
+
 function renderStatistics() {
   const payload = state.statistics;
   const grid = $("#statistics-grid");
@@ -322,6 +426,7 @@ function renderStatistics() {
     </div>
   `).join("");
   breakdown.innerHTML = `
+    ${renderDailyHistory(payload)}
     <div class="process-title">
       <span class="step-code">∑</span>
       <div>
@@ -343,11 +448,13 @@ function renderStatistics() {
       ${ruleRows || `<div class="stat-row"><span>Nincs aktív szabály</span><strong>-</strong></div>`}
     </div>
   `;
+  bindDailyHistoryControls();
 }
 
 async function loadStatistics() {
   const monthInput = $("#statistics-month");
   if (monthInput?.value) state.statisticsMonth = monthInput.value;
+  state.statisticsHistoryDate = "";
   $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
   try {
     state.statistics = await api(`/api/statistics/monthly?month=${encodeURIComponent(state.statisticsMonth)}&_=${Date.now()}`);

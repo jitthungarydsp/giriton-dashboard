@@ -427,6 +427,10 @@ def upsert_flat_table(table_name: str, payload: dict[str, Any]) -> None:
     raise_for_response(response, f"{table_name} upsert")
 
 
+def upsert_daily_route_history(payload: dict[str, Any]) -> None:
+    upsert_flat_table("courier_daily_route_history", payload)
+
+
 def import_api_overview_to_jit(*, year: int, month: int, warehouse_id: int | None = None) -> str:
     url = os.environ["SUPABASE_URL"].rstrip("/")
     response = requests.post(
@@ -811,6 +815,64 @@ def build_compliance_row(
         "departure_delay_minutes": minutes_between(departed_at, planned_departure_at),
         "return_delay_minutes": minutes_between(warehouse_arrived_at, last_order_finished_at),
         "event_summary": event_summary,
+        "response_status_code": status_code,
+        "source_raw_updated_at": now,
+        "updated_at": now,
+    }
+
+
+def build_daily_route_history_row(
+    *,
+    courier_id: int,
+    route_ref: dict[str, Any],
+    warehouse_id: int,
+    response_json: Any,
+    status_code: int,
+    year: int,
+    month: int,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    route_id = int(route_ref["route_id"])
+    shift = response_json.get("shift") if isinstance(response_json, dict) else {}
+    shift = shift if isinstance(shift, dict) else {}
+    stops = response_json.get("stops") if isinstance(response_json, dict) else []
+    stops = stops if isinstance(stops, list) else []
+    planned_start_at = clean_text(shift.get("plannedStartAt")) or None
+    actual_start_at = clean_text(shift.get("actualStartAt")) or None
+    planned_departure_at = clean_text(shift.get("plannedDepartureAt")) or None
+    departed_at = clean_text(shift.get("departedAt")) or first_log_event_at(response_json, "DEPARTED")
+    route_assigned_at = first_log_event_at(response_json, "ROUTE_ASSIGNED")
+    shift_available_at = first_log_event_at(response_json, "SHIFT_AVAILABLE") or actual_start_at
+    last_order_finished_at = first_log_event_at(response_json, "LAST_ORDER_FINISHED")
+    warehouse_arrived_at = first_log_event_at(response_json, "WAREHOUSE_ARRIVED")
+    work_date = (
+        clean_text(route_ref.get("delivery_date"))
+        or iso_date(planned_start_at)
+        or iso_date(actual_start_at)
+        or f"{year}-{month:02d}-01"
+    )
+    return {
+        "courier_id": courier_id,
+        "route_id": route_id,
+        "work_date": work_date,
+        "year": year,
+        "month": month,
+        "dsp_id": int(os.getenv("COURIER_HUB_DSP_ID", "8")),
+        "warehouse_id": warehouse_id,
+        "order_count": safe_int(route_ref.get("order_count")) or len(stops),
+        "stops_count": len(stops),
+        "planned_start_at": planned_start_at,
+        "actual_start_at": actual_start_at,
+        "route_assigned_at": route_assigned_at,
+        "shift_available_at": shift_available_at,
+        "planned_departure_at": planned_departure_at,
+        "departed_at": departed_at,
+        "last_order_finished_at": last_order_finished_at,
+        "warehouse_arrived_at": warehouse_arrived_at,
+        "vehicle_model": clean_text(shift.get("vehicleModel")) or None,
+        "vehicle_plate": clean_text(shift.get("vehiclePlate")) or None,
+        "mileage_km": safe_float(shift.get("mileageKm")),
+        "vehicle_ownership": clean_text(shift.get("vehicleOwnership")) or None,
         "response_status_code": status_code,
         "source_raw_updated_at": now,
         "updated_at": now,

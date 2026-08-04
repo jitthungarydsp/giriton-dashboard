@@ -18,6 +18,7 @@ import requests
 from sync_courier_financial_overview import (
     COURIER_TARGET_TABLES,
     build_compliance_row,
+    build_daily_route_history_row,
     build_delay_row,
     clean_text,
     fetch_route_performance_detail,
@@ -26,6 +27,7 @@ from sync_courier_financial_overview import (
     safe_int,
     supabase_headers,
     upsert_flat_table,
+    upsert_daily_route_history,
     upsert_route_performance_detail,
 )
 
@@ -202,6 +204,17 @@ def main() -> int:
                             year=args.year,
                             month=args.month,
                         ),
+                    )
+                    upsert_daily_route_history(
+                        build_daily_route_history_row(
+                            courier_id=courier_id,
+                            route_ref=route_ref,
+                            warehouse_id=warehouse_id,
+                            response_json=detail_json,
+                            status_code=status_code,
+                            year=args.year,
+                            month=args.month,
+                        )
                     )
 
             if status_code == 200:
