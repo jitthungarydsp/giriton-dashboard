@@ -4733,12 +4733,21 @@ def load_courier_route_detail(
         )
         has_source_id = source_id is not None and _courier_id_key(source_id) != ""
         source_name_key = _courier_match_key(source_name)
-        source_tokens, target_tokens = set(source_name_key.split()), set(target_name.split())
+
+        source_tokens = set(source_name_key.split())
+        target_tokens = set(target_name.split())
+
         is_exact_name = source_name_key == target_name
+
         is_extended_full_name = (
-            len(source_tokens) >= 2 and len(target_tokens) >= 2
-            and (source_tokens <= target_tokens or target_tokens <= source_tokens)
+            len(source_tokens) >= 2
+            and len(target_tokens) >= 2
+            and (
+                source_tokens <= target_tokens
+                or target_tokens <= source_tokens
+            )
         )
+
         id_matches = (
             has_source_id
             and _courier_id_key(source_id) == target_id
@@ -4749,8 +4758,10 @@ def load_courier_route_detail(
             or is_exact_name
             or (not has_source_id and is_extended_full_name)
         )
+
         if not is_matching_courier:
             continue
+
         if source.get("is_route_primary") is not True:
             continue
         route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
@@ -5720,19 +5731,6 @@ def show_courier_dialog() -> None:
             period_start,
             st.session_state.get("new_warehouse", "Összes"),
         )
-    st.write("DEBUG route_detail sorok:", len(route_detail))
-
-if not route_detail.empty:
-    st.dataframe(
-        route_detail.groupby(
-            ["Túratípus", "Naptípus"],
-            dropna=False,
-        )
-        .size()
-        .reset_index(name="Darab"),
-        use_container_width=True,
-        hide_index=True,
-    )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
