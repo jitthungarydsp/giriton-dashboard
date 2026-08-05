@@ -6329,6 +6329,34 @@ def show_courier_dialog() -> None:
             + "</div></div>",
             unsafe_allow_html=True,
         )
+        with st.expander("Kör részletei - műszakok és kifutott túrák", expanded=False):
+            route_source_label = "courier_settlement_summary" if summary_row else "route_detail"
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "Mutató": "MűszakPro foglalt műszak",
+                        "Darab": booked_shift_count,
+                        "Forrás": str(booking_summary.get("source") or "-"),
+                    },
+                    {
+                        "Mutató": "Giriton műszak",
+                        "Darab": giriton_shift_count,
+                        "Forrás": str(giriton_shift_summary.get("source") or "-"),
+                    },
+                    {
+                        "Mutató": "Kifutott túra",
+                        "Darab": route_total,
+                        "Forrás": route_source_label,
+                    },
+                    {
+                        "Mutató": "Cím / rendelés",
+                        "Darab": order_total,
+                        "Forrás": route_source_label,
+                    },
+                ]),
+                hide_index=True,
+                use_container_width=True,
+            )
 
         mobile_income_total = (
             base_total + tip_total + delay_total + compliance_total
