@@ -1764,6 +1764,50 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
     }
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_giriton_shift_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return {"giriton_shift_count": 0, "source": ""}
+
+    def valid_status(value: object) -> bool:
+        text = str(value or "").strip().casefold()
+        return bool(text) and text not in {"-", "nincs", "missing", "missing_giriton"}
+
+    for table_name, select_columns in [
+        ("ops_shift_comparison", "work_date,shift_start,giriton_status,courier_id"),
+        ("giriton_shifts_raw", "work_date,start_time,status,courier_id,serial"),
+        ("raw_giriton_shifts", "work_date,start_time,status,courier_id,serial"),
+    ]:
+        try:
+            rows = (
+                get_db().schema("public").table(table_name)
+                .select(select_columns)
+                .eq("courier_id", clean_courier_id)
+                .gte("work_date", period_start.isoformat())
+                .lte("work_date", period_end.isoformat())
+                .limit(2000)
+                .execute().data or []
+            )
+        except BaseException:
+            rows = []
+        if not rows:
+            continue
+        unique_keys = set()
+        for row in rows:
+            status_value = row.get("giriton_status") if table_name == "ops_shift_comparison" else row.get("status")
+            if not valid_status(status_value):
+                continue
+            unique_keys.add((
+                str(row.get("work_date") or ""),
+                str(row.get("shift_start") or row.get("start_time") or ""),
+                str(row.get("serial") or ""),
+            ))
+        return {"giriton_shift_count": len(unique_keys), "source": table_name}
+
+    return {"giriton_shift_count": 0, "source": ""}
+
+
 def save_monthly_workload_summary(
     *,
     courier_id: str,
@@ -1772,6 +1816,7 @@ def save_monthly_workload_summary(
     period_end: date,
     booked_shift_count: int,
     advance_booked_shift_count: int,
+    giriton_shift_count: int,
     completed_route_count: int,
     order_count: int,
     muszakpro_source: str,
@@ -1786,6 +1831,7 @@ def save_monthly_workload_summary(
                 "period_end": period_end.isoformat(),
                 "booked_shift_count": max(int(booked_shift_count or 0), 0),
                 "advance_booked_shift_count": max(int(advance_booked_shift_count or 0), 0),
+                "giriton_shift_count": max(int(giriton_shift_count or 0), 0),
                 "completed_route_count": max(int(completed_route_count or 0), 0),
                 "order_count": max(int(order_count or 0), 0),
                 "muszakpro_source": str(muszakpro_source or ""),
@@ -5996,6 +6042,8 @@ def show_courier_dialog() -> None:
         booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
         booked_shift_count = int(booking_summary.get("booked_shift_count") or 0)
         advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
+        giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
+        giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
         save_monthly_workload_summary(
             courier_id=courier_id,
             courier_name=str(row["Futár"]),
@@ -6003,6 +6051,7 @@ def show_courier_dialog() -> None:
             period_end=period_end,
             booked_shift_count=booked_shift_count,
             advance_booked_shift_count=advance_booked_shift_count,
+            giriton_shift_count=giriton_shift_count,
             completed_route_count=route_total,
             order_count=order_total,
             muszakpro_source=str(booking_summary.get("source") or ""),
@@ -6070,11 +6119,12 @@ def show_courier_dialog() -> None:
             """,
             unsafe_allow_html=True,
         )
-        workload_cols = st.columns(4)
+        workload_cols = st.columns(5)
         workload_cols[0].metric("MűszakPro foglalt műszak", booked_shift_count)
         workload_cols[1].metric("Előre foglalt műszak", advance_booked_shift_count)
-        workload_cols[2].metric("Kifutott túra", route_total)
-        workload_cols[3].metric("Cím / rendelés", order_total)
+        workload_cols[2].metric("Giriton műszak", giriton_shift_count)
+        workload_cols[3].metric("Kifutott túra", route_total)
+        workload_cols[4].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
@@ -6128,6 +6178,13 @@ def show_courier_dialog() -> None:
         compliance_level_rules = load_active_bonus_level_rules("cfg_jitt_compliance_bonus_rules")
 
         def finance_detail_frame(detail_label: str) -> pd.DataFrame:
+            if detail_label == "Kör":
+                return pd.DataFrame([
+                    {"Tétel": "MűszakPro foglalt műszak", "Darab": booked_shift_count, "Forrás": str(booking_summary.get("source") or "-")},
+                    {"Tétel": "Giriton műszak", "Darab": giriton_shift_count, "Forrás": str(giriton_shift_summary.get("source") or "-")},
+                    {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_row else "route_detail"},
+                    {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_row else "route_detail"},
+                ])
             if detail_label == "Késedelmi díj":
                 return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
             if detail_label == "Túramegfelelés":
@@ -6241,7 +6298,7 @@ def show_courier_dialog() -> None:
             )
 
         detail_labels = {
-            "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
+            "Kör", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
             "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 

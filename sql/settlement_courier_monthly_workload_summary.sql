@@ -8,6 +8,7 @@ create table if not exists settlement.courier_monthly_workload_summary (
     period_end date not null,
     booked_shift_count integer not null default 0 check (booked_shift_count >= 0),
     advance_booked_shift_count integer not null default 0 check (advance_booked_shift_count >= 0),
+    giriton_shift_count integer not null default 0 check (giriton_shift_count >= 0),
     completed_route_count integer not null default 0 check (completed_route_count >= 0),
     order_count integer not null default 0 check (order_count >= 0),
     muszakpro_source text,
@@ -17,6 +18,9 @@ create table if not exists settlement.courier_monthly_workload_summary (
     created_at timestamptz not null default now(),
     constraint courier_monthly_workload_summary_unique unique (courier_id, period_start)
 );
+
+alter table settlement.courier_monthly_workload_summary
+    add column if not exists giriton_shift_count integer not null default 0 check (giriton_shift_count >= 0);
 
 create index if not exists courier_monthly_workload_summary_period_idx
     on settlement.courier_monthly_workload_summary (period_start, period_end);
