@@ -288,6 +288,47 @@ function uniqueText(values = []) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+function routeStoryTime(label, value) {
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(shortDateTime(value))}</strong></div>`;
+}
+
+function routeStoryMetric(label, value, suffix = "") {
+  const numeric = Number(value || 0);
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatCount(numeric)}${suffix}</strong></div>`;
+}
+
+function routeStoryDistance(label, value) {
+  const numeric = Number(value || 0);
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatAverage(numeric)} km</strong></div>`;
+}
+
+function renderRouteStoryDetails(row) {
+  const story = row.routeStory || {};
+  if (!Object.keys(story).length) {
+    return `
+      <div class="daily-route-story">
+        <div class="stat-row"><span>Route story</span><strong>Nincs mart adat</strong></div>
+      </div>
+    `;
+  }
+  const distance = Number(story.gpsDistanceKm || row.mileageKm || 0);
+  return `
+    <div class="daily-route-story">
+      ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
+      ${routeStoryTime("Műszak kezdete", story.shiftStart)}
+      ${routeStoryTime("Sorba állt / elérhető", story.queueStartedAt || story.availableForShiftSince || story.availableAt || story.courierRegisteredAt)}
+      ${routeStoryTime("Túrát kapott", story.assignedAt || row.routeAssignedAt)}
+      ${routeStoryTime("Indulás a raktárból", story.realDeparture || row.departedAt)}
+      ${routeStoryTime("Visszaérkezés a raktárba", story.realReturn || row.warehouseArrivedAt)}
+      ${routeStoryMetric("Várakozás túrára", story.queueWaitMinutes, " perc")}
+      ${routeStoryMetric("Időkapun túli késés", story.timeWindowLateCount, " cím")}
+      ${routeStoryMetric("Kiosztástól visszaérkezésig", story.assignedToReturnMinutes || story.totalRouteMinutes, " perc")}
+      ${routeStoryDistance("Megtett táv", distance)}
+      ${story.storyText ? `<p class="route-story-text">${escapeHtml(story.storyText)}</p>` : ""}
+    </div>
+  `;
+}
+
 function renderDailyHistory(payload) {
   const rows = payload.dailyHistory || [];
   const byDate = dailyHistoryByDate(rows);
@@ -314,16 +355,19 @@ function renderDailyHistory(payload) {
   const mileage = selectedRows.reduce((sum, row) => sum + Number(row.mileageKm || 0), 0);
   const routes = selectedRows.length;
   const routeRows = selectedRows.map((row) => `
-    <div class="daily-route-row">
-      <div>
-        <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
-        <small>WH${escapeHtml(row.warehouseId || "-")} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
-      </div>
-      <div>
-        <span>${escapeHtml(row.vehiclePlate || "-")}</span>
-        <small>${escapeHtml(row.vehicleModel || "")}</small>
-      </div>
-    </div>
+    <details class="daily-route-details">
+      <summary class="daily-route-row">
+        <div>
+          <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
+          <small>WH${escapeHtml(row.warehouseId || "-")} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
+        </div>
+        <div>
+          <span>${escapeHtml(row.vehiclePlate || "-")}</span>
+          <small>${escapeHtml(row.vehicleModel || "")}</small>
+        </div>
+      </summary>
+      ${renderRouteStoryDetails(row)}
+    </details>
   `).join("");
   return `
     <section class="daily-history-card" id="daily-history-card">
@@ -442,7 +486,7 @@ function renderStatistics() {
       <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
     </div>
-    <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
+    <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · mart story: ${formatCount(quality.routeStoryRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
     <div class="stat-rule-list">
       <h4>Alkalmazott napbesorolás</h4>
       ${ruleRows || `<div class="stat-row"><span>Nincs aktív szabály</span><strong>-</strong></div>`}

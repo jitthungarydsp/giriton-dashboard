@@ -2145,6 +2145,41 @@ def load_daily_route_history_for_courier(
     )
 
 
+def load_route_story_rows_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "mart_dsp_route_stories",
+        params={
+            "select": (
+                "work_date,route_id,warehouse_name,shift_name,shift_start,shift_end,"
+                "available_at,available_for_shift_since,queue_started_at,route_created_at,"
+                "courier_registered_at,assigned_at,loading_time,planned_departure,real_departure,"
+                "planned_return,real_return,queue_entry_delta_minutes,queue_wait_minutes,"
+                "planned_loading_minutes,real_loading_minutes,planned_route_minutes,real_route_minutes,"
+                "assigned_to_return_minutes,total_route_minutes,gps_distance_km,checkpoint_straight_km,"
+                "address_count,time_window_late_count,next_shift_delay_minutes,assignment_mode,story_text"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.desc,route_id.desc",
+            "limit": "700",
+        },
+        timeout=60,
+    )
+
+
+def route_story_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row.get("work_date") or "")[:10], str(row.get("route_id") or "").strip())
+        if key[0] and key[1]:
+            lookup[key] = row
+    return lookup
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -2172,15 +2207,18 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
         route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
+        story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
         history_rows = history_future.result()
+        story_rows = story_future.result()
+    stories_by_route = route_story_lookup(story_rows)
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2254,10 +2292,48 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "isLateDeparture": departure_delay > 0,
         }
 
-    def compact_history_row(row: dict[str, Any]) -> dict[str, Any]:
+    def compact_story_row(story: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not story:
+            return None
         return {
+            "shiftName": str(story.get("shift_name") or ""),
+            "shiftStart": str(story.get("shift_start") or ""),
+            "shiftEnd": str(story.get("shift_end") or ""),
+            "availableAt": str(story.get("available_at") or ""),
+            "availableForShiftSince": str(story.get("available_for_shift_since") or ""),
+            "queueStartedAt": str(story.get("queue_started_at") or ""),
+            "routeCreatedAt": str(story.get("route_created_at") or ""),
+            "courierRegisteredAt": str(story.get("courier_registered_at") or ""),
+            "assignedAt": str(story.get("assigned_at") or ""),
+            "loadingTime": str(story.get("loading_time") or ""),
+            "plannedDeparture": str(story.get("planned_departure") or ""),
+            "realDeparture": str(story.get("real_departure") or ""),
+            "plannedReturn": str(story.get("planned_return") or ""),
+            "realReturn": str(story.get("real_return") or ""),
+            "queueEntryDeltaMinutes": safe_int(story.get("queue_entry_delta_minutes")),
+            "queueWaitMinutes": safe_int(story.get("queue_wait_minutes")),
+            "plannedLoadingMinutes": safe_int(story.get("planned_loading_minutes")),
+            "realLoadingMinutes": safe_int(story.get("real_loading_minutes")),
+            "plannedRouteMinutes": safe_int(story.get("planned_route_minutes")),
+            "realRouteMinutes": safe_int(story.get("real_route_minutes")),
+            "assignedToReturnMinutes": safe_int(story.get("assigned_to_return_minutes")),
+            "totalRouteMinutes": safe_int(story.get("total_route_minutes")),
+            "gpsDistanceKm": float(story.get("gps_distance_km") or 0),
+            "checkpointStraightKm": float(story.get("checkpoint_straight_km") or 0),
+            "addressCount": safe_int(story.get("address_count")),
+            "timeWindowLateCount": safe_int(story.get("time_window_late_count")),
+            "nextShiftDelayMinutes": safe_int(story.get("next_shift_delay_minutes")),
+            "assignmentMode": str(story.get("assignment_mode") or ""),
+            "storyText": str(story.get("story_text") or ""),
+        }
+
+    def compact_history_row(row: dict[str, Any]) -> dict[str, Any]:
+        work_date = str(row.get("work_date") or "")[:10]
+        route_id = str(row.get("route_id") or "")
+        story = compact_story_row(stories_by_route.get((work_date, route_id)))
+        result = {
             "date": str(row.get("work_date") or "")[:10],
-            "routeId": str(row.get("route_id") or ""),
+            "routeId": route_id,
             "warehouseId": safe_int(row.get("warehouse_id")),
             "orders": safe_int(row.get("order_count")),
             "stops": safe_int(row.get("stops_count")),
@@ -2274,6 +2350,36 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "mileageKm": float(row.get("mileage_km") or 0),
             "vehicleOwnership": str(row.get("vehicle_ownership") or ""),
         }
+        if story:
+            result["routeStory"] = story
+        return result
+
+    def compact_route_fallback_row(route: dict[str, Any]) -> dict[str, Any]:
+        work_date = str(route.get("work_date") or "")[:10]
+        route_id = str(route.get("route_id") or "")
+        result = {
+            "date": work_date,
+            "routeId": route_id,
+            "warehouseId": safe_int(route.get("warehouse_id")),
+            "orders": safe_int(route.get("orders")),
+            "stops": safe_int(route.get("orders")),
+            "plannedStartAt": "",
+            "actualStartAt": "",
+            "shiftAvailableAt": "",
+            "routeAssignedAt": "",
+            "plannedDepartureAt": "",
+            "departedAt": "",
+            "lastOrderFinishedAt": "",
+            "warehouseArrivedAt": "",
+            "vehicleModel": "",
+            "vehiclePlate": "",
+            "mileageKm": 0,
+            "vehicleOwnership": "",
+        }
+        story = compact_story_row(stories_by_route.get((work_date, route_id)))
+        if story:
+            result["routeStory"] = story
+        return result
 
     delay_detail_rows: list[dict[str, Any]] = []
     compliance_detail_rows: list[dict[str, Any]] = []
@@ -2302,28 +2408,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         },
         "dailyHistory": (
             [compact_history_row(row) for row in history_rows]
-            or [
-                {
-                    "date": str(route.get("work_date") or "")[:10],
-                    "routeId": str(route.get("route_id") or ""),
-                    "warehouseId": safe_int(route.get("warehouse_id")),
-                    "orders": safe_int(route.get("orders")),
-                    "stops": safe_int(route.get("orders")),
-                    "plannedStartAt": "",
-                    "actualStartAt": "",
-                    "shiftAvailableAt": "",
-                    "routeAssignedAt": "",
-                    "plannedDepartureAt": "",
-                    "departedAt": "",
-                    "lastOrderFinishedAt": "",
-                    "warehouseArrivedAt": "",
-                    "vehicleModel": "",
-                    "vehiclePlate": "",
-                    "mileageKm": 0,
-                    "vehicleOwnership": "",
-                }
-                for route in route_rows
-            ]
+            or [compact_route_fallback_row(route) for route in route_rows]
         ),
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
@@ -2337,6 +2422,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         "dataQuality": {
             "dailyRows": len(daily_rows),
             "routeRows": len(route_rows),
+            "routeStoryRows": len(story_rows),
             "routeSource": route_source or "nincs route raw adat",
             "dayRuleSource": day_rule_source,
             "dayRules": serialize_day_rules(day_rules),
