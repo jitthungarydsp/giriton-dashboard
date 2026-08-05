@@ -5715,6 +5715,19 @@ def show_courier_dialog() -> None:
             period_start,
             st.session_state.get("new_warehouse", "Összes"),
         )
+    st.write("DEBUG route_detail sorok:", len(route_detail))
+
+    if not route_detail.empty:
+        st.dataframe(
+            route_detail.groupby(
+                ["Túratípus", "Naptípus"],
+                dropna=False,
+            )
+            .size()
+            .reset_index(name="Darab"),
+            use_container_width=True,
+            hide_index=True,
+        )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
