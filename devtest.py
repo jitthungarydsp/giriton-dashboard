@@ -6774,7 +6774,11 @@ def show_courier_dialog() -> None:
             process_ids.update(
                 normalize_process_id(item.get("process_id"))
                 for item in current_requests.to_dict("records")
-                if normalize_process_id(item.get("process_id"))
+                if (
+                    normalize_process_id(item.get("process_id"))
+                    and str(item.get("status") or "").strip().casefold()
+                    not in {"rejected", "cancelled", "closed"}
+                )
             )
 
         status_by_key = {
@@ -6788,27 +6792,80 @@ def show_courier_dialog() -> None:
         request_by_process = {
             normalize_process_id(item.get("process_id")): item
             for item in advance_requests.to_dict("records")
-            if normalize_process_id(item.get("process_id"))
-        } if not advance_requests.empty else {}
+            if (
+                normalize_process_id(item.get("process_id"))
+                and str(item.get("status") or "").strip().casefold()
+                not in {"rejected", "cancelled", "closed"}
+            )
+} if not advance_requests.empty else {}
 
         process_options = []
-        for process_id in sorted(process_ids, key=lambda value: (bool(value), value)):
+        for process_id in sorted(
+            process_ids,
+            key=lambda value: (bool(value), value),
+        ):
+            request_item = request_by_process.get(process_id, {})
+
+            if process_id:
+                request_status = str(
+                    request_item.get("status") or ""
+                ).strip().casefold()
+
+                if not request_item or request_status in {
+                    "rejected",
+                    "cancelled",
+                    "closed",
+                }:
+                    continue
+
             invoice_rows = invoice_rows_by_process.get(process_id, [])
             latest_invoice = invoice_rows[0] if invoice_rows else {}
-            invoice_number = invoice_number_from_document(latest_invoice) if latest_invoice else ""
-            invoice_amount = sum(invoice_amount_from_document(item) for item in invoice_rows)
-            request_item = request_by_process.get(process_id, {})
-            request_amount = parse_huf_value(request_item.get("requested_amount_huf")) if request_item else 0
-            action_key = process_action_key("invoice_payment", process_id)
-            payment_status = str((status_by_key.get(action_key) or {}).get("status") or "").casefold()
+            invoice_number = (
+                invoice_number_from_document(latest_invoice)
+                if latest_invoice
+                else ""
+            )
+            invoice_amount = sum(
+                invoice_amount_from_document(item)
+                for item in invoice_rows
+            )
+            request_amount = (
+                parse_huf_value(request_item.get("requested_amount_huf"))
+                if request_item
+                else 0
+            )
+
+            action_key = process_action_key(
+                "invoice_payment",
+                process_id,
+            )
+            payment_status = str(
+                (status_by_key.get(action_key) or {}).get("status") or ""
+            ).casefold()
+
             process_options.append({
                 "process_id": process_id,
-                "label": "Havi folyamat" if not process_id else f"Egyéb folyamat: {process_id}",
+                "label": (
+                    "Havi folyamat"
+                    if not process_id
+                    else f"Egyéb folyamat: {process_id}"
+                ),
                 "invoice_number": invoice_number,
                 "invoice_file": str(latest_invoice.get("file_name") or ""),
                 "invoice_title": str(latest_invoice.get("title") or ""),
-                "amount": request_amount if request_item else (invoice_amount or (payable_total if not process_id else 0)),
-                "status": "Lezárva" if payment_status == "done" or (not process_id and closure_done) else "Nyitott",
+                "amount": (
+                    request_amount
+                    if request_item
+                    else invoice_amount or (
+                        payable_total if not process_id else 0
+                    )
+                ),
+                "status": (
+                    "Lezárva"
+                    if payment_status == "done"
+                    or (not process_id and closure_done)
+                    else "Nyitott"
+                ),
                 "request": request_item,
             })
 
