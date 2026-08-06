@@ -5020,10 +5020,10 @@ def load_courier_api_route_statistics_rows(
     period_end: date,
     warehouse_label: str | None = None,
 ) -> pd.DataFrame:
-    """Load and safely combine Courier Hub route statistics rows.
+    """Load all Courier Hub API route rows for the statistics tab.
 
-    Each source is prefixed before merging, so columns with the same name from
-    history, delay and compliance cannot collide during repeated merges.
+    This is intentionally separate from the existing issue loaders, because those
+    only return problematic rows and cannot be used as KPI denominators.
     """
     clean_id = _courier_id_key(courier_id)
     if not clean_id:
@@ -5048,114 +5048,62 @@ def load_courier_api_route_statistics_rows(
         except BaseException:
             return pd.DataFrame()
 
-    source_specs = [
-        (
-            "history",
-            fetch_table(
-                "courier_daily_route_history",
-                "work_date,route_id,warehouse_id,order_count,stops_count,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,updated_at",
-                "work_date",
-            ),
-            "work_date",
-        ),
-        (
-            "delay",
-            fetch_table(
-                "courier_financial_overview_delay",
-                "delivery_date,route_id,warehouse_id,route_order_count,stops_count,delayed_stops_count,total_delay_minutes,max_delay_minutes,slot_miss_projected_count,rejected_stops_count,updated_at",
-                "delivery_date",
-            ),
-            "delivery_date",
-        ),
-        (
-            "compliance",
-            fetch_table(
-                "courier_financial_overview_compliance",
-                "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes,updated_at",
-                "shift_date",
-            ),
-            "shift_date",
-        ),
-    ]
+    history = fetch_table(
+        "courier_daily_route_history",
+        "work_date,route_id,warehouse_id,order_count,stops_count,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,updated_at",
+        "work_date",
+    )
+    delay = fetch_table(
+        "courier_financial_overview_delay",
+        "delivery_date,route_id,warehouse_id,route_order_count,stops_count,delayed_stops_count,total_delay_minutes,max_delay_minutes,slot_miss_projected_count,rejected_stops_count,updated_at",
+        "delivery_date",
+    )
+    compliance = fetch_table(
+        "courier_financial_overview_compliance",
+        "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes,updated_at",
+        "shift_date",
+    )
 
-    prepared: list[pd.DataFrame] = []
-    for source_name, frame, date_column in source_specs:
+    frames = []
+    for frame, date_column in ((history, "work_date"), (delay, "delivery_date"), (compliance, "shift_date")):
         if frame.empty:
             continue
         frame = frame.copy()
-        frame["route_id_key"] = frame["route_id"].map(normalize_route_key)
-        frame["warehouse_id_key"] = (
-            pd.to_numeric(frame["warehouse_id"], errors="coerce").fillna(0).astype(int)
-        )
-        frame[f"{source_name}__stat_date"] = pd.to_datetime(
-            frame[date_column], errors="coerce"
-        ).dt.date
+        frame["route_id_key"] = frame.get("route_id", pd.Series(dtype=str)).map(normalize_route_key)
+        frame["warehouse_id_key"] = pd.to_numeric(frame.get("warehouse_id"), errors="coerce").fillna(0).astype(int)
+        frame["stat_date"] = pd.to_datetime(frame.get(date_column), errors="coerce").dt.date
+        frames.append(frame)
 
-        rename_map = {
-            column: f"{source_name}__{column}"
-            for column in frame.columns
-            if column not in {"route_id_key", "warehouse_id_key"}
-        }
-        prepared.append(frame.rename(columns=rename_map))
-
-    if not prepared:
+    if not frames:
         return pd.DataFrame()
 
-    result = prepared[0]
-    for next_frame in prepared[1:]:
+    result = frames[0]
+    for next_frame in frames[1:]:
+        join_columns = ["route_id_key", "warehouse_id_key"]
         result = result.merge(
-            next_frame,
-            on=["route_id_key", "warehouse_id_key"],
+            next_frame.drop(columns=[column for column in ["route_id", "warehouse_id"] if column in next_frame.columns]),
+            on=join_columns,
             how="outer",
-            validate="one_to_one",
+            suffixes=("", "_source"),
         )
 
-    def coalesce(target: str, candidates: list[str]) -> None:
-        existing = [column for column in candidates if column in result.columns]
-        if not existing:
-            return
-        combined = result[existing[0]]
-        for column in existing[1:]:
-            combined = combined.combine_first(result[column])
-        result[target] = combined
+    for column in [
+        "work_date", "delivery_date", "shift_date", "stat_date",
+        "planned_start_at", "actual_start_at", "route_assigned_at", "shift_available_at",
+        "planned_departure_at", "departed_at", "last_order_finished_at", "warehouse_arrived_at",
+        "vehicle_plate", "mileage_km", "order_count", "stops_count",
+    ]:
+        alternatives = [column, f"{column}_source", f"{column}_x", f"{column}_y"]
+        existing = [item for item in alternatives if item in result.columns]
+        if existing:
+            combined = result[existing[0]]
+            for alternative in existing[1:]:
+                combined = combined.combine_first(result[alternative])
+            result[column] = combined
 
-    coalesce("stat_date", [
-        "history__stat_date", "delay__stat_date", "compliance__stat_date"
-    ])
-    coalesce("work_date", ["history__work_date", "delay__delivery_date", "compliance__shift_date"])
-
-    shared_columns = [
-        "planned_start_at", "actual_start_at", "route_assigned_at",
-        "shift_available_at", "planned_departure_at", "departed_at",
-        "last_order_finished_at", "warehouse_arrived_at", "vehicle_plate",
-        "mileage_km", "stops_count", "updated_at",
-    ]
-    for column in shared_columns:
-        coalesce(column, [
-            f"history__{column}", f"delay__{column}", f"compliance__{column}"
-        ])
-
-    coalesce("order_count", ["history__order_count", "delay__route_order_count"])
-
-    delay_columns = [
-        "delayed_stops_count", "total_delay_minutes", "max_delay_minutes",
-        "slot_miss_projected_count", "rejected_stops_count",
-    ]
-    for column in delay_columns:
-        coalesce(column, [f"delay__{column}"])
-
-    compliance_columns = [
-        "planned_start_delay_minutes", "departure_delay_minutes",
-        "return_delay_minutes",
-    ]
-    for column in compliance_columns:
-        coalesce(column, [f"compliance__{column}"])
-
-    result["route_id"] = result["route_id_key"]
-    result["warehouse_id"] = result["warehouse_id_key"]
-
-    sort_columns = [column for column in ["stat_date", "route_id"] if column in result.columns]
-    return result.sort_values(sort_columns, kind="stable") if sort_columns else result
+    result["route_id"] = result.get("route_id_key", pd.Series(dtype=str))
+    result["warehouse_id"] = result.get("warehouse_id_key", pd.Series(dtype=int))
+    return result.sort_values(["stat_date", "route_id"], kind="stable")
 
 
 def render_courier_api_statistics(
