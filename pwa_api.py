@@ -2019,6 +2019,13 @@ def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "route_type": "express" if "express" in route_layer else "regional" if "region" in route_layer else "normal",
                     "orders": safe_int(route.get("orderCount") or route.get("orders")),
                     "tips_huf": safe_money_amount(route.get("customerTipsTotal")),
+                    "stops_total": safe_int(route.get("stopsTotal") or route.get("stops_total")),
+                    "delivered_count": safe_int(route.get("deliveredCount") or route.get("delivered_count")),
+                    "delayed_count": safe_int(route.get("delayedCount") or route.get("delayed_count")),
+                    "avg_delay_minutes": safe_int(route.get("avgDelayMinutes") or route.get("avg_delay_minutes")),
+                    "final_delay_minutes": safe_int(route.get("finalDelayMinutes") or route.get("final_delay_minutes")),
+                    "warehouse_departure_actual": str(route.get("warehouseDepartureActual") or route.get("warehouse_departure_actual") or ""),
+                    "warehouse_arrival_actual": str(route.get("warehouseArrivalActual") or route.get("warehouse_arrival_actual") or ""),
                 }
             )
     return routes
