@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
+import matplotlib.pyplot as plt
 import streamlit as st
 import streamlit.components.v1 as components
 from resources.settlement_excel_import import (
@@ -5213,9 +5214,15 @@ def render_courier_api_statistics(
             return "-"
         return parsed.strftime("%Y.%m.%d. %H:%M")
 
+    stat_date_series = (
+        rows["stat_date"]
+        if "stat_date" in rows.columns
+        else pd.Series(pd.NaT, index=rows.index, dtype="datetime64[ns]")
+    )
+
     table = pd.DataFrame({
-        "Dátum": pd.to_datetime(rows.get("stat_date"), errors="coerce").dt.strftime("%Y.%m.%d."),
-        "Route ID": rows.get("route_id", pd.Series(dtype=str)).astype(str),
+        "Dátum": pd.to_datetime(stat_date_series, errors="coerce").dt.strftime("%Y.%m.%d."),
+        "Route ID": rows.get("route_id", pd.Series("", index=rows.index, dtype=str)).astype(str),
         "Raktár": rows.get("warehouse_id", pd.Series(dtype=object)).map(lambda value: f"WH{int(value)}" if pd.notna(value) and str(value) not in {"", "0"} else "-"),
         "Sorba állt": rows.get("actual_start_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
         "Elérhető": rows.get("shift_available_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
@@ -5230,6 +5237,85 @@ def render_courier_api_statistics(
         "KM": numeric("mileage_km").round(1),
     })
     st.dataframe(table, use_container_width=True, hide_index=True, height=420)
+
+    previous_month_end = period_start.replace(day=1) - timedelta(days=1)
+    previous_month_start = previous_month_end.replace(day=1)
+    previous_rows = load_courier_api_route_statistics_rows(
+        courier_id, previous_month_start, previous_month_end, warehouse_label
+    )
+
+    st.markdown("##### Előző havi teljesítés")
+    st.caption(
+        f"Időszak: {previous_month_start:%Y.%m.%d.} – {previous_month_end:%Y.%m.%d.}"
+    )
+
+    if previous_rows.empty:
+        st.info("Az előző hónaphoz még nincs megjeleníthető Courier Hub route statisztika.")
+    else:
+        previous_stops = pd.to_numeric(
+            previous_rows.get(
+                "stops_count",
+                pd.Series(0, index=previous_rows.index, dtype="float64"),
+            ),
+            errors="coerce",
+        ).fillna(0.0)
+        previous_orders = pd.to_numeric(
+            previous_rows.get(
+                "order_count",
+                pd.Series(0, index=previous_rows.index, dtype="float64"),
+            ),
+            errors="coerce",
+        ).fillna(0.0)
+        previous_delayed = pd.to_numeric(
+            previous_rows.get(
+                "delayed_stops_count",
+                pd.Series(0, index=previous_rows.index, dtype="float64"),
+            ),
+            errors="coerce",
+        ).fillna(0.0)
+
+        previous_stop_count = int(max(previous_stops.sum(), previous_orders.sum()))
+        previous_delayed_count = min(int(previous_delayed.sum()), previous_stop_count)
+        previous_on_time_count = max(previous_stop_count - previous_delayed_count, 0)
+
+        if previous_stop_count <= 0:
+            st.info("Az előző hónap route-jaihoz nincs cím/stop darabszám.")
+        else:
+            chart_col, metric_col = st.columns([0.58, 0.42], gap="large")
+            with chart_col:
+                figure, axis = plt.subplots(figsize=(5.2, 5.2))
+                axis.pie(
+                    [previous_on_time_count, previous_delayed_count],
+                    labels=["Időben", "Késő"],
+                    autopct=lambda value: f"{value:.1f}%" if value > 0 else "",
+                    startangle=90,
+                    wedgeprops={"width": 0.42},
+                )
+                axis.text(
+                    0,
+                    0,
+                    f"{previous_stop_count}\ncím",
+                    ha="center",
+                    va="center",
+                    fontsize=14,
+                    fontweight="bold",
+                )
+                axis.set_title("Előző havi időablakos teljesítés")
+                axis.axis("equal")
+                st.pyplot(figure, use_container_width=True)
+                plt.close(figure)
+
+            with metric_col:
+                previous_delay_percent = (
+                    previous_delayed_count / previous_stop_count * 100.0
+                )
+                st.metric("Előző havi cím / stop", previous_stop_count)
+                st.metric(
+                    "Előző havi késő cím",
+                    previous_delayed_count,
+                    f"{previous_delay_percent:.2f}%",
+                )
+                st.metric("Előző havi időben teljesített", previous_on_time_count)
 
 
 def save_route_issue_review(
