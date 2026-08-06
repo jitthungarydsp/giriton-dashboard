@@ -2428,6 +2428,10 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             [compact_history_row(row) for row in history_rows]
             or [compact_route_fallback_row(route) for route in route_rows]
         ),
+        "rawRouteOverview": {
+            "source": route_source or "",
+            "routes": route_rows,
+        },
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
             "normalDayRoutes": normal_day_routes,
