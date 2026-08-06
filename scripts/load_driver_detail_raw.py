@@ -31,7 +31,6 @@ ORGANIZATION_ID = "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 KIFLI_API_BASE_URL = "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
 SOURCE_NAME = "fetch-drivers-detail"
 TARGET_TABLE_CANDIDATES = [
-    "raw_dsp_driver_detail",
     "dsp_driver_detail_raw",
 ]
 
