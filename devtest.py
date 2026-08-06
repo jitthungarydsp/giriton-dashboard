@@ -4696,16 +4696,36 @@ def load_courier_route_detail(
         if not session_id:
             session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
     try:
-        rows = (
-            get_db().schema("settlement").table("jit_row")
-            .select(
-                "normalized_data,route_unique_id,route_date,weekday_iso,calculated_day_type,"
-                "courier_base_rate_huf,courier_tip_huf,courier_delay_bonus_huf,"
-                "courier_compliance_bonus_huf,courier_other_bonus_huf,"
-                "courier_bonus_total_huf,is_route_primary,base_rate_status"
+        rows: list[dict[str, object]] = []
+        page_size = 1000
+        offset = 0
+
+        while True:
+            page = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select(
+                    "normalized_data,route_unique_id,route_date,weekday_iso,"
+                    "calculated_day_type,courier_base_rate_huf,courier_tip_huf,"
+                    "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
+                    "courier_other_bonus_huf,courier_bonus_total_huf,"
+                    "is_route_primary,base_rate_status"
+                )
+                .eq("session_id", session_id)
+                .range(offset, offset + page_size - 1)
+                .execute()
+                .data
+                or []
             )
-            .eq("session_id", session_id).execute().data or []
-        )
+
+            rows.extend(page)
+
+            if len(page) < page_size:
+                break
+
+            offset += page_size
+
     except BaseException:
         return pd.DataFrame(columns=columns)
     parsed: list[dict[str, object]] = []
