@@ -899,6 +899,46 @@ $("#shift-list").addEventListener("click", async (event) => {
   await sendShiftDelayAlert(items[index], button);
 });
 
+function applyInvoiceValidationOverride() {
+  const workflow = state.workflow;
+
+  if (!workflow?.invoiceValidationOverride) {
+    return;
+  }
+
+  const steps = workflow.steps || [];
+  const invoiceDocuments = workflow.documents?.invoice || [];
+
+  const invoiceSubmitStep = steps.find(
+    (step) => step.key === "invoice_submit"
+  );
+
+  const invoiceCheckStep = steps.find(
+    (step) => step.key === "invoice_check"
+  );
+
+  const invoicePaymentStep = steps.find(
+    (step) => step.key === "invoice_payment"
+  );
+
+  const invoiceSubmitted = Boolean(
+    invoiceSubmitStep?.done || invoiceDocuments.length
+  );
+
+  // Az admin továbbengedés az ellenőrzést sikeresnek tekinti.
+  if (invoiceCheckStep) {
+    invoiceCheckStep.done = true;
+    invoiceCheckStep.locked = false;
+    invoiceCheckStep.title = "Számlaellenőrzés – admin által továbbengedve";
+  }
+
+  // A kifizetési lépés csak akkor oldható fel,
+  // ha a számla ténylegesen beérkezett.
+  if (invoicePaymentStep && invoiceSubmitted) {
+    invoicePaymentStep.locked = false;
+  }
+}
+
 function workflowStep(key) {
   return state.workflow?.steps?.find((step) => step.key === key) || {};
 }
@@ -1243,6 +1283,7 @@ function showOnlyWorkflowPanel(panelId) {
 }
 
 function renderWorkflow() {
+  applyInvoiceValidationOverride();
   renderWorkflowSteps();
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
