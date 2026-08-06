@@ -11,7 +11,6 @@ requests
 supabase>=2.15.3
 psycopg2-binary
 python-dotenv
-html
 
 gspread
 google-auth
