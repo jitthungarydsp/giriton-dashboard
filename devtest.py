@@ -5786,6 +5786,9 @@ def show_courier_dialog() -> None:
     profile_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
     order_total = profile_metrics["order_total"]
     route_total = profile_metrics["route_total"]
+    if summary_row:
+        order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
+        route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
     if not route_detail.empty:
         route_day_type = route_detail.get("Naptípus", pd.Series(dtype=str)).astype(str).str.casefold()
         route_type = route_detail.get("Túratípus", pd.Series(dtype=str)).astype(str).str.casefold()
@@ -5798,6 +5801,11 @@ def show_courier_dialog() -> None:
         normal_route_total = int(parse_huf_value(summary_row.get("normal_routes")))
         express_highlighted_total = int(parse_huf_value(summary_row.get("express_highlighted_routes")))
         express_normal_total = int(parse_huf_value(summary_row.get("express_normal_routes")))
+    if summary_row:
+        highlighted_route_total = max(highlighted_route_total, int(parse_huf_value(summary_row.get("highlighted_routes"))))
+        normal_route_total = max(normal_route_total, int(parse_huf_value(summary_row.get("normal_routes"))))
+        express_highlighted_total = max(express_highlighted_total, int(parse_huf_value(summary_row.get("express_highlighted_routes"))))
+        express_normal_total = max(express_normal_total, int(parse_huf_value(summary_row.get("express_normal_routes"))))
     if route_total > 0 and highlighted_route_total + normal_route_total == 0:
         normal_route_total = route_total
     data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
@@ -5996,8 +6004,8 @@ def show_courier_dialog() -> None:
         manual_other_total = float(adjustment_totals.get("other_expense", 0))
 
         # The profile cards are a direct projection of the persisted central
-        # settlement row for money amounts. Route detail remains the source of
-        # truth for route and order counts when it is available.
+        # settlement row for money amounts. For counts, keep the larger central
+        # monthly value when the route detail drill-down is incomplete.
         if summary_row and route_detail.empty:
             amount = lambda field: parse_huf_value(summary_row.get(field))
             base_total = amount("courier_base_rate_huf")
@@ -6015,6 +6023,8 @@ def show_courier_dialog() -> None:
             compliance_total = parse_huf_value(summary_row.get("compliance_bonus_huf"))
             route_other_bonus_total = parse_huf_value(summary_row.get("other_route_bonus_huf"))
             imported_bonus_total = parse_huf_value(summary_row.get("imported_bonus_huf"))
+            order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
+            route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
 
         manual_bonus_total = float(adjustment_totals.get("bonus", 0.0))
         manual_customer_rating_total = float(adjustment_totals.get("customer_rating", 0.0))
