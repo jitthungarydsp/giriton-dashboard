@@ -2829,19 +2829,27 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
     }).eq("id", request_id).execute()
     cancel_salary_advance_plan_for_request(request_row, response)
     if process_id:
-        for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+        for action in [
+            "settlement",
+            "tig",
+            "invoice_submit",
+            "invoice_check",
+            "invoice_payment",
+        ]:
             upsert_peopleforce_card_status(
                 courier_id=courier_id,
                 courier_name=courier_name,
                 action_key=process_action_key(action, process_id),
                 document_month=document_month,
-                status="done",
+                status="open",
                 status_note=f"Fizetés előleg elutasítva. {response}".strip(),
                 updated_by=actor,
             )
     load_courier_salary_advance_requests.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
 
 
 def close_salary_advance_installments(courier_id: str, period_start: date, period_end: date) -> int:
