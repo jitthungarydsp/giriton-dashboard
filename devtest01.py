@@ -5013,173 +5013,6 @@ def load_courier_financial_compliance_rows(courier_id: str, period_start: date, 
         return pd.DataFrame()
 
 
-@st.cache_data(show_spinner=False, ttl=300)
-def load_courier_api_route_statistics_rows(
-    courier_id: str,
-    period_start: date,
-    period_end: date,
-    warehouse_label: str | None = None,
-) -> pd.DataFrame:
-    """Load all Courier Hub API route rows for the statistics tab.
-
-    This is intentionally separate from the existing issue loaders, because those
-    only return problematic rows and cannot be used as KPI denominators.
-    """
-    clean_id = _courier_id_key(courier_id)
-    if not clean_id:
-        return pd.DataFrame()
-
-    warehouse_id = settlement_warehouse_id(warehouse_label)
-
-    def fetch_table(table_name: str, select_fields: str, date_field: str) -> pd.DataFrame:
-        try:
-            query = (
-                get_db().schema("public").table(table_name)
-                .select(select_fields)
-                .eq("courier_id", int(clean_id))
-                .gte(date_field, period_start.isoformat())
-                .lte(date_field, period_end.isoformat())
-                .order(date_field)
-                .limit(5000)
-            )
-            if warehouse_id is not None:
-                query = query.eq("warehouse_id", int(warehouse_id))
-            return pd.DataFrame(query.execute().data or [])
-        except BaseException:
-            return pd.DataFrame()
-
-    history = fetch_table(
-        "courier_daily_route_history",
-        "work_date,route_id,warehouse_id,order_count,stops_count,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,updated_at",
-        "work_date",
-    )
-    delay = fetch_table(
-        "courier_financial_overview_delay",
-        "delivery_date,route_id,warehouse_id,route_order_count,stops_count,delayed_stops_count,total_delay_minutes,max_delay_minutes,slot_miss_projected_count,rejected_stops_count,updated_at",
-        "delivery_date",
-    )
-    compliance = fetch_table(
-        "courier_financial_overview_compliance",
-        "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,route_assigned_at,shift_available_at,planned_departure_at,departed_at,last_order_finished_at,warehouse_arrived_at,vehicle_plate,mileage_km,planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes,updated_at",
-        "shift_date",
-    )
-
-    frames = []
-    for frame, date_column in ((history, "work_date"), (delay, "delivery_date"), (compliance, "shift_date")):
-        if frame.empty:
-            continue
-        frame = frame.copy()
-        frame["route_id_key"] = frame.get("route_id", pd.Series(dtype=str)).map(normalize_route_key)
-        frame["warehouse_id_key"] = pd.to_numeric(frame.get("warehouse_id"), errors="coerce").fillna(0).astype(int)
-        frame["stat_date"] = pd.to_datetime(frame.get(date_column), errors="coerce").dt.date
-        frames.append(frame)
-
-    if not frames:
-        return pd.DataFrame()
-
-    result = frames[0]
-    for next_frame in frames[1:]:
-        join_columns = ["route_id_key", "warehouse_id_key"]
-        result = result.merge(
-            next_frame.drop(columns=[column for column in ["route_id", "warehouse_id"] if column in next_frame.columns]),
-            on=join_columns,
-            how="outer",
-            suffixes=("", "_source"),
-        )
-
-    for column in [
-        "work_date", "delivery_date", "shift_date", "stat_date",
-        "planned_start_at", "actual_start_at", "route_assigned_at", "shift_available_at",
-        "planned_departure_at", "departed_at", "last_order_finished_at", "warehouse_arrived_at",
-        "vehicle_plate", "mileage_km", "order_count", "stops_count",
-    ]:
-        alternatives = [column, f"{column}_source", f"{column}_x", f"{column}_y"]
-        existing = [item for item in alternatives if item in result.columns]
-        if existing:
-            combined = result[existing[0]]
-            for alternative in existing[1:]:
-                combined = combined.combine_first(result[alternative])
-            result[column] = combined
-
-    result["route_id"] = result.get("route_id_key", pd.Series(dtype=str))
-    result["warehouse_id"] = result.get("warehouse_id_key", pd.Series(dtype=int))
-    return result.sort_values(["stat_date", "route_id"], kind="stable")
-
-
-def render_courier_api_statistics(
-    courier_id: str,
-    period_start: date,
-    period_end: date,
-    warehouse_label: str | None,
-) -> None:
-    rows = load_courier_api_route_statistics_rows(
-        courier_id, period_start, period_end, warehouse_label
-    )
-
-    st.markdown("#### Statisztika")
-    st.caption("Forrás: Courier Hub API · a bal oldali Számítás módja: API")
-
-    if rows.empty:
-        st.info(
-            "Ehhez a futárhoz és időszakhoz még nincs route performance detail adat. "
-            "Futtasd le a sync_courier_route_performance_details.py szinkront."
-        )
-        return
-
-    def numeric(column: str) -> pd.Series:
-        if column not in rows.columns:
-            return pd.Series(0.0, index=rows.index, dtype="float64")
-        return pd.to_numeric(rows[column], errors="coerce").fillna(0.0)
-
-    route_count = int(rows["route_id"].astype(str).replace("", pd.NA).dropna().nunique())
-    stop_count = int(max(numeric("stops_count").sum(), numeric("order_count").sum()))
-    delayed_count = int(numeric("delayed_stops_count").sum())
-    delay_percent = (delayed_count / stop_count * 100.0) if stop_count else 0.0
-    total_delay_minutes = int(numeric("total_delay_minutes").sum())
-    max_delay_minutes = int(numeric("max_delay_minutes").max()) if len(rows) else 0
-
-    actual_start_missing = rows.get("actual_start_at", pd.Series(index=rows.index, dtype=object)).isna()
-    available_missing = rows.get("shift_available_at", pd.Series(index=rows.index, dtype=object)).isna()
-    no_show_count = int((actual_start_missing | available_missing).sum())
-    no_show_percent = (no_show_count / route_count * 100.0) if route_count else 0.0
-
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Route", route_count)
-    kpi2.metric("Cím / stop", stop_count)
-    kpi3.metric("Késő cím", delayed_count, f"{delay_percent:.2f}%")
-    kpi4.metric("No-show", no_show_count, f"{no_show_percent:.2f}%")
-
-    kpi5, kpi6, kpi7, kpi8 = st.columns(4)
-    kpi5.metric("Összes delay", f"{total_delay_minutes} perc")
-    kpi6.metric("Legnagyobb delay", f"{max_delay_minutes} perc")
-    kpi7.metric("Slot miss", int(numeric("slot_miss_projected_count").sum()))
-    kpi8.metric("Kilométer", f"{numeric('mileage_km').sum():.1f} km")
-
-    def display_time(value: object) -> str:
-        parsed = pd.to_datetime(value, errors="coerce")
-        if pd.isna(parsed):
-            return "-"
-        return parsed.strftime("%Y.%m.%d. %H:%M")
-
-    table = pd.DataFrame({
-        "Dátum": pd.to_datetime(rows.get("stat_date"), errors="coerce").dt.strftime("%Y.%m.%d."),
-        "Route ID": rows.get("route_id", pd.Series(dtype=str)).astype(str),
-        "Raktár": rows.get("warehouse_id", pd.Series(dtype=object)).map(lambda value: f"WH{int(value)}" if pd.notna(value) and str(value) not in {"", "0"} else "-"),
-        "Sorba állt": rows.get("actual_start_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
-        "Elérhető": rows.get("shift_available_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
-        "Route kiosztva": rows.get("route_assigned_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
-        "Indult": rows.get("departed_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
-        "Visszaért": rows.get("warehouse_arrived_at", pd.Series(index=rows.index, dtype=object)).map(display_time),
-        "Cím": numeric("stops_count").astype(int),
-        "Késő cím": numeric("delayed_stops_count").astype(int),
-        "Delay perc": numeric("total_delay_minutes").astype(int),
-        "Max delay": numeric("max_delay_minutes").astype(int),
-        "No-show": (actual_start_missing | available_missing).map({True: "Igen", False: "Nem"}),
-        "KM": numeric("mileage_km").round(1),
-    })
-    st.dataframe(table, use_container_width=True, hide_index=True, height=420)
-
-
 def save_route_issue_review(
     session_id: str | None,
     courier_id: str,
@@ -5715,13 +5548,9 @@ def render_fast_courier_profile(
         unsafe_allow_html=True,
     )
 
-    profile_menu_items = ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
-    if str(st.session_state.get("new_calculation_mode", "API")).strip().casefold() == "api":
-        profile_menu_items.append("Statisztika")
-    profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
     selected_menu = st.radio(
         "Futármenü",
-        profile_menu_items,
+        ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
         horizontal=True,
         label_visibility="collapsed",
         key=menu_key,
@@ -6046,12 +5875,8 @@ def show_courier_dialog() -> None:
         """,
         unsafe_allow_html=True,
     )
-    courier_menu_items = ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
-    if str(active_calculation_mode or "API").strip().casefold() == "api":
-        courier_menu_items.append("Statisztika")
-    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
     selected_menu = st.radio(
-        "Futármenü", courier_menu_items,
+        "Futármenü", ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak", "Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"],
         horizontal=True, label_visibility="collapsed", key=menu_key,
     )
 
@@ -7358,15 +7183,6 @@ def show_courier_dialog() -> None:
                     use_container_width=True,
                     hide_index=True,
                 )
-
-    if selected_menu == "Statisztika":
-        if str(active_calculation_mode or "API").strip().casefold() == "api":
-            render_courier_api_statistics(
-                courier_id=courier_id,
-                period_start=period_start,
-                period_end=period_end,
-                warehouse_label=st.session_state.get("new_warehouse", "Összes"),
-            )
 
     if selected_menu == "Útvonalak":
         if route_detail.empty:
