@@ -8,7 +8,6 @@ from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
 import streamlit.components.v1 as components
 from resources.settlement_excel_import import (
@@ -5283,27 +5282,34 @@ def render_courier_api_statistics(
         else:
             chart_col, metric_col = st.columns([0.58, 0.42], gap="large")
             with chart_col:
-                figure, axis = plt.subplots(figsize=(5.2, 5.2))
-                axis.pie(
-                    [previous_on_time_count, previous_delayed_count],
-                    labels=["Időben", "Késő"],
-                    autopct=lambda value: f"{value:.1f}%" if value > 0 else "",
-                    startangle=90,
-                    wedgeprops={"width": 0.42},
+                chart_data = pd.DataFrame(
+                    {
+                        "Állapot": ["Időben", "Késő"],
+                        "Darabszám": [previous_on_time_count, previous_delayed_count],
+                    }
                 )
-                axis.text(
-                    0,
-                    0,
-                    f"{previous_stop_count}\ncím",
-                    ha="center",
-                    va="center",
-                    fontsize=14,
-                    fontweight="bold",
+                st.vega_lite_chart(
+                    chart_data,
+                    {
+                        "title": "Előző havi időablakos teljesítés",
+                        "mark": {"type": "arc", "innerRadius": 70},
+                        "encoding": {
+                            "theta": {"field": "Darabszám", "type": "quantitative"},
+                            "color": {
+                                "field": "Állapot",
+                                "type": "nominal",
+                                "legend": {"orient": "bottom"},
+                            },
+                            "tooltip": [
+                                {"field": "Állapot", "type": "nominal"},
+                                {"field": "Darabszám", "type": "quantitative"},
+                            ],
+                        },
+                        "view": {"stroke": None},
+                    },
+                    use_container_width=True,
                 )
-                axis.set_title("Előző havi időablakos teljesítés")
-                axis.axis("equal")
-                st.pyplot(figure, use_container_width=True)
-                plt.close(figure)
+                st.caption(f"Összesen: {previous_stop_count} cím / stop")
 
             with metric_col:
                 previous_delay_percent = (
