@@ -1717,13 +1717,6 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     shift_count = sum(safe_int(item.get("shift_count")) for item in daily_performance_rows)
     route_delayed_stops = sum(safe_int(item.get("delayed_stops_count")) for item in delay_rows)
     route_delay_minutes = sum(safe_int(item.get("total_delay_minutes")) for item in delay_rows)
-    delay_rows = []
-    compliance_rows = []
-    delayed_orders = 0
-    late_count = 0
-    no_show_count = 0
-    route_delayed_stops = 0
-    route_delay_minutes = 0
     if not daily_performance_rows:
         delayed_orders = 0
         late_count = 0
@@ -2219,6 +2212,8 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         history_rows = history_future.result()
         story_rows = story_future.result()
     stories_by_route = route_story_lookup(story_rows)
+    delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
+    compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end)
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2234,15 +2229,31 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     normal_day_routes = 0
     express_routes = 0
     express_orders = 0
+    highlighted_city_routes = 0
+    normal_city_routes = 0
+    highlighted_express_routes = 0
+    normal_express_routes = 0
     route_types = {"normal": 0, "express": 0, "regional": 0}
     if route_rows:
         for route in route_rows:
             route_type = route.get("route_type") or "normal"
             route_types[route_type] = route_types.get(route_type, 0) + 1
+            is_highlighted = day_type_for_date(route.get("work_date"), day_rules) == "highlighted"
             if route_type == "express":
                 express_routes += 1
                 express_orders += safe_int(route.get("orders"))
-            if day_type_for_date(route.get("work_date"), day_rules) == "highlighted":
+                if is_highlighted:
+                    highlighted_express_routes += 1
+                else:
+                    normal_express_routes += 1
+            elif route_type == "regional":
+                pass
+            else:
+                if is_highlighted:
+                    highlighted_city_routes += 1
+                else:
+                    normal_city_routes += 1
+            if is_highlighted:
                 highlighted_routes += 1
             else:
                 normal_day_routes += 1
@@ -2381,8 +2392,8 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             result["routeStory"] = story
         return result
 
-    delay_detail_rows: list[dict[str, Any]] = []
-    compliance_detail_rows: list[dict[str, Any]] = []
+    delay_detail_rows: list[dict[str, Any]] = [compact_delay_row(item) for item in delay_rows]
+    compliance_detail_rows: list[dict[str, Any]] = [compact_compliance_row(item) for item in compliance_rows]
 
     return {
         "month": period_start.strftime("%Y-%m"),
@@ -2413,6 +2424,10 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         "routeBreakdown": {
             "highlightedRoutes": highlighted_routes,
             "normalDayRoutes": normal_day_routes,
+            "highlightedCityRoutes": highlighted_city_routes,
+            "normalCityRoutes": normal_city_routes,
+            "highlightedExpressRoutes": highlighted_express_routes,
+            "normalExpressRoutes": normal_express_routes,
             "expressRoutes": express_routes,
             "expressOrders": express_orders,
             "normalRoutes": route_types.get("normal", 0),

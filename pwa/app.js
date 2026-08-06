@@ -469,6 +469,8 @@ function renderStatistics() {
       <strong>${escapeHtml(rule.validFrom || "-")} - ${escapeHtml(rule.validTo || "folyamatos")}</strong>
     </div>
   `).join("");
+  const delayRows = details.delayRows || [];
+  const complianceRows = details.complianceRows || [];
   breakdown.innerHTML = `
     ${renderDailyHistory(payload)}
     <div class="process-title">
@@ -479,12 +481,24 @@ function renderStatistics() {
       </div>
     </div>
     <div class="stat-breakdown-list">
-      <div class="stat-row"><span>Kiemelt napi kör</span><strong>${formatCount(routeBreakdown.highlightedRoutes)}</strong></div>
-      <div class="stat-row"><span>Nem kiemelt napi kör</span><strong>${formatCount(routeBreakdown.normalDayRoutes)}</strong></div>
+      <div class="stat-row"><span>Kiemelt City</span><strong>${formatCount(routeBreakdown.highlightedCityRoutes)}</strong></div>
+      <div class="stat-row"><span>Normál City</span><strong>${formatCount(routeBreakdown.normalCityRoutes)}</strong></div>
+      <div class="stat-row"><span>Kiemelt Express</span><strong>${formatCount(routeBreakdown.highlightedExpressRoutes)}</strong></div>
+      <div class="stat-row"><span>Normál Express</span><strong>${formatCount(routeBreakdown.normalExpressRoutes)}</strong></div>
       <div class="stat-row"><span>Express kör</span><strong>${formatCount(routeBreakdown.expressRoutes)}</strong></div>
       <div class="stat-row"><span>Express cím</span><strong>${formatCount(routeBreakdown.expressOrders)}</strong></div>
       <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
+    </div>
+    <div class="stat-breakdown-list">
+      <details class="stat-row detail-toggle">
+        <summary><span>Késedelmi díj</span><strong>${delayRows.length ? formatCount(delayRows.length) : "Nincs"}</strong></summary>
+        ${renderDelayDetailRows(delayRows)}
+      </details>
+      <details class="stat-row detail-toggle">
+        <summary><span>Túramegfelelés</span><strong>${complianceRows.length ? formatCount(complianceRows.length) : "Nincs"}</strong></summary>
+        ${renderComplianceDetailRows(complianceRows)}
+      </details>
     </div>
     <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · mart story: ${formatCount(quality.routeStoryRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
     <div class="stat-rule-list">
