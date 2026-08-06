@@ -4781,7 +4781,13 @@ def load_courier_route_detail(
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
 
-
+st.write(
+    {
+        "profil_session_id": session_id,
+        "számítási_mód": active_calculation_mode,
+        "route_detail_sorok": len(route_detail),
+    }
+)
 def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
     """Aggregate only the auditable Route ID rows displayed to the user."""
     columns = [
