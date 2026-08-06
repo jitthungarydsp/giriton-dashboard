@@ -1689,7 +1689,13 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
             step = "A futár TIG-elfogadására vár"
             courier_feedback = "Futárnál"
             note = str(tig_status.get("status_note") or "A TIG feltöltve.") if tig_status is not None else "A TIG feltöltve."
-        elif invoice_check_status is None or str(invoice_check_status.get("status") or "").lower() != "done":
+        elif (
+                (
+                    invoice_check_status is None
+                    or str(invoice_check_status.get("status") or "").lower() != "done"
+                )
+                and not invoice_override_enabled
+            ):
             row_state = "waiting"
             lamp = "Sárga"
             workflow_priority = 40
@@ -1709,7 +1715,13 @@ def render_monthly_invoice_tasks(route_driver_names, document_month, driver_summ
                 step = "A futár számlaellenőrzésére vár"
                 note = "A TIG-et a futár elfogadta, a számla ellenőrzése még nem készült el."
             courier_feedback = "Futárnál"
-        elif invoice_submit_status is None or str(invoice_submit_status.get("status") or "").lower() != "done":
+        elif (
+                (
+                    invoice_submit_status is None
+                    or str(invoice_submit_status.get("status") or "").lower() != "done"
+                )
+                and not invoice_override_enabled
+            ):
             row_state = "waiting"
             lamp = "Sárga"
             workflow_priority = 50
