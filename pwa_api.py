@@ -906,6 +906,63 @@ def read_current_route_story(
     return compact_route_story_row(rows[0] if rows else None)
 
 
+def read_latest_route_story_for_courier(courier_id: str, work_date: date) -> dict[str, Any] | None:
+    rows = optional_supabase_rows(
+        "mart_dsp_route_stories",
+        params={
+            "select": (
+                "work_date,route_id,warehouse_name,shift_name,shift_start,shift_end,"
+                "available_at,available_for_shift_since,queue_started_at,route_created_at,"
+                "courier_registered_at,assigned_at,loading_time,planned_departure,real_departure,"
+                "planned_return,real_return,queue_entry_delta_minutes,queue_wait_minutes,"
+                "planned_loading_minutes,real_loading_minutes,planned_route_minutes,real_route_minutes,"
+                "assigned_to_return_minutes,total_route_minutes,gps_distance_km,checkpoint_straight_km,"
+                "address_count,time_window_late_count,next_shift_delay_minutes,assignment_mode,story_text"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "order": "real_return.desc.nullsfirst,real_departure.desc.nullslast,assigned_at.desc.nullslast",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    return rows[0] if rows else None
+
+
+def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    story = compact_route_story_row(story_row)
+    if not story_row or not story:
+        return None
+    route_payload = {
+        "routeId": str(story_row.get("route_id") or ""),
+        "warehouse": str(story_row.get("warehouse_name") or ""),
+        "status": "Mart adat",
+        "totalOrders": safe_int(story_row.get("address_count")),
+        "deliveredOrders": safe_int(story_row.get("address_count")) if story_row.get("real_return") else 0,
+        "plannedDeparture": local_iso_time(story_row.get("planned_departure")),
+        "realDeparture": local_iso_time(story_row.get("real_departure")),
+        "plannedReturn": local_iso_time(story_row.get("planned_return")),
+        "realReturn": local_iso_time(story_row.get("real_return")),
+        "minutesUntilReturn": minutes_until_route_return(
+            {
+                "realReturn": story_row.get("real_return"),
+                "plannedReturn": story_row.get("planned_return"),
+            }
+        ),
+        "previous": None,
+        "current": None,
+        "next": None,
+        "routeStory": story,
+    }
+    return {
+        "found": True,
+        "totalRoutes": 1,
+        "route": route_payload,
+        "source": "mart_dsp_route_stories",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
@@ -983,11 +1040,27 @@ def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
-    payload = fetch_driver_detail(user)
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    try:
+        payload = fetch_driver_detail(user)
+    except HTTPException:
+        fallback_card = build_route_card_from_story(
+            read_latest_route_story_for_courier(courier_id, today)
+        )
+        if fallback_card:
+            return fallback_card
+        raise
     routes = payload.get("routes") or []
     route = active_route(routes)
 
     if not route:
+        fallback_story = read_latest_route_story_for_courier(
+            courier_id,
+            today,
+        )
+        fallback_card = build_route_card_from_story(fallback_story)
+        if fallback_card:
+            return fallback_card
         return {
             "found": False,
             "route": None,
