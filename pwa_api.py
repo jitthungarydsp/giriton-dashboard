@@ -2131,6 +2131,18 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     ]
     overrides = read_mobile_breakdown_overrides(courier_id, month)
     cards = apply_mobile_overrides(cards, overrides)
+    for card in cards:
+        if card.get("key") != "deductions":
+            continue
+        if not card.get("items") and money_int(card.get("amountHuf")):
+            card["items"] = [
+                signed_item(
+                    "deduction_total_visible",
+                    "LevonĂˇsok / korrekciĂłk Ă¶sszesen",
+                    money_int(card.get("amountHuf")),
+                    note="Ă–sszesĂ­tett mobil elszĂˇmolĂˇsi adat.",
+                )
+            ]
     payable_card = next((card for card in cards if card.get("key") == "payable"), {})
     payable = money_int(payable_card.get("amountHuf")) if payable_card else payable
     complaint_options = [
@@ -3910,10 +3922,12 @@ def update_profile_password(
 @app.get("/api/statistics/monthly")
 def monthly_statistics(
     month: str = Query(default=""),
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    return build_monthly_courier_statistics(user, parse_month(month))
+    view_user, _preview = workflow_view_user(user, courier)
+    return build_monthly_courier_statistics(view_user, parse_month(month))
 
 
 @app.put("/api/profile/billing")

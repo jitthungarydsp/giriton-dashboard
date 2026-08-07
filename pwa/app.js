@@ -20,7 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
-const APP_VERSION = "v57";
+const APP_VERSION = "v59";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -494,7 +494,13 @@ function renderStatistics() {
     ? formatAverage(rating.averageRating)
     : "Előkészítve";
 
+  const viewedUser = state.workflow?.viewingAs || {};
+  const previewNotice = state.user?.canPreviewCouriers && state.workflowPreviewCourierId
+    ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || state.workflowPreviewCourierId)} (${escapeHtml(viewedUser.courierId || state.workflowPreviewCourierId)}). Ebben a módban más futár statisztikáját látod.</div>`
+    : "";
+
   message.innerHTML = `
+    ${previewNotice}
     <div class="notice">
       ${escapeHtml(payload.month || state.statisticsMonth)} havi adatok. ${escapeHtml(payload.amountsNote || "A teljes bevétel rejtve a mobil nézetben.")}
     </div>
@@ -564,7 +570,11 @@ async function loadStatistics() {
   state.statisticsHistoryDate = "";
   $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
   try {
-    state.statistics = await api(`/api/statistics/monthly?month=${encodeURIComponent(state.statisticsMonth)}&_=${Date.now()}`);
+    const params = new URLSearchParams({ month: state.statisticsMonth, _: String(Date.now()) });
+    if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+      params.set("courier", state.workflowPreviewCourierId);
+    }
+    state.statistics = await api(`/api/statistics/monthly?${params.toString()}`);
     renderStatistics();
   } catch (error) {
     state.statistics = null;
@@ -1160,7 +1170,15 @@ function financialComplaintOptions(options = []) {
 }
 
 function financialHighlightPanel(card, emptyText) {
-  const items = (card?.items || []).filter((item) => Number(item.amountHuf || 0));
+  let items = (card?.items || []).filter((item) => Number(item.amountHuf || 0));
+  if (!items.length && Number(card?.amountHuf || 0)) {
+    items = [{
+      key: `${card.key || "card"}_total`,
+      label: card.label || "Osszesen",
+      amountHuf: Number(card.amountHuf || 0),
+      note: "Osszesitett havi adat.",
+    }];
+  }
   if (!items.length) return `<div class="notice">${escapeHtml(emptyText)}</div>`;
   return `<div class="financial-highlight-panel">
     <strong>${escapeHtml(card.label || "Tetelek")}</strong>
@@ -1416,9 +1434,11 @@ function activeWorkflowPanel() {
 }
 
 function showOnlyWorkflowPanel(panelId) {
+  const showAdminPreviewTig = Boolean(state.workflow?.viewerReadOnly && state.workflow?.tigBreakdown?.available);
   ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel"].forEach((id) => {
     const panel = $(`#${id}`);
-    if (panel) panel.classList.toggle("hidden", id !== panelId);
+    const visible = id === panelId || (showAdminPreviewTig && id === "tig-panel");
+    if (panel) panel.classList.toggle("hidden", !visible);
   });
 }
 
@@ -1622,7 +1642,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=57");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=59");
   }
   return navigator.serviceWorker.ready;
 }
@@ -2334,9 +2354,11 @@ workflowPreviewCourierInput?.addEventListener("change", (event) => {
   state.workflowPreviewCourierId = String(event.target.value || "").trim();
   state.workflowProcess = "";
   state.workflow = null;
+  state.statistics = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   loadWorkflow();
+  if (state.section === "statistics") loadStatistics();
 });
 
 $("#workflow-refresh").addEventListener("click", () => {

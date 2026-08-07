@@ -1,5 +1,5 @@
-const CACHE = "giriton-pwa-v57";
-const APP_SHELL = ["/", "/styles.css?v=57", "/app.js?v=57", "/sw.js?v=57", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "giriton-pwa-v59";
+const APP_SHELL = ["/", "/styles.css?v=59", "/app.js?v=59", "/sw.js?v=59", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
