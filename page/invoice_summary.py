@@ -679,6 +679,34 @@ def month_start_from_date(value):
     return value.replace(day=1)
 
 
+WORKFLOW_BACKSTEP_TARGETS = {
+    "settlement": {"label": "Elszamolas elfogadasara", "done": [], "open": ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "tig": {"label": "TIG elfogadasara", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "invoice_submit": {"label": "Szamlafeltoltesre", "done": ["settlement", "tig"], "open": ["invoice_submit", "invoice_check", "invoice_payment"]},
+    "invoice_check": {"label": "Szamlaellenorzesre", "done": ["settlement", "tig", "invoice_submit"], "open": ["invoice_check", "invoice_payment"]},
+    "invoice_payment": {"label": "Kifizetesre", "done": ["settlement", "tig", "invoice_submit", "invoice_check"], "open": ["invoice_payment"]},
+}
+
+
+def backstep_peopleforce_workflow(*, courier_id, courier_name, document_month, target_action, updated_by, note=""):
+    target = WORKFLOW_BACKSTEP_TARGETS.get(str(target_action or ""))
+    if not target:
+        return 0
+    clean_note = str(note or "").strip() or f"Admin visszaleptette: {target['label']}."
+    saved = 0
+    for action_key in ["manual_invoice_skip", "invoice_validation_override"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="open", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    for action_key in target["done"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="done", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    for action_key in target["open"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="open", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    read_peopleforce_card_statuses_for_month.clear()
+    return saved
+
+
 def render_admin_document_manager(courier_id, courier_name):
     with st.expander("A futárnak feltöltött dokumentumok kezelése", expanded=False):
         try:
@@ -1323,6 +1351,42 @@ def render_invoice_task_dialog(task_row, document_month):
                 use_container_width=True,
                 key=f"task_document_download_{selected_document_id}",
             )
+
+    with st.expander("Folyamat visszaleptetese", expanded=False):
+        backstep_options = list(WORKFLOW_BACKSTEP_TARGETS.keys())
+        backstep_target = st.selectbox(
+            "Melyik lepesre keruljon vissza?",
+            backstep_options,
+            format_func=lambda key: WORKFLOW_BACKSTEP_TARGETS[key]["label"],
+            index=backstep_options.index("tig"),
+            key=f"legacy_task_backstep_target_{courier_id}_{document_month}",
+        )
+        backstep_note = st.text_input(
+            "Megjegyzes",
+            value=f"Admin visszaleptetes: {WORKFLOW_BACKSTEP_TARGETS[backstep_target]['label']}.",
+            key=f"legacy_task_backstep_note_{courier_id}_{document_month}",
+        )
+        if st.button(
+            "Visszaleptetes mentese",
+            type="primary",
+            use_container_width=True,
+            disabled=not bool(courier_id),
+            key=f"legacy_task_backstep_save_{courier_id}_{document_month}",
+        ):
+            try:
+                saved_count = backstep_peopleforce_workflow(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    document_month=month_start_from_date(document_month),
+                    target_action=backstep_target,
+                    updated_by=str(st.session_state.get("username", "admin")),
+                    note=backstep_note,
+                )
+                st.cache_data.clear()
+                st.success(f"Folyamat visszaleptetve. Modositott statuszok: {saved_count}.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A folyamat visszaleptetese nem mentheto: {exc}")
 
     st.divider()
     _render_task_tig_generator(task_row, document_month)

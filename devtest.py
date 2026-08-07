@@ -2303,6 +2303,35 @@ def invoice_amount_from_document(document: dict[str, object]) -> float:
     return 0.0
 
 
+WORKFLOW_BACKSTEP_TARGETS = {
+    "settlement": {"label": "Elszamolas elfogadasara", "done": [], "open": ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "tig": {"label": "TIG elfogadasara", "done": ["settlement"], "open": ["tig", "invoice_submit", "invoice_check", "invoice_payment"]},
+    "invoice_submit": {"label": "Szamlafeltoltesre", "done": ["settlement", "tig"], "open": ["invoice_submit", "invoice_check", "invoice_payment"]},
+    "invoice_check": {"label": "Szamlaellenorzesre", "done": ["settlement", "tig", "invoice_submit"], "open": ["invoice_check", "invoice_payment"]},
+    "invoice_payment": {"label": "Kifizetesre", "done": ["settlement", "tig", "invoice_submit", "invoice_check"], "open": ["invoice_payment"]},
+}
+
+
+def backstep_peopleforce_workflow(*, courier_id: str, courier_name: str, document_month: date, target_action: str, updated_by: str, note: str = "") -> int:
+    target = WORKFLOW_BACKSTEP_TARGETS.get(str(target_action or ""))
+    if not target:
+        return 0
+    clean_note = str(note or "").strip() or f"Admin visszaleptette: {target['label']}."
+    saved = 0
+    for action_key in ["manual_invoice_skip", "invoice_validation_override"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="open", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    for action_key in target["done"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="done", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    for action_key in target["open"]:
+        upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="open", status_note=clean_note, updated_by=updated_by)
+        saved += 1
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    return saved
+
+
 def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.DataFrame:
     try:
         documents = read_peopleforce_documents_for_month(period_start.replace(day=1), "invoice")
@@ -7938,6 +7967,40 @@ def show_courier_dialog() -> None:
                     st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont.")
             except Exception as exc:
                 st.error(f"Az egyedi havi számlázás nyitása sikertelen: {exc}")
+        with st.expander("Folyamat visszaleptetese", expanded=False):
+            backstep_options = list(WORKFLOW_BACKSTEP_TARGETS.keys())
+            backstep_target = st.selectbox(
+                "Melyik lepesre keruljon vissza?",
+                backstep_options,
+                format_func=lambda key: WORKFLOW_BACKSTEP_TARGETS[key]["label"],
+                index=backstep_options.index("tig"),
+                key=f"workflow_backstep_target_{courier_id}_{workflow_month:%Y%m}",
+            )
+            backstep_note = st.text_input(
+                "Megjegyzes",
+                value=f"Admin visszaleptetes: {WORKFLOW_BACKSTEP_TARGETS[backstep_target]['label']}.",
+                key=f"workflow_backstep_note_{courier_id}_{workflow_month:%Y%m}",
+            )
+            if st.button(
+                "Visszaleptetes mentese",
+                type="primary",
+                use_container_width=True,
+                disabled=closure_done,
+                key=f"workflow_backstep_save_{courier_id}_{workflow_month:%Y%m}",
+            ):
+                try:
+                    saved_count = backstep_peopleforce_workflow(
+                        courier_id=courier_id,
+                        courier_name=str(row["FutĂˇr"]),
+                        document_month=workflow_month,
+                        target_action=backstep_target,
+                        updated_by=actor,
+                        note=backstep_note,
+                    )
+                    st.success(f"Folyamat visszaleptetve. Modositott statuszok: {saved_count}.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A folyamat visszaleptetese sikertelen: {exc}")
         status_rows = []
         for action_key, action_label in workflow_action_labels.items():
             saved_status = status_by_action.get(action_key, {})
