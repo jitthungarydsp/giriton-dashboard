@@ -1158,6 +1158,15 @@ function financialComplaintOptions(options = []) {
   `).join("")}</div>`;
 }
 
+function financialHighlightPanel(card, emptyText) {
+  const items = (card?.items || []).filter((item) => Number(item.amountHuf || 0));
+  if (!items.length) return `<div class="notice">${escapeHtml(emptyText)}</div>`;
+  return `<div class="financial-highlight-panel">
+    <strong>${escapeHtml(card.label || "Tetelek")}</strong>
+    ${financialDetailRows(items)}
+  </div>`;
+}
+
 function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
   const breakdown = state.workflow?.financialBreakdown || {};
   const complaints = state.workflow?.complaints?.settlement || [];
@@ -1167,6 +1176,8 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
   const cards = breakdown.cards || [];
+  const deductionCard = cards.find((card) => card.key === "deductions");
+  const bonusMalusCard = cards.find((card) => card.key === "bonus_malus");
   const viewedUser = state.workflow?.viewingAs || {};
   const previewNotice = readOnly
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
@@ -1178,9 +1189,11 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       <strong>${formatHuf(breakdown.totalPayableHuf)}</strong>
       <small>${escapeHtml(breakdown.month || state.workflowMonth)}</small>
     </section>
+    ${financialHighlightPanel(deductionCard, "Ebben a honapban nincs levonas vagy korrekcio.")}
+    ${financialHighlightPanel(bonusMalusCard, "Ebben a honapban nincs bonusz vagy malusz tetel.")}
     <div class="financial-card-grid">
       ${cards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
+        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "deductions", "bonus_malus"].includes(card.key) ? "open" : ""}>
           <summary>
             <span>${escapeHtml(card.label)}</span>
             <strong>${formatFinancialValue(card)}</strong>
@@ -1288,7 +1301,7 @@ function renderDocumentPanel(action, title, stepNumber) {
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
-  const locked = Boolean(documentStep.locked);
+  const locked = Boolean(documentStep.locked) && !(action === "tig" && readOnly && state.workflow?.tigBreakdown?.available);
   const breakdown = state.workflow?.financialBreakdown || {};
   const useLegacySettlementDocument = action === "settlement" && !breakdown.available && documents.length > 0;
   const waitingTitle = action === "settlement"
@@ -1608,7 +1621,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=55");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=56");
   }
   return navigator.serviceWorker.ready;
 }

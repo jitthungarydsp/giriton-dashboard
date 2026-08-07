@@ -153,6 +153,10 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-detail-row strong { display: block; font-size: 13px; }
 .financial-detail-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
 .financial-detail-row span { font-weight: 900; overflow-wrap: anywhere; text-align: right; }
+.financial-highlight-panel { margin-top: 12px; padding: 13px 14px; border: 1px solid #f0c7c5; border-radius: 16px; background: #fff6f5; }
+.financial-highlight-panel > strong { display: block; margin-bottom: 4px; color: var(--danger); font-size: 13px; text-transform: uppercase; }
+.financial-highlight-panel .financial-detail-list { padding: 0; }
+.financial-highlight-panel .financial-detail-row:first-child { border-top: 0; }
 .financial-complaint-options { display: grid; gap: 8px; margin: 10px 0; }
 .financial-complaint-options .checkbox-line { align-items: flex-start; }
 .financial-complaint-options span { display: grid; gap: 2px; }
