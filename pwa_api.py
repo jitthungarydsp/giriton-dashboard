@@ -2606,6 +2606,95 @@ def save_route_note_for_user(user: dict[str, Any], payload: RouteNoteRequest) ->
     }
 
 
+def route_quality_shift_key(row: dict[str, Any]) -> str:
+    story = row.get("routeStory") or {}
+    return str(
+        story.get("shiftStart")
+        or row.get("plannedStartAt")
+        or row.get("shiftAvailableAt")
+        or row.get("actualStartAt")
+        or f"{row.get('date') or ''}_{row.get('routeId') or ''}"
+    ).strip()
+
+
+def build_route_quality_records(
+    *,
+    courier_id: str,
+    courier_name: str,
+    month: date,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    def time_or_none(value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(route_quality_shift_key(row), []).append(row)
+    same_checkin_by_shift = {
+        key: len({
+            str(item.get("actualStartAt") or item.get("shiftAvailableAt") or "").strip()
+            for item in items
+            if str(item.get("actualStartAt") or item.get("shiftAvailableAt") or "").strip()
+        }) == 1 and len(items) > 1
+        for key, items in grouped.items()
+    }
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        work_date = parse_date_value(row.get("date"))
+        if not work_date:
+            continue
+        story = row.get("routeStory") or {}
+        shift_key = route_quality_shift_key(row)
+        late_start_minutes = safe_int(row.get("plannedStartDelayMinutes"))
+        late_stop_count = safe_int(row.get("timeWindowLateCount"))
+        late_stop_minutes = safe_int(row.get("timeWindowLateMinutes"))
+        queued_on_time = late_start_minutes <= 0
+        no_late_stops = late_stop_count <= 0
+        records.append({
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "period_start": month.isoformat(),
+            "work_date": work_date.isoformat(),
+            "route_id": str(row.get("routeId") or ""),
+            "warehouse_id": safe_int(row.get("warehouseId")),
+            "shift_key": shift_key,
+            "shift_start_at": time_or_none(story.get("shiftStart") or row.get("plannedStartAt")),
+            "route_type": str(row.get("routeType") or "normal"),
+            "route_assigned_at": time_or_none(story.get("assignedAt") or row.get("routeAssignedAt")),
+            "shift_available_at": time_or_none(story.get("availableForShiftSince") or story.get("availableAt") or row.get("shiftAvailableAt")),
+            "queue_started_at": time_or_none(story.get("queueStartedAt") or row.get("actualStartAt")),
+            "departed_at": time_or_none(story.get("realDeparture") or row.get("departedAt")),
+            "planned_return_at": time_or_none(story.get("plannedReturn") or row.get("plannedReturnAt")),
+            "real_return_at": time_or_none(story.get("realReturn") or row.get("warehouseArrivedAt")),
+            "queued_on_time": queued_on_time,
+            "no_late_stops": no_late_stops,
+            "quality_ok": queued_on_time and no_late_stops,
+            "late_start_minutes": late_start_minutes,
+            "late_stop_count": late_stop_count,
+            "late_stop_minutes": late_stop_minutes,
+            "same_checkin_group": bool(same_checkin_by_shift.get(shift_key)),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+    return records
+
+
+def persist_route_quality_records(records: list[dict[str, Any]]) -> None:
+    if not records:
+        return
+    try:
+        supabase_rest(
+            "POST",
+            "pwa_courier_route_quality_report",
+            params={"on_conflict": "courier_id,work_date,route_id"},
+            payload=records,
+            prefer="resolution=merge-duplicates,return=minimal",
+            timeout=60,
+        )
+    except HTTPException as exc:
+        print("Route quality report save skipped:", exc.detail)
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -2651,6 +2740,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end, only_problem_rows=False)
     compliance_by_route = route_row_lookup(compliance_rows, "shift_date")
     delay_by_route = route_row_lookup(delay_rows, "delivery_date")
+    route_overview_by_route = route_row_lookup(route_rows, "work_date")
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2753,6 +2843,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         route_key = (work_date, route_id)
         compliance_row = compliance_by_route.get(route_key, {})
         delay_row = delay_by_route.get(route_key, {})
+        overview_row = route_overview_by_route.get(route_key, {})
         note_row = route_notes.get(route_key, {})
         story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
@@ -2776,6 +2867,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "routeType": str(overview_row.get("route_type") or ""),
             "routeNote": str(note_row.get("note") or ""),
             "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
             "vehicleModel": str(row.get("vehicle_model") or ""),
@@ -2793,6 +2885,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         route_key = (work_date, route_id)
         compliance_row = compliance_by_route.get(route_key, {})
         delay_row = delay_by_route.get(route_key, {})
+        overview_row = route_overview_by_route.get(route_key, route)
         note_row = route_notes.get(route_key, {})
         story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
@@ -2816,6 +2909,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "routeType": str(overview_row.get("route_type") or ""),
             "routeNote": str(note_row.get("note") or ""),
             "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
             "vehicleModel": "",
@@ -2829,6 +2923,17 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
 
     delay_detail_rows: list[dict[str, Any]] = [compact_delay_row(item) for item in delay_rows]
     compliance_detail_rows: list[dict[str, Any]] = [compact_compliance_row(item) for item in compliance_rows]
+    daily_history_rows = (
+        [compact_history_row(row) for row in history_rows]
+        or [compact_route_fallback_row(route) for route in route_rows]
+    )
+    route_quality_records = build_route_quality_records(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        month=period_start,
+        rows=daily_history_rows,
+    )
+    persist_route_quality_records(route_quality_records)
 
     return {
         "month": period_start.strftime("%Y-%m"),
@@ -2852,10 +2957,12 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "delaySourceRows": 0,
             "complianceSourceRows": 0,
         },
-        "dailyHistory": (
-            [compact_history_row(row) for row in history_rows]
-            or [compact_route_fallback_row(route) for route in route_rows]
-        ),
+        "dailyHistory": daily_history_rows,
+        "routeQuality": {
+            "savedRows": len(route_quality_records),
+            "okRows": sum(1 for row in route_quality_records if row.get("quality_ok")),
+            "problemRows": sum(1 for row in route_quality_records if not row.get("quality_ok")),
+        },
         "rawRouteOverview": {
             "source": route_source or "",
             "routes": route_rows,

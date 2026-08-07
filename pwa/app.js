@@ -20,7 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
-const APP_VERSION = "v61";
+const APP_VERSION = "v62";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -300,11 +300,74 @@ function routeStoryMetric(label, value, suffix = "") {
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatCount(numeric)}${suffix}</strong></div>`;
 }
 
+function routeTypeLabel(value) {
+  const key = String(value || "").toLowerCase();
+  if (key === "express") return "Express";
+  if (key === "regional") return "Regionális";
+  return "Normál";
+}
+
 function minutesBetween(start, end) {
   const startTime = start ? new Date(start).getTime() : NaN;
   const endTime = end ? new Date(end).getTime() : NaN;
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) return 0;
   return Math.round((endTime - startTime) / 60000);
+}
+
+function shiftKeyForRoute(row = {}) {
+  return String(
+    row.routeStory?.shiftStart
+    || row.plannedStartAt
+    || row.shiftAvailableAt
+    || row.actualStartAt
+    || `${row.date || ""}_${row.routeId || ""}`
+  ).trim();
+}
+
+function buildDailyShiftReport(rows = []) {
+  const grouped = rows.reduce((acc, row) => {
+    const key = shiftKeyForRoute(row);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+  return Object.entries(grouped).map(([key, items], index) => {
+    const lateStartRows = items.filter((row) => Number(row.plannedStartDelayMinutes || 0) > 0);
+    const lateStopRows = items.filter((row) => Number(row.timeWindowLateCount || 0) > 0);
+    const sameCheckin = uniqueText(items.map((row) => row.actualStartAt || row.shiftAvailableAt)).length === 1 && items.length > 1;
+    return {
+      key,
+      label: shortDateTime(key) !== "-" ? shortDateTime(key) : `Műszak ${index + 1}`,
+      routes: items.length,
+      lateStartRows,
+      lateStopRows,
+      sameCheckin,
+      ok: lateStartRows.length === 0 && lateStopRows.length === 0,
+    };
+  });
+}
+
+function renderStatusBadge(ok) {
+  return `<span class="route-status-badge ${ok ? "ok" : "bad"}">${ok ? "✓" : ":("}</span>`;
+}
+
+function renderDailyShiftReport(rows = []) {
+  const report = buildDailyShiftReport(rows);
+  if (!report.length) return "";
+  return `
+    <div class="shift-quality-list">
+      ${report.map((shift) => `
+        <div class="shift-quality-row">
+          ${renderStatusBadge(shift.ok)}
+          <div>
+            <strong>${escapeHtml(shift.label)}</strong>
+            <small>${formatCount(shift.routes)} túra${shift.sameCheckin ? " · azonos bejelentkezés több túránál" : ""}</small>
+          </div>
+          <span>${shift.ok ? "Rendben" : "Eltérés"}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function routeStoryDistance(label, value) {
@@ -377,10 +440,16 @@ function renderRouteStoryDetails(row) {
   const lateText = lateCount || lateMinutes || maxDelay
     ? `${formatCount(lateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
     : "Nincs";
+  const routeOk = Number(row.plannedStartDelayMinutes || 0) <= 0 && lateCount <= 0;
   return `
     <div class="daily-route-story">
+      <div class="route-quality-head">
+        ${renderStatusBadge(routeOk)}
+        <div><strong>${routeOk ? "Teljesült" : "Eltérés"}</strong><small>Időben sorban állt és nem volt késéses cím</small></div>
+      </div>
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
-      ${routeStoryTime("Műszak kezdete", story.shiftStart)}
+      ${routeStoryTime("Műszak kezdete", story.shiftStart || row.plannedStartAt)}
+      <div class="stat-row"><span>Túratípus</span><strong>${escapeHtml(routeTypeLabel(row.routeType))}</strong></div>
       ${routeStoryTime("Elérhető volt", story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt)}
       ${routeStoryTime("Sorba állt", story.queueStartedAt || row.actualStartAt)}
       ${routeStoryTime("Túrát kapott", story.assignedAt || row.routeAssignedAt)}
@@ -445,12 +514,13 @@ function renderDailyHistory(payload) {
   const stops = selectedRows.reduce((sum, row) => sum + Number(row.stops || 0), 0);
   const mileage = selectedRows.reduce((sum, row) => sum + Number(row.mileageKm || 0), 0);
   const routes = selectedRows.length;
+  const shifts = buildDailyShiftReport(selectedRows).length;
   const routeRows = selectedRows.map((row) => `
     <details class="daily-route-details">
       <summary class="daily-route-row">
         <div>
           <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
-          <small>WH${escapeHtml(row.warehouseId || "-")} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
+          <small>WH${escapeHtml(row.warehouseId || "-")} · ${escapeHtml(routeTypeLabel(row.routeType))} · ${formatCount(row.orders)} cím · ${formatCount(row.stops)} stop · ${formatAverage(row.mileageKm)} km</small>
         </div>
         <div>
           <span>${escapeHtml(row.vehiclePlate || "-")}</span>
@@ -472,9 +542,11 @@ function renderDailyHistory(payload) {
       </div>
       <div class="daily-history-summary">
         <div><span>Kör</span><strong>${formatCount(routes)}</strong></div>
+        <div><span>Műszakok</span><strong>${formatCount(shifts)}</strong></div>
         <div><span>Cím</span><strong>${formatCount(orders)}</strong></div>
         <div><span>Km</span><strong>${formatAverage(mileage)}</strong></div>
       </div>
+      ${renderDailyShiftReport(selectedRows)}
       <div class="vehicle-chip-row">
         ${(plates.length ? plates : ["Nincs rendszám"]).map((plate) => `<span>${escapeHtml(plate)}</span>`).join("")}
       </div>
@@ -577,16 +649,15 @@ function renderStatistics() {
   `;
   grid.innerHTML = [
     statisticCard("Kör", formatCount(routes), "kivitt túrák"),
+    statisticCard("Műszakok", formatCount(summary.shiftCount), "foglalt / teljesített"),
     statisticCard("Cím", formatCount(orders), "rendelések"),
     statisticCard("Átlag", formatAverage(average), "cím / kör"),
-    statisticCard("Műszak", formatCount(summary.shiftCount), "összes"),
     statisticCard("Borravaló", amountsHidden ? "Rejtve" : formatHuf(summary.tipsTotalHuf), amountsHidden ? "havi nyitás után" : "összesen"),
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
 
   const routeBreakdown = payload.routeBreakdown || {};
-  const details = payload.performanceDetails || {};
   const quality = payload.dataQuality || {};
   const ruleRows = (quality.dayRules || []).map((rule) => `
     <div class="stat-row">
@@ -594,8 +665,6 @@ function renderStatistics() {
       <strong>${escapeHtml(rule.validFrom || "-")} - ${escapeHtml(rule.validTo || "folyamatos")}</strong>
     </div>
   `).join("");
-  const delayRows = details.delayRows || [];
-  const complianceRows = details.complianceRows || [];
   breakdown.innerHTML = `
     ${renderDailyHistory(payload)}
     <div class="process-title">
@@ -614,16 +683,6 @@ function renderStatistics() {
       <div class="stat-row"><span>Express cím</span><strong>${formatCount(routeBreakdown.expressOrders)}</strong></div>
       <div class="stat-row"><span>Normál kör</span><strong>${formatCount(routeBreakdown.normalRoutes)}</strong></div>
       <div class="stat-row"><span>Regionális kör</span><strong>${formatCount(routeBreakdown.regionalRoutes)}</strong></div>
-    </div>
-    <div class="stat-breakdown-list">
-      <details class="stat-row detail-toggle">
-        <summary><span>Késedelmi díj</span><strong>${delayRows.length ? formatCount(delayRows.length) : "Nincs"}</strong></summary>
-        ${renderDelayDetailRows(delayRows)}
-      </details>
-      <details class="stat-row detail-toggle">
-        <summary><span>Túramegfelelés</span><strong>${complianceRows.length ? formatCount(complianceRows.length) : "Nincs"}</strong></summary>
-        ${renderComplianceDetailRows(complianceRows)}
-      </details>
     </div>
     <p class="updated-at">Forrás: ${escapeHtml(quality.routeSource || "nincs route raw adat")} · napi sor: ${formatCount(quality.dailyRows)} · mart story: ${formatCount(quality.routeStoryRows)} · szabály: ${escapeHtml(quality.dayRuleSource || "-")}</p>
     <div class="stat-rule-list">
@@ -1712,7 +1771,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=61");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=62");
   }
   return navigator.serviceWorker.ready;
 }
