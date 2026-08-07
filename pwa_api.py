@@ -2743,8 +2743,14 @@ def build_workflow(
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
     legacy_unrestricted_month = is_unrestricted_legacy_settlement_month(month)
+    individual_monthly_billing_open = (
+        not process_id
+        and str((states.get("individual_monthly_billing") or {}).get("status") or "").lower()
+        in {"open", "done"}
+    )
     amount_access = (
         legacy_unrestricted_month
+        or individual_monthly_billing_open
         or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
     )
     financial_breakdown = build_financial_breakdown(
@@ -2994,6 +3000,37 @@ def workflow_tig_document_exists(user: dict[str, Any], month: date, process_id: 
         timeout=60,
     )
     return any(document_belongs_to_process(row, process_id) for row in rows)
+
+
+def delete_workflow_tig_documents(user: dict[str, Any], month: date, process_id: str | None = "") -> int:
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id,note",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month.isoformat()}",
+            "document_type": "eq.tig",
+            "order": "uploaded_at.desc",
+            "limit": "50",
+        },
+        timeout=60,
+    )
+    deleted = 0
+    for row in rows:
+        document_id = str(row.get("id") or "").strip()
+        if not document_id or not document_belongs_to_process(row, process_id):
+            continue
+        supabase_rest(
+            "DELETE",
+            "peopleforce_documents",
+            params={"id": f"eq.{document_id}"},
+            prefer="return=minimal",
+            timeout=30,
+        )
+        deleted += 1
+    return deleted
 
 
 def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, process_id: str | None = "") -> bool:
@@ -3979,6 +4016,9 @@ def create_workflow_complaint(
             status_code=409,
             detail="Ehhez a lepeshez mar van nyitott reklamacio. Ujat akkor tudsz kuldeni, ha az admin lezarja az elozo rekordot.",
         )
+    deleted_tig_count = 0
+    if payload.action == "settlement":
+        deleted_tig_count = delete_workflow_tig_documents(user, month, process_id)
     supabase_rest(
         "POST",
         "peopleforce_complaints",
@@ -3994,7 +4034,11 @@ def create_workflow_complaint(
         prefer="return=representation",
     )
     upsert_workflow_status(user, month, payload.action, "open", "Új reklamáció érkezett.", process_id)
-    return {"ok": True, "workflow": build_workflow(user, month, process_id)}
+    return {
+        "ok": True,
+        "deletedTigCount": deleted_tig_count,
+        "workflow": build_workflow(user, month, process_id),
+    }
 
 
 @app.get("/api/documents/{document_id}")

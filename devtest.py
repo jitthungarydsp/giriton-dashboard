@@ -26,6 +26,7 @@ from resources.courier_master_db import update_courier_master_profile
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
+    delete_peopleforce_document,
     decode_document_content,
     read_peopleforce_document_content,
     read_peopleforce_documents_for_courier,
@@ -1050,6 +1051,22 @@ def _normalized_field_key(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
     return re.sub(r"[^a-z0-9]", "", text)
+
+
+def _search_text_key(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def filter_couriers_by_search(data: pd.DataFrame, query: str) -> pd.DataFrame:
+    clean_query = _search_text_key(query)
+    if data.empty or not clean_query:
+        return data
+    name_series = data.get("Futár", pd.Series("", index=data.index)).map(_search_text_key)
+    id_series = data.get("Courier ID", pd.Series("", index=data.index)).astype(str).map(_search_text_key)
+    mask = name_series.str.contains(clean_query, regex=False, na=False) | id_series.str.contains(clean_query, regex=False, na=False)
+    return data[mask]
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -6509,7 +6526,7 @@ def show_courier_dialog() -> None:
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
         doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
         doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
-        upload_a, upload_b, refresh_col = st.columns([0.18, 0.18, 0.18])
+        upload_a, upload_b, open_month_col, refresh_col = st.columns([0.18, 0.18, 0.28, 0.18])
         if closure_done:
             st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
@@ -6548,6 +6565,36 @@ def show_courier_dialog() -> None:
                 rerun_courier_profile("Pénzügy")
             except Exception as exc:
                 st.error(f"A TIG feltöltése sikertelen: {exc}")
+        if open_month_col.button(
+            "Egyedi havi számlázás nyitása",
+            type="primary",
+            use_container_width=True,
+            disabled=closure_done or active_calculation_mode not in {"API", "Excel"},
+            key=f"finance_open_individual_month_{courier_id}",
+            help="Teszteléshez egy futárnak publikálja a havi elszámolást, és admin előnézetként feltölti a TIG-et is.",
+        ):
+            try:
+                actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+                deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
+                    row.to_dict(),
+                    period_start,
+                    period_end,
+                    active_calculation_mode,
+                    st.session_state.get("new_warehouse", "Összes"),
+                    session_id,
+                    actor,
+                )
+                if courier_count:
+                    st.success(
+                        "Egyedi havi számlázás megnyitva: "
+                        f"{uploaded_count} dokumentum feltöltve"
+                        + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                    )
+                    rerun_courier_profile("Dokumentumok")
+                else:
+                    st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
+            except Exception as exc:
+                st.error(f"Az egyedi havi számlázás nyitása sikertelen: {exc}")
         if refresh_col.button("Adatok frissítése", use_container_width=True, key=f"finance_refresh_data_{courier_id}"):
             refresh_settlement_profile_data()
             st.toast("Futárprofil adatok frissítve.", icon="✅")
@@ -7693,6 +7740,7 @@ def show_courier_dialog() -> None:
             "complaint_response": "Reklamáció válasz",
         }
         workflow_action_labels = {
+            "individual_monthly_billing": "Egyedi havi számlázás nyitva",
             "settlement": "Elszámolás elfogadása",
             "tig": "TIG elfogadása",
             "invoice_check": "Számlaellenőrzés",
@@ -7741,15 +7789,18 @@ def show_courier_dialog() -> None:
                     action_key = str(status_row.get("Kulcs") or "")
                     if not action_key:
                         continue
+                    is_done = bool(status_row.get("Kész"))
                     upsert_peopleforce_card_status(
                         courier_id=courier_id,
                         courier_name=str(row["Futár"]),
                         action_key=action_key,
                         document_month=workflow_month,
-                        status="done" if bool(status_row.get("Kész")) else "open",
+                        status="done" if is_done else "open",
                         status_note=str(status_row.get("Megjegyzés") or ""),
                         updated_by=actor,
                     )
+                    if action_key == "settlement" and not is_done:
+                        delete_generated_monthly_billing_documents(courier_id, workflow_month, {"tig"})
                     saved_count += 1
                 st.success(f"{saved_count} folyamat státusz mentve. A mobilos felület is ezt olvassa.")
                 st.rerun()
@@ -9095,6 +9146,120 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
     return documents
 
 
+def delete_generated_monthly_billing_documents(
+    courier_id: str,
+    period_start: date,
+    document_types: set[str] | None = None,
+) -> int:
+    document_types = document_types or {"settlement", "tig"}
+    try:
+        documents = read_peopleforce_documents_for_courier(courier_id)
+    except Exception:
+        return 0
+    if documents.empty:
+        return 0
+    month_text = period_start.replace(day=1).isoformat()
+    deleted = 0
+    marker = "Egyedi havi számlázás nyitása"
+    for item in documents.to_dict("records"):
+        document_type = str(item.get("document_type") or "").strip().lower()
+        document_month = str(item.get("document_month") or "")[:10]
+        note = str(item.get("note") or "")
+        if (
+            document_type in document_types
+            and document_month == month_text
+            and marker in note
+            and item.get("id")
+        ):
+            delete_peopleforce_document(str(item["id"]))
+            deleted += 1
+    return deleted
+
+
+def open_individual_monthly_billing(
+    row: dict[str, object],
+    period_start: date,
+    period_end: date,
+    calculation_mode: str,
+    warehouse_label: str,
+    session_id: str | None,
+    actor: str,
+) -> tuple[int, int, int]:
+    courier_id = str(row.get("Courier ID") or "").strip()
+    courier_name = str(row.get("Futár") or "").strip()
+    if not courier_id or not courier_name:
+        return 0, 0, 0
+
+    single_row = pd.DataFrame([row])
+    deleted = delete_generated_monthly_billing_documents(courier_id, period_start)
+    courier_count, _row_count = publish_mobile_settlement_snapshot(
+        single_row,
+        period_start,
+        calculation_mode,
+        warehouse_label,
+        session_id,
+        actor,
+    )
+    if not courier_count:
+        return deleted, 0, 0
+
+    documents = build_monthly_period_documents(single_row, period_start, period_end)
+    uploaded = 0
+    for document in documents:
+        document_type = str(document.get("document_type") or "").strip()
+        title = (
+            f"Elszámolás - {period_start:%Y-%m}"
+            if document_type == "settlement"
+            else f"TIG - {period_start:%Y-%m}"
+        )
+        note = (
+            "Egyedi havi számlázás nyitása. "
+            f"Dokumentum azonosító: {document.get(f'{document_type}_reference') or document.get('settlement_reference') or document.get('tig_reference') or ''}"
+        ).strip()
+        upload_peopleforce_document_bytes(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            document_type=document_type,
+            document_month=period_start.replace(day=1),
+            title=title,
+            note=note,
+            file_name=str(document.get("file_name") or "dokumentum.pdf"),
+            mime_type="application/pdf",
+            file_bytes=document.get("file_bytes") or b"",
+            uploaded_by=actor,
+        )
+        uploaded += 1
+
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key="individual_monthly_billing",
+        document_month=period_start.replace(day=1),
+        status="done",
+        status_note="Egyedi havi számlázás megnyitva teszteléshez.",
+        updated_by=actor,
+    )
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key="settlement",
+        document_month=period_start.replace(day=1),
+        status="open",
+        status_note="Egyedi havi számlázás megnyitva teszteléshez.",
+        updated_by=actor,
+    )
+    upsert_peopleforce_card_status(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        action_key="tig",
+        document_month=period_start.replace(day=1),
+        status="open",
+        status_note="Admin előnézeti TIG elkészült; futárnak elszámolás elfogadása után aktív.",
+        updated_by=actor,
+    )
+    return deleted, uploaded, courier_count
+
+
 def show_new_settlement_page() -> None:
     apply_design()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
@@ -9564,11 +9729,7 @@ def show_new_settlement_page() -> None:
     if status!="Összes":
         base_filtered=base_filtered[base_filtered["Státusz"]==status]
     if search.strip():
-        query=search.strip()
-        base_filtered=base_filtered[
-            base_filtered["Futár"].str.contains(query,case=False,na=False)
-            | base_filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
-        ]
+        base_filtered = filter_couriers_by_search(base_filtered, search)
 
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
     filtered = base_filtered.copy()
@@ -9616,11 +9777,7 @@ def show_new_settlement_page() -> None:
         if status!="Összes":
             previous_filtered=previous_filtered[previous_filtered["Státusz"]==status]
         if search.strip():
-            query=search.strip()
-            previous_filtered=previous_filtered[
-                previous_filtered["Futár"].str.contains(query,case=False,na=False)
-                | previous_filtered["Courier ID"].astype(str).str.contains(query,case=False,na=False)
-            ]
+            previous_filtered = filter_couriers_by_search(previous_filtered, search)
         if active_workflow_filter:
             previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
     except BaseException:
