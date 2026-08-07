@@ -6094,7 +6094,16 @@ def show_courier_dialog() -> None:
         return
 
     row = match.iloc[0]
-    courier_name = str(row.get("Futár") or "Ismeretlen futár")
+    courier_name = str(
+        row.get("Futár")
+        or row.get("name")
+        or row.get("courier_name")
+        or row.get("driver_name")
+        or "Ismeretlen futár"
+    )
+    if "Futár" not in row or not str(row.get("Futár") or "").strip():
+        row = row.copy()
+        row["Futár"] = courier_name
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
     session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
     active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
@@ -6502,7 +6511,7 @@ def show_courier_dialog() -> None:
         giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
         save_monthly_workload_summary(
             courier_id=courier_id,
-            courier_name=str(row["Futár"]),
+            courier_name=courier_name,
             period_start=period_start,
             period_end=period_end,
             booked_shift_count=booked_shift_count,
@@ -6518,7 +6527,7 @@ def show_courier_dialog() -> None:
         tig_document_reference = make_document_reference(courier_id, "tig", period_start)
         pdf_bytes = build_settlement_pdf(
             {
-                "name": row["Futár"],
+                "name": courier_name,
                 "id": courier_id,
                 "branch": row["Branch"],
                 "warehouse": row["Raktár"],
@@ -6546,8 +6555,8 @@ def show_courier_dialog() -> None:
         )
         tig_bytes = build_tig_pdf(
             {
-                "name": row["Futár"],
-                "company_name": profile.get("company_name") or row["Futár"],
+                "name": courier_name,
+                "company_name": profile.get("company_name") or courier_name,
                 "address": profile.get("address") or "",
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
                 "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
@@ -6582,8 +6591,8 @@ def show_courier_dialog() -> None:
         workload_cols[3].metric("Kifutott túra", route_total)
         workload_cols[4].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
-        settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
-        tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(row['Futár'])}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
+        settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
+        tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
         doc_a.download_button("Elszámolás PDF", data=pdf_bytes, file_name=settlement_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_settlement_pdf_{courier_id}")
         doc_b.download_button("TIG PDF", data=tig_bytes, file_name=tig_file_name, mime="application/pdf", use_container_width=True, key=f"finance_top_tig_pdf_{courier_id}")
         upload_a, upload_b, open_month_col, refresh_col = st.columns([0.18, 0.18, 0.28, 0.18])
@@ -6593,7 +6602,7 @@ def show_courier_dialog() -> None:
             try:
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
-                    courier_name=str(row["Futár"]),
+                    courier_name=courier_name,
                     document_type="settlement",
                     document_month=period_start.replace(day=1),
                     title=f"Elszámolás - {period_start:%Y-%m}",
@@ -6611,7 +6620,7 @@ def show_courier_dialog() -> None:
             try:
                 upload_peopleforce_document_bytes(
                     courier_id=courier_id,
-                    courier_name=str(row["Futár"]),
+                    courier_name=courier_name,
                     document_type="tig",
                     document_month=period_start.replace(day=1),
                     title=f"TIG - {period_start:%Y-%m}",
@@ -6844,12 +6853,14 @@ def show_courier_dialog() -> None:
                 use_container_width=True,
             )
 
+        mobile_monthly_bonus = max(monthly_bonus_malus_effect, 0.0)
+        mobile_monthly_malus = abs(min(monthly_bonus_malus_effect, 0.0))
         mobile_income_total = (
             base_total + tip_total + delay_total + compliance_total
-            + bonus_total + loyalty_total + customer_rating_total
+            + route_other_bonus_total + mobile_monthly_bonus
         )
         mobile_deduction_total = -(
-            malus_total + atm_deduction_total + other_expense_total
+            mobile_monthly_malus + atm_deduction_total + other_expense_total
             + salary_advance_total + reserve_addition_total + insurance_fee_total
         )
         mobile_default_rows = pd.DataFrame([
@@ -6863,8 +6874,8 @@ def show_courier_dialog() -> None:
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
-            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus_total, "note": "Valós elszámolási adat"},
-            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -malus_total, "note": "Valós elszámolási adat"},
+            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": mobile_monthly_bonus, "note": "Valós elszámolási adat"},
+            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -mobile_monthly_malus, "note": "Valós elszámolási adat"},
             {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve_addition_total, "note": "Valós elszámolási adat"},
             {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
@@ -6884,7 +6895,12 @@ def show_courier_dialog() -> None:
             mobile_default_rows = mobile_default_rows.set_index("item_key")
             for _, override_row in mobile_overrides.iterrows():
                 override_note_key = _normalized_field_key(override_row.get("note"))
-                if not override_note_key or "snapshot" in override_note_key or "publikalt" in override_note_key:
+                if (
+                    not override_note_key
+                    or "snapshot" in override_note_key
+                    or "publikalt" in override_note_key
+                    or "valos elszamolasi adat" in override_note_key
+                ):
                     continue
                 item_key = str(override_row.get("item_key") or "")
                 if item_key in mobile_default_rows.index:
@@ -6928,8 +6944,8 @@ def show_courier_dialog() -> None:
 
         tig_breakdown = build_tig_breakdown(
             {
-                "name": row["FutĂˇr"],
-                "company_name": profile.get("company_name") or row["FutĂˇr"],
+                "name": courier_name,
+                "company_name": profile.get("company_name") or courier_name,
                 "address": profile.get("address") or profile.get("company_address") or "",
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
                 "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",

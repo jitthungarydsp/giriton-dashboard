@@ -1846,7 +1846,11 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         if not note:
             return False
         note_key = normalize_text(note)
-        return "snapshot" not in note_key and "publikalt" not in note_key
+        return (
+            "snapshot" not in note_key
+            and "publikalt" not in note_key
+            and "valos elszamolasi adat" not in note_key
+        )
 
     def ensure_override_item(card_key: str, item_key: str, fallback_label: str) -> None:
         override = overrides.get(item_key)
@@ -1869,7 +1873,10 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
 
     for card in cards:
         card_override = overrides.get(str(card.get("key") or ""))
-        if card_override:
+        if card_override and (
+            is_manual_override(card_override)
+            or (not money_int(card.get("amountHuf")) and money_int(card_override.get("amount_value")))
+        ):
             card["amountHuf"] = money_int(card_override.get("amount_value"))
             card["amountKind"] = str(card_override.get("amount_kind") or card.get("amountKind") or "huf")
             if is_manual_override(card_override):
@@ -1877,6 +1884,8 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         for item in card.get("items") or []:
             override = overrides.get(str(item.get("key") or ""))
             if not override:
+                continue
+            if not is_manual_override(override) and money_int(item.get("amountHuf")):
                 continue
             item["amountHuf"] = money_int(override.get("amount_value"))
             item["amountKind"] = str(override.get("amount_kind") or item.get("amountKind") or "huf")
@@ -2061,6 +2070,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         "manual_bonus_huf",
     )
     monthly_malus = abs(money_from(row, "monthly_malus_huf") or money_from(row, "malus_huf"))
+    monthly_adjustment_effect = money_from(row, "monthly_adjustment_effect_huf")
+    if monthly_adjustment_effect:
+        monthly_bonus = max(monthly_adjustment_effect, 0)
+        monthly_malus = abs(min(monthly_adjustment_effect, 0))
     returned_route = abs(money_from(row, "monthly_returned_route_huf"))
     accepted_route = money_from(row, "monthly_accepted_route_huf")
     atm_effect = money_from(row, "atm_effect_huf")
