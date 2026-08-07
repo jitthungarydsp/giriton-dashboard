@@ -7741,6 +7741,7 @@ def show_courier_dialog() -> None:
         }
         workflow_action_labels = {
             "individual_monthly_billing": "Egyedi havi számlázás nyitva",
+            "manual_invoice_skip": "Számlázás kihagyása kézzel",
             "settlement": "Elszámolás elfogadása",
             "tig": "TIG elfogadása",
             "invoice_check": "Számlaellenőrzés",

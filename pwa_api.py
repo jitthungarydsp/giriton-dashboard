@@ -2600,6 +2600,10 @@ def invoice_validation_override_enabled(states: dict[str, dict]) -> bool:
     return workflow_done(states, "invoice_validation_override")
 
 
+def manual_invoice_skip_enabled(states: dict[str, dict]) -> bool:
+    return workflow_done(states, "manual_invoice_skip")
+
+
 def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> dict[str, Any]:
     if not enabled or not result or result.get("ok"):
         return result
@@ -2798,6 +2802,9 @@ def build_workflow(
     settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
     settlement_done = workflow_done(states, "settlement") or process_settlement_ready
     tig_done = workflow_done(states, "tig") or process_invoice_flow_ready
+    manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
+    invoice_submit_done = workflow_done(states, "invoice_submit") or (manual_invoice_skip and tig_done)
+    invoice_check_done = workflow_done(states, "invoice_check") or (manual_invoice_skip and tig_done)
 
     steps = [
         {
@@ -2834,15 +2841,15 @@ def build_workflow(
         },
         {
             "key": "invoice_submit",
-            "title": "Számlafeltöltés",
-            "done": workflow_done(states, "invoice_submit"),
-            "locked": not tig_done,
+            "title": "Számlafeltöltés kézzel kihagyva" if manual_invoice_skip else "Számlafeltöltés",
+            "done": invoice_submit_done,
+            "locked": True if manual_invoice_skip else not tig_done,
         },
         {
             "key": "invoice_check",
-            "title": "Számlaellenőrzés",
-            "done": workflow_done(states, "invoice_check"),
-            "locked": not workflow_done(states, "invoice_submit"),
+            "title": "Számlaellenőrzés kézzel kihagyva" if manual_invoice_skip else "Számlaellenőrzés",
+            "done": invoice_check_done,
+            "locked": True if manual_invoice_skip else not workflow_done(states, "invoice_submit"),
         },
         {
             "key": "invoice_payment",
@@ -2852,7 +2859,7 @@ def build_workflow(
                 else "Admin szĂˇmlaelfogadĂˇs Ă©s kifizetĂ©s"
             ),
             "done": workflow_done(states, "invoice_payment"),
-            "locked": not workflow_done(states, "invoice_check"),
+            "locked": not invoice_check_done,
         },
     ]
     if financial_breakdown.get("available") and not document_groups["settlement"]:
@@ -2922,6 +2929,7 @@ def build_workflow(
         "complaintResponses": response_documents_by_action,
         "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
         "invoiceValidationOverride": invoice_validation_override_enabled(states),
+        "manualInvoiceSkip": manual_invoice_skip,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -3983,6 +3991,23 @@ def accept_workflow_document(
     )
     if action == "settlement":
         generate_tig_after_settlement_accept(user, month, process_id)
+    if action == "tig" and not process_id and manual_invoice_skip_enabled(states):
+        upsert_workflow_status(
+            user,
+            month,
+            "invoice_submit",
+            "done",
+            "Számlafeltöltés kézzel kihagyva.",
+            process_id,
+        )
+        upsert_workflow_status(
+            user,
+            month,
+            "invoice_check",
+            "done",
+            "Számlaellenőrzés kézzel kihagyva.",
+            process_id,
+        )
     return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 

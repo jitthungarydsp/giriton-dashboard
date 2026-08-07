@@ -1361,12 +1361,15 @@ function renderWorkflow() {
   const previewNotice = readOnly && viewedUser
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
     : "";
-  const overrideNotice = state.workflow?.invoiceValidationOverride
+  let overrideNotice = state.workflow?.invoiceValidationOverride
     ? `<div class="notice">Admin továbbengedés aktív: a számlaellenőrzési hibák figyelmeztetésként kezelődnek.</div>`
     : "";
+  if (state.workflow?.manualInvoiceSkip) {
+    overrideNotice += `<div class="notice">SzĂˇmlafeltĂ¶ltĂ©s kĂ©zzel kihagyva, a folyamat admin kifizetĂ©sre vĂˇr.</div>`;
+  }
   const checkInfo = $("#invoice-check-info");
   if (checkInfo) {
-    const checkDone = state.workflow?.states?.invoice_check?.status === "done";
+    const checkDone = !state.workflow?.manualInvoiceSkip && state.workflow?.states?.invoice_check?.status === "done";
     const checkOpen = state.workflow?.states?.invoice_check?.status === "open";
     checkInfo.innerHTML = `${previewNotice}${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
   }
