@@ -1848,6 +1848,25 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         note_key = normalize_text(note)
         return "snapshot" not in note_key and "publikalt" not in note_key
 
+    def ensure_override_item(card_key: str, item_key: str, fallback_label: str) -> None:
+        override = overrides.get(item_key)
+        if not override or not money_int(override.get("amount_value")):
+            return
+        card = next((item for item in cards if item.get("key") == card_key), None)
+        if not card:
+            return
+        items = card.setdefault("items", [])
+        if any(str(item.get("key") or "") == item_key for item in items):
+            return
+        items.append(
+            signed_item(
+                item_key,
+                str(override.get("item_label") or fallback_label),
+                money_int(override.get("amount_value")),
+                note=str(override.get("note") or "Admin altal modositva"),
+            )
+        )
+
     for card in cards:
         card_override = overrides.get(str(card.get("key") or ""))
         if card_override:
@@ -1872,6 +1891,35 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         highlighted = money_int((by_key.get("highlighted_routes") or {}).get("amountHuf"))
         if routes > 0 and normal + highlighted == 0 and by_key.get("normal_routes"):
             by_key["normal_routes"]["amountHuf"] = routes
+    deduction_override_items = [
+        ("monthly_malus", "Havi malusz"),
+        ("returned_route", "Visszavett kor"),
+        ("atm_effect", "ATM hatas"),
+        ("reserve", "Celtartalek"),
+        ("fuel", "Uzemanyag"),
+        ("damage", "Kar / levonas"),
+        ("cash_missing", "KP hiany"),
+        ("other_deduction", "Egyeb levonas"),
+        ("instructor_fee", "Oktatoi dij"),
+        ("salary_advance", "Fizetes eloleg"),
+    ]
+    for item_key, label in deduction_override_items:
+        ensure_override_item("deductions", item_key, label)
+    for item_key, label in [
+        ("monthly_bonus", "Havi bonusz"),
+        ("monthly_malus", "Havi malusz"),
+        ("accepted_route", "Elfogadott kor korrekcio"),
+        ("returned_route", "Visszavett kor"),
+        ("loyalty_bonus", "Lojalitasi bonusz"),
+        ("customer_rating", "Ugyfelertekelesi bonusz"),
+    ]:
+        ensure_override_item("bonus_malus", item_key, label)
+    deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
+    bonus_malus_card = next((card for card in cards if card.get("key") == "bonus_malus"), None)
+    if deduction_card and not overrides.get("deductions"):
+        deduction_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in deduction_card.get("items") or [])
+    if bonus_malus_card and not overrides.get("bonus_malus"):
+        bonus_malus_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in bonus_malus_card.get("items") or [])
     return cards
 
 
@@ -2572,6 +2620,13 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
                 normal_day_routes += route_count_for_day
 
     shift_count = sum(safe_int(row.get("shift_count")) for row in daily_rows)
+    if not shift_count and route_rows:
+        route_work_dates = {
+            str(row.get("work_date") or "")[:10]
+            for row in route_rows
+            if str(row.get("work_date") or "").strip()
+        }
+        shift_count = len(route_work_dates)
 
     def compact_delay_row(row: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -3926,8 +3981,12 @@ def monthly_statistics(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    view_user, _preview = workflow_view_user(user, courier)
-    return build_monthly_courier_statistics(view_user, parse_month(month))
+    view_user, preview_read_only = workflow_view_user(user, courier)
+    payload = build_monthly_courier_statistics(view_user, parse_month(month))
+    if preview_read_only:
+        payload["viewingAs"] = public_user(view_user)
+        payload["viewerReadOnly"] = True
+    return payload
 
 
 @app.put("/api/profile/billing")

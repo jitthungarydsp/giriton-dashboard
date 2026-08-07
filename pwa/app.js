@@ -20,7 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
-const APP_VERSION = "v59";
+const APP_VERSION = "v60";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -110,8 +110,10 @@ function showApp() {
   const coordinatorOnly = role === "coordinator";
   ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
-  const previewWrapper = $("#workflow-preview-wrapper");
-  if (previewWrapper) previewWrapper.classList.toggle("hidden", !state.user.canPreviewCouriers);
+  ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
+    const previewWrapper = $(selector);
+    if (previewWrapper) previewWrapper.classList.toggle("hidden", !state.user.canPreviewCouriers);
+  });
 }
 
 function showSection(section) {
@@ -494,7 +496,7 @@ function renderStatistics() {
     ? formatAverage(rating.averageRating)
     : "Előkészítve";
 
-  const viewedUser = state.workflow?.viewingAs || {};
+  const viewedUser = payload.viewingAs || payload.courier || state.workflow?.viewingAs || {};
   const previewNotice = state.user?.canPreviewCouriers && state.workflowPreviewCourierId
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || state.workflowPreviewCourierId)} (${escapeHtml(viewedUser.courierId || state.workflowPreviewCourierId)}). Ebben a módban más futár statisztikáját látod.</div>`
     : "";
@@ -1642,7 +1644,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=59");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=60");
   }
   return navigator.serviceWorker.ready;
 }
@@ -2331,6 +2333,8 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
 $("#workflow-month").value = state.workflowMonth;
 const workflowPreviewCourierInput = $("#workflow-preview-courier");
 if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
+const statisticsPreviewCourierInput = $("#statistics-preview-courier");
+if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
 renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
@@ -2350,8 +2354,10 @@ $("#workflow-process").addEventListener("change", (event) => {
   loadWorkflow();
 });
 
-workflowPreviewCourierInput?.addEventListener("change", (event) => {
-  state.workflowPreviewCourierId = String(event.target.value || "").trim();
+function updatePreviewCourier(value) {
+  state.workflowPreviewCourierId = String(value || "").trim();
+  if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
+  if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
   state.workflowProcess = "";
   state.workflow = null;
   state.statistics = null;
@@ -2359,6 +2365,14 @@ workflowPreviewCourierInput?.addEventListener("change", (event) => {
   state.checkedInvoiceMonth = null;
   loadWorkflow();
   if (state.section === "statistics") loadStatistics();
+}
+
+workflowPreviewCourierInput?.addEventListener("change", (event) => {
+  updatePreviewCourier(event.target.value);
+});
+
+statisticsPreviewCourierInput?.addEventListener("change", (event) => {
+  updatePreviewCourier(event.target.value);
 });
 
 $("#workflow-refresh").addEventListener("click", () => {
