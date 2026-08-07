@@ -105,6 +105,12 @@ class RouteDelayAlertRequest(BaseModel):
     current_checkpoint_position: int | None = None
 
 
+class RouteNoteRequest(BaseModel):
+    work_date: str
+    route_id: str
+    note: str = ""
+
+
 class ShiftDelayAlertRequest(BaseModel):
     work_date: str
     start: str = ""
@@ -2462,22 +2468,26 @@ def load_route_compliance_rows_for_courier(
     courier_id: str,
     period_start: date,
     period_end: date,
+    *,
+    only_problem_rows: bool = True,
 ) -> list[dict[str, Any]]:
+    params = {
+        "select": (
+            "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,"
+            "route_assigned_at,shift_available_at,planned_departure_at,departed_at,"
+            "last_order_finished_at,warehouse_arrived_at,vehicle_plate,"
+            "planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes"
+        ),
+        "courier_id": f"eq.{courier_id}",
+        "and": f"(shift_date.gte.{period_start.isoformat()},shift_date.lte.{period_end.isoformat()})",
+        "order": "shift_date.asc,route_id.asc",
+        "limit": "700",
+    }
+    if only_problem_rows:
+        params["or"] = "(planned_start_delay_minutes.gt.0,departure_delay_minutes.gt.0,actual_start_at.is.null,shift_available_at.is.null)"
     return optional_supabase_rows(
         "courier_financial_overview_compliance",
-        params={
-            "select": (
-                "shift_date,route_id,warehouse_id,planned_start_at,actual_start_at,"
-                "route_assigned_at,shift_available_at,planned_departure_at,departed_at,"
-                "last_order_finished_at,warehouse_arrived_at,vehicle_plate,"
-                "planned_start_delay_minutes,departure_delay_minutes,return_delay_minutes"
-            ),
-            "courier_id": f"eq.{courier_id}",
-            "and": f"(shift_date.gte.{period_start.isoformat()},shift_date.lte.{period_end.isoformat()})",
-            "or": "(planned_start_delay_minutes.gt.0,departure_delay_minutes.gt.0,actual_start_at.is.null,shift_available_at.is.null)",
-            "order": "shift_date.asc,route_id.asc",
-            "limit": "200",
-        },
+        params=params,
         timeout=60,
     )
 
@@ -2540,6 +2550,62 @@ def route_story_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict
     return lookup
 
 
+def route_row_lookup(rows: list[dict[str, Any]], date_key: str) -> dict[tuple[str, str], dict[str, Any]]:
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        route_id = str(row.get("route_id") or "").strip()
+        row_date = str(row.get(date_key) or "")[:10]
+        if row_date and route_id:
+            lookup[(row_date, route_id)] = row
+    return lookup
+
+
+def load_route_notes_for_courier(courier_id: str, period_start: date, period_end: date) -> dict[tuple[str, str], dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "pwa_courier_route_notes",
+        params={
+            "select": "work_date,route_id,note,updated_at",
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.desc,route_id.desc",
+            "limit": "700",
+        },
+        timeout=30,
+    )
+    return route_row_lookup(rows, "work_date")
+
+
+def save_route_note_for_user(user: dict[str, Any], payload: RouteNoteRequest) -> dict[str, Any]:
+    courier_id, courier_name = courier_identity(user)
+    work_date = parse_date_value(payload.work_date)
+    if not work_date:
+        raise HTTPException(status_code=422, detail="Hibás dátum.")
+    route_id = clean_text(payload.route_id, limit=80)
+    if not route_id:
+        raise HTTPException(status_code=422, detail="Hiányzik a Route ID.")
+    note = clean_text(payload.note, limit=1200)
+    rows = supabase_rest(
+        "POST",
+        "pwa_courier_route_notes",
+        params={"on_conflict": "courier_id,work_date,route_id"},
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "work_date": work_date.isoformat(),
+            "route_id": route_id,
+            "note": note,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    row = rows[0] if rows else {}
+    return {
+        "ok": True,
+        "note": str(row.get("note") or note),
+        "updatedAt": str(row.get("updated_at") or ""),
+    }
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -2567,20 +2633,24 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
         route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
+        notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
         history_rows = history_future.result()
         story_rows = story_future.result()
+        route_notes = notes_future.result()
     stories_by_route = route_story_lookup(story_rows)
     delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
-    compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end)
+    compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end, only_problem_rows=False)
+    compliance_by_route = route_row_lookup(compliance_rows, "shift_date")
+    delay_by_route = route_row_lookup(delay_rows, "delivery_date")
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2680,23 +2750,36 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     def compact_history_row(row: dict[str, Any]) -> dict[str, Any]:
         work_date = str(row.get("work_date") or "")[:10]
         route_id = str(row.get("route_id") or "")
+        route_key = (work_date, route_id)
+        compliance_row = compliance_by_route.get(route_key, {})
+        delay_row = delay_by_route.get(route_key, {})
+        note_row = route_notes.get(route_key, {})
         story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
             "date": str(row.get("work_date") or "")[:10],
             "routeId": route_id,
-            "warehouseId": safe_int(row.get("warehouse_id")),
+            "warehouseId": safe_int(row.get("warehouse_id") or compliance_row.get("warehouse_id")),
             "orders": safe_int(row.get("order_count")),
             "stops": safe_int(row.get("stops_count")),
-            "plannedStartAt": str(row.get("planned_start_at") or ""),
-            "actualStartAt": str(row.get("actual_start_at") or ""),
-            "shiftAvailableAt": str(row.get("shift_available_at") or ""),
-            "routeAssignedAt": str(row.get("route_assigned_at") or ""),
-            "plannedDepartureAt": str(row.get("planned_departure_at") or ""),
-            "departedAt": str(row.get("departed_at") or ""),
-            "lastOrderFinishedAt": str(row.get("last_order_finished_at") or ""),
-            "warehouseArrivedAt": str(row.get("warehouse_arrived_at") or ""),
+            "plannedStartAt": str(row.get("planned_start_at") or compliance_row.get("planned_start_at") or ""),
+            "actualStartAt": str(row.get("actual_start_at") or compliance_row.get("actual_start_at") or ""),
+            "shiftAvailableAt": str(row.get("shift_available_at") or compliance_row.get("shift_available_at") or ""),
+            "routeAssignedAt": str(row.get("route_assigned_at") or compliance_row.get("route_assigned_at") or ""),
+            "plannedDepartureAt": str(row.get("planned_departure_at") or compliance_row.get("planned_departure_at") or ""),
+            "departedAt": str(row.get("departed_at") or compliance_row.get("departed_at") or ""),
+            "lastOrderFinishedAt": str(row.get("last_order_finished_at") or compliance_row.get("last_order_finished_at") or ""),
+            "warehouseArrivedAt": str(row.get("warehouse_arrived_at") or compliance_row.get("warehouse_arrived_at") or ""),
+            "plannedReturnAt": str((story or {}).get("plannedReturn") or ""),
+            "plannedStartDelayMinutes": safe_int(compliance_row.get("planned_start_delay_minutes")),
+            "departureDelayMinutes": safe_int(compliance_row.get("departure_delay_minutes")),
+            "returnDelayMinutes": safe_int(compliance_row.get("return_delay_minutes")),
+            "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
+            "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
+            "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "routeNote": str(note_row.get("note") or ""),
+            "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
             "vehicleModel": str(row.get("vehicle_model") or ""),
-            "vehiclePlate": str(row.get("vehicle_plate") or ""),
+            "vehiclePlate": str(row.get("vehicle_plate") or compliance_row.get("vehicle_plate") or ""),
             "mileageKm": float(row.get("mileage_km") or 0),
             "vehicleOwnership": str(row.get("vehicle_ownership") or ""),
         }
@@ -2707,26 +2790,39 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     def compact_route_fallback_row(route: dict[str, Any]) -> dict[str, Any]:
         work_date = str(route.get("work_date") or "")[:10]
         route_id = str(route.get("route_id") or "")
+        route_key = (work_date, route_id)
+        compliance_row = compliance_by_route.get(route_key, {})
+        delay_row = delay_by_route.get(route_key, {})
+        note_row = route_notes.get(route_key, {})
+        story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
             "date": work_date,
             "routeId": route_id,
-            "warehouseId": safe_int(route.get("warehouse_id")),
+            "warehouseId": safe_int(route.get("warehouse_id") or compliance_row.get("warehouse_id")),
             "orders": safe_int(route.get("orders")),
             "stops": safe_int(route.get("orders")),
-            "plannedStartAt": "",
-            "actualStartAt": "",
-            "shiftAvailableAt": "",
-            "routeAssignedAt": "",
-            "plannedDepartureAt": "",
-            "departedAt": "",
-            "lastOrderFinishedAt": "",
-            "warehouseArrivedAt": "",
+            "plannedStartAt": str(compliance_row.get("planned_start_at") or ""),
+            "actualStartAt": str(compliance_row.get("actual_start_at") or ""),
+            "shiftAvailableAt": str(compliance_row.get("shift_available_at") or ""),
+            "routeAssignedAt": str(compliance_row.get("route_assigned_at") or ""),
+            "plannedDepartureAt": str(compliance_row.get("planned_departure_at") or ""),
+            "departedAt": str(compliance_row.get("departed_at") or ""),
+            "lastOrderFinishedAt": str(compliance_row.get("last_order_finished_at") or ""),
+            "warehouseArrivedAt": str(compliance_row.get("warehouse_arrived_at") or ""),
+            "plannedReturnAt": str((story or {}).get("plannedReturn") or ""),
+            "plannedStartDelayMinutes": safe_int(compliance_row.get("planned_start_delay_minutes")),
+            "departureDelayMinutes": safe_int(compliance_row.get("departure_delay_minutes")),
+            "returnDelayMinutes": safe_int(compliance_row.get("return_delay_minutes")),
+            "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
+            "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
+            "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "routeNote": str(note_row.get("note") or ""),
+            "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
             "vehicleModel": "",
-            "vehiclePlate": "",
+            "vehiclePlate": str(compliance_row.get("vehicle_plate") or ""),
             "mileageKm": 0,
             "vehicleOwnership": "",
         }
-        story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         if story:
             result["routeStory"] = story
         return result
@@ -4000,6 +4096,15 @@ def monthly_statistics(
         payload["viewingAs"] = public_user(view_user)
         payload["viewerReadOnly"] = True
     return payload
+
+
+@app.put("/api/statistics/route-note")
+def save_statistics_route_note(
+    payload: RouteNoteRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    return save_route_note_for_user(user, payload)
 
 
 @app.put("/api/profile/billing")

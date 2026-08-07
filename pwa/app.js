@@ -20,7 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
-const APP_VERSION = "v60";
+const APP_VERSION = "v61";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -300,6 +300,13 @@ function routeStoryMetric(label, value, suffix = "") {
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatCount(numeric)}${suffix}</strong></div>`;
 }
 
+function minutesBetween(start, end) {
+  const startTime = start ? new Date(start).getTime() : NaN;
+  const endTime = end ? new Date(end).getTime() : NaN;
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) return 0;
+  return Math.round((endTime - startTime) / 60000);
+}
+
 function routeStoryDistance(label, value) {
   const numeric = Number(value || 0);
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatAverage(numeric)} km</strong></div>`;
@@ -355,28 +362,61 @@ function renderCurrentRouteStory(route) {
 
 function renderRouteStoryDetails(row) {
   const story = row.routeStory || {};
-  if (!Object.keys(story).length) {
-    return `
-      <div class="daily-route-story">
-        <div class="stat-row"><span>Route story</span><strong>Nincs mart adat</strong></div>
-      </div>
-    `;
-  }
   const distance = Number(story.gpsDistanceKm || row.mileageKm || 0);
+  const routeMinutes = Number(
+    story.realRouteMinutes
+    || story.assignedToReturnMinutes
+    || story.totalRouteMinutes
+    || row.routeDurationMinutes
+    || minutesBetween(row.departedAt || row.routeAssignedAt, row.warehouseArrivedAt)
+    || 0
+  );
+  const lateCount = Number(story.timeWindowLateCount || row.timeWindowLateCount || 0);
+  const lateMinutes = Number(row.timeWindowLateMinutes || 0);
+  const maxDelay = Number(row.maxDelayMinutes || 0);
+  const lateText = lateCount || lateMinutes || maxDelay
+    ? `${formatCount(lateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
+    : "Nincs";
   return `
     <div class="daily-route-story">
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
       ${routeStoryTime("Műszak kezdete", story.shiftStart)}
-      ${routeStoryTime("Sorba állt / elérhető", story.queueStartedAt || story.availableForShiftSince || story.availableAt || story.courierRegisteredAt)}
+      ${routeStoryTime("Elérhető volt", story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt)}
+      ${routeStoryTime("Sorba állt", story.queueStartedAt || row.actualStartAt)}
       ${routeStoryTime("Túrát kapott", story.assignedAt || row.routeAssignedAt)}
       ${routeStoryTime("Indulás a raktárból", story.realDeparture || row.departedAt)}
-      ${routeStoryTime("Visszaérkezés a raktárba", story.realReturn || row.warehouseArrivedAt)}
+      ${routeStoryTime("Tervezett visszaérkezés", story.plannedReturn || row.plannedReturnAt)}
+      ${routeStoryTime("Valós visszaérkezés", story.realReturn || row.warehouseArrivedAt)}
       ${routeStoryMetric("Várakozás túrára", story.queueWaitMinutes, " perc")}
-      ${routeStoryMetric("Időkapun túli késés", story.timeWindowLateCount, " cím")}
-      ${routeStoryMetric("Kiosztástól visszaérkezésig", story.assignedToReturnMinutes || story.totalRouteMinutes, " perc")}
+      ${routeStoryMetric("Túra hossza", routeMinutes, " perc")}
+      <div class="stat-row"><span>Időkapun túli késés</span><strong>${escapeHtml(lateText)}</strong></div>
       ${routeStoryDistance("Megtett táv", distance)}
       ${story.storyText ? `<p class="route-story-text">${escapeHtml(story.storyText)}</p>` : ""}
+      ${Object.keys(story).length ? "" : `<p class="updated-at">Forrás: napi route history + compliance/delay táblák</p>`}
+      ${renderRouteNoteForm(row)}
     </div>
+  `;
+}
+
+function renderRouteNoteForm(row) {
+  const routeId = String(row.routeId || "").trim();
+  const workDate = String(row.date || "").trim();
+  if (!routeId || !workDate) return "";
+  const previewReadOnly = Boolean(state.user?.canPreviewCouriers && state.workflowPreviewCourierId);
+  if (previewReadOnly) {
+    return `
+      <div class="route-note-form">
+        <label>Megjegyzés<textarea readonly>${escapeHtml(row.routeNote || "")}</textarea></label>
+        <p class="updated-at">${row.routeNoteUpdatedAt ? `Mentve: ${escapeHtml(shortDateTime(row.routeNoteUpdatedAt))}` : "Előnézetben a megjegyzés nem szerkeszthető."}</p>
+      </div>
+    `;
+  }
+  return `
+    <form class="route-note-form" data-route-id="${escapeHtml(routeId)}" data-work-date="${escapeHtml(workDate)}">
+      <label>Megjegyzés<textarea name="note" maxlength="1200" placeholder="Ide írhatod a route-tal kapcsolatos megjegyzést.">${escapeHtml(row.routeNote || "")}</textarea></label>
+      <button class="secondary" type="submit">Megjegyzés mentése</button>
+      <p class="updated-at route-note-status">${row.routeNoteUpdatedAt ? `Mentve: ${escapeHtml(shortDateTime(row.routeNoteUpdatedAt))}` : ""}</p>
+    </form>
   `;
 }
 
@@ -453,6 +493,34 @@ function changeDailyHistoryDate(offset) {
   if (nextIndex === currentIndex) return;
   state.statisticsHistoryDate = dates[nextIndex];
   renderStatistics();
+}
+
+async function saveRouteNote(form) {
+  const routeId = String(form.dataset.routeId || "").trim();
+  const workDate = String(form.dataset.workDate || "").trim();
+  const noteInput = form.querySelector("textarea[name='note']");
+  const status = form.querySelector(".route-note-status");
+  const button = form.querySelector("button[type='submit']");
+  const note = String(noteInput?.value || "").trim();
+  if (!routeId || !workDate) return;
+  if (button) button.disabled = true;
+  if (status) status.textContent = "Mentés...";
+  try {
+    const response = await api("/api/statistics/route-note", {
+      method: "PUT",
+      body: JSON.stringify({ route_id: routeId, work_date: workDate, note }),
+    });
+    const row = (state.statistics?.dailyHistory || []).find((item) => String(item.routeId || "") === routeId && String(item.date || "") === workDate);
+    if (row) {
+      row.routeNote = response.note || note;
+      row.routeNoteUpdatedAt = response.updatedAt || new Date().toISOString();
+    }
+    if (status) status.textContent = `Mentve: ${shortDateTime(response.updatedAt || new Date().toISOString())}`;
+  } catch (error) {
+    if (status) status.textContent = error.message || "Nem sikerült menteni.";
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function bindDailyHistoryControls() {
@@ -1644,7 +1712,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=60");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=61");
   }
   return navigator.serviceWorker.ready;
 }
@@ -2388,6 +2456,13 @@ $("#statistics-month").addEventListener("change", (event) => {
 $("#statistics-refresh").addEventListener("click", () => {
   state.statistics = null;
   loadStatistics();
+});
+
+$("#statistics-breakdown").addEventListener("submit", (event) => {
+  const form = event.target.closest(".route-note-form");
+  if (!form) return;
+  event.preventDefault();
+  saveRouteNote(form);
 });
 
 $("#salary-advance-start-date").value = state.workflowMonth;

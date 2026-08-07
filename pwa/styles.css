@@ -227,6 +227,10 @@ textarea { min-height: 96px; resize: vertical; }
 .daily-route-story { display: grid; gap: 8px; padding: 0 12px 12px; }
 .daily-route-story .stat-row { align-items: flex-start; }
 .daily-route-story .stat-row strong { text-align: right; }
+.route-note-form { display: grid; gap: 8px; padding-top: 6px; }
+.route-note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
+.route-note-form textarea { min-height: 76px; border-radius: 12px; }
+.route-note-form button { min-height: 42px; }
 .route-story-text { margin: 2px 0 0; padding: 12px; border-radius: 12px; background: #eff8ed; color: var(--ink); font-size: 12px; line-height: 1.45; font-weight: 750; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
