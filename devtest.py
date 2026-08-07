@@ -6092,6 +6092,7 @@ def show_courier_dialog() -> None:
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name)
+    summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
     profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     profile_adjustment_totals = (
         profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
@@ -6110,7 +6111,7 @@ def show_courier_dialog() -> None:
     contractor_received_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
     if (
         str(active_calculation_mode or "").strip().casefold() == "api"
-        and (not summary_row or contractor_received_total == 0)
+        and (not summary_available or contractor_received_total == 0)
     ):
         api_received = load_api_received_amounts(period_start, st.session_state.get("new_warehouse", "Összes")).copy()
         if not api_received.empty:
@@ -6153,7 +6154,7 @@ def show_courier_dialog() -> None:
     profile_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
     order_total = profile_metrics["order_total"]
     route_total = profile_metrics["route_total"]
-    if summary_row:
+    if summary_available:
         order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
         route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
     if not route_detail.empty:
@@ -6168,14 +6169,14 @@ def show_courier_dialog() -> None:
         normal_route_total = int(parse_huf_value(summary_row.get("normal_routes")))
         express_highlighted_total = int(parse_huf_value(summary_row.get("express_highlighted_routes")))
         express_normal_total = int(parse_huf_value(summary_row.get("express_normal_routes")))
-    if summary_row:
+    if summary_available:
         highlighted_route_total = max(highlighted_route_total, int(parse_huf_value(summary_row.get("highlighted_routes"))))
         normal_route_total = max(normal_route_total, int(parse_huf_value(summary_row.get("normal_routes"))))
         express_highlighted_total = max(express_highlighted_total, int(parse_huf_value(summary_row.get("express_highlighted_routes"))))
         express_normal_total = max(express_normal_total, int(parse_huf_value(summary_row.get("express_normal_routes"))))
     if route_total > 0 and highlighted_route_total + normal_route_total == 0:
         normal_route_total = route_total
-    data_source_label = "DB összesítő" if summary_row else "Főoldali adat"
+    data_source_label = "DB összesítő" if summary_available else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
 
@@ -6221,7 +6222,7 @@ def show_courier_dialog() -> None:
 
     if selected_menu == "Áttekintés":
         missing_data_count = 0
-        if not summary_row:
+        if not summary_available:
             missing_data_count += 1
 
         st.markdown(
@@ -6377,7 +6378,7 @@ def show_courier_dialog() -> None:
         # The profile cards are a direct projection of the persisted central
         # settlement row for money amounts. For counts, keep the larger central
         # monthly value when the route detail drill-down is incomplete.
-        if summary_row and route_detail.empty:
+        if summary_available and route_detail.empty:
             amount = lambda field: parse_huf_value(summary_row.get(field))
             base_total = amount("courier_base_rate_huf")
             tip_total = amount("tip_huf")
@@ -6387,7 +6388,7 @@ def show_courier_dialog() -> None:
             imported_bonus_total = amount("imported_bonus_huf")
             order_total = int(amount("order_count"))
             route_total = int(amount("route_count"))
-        elif summary_row:
+        elif summary_available:
             base_total = parse_huf_value(summary_row.get("courier_base_rate_huf"))
             tip_total = parse_huf_value(summary_row.get("tip_huf"))
             delay_total = parse_huf_value(summary_row.get("delay_bonus_huf"))
@@ -6451,7 +6452,7 @@ def show_courier_dialog() -> None:
             completed_route_count=route_total,
             order_count=order_total,
             muszakpro_source=str(booking_summary.get("source") or ""),
-            route_source="courier_settlement_summary" if summary_row else "route_detail",
+            route_source="courier_settlement_summary" if summary_available else "route_detail",
         )
 
         settlement_document_reference = make_document_reference(courier_id, "settlement", period_start)
@@ -6608,8 +6609,8 @@ def show_courier_dialog() -> None:
                 return pd.DataFrame([
                     {"Tétel": "MűszakPro foglalt műszak", "Darab": booked_shift_count, "Forrás": str(booking_summary.get("source") or "-")},
                     {"Tétel": "Giriton műszak", "Darab": giriton_shift_count, "Forrás": str(giriton_shift_summary.get("source") or "-")},
-                    {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_row else "route_detail"},
-                    {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_row else "route_detail"},
+                    {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
+                    {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
                 ])
             if detail_label == "Késedelmi díj":
                 return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
@@ -6756,7 +6757,7 @@ def show_courier_dialog() -> None:
             unsafe_allow_html=True,
         )
         with st.expander("Kör részletei - műszakok és kifutott túrák", expanded=False):
-            route_source_label = "courier_settlement_summary" if summary_row else "route_detail"
+            route_source_label = "courier_settlement_summary" if summary_available else "route_detail"
             st.dataframe(
                 pd.DataFrame([
                     {
@@ -7762,6 +7763,66 @@ def show_courier_dialog() -> None:
             str(item.get("action_key") or ""): item
             for item in workflow_statuses.to_dict("records")
         } if not workflow_statuses.empty else {}
+        manual_invoice_skip_active = str(
+            (status_by_action.get("manual_invoice_skip") or {}).get("status") or ""
+        ).casefold() == "done"
+        tig_accepted = str((status_by_action.get("tig") or {}).get("status") or "").casefold() == "done"
+        skip_col, reset_skip_col = st.columns(2)
+        if skip_col.button(
+            "Számlázás kihagyása kézzel",
+            type="primary",
+            use_container_width=True,
+            disabled=manual_invoice_skip_active,
+            key=f"manual_invoice_skip_open_{courier_id}_{workflow_month:%Y%m}",
+        ):
+            try:
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    action_key="manual_invoice_skip",
+                    document_month=workflow_month,
+                    status="done",
+                    status_note="Admin kézzel kihagyta a számlafeltöltést ehhez a havi folyamathoz.",
+                    updated_by=actor,
+                )
+                if tig_accepted:
+                    for skipped_action, skipped_note in [
+                        ("invoice_submit", "Számlafeltöltés kézzel kihagyva."),
+                        ("invoice_check", "Számlaellenőrzés kézzel kihagyva."),
+                    ]:
+                        upsert_peopleforce_card_status(
+                            courier_id=courier_id,
+                            courier_name=str(row["Futár"]),
+                            action_key=skipped_action,
+                            document_month=workflow_month,
+                            status="done",
+                            status_note=skipped_note,
+                            updated_by=actor,
+                        )
+                st.success("A számlázás kézi kihagyása beállítva.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A számlázás kézi kihagyása sikertelen: {exc}")
+        if reset_skip_col.button(
+            "Normál számlázás visszaállítása",
+            use_container_width=True,
+            disabled=not manual_invoice_skip_active,
+            key=f"manual_invoice_skip_reset_{courier_id}_{workflow_month:%Y%m}",
+        ):
+            try:
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    action_key="manual_invoice_skip",
+                    document_month=workflow_month,
+                    status="open",
+                    status_note="Admin visszaállította a normál számlázási folyamatot.",
+                    updated_by=actor,
+                )
+                st.success("A normál számlázási folyamat visszaállítva.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A normál számlázás visszaállítása sikertelen: {exc}")
         status_rows = []
         for action_key, action_label in workflow_action_labels.items():
             saved_status = status_by_action.get(action_key, {})

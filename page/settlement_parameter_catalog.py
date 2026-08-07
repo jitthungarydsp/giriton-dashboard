@@ -467,6 +467,9 @@ def _show_loyalty_bonus(client: Any) -> None:
 def _show_efo_assignments(client: Any) -> None:
     st.caption("EFO-s kollégák időszakos nyilvántartása. Itt tartható karban, mettől meddig volt bejelentve és mennyi a napi díj levonása.")
     data = read_items(client, EFO_ASSIGNMENT_TABLE)
+    if data.attrs.get("missing_table"):
+        st.info("Az EFO nyilvántartási tábla nincs telepítve. A havi számlázás kihagyását most a futár Dokumentumok menüjében, kézzel lehet kapcsolni.")
+        return
     if not data.empty:
         view = data.copy()
         view["Napi levonás"] = view["daily_deduction_huf"].map(_money)

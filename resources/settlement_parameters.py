@@ -274,14 +274,21 @@ def parameter_status(valid_from: Any, valid_to: Any, is_active: bool, today: dat
 
 
 def read_items(client: Any, table_name: str) -> pd.DataFrame:
-    response = (
-        _table(client, table_name)
-        .select("*")
-        .is_("deleted_at", "null")
-        .order("is_active", desc=True)
-        .order("valid_from", desc=True)
-        .execute()
-    )
+    try:
+        response = (
+            _table(client, table_name)
+            .select("*")
+            .is_("deleted_at", "null")
+            .order("is_active", desc=True)
+            .order("valid_from", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        if table_name == EFO_ASSIGNMENT_TABLE and "PGRST205" in str(exc):
+            data = pd.DataFrame()
+            data.attrs["missing_table"] = True
+            return data
+        raise
     return pd.DataFrame(response.data or [])
 
 
