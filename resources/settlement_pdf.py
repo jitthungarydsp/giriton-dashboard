@@ -109,6 +109,76 @@ def _tig_service_amount_without_cash_and_tip(amounts: dict[str, float], courier:
     return max(payable + cash - tip - cash_vat_adjustment, 0)
 
 
+def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> dict[str, Any]:
+    service = _tig_service_amount_without_cash_and_tip(amounts, courier)
+    cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
+    tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
+    payable = max(_int_money(amounts.get("payable")), 0)
+    vat_payer = _tig_kind(courier) == "vat"
+    if vat_payer:
+        service_net, service_vat, service_gross = _add_vat_to_net(service)
+        cash_net, cash_vat, cash_gross = _split_gross_vat_amount(cash)
+        tax_label = "27%-os AFA"
+    else:
+        service_net, service_vat, service_gross = service, 0, service
+        cash_net, cash_vat, cash_gross = cash, 0, cash
+        tax_label = "AAM"
+    final_total = service_gross + tip
+    rows = [
+        {
+            "key": "transfer_service",
+            "label": "Szallitasi dij - atutalas",
+            "netHuf": service_net,
+            "vatHuf": service_vat,
+            "grossHuf": service_gross,
+            "vatLabel": "27%" if vat_payer else "AAM",
+            "note": "KP es borravalo nelkuli szolgaltatasi dij.",
+        }
+    ]
+    if tip:
+        rows.append({
+            "key": "tip",
+            "label": "Borravalo - adomentes",
+            "netHuf": tip,
+            "vatHuf": 0,
+            "grossHuf": tip,
+            "vatLabel": "Adomentes",
+            "note": "Kulon adomentes tetel.",
+        })
+    if cash:
+        rows.append({
+            "key": "cash_service",
+            "label": "Szallitasi dij - KP",
+            "netHuf": cash_net,
+            "vatHuf": cash_vat,
+            "grossHuf": cash_gross,
+            "vatLabel": "27%" if vat_payer else "AAM",
+            "note": "Kulon KP sor, nem noveli az atutalasos vegosszeget.",
+        })
+        rows.append({
+            "key": "cash_deduction",
+            "label": "KP levonasa",
+            "netHuf": -cash_net,
+            "vatHuf": -cash_vat,
+            "grossHuf": -cash_gross,
+            "vatLabel": "Levonas",
+            "note": "A futarnal mar kezben levo KP levonasa.",
+        })
+    return {
+        "available": payable > 0 or bool(rows),
+        "payableHuf": payable,
+        "transferServiceHuf": service,
+        "tipHuf": tip,
+        "cashGrossHuf": cash_gross,
+        "cashNetDeductionHuf": cash_net,
+        "cashVatHuf": cash_vat,
+        "finalTotalHuf": final_total,
+        "taxMode": "vat" if vat_payer else "aam",
+        "taxLabel": tax_label,
+        "rows": rows,
+    }
+
+
 def _month_label(value: Any) -> str:
     if isinstance(value, date):
         months = [

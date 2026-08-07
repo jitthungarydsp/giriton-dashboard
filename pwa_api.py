@@ -27,7 +27,7 @@ from resources.email_sender import send_login_credentials, send_message, smtp_co
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password
 from resources.security import hash_password, verify_password
-from resources.settlement_pdf import build_tig_pdf
+from resources.settlement_pdf import build_tig_breakdown, build_tig_pdf
 
 try:
     from cryptography.hazmat.primitives import serialization
@@ -1475,13 +1475,49 @@ def read_courier_display_name(courier_id: str) -> str:
     return str((rows[0] if rows else {}).get("courier_name") or "").strip()
 
 
+def resolve_preview_courier(query: str) -> tuple[str, str]:
+    target = str(query or "").strip()
+    if not target:
+        return "", ""
+    rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name",
+            "courier_id": f"eq.{target}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        rows = optional_supabase_rows(
+            "courier_master",
+            params={
+                "select": "courier_id,courier_name",
+                "courier_name": f"ilike.*{target}*",
+                "order": "courier_name.asc",
+                "limit": "10",
+            },
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Nem talalhato futar ezzel a nevvel vagy azonositoval.")
+    if len(rows) > 1:
+        exact_rows = [row for row in rows if normalize_text(row.get("courier_name")) == normalize_text(target)]
+        if len(exact_rows) == 1:
+            rows = exact_rows
+        else:
+            names = ", ".join(str(row.get("courier_name") or row.get("courier_id") or "") for row in rows[:5])
+            raise HTTPException(status_code=409, detail=f"Tobb futar is talalat: {names}. Pontosits nevvel vagy ID-val.")
+    row = rows[0]
+    return str(row.get("courier_id") or "").strip(), str(row.get("courier_name") or "").strip()
+
+
 def workflow_view_user(user: dict[str, Any], courier_id: str | None = "") -> tuple[dict[str, Any], bool]:
-    target_id = str(courier_id or "").strip()
-    if not target_id:
+    target_query = str(courier_id or "").strip()
+    if not target_query:
         return user, False
     if not can_preview_couriers(user):
         raise HTTPException(status_code=403, detail="Másik futár mobil nézetéhez admin jogosultság szükséges.")
-    target_name = read_courier_display_name(target_id) or f"Futár {target_id}"
+    target_id, resolved_name = resolve_preview_courier(target_query)
+    target_name = resolved_name or read_courier_display_name(target_id) or f"Futár {target_id}"
     preview_user = dict(user)
     preview_user["courierId"] = target_id
     preview_user["username"] = target_name
@@ -1839,6 +1875,85 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     return cards
 
 
+def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if not breakdown.get("available"):
+        return breakdown
+    rows = breakdown.get("rows") or []
+    for row in rows:
+        override = overrides.get(f"tig_{row.get('key') or ''}")
+        if not override:
+            continue
+        amount = money_int(override.get("amount_value"))
+        row["grossHuf"] = amount
+        if row.get("key") == "cash_deduction" and amount > 0:
+            row["grossHuf"] = -amount
+        sign = -1 if money_int(row.get("grossHuf")) < 0 else 1
+        gross_abs = abs(money_int(row.get("grossHuf")))
+        if breakdown.get("taxMode") == "vat" and row.get("key") not in {"tip"}:
+            net = int(round(gross_abs / 1.27))
+            vat = gross_abs - net
+            row["netHuf"] = sign * net
+            row["vatHuf"] = sign * vat
+            row["vatLabel"] = "27%" if sign > 0 else "Levonas"
+        else:
+            row["netHuf"] = money_int(row.get("grossHuf"))
+            row["vatHuf"] = 0
+        row["label"] = str(override.get("item_label") or row.get("label") or "")
+        row["note"] = str(override.get("note") or "Admin Ăˇltal mĂłdosĂ­tva")
+    final_override = overrides.get("tig_final_total")
+    if final_override:
+        breakdown["finalTotalHuf"] = money_int(final_override.get("amount_value"))
+    else:
+        breakdown["finalTotalHuf"] = sum(
+            money_int(row.get("grossHuf"))
+            for row in rows
+            if row.get("key") in {"transfer_service", "tip"}
+        )
+    return breakdown
+
+
+def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_breakdown: dict[str, Any]) -> dict[str, Any]:
+    courier_id, courier_name = courier_identity(user)
+    if not financial_breakdown.get("available"):
+        return {
+            "available": False,
+            "month": month.strftime("%Y-%m"),
+            "message": "A TIG bontĂˇs az elszĂˇmolĂˇsi adatok elkĂ©szĂĽlte utĂˇn lĂˇthatĂł.",
+            "rows": [],
+        }
+    profile_rows = optional_supabase_rows(
+        "courier_master",
+        params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
+        timeout=30,
+    )
+    profile = profile_rows[0] if profile_rows else {}
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in financial_breakdown.get("cards") or []
+        for item in card.get("items") or []
+    }
+    tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
+    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    payable = money_int(financial_breakdown.get("totalPayableHuf"))
+    tig = build_tig_breakdown(
+        {
+            "name": courier_name,
+            "company_name": profile.get("company_name") or courier_name,
+            "address": profile.get("company_address") or profile.get("address") or "",
+            "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+            "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+            "vat_status": profile.get("vat_status") or "",
+            "id": courier_id,
+            "document_month": month,
+        },
+        {"payable": payable, "cash": cash_amount, "tip": tip_amount},
+    )
+    tig["month"] = month.strftime("%Y-%m")
+    tig["courierId"] = courier_id
+    tig["courierName"] = courier_name
+    return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
+
+
 def hidden_financial_breakdown(month: date) -> dict[str, Any]:
     return {
         "available": False,
@@ -1939,6 +2054,17 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     if not payable:
         payable = income_total + deduction_total
 
+    bonus_malus_items = [
+        signed_item("monthly_bonus", "Havi bonusz", monthly_bonus),
+        signed_item("monthly_malus", "Havi malusz", -monthly_malus),
+        signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
+        signed_item("returned_route", "Visszavett kor", -returned_route),
+        signed_item("loyalty_bonus", "Lojalitasi bonusz", loyalty),
+        signed_item("customer_rating", "Ugyfelertekelesi bonusz", customer_rating),
+    ]
+    bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]]
+    bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)
+
     route_items = [
         count_item("orders", "Cím", money_from(row, "orders", "order_count")),
         count_item("routes", "Kör", money_from(row, "route_count", "routes")),
@@ -2000,6 +2126,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         },
         {"key": "income", "label": "Jóváírások", "amountHuf": income_total, "tone": "income", "items": income_items},
         {"key": "deductions", "label": "Levonások / korrekciók", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "bonus_malus", "label": "Bonusz / Malusz", "amountHuf": bonus_malus_total, "tone": "info", "items": bonus_malus_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
     overrides = read_mobile_breakdown_overrides(courier_id, month)
@@ -2677,6 +2804,41 @@ def manual_invoice_skip_enabled(states: dict[str, dict]) -> bool:
     return workflow_done(states, "manual_invoice_skip")
 
 
+def courier_has_efo_assignment(user: dict[str, Any], month: date) -> bool:
+    courier_id, _courier_name = courier_identity(user)
+    period_start = month.replace(day=1)
+    period_end = month_end(period_start)
+    rows = optional_supabase_rows(
+        "courier_efo_assignment",
+        schema="settlement",
+        params={
+            "select": "valid_from,valid_to",
+            "courier_id": f"eq.{courier_id}",
+            "is_active": "eq.true",
+            "deleted_at": "is.null",
+            "valid_from": f"lte.{period_end.isoformat()}",
+            "order": "valid_from.desc",
+            "limit": "20",
+        },
+    )
+    for row in rows:
+        valid_to = str(row.get("valid_to") or "")[:10]
+        if not valid_to or valid_to >= period_start.isoformat():
+            return True
+    return False
+
+
+def open_payment_waiting_status(user: dict[str, Any], month: date, note: str, process_id: str | None = "") -> None:
+    upsert_workflow_status(
+        user,
+        month,
+        "invoice_payment",
+        "open",
+        note,
+        process_id,
+    )
+
+
 def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> dict[str, Any]:
     if not enabled or not result or result.get("ok"):
         return result
@@ -2845,6 +3007,12 @@ def build_workflow(
     }
     if not process_id and not amount_access:
         financial_breakdown = hidden_financial_breakdown(month)
+    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown) if not process_id else {
+        "available": False,
+        "month": month.strftime("%Y-%m"),
+        "message": "Egyedi folyamatnĂˇl nincs havi TIG bontĂˇs.",
+        "rows": [],
+    }
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
     complaints = [
         row for row in complaints
@@ -2874,10 +3042,13 @@ def build_workflow(
     process_settlement_ready = process_invoice_flow_ready
     settlement_ready = process_settlement_ready or bool(document_groups["settlement"]) or bool(financial_breakdown.get("available"))
     settlement_done = workflow_done(states, "settlement") or process_settlement_ready
-    tig_done = workflow_done(states, "tig") or process_invoice_flow_ready
+    efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
-    invoice_submit_done = workflow_done(states, "invoice_submit") or (manual_invoice_skip and tig_done)
-    invoice_check_done = workflow_done(states, "invoice_check") or (manual_invoice_skip and tig_done)
+    invoice_skip = manual_invoice_skip or efo_invoice_skip
+    tig_ready = bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
+    tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (invoice_skip and settlement_done)
+    invoice_submit_done = workflow_done(states, "invoice_submit") or (invoice_skip and tig_done)
+    invoice_check_done = workflow_done(states, "invoice_check") or (invoice_skip and tig_done)
 
     steps = [
         {
@@ -2900,17 +3071,17 @@ def build_workflow(
             "key": "tig_document",
             "title": "TIG nem szükséges ehhez a folyamathoz" if process_id else (
                 "TIG elkészült"
-                if document_groups["tig"]
+                if tig_ready
                 else "Várakozás a TIG elkészítésére"
             ),
-            "done": bool(document_groups["tig"]) or process_invoice_flow_ready,
+            "done": tig_ready or process_invoice_flow_ready,
             "locked": not settlement_done,
         },
         {
             "key": "tig",
             "title": "TIG elfogadása",
             "done": tig_done,
-            "locked": not settlement_done or (not process_id and not bool(document_groups["tig"])),
+            "locked": not settlement_done or (not process_id and not tig_ready),
         },
         {
             "key": "invoice_submit",
@@ -2937,6 +3108,62 @@ def build_workflow(
     ]
     if financial_breakdown.get("available") and not document_groups["settlement"]:
         steps[0]["title"] = "Havi pénzügyi adatok elkészültek"
+    if efo_invoice_skip:
+        efo_step_updates = {
+            "tig_document": {
+                "title": "TIG nem szükséges EFO folyamatnál",
+                "done": settlement_done,
+                "locked": not settlement_done,
+            },
+            "tig": {
+                "title": "TIG nem szükséges EFO folyamatnál",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_submit": {
+                "title": "Számlafeltöltés nem szükséges EFO folyamatnál",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_check": {
+                "title": "Számlaellenőrzés nem szükséges EFO folyamatnál",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_payment": {
+                "locked": not settlement_done,
+            },
+        }
+        for step in steps:
+            step.update(efo_step_updates.get(str(step.get("key") or ""), {}))
+    elif manual_invoice_skip:
+        manual_step_updates = {
+            "tig_document": {
+                "title": "TIG kézzel kihagyva",
+                "done": settlement_done,
+                "locked": not settlement_done,
+            },
+            "tig": {
+                "title": "TIG kézzel kihagyva",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_submit": {
+                "title": "Számlafeltöltés kézzel kihagyva",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_check": {
+                "title": "Számlaellenőrzés kézzel kihagyva",
+                "done": settlement_done,
+                "locked": True,
+            },
+            "invoice_payment": {
+                "locked": not settlement_done,
+            },
+        }
+        for step in steps:
+            step.update(manual_step_updates.get(str(step.get("key") or ""), {}))
     safe_documents: dict[str, list[dict[str, Any]]] = {}
     for document_type, rows in document_groups.items():
         safe_documents[document_type] = [
@@ -2998,10 +3225,12 @@ def build_workflow(
         "states": states,
         "documents": safe_documents,
         "financialBreakdown": financial_breakdown,
+        "tigBreakdown": tig_breakdown,
         "complaints": complaints_by_action,
         "complaintResponses": response_documents_by_action,
         "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
         "invoiceValidationOverride": invoice_validation_override_enabled(states),
+        "efoInvoiceSkip": efo_invoice_skip,
         "manualInvoiceSkip": manual_invoice_skip,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -3050,6 +3279,10 @@ def expected_tig_amount(user: dict[str, Any], month: date) -> int:
             amount = 0
         if amount:
             return amount
+    financial_breakdown = build_financial_breakdown(user, month)
+    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown)
+    if tig_breakdown.get("available"):
+        return money_int(tig_breakdown.get("finalTotalHuf"))
     return 0
 
 
@@ -4046,8 +4279,10 @@ def accept_workflow_document(
         if process_id_from_action_key(str(row.get("document_type") or "")) == process_id
     ]
     has_action_document = any(base_action_key(str(row.get("document_type") or "")) == action for row in documents)
-    has_financial_breakdown = action == "settlement" and bool(build_financial_breakdown(user, month).get("available"))
-    if not has_action_document and not has_financial_breakdown:
+    financial_breakdown = build_financial_breakdown(user, month)
+    has_financial_breakdown = action == "settlement" and bool(financial_breakdown.get("available"))
+    has_tig_breakdown = action == "tig" and bool(build_workflow_tig_breakdown(user, month, financial_breakdown).get("available"))
+    if not has_action_document and not has_financial_breakdown and not has_tig_breakdown:
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
     if has_open_complaint(complaints, action) and not complaints_ignored_for_billing(states):
         raise HTTPException(
@@ -4062,7 +4297,42 @@ def accept_workflow_document(
         "A futár elfogadta a dokumentumot.",
         process_id,
     )
-    if action == "settlement":
+    efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
+    manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
+    invoice_skip = efo_invoice_skip or manual_invoice_skip
+    skip_note_prefix = "EFO folyamat" if efo_invoice_skip else "Admin kézi továbbengedés"
+    if action == "settlement" and invoice_skip:
+        upsert_workflow_status(
+            user,
+            month,
+            "tig",
+            "done",
+            f"{skip_note_prefix}: TIG nem szükséges.",
+            process_id,
+        )
+        upsert_workflow_status(
+            user,
+            month,
+            "invoice_submit",
+            "done",
+            f"{skip_note_prefix}: számlafeltöltés nem szükséges.",
+            process_id,
+        )
+        upsert_workflow_status(
+            user,
+            month,
+            "invoice_check",
+            "done",
+            f"{skip_note_prefix}: számlaellenőrzés nem szükséges.",
+            process_id,
+        )
+        open_payment_waiting_status(
+            user,
+            month,
+            f"{skip_note_prefix}: elszámolás elfogadva, admin kifizetésre vár.",
+            process_id,
+        )
+    elif action == "settlement":
         generate_tig_after_settlement_accept(user, month, process_id)
     if action == "tig" and not process_id and manual_invoice_skip_enabled(states):
         upsert_workflow_status(
@@ -4071,6 +4341,12 @@ def accept_workflow_document(
             "invoice_submit",
             "done",
             "Számlafeltöltés kézzel kihagyva.",
+            process_id,
+        )
+        open_payment_waiting_status(
+            user,
+            month,
+            "Számlázás kézzel kihagyva, admin kifizetésre vár.",
             process_id,
         )
         upsert_workflow_status(

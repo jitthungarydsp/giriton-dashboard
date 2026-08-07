@@ -1180,7 +1180,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     </section>
     <div class="financial-card-grid">
       ${cards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")}" ${card.key === "payable" ? "open" : ""}>
+        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
           <summary>
             <span>${escapeHtml(card.label)}</span>
             <strong>${formatFinancialValue(card)}</strong>
@@ -1243,6 +1243,36 @@ function renderLegacySettlementDocumentPanel(documents, complaints, accepted, lo
   `;
 }
 
+function tigValue(value) {
+  return formatHuf(Number(value || 0));
+}
+
+function renderTigBreakdown() {
+  const tig = state.workflow?.tigBreakdown || {};
+  if (!tig.available) {
+    return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
+  }
+  const rows = tig.rows || [];
+  return `
+    <section class="tig-total-card">
+      <span>TIG vegosszeg</span>
+      <strong>${tigValue(tig.finalTotalHuf)}</strong>
+      <small>${escapeHtml(tig.month || state.workflowMonth)} · ${escapeHtml(tig.taxLabel || "")}</small>
+    </section>
+    <div class="tig-table">
+      <div class="tig-row head"><span>Tetel</span><span>Netto</span><span>AFA</span><span>Brutto</span></div>
+      ${rows.map((row) => `
+        <div class="tig-row ${row.key === "cash_deduction" ? "deduction" : ""}">
+          <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
+          <span>${tigValue(row.netHuf)}</span>
+          <span>${row.vatLabel ? escapeHtml(row.vatLabel) : tigValue(row.vatHuf)}</span>
+          <span>${tigValue(row.grossHuf)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function isExtraWorkflow() {
   return Boolean(state.workflow?.process);
 }
@@ -1282,6 +1312,38 @@ function renderDocumentPanel(action, title, stepNumber) {
             ? renderLegacySettlementDocumentPanel(documents, complaints, accepted, locked, blocksAcceptance, readOnly)
           : renderFinancialBreakdown(locked, accepted, blocksAcceptance)}
     `;
+    const acceptButton = $(`#accept-${action}`);
+    if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
+    const complaintForm = $(`#complaint-${action}`);
+    if (complaintForm) complaintForm.addEventListener("submit", (event) => submitComplaint(event, action));
+    return;
+  }
+  if (action === "tig" && !isExtraWorkflow()) {
+    const tig = state.workflow?.tigBreakdown || {};
+    const tigReady = Boolean(tig.available);
+    panel.innerHTML = `
+      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, KP sorral és KP levonással.</p></div></div>
+      ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : renderTigBreakdown()}
+      ${!locked && documents.length ? documentList(documents) : ""}
+      ${accepted
+        ? `<div class="accept-row done">A TIG-et elfogadtad.</div>`
+        : readOnly
+          ? `<div class="accept-row"><button class="primary" disabled>Előnézeti módban nem módosítható</button></div>`
+        : tigReady && !locked && !blocksAcceptance
+          ? `<div class="accept-row"><button class="primary" id="accept-${action}">Elfogadom a TIG-et</button></div>`
+        : tigReady && !locked && blocksAcceptance
+          ? `<div class="accept-row"><button class="primary" disabled>Reklamáció lezárásáig nem fogadható el</button></div>`
+          : ""}
+      ${!locked && tigReady ? `<div class="complaint-box">
+        <strong>Reklamáció</strong>
+        ${complaintList(complaints)}
+        ${complaintResponseList(complaintResponses)}
+        ${hasOpenComplaintForAction
+          ? `<div class="notice">Már van nyitott reklamáció ehhez a lépéshez. Új rekordot az előző lezárása után tudsz küldeni.</div>`
+          : readOnly
+            ? `<div class="notice">Előnézeti módban reklamáció nem küldhető.</div>`
+          : `<form id="complaint-${action}"><label>Mi a gond?<textarea name="message" placeholder="Írd le röviden, mit kell javítani vagy ellenőrizni." required></textarea></label><button class="secondary" type="submit">Reklamáció küldése</button></form>`}
+      </div>` : ""}`;
     const acceptButton = $(`#accept-${action}`);
     if (acceptButton) acceptButton.addEventListener("click", () => acceptDocument(action));
     const complaintForm = $(`#complaint-${action}`);
@@ -1364,12 +1426,14 @@ function renderWorkflow() {
   let overrideNotice = state.workflow?.invoiceValidationOverride
     ? `<div class="notice">Admin továbbengedés aktív: a számlaellenőrzési hibák figyelmeztetésként kezelődnek.</div>`
     : "";
-  if (state.workflow?.manualInvoiceSkip) {
+  if (state.workflow?.efoInvoiceSkip) {
+    overrideNotice += `<div class="notice">EFO folyamat: számla nem szükséges, a folyamat admin kifizetésre vár.</div>`;
+  } else if (state.workflow?.manualInvoiceSkip) {
     overrideNotice += `<div class="notice">SzĂˇmlafeltĂ¶ltĂ©s kĂ©zzel kihagyva, a folyamat admin kifizetĂ©sre vĂˇr.</div>`;
   }
   const checkInfo = $("#invoice-check-info");
   if (checkInfo) {
-    const checkDone = !state.workflow?.manualInvoiceSkip && state.workflow?.states?.invoice_check?.status === "done";
+    const checkDone = !state.workflow?.manualInvoiceSkip && !state.workflow?.efoInvoiceSkip && state.workflow?.states?.invoice_check?.status === "done";
     const checkOpen = state.workflow?.states?.invoice_check?.status === "open";
     checkInfo.innerHTML = `${previewNotice}${overrideNotice}${checkDone ? `<div class="notice">A feltöltött számla ellenőrzése sikeres.</div>` : ""}${checkOpen ? `<div class="notice error">A számla manuális ellenőrzésre került, kérlek légy türelemmel.</div>` : ""}${complaintList(state.workflow?.complaints?.invoice_check || [])}`;
   }
@@ -1544,7 +1608,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=50");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=55");
   }
   return navigator.serviceWorker.ready;
 }

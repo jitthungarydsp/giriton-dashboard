@@ -157,6 +157,18 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-complaint-options .checkbox-line { align-items: flex-start; }
 .financial-complaint-options span { display: grid; gap: 2px; }
 .financial-complaint-options strong { color: var(--ink); font-size: 12px; }
+.tig-total-card { display: grid; gap: 6px; margin-top: 18px; padding: 18px; border-radius: 18px; background: #20352a; color: #fff; text-align: center; box-shadow: 0 14px 32px #17231c20; }
+.tig-total-card span { color: #cfe88f; font-size: 11px; font-weight: 850; text-transform: uppercase; }
+.tig-total-card strong { font-size: 31px; line-height: 1; overflow-wrap: anywhere; }
+.tig-total-card small { color: #d8e0d9; font-size: 11px; font-weight: 750; }
+.tig-table { display: grid; gap: 1px; margin-top: 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line); }
+.tig-row { display: grid; grid-template-columns: minmax(0, 1.5fr) .8fr .7fr .9fr; gap: 8px; align-items: center; padding: 12px; background: #f9faf8; font-size: 12px; }
+.tig-row.head { min-height: 42px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.tig-row span:not(:first-child) { text-align: right; font-weight: 850; overflow-wrap: anywhere; }
+.tig-row strong { display: block; font-size: 13px; }
+.tig-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.25; }
+.tig-row.deduction { background: #fff0ef; color: var(--danger); }
+.tig-row.deduction small { color: #9d5956; }
 .process-form { margin-top: 18px; }
 .process-form.two-column { grid-template-columns: 1fr; }
 .full-width { grid-column: 1 / -1; }
@@ -236,4 +248,13 @@ textarea { min-height: 96px; resize: vertical; }
   .workflow-header { grid-template-columns: 1fr auto; }
   .process-form.two-column { grid-template-columns: 1fr 1fr; }
   .bottom-nav { right: calc((100vw - 760px) / 2); left: calc((100vw - 760px) / 2); border-right: 1px solid var(--line); border-left: 1px solid var(--line); }
+}
+
+@media (max-width: 430px) {
+  .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
+  .tig-row.head { display: none; }
+  .tig-row span:first-child { grid-column: 1 / -1; }
+  .tig-row span:nth-child(2)::before { content: "Netto: "; color: var(--muted); font-weight: 750; }
+  .tig-row span:nth-child(3)::before { content: "AFA: "; color: var(--muted); font-weight: 750; }
+  .tig-row span:nth-child(4)::before { content: "Brutto: "; color: var(--muted); font-weight: 750; }
 }

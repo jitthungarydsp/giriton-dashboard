@@ -21,7 +21,7 @@ from resources.settlement_processor import (
     report_as_dict,
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
-from resources.settlement_pdf import build_settlement_pdf, build_tig_pdf
+from resources.settlement_pdf import build_settlement_pdf, build_tig_breakdown, build_tig_pdf
 from resources.courier_master_db import update_courier_master_profile
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
@@ -1538,6 +1538,36 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
     ]
+
+
+def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: pd.DataFrame | None = None) -> pd.DataFrame:
+    rows = []
+    override_map = {}
+    if isinstance(overrides, pd.DataFrame) and not overrides.empty:
+        override_map = {
+            str(item.get("item_key") or ""): item
+            for item in overrides.to_dict("records")
+            if str(item.get("item_key") or "").startswith("tig_")
+        }
+    for item in tig_breakdown.get("rows") or []:
+        item_key = f"tig_{item.get('key') or ''}"
+        override = override_map.get(item_key, {})
+        rows.append({
+            "Kulcs": item_key,
+            "MegnevezĂ©s": str(override.get("item_label") or item.get("label") or item_key),
+            "TĂ­pus": "huf",
+            "Ă‰rtĂ©k": parse_huf_value(override.get("amount_value") if override else item.get("grossHuf")),
+            "MegjegyzĂ©s": str(override.get("note") or item.get("note") or ""),
+        })
+    final_override = override_map.get("tig_final_total", {})
+    rows.append({
+        "Kulcs": "tig_final_total",
+        "MegnevezĂ©s": str(final_override.get("item_label") or "TIG vĂ©gĂ¶sszeg"),
+        "TĂ­pus": "huf",
+        "Ă‰rtĂ©k": parse_huf_value(final_override.get("amount_value") if final_override else tig_breakdown.get("finalTotalHuf")),
+        "MegjegyzĂ©s": str(final_override.get("note") or "TIG elfogadĂˇsnĂˇl lĂˇthatĂł vĂ©gĂ¶sszeg"),
+    })
+    return pd.DataFrame(rows, columns=["Kulcs", "MegnevezĂ©s", "TĂ­pus", "Ă‰rtĂ©k", "MegjegyzĂ©s"])
 
 
 def publish_mobile_settlement_snapshot(
@@ -6867,6 +6897,52 @@ def show_courier_dialog() -> None:
             else:
                 st.error("A mobil értékek mentése sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
 
+        tig_breakdown = build_tig_breakdown(
+            {
+                "name": row["FutĂˇr"],
+                "company_name": profile.get("company_name") or row["FutĂˇr"],
+                "address": profile.get("address") or profile.get("company_address") or "",
+                "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                "vat_status": profile.get("vat_status") or "",
+                "id": courier_id,
+                "document_month": period_start,
+            },
+            {
+                "payable": payable_total,
+                "cash": abs(atm_deduction_total),
+                "tip": tip_total,
+            },
+        )
+        st.markdown("#### Mobilon lĂˇthatĂł TIG")
+        st.caption("A TIG is az oldalon jelenik meg. A KP kĂĽlĂ¶n sor, a KP levonĂˇsa kĂĽlĂ¶n sor.")
+        edited_tig_mobile = st.data_editor(
+            tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides),
+            hide_index=True,
+            use_container_width=True,
+            key=f"mobile_tig_breakdown_editor_{courier_id}_{period_start:%Y%m}",
+            disabled=["Kulcs", "TĂ­pus"],
+            column_config={
+                "Kulcs": st.column_config.TextColumn("Kulcs"),
+                "MegnevezĂ©s": st.column_config.TextColumn("MegnevezĂ©s"),
+                "TĂ­pus": st.column_config.SelectboxColumn("TĂ­pus", options=["huf", "count"], required=True),
+                "Ă‰rtĂ©k": st.column_config.NumberColumn("Ă‰rtĂ©k", step=1, format="%d"),
+                "MegjegyzĂ©s": st.column_config.TextColumn("MegjegyzĂ©s"),
+            },
+        )
+        if st.button("TIG mobil Ă©rtĂ©kek mentĂ©se", type="primary", use_container_width=True, key=f"save_mobile_tig_breakdown_{courier_id}_{period_start:%Y%m}"):
+            saved = save_mobile_breakdown_overrides(
+                courier_id,
+                period_start,
+                edited_tig_mobile.to_dict("records"),
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
+            if saved:
+                st.success("Mobilon lĂˇthatĂł TIG mentve.")
+                st.rerun()
+            else:
+                st.error("A TIG mobil Ă©rtĂ©kek mentĂ©se sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
+
         payable_sources = pd.DataFrame([
             {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
@@ -7766,8 +7842,7 @@ def show_courier_dialog() -> None:
         manual_invoice_skip_active = str(
             (status_by_action.get("manual_invoice_skip") or {}).get("status") or ""
         ).casefold() == "done"
-        tig_accepted = str((status_by_action.get("tig") or {}).get("status") or "").casefold() == "done"
-        skip_col, reset_skip_col = st.columns(2)
+        skip_col, reset_skip_col, open_billing_col = st.columns(3)
         if skip_col.button(
             "Számlázás kihagyása kézzel",
             type="primary",
@@ -7785,20 +7860,21 @@ def show_courier_dialog() -> None:
                     status_note="Admin kézzel kihagyta a számlafeltöltést ehhez a havi folyamathoz.",
                     updated_by=actor,
                 )
-                if tig_accepted:
-                    for skipped_action, skipped_note in [
-                        ("invoice_submit", "Számlafeltöltés kézzel kihagyva."),
-                        ("invoice_check", "Számlaellenőrzés kézzel kihagyva."),
-                    ]:
-                        upsert_peopleforce_card_status(
-                            courier_id=courier_id,
-                            courier_name=str(row["Futár"]),
-                            action_key=skipped_action,
-                            document_month=workflow_month,
-                            status="done",
-                            status_note=skipped_note,
-                            updated_by=actor,
-                        )
+                for skipped_action, skipped_status, skipped_note in [
+                    ("tig", "done", "TIG kézzel kihagyva."),
+                    ("invoice_submit", "done", "Számlafeltöltés kézzel kihagyva."),
+                    ("invoice_check", "done", "Számlaellenőrzés kézzel kihagyva."),
+                    ("invoice_payment", "open", "Számlázás kézzel kihagyva, admin kifizetésre vár."),
+                ]:
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        action_key=skipped_action,
+                        document_month=workflow_month,
+                        status=skipped_status,
+                        status_note=skipped_note,
+                        updated_by=actor,
+                    )
                 st.success("A számlázás kézi kihagyása beállítva.")
                 st.rerun()
             except Exception as exc:
@@ -7819,10 +7895,49 @@ def show_courier_dialog() -> None:
                     status_note="Admin visszaállította a normál számlázási folyamatot.",
                     updated_by=actor,
                 )
+                for reopened_action in ["tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+                    upsert_peopleforce_card_status(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        action_key=reopened_action,
+                        document_month=workflow_month,
+                        status="open",
+                        status_note="Normál számlázási folyamat visszaállítva.",
+                        updated_by=actor,
+                    )
                 st.success("A normál számlázási folyamat visszaállítva.")
                 st.rerun()
             except Exception as exc:
                 st.error(f"A normál számlázás visszaállítása sikertelen: {exc}")
+        if open_billing_col.button(
+            "Egyedi havi számlázás nyitása",
+            type="primary",
+            use_container_width=True,
+            disabled=closure_done,
+            key=f"docs_open_individual_month_{courier_id}_{workflow_month:%Y%m}",
+            help="Teszteléshez publikálja az adott futár havi elszámolását, és feltölti az elszámolás/TIG dokumentumokat.",
+        ):
+            try:
+                deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
+                    row.to_dict() if hasattr(row, "to_dict") else dict(row),
+                    period_start,
+                    period_end,
+                    active_calculation_mode,
+                    st.session_state.get("new_warehouse", "Összes"),
+                    session_id,
+                    actor,
+                )
+                if courier_count:
+                    st.success(
+                        "Egyedi havi számlázás megnyitva: "
+                        f"{uploaded_count} dokumentum feltöltve"
+                        + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                    )
+                    st.rerun()
+                else:
+                    st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont.")
+            except Exception as exc:
+                st.error(f"Az egyedi havi számlázás nyitása sikertelen: {exc}")
         status_rows = []
         for action_key, action_label in workflow_action_labels.items():
             saved_status = status_by_action.get(action_key, {})
