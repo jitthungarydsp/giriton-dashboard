@@ -17,6 +17,18 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def load_dotenv_if_available():
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+
+    load_dotenv(PROJECT_ROOT / ".env")
+
+
+load_dotenv_if_available()
+
+
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 DEFAULT_START_DATE = "2026-06-01"
 TARGET_TABLE = "mart_dsp_route_stories"

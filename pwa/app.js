@@ -302,6 +302,54 @@ function routeStoryDistance(label, value) {
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatAverage(numeric)} km</strong></div>`;
 }
 
+function routeStoryDelayLabel(story = {}) {
+  const lateStops = Number(story.timeWindowLateCount || 0);
+  const nextShiftDelay = Number(story.nextShiftDelayMinutes || 0);
+  const parts = [];
+  if (lateStops > 0) parts.push(`${formatCount(lateStops)} késéses cím`);
+  if (nextShiftDelay > 0) parts.push(`${formatCount(nextShiftDelay)} perc csúszás a következő műszakra`);
+  return parts.length ? `Igen - ${parts.join(" - ")}` : "Nem látszik késés";
+}
+
+function routeStoryShiftLabel(story = {}) {
+  const name = String(story.shiftName || "").trim();
+  const start = shortDateTime(story.shiftStart);
+  const end = shortDateTime(story.shiftEnd);
+  const time = start !== "-" || end !== "-" ? `${start} - ${end}` : "";
+  return [name, time].filter(Boolean).join(" - ") || "-";
+}
+
+function renderCurrentRouteStory(route) {
+  const story = route.routeStory || {};
+  if (!Object.keys(story).length) {
+    return `
+      <section class="route-timeline">
+        <div class="route-timeline-head">
+          <span>API számítás</span>
+          <strong>Nincs részletes mart adat</strong>
+        </div>
+      </section>
+    `;
+  }
+  return `
+    <section class="route-timeline">
+      <div class="route-timeline-head">
+        <span>API számítás</span>
+        <strong>${escapeHtml(routeStoryShiftLabel(story))}</strong>
+      </div>
+      <div class="route-timeline-grid">
+        ${routeStoryTime("Elérhető volt", story.queueStartedAt || story.availableForShiftSince || story.availableAt || story.courierRegisteredAt)}
+        ${routeStoryTime("Túrát kapott", story.assignedAt || route.routeAssignedAt)}
+        ${routeStoryMetric("Várakozott", story.queueWaitMinutes, " perc")}
+        ${routeStoryTime("Raktárat elhagyta", story.realDeparture || route.realDeparture)}
+        ${routeStoryTime("Tényleges visszaérkezés", story.realReturn || route.realReturn)}
+        <div class="stat-row"><span>Volt késése?</span><strong>${escapeHtml(routeStoryDelayLabel(story))}</strong></div>
+      </div>
+      ${story.storyText ? `<p class="route-story-text">${escapeHtml(story.storyText)}</p>` : ""}
+    </section>
+  `;
+}
+
 function renderRouteStoryDetails(row) {
   const story = row.routeStory || {};
   if (!Object.keys(story).length) {
@@ -618,6 +666,8 @@ function renderCurrentRoute() {
       <span>Visszaérkezésig</span>
       <strong>${escapeHtml(returnCountdownText(route.minutesUntilReturn))}</strong>
     </div>
+
+    ${renderCurrentRouteStory(route)}
 
     <div class="route-current">
       <span>Mostani cím</span>

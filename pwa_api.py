@@ -833,6 +833,79 @@ def minutes_until_route_return(route: dict[str, Any]) -> int | None:
     return max(0, int((planned - datetime.now(LOCAL_TIMEZONE)).total_seconds() // 60))
 
 
+def compact_route_story_row(story: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not story:
+        return None
+
+    def safe_float_value(value: Any) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "shiftName": str(story.get("shift_name") or ""),
+        "shiftStart": str(story.get("shift_start") or ""),
+        "shiftEnd": str(story.get("shift_end") or ""),
+        "availableAt": str(story.get("available_at") or ""),
+        "availableForShiftSince": str(story.get("available_for_shift_since") or ""),
+        "queueStartedAt": str(story.get("queue_started_at") or ""),
+        "routeCreatedAt": str(story.get("route_created_at") or ""),
+        "courierRegisteredAt": str(story.get("courier_registered_at") or ""),
+        "assignedAt": str(story.get("assigned_at") or ""),
+        "loadingTime": str(story.get("loading_time") or ""),
+        "plannedDeparture": str(story.get("planned_departure") or ""),
+        "realDeparture": str(story.get("real_departure") or ""),
+        "plannedReturn": str(story.get("planned_return") or ""),
+        "realReturn": str(story.get("real_return") or ""),
+        "queueEntryDeltaMinutes": safe_int(story.get("queue_entry_delta_minutes")),
+        "queueWaitMinutes": safe_int(story.get("queue_wait_minutes")),
+        "plannedLoadingMinutes": safe_int(story.get("planned_loading_minutes")),
+        "realLoadingMinutes": safe_int(story.get("real_loading_minutes")),
+        "plannedRouteMinutes": safe_int(story.get("planned_route_minutes")),
+        "realRouteMinutes": safe_int(story.get("real_route_minutes")),
+        "assignedToReturnMinutes": safe_int(story.get("assigned_to_return_minutes")),
+        "totalRouteMinutes": safe_int(story.get("total_route_minutes")),
+        "gpsDistanceKm": safe_float_value(story.get("gps_distance_km")),
+        "checkpointStraightKm": safe_float_value(story.get("checkpoint_straight_km")),
+        "addressCount": safe_int(story.get("address_count")),
+        "timeWindowLateCount": safe_int(story.get("time_window_late_count")),
+        "nextShiftDelayMinutes": safe_int(story.get("next_shift_delay_minutes")),
+        "assignmentMode": str(story.get("assignment_mode") or ""),
+        "storyText": str(story.get("story_text") or ""),
+    }
+
+
+def read_current_route_story(
+    courier_id: str,
+    route_id: Any,
+    work_date: date,
+) -> dict[str, Any] | None:
+    clean_route_id = str(route_id or "").strip()
+    if not clean_route_id:
+        return None
+    rows = optional_supabase_rows(
+        "mart_dsp_route_stories",
+        params={
+            "select": (
+                "work_date,route_id,warehouse_name,shift_name,shift_start,shift_end,"
+                "available_at,available_for_shift_since,queue_started_at,route_created_at,"
+                "courier_registered_at,assigned_at,loading_time,planned_departure,real_departure,"
+                "planned_return,real_return,queue_entry_delta_minutes,queue_wait_minutes,"
+                "planned_loading_minutes,real_loading_minutes,planned_route_minutes,real_route_minutes,"
+                "assigned_to_return_minutes,total_route_minutes,gps_distance_km,checkpoint_straight_km,"
+                "address_count,time_window_late_count,next_shift_delay_minutes,assignment_mode,story_text"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "route_id": f"eq.{clean_route_id}",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    return compact_route_story_row(rows[0] if rows else None)
+
+
 def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
@@ -909,6 +982,7 @@ def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
+    courier_id, _courier_name = courier_identity(user)
     payload = fetch_driver_detail(user)
     routes = payload.get("routes") or []
     route = active_route(routes)
@@ -942,43 +1016,56 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
         else None
     )
 
+    route_id = route.get("id") or route.get("routeId")
+    route_date = (
+        local_datetime(route.get("plannedDeparture"))
+        or local_datetime(route.get("realDeparture"))
+        or local_datetime(route.get("assignedAt"))
+        or datetime.now(LOCAL_TIMEZONE)
+    ).date()
+    route_story = read_current_route_story(courier_id, route_id, route_date)
+
+    route_payload = {
+        "routeId": route_id,
+        "warehouse": payload.get("warehouseName") or "",
+        "status": route.get("status"),
+        "totalOrders": int(route.get("numTotalOrders") or 0),
+        "deliveredOrders": int(route.get("numDeliveredOrders") or 0),
+        "plannedDeparture": local_iso_time(route.get("plannedDeparture")),
+        "realDeparture": local_iso_time(route.get("realDeparture")),
+        "plannedReturn": local_iso_time(route.get("plannedReturn")),
+        "realReturn": local_iso_time(route.get("realReturn")),
+        "minutesUntilReturn": minutes_until_route_return(route),
+        "previous": {
+            "orderId": str((previous_checkpoint or {}).get("orderId") or ""),
+            "position": (previous_checkpoint or {}).get("position"),
+            "address": str((previous_checkpoint or {}).get("address") or ""),
+        } if previous_checkpoint else None,
+        "current": {
+            "orderId": str((current_checkpoint or {}).get("orderId") or ""),
+            "position": (current_checkpoint or {}).get("position"),
+            "address": str((current_checkpoint or {}).get("address") or ""),
+            "windowFrom": local_iso_time((current_checkpoint or {}).get("deliverSince")),
+            "windowTo": local_iso_time((current_checkpoint or {}).get("deliverTill")),
+            "plannedArrival": local_iso_time((current_checkpoint or {}).get("plannedArrivalTime")),
+            "estimatedArrival": local_iso_time((current_checkpoint or {}).get("estimatedArrivalTime")),
+            "realArrival": local_iso_time((current_checkpoint or {}).get("realArrivalTime")),
+        } if current_checkpoint else None,
+        "next": {
+            "orderId": str((next_checkpoint or {}).get("orderId") or ""),
+            "position": (next_checkpoint or {}).get("position"),
+            "address": str((next_checkpoint or {}).get("address") or ""),
+            "windowFrom": local_iso_time((next_checkpoint or {}).get("deliverSince")),
+            "windowTo": local_iso_time((next_checkpoint or {}).get("deliverTill")),
+        } if next_checkpoint else None,
+    }
+    if route_story:
+        route_payload["routeStory"] = route_story
+
     return {
         "found": True,
         "totalRoutes": len(routes),
-        "route": {
-            "routeId": route.get("id") or route.get("routeId"),
-            "warehouse": payload.get("warehouseName") or "",
-            "status": route.get("status"),
-            "totalOrders": int(route.get("numTotalOrders") or 0),
-            "deliveredOrders": int(route.get("numDeliveredOrders") or 0),
-            "plannedDeparture": local_iso_time(route.get("plannedDeparture")),
-            "realDeparture": local_iso_time(route.get("realDeparture")),
-            "plannedReturn": local_iso_time(route.get("plannedReturn")),
-            "realReturn": local_iso_time(route.get("realReturn")),
-            "minutesUntilReturn": minutes_until_route_return(route),
-            "previous": {
-                "orderId": str((previous_checkpoint or {}).get("orderId") or ""),
-                "position": (previous_checkpoint or {}).get("position"),
-                "address": str((previous_checkpoint or {}).get("address") or ""),
-            } if previous_checkpoint else None,
-            "current": {
-                "orderId": str((current_checkpoint or {}).get("orderId") or ""),
-                "position": (current_checkpoint or {}).get("position"),
-                "address": str((current_checkpoint or {}).get("address") or ""),
-                "windowFrom": local_iso_time((current_checkpoint or {}).get("deliverSince")),
-                "windowTo": local_iso_time((current_checkpoint or {}).get("deliverTill")),
-                "plannedArrival": local_iso_time((current_checkpoint or {}).get("plannedArrivalTime")),
-                "estimatedArrival": local_iso_time((current_checkpoint or {}).get("estimatedArrivalTime")),
-                "realArrival": local_iso_time((current_checkpoint or {}).get("realArrivalTime")),
-            } if current_checkpoint else None,
-            "next": {
-                "orderId": str((next_checkpoint or {}).get("orderId") or ""),
-                "position": (next_checkpoint or {}).get("position"),
-                "address": str((next_checkpoint or {}).get("address") or ""),
-                "windowFrom": local_iso_time((next_checkpoint or {}).get("deliverSince")),
-                "windowTo": local_iso_time((next_checkpoint or {}).get("deliverTill")),
-            } if next_checkpoint else None,
-        },
+        "route": route_payload,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -2310,45 +2397,10 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "isLateDeparture": departure_delay > 0,
         }
 
-    def compact_story_row(story: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not story:
-            return None
-        return {
-            "shiftName": str(story.get("shift_name") or ""),
-            "shiftStart": str(story.get("shift_start") or ""),
-            "shiftEnd": str(story.get("shift_end") or ""),
-            "availableAt": str(story.get("available_at") or ""),
-            "availableForShiftSince": str(story.get("available_for_shift_since") or ""),
-            "queueStartedAt": str(story.get("queue_started_at") or ""),
-            "routeCreatedAt": str(story.get("route_created_at") or ""),
-            "courierRegisteredAt": str(story.get("courier_registered_at") or ""),
-            "assignedAt": str(story.get("assigned_at") or ""),
-            "loadingTime": str(story.get("loading_time") or ""),
-            "plannedDeparture": str(story.get("planned_departure") or ""),
-            "realDeparture": str(story.get("real_departure") or ""),
-            "plannedReturn": str(story.get("planned_return") or ""),
-            "realReturn": str(story.get("real_return") or ""),
-            "queueEntryDeltaMinutes": safe_int(story.get("queue_entry_delta_minutes")),
-            "queueWaitMinutes": safe_int(story.get("queue_wait_minutes")),
-            "plannedLoadingMinutes": safe_int(story.get("planned_loading_minutes")),
-            "realLoadingMinutes": safe_int(story.get("real_loading_minutes")),
-            "plannedRouteMinutes": safe_int(story.get("planned_route_minutes")),
-            "realRouteMinutes": safe_int(story.get("real_route_minutes")),
-            "assignedToReturnMinutes": safe_int(story.get("assigned_to_return_minutes")),
-            "totalRouteMinutes": safe_int(story.get("total_route_minutes")),
-            "gpsDistanceKm": float(story.get("gps_distance_km") or 0),
-            "checkpointStraightKm": float(story.get("checkpoint_straight_km") or 0),
-            "addressCount": safe_int(story.get("address_count")),
-            "timeWindowLateCount": safe_int(story.get("time_window_late_count")),
-            "nextShiftDelayMinutes": safe_int(story.get("next_shift_delay_minutes")),
-            "assignmentMode": str(story.get("assignment_mode") or ""),
-            "storyText": str(story.get("story_text") or ""),
-        }
-
     def compact_history_row(row: dict[str, Any]) -> dict[str, Any]:
         work_date = str(row.get("work_date") or "")[:10]
         route_id = str(row.get("route_id") or "")
-        story = compact_story_row(stories_by_route.get((work_date, route_id)))
+        story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
             "date": str(row.get("work_date") or "")[:10],
             "routeId": route_id,
@@ -2394,7 +2446,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "mileageKm": 0,
             "vehicleOwnership": "",
         }
-        story = compact_story_row(stories_by_route.get((work_date, route_id)))
+        story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         if story:
             result["routeStory"] = story
         return result

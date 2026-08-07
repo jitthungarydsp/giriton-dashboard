@@ -107,6 +107,13 @@ textarea { min-height: 96px; resize: vertical; }
 .route-current span, .route-stop span { color: var(--green-dark); font-size: 11px; font-weight: 850; text-transform: uppercase; }
 .route-current strong { font-size: 17px; line-height: 1.35; }
 .route-current small, .route-stop small { color: var(--muted); font-weight: 700; }
+.route-timeline { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.route-timeline-head { display: grid; gap: 4px; }
+.route-timeline-head span { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-timeline-head strong { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+.route-timeline-grid { display: grid; gap: 8px; }
+.route-timeline .stat-row { align-items: flex-start; }
+.route-timeline .stat-row strong { max-width: 58%; text-align: right; overflow-wrap: anywhere; }
 .route-stop-list { display: grid; gap: 8px; }
 .route-stop { display: grid; grid-template-columns: 34px 1fr; gap: 11px; align-items: start; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .route-stop-index { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: #edf1eb; color: var(--muted); font-size: 13px; font-weight: 900; }

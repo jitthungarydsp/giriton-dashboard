@@ -127,6 +127,11 @@ def parse_args():
         help="Kompatibilitasi opcio: nem futtat SQL refresh-t.",
     )
     parser.add_argument("--skip-stories", action="store_true", help="Route story epites kihagyasa.")
+    parser.add_argument(
+        "--stories-only",
+        action="store_true",
+        help="Csak a mart_dsp_route_stories epiteset futtatja a mar meglevo raw/stage adatokbol.",
+    )
     return parser.parse_args()
 
 
@@ -147,63 +152,67 @@ def main():
     date_args = build_common_date_args(start_date, end_date)
     dry_run_arg = ["--dry-run"] if args.dry_run else []
 
-    run_command(
-        "Attendance raw DB frissites",
-        [
-            sys.executable,
-            "scripts/dsp_attendance_raw.py",
-            *date_args,
-            *dry_run_arg,
-        ],
-    )
-    run_command(
-        "Driver detail raw DB frissites",
-        [
-            sys.executable,
-            "scripts/load_driver_detail_raw.py",
-            "--all-drivers",
-            *date_args,
-            *dry_run_arg,
-        ],
-    )
-
-    if not args.skip_live:
+    if not args.stories_only:
         run_command(
-            "Live DSP route/km snapshot",
+            "Attendance raw DB frissites",
             [
                 sys.executable,
-                "scripts/load_drivers_live_raw.py",
+                "scripts/dsp_attendance_raw.py",
+                *date_args,
                 *dry_run_arg,
             ],
         )
-
-    if not args.skip_distance:
         run_command(
-            "Route kilometer szamitas",
+            "Driver detail raw DB frissites",
             [
                 sys.executable,
-                "scripts/calculate_route_distances.py",
+                "scripts/load_driver_detail_raw.py",
+                "--all-drivers",
                 *date_args,
                 *dry_run_arg,
             ],
         )
 
-    if args.run_sql_refresh and not args.skip_refresh:
-        if optional_database_url_exists():
+        if not args.skip_live:
             run_command(
-                "DSP stage/mart SQL frissites",
+                "Live DSP route/km snapshot",
                 [
                     sys.executable,
-                    "scripts/dsp_refresh_all.py",
+                    "scripts/load_drivers_live_raw.py",
+                    *dry_run_arg,
                 ],
-                optional=True,
             )
+
+        if not args.skip_distance:
+            run_command(
+                "Route kilometer szamitas",
+                [
+                    sys.executable,
+                    "scripts/calculate_route_distances.py",
+                    *date_args,
+                    *dry_run_arg,
+                ],
+            )
+
+        if args.run_sql_refresh and not args.skip_refresh:
+            if optional_database_url_exists():
+                run_command(
+                    "DSP stage/mart SQL frissites",
+                    [
+                        sys.executable,
+                        "scripts/dsp_refresh_all.py",
+                    ],
+                    optional=True,
+                )
+            else:
+                print("")
+                print("DSP stage/mart SQL frissites kihagyva: nincs DATABASE_URL/SUPABASE_DB_URL.")
         else:
             print("")
-            print("DSP stage/mart SQL frissites kihagyva: nincs DATABASE_URL/SUPABASE_DB_URL.")
+            print("DSP stage/mart SQL frissites alapbol kikapcsolva. Kapcsolo: --run-sql-refresh")
     else:
         print("")
-        print("DSP stage/mart SQL frissites alapbol kikapcsolva. Kapcsolo: --run-sql-refresh")
+        print("Csak DSP route story frissites fut (--stories-only).")
 
     if not args.skip_stories:
         route_story_date_args = (
