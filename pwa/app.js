@@ -20,7 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
-const APP_VERSION = "v62";
+const APP_VERSION = "v63";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -332,8 +332,13 @@ function buildDailyShiftReport(rows = []) {
     return acc;
   }, {});
   return Object.entries(grouped).map(([key, items], index) => {
-    const lateStartRows = items.filter((row) => Number(row.plannedStartDelayMinutes || 0) > 0);
-    const lateStopRows = items.filter((row) => Number(row.timeWindowLateCount || 0) > 0);
+    const hasApiQuality = items.some((row) => Number(row.apiShiftCount || 0) > 0 || Number(row.apiLateCount || 0) > 0 || Number(row.apiDelayedOrderCount || 0) > 0 || Number(row.apiDidNotComeCount || 0) > 0);
+    const lateStartRows = hasApiQuality
+      ? items.filter((row) => Number(row.apiLateCount || 0) > 0)
+      : items.filter((row) => Number(row.plannedStartDelayMinutes || 0) > 0);
+    const lateStopRows = hasApiQuality
+      ? items.filter((row) => Number(row.apiDelayedOrderCount || 0) > 0)
+      : items.filter((row) => Number(row.timeWindowLateCount || 0) > 0);
     const sameCheckin = uniqueText(items.map((row) => row.actualStartAt || row.shiftAvailableAt)).length === 1 && items.length > 1;
     return {
       key,
@@ -348,7 +353,7 @@ function buildDailyShiftReport(rows = []) {
 }
 
 function renderStatusBadge(ok) {
-  return `<span class="route-status-badge ${ok ? "ok" : "bad"}">${ok ? "✓" : ":("}</span>`;
+  return `<span class="route-status-badge ${ok ? "ok" : "bad"}">${ok ? ":)" : ":("}</span>`;
 }
 
 function renderDailyShiftReport(rows = []) {
@@ -435,12 +440,18 @@ function renderRouteStoryDetails(row) {
     || 0
   );
   const lateCount = Number(story.timeWindowLateCount || row.timeWindowLateCount || 0);
+  const apiDelayedOrders = Number(row.apiDelayedOrderCount || 0);
+  const apiLateCount = Number(row.apiLateCount || 0);
+  const hasApiQuality = Number(row.apiShiftCount || 0) > 0 || apiDelayedOrders > 0 || apiLateCount > 0 || Number(row.apiDidNotComeCount || 0) > 0;
   const lateMinutes = Number(row.timeWindowLateMinutes || 0);
   const maxDelay = Number(row.maxDelayMinutes || 0);
-  const lateText = lateCount || lateMinutes || maxDelay
-    ? `${formatCount(lateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
+  const visibleLateCount = hasApiQuality ? apiDelayedOrders : lateCount;
+  const lateText = visibleLateCount || lateMinutes || maxDelay
+    ? `${formatCount(visibleLateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
     : "Nincs";
-  const routeOk = Number(row.plannedStartDelayMinutes || 0) <= 0 && lateCount <= 0;
+  const routeOk = hasApiQuality
+    ? apiLateCount <= 0 && apiDelayedOrders <= 0
+    : Number(row.plannedStartDelayMinutes || 0) <= 0 && lateCount <= 0;
   return `
     <div class="daily-route-story">
       <div class="route-quality-head">
@@ -514,7 +525,8 @@ function renderDailyHistory(payload) {
   const stops = selectedRows.reduce((sum, row) => sum + Number(row.stops || 0), 0);
   const mileage = selectedRows.reduce((sum, row) => sum + Number(row.mileageKm || 0), 0);
   const routes = selectedRows.length;
-  const shifts = buildDailyShiftReport(selectedRows).length;
+  const apiShifts = selectedRows.reduce((max, row) => Math.max(max, Number(row.apiShiftCount || 0)), 0);
+  const shifts = apiShifts || buildDailyShiftReport(selectedRows).length;
   const routeRows = selectedRows.map((row) => `
     <details class="daily-route-details">
       <summary class="daily-route-row">
@@ -1771,7 +1783,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=62");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=63");
   }
   return navigator.serviceWorker.ready;
 }

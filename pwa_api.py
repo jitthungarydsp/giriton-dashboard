@@ -2560,6 +2560,15 @@ def route_row_lookup(rows: list[dict[str, Any]], date_key: str) -> dict[tuple[st
     return lookup
 
 
+def daily_performance_lookup(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        if work_date:
+            lookup[work_date] = row
+    return lookup
+
+
 def load_route_notes_for_courier(courier_id: str, period_start: date, period_end: date) -> dict[tuple[str, str], dict[str, Any]]:
     rows = optional_supabase_rows(
         "pwa_courier_route_notes",
@@ -2647,10 +2656,14 @@ def build_route_quality_records(
         story = row.get("routeStory") or {}
         shift_key = route_quality_shift_key(row)
         late_start_minutes = safe_int(row.get("plannedStartDelayMinutes"))
-        late_stop_count = safe_int(row.get("timeWindowLateCount"))
-        late_stop_minutes = safe_int(row.get("timeWindowLateMinutes"))
-        queued_on_time = late_start_minutes <= 0
-        no_late_stops = late_stop_count <= 0
+        route_late_stop_count = safe_int(row.get("timeWindowLateCount"))
+        route_late_stop_minutes = safe_int(row.get("timeWindowLateMinutes"))
+        api_late_count = safe_int(row.get("apiLateCount"))
+        api_delayed_orders = safe_int(row.get("apiDelayedOrderCount"))
+        has_api_daily_quality = any(key in row and row.get(key) not in (None, "") for key in ("apiLateCount", "apiDelayedOrderCount", "apiShiftCount"))
+        late_stop_count = api_delayed_orders if has_api_daily_quality else route_late_stop_count
+        late_stop_minutes = route_late_stop_minutes
+        queued_on_time = api_late_count <= 0 if has_api_daily_quality else late_start_minutes <= 0
         records.append({
             "courier_id": courier_id,
             "courier_name": courier_name,
@@ -2668,9 +2681,9 @@ def build_route_quality_records(
             "planned_return_at": time_or_none(story.get("plannedReturn") or row.get("plannedReturnAt")),
             "real_return_at": time_or_none(story.get("realReturn") or row.get("warehouseArrivedAt")),
             "queued_on_time": queued_on_time,
-            "no_late_stops": no_late_stops,
-            "quality_ok": queued_on_time and no_late_stops,
-            "late_start_minutes": late_start_minutes,
+            "no_late_stops": late_stop_count <= 0,
+            "quality_ok": queued_on_time and late_stop_count <= 0,
+            "late_start_minutes": api_late_count if has_api_daily_quality else late_start_minutes,
             "late_stop_count": late_stop_count,
             "late_stop_minutes": late_stop_minutes,
             "same_checkin_group": bool(same_checkin_by_shift.get(shift_key)),
@@ -2741,6 +2754,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     compliance_by_route = route_row_lookup(compliance_rows, "shift_date")
     delay_by_route = route_row_lookup(delay_rows, "delivery_date")
     route_overview_by_route = route_row_lookup(route_rows, "work_date")
+    daily_by_date = daily_performance_lookup(daily_rows)
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
@@ -2844,6 +2858,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         compliance_row = compliance_by_route.get(route_key, {})
         delay_row = delay_by_route.get(route_key, {})
         overview_row = route_overview_by_route.get(route_key, {})
+        daily_row = daily_by_date.get(work_date, {})
         note_row = route_notes.get(route_key, {})
         story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
@@ -2864,6 +2879,10 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "plannedStartDelayMinutes": safe_int(compliance_row.get("planned_start_delay_minutes")),
             "departureDelayMinutes": safe_int(compliance_row.get("departure_delay_minutes")),
             "returnDelayMinutes": safe_int(compliance_row.get("return_delay_minutes")),
+            "apiShiftCount": safe_int(daily_row.get("shift_count")),
+            "apiLateCount": safe_int(daily_row.get("late_count")),
+            "apiDidNotComeCount": safe_int(daily_row.get("did_not_come_count")),
+            "apiDelayedOrderCount": safe_int(daily_row.get("delayed_order_count")),
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
@@ -2886,6 +2905,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         compliance_row = compliance_by_route.get(route_key, {})
         delay_row = delay_by_route.get(route_key, {})
         overview_row = route_overview_by_route.get(route_key, route)
+        daily_row = daily_by_date.get(work_date, {})
         note_row = route_notes.get(route_key, {})
         story = compact_route_story_row(stories_by_route.get((work_date, route_id)))
         result = {
@@ -2906,6 +2926,10 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "plannedStartDelayMinutes": safe_int(compliance_row.get("planned_start_delay_minutes")),
             "departureDelayMinutes": safe_int(compliance_row.get("departure_delay_minutes")),
             "returnDelayMinutes": safe_int(compliance_row.get("return_delay_minutes")),
+            "apiShiftCount": safe_int(daily_row.get("shift_count")),
+            "apiLateCount": safe_int(daily_row.get("late_count")),
+            "apiDidNotComeCount": safe_int(daily_row.get("did_not_come_count")),
+            "apiDelayedOrderCount": safe_int(daily_row.get("delayed_order_count")),
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
