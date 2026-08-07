@@ -20,6 +20,7 @@ const state = {
   statisticsHistoryDate: "",
   section: "home",
 };
+const APP_VERSION = "v57";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -1460,7 +1461,7 @@ function renderWorkflow() {
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
   renderDocumentsSection();
-  $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")}`;
+  $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")} · ${APP_VERSION}`;
 }
 
 function showWorkflowMessage(message, isError = false) {
@@ -1621,7 +1622,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=56");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=57");
   }
   return navigator.serviceWorker.ready;
 }

@@ -4891,6 +4891,11 @@ app.mount("/assets", StaticFiles(directory=PWA_ROOT), name="pwa-assets")
 @app.get("/{path:path}")
 def pwa(path: str):
     requested = (PWA_ROOT / path).resolve()
+    no_store_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
     if path and requested.is_file() and PWA_ROOT.resolve() in requested.parents:
         media_types = {
             ".css": "text/css",
@@ -4898,5 +4903,6 @@ def pwa(path: str):
             ".svg": "image/svg+xml",
             ".webmanifest": "application/manifest+json",
         }
-        return FileResponse(requested, media_type=media_types.get(requested.suffix))
-    return FileResponse(PWA_ROOT / "index.html")
+        headers = no_store_headers if requested.name in {"sw.js", "index.html"} else {"Cache-Control": "public, max-age=300"}
+        return FileResponse(requested, media_type=media_types.get(requested.suffix), headers=headers)
+    return FileResponse(PWA_ROOT / "index.html", headers=no_store_headers)
