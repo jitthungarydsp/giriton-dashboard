@@ -225,7 +225,12 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
 def can_preview_couriers(user: dict[str, Any]) -> bool:
     username_key = normalize_text(user.get("username"))
     role = str(user.get("role") or "").strip().lower()
-    return role == "admin" or username_key == normalize_text("Bagoly Zoltán")
+    trainer_key = normalize_text(user.get("trainer"))
+    return (
+        role in {"admin", "coordinator", "superadmin"}
+        or username_key in {normalize_text("admin"), normalize_text("Bagoly Zoltán")}
+        or trainer_key == normalize_text("admin")
+    )
 
 
 def can_view_financial_amounts(user: dict[str, Any]) -> bool:
