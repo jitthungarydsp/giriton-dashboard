@@ -2016,7 +2016,7 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
             card["amountHuf"] = sum(
                 money_int(item.get("amountHuf"))
                 for item in card.get("items") or []
-                if str(item.get("amountKind") or "huf") == "huf"
+                if str(item.get("amountKind") or "huf") == "huf" and not item.get("excludeFromTotal")
             )
     return cards
 
@@ -2350,7 +2350,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         count_item("loyalty_current_routes", "Kifutott kör", money_from(row, "loyalty_current_normal_routes", "loyalty_current_route_count", "route_count", "routes")),
         count_item("loyalty_advance_booking_days", "Előre foglalt műszak", money_from(row, "loyalty_advance_booking_days", "advance_booking_days")),
-        signed_item("loyalty_rate", "Egységösszeg", money_from(row, "loyalty_rate_huf")),
+        {**signed_item("loyalty_rate", "Egységösszeg", money_from(row, "loyalty_rate_huf")), "excludeFromTotal": True},
         signed_item("loyalty_status", "Státusz", 0, note=str(row.get("loyalty_status") or row.get("Lojalitás státusz") or "")),
     ]
     customer_rating_items = [
@@ -2454,6 +2454,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         for card in cards
         for item in card["items"]
         if item["key"] not in {"income_total", "deduction_total", "payable_total"}
+        and not item.get("excludeFromTotal")
     ]
     visible_cards = [card for card in cards if card.get("key") != "deductions"]
     return {

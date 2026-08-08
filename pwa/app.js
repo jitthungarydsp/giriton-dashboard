@@ -21,7 +21,7 @@ const state = {
   statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v67";
+const APP_VERSION = "v68";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
