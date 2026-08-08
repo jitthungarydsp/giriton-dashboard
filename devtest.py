@@ -1730,11 +1730,108 @@ def _parse_booking_timestamp_date(value: object) -> date | None:
     return parsed.date()
 
 
+def _booking_operation_key(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _is_booking_change_operation(value: object) -> bool:
+    operation = _booking_operation_key(value)
+    if not operation:
+        return False
+    return any(
+        marker in operation
+        for marker in [
+            "modosit",
+            "modositas",
+            "torol",
+            "torles",
+            "lemond",
+            "lemondas",
+            "cancel",
+            "delete",
+            "modify",
+            "change",
+        ]
+    )
+
+
+def _is_clean_booking_operation(value: object) -> bool:
+    operation = _booking_operation_key(value)
+    if not operation:
+        return False
+    if _is_booking_change_operation(value):
+        return False
+    return any(marker in operation for marker in ["foglal", "book"])
+
+
+def _booked_by_period_cutoff(value: object, cutoff_date: date) -> bool:
+    booked_at = pd.to_datetime(value, errors="coerce")
+    return bool(pd.notna(booked_at) and booked_at.date() <= cutoff_date)
+
+
+def _loyalty_booking_shift_key(row: dict[str, object], *, include_driver: bool = False) -> tuple[str, ...]:
+    driver_key = _courier_id_key(row.get("courier_id")) or _courier_match_key(
+        row.get("courier_name") or row.get("user_email")
+    )
+    shift_date = str(row.get("shift_date") or "").strip()[:10]
+    shift_time = str(row.get("shift_time") or "").strip()
+    warehouse = str(row.get("warehouse") or "").strip().casefold()
+    raw_shift_data = str(row.get("raw_shift_data") or "").strip()
+    base_key = (shift_date, shift_time, warehouse, raw_shift_data)
+    return (driver_key, *base_key) if include_driver else base_key
+
+
+def _summarize_loyalty_booking_log_rows(
+    rows: list[dict[str, object]],
+    previous_month_end: date,
+) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
+    changed_keys = {
+        _loyalty_booking_shift_key(row)
+        for row in rows
+        if _is_booking_change_operation(row.get("operation"))
+    }
+    clean_booking_keys = set()
+    advance_booking_keys = set()
+    for row in rows:
+        shift_key = _loyalty_booking_shift_key(row)
+        if not all(shift_key[:2]) or shift_key in changed_keys:
+            continue
+        if not _is_clean_booking_operation(row.get("operation")):
+            continue
+        clean_booking_keys.add(shift_key)
+        if _booked_by_period_cutoff(row.get("booked_at"), previous_month_end):
+            advance_booking_keys.add(shift_key)
+    return clean_booking_keys, advance_booking_keys
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
     clean_courier_id = str(courier_id or "").strip()
     if not clean_courier_id:
         return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
+
+    previous_month_end = period_start - timedelta(days=1)
+    try:
+        log_rows = (
+            get_db().schema("settlement").table("courier_loyalty_booking_log")
+            .select("courier_id,courier_name,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
+            .eq("courier_id", clean_courier_id)
+            .gte("shift_date", period_start.isoformat())
+            .lte("shift_date", period_end.isoformat())
+            .limit(1000)
+            .execute().data or []
+        )
+    except BaseException:
+        log_rows = []
+    if log_rows:
+        clean_keys, advance_keys = _summarize_loyalty_booking_log_rows(log_rows, previous_month_end)
+        return {
+            "booked_shift_count": len(clean_keys),
+            "advance_booked_shift_count": len(advance_keys),
+            "source": "courier_loyalty_booking_log",
+        }
 
     rows: list[dict[str, object]] = []
     source_table = ""
@@ -1755,43 +1852,8 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
             rows = []
 
     if not rows:
-        try:
-            log_rows = (
-                get_db().schema("settlement").table("courier_loyalty_booking_log")
-                .select("shift_date,shift_time,booked_at,source_key,courier_id")
-                .eq("courier_id", clean_courier_id)
-                .gte("shift_date", period_start.isoformat())
-                .lte("shift_date", period_end.isoformat())
-                .limit(1000)
-                .execute().data or []
-            )
-        except BaseException:
-            log_rows = []
-        previous_month_end = period_start - timedelta(days=1)
-        unique_keys = {
-            (
-                str(row.get("shift_date") or ""),
-                str(row.get("shift_time") or ""),
-                str(row.get("source_key") or ""),
-            )
-            for row in log_rows
-        }
-        advance_keys = set()
-        for row in log_rows:
-            booked_at = pd.to_datetime(row.get("booked_at"), errors="coerce")
-            if pd.notna(booked_at) and booked_at.date() <= previous_month_end:
-                advance_keys.add((
-                    str(row.get("shift_date") or ""),
-                    str(row.get("shift_time") or ""),
-                    str(row.get("source_key") or ""),
-                ))
-        return {
-            "booked_shift_count": len(unique_keys),
-            "advance_booked_shift_count": len(advance_keys),
-            "source": "courier_loyalty_booking_log",
-        }
+        return {"booked_shift_count": 0, "advance_booked_shift_count": 0, "source": ""}
 
-    previous_month_end = period_start - timedelta(days=1)
     unique_keys = set()
     advance_keys = set()
     for row in rows:
@@ -4031,32 +4093,39 @@ def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> p
     try:
         rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
-            .select("courier_id,courier_name,user_email,operation,booked_at,shift_date")
+            .select("courier_id,courier_name,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
             .gte("shift_date", period_start.isoformat())
             .lte("shift_date", period_end.isoformat())
-            .lte("booked_at", datetime.combine(previous_month_end, datetime.max.time(), tzinfo=timezone.utc).isoformat())
             .limit(50000)
             .execute().data or []
         )
     except BaseException:
         return pd.DataFrame(columns=["driver_key", "advance_booking_days"])
+    changed_keys = {
+        _loyalty_booking_shift_key(row, include_driver=True)
+        for row in rows
+        if _is_booking_change_operation(row.get("operation"))
+    }
     records = []
     for row in rows:
-        operation = str(row.get("operation") or "").casefold()
-        if "foglal" not in operation:
+        shift_key = _loyalty_booking_shift_key(row, include_driver=True)
+        if not all(shift_key[:3]) or shift_key in changed_keys:
+            continue
+        if not _is_clean_booking_operation(row.get("operation")):
+            continue
+        if not _booked_by_period_cutoff(row.get("booked_at"), previous_month_end):
             continue
         driver_key = _courier_match_key(row.get("courier_name") or row.get("user_email") or row.get("courier_id"))
-        shift_date = str(row.get("shift_date") or "").strip()
-        if driver_key and shift_date:
-            records.append({"driver_key": driver_key, "shift_date": shift_date})
+        if driver_key:
+            records.append({"driver_key": driver_key, "shift_key": "|".join(shift_key)})
     if not records:
         return pd.DataFrame(columns=["driver_key", "advance_booking_days"])
     return (
         pd.DataFrame(records)
-        .drop_duplicates(["driver_key", "shift_date"])
-        .groupby("driver_key", as_index=False)["shift_date"]
+        .drop_duplicates(["driver_key", "shift_key"])
+        .groupby("driver_key", as_index=False)["shift_key"]
         .nunique()
-        .rename(columns={"shift_date": "advance_booking_days"})
+        .rename(columns={"shift_key": "advance_booking_days"})
     )
 
 
@@ -6711,7 +6780,7 @@ def show_courier_dialog() -> None:
                     },
                     {"Tétel": "Előző havi normál kör", "Darab": loyalty_previous_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_previous_routes)},
                     {"Tétel": "Aktuális normál kör", "Darab": loyalty_current_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_current_routes)},
-                    {"Tétel": "Előre foglalt nap", "Darab": loyalty_advance_booking_days, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_advance_booking_days)},
+                    {"Tétel": "Előre foglalt műszak", "Darab": loyalty_advance_booking_days, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_advance_booking_days)},
                     {"Tétel": "Státusz", "Darab": 0, "Egységösszeg": 0, "Összeg": 0, "Számítás": loyalty_status or "-"},
                 ])
             if detail_label == "Ügyfélértékelési bónusz":
@@ -6899,7 +6968,7 @@ def show_courier_dialog() -> None:
             {"item_key": "normal_routes", "item_label": "Normál kör", "amount_kind": "count", "amount_value": normal_route_total, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_previous_normal_routes", "item_label": "Lojalitás: előző havi normál kör", "amount_kind": "count", "amount_value": loyalty_previous_routes, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_current_normal_routes", "item_label": "Lojalitás: aktuális normál kör", "amount_kind": "count", "amount_value": loyalty_current_routes, "note": "Valós elszámolási adat"},
-            {"item_key": "loyalty_advance_booking_days", "item_label": "Lojalitás: előre foglalt nap", "amount_kind": "count", "amount_value": loyalty_advance_booking_days, "note": "Valós elszámolási adat"},
+            {"item_key": "loyalty_advance_booking_days", "item_label": "Lojalitás: előre foglalt műszak", "amount_kind": "count", "amount_value": loyalty_advance_booking_days, "note": "Valós elszámolási adat"},
             {"item_key": "shift_count", "item_label": "Műszak", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "late_count", "item_label": "Késések száma", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
