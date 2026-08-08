@@ -2021,7 +2021,6 @@ def tig_split_amount(amount: int, tax_mode: str) -> tuple[int, int, int, str]:
 
 def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financial_breakdown: dict[str, Any]) -> dict[str, Any]:
     cards = financial_breakdown.get("cards") or []
-    income_card = next((card for card in cards if card.get("key") == "income"), None)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
     if not deduction_card or not money_int(deduction_card.get("amountHuf")):
         return breakdown
@@ -2030,23 +2029,21 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
         for card in cards
         for item in card.get("items") or []
     }
-    income_total = money_int((income_card or {}).get("amountHuf"))
-    deduction_total = money_int((deduction_card or {}).get("amountHuf"))
     payable_total = money_int(financial_breakdown.get("totalPayableHuf"))
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
-    service_amount = income_total - tip_amount
+    service_amount = payable_total - tip_amount
     tax_mode = str(breakdown.get("taxMode") or "aam")
     rows: list[dict[str, Any]] = []
     if service_amount:
         net, vat, gross, vat_label = tig_split_amount(service_amount, tax_mode)
         rows.append({
             "key": "transfer_service",
-            "label": "Szállítási díj - átutalás",
+            "label": "Szállítási díj (494107)",
             "netHuf": net,
             "vatHuf": vat,
             "grossHuf": gross,
             "vatLabel": vat_label,
-            "note": "Az elszámolás jóváírásai borravaló nélkül.",
+            "note": "Kifizetendő összeg borravaló nélkül.",
         })
     if tip_amount:
         rows.append({
@@ -2058,16 +2055,6 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             "vatLabel": "Adómentes",
             "note": "Külön adómentes tétel.",
         })
-    net, vat, gross, vat_label = tig_split_amount(deduction_total, tax_mode)
-    rows.append({
-        "key": "settlement_deductions",
-        "label": "Levonások / korrekciók",
-        "netHuf": net,
-        "vatHuf": vat,
-        "grossHuf": gross,
-        "vatLabel": vat_label,
-        "note": "Az elszámolásban szereplő bónusz/málusz és levonás hatása.",
-    })
     breakdown["rows"] = rows
     breakdown["payableHuf"] = payable_total
     breakdown["transferServiceHuf"] = service_amount
