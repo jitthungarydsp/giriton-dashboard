@@ -205,7 +205,7 @@ def validate_loyalty_bonus_rule(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("A lojalitási hónapok száma nem lehet negatív.")
     previous_normal_routes_min = int(payload.get("previous_normal_routes_min") or 0)
     if previous_normal_routes_min < 0:
-        raise ValueError("Az előző havi normál kör minimum nem lehet negatív.")
+        raise ValueError("Az előre foglalt műszak minimum nem lehet negatív.")
     return {
         "loyalty_start_date": _date(payload.get("loyalty_start_date") or payload.get("valid_from"), "lojalitási kezdő").isoformat(),
         "loyalty_months_required": required_months,

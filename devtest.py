@@ -56,6 +56,7 @@ except Exception:
 RESERVE_TARGET_HUF = 50_000
 RESERVE_RATE = 0.10
 INSURANCE_FEE_HUF = 10_000
+DEFAULT_LOYALTY_MONTHS_REQUIRED = 6
 ROUTE_ISSUE_STATUSES = ["Nincs reklamáció", "Vizsgálat", "Elfogadva", "Elutasítva", "Lezárva"]
 CUSTOMER_RATING_UPLOAD_TABLE = "bill_jitt_invoice_customer_rating_bonus"
 
@@ -1707,13 +1708,14 @@ def load_loyalty_month_requirement_for_date(as_of: date) -> int:
             .execute().data or []
         )
     except BaseException:
-        return 0
+        return DEFAULT_LOYALTY_MONTHS_REQUIRED
     valid_requirements: list[int] = []
     for row in rows:
         valid_to = pd.to_datetime(row.get("valid_to"), errors="coerce")
         if pd.isna(valid_to) or valid_to.date() >= as_of:
-            valid_requirements.append(int(parse_huf_value(row.get("loyalty_months_required"))))
-    return min(valid_requirements) if valid_requirements else 0
+            required_months = int(parse_huf_value(row.get("loyalty_months_required")))
+            valid_requirements.append(required_months if required_months > 0 else DEFAULT_LOYALTY_MONTHS_REQUIRED)
+    return min(valid_requirements) if valid_requirements else DEFAULT_LOYALTY_MONTHS_REQUIRED
 
 
 def _parse_booking_timestamp_date(value: object) -> date | None:
@@ -1771,9 +1773,55 @@ def _booked_by_period_cutoff(value: object, cutoff_date: date) -> bool:
     return bool(pd.notna(booked_at) and booked_at.date() <= cutoff_date)
 
 
+def _booking_proxy_email(value: object) -> str:
+    match = re.search(r"Proxy:\s*([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", str(value or ""), flags=re.IGNORECASE)
+    return match.group(1).strip().casefold() if match else ""
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_courier_identity_by_email() -> dict[str, dict[str, str]]:
+    try:
+        rows = (
+            get_db().schema("public").table("courier_master")
+            .select("courier_id,courier_name,email,billing_email")
+            .limit(20000)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    lookup: dict[str, dict[str, str]] = {}
+    for row in rows:
+        payload = {
+            "courier_id": str(row.get("courier_id") or "").strip(),
+            "courier_name": str(row.get("courier_name") or "").strip(),
+        }
+        for email in [row.get("email"), row.get("billing_email")]:
+            email_key = str(email or "").strip().casefold()
+            if email_key:
+                lookup[email_key] = payload
+    return lookup
+
+
+def _loyalty_booking_effective_identity(row: dict[str, object]) -> dict[str, str]:
+    proxy_email = _booking_proxy_email(row.get("raw_shift_data"))
+    if proxy_email:
+        match = load_courier_identity_by_email().get(proxy_email, {})
+        return {
+            "courier_id": str(match.get("courier_id") or "").strip(),
+            "courier_name": str(match.get("courier_name") or "").strip(),
+            "user_email": proxy_email,
+        }
+    return {
+        "courier_id": str(row.get("courier_id") or "").strip(),
+        "courier_name": str(row.get("courier_name") or "").strip(),
+        "user_email": str(row.get("user_email") or "").strip(),
+    }
+
+
 def _loyalty_booking_shift_key(row: dict[str, object], *, include_driver: bool = False) -> tuple[str, ...]:
-    driver_key = _courier_id_key(row.get("courier_id")) or _courier_match_key(
-        row.get("courier_name") or row.get("user_email")
+    identity = _loyalty_booking_effective_identity(row)
+    driver_key = _courier_id_key(identity.get("courier_id")) or _courier_match_key(
+        identity.get("courier_name") or identity.get("user_email")
     )
     shift_date = str(row.get("shift_date") or "").strip()[:10]
     shift_time = str(row.get("shift_time") or "").strip()
@@ -1817,14 +1865,17 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
         log_rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
             .select("courier_id,courier_name,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
-            .eq("courier_id", clean_courier_id)
             .gte("shift_date", period_start.isoformat())
             .lte("shift_date", period_end.isoformat())
-            .limit(1000)
+            .limit(50000)
             .execute().data or []
         )
     except BaseException:
         log_rows = []
+    log_rows = [
+        row for row in log_rows
+        if _courier_id_key(_loyalty_booking_effective_identity(row).get("courier_id")) == _courier_id_key(clean_courier_id)
+    ]
     if log_rows:
         clean_keys, advance_keys = _summarize_loyalty_booking_log_rows(log_rows, previous_month_end)
         return {
@@ -4032,6 +4083,43 @@ def load_loyalty_route_counts(session_id: str | None) -> pd.DataFrame:
     return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
 
 
+def _loyalty_route_counts_from_settlement_rows(data: pd.DataFrame) -> pd.DataFrame:
+    records: list[dict[str, object]] = []
+    for _, row in data.iterrows():
+        driver_key = _courier_match_key(row.get("Futár"))
+        if not driver_key:
+            continue
+        total_routes = int(parse_huf_value(row.get("Számolt túrák") or row.get("Útvonalak") or row.get("Kör")))
+        normal_routes = int(parse_huf_value(row.get("Normál túrák") or row.get("Normál túra") or row.get("Normál kör")))
+        highlighted_routes = int(parse_huf_value(row.get("Kiemelt túrák") or row.get("Kiemelt túra") or row.get("Kiemelt kör")))
+        express_normal = int(parse_huf_value(row.get("Express normál")))
+        express_highlighted = int(parse_huf_value(row.get("Express kiemelt")))
+        normal_total = normal_routes + highlighted_routes
+        express_total = express_normal + express_highlighted
+        if total_routes > 0 and normal_total + express_total == 0:
+            normal_total = total_routes
+        elif total_routes > normal_total + express_total:
+            normal_total += total_routes - normal_total - express_total
+        orders = int(parse_huf_value(row.get("Cím") or row.get("Rendelés") or row.get("Cím / rendelés")))
+        if normal_total > 0:
+            records.append({
+                "driver_key": driver_key,
+                "route_type": "normal",
+                "routes": normal_total,
+                "orders": orders,
+            })
+        if express_total > 0:
+            records.append({
+                "driver_key": driver_key,
+                "route_type": "express",
+                "routes": express_total,
+                "orders": 0,
+            })
+    if not records:
+        return pd.DataFrame(columns=["driver_key", "route_type", "routes", "orders"])
+    return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
+
+
 def _loyalty_count_record(payload: object) -> dict[str, object] | None:
     if isinstance(payload, str):
         try:
@@ -4115,7 +4203,10 @@ def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> p
             continue
         if not _booked_by_period_cutoff(row.get("booked_at"), previous_month_end):
             continue
-        driver_key = _courier_match_key(row.get("courier_name") or row.get("user_email") or row.get("courier_id"))
+        identity = _loyalty_booking_effective_identity(row)
+        driver_key = _courier_match_key(
+            identity.get("courier_name") or identity.get("user_email") or identity.get("courier_id")
+        )
         if driver_key:
             records.append({"driver_key": driver_key, "shift_key": "|".join(shift_key)})
     if not records:
@@ -4172,6 +4263,8 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     result = data.copy()
     rules = load_loyalty_bonus_rules_for_month(period_start, period_end)
     current_counts = load_loyalty_route_counts(session_id)
+    if current_counts.empty:
+        current_counts = _loyalty_route_counts_from_settlement_rows(result)
     previous_month_end = period_start - timedelta(days=1)
     previous_month_start = previous_month_end.replace(day=1)
     previous_counts = load_loyalty_route_counts_for_period(previous_month_start, previous_month_end, source_mode)
@@ -4223,15 +4316,32 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     for _, row in result.iterrows():
         driver_key = _courier_match_key(row.get("Futár"))
         profile = profile_lookup.get(driver_key, {})
+        courier_id = str(row.get("Courier ID") or "").strip()
+        db_profile = load_courier_profile(courier_id) if courier_id else {}
+        if db_profile:
+            profile = {**profile, **db_profile}
+        if profile.get("work_start_date"):
+            profile["start_date"] = profile.get("work_start_date")
         start_value = row.get("Munkakezdés") or profile.get("start_date")
         months_worked = completed_months_between(start_value, period_start)
         driver_counts = current_by_driver.get(driver_key)
-        current_normal_routes = int(float(driver_counts.loc[driver_counts["route_type"] == "normal", "routes"].sum())) if driver_counts is not None and not driver_counts.empty else 0
+        settlement_route_count = int(parse_huf_value(row.get("Számolt túrák") or row.get("Útvonalak") or row.get("Kör")))
+        settlement_order_count = int(parse_huf_value(row.get("Cím") or row.get("Rendelés") or row.get("Cím / rendelés")))
+        source_route_count = int(float(driver_counts["routes"].sum())) if driver_counts is not None and not driver_counts.empty else 0
+        source_order_count = int(float(driver_counts["orders"].sum())) if driver_counts is not None and not driver_counts.empty else 0
+        current_route_count = max(source_route_count, settlement_route_count)
+        current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
+        if courier_id:
+            booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
+            advance_booking_days = max(
+                advance_booking_days,
+                int(parse_huf_value(booking_summary.get("advance_booked_shift_count"))),
+            )
 
         previous_route_values.append(previous_normal_routes)
-        current_route_values.append(current_normal_routes)
+        current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
 
         if months_worked < 0:
@@ -4239,7 +4349,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             rate_values.append(0.0)
             status_values.append("Hiányzik: munkakezdés")
             continue
-        if driver_counts is None or driver_counts.empty:
+        if current_route_count <= 0 and current_order_count <= 0:
             loyalty_amounts.append(0.0)
             rate_values.append(0.0)
             status_values.append("Nincs aktuális kör")
@@ -4249,12 +4359,13 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         selected_missing: list[str] = []
         for _, rule in rules.iterrows():
             missing: list[str] = []
-            required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
+            configured_required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
+            required_months = configured_required_months if configured_required_months > 0 else DEFAULT_LOYALTY_MONTHS_REQUIRED
             if months_worked < required_months:
-                missing.append("7. hónap")
-            previous_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
-            if previous_normal_routes < previous_min:
-                missing.append(f"előző havi normál kör < {previous_min}")
+                missing.append(f"{required_months}. hónap")
+            booked_shift_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
+            if advance_booking_days < booked_shift_min:
+                missing.append(f"előre foglalt műszak < {booked_shift_min}")
             if _loyalty_rule_bool(rule, "require_active_relationship", True):
                 is_active = bool(profile.get("is_active", True))
                 is_notice_period = bool(profile.get("is_notice_period", False))
@@ -4262,10 +4373,6 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
                     missing.append("aktív jogviszony")
             if _loyalty_rule_bool(rule, "require_advance_booking", True) and advance_booking_days <= 0:
                 missing.append("előfoglalás")
-            route_type = str(rule.get("route_type") or "normal")
-            matched_counts = driver_counts if route_type == "any" else driver_counts.loc[driver_counts["route_type"] == normalize_customer_rating_route_type(route_type)]
-            if matched_counts.empty:
-                missing.append("aktuális túratípus")
             if not missing:
                 selected_rule = rule
                 selected_missing = []
@@ -4279,12 +4386,9 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             status_values.append("Hiányzik: " + ", ".join(selected_missing or ["feltétel"]))
             continue
 
-        route_type = str(selected_rule.get("route_type") or "normal")
         unit = str(selected_rule.get("calculation_unit") or "per_route")
         amount = parse_huf_value(selected_rule.get("bonus_amount_huf"))
-        matched_counts = driver_counts if route_type == "any" else driver_counts.loc[driver_counts["route_type"] == normalize_customer_rating_route_type(route_type)]
-        quantity_column = "orders" if unit == "per_order" else "routes"
-        quantity = float(matched_counts[quantity_column].sum())
+        quantity = float(current_order_count if unit == "per_order" else current_route_count)
         total = quantity * amount
         loyalty_amounts.append(total)
         rate_values.append(amount)
@@ -6778,8 +6882,7 @@ def show_courier_dialog() -> None:
                         "Összeg": loyalty_total,
                         "Számítás": f"{loyalty_current_routes} x {format_huf(unit_amount)}" if unit_amount else format_huf(loyalty_total),
                     },
-                    {"Tétel": "Előző havi normál kör", "Darab": loyalty_previous_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_previous_routes)},
-                    {"Tétel": "Aktuális normál kör", "Darab": loyalty_current_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_current_routes)},
+                    {"Tétel": "Kifutott kör", "Darab": loyalty_current_routes, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_current_routes)},
                     {"Tétel": "Előre foglalt műszak", "Darab": loyalty_advance_booking_days, "Egységösszeg": 0, "Összeg": 0, "Számítás": str(loyalty_advance_booking_days)},
                     {"Tétel": "Státusz", "Darab": 0, "Egységösszeg": 0, "Összeg": 0, "Számítás": loyalty_status or "-"},
                 ])

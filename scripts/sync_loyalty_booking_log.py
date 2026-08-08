@@ -30,14 +30,18 @@ def supabase_config() -> tuple[str, str]:
     return url.rstrip("/"), key
 
 
-def headers() -> dict[str, str]:
+def headers(schema: str | None = None) -> dict[str, str]:
     _, key = supabase_config()
-    return {
+    result = {
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
     }
+    if schema:
+        result["Accept-Profile"] = schema
+        result["Content-Profile"] = schema
+    return result
 
 
 def raise_for_response(response: requests.Response, label: str) -> None:
@@ -52,7 +56,9 @@ def normalize_key(value: object) -> str:
 
 
 def parse_datetime(value: object) -> str | None:
-    parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    parsed = pd.to_datetime(value, format="%Y.%m.%d. %H:%M:%S", errors="coerce")
+    if pd.isna(parsed):
+        parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
     if pd.isna(parsed):
         return None
     if parsed.tzinfo is None:
@@ -62,16 +68,19 @@ def parse_datetime(value: object) -> str | None:
 
 def parse_shift_data(value: object) -> dict[str, str]:
     text = str(value or "")
-    result = {"shift_date": "", "shift_time": "", "warehouse": ""}
+    result = {"shift_date": "", "shift_time": "", "warehouse": "", "proxy_email": ""}
     date_match = re.search(r"D[áa]tum:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", text, flags=re.IGNORECASE)
     shift_match = re.search(r"M[űu]szak:\s*([^,]+)", text, flags=re.IGNORECASE)
     warehouse_match = re.search(r"Rakt[áa]r:\s*([^,]+)", text, flags=re.IGNORECASE)
+    proxy_match = re.search(r"Proxy:\s*([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", text, flags=re.IGNORECASE)
     if date_match:
         result["shift_date"] = date_match.group(1).strip()
     if shift_match:
         result["shift_time"] = shift_match.group(1).strip()
     if warehouse_match:
         result["warehouse"] = warehouse_match.group(1).strip()
+    if proxy_match:
+        result["proxy_email"] = proxy_match.group(1).strip()
     return result
 
 
@@ -125,7 +134,7 @@ def read_booking_rows() -> list[dict[str, Any]]:
         source_key = f"loyalty_booking:{BOOKING_SHEET_ID}:{BOOKING_WORKSHEET_GID}:{row_number}"
         rows.append(
             {
-                "user_email": str(user_email or "").strip(),
+                "user_email": str(shift["proxy_email"] or user_email or "").strip(),
                 "booked_at": parse_datetime(booked_at),
                 "operation": str(operation or "").strip(),
                 "shift_date": shift["shift_date"] or None,
@@ -165,7 +174,7 @@ def upsert_rows(rows: list[dict[str, Any]]) -> int:
         chunk = rows[start : start + 500]
         response = requests.post(
             f"{url}/rest/v1/{TARGET_TABLE}",
-            headers={**headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            headers={**headers("settlement"), "Prefer": "resolution=merge-duplicates,return=representation"},
             params={"on_conflict": "source_key"},
             json=chunk,
             timeout=60,

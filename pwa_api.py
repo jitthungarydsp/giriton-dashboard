@@ -1984,31 +1984,58 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         ("monthly_malus", "Havi malusz"),
         ("accepted_route", "Elfogadott kor korrekcio"),
         ("returned_route", "Visszavett kor"),
-        ("loyalty_bonus", "Lojalitasi bonusz"),
-        ("customer_rating", "Ugyfelelegedettseg"),
     ]:
         ensure_override_item("bonus_malus", item_key, label)
+    for item_key, label in [
+        ("loyalty_bonus", "Lojalitasi bonusz"),
+        ("loyalty_current_routes", "Kifutott kor"),
+        ("loyalty_advance_booking_days", "Elore foglalt muszak"),
+        ("loyalty_rate", "Egysegar"),
+    ]:
+        ensure_override_item("loyalty_bonus", item_key, label)
+    for item_key, label in [
+        ("customer_rating", "Ugyfelelegedettseg"),
+        ("manual_customer_rating", "Kezi ugyfelelegedettseg"),
+    ]:
+        ensure_override_item("customer_rating", item_key, label)
+    for item_key, label in [
+        ("correction", "Korrekcio"),
+        ("manual_correction", "Kezi korrekcio"),
+        ("correction_total", "Korrekciok osszesen"),
+    ]:
+        ensure_override_item("corrections", item_key, label)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
     bonus_malus_card = next((card for card in cards if card.get("key") == "bonus_malus"), None)
     if deduction_card and not overrides.get("deductions"):
         deduction_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in deduction_card.get("items") or [])
     if bonus_malus_card and not overrides.get("bonus_malus"):
         bonus_malus_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in bonus_malus_card.get("items") or [])
+    for card_key in ["loyalty_bonus", "customer_rating", "corrections"]:
+        card = next((item for item in cards if item.get("key") == card_key), None)
+        if card and not overrides.get(card_key):
+            card["amountHuf"] = sum(
+                money_int(item.get("amountHuf"))
+                for item in card.get("items") or []
+                if str(item.get("amountKind") or "huf") == "huf"
+            )
     return cards
 
 
 def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_override: bool = False) -> int:
     income_card = next((card for card in cards if card.get("key") == "income"), None)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
+    correction_card = next((card for card in cards if card.get("key") == "corrections"), None)
     payable_card = next((card for card in cards if card.get("key") == "payable"), None)
     income_total = money_int((income_card or {}).get("amountHuf"))
     deduction_total = money_int((deduction_card or {}).get("amountHuf"))
-    payable_total = money_int((payable_card or {}).get("amountHuf")) if keep_payable_override else income_total + deduction_total
+    correction_total = money_int((correction_card or {}).get("amountHuf"))
+    payable_total = money_int((payable_card or {}).get("amountHuf")) if keep_payable_override else income_total + deduction_total + correction_total
     if payable_card is not None:
         payable_card["amountHuf"] = payable_total
         payable_card["items"] = [
             signed_item("income_total", "Jóváírások összesen", income_total),
             signed_item("deduction_total", "Bonusz / malusz tételek", deduction_total),
+            signed_item("correction_total", "Korrekciók összesen", correction_total),
             signed_item("payable_total", "Kifizetendő", payable_total),
         ]
     return payable_total
@@ -2270,6 +2297,31 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     manual_bonus = manual_adjustments.get("bonus", 0)
     manual_malus = manual_adjustments.get("malus", 0)
     manual_customer_rating = manual_adjustments.get("customer_rating", 0)
+    manual_correction_types = {
+        "correction",
+        "manual_correction",
+        "correction_income",
+        "correction_deduction",
+        "manual_correction_deduction",
+    }
+    manual_correction_items = []
+    for index, adjustment_row in enumerate(manual_adjustment_rows, start=1):
+        adjustment_type = str(adjustment_row.get("adjustment_type") or "")
+        if adjustment_type not in manual_correction_types:
+            continue
+        amount = money_int(adjustment_row.get("amount_huf"))
+        if adjustment_type in {"correction_deduction", "manual_correction_deduction"}:
+            amount = -amount
+        manual_correction_items.append(
+            signed_item(
+                f"manual_correction_{index}",
+                "Kézi korrekció",
+                amount,
+                source="settlement.courier_settlement_adjustment",
+                note=str(adjustment_row.get("note") or ""),
+            )
+        )
+    correction_total = sum(item["amountHuf"] for item in manual_correction_items)
     manual_bonus_malus_types = {"bonus", "malus", "customer_rating"}
     manual_bonus_malus_items = [
         signed_item(
@@ -2291,11 +2343,29 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("monthly_malus", "Havi malusz", -(monthly_malus - manual_malus)),
         signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
         signed_item("returned_route", "Visszavett kor", -returned_route),
-        signed_item("loyalty_bonus", "Lojalitasi bonusz", loyalty),
-        signed_item("customer_rating", "Ugyfelelegedettseg", customer_rating - manual_customer_rating),
     ]
     bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
     bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)
+    loyalty_items = [
+        signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
+        count_item("loyalty_current_routes", "Kifutott kör", money_from(row, "loyalty_current_normal_routes", "loyalty_current_route_count", "route_count", "routes")),
+        count_item("loyalty_advance_booking_days", "Előre foglalt műszak", money_from(row, "loyalty_advance_booking_days", "advance_booking_days")),
+        signed_item("loyalty_rate", "Egységösszeg", money_from(row, "loyalty_rate_huf")),
+        signed_item("loyalty_status", "Státusz", 0, note=str(row.get("loyalty_status") or row.get("Lojalitás státusz") or "")),
+    ]
+    customer_rating_items = [
+        signed_item("customer_rating", "Ügyfélelégedettség", customer_rating - manual_customer_rating),
+        count_item("customer_rating_routes", "Érintett kör", money_from(row, "customer_rating_completed_routes", "completed_routes", "route_count", "routes")),
+        signed_item("manual_customer_rating", "Kézi ügyfélértékelés", manual_customer_rating, source="settlement.courier_settlement_adjustment"),
+    ]
+    loyalty_items = [
+        item for item in loyalty_items
+        if item["amountHuf"] or item.get("amountKind") == "count" or str(item.get("note") or "").strip()
+    ]
+    customer_rating_items = [
+        item for item in customer_rating_items
+        if item["amountHuf"] or item.get("amountKind") == "count"
+    ]
 
     route_items = [
         count_item("orders", "Cím", money_from(row, "orders", "order_count")),
@@ -2358,7 +2428,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         },
         {"key": "income", "label": "Jóváírások", "amountHuf": income_total, "tone": "income", "items": income_items},
         {"key": "deductions", "label": "Bonusz / malusz tételek", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": loyalty, "tone": "income", "items": loyalty_items},
+        {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": customer_rating, "tone": "income", "items": customer_rating_items},
         {"key": "bonus_malus", "label": "Bonusz / Malusz", "amountHuf": bonus_malus_total, "tone": "info", "items": bonus_malus_items},
+        {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": manual_correction_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
     overrides = read_mobile_breakdown_overrides(courier_id, month)

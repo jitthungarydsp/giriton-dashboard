@@ -433,19 +433,19 @@ def _show_loyalty_bonus(client: Any) -> None:
     if not data.empty:
         view = data.copy()
         view["Hónapok"] = pd.to_numeric(view.get("loyalty_months_required", 0), errors="coerce").fillna(0).astype(int)
-        view["Előző havi normál min."] = pd.to_numeric(view.get("previous_normal_routes_min", 0), errors="coerce").fillna(0).astype(int)
+        view["Előre foglalt műszak min."] = pd.to_numeric(view.get("previous_normal_routes_min", 0), errors="coerce").fillna(0).astype(int)
         view["Túratípus"] = view.get("route_type", pd.Series("normal", index=view.index)).fillna("normal").map(ROUTE_LABELS)
         view["Egység"] = view.get("calculation_unit", pd.Series("per_route", index=view.index)).fillna("per_route").map(UNIT_LABELS)
         view["Összeg"] = view["bonus_amount_huf"].map(_money)
         view["Előfoglalás kell"] = view.get("require_advance_booking", pd.Series(True, index=view.index)).fillna(True).astype(bool)
         view["Aktív jogviszony kell"] = view.get("require_active_relationship", pd.Series(True, index=view.index)).fillna(True).astype(bool)
         view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["Hónapok", "Előző havi normál min.", "Túratípus", "Egység", "Összeg", "Előfoglalás kell", "Aktív jogviszony kell", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
+        st.dataframe(view[["Hónapok", "Előre foglalt műszak min.", "Túratípus", "Egység", "Összeg", "Előfoglalás kell", "Aktív jogviszony kell", "valid_from", "Vége", "note"]], use_container_width=True, hide_index=True)
     row = _editor_row(data, "loyalty", "valid_from")
     with st.form(f"loyalty_form_{_text((row or {}).get('id')) or 'new'}"):
         left, middle, right = st.columns(3)
         required_months = left.number_input("Lojális bónusz hónapok száma", min_value=0, value=_int((row or {}).get("loyalty_months_required")), step=1)
-        previous_normal_routes_min = left.number_input("Előző havi normál kör minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1)
+        previous_normal_routes_min = left.number_input("Előre foglalt műszak minimum", min_value=0, value=_int((row or {}).get("previous_normal_routes_min")), step=1)
         routes = ["normal", "express", "regional", "any"]
         route_type = middle.selectbox("Túratípus", routes, index=_index(routes, (row or {}).get("route_type") or "normal"), format_func=ROUTE_LABELS.get)
         units = ["per_route", "per_order"]
