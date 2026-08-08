@@ -1985,7 +1985,7 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         ("accepted_route", "Elfogadott kor korrekcio"),
         ("returned_route", "Visszavett kor"),
         ("loyalty_bonus", "Lojalitasi bonusz"),
-        ("customer_rating", "Ugyfelertekelesi bonusz"),
+        ("customer_rating", "Ugyfelelegedettseg"),
     ]:
         ensure_override_item("bonus_malus", item_key, label)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
@@ -2008,7 +2008,7 @@ def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_ove
         payable_card["amountHuf"] = payable_total
         payable_card["items"] = [
             signed_item("income_total", "Jóváírások összesen", income_total),
-            signed_item("deduction_total", "Levonások / korrekciók összesen", deduction_total),
+            signed_item("deduction_total", "Bonusz / malusz tételek", deduction_total),
             signed_item("payable_total", "Kifizetendő", payable_total),
         ]
     return payable_total
@@ -2026,9 +2026,6 @@ def tig_split_amount(amount: int, tax_mode: str) -> tuple[int, int, int, str]:
 
 def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financial_breakdown: dict[str, Any]) -> dict[str, Any]:
     cards = financial_breakdown.get("cards") or []
-    deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
-    if not deduction_card or not money_int(deduction_card.get("amountHuf")):
-        return breakdown
     breakdown_items = {
         str(item.get("key") or ""): item
         for card in cards
@@ -2244,7 +2241,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("delay_bonus", "Késedelmi díj", delay),
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
-        signed_item("customer_rating", "Ügyfélértékelési bónusz", customer_rating),
+        signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
         signed_item("monthly_bonus", "Havi bónusz", monthly_bonus),
         signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
         signed_item("other_income", "Egyéb jóváírás", other_income),
@@ -2260,7 +2257,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("other_deduction", "Egyéb levonás", other_deduction),
         signed_item("instructor_fee", "Oktatói díj", instructor_fee),
     ]
-    income_items = [item for item in income_items if item["amountHuf"]]
+    income_items = [
+        item for item in income_items
+        if item["amountHuf"] or item["key"] == "customer_rating"
+    ]
     deduction_items = [item for item in deduction_items if item["amountHuf"]]
     income_total = sum(item["amountHuf"] for item in income_items)
     deduction_total = sum(item["amountHuf"] for item in deduction_items)
@@ -2277,7 +2277,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             {
                 "bonus": "Kézi bónusz",
                 "malus": "Kézi málusz",
-                "customer_rating": "Ügyfélértékelési korrekció",
+                "customer_rating": "Ügyfélelégedettség",
             }.get(str(row.get("adjustment_type") or ""), "Kézi korrekció"),
             -money_int(row.get("amount_huf")) if str(row.get("adjustment_type") or "") == "malus" else money_int(row.get("amount_huf")),
             source="settlement.courier_settlement_adjustment",
@@ -2292,7 +2292,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
         signed_item("returned_route", "Visszavett kor", -returned_route),
         signed_item("loyalty_bonus", "Lojalitasi bonusz", loyalty),
-        signed_item("customer_rating", "Ugyfelertekelesi bonusz", customer_rating - manual_customer_rating),
+        signed_item("customer_rating", "Ugyfelelegedettseg", customer_rating - manual_customer_rating),
     ]
     bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
     bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)
@@ -2352,12 +2352,12 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             "tone": "total",
             "items": [
                 signed_item("income_total", "Jóváírások összesen", income_total),
-                signed_item("deduction_total", "Levonások / korrekciók összesen", deduction_total),
+                signed_item("deduction_total", "Bonusz / malusz tételek", deduction_total),
                 signed_item("payable_total", "Kifizetendő", payable),
             ],
         },
         {"key": "income", "label": "Jóváírások", "amountHuf": income_total, "tone": "income", "items": income_items},
-        {"key": "deductions", "label": "Levonások / korrekciók", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "deductions", "label": "Bonusz / malusz tételek", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "bonus_malus", "label": "Bonusz / Malusz", "amountHuf": bonus_malus_total, "tone": "info", "items": bonus_malus_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
@@ -2382,6 +2382,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         for item in card["items"]
         if item["key"] not in {"income_total", "deduction_total", "payable_total"}
     ]
+    visible_cards = [card for card in cards if card.get("key") != "deductions"]
     return {
         "available": True,
         "month": month.strftime("%Y-%m"),
@@ -2389,7 +2390,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         "sourceMode": str(row.get("_mobile_source_mode") or ""),
         "sourceSheet": str(row.get("_mobile_source_sheet") or ""),
         "totalPayableHuf": payable,
-        "cards": cards,
+        "cards": visible_cards,
         "complaintOptions": complaint_options,
         "source": "settlement.courier_settlement_summary",
         "message": "",
