@@ -4078,6 +4078,18 @@ def load_loyalty_profile_lookup() -> dict[str, dict[str, object]]:
     return lookup
 
 
+def resolve_loyalty_work_start(profile: dict[str, object], courier_name: str) -> tuple[object, str, dict[str, object]]:
+    db_value = profile.get("work_start_date")
+    db_start = pd.to_datetime(db_value, errors="coerce")
+    if pd.notna(db_start):
+        return db_start.date(), "DB profil", {}
+    sheet_profile = load_loyalty_profile_lookup().get(_courier_match_key(courier_name), {})
+    sheet_start = pd.to_datetime(sheet_profile.get("start_date"), errors="coerce")
+    if pd.notna(sheet_start):
+        return sheet_start.date(), "Lojalitási Google Sheet", sheet_profile
+    return None, "Nincs adat", sheet_profile
+
+
 def _loyalty_rule_bool(rule: pd.Series, column: str, default: bool) -> bool:
     if column not in rule or pd.isna(rule.get(column)):
         return default
@@ -5901,7 +5913,8 @@ def render_fast_courier_profile(
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     efo_assignment = load_active_efo_assignment(courier_id, date.today())
     loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
-    work_months = completed_months_between(profile.get("work_start_date"), period_start)
+    resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, courier_name)
+    work_months = completed_months_between(resolved_work_start, period_start)
     employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
     if employment_type not in EMPLOYMENT_TYPE_LABELS:
         employment_type = "egyeni_vallalkozo"
@@ -5971,13 +5984,13 @@ def render_fast_courier_profile(
         email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"fast_profile_email_{courier_id}")
         warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row.get("Raktár") or ""), disabled=not is_editing, key=f"fast_profile_warehouse_{courier_id}")
         billing_email = st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=not is_editing, key=f"fast_profile_billing_email_{courier_id}")
-        current_work_start = pd.to_datetime(profile.get("work_start_date"), errors="coerce")
         work_start_date = st.date_input(
             "Munkakezdés dátuma",
-            value=current_work_start.date() if pd.notna(current_work_start) else date.today(),
+            value=resolved_work_start or date.today(),
             disabled=not is_editing,
             key=f"fast_profile_work_start_{courier_id}",
         )
+        st.caption(f"ForrĂˇs: {work_start_source}")
         employment_options = list(EMPLOYMENT_TYPE_LABELS)
         employment_type = st.selectbox(
             "Jogviszony",
@@ -6034,6 +6047,7 @@ def render_fast_courier_profile(
             load_courier_profile.clear()
             load_active_efo_assignment.clear()
             load_muszakpro_booking_summary.clear()
+            load_loyalty_profile_lookup.clear()
             load_loyalty_month_requirement_for_date.clear()
             load_courier_master.clear()
             st.success("A profil mentve, a változás naplózva.")
@@ -6047,6 +6061,7 @@ def render_fast_courier_profile(
         load_courier_profile.clear()
         load_active_efo_assignment.clear()
         load_muszakpro_booking_summary.clear()
+        load_loyalty_profile_lookup.clear()
         load_loyalty_month_requirement_for_date.clear()
         load_target_reserve_status.clear()
         st.rerun()
@@ -8546,7 +8561,8 @@ def show_courier_dialog() -> None:
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
         efo_assignment = load_active_efo_assignment(courier_id, date.today())
         loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
-        work_months = completed_months_between(profile.get("work_start_date"), period_start)
+        resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, str(row["FutĂˇr"]))
+        work_months = completed_months_between(resolved_work_start, period_start)
         employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
         if employment_type not in EMPLOYMENT_TYPE_LABELS:
             employment_type = "egyeni_vallalkozo"
@@ -8578,13 +8594,13 @@ def show_courier_dialog() -> None:
             email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"ui_profile_email_{courier_id}")
             warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=not is_editing, key=f"ui_profile_warehouse_{courier_id}")
             billing_email = st.text_input("Számlázási e-mail", value=str(profile.get("billing_email") or ""), disabled=not is_editing, key=f"ui_profile_billing_email_{courier_id}")
-            current_work_start = pd.to_datetime(profile.get("work_start_date"), errors="coerce")
             work_start_date = st.date_input(
                 "Munkakezdés dátuma",
-                value=current_work_start.date() if pd.notna(current_work_start) else date.today(),
+            value=resolved_work_start or date.today(),
                 disabled=not is_editing,
                 key=f"ui_profile_work_start_{courier_id}",
             )
+            st.caption(f"ForrĂˇs: {work_start_source}")
             employment_options = list(EMPLOYMENT_TYPE_LABELS)
             employment_type = st.selectbox(
                 "Jogviszony",
@@ -8646,6 +8662,7 @@ def show_courier_dialog() -> None:
                 keep_courier_menu("Profil")
                 load_courier_profile.clear()
                 load_active_efo_assignment.clear()
+                load_loyalty_profile_lookup.clear()
                 load_loyalty_month_requirement_for_date.clear()
                 load_courier_master.clear()
                 st.success("A profil mentve, a változás naplózva.")
