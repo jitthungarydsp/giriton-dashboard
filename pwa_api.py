@@ -2541,6 +2541,140 @@ def load_route_story_rows_for_courier(
     )
 
 
+def load_attendance_shift_rows_for_courier(
+    courier_id: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    courier_key = str(courier_id or "").strip()
+    if not courier_key:
+        return []
+    raw_rows = optional_supabase_rows(
+        "raw_dsp_attendance",
+        params={
+            "select": "work_date,response_json",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.asc",
+            "limit": "90",
+        },
+        timeout=60,
+    ) or optional_supabase_rows(
+        "dsp_attendance_raw",
+        params={
+            "select": "work_date,response_json",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.asc",
+            "limit": "90",
+        },
+        timeout=60,
+    )
+    shifts: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        payload = raw.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            candidates = payload.get("couriers") or payload.get("drivers") or payload.get("items") or payload
+        else:
+            candidates = []
+        if isinstance(candidates, dict):
+            candidates = candidates.get("data") or candidates.get("items") or []
+        if not isinstance(candidates, list):
+            continue
+        for courier in candidates:
+            if not isinstance(courier, dict):
+                continue
+            if str(courier.get("courierId") or courier.get("courier_id") or "").strip() != courier_key:
+                continue
+            for shift in courier.get("shifts") or []:
+                if not isinstance(shift, dict):
+                    continue
+                shift_start = str(shift.get("shiftStart") or shift.get("shift_start") or "")
+                shift_end = str(shift.get("shiftEnd") or shift.get("shift_end") or "")
+                available = str(shift.get("availableForShiftSince") or shift.get("available_for_shift_since") or "")
+                shifts.append({
+                    "date": str(raw.get("work_date") or shift_start)[:10],
+                    "shiftId": str(shift.get("shiftId") or shift.get("shift_id") or ""),
+                    "shiftName": str(shift.get("shiftName") or shift.get("shift_name") or ""),
+                    "warehouseName": str(courier.get("warehouseName") or courier.get("warehouse_name") or ""),
+                    "shiftStart": shift_start,
+                    "shiftEnd": shift_end,
+                    "availableForShiftSince": available,
+                })
+    return shifts
+
+
+def attendance_shift_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+    lookup: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        work_date = str(row.get("date") or row.get("shiftStart") or "")[:10]
+        shift_start = local_datetime(row.get("shiftStart"))
+        if not work_date or not shift_start:
+            continue
+        lookup[(work_date, shift_start.strftime("%H:%M"))] = row
+    return lookup
+
+
+def match_attendance_shift_for_route(row: dict[str, Any], lookup: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    work_date = str(row.get("date") or row.get("work_date") or "")[:10]
+    if not work_date or not lookup:
+        return {}
+    story = row.get("routeStory") or {}
+    references = [
+        story.get("shiftStart"),
+        row.get("plannedStartAt"),
+        row.get("routeAssignedAt"),
+        story.get("assignedAt"),
+    ]
+    best: tuple[float, dict[str, Any]] | None = None
+    for value in references:
+        target = local_datetime(value)
+        if not target:
+            continue
+        for (candidate_date, _candidate_time), shift in lookup.items():
+            if candidate_date != work_date:
+                continue
+            shift_start = local_datetime(shift.get("shiftStart"))
+            if not shift_start:
+                continue
+            distance = abs((shift_start - target).total_seconds())
+            if best is None or distance < best[0]:
+                best = (distance, shift)
+        if best:
+            break
+    return best[1] if best else {}
+
+
+def apply_attendance_shift_to_route_result(
+    result: dict[str, Any],
+    attendance_by_shift: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, Any]:
+    attendance_shift = match_attendance_shift_for_route(result, attendance_by_shift)
+    if not attendance_shift:
+        return result
+
+    result["attendanceShiftName"] = attendance_shift.get("shiftName") or ""
+    result["attendanceShiftStart"] = attendance_shift.get("shiftStart") or ""
+    result["attendanceShiftEnd"] = attendance_shift.get("shiftEnd") or ""
+    result["attendanceAvailableForShiftSince"] = attendance_shift.get("availableForShiftSince") or ""
+    result["plannedStartAt"] = str(attendance_shift.get("shiftStart") or result.get("plannedStartAt") or "")
+    result["shiftAvailableAt"] = str(attendance_shift.get("availableForShiftSince") or result.get("shiftAvailableAt") or "")
+    result["actualStartAt"] = str(attendance_shift.get("availableForShiftSince") or result.get("actualStartAt") or "")
+    result.setdefault("routeStory", {})
+    result["routeStory"]["shiftName"] = str(attendance_shift.get("shiftName") or result["routeStory"].get("shiftName") or "")
+    result["routeStory"]["shiftStart"] = str(attendance_shift.get("shiftStart") or result["routeStory"].get("shiftStart") or "")
+    result["routeStory"]["shiftEnd"] = str(attendance_shift.get("shiftEnd") or result["routeStory"].get("shiftEnd") or "")
+    result["routeStory"]["availableForShiftSince"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableForShiftSince") or "")
+    result["routeStory"]["availableAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableAt") or "")
+    result["routeStory"]["queueStartedAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("queueStartedAt") or "")
+    return result
+
+
 def route_story_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
@@ -2735,20 +2869,23 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=7) as executor:
         daily_future = executor.submit(load_daily_performance_for_courier, courier_id, period_start, period_end)
         route_future = executor.submit(load_api_financial_routes_for_courier, courier_id, period_start)
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
+        attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
         history_rows = history_future.result()
         story_rows = story_future.result()
+        attendance_shift_rows = attendance_future.result()
         route_notes = notes_future.result()
     stories_by_route = route_story_lookup(story_rows)
+    attendance_by_shift = attendance_shift_lookup(attendance_shift_rows)
     delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
     compliance_rows = load_route_compliance_rows_for_courier(courier_id, period_start, period_end, only_problem_rows=False)
     compliance_by_route = route_row_lookup(compliance_rows, "shift_date")
@@ -2896,7 +3033,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         }
         if story:
             result["routeStory"] = story
-        return result
+        return apply_attendance_shift_to_route_result(result, attendance_by_shift)
 
     def compact_route_fallback_row(route: dict[str, Any]) -> dict[str, Any]:
         work_date = str(route.get("work_date") or "")[:10]
@@ -2943,7 +3080,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         }
         if story:
             result["routeStory"] = story
-        return result
+        return apply_attendance_shift_to_route_result(result, attendance_by_shift)
 
     delay_detail_rows: list[dict[str, Any]] = [compact_delay_row(item) for item in delay_rows]
     compliance_detail_rows: list[dict[str, Any]] = [compact_compliance_row(item) for item in compliance_rows]
@@ -2973,7 +3110,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "orders": total_orders,
             "averageOrdersPerRoute": average_orders,
             "shiftCount": shift_count,
-            "tipsTotalHuf": route_tips if can_show_amounts else 0,
+            "tipsTotalHuf": route_tips,
         },
         "performanceDetails": {
             "delayRows": delay_detail_rows,

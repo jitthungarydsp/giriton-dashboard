@@ -21,7 +21,7 @@ const state = {
   statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v64";
+const APP_VERSION = "v65";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -673,7 +673,7 @@ function renderStatistics() {
     statisticCard("Műszakok", formatCount(summary.shiftCount), "foglalt / teljesített"),
     statisticCard("Cím", formatCount(orders), "rendelések"),
     statisticCard("Átlag", formatAverage(average), "cím / kör"),
-    statisticCard("Borravaló", amountsHidden ? "Rejtve" : formatHuf(summary.tipsTotalHuf), amountsHidden ? "havi nyitás után" : "összesen"),
+    statisticCard("Borravaló", formatHuf(summary.tipsTotalHuf), "összesen"),
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
