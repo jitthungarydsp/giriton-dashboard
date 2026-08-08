@@ -1664,6 +1664,25 @@ def load_courier_profile(courier_id: str) -> dict[str, object]:
         return {}
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_profile_lookup() -> dict[str, dict[str, object]]:
+    try:
+        rows = (
+            get_db().schema("public").table("courier_master")
+            .select("courier_id,courier_name,work_start_date,active")
+            .limit(20000)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    lookup: dict[str, dict[str, object]] = {}
+    for row in rows:
+        courier_key = _courier_id_key(row.get("courier_id"))
+        if courier_key:
+            lookup[courier_key] = row
+    return lookup
+
+
 EMPLOYMENT_TYPE_LABELS = {
     "efo": "EFO",
     "egyeni_vallalkozo": "Egyéni vállalkozó",
@@ -4270,6 +4289,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     previous_counts = load_loyalty_route_counts_for_period(previous_month_start, previous_month_end, source_mode)
     booking_days = load_loyalty_advance_booking_days(period_start, period_end)
     profile_lookup = load_loyalty_profile_lookup()
+    db_profile_by_id = load_courier_profile_lookup()
 
     for column, default in [
         ("Lojalitás", 0.0),
@@ -4317,7 +4337,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         driver_key = _courier_match_key(row.get("Futár"))
         profile = profile_lookup.get(driver_key, {})
         courier_id = str(row.get("Courier ID") or "").strip()
-        db_profile = load_courier_profile(courier_id) if courier_id else {}
+        db_profile = db_profile_by_id.get(_courier_id_key(courier_id), {}) if courier_id else {}
         if db_profile:
             profile = {**profile, **db_profile}
         if profile.get("work_start_date"):
@@ -4333,13 +4353,6 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
-        if courier_id:
-            booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
-            advance_booking_days = max(
-                advance_booking_days,
-                int(parse_huf_value(booking_summary.get("advance_booked_shift_count"))),
-            )
-
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
