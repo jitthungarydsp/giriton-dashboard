@@ -18,9 +18,10 @@ const state = {
   workflowPreviewCourierId: "",
   statisticsMonth: new Date().toISOString().slice(0, 7),
   statisticsHistoryDate: "",
+  statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v63";
+const APP_VERSION = "v64";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -572,7 +573,9 @@ function changeDailyHistoryDate(offset) {
   const rows = state.statistics?.dailyHistory || [];
   const dates = Object.keys(dailyHistoryByDate(rows)).sort().reverse();
   if (!dates.length) return;
-  const currentIndex = Math.max(0, dates.indexOf(state.statisticsHistoryDate));
+  const currentIndex = dates.includes(state.statisticsHistoryDate)
+    ? dates.indexOf(state.statisticsHistoryDate)
+    : 0;
   const nextIndex = Math.min(dates.length - 1, Math.max(0, currentIndex + offset));
   if (nextIndex === currentIndex) return;
   state.statisticsHistoryDate = dates[nextIndex];
@@ -613,13 +616,19 @@ function bindDailyHistoryControls() {
   const card = $("#daily-history-card");
   if (!card) return;
   let startX = 0;
+  let startY = 0;
   card.addEventListener("touchstart", (event) => {
+    if (event.target?.closest?.("button, input, textarea, select, summary, details")) return;
     startX = event.touches?.[0]?.clientX || 0;
+    startY = event.touches?.[0]?.clientY || 0;
   }, { passive: true });
   card.addEventListener("touchend", (event) => {
+    if (event.target?.closest?.("button, input, textarea, select, summary, details")) return;
     const endX = event.changedTouches?.[0]?.clientX || 0;
+    const endY = event.changedTouches?.[0]?.clientY || 0;
     const delta = endX - startX;
-    if (Math.abs(delta) < 45) return;
+    const verticalDelta = endY - startY;
+    if (Math.abs(delta) < 65 || Math.abs(delta) < Math.abs(verticalDelta) * 1.4) return;
     changeDailyHistoryDate(delta < 0 ? 1 : -1);
   }, { passive: true });
 }
@@ -705,19 +714,28 @@ function renderStatistics() {
   bindDailyHistoryControls();
 }
 
-async function loadStatistics() {
+async function loadStatistics(options = {}) {
   const monthInput = $("#statistics-month");
   if (monthInput?.value) state.statisticsMonth = monthInput.value;
-  state.statisticsHistoryDate = "";
+  if (options.resetHistory) state.statisticsHistoryDate = "";
+  const requestSeq = ++state.statisticsRequestSeq;
+  const requestedHistoryDate = state.statisticsHistoryDate;
   $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
   try {
     const params = new URLSearchParams({ month: state.statisticsMonth, _: String(Date.now()) });
     if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
       params.set("courier", state.workflowPreviewCourierId);
     }
-    state.statistics = await api(`/api/statistics/monthly?${params.toString()}`);
+    const payload = await api(`/api/statistics/monthly?${params.toString()}`);
+    if (requestSeq !== state.statisticsRequestSeq) return;
+    state.statistics = payload;
+    const dates = Object.keys(dailyHistoryByDate(payload.dailyHistory || [])).sort().reverse();
+    if (!options.resetHistory && requestedHistoryDate && dates.includes(requestedHistoryDate)) {
+      state.statisticsHistoryDate = requestedHistoryDate;
+    }
     renderStatistics();
   } catch (error) {
+    if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
     $("#statistics-grid").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
@@ -2503,7 +2521,7 @@ function updatePreviewCourier(value) {
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   loadWorkflow();
-  if (state.section === "statistics") loadStatistics();
+  if (state.section === "statistics") loadStatistics({ resetHistory: true });
 }
 
 workflowPreviewCourierInput?.addEventListener("change", (event) => {
@@ -2521,7 +2539,7 @@ $("#workflow-refresh").addEventListener("click", () => {
 $("#statistics-month").addEventListener("change", (event) => {
   state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
   state.statistics = null;
-  loadStatistics();
+  loadStatistics({ resetHistory: true });
 });
 
 $("#statistics-refresh").addEventListener("click", () => {

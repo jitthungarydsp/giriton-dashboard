@@ -32,6 +32,9 @@ load_dotenv_if_available()
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 DEFAULT_START_DATE = "2026-06-01"
 TARGET_TABLE = "mart_dsp_route_stories"
+SHIFT_QUALITY_TABLE = "dsp_courier_shift_quality_report"
+DAILY_QUALITY_TABLE = "dsp_courier_quality_daily"
+MONTHLY_QUALITY_TABLE = "dsp_courier_quality_monthly"
 SUMMARY_TABLE_CANDIDATES = [
     "stg_dsp_shift_route_summary",
     "dsp_shift_route_summary",
@@ -55,6 +58,32 @@ DISTANCE_TABLE_CANDIDATES = [
 BOOKING_TABLE_CANDIDATES = [
     "raw_muszakpro_bookings",
     "foglalasok_raw",
+]
+
+ROUTE_STORY_COLUMNS = [
+    "work_date",
+    "courier_id",
+    "courier_name",
+    "warehouse_name",
+    "route_id",
+    "shift_id",
+    "shift_name",
+    "shift_start",
+    "shift_end",
+    "available_at",
+    "available_for_shift_since",
+    "queue_started_at",
+    "courier_registered_at",
+    "assigned_at",
+    "planned_departure",
+    "real_departure",
+    "planned_return",
+    "real_return",
+    "planned_route_minutes",
+    "route_type",
+    "address_count",
+    "time_window_late_count",
+    "assignment_mode",
 ]
 
 
@@ -663,6 +692,7 @@ def build_arrival_stats(arrivals):
             "planned_late_count": 0,
             "time_window_early_count": 0,
             "time_window_late_count": 0,
+            "city_window_count": 0,
         }
     )
 
@@ -688,6 +718,12 @@ def build_arrival_stats(arrivals):
                 stats["planned_late_count"] += 1
 
         status = normalize_status(row.get("idoablakhoz_kepest_statusz"))
+        window_start = parse_datetime(row.get("idoablak_kezdete"))
+        window_end = parse_datetime(row.get("idoablak_vege"))
+        window_minutes = minutes_between(window_start, window_end)
+
+        if window_minutes in (15, 60):
+            stats["city_window_count"] += 1
 
         if "kes" in status or "late" in status:
             stats["time_window_late_count"] += 1
@@ -695,8 +731,6 @@ def build_arrival_stats(arrivals):
             stats["time_window_early_count"] += 1
         else:
             real_arrival = parse_datetime(row.get("valos_erkezes"))
-            window_start = parse_datetime(row.get("idoablak_kezdete"))
-            window_end = parse_datetime(row.get("idoablak_vege"))
 
             if real_arrival and window_start and real_arrival < window_start:
                 stats["time_window_early_count"] += 1
@@ -704,6 +738,13 @@ def build_arrival_stats(arrivals):
                 stats["time_window_late_count"] += 1
 
     return grouped
+
+
+def resolve_route_type_from_arrival_stats(stats):
+    if (stats or {}).get("city_window_count", 0) > 0:
+        return "normal"
+
+    return "express"
 
 
 def build_distance_lookup(distance_rows):
@@ -1027,6 +1068,41 @@ def parse_raw_attendance_rows(raw_rows):
                 summary_rows.append(route_row)
 
     return summary_rows
+
+
+def parse_raw_attendance_shift_rows(raw_rows):
+    shift_rows = []
+
+    for raw in raw_rows:
+        response_json = raw.get("response_json") or {}
+        work_date = response_json.get("date") or raw.get("work_date")
+
+        for courier in response_json.get("couriers", []) or []:
+            courier_id = to_int(courier.get("courierId"))
+
+            if courier_id is None:
+                continue
+
+            for shift in courier.get("shifts", []) or []:
+                shift_start = parse_datetime(shift.get("shiftStart"))
+                shift_end = parse_datetime(shift.get("shiftEnd"))
+                available_at = parse_datetime(shift.get("availableForShiftSince"))
+
+                shift_rows.append(
+                    {
+                        "work_date": work_date,
+                        "courier_id": courier_id,
+                        "courier_name": courier.get("courierName"),
+                        "warehouse_name": courier.get("warehouseName"),
+                        "shift_id": shift.get("shiftId"),
+                        "shift_name": shift.get("shiftName"),
+                        "shift_start": serialize_datetime(shift_start),
+                        "shift_end": serialize_datetime(shift_end),
+                        "available_for_shift_since": serialize_datetime(available_at),
+                    }
+                )
+
+    return shift_rows
 
 
 def build_route_detail_lookup(raw_rows):
@@ -1391,6 +1467,7 @@ def build_output_rows(
                 "planned_late_count": 0,
                 "time_window_early_count": 0,
                 "time_window_late_count": 0,
+                "city_window_count": 0,
             },
         )
         distance = distance_lookup.get(
@@ -1435,6 +1512,7 @@ def build_output_rows(
                 "real_loading_minutes": story["real_loading_minutes"],
                 "planned_route_minutes": story["planned_route_minutes"],
                 "real_route_minutes": story["real_route_minutes"],
+                "route_type": resolve_route_type_from_arrival_stats(stats),
                 "assigned_to_return_minutes": story["assigned_to_return_minutes"],
                 "total_route_minutes": story["total_route_minutes"],
                 "gps_distance_km": story["gps_distance_km"],
@@ -1512,6 +1590,1141 @@ def upsert_rows(supabase_url, service_role_key, rows, chunk_size=500):
             break
 
         print(f"Feltoltve: {start + len(chunk)} / {len(rows)} route story")
+
+
+def shift_group_key(row):
+    work_date = str(row.get("work_date") or "").strip()[:10]
+    courier_id = to_int(row.get("courier_id"))
+    shift_key = str(
+        row.get("shift_start")
+        or row.get("shift_id")
+        or row.get("shift_name")
+        or row.get("route_id")
+        or ""
+    ).strip()
+
+    if courier_id is None or not work_date or not shift_key:
+        return None
+
+    return work_date, courier_id, shift_key
+
+
+def normalize_warehouse(value):
+    return str(value or "").strip().upper()
+
+
+def shift_match_key(work_date, courier_id, warehouse, shift_start):
+    parsed_start = parse_datetime(shift_start)
+
+    if courier_id is None or not work_date or not parsed_start:
+        return None
+
+    return (
+        str(work_date)[:10],
+        int(courier_id),
+        normalize_warehouse(warehouse),
+        parsed_start.strftime("%H:%M"),
+    )
+
+
+def read_settlement_table(supabase_url, service_role_key, table_name, columns, order="priority.asc"):
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{table_name}",
+        headers=supabase_headers(
+            service_role_key,
+            {"Accept-Profile": "settlement"},
+        ),
+        params={
+            "select": ",".join(columns),
+            "is_active": "eq.true",
+            "deleted_at": "is.null",
+            "order": order,
+            "limit": "1000",
+        },
+        timeout=60,
+    )
+
+    if is_missing_table_response(response):
+        return []
+
+    raise_for_supabase_error(response, table_name)
+    return response.json()
+
+
+def read_public_table(supabase_url, service_role_key, table_name, columns, params=None):
+    request_params = {
+        "select": ",".join(columns),
+        "limit": "1000",
+    }
+    request_params.update(params or {})
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{table_name}",
+        headers=supabase_headers(service_role_key),
+        params=request_params,
+        timeout=60,
+    )
+
+    if is_missing_table_response(response):
+        return []
+
+    raise_for_supabase_error(response, table_name)
+    return response.json()
+
+
+def shift_id_match_key(work_date, courier_id, shift_id):
+    parsed_shift_id = to_int(shift_id)
+
+    if courier_id is None or not work_date or parsed_shift_id is None:
+        return None
+
+    return (
+        str(work_date)[:10],
+        int(courier_id),
+        parsed_shift_id,
+    )
+
+
+def first_datetime(rows, field_names):
+    values = []
+
+    for row in rows:
+        for field_name in field_names:
+            parsed = parse_datetime(row.get(field_name))
+
+            if parsed:
+                values.append(parsed)
+                break
+
+    return min(values) if values else None
+
+
+def last_datetime(rows, field_names):
+    values = []
+
+    for row in rows:
+        for field_name in field_names:
+            parsed = parse_datetime(row.get(field_name))
+
+            if parsed:
+                values.append(parsed)
+                break
+
+    return max(values) if values else None
+
+
+def is_after_order_cutoff(value):
+    parsed = parse_datetime(value)
+
+    if not parsed:
+        return False
+
+    return (parsed.hour, parsed.minute) >= (20, 45)
+
+
+def safe_percent(part, total):
+    if not total:
+        return 0.0
+
+    return round((float(part or 0) / float(total)) * 100, 2)
+
+
+def delay_level_from_percent(value):
+    if value <= 1.50:
+        return 1
+
+    if value <= 3.00:
+        return 2
+
+    if value <= 5.00:
+        return 3
+
+    return 4
+
+
+def route_quality_level_from_percent(value):
+    if value <= 2.00:
+        return 1
+
+    if value <= 4.00:
+        return 2
+
+    if value <= 10.00:
+        return 3
+
+    return 4
+
+
+def parse_bool(value, default=True):
+    if value in (None, ""):
+        return default
+
+    return bool(value)
+
+
+def value_in_range(value, minimum, maximum, min_inclusive=True, max_inclusive=True):
+    if minimum is not None:
+        if min_inclusive and value < float(minimum):
+            return False
+        if not min_inclusive and value <= float(minimum):
+            return False
+
+    if maximum is not None:
+        if max_inclusive and value > float(maximum):
+            return False
+        if not max_inclusive and value >= float(maximum):
+            return False
+
+    return True
+
+
+def route_type_from_text(value):
+    text = normalize_status(value)
+
+    if "express" in text:
+        return "express"
+
+    if "regional" in text or "regio" in text:
+        return "regional"
+
+    return "normal"
+
+
+def route_type_from_row(row):
+    route_type = normalize_status(row.get("route_type"))
+
+    if route_type in {"express", "normal", "regional"}:
+        return route_type
+
+    return route_type_from_text(row.get("shift_name"))
+
+
+def route_type_from_route_rows(route_rows):
+    route_types = {route_type_from_row(row) for row in route_rows or []}
+
+    if "normal" in route_types:
+        return "normal"
+
+    if "regional" in route_types:
+        return "regional"
+
+    return "express"
+
+
+def resolve_day_type(work_date, day_rules):
+    parsed = parse_date(str(work_date or "")[:10])
+
+    if not parsed:
+        return "normal"
+
+    weekday = parsed.isoweekday()
+
+    for rule in day_rules:
+        valid_from = parse_date(rule.get("valid_from"))
+        valid_to = parse_date(rule.get("valid_to")) if rule.get("valid_to") else None
+        weekdays = rule.get("weekdays") or []
+
+        if valid_from and parsed < valid_from:
+            continue
+
+        if valid_to and parsed > valid_to:
+            continue
+
+        if weekday in [int(item) for item in weekdays]:
+            return str(rule.get("day_type") or "normal")
+
+    return "normal"
+
+
+def planned_route_hours(row):
+    minutes = to_int(row.get("planned_route_minutes"))
+
+    if minutes is None:
+        planned_departure = parse_datetime(row.get("planned_departure_at"))
+        planned_return = parse_datetime(row.get("planned_return_at"))
+        minutes = minutes_between(planned_departure, planned_return)
+
+    if minutes is None or minutes <= 0:
+        shift_start = parse_datetime(row.get("shift_start_at"))
+        shift_end = parse_datetime(row.get("shift_end_at"))
+        minutes = minutes_between(shift_start, shift_end)
+
+    return (float(minutes) / 60.0) if minutes and minutes > 0 else 0.0
+
+
+def matching_amount_rule(rules, metric_percent, row, day_type):
+    duration_hours = planned_route_hours(row)
+    route_type = route_type_from_row(row)
+    warehouse = normalize_warehouse(row.get("warehouse"))
+
+    matches = []
+
+    for rule in rules:
+        valid_from = parse_date(rule.get("valid_from"))
+        valid_to = parse_date(rule.get("valid_to")) if rule.get("valid_to") else None
+        work_date = parse_date(str(row.get("work_date") or "")[:10])
+
+        if valid_from and work_date and work_date < valid_from:
+            continue
+
+        if valid_to and work_date and work_date > valid_to:
+            continue
+
+        if str(rule.get("day_type") or "any") not in (day_type, "any"):
+            continue
+
+        if str(rule.get("route_type") or "any") not in (route_type, "any"):
+            continue
+
+        rule_warehouse = normalize_warehouse(rule.get("warehouse_code"))
+
+        if rule_warehouse and rule_warehouse != warehouse:
+            continue
+
+        if not value_in_range(
+            metric_percent,
+            rule.get("threshold_min"),
+            rule.get("threshold_max"),
+            parse_bool(rule.get("threshold_min_inclusive")),
+            parse_bool(rule.get("threshold_max_inclusive")),
+        ):
+            continue
+
+        if not value_in_range(
+            duration_hours,
+            rule.get("duration_min_hours"),
+            rule.get("duration_max_hours"),
+        ):
+            continue
+
+        matches.append(rule)
+
+    if not matches:
+        return None
+
+    return sorted(
+        matches,
+        key=lambda item: (
+            int(item.get("priority") or 100),
+            0 if str(item.get("day_type") or "") == day_type else 1,
+            0 if str(item.get("route_type") or "") == route_type else 1,
+            str(item.get("id") or ""),
+        ),
+    )[0]
+
+
+def amount_from_rule(rule, row, amount_field):
+    if not rule:
+        return 0
+
+    amount = int(float(rule.get(amount_field) or 0))
+    unit = str(rule.get("calculation_unit") or "per_route")
+    route_count = max(to_int(row.get("route_count")) or 0, 1)
+
+    if unit == "per_order":
+        return amount * max(to_int(row.get("address_count")) or 0, 0)
+
+    if unit == "per_hour":
+        return int(round(amount * planned_route_hours(row)))
+
+    if unit == "fixed":
+        return amount
+
+    return amount * route_count
+
+
+def calculate_group_bonus_amounts(rows, delay_percent, route_quality_bad_percent, day_rules, delay_rules, compliance_rules):
+    company_delay = 0
+    courier_delay = 0
+    company_compliance = 0
+    courier_compliance = 0
+
+    for row in rows:
+        if row.get("no_show") or not (to_int(row.get("route_count")) or 0):
+            continue
+
+        day_type = resolve_day_type(row.get("work_date"), day_rules)
+        delay_rule = matching_amount_rule(delay_rules, delay_percent, row, day_type)
+        compliance_rule = matching_amount_rule(
+            compliance_rules,
+            route_quality_bad_percent,
+            row,
+            day_type,
+        )
+        company_delay += amount_from_rule(delay_rule, row, "company_amount_huf")
+        courier_delay += amount_from_rule(delay_rule, row, "courier_amount_huf")
+        company_compliance += amount_from_rule(compliance_rule, row, "company_amount_huf")
+        courier_compliance += amount_from_rule(compliance_rule, row, "courier_amount_huf")
+
+    return {
+        "company_delay_bonus_huf": company_delay,
+        "courier_delay_bonus_huf": courier_delay,
+        "company_compliance_bonus_huf": company_compliance,
+        "courier_compliance_bonus_huf": courier_compliance,
+        "company_quality_bonus_total_huf": company_delay + company_compliance,
+        "courier_quality_bonus_total_huf": courier_delay + courier_compliance,
+    }
+
+
+def build_shift_quality_rows(output_rows, booking_lookup, attendance_shift_rows=None):
+    grouped = defaultdict(list)
+
+    for row in output_rows:
+        key = shift_group_key(row)
+
+        if key:
+            grouped[key].append(row)
+
+    rows_by_courier_day = defaultdict(list)
+    item_by_match_key = {}
+    item_by_shift_id_key = {}
+
+    for shift in attendance_shift_rows or []:
+        work_date = str(shift.get("work_date") or "").strip()[:10]
+        courier_id = to_int(shift.get("courier_id"))
+        shift_start = parse_datetime(shift.get("shift_start"))
+
+        if courier_id is None or not work_date or not shift_start:
+            continue
+
+        item = {
+            "kind": "attendance",
+            "shift_key": str(shift.get("shift_start") or shift.get("shift_id") or ""),
+            "shift_start": shift_start,
+            "route_rows": [],
+            "booking": {},
+            "attendance": shift,
+        }
+        rows_by_courier_day[(work_date, courier_id)].append(item)
+        match_key = shift_match_key(
+            work_date,
+            courier_id,
+            shift.get("warehouse_name"),
+            shift_start,
+        )
+        shift_id_key = shift_id_match_key(
+            work_date,
+            courier_id,
+            shift.get("shift_id"),
+        )
+
+        if match_key:
+            item_by_match_key[match_key] = item
+
+        if shift_id_key:
+            item_by_shift_id_key[shift_id_key] = item
+
+    for (work_date, courier_id, shift_key), route_rows in grouped.items():
+        first = route_rows[0]
+        shift_start = parse_datetime(first.get("shift_start"))
+        shift_id_key = shift_id_match_key(
+            work_date,
+            courier_id,
+            first.get("shift_id"),
+        )
+        match_key = shift_match_key(
+            work_date,
+            courier_id,
+            first.get("warehouse_name"),
+            shift_start,
+        )
+        existing_item = item_by_shift_id_key.get(shift_id_key) or item_by_match_key.get(match_key)
+
+        if existing_item:
+            existing_item["route_rows"].extend(route_rows)
+            continue
+
+        item = {
+            "kind": "route",
+            "shift_key": shift_key,
+            "shift_start": shift_start,
+            "route_rows": route_rows,
+            "booking": {},
+            "attendance": {},
+        }
+        rows_by_courier_day[(work_date, courier_id)].append(item)
+
+        if match_key:
+            item_by_match_key[match_key] = item
+
+        if shift_id_key:
+            item_by_shift_id_key[shift_id_key] = item
+
+    for booking_key, booking_rows in booking_lookup.items():
+        for booking in booking_rows:
+            work_date, courier_id = booking_key
+            shift_start = booking.get("shift_start")
+            shift_id_key = shift_id_match_key(
+                work_date,
+                courier_id,
+                booking.get("booking_code"),
+            )
+            match_key = shift_match_key(
+                work_date,
+                courier_id,
+                booking.get("warehouse"),
+                shift_start,
+            )
+            existing_item = item_by_shift_id_key.get(shift_id_key) or item_by_match_key.get(match_key)
+
+            if existing_item:
+                existing_item["booking"] = booking
+                continue
+
+            item = {
+                "kind": "booking_only",
+                "shift_key": f"{work_date}_{booking.get('warehouse') or ''}_{booking.get('shift_text') or booking.get('serial') or len(rows_by_courier_day.get(booking_key, [])) + 1}",
+                "shift_start": shift_start,
+                "route_rows": [],
+                "booking": booking,
+                "attendance": {},
+            }
+            rows_by_courier_day[booking_key].append(item)
+
+            if match_key:
+                item_by_match_key[match_key] = item
+
+            if shift_id_key:
+                item_by_shift_id_key[shift_id_key] = item
+
+    quality_rows = []
+
+    for (work_date, courier_id), shift_items in rows_by_courier_day.items():
+        shift_items.sort(
+            key=lambda item: (
+                item.get("shift_start") or datetime.max,
+                str(item.get("shift_key") or ""),
+            )
+        )
+        previous_record = None
+
+        for index, item in enumerate(shift_items):
+            route_rows = item.get("route_rows") or []
+            booking = item.get("booking") or {}
+            attendance = item.get("attendance") or {}
+            first = route_rows[0] if route_rows else attendance or booking
+            shift_start = item.get("shift_start") or parse_datetime(first.get("shift_start"))
+            shift_end = parse_datetime(first.get("shift_end"))
+            queue_started = first_datetime(
+                route_rows or [attendance],
+                ["queue_started_at", "available_for_shift_since", "available_at", "courier_registered_at"],
+            )
+            available_at = first_datetime(
+                route_rows or [attendance],
+                ["available_for_shift_since", "available_at", "courier_registered_at"],
+            )
+            planned_departure = first_datetime(route_rows, ["planned_departure"])
+            real_departure = first_datetime(route_rows, ["real_departure"])
+            planned_return = last_datetime(route_rows, ["planned_return"])
+            real_return = last_datetime(route_rows, ["real_return"])
+            planned_route_minutes = sum(
+                to_int(row.get("planned_route_minutes")) or 0
+                for row in route_rows
+            )
+            route_ids = ", ".join(
+                str(row.get("route_id") or "")
+                for row in route_rows
+                if str(row.get("route_id") or "").strip()
+            )
+            assignment_modes = ", ".join(
+                sorted(
+                    {
+                        str(row.get("assignment_mode") or "").strip()
+                        for row in route_rows
+                        if str(row.get("assignment_mode") or "").strip()
+                    }
+                )
+            )
+            route_type = route_type_from_route_rows(route_rows)
+            address_count = sum(to_int(row.get("address_count")) or 0 for row in route_rows)
+            time_window_late_count = sum(
+                to_int(row.get("time_window_late_count")) or 0 for row in route_rows
+            )
+            queued_on_time = bool(queue_started and shift_start and queue_started <= shift_start)
+            no_show = False
+            no_show_reason = ""
+            cutoff_exception = False
+
+            if index == 0 and not queued_on_time:
+                no_show = True
+                no_show_reason = "Elso muszak: nem allt sorba idoben."
+
+            if previous_record and shift_start and not queued_on_time:
+                previous_planned = parse_datetime(previous_record.get("planned_return_at"))
+                planned_return_before_shift = (
+                    previous_planned is not None
+                    and previous_planned <= shift_start
+                )
+                cutoff_exception = is_after_order_cutoff(
+                    previous_record.get("planned_return_at")
+                )
+
+                if planned_return_before_shift and not cutoff_exception:
+                    no_show = True
+                    no_show_reason = "Kovetkezo muszak: tervezett visszaerkezese idoben volt, de kesobb allt sorba."
+                elif cutoff_exception:
+                    no_show = False
+                    no_show_reason = "20:45 utani tervezett visszaerkezes, 20:30-as rendelesi zaras miatt nem no show."
+
+            if item.get("kind") == "booking_only":
+                no_show = True
+                no_show_reason = "Van torteneti foglalas, de nincs hozza DSP route story sor."
+
+            record = {
+                "courier_id": courier_id,
+                "courier_name": first.get("courier_name"),
+                "work_date": work_date,
+                "shift_key": str(item.get("shift_key") or ""),
+                "shift_name": first.get("shift_name") or booking.get("shift_text"),
+                "shift_start_at": serialize_datetime(shift_start),
+                "shift_end_at": serialize_datetime(shift_end),
+                "warehouse": first.get("warehouse_name") or first.get("warehouse"),
+                "booking_code": booking.get("booking_code") or first.get("shift_id"),
+                "first_shift_of_day": index == 0,
+                "last_shift_of_day": index == len(shift_items) - 1,
+                "available_at": serialize_datetime(available_at),
+                "queue_started_at": serialize_datetime(queue_started),
+                "route_id": route_ids,
+                "route_count": len(route_rows),
+                "route_type": route_type,
+                "assignment_mode": assignment_modes or ("NO_ROUTE" if item.get("kind") == "booking_only" else ""),
+                "address_count": address_count,
+                "time_window_late_count": time_window_late_count,
+                "planned_departure_at": serialize_datetime(planned_departure),
+                "planned_return_at": serialize_datetime(planned_return),
+                "planned_route_minutes": planned_route_minutes,
+                "real_departure_at": serialize_datetime(real_departure),
+                "real_return_at": serialize_datetime(real_return),
+                "queued_on_time": queued_on_time,
+                "no_late_time_window": time_window_late_count <= 0,
+                "no_show": no_show,
+                "no_show_reason": no_show_reason,
+                "late_order_cutoff_exception": cutoff_exception,
+                "quality_ok": queued_on_time and time_window_late_count <= 0 and not no_show,
+                "source": "dsp_route_story",
+                "updated_at": serialize_datetime(datetime.now(BUDAPEST_TZ).replace(tzinfo=None)),
+            }
+            quality_rows.append(record)
+            previous_record = record
+
+    return quality_rows
+
+
+def upsert_shift_quality_rows(supabase_url, service_role_key, rows, chunk_size=500):
+    if not rows:
+        return
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{SHIFT_QUALITY_TABLE}"
+        "?on_conflict=courier_id,work_date,shift_key"
+    )
+    headers = supabase_headers(
+        service_role_key,
+        {
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+    )
+    skipped_columns = set()
+
+    for start in range(0, len(rows), chunk_size):
+        chunk = rows[start : start + chunk_size]
+        payload = chunk
+
+        if skipped_columns:
+            for column_name in skipped_columns:
+                payload = remove_column_from_rows(payload, column_name)
+
+        while True:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            missing_column = missing_column_from_response(response)
+
+            if missing_column:
+                skipped_columns.add(missing_column)
+                payload = remove_column_from_rows(payload, missing_column)
+                print(
+                    f"FIGYELEM: {SHIFT_QUALITY_TABLE} tabla nem tartalmazza ezt az oszlopot, "
+                    f"feltoltes kozben kihagyva: {missing_column}"
+                )
+                continue
+
+            raise_for_supabase_error(response, SHIFT_QUALITY_TABLE)
+            break
+
+        print(f"Feltoltve: {start + len(chunk)} / {len(rows)} muszak quality")
+
+
+def month_start_from_date(value):
+    parsed = parse_date(str(value)[:10])
+
+    if not parsed:
+        return None
+
+    return parsed.replace(day=1)
+
+
+def summarize_quality_group(rows, scope, period_start=None, day_rules=None, delay_rules=None, compliance_rules=None):
+    first = rows[0] if rows else {}
+    shift_count = len(rows)
+    no_show_count = sum(1 for row in rows if row.get("no_show"))
+    show_count = max(shift_count - no_show_count, 0)
+    late_shift_count = sum(
+        1
+        for row in rows
+        if not row.get("queued_on_time") and not row.get("no_show")
+    )
+    route_count = sum(to_int(row.get("route_count")) or 0 for row in rows)
+    order_count = sum(to_int(row.get("address_count")) or 0 for row in rows)
+    delayed_order_count = sum(
+        to_int(row.get("time_window_late_count")) or 0 for row in rows
+    )
+    delay_percent = safe_percent(delayed_order_count, order_count)
+    late_percent = safe_percent(late_shift_count, shift_count)
+    no_show_percent = safe_percent(no_show_count, shift_count)
+    route_quality_bad_percent = round(
+        (0.7 * no_show_percent) + (0.3 * late_percent),
+        2,
+    )
+    compliance_score_percent = round(100 - route_quality_bad_percent, 2)
+    bonus_amounts = calculate_group_bonus_amounts(
+        rows,
+        delay_percent,
+        route_quality_bad_percent,
+        day_rules or [],
+        delay_rules or [],
+        compliance_rules or [],
+    )
+    payload = {
+        "courier_id": first.get("courier_id"),
+        "courier_name": first.get("courier_name"),
+        "scope": scope,
+        "shift_count": shift_count,
+        "show_count": show_count,
+        "no_show_count": no_show_count,
+        "late_shift_count": late_shift_count,
+        "route_count": route_count,
+        "order_count": order_count,
+        "delayed_order_count": delayed_order_count,
+        "delay_percent": delay_percent,
+        "late_percent": late_percent,
+        "no_show_percent": no_show_percent,
+        "route_quality_bad_percent": route_quality_bad_percent,
+        "compliance_score_percent": compliance_score_percent,
+        **bonus_amounts,
+        "delay_level": delay_level_from_percent(delay_percent),
+        "route_quality_level": route_quality_level_from_percent(
+            route_quality_bad_percent
+        ),
+        "source": "dsp_shift_quality",
+        "updated_at": serialize_datetime(datetime.now(BUDAPEST_TZ).replace(tzinfo=None)),
+    }
+
+    if scope == "daily":
+        payload["work_date"] = first.get("work_date")
+    else:
+        payload["period_month"] = period_start.isoformat() if period_start else None
+
+    return payload
+
+
+def build_quality_summary_rows(shift_quality_rows, day_rules=None, delay_rules=None, compliance_rules=None):
+    daily_groups = defaultdict(list)
+    monthly_groups = defaultdict(list)
+
+    for row in shift_quality_rows:
+        courier_id = row.get("courier_id")
+        work_date = str(row.get("work_date") or "").strip()[:10]
+        period_month = month_start_from_date(work_date)
+
+        if courier_id is None or not work_date or not period_month:
+            continue
+
+        daily_groups[(work_date, courier_id)].append(row)
+        monthly_groups[(period_month, courier_id)].append(row)
+
+    daily_rows = [
+        summarize_quality_group(
+            rows,
+            "daily",
+            day_rules=day_rules,
+            delay_rules=delay_rules,
+            compliance_rules=compliance_rules,
+        )
+        for _key, rows in sorted(daily_groups.items())
+    ]
+    monthly_rows = [
+        summarize_quality_group(
+            rows,
+            "monthly",
+            period_start=period_month,
+            day_rules=day_rules,
+            delay_rules=delay_rules,
+            compliance_rules=compliance_rules,
+        )
+        for (period_month, _courier_id), rows in sorted(monthly_groups.items())
+    ]
+
+    return daily_rows, monthly_rows
+
+
+def upsert_quality_summary_rows(
+    supabase_url,
+    service_role_key,
+    table_name,
+    rows,
+    conflict_columns,
+    chunk_size=500,
+):
+    if not rows:
+        return
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/{table_name}"
+        f"?on_conflict={conflict_columns}"
+    )
+    headers = supabase_headers(
+        service_role_key,
+        {
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+    )
+    skipped_columns = set()
+
+    for start in range(0, len(rows), chunk_size):
+        chunk = rows[start : start + chunk_size]
+        payload = chunk
+
+        if skipped_columns:
+            for column_name in skipped_columns:
+                payload = remove_column_from_rows(payload, column_name)
+
+        while True:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            missing_column = missing_column_from_response(response)
+
+            if missing_column:
+                skipped_columns.add(missing_column)
+                payload = remove_column_from_rows(payload, missing_column)
+                print(
+                    f"FIGYELEM: {table_name} tabla nem tartalmazza ezt az oszlopot, "
+                    f"feltoltes kozben kihagyva: {missing_column}"
+                )
+                continue
+
+            raise_for_supabase_error(response, table_name)
+            break
+
+        print(f"Feltoltve: {start + len(chunk)} / {len(rows)} {table_name}")
+
+
+def upsert_quality_outputs(
+    supabase_url,
+    service_role_key,
+    shift_quality_rows,
+    daily_quality_rows,
+    monthly_quality_rows,
+):
+    upsert_shift_quality_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        rows=shift_quality_rows,
+    )
+    upsert_quality_summary_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        table_name=DAILY_QUALITY_TABLE,
+        rows=daily_quality_rows,
+        conflict_columns="courier_id,work_date",
+    )
+    upsert_quality_summary_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        table_name=MONTHLY_QUALITY_TABLE,
+        rows=monthly_quality_rows,
+        conflict_columns="courier_id,period_month",
+    )
+
+
+def delete_table_rows_by_date_range(
+    supabase_url,
+    service_role_key,
+    table_name,
+    date_column,
+    start_date,
+    end_date,
+):
+    endpoint = f"{supabase_url}/rest/v1/{table_name}"
+    response = requests.delete(
+        endpoint,
+        headers=supabase_headers(
+            service_role_key,
+            {"Prefer": "return=minimal"},
+        ),
+        params={
+            date_column: f"gte.{start_date.isoformat()}",
+            "and": f"({date_column}.lte.{end_date.isoformat()})",
+        },
+        timeout=60,
+    )
+    raise_for_supabase_error(response, table_name)
+    print(f"Torolve: {table_name} {start_date} - {end_date}")
+
+
+def delete_quality_outputs(supabase_url, service_role_key, start_date, end_date):
+    month_start = start_date.replace(day=1)
+    month_end = end_date.replace(day=1)
+
+    delete_table_rows_by_date_range(
+        supabase_url,
+        service_role_key,
+        SHIFT_QUALITY_TABLE,
+        "work_date",
+        start_date,
+        end_date,
+    )
+    delete_table_rows_by_date_range(
+        supabase_url,
+        service_role_key,
+        DAILY_QUALITY_TABLE,
+        "work_date",
+        start_date,
+        end_date,
+    )
+    delete_table_rows_by_date_range(
+        supabase_url,
+        service_role_key,
+        MONTHLY_QUALITY_TABLE,
+        "period_month",
+        month_start,
+        month_end,
+    )
+
+
+def print_quality_counts(output_rows, shift_quality_rows, daily_quality_rows, monthly_quality_rows):
+    print(f"Kesz. Route story sorok: {len(output_rows)}")
+    print(f"Kesz. Muszak quality sorok: {len(shift_quality_rows)}")
+    print(f"Kesz. Napi quality osszesito sorok: {len(daily_quality_rows)}")
+    print(f"Kesz. Havi quality osszesito sorok: {len(monthly_quality_rows)}")
+
+
+def load_existing_route_story_rows(supabase_url, service_role_key, start_date, end_date):
+    rows = read_table_range_by_day(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        table_name=TARGET_TABLE,
+        columns=ROUTE_STORY_COLUMNS,
+        start_date=start_date,
+        end_date=end_date,
+        order="work_date.asc,courier_id.asc,route_id.asc",
+        page_size=500,
+    )
+    return rows or []
+
+
+def load_attendance_shift_rows(supabase_url, service_role_key, start_date, end_date):
+    source_tables = []
+    shift_rows = []
+    seen_keys = set()
+
+    for table_name in ATTENDANCE_RAW_TABLE_CANDIDATES:
+        try:
+            raw_rows = read_table_range_by_day(
+                supabase_url=supabase_url,
+                service_role_key=service_role_key,
+                table_name=table_name,
+                columns=ATTENDANCE_RAW_COLUMNS,
+                start_date=start_date,
+                end_date=end_date,
+                order="work_date.asc",
+                page_size=50,
+            )
+        except Exception as exc:
+            print(f"Attendance muszak forras kihagyva ({table_name}): {exc}")
+            continue
+
+        if raw_rows is None:
+            continue
+
+        parsed_rows = parse_raw_attendance_shift_rows(raw_rows)
+
+        if parsed_rows:
+            source_tables.append(table_name)
+
+        for row in parsed_rows:
+            key = shift_match_key(
+                row.get("work_date"),
+                row.get("courier_id"),
+                row.get("warehouse_name"),
+                row.get("shift_start"),
+            )
+
+            if not key or key in seen_keys:
+                continue
+
+            seen_keys.add(key)
+            shift_rows.append(row)
+
+    return "+".join(source_tables), shift_rows
+
+
+def load_quality_parameter_rules(supabase_url, service_role_key):
+    base_rule_columns = [
+        "id",
+        "level_code",
+        "day_type",
+        "route_type",
+        "warehouse_code",
+        "threshold_min",
+        "threshold_max",
+        "threshold_min_inclusive",
+        "threshold_max_inclusive",
+        "duration_min_hours",
+        "duration_max_hours",
+        "company_amount_huf",
+        "courier_amount_huf",
+        "calculation_unit",
+        "valid_from",
+        "valid_to",
+        "priority",
+    ]
+    matrix_rule_columns = ["metric_type", *base_rule_columns]
+    matrix_rules = read_public_table(
+        supabase_url,
+        service_role_key,
+        "dsp_jitt_quality_bonus_matrix",
+        matrix_rule_columns,
+        params={
+            "is_active": "eq.true",
+            "order": "metric_type.asc,priority.asc",
+        },
+    )
+    if matrix_rules:
+        delay_rules = [
+            rule for rule in matrix_rules
+            if str(rule.get("metric_type") or "").strip().casefold() == "delay"
+        ]
+        compliance_rules = [
+            rule for rule in matrix_rules
+            if str(rule.get("metric_type") or "").strip().casefold() == "compliance"
+        ]
+    else:
+        delay_rules = []
+        compliance_rules = []
+
+    day_rules = read_settlement_table(
+        supabase_url,
+        service_role_key,
+        "cfg_jitt_day_definitions",
+        ["id", "day_type", "weekdays", "valid_from", "valid_to", "priority"],
+        order="priority.asc",
+    )
+    if not delay_rules:
+        delay_rules = read_settlement_table(
+            supabase_url,
+            service_role_key,
+            "cfg_jitt_delay_bonus_rules",
+            base_rule_columns,
+            order="priority.asc",
+        )
+    if not compliance_rules:
+        compliance_rules = read_settlement_table(
+            supabase_url,
+            service_role_key,
+            "cfg_jitt_compliance_bonus_rules",
+            base_rule_columns,
+            order="priority.asc",
+        )
+    print(
+        "JITT quality parameterek: "
+        f"nap={len(day_rules)}, delay={len(delay_rules)}, compliance={len(compliance_rules)}"
+    )
+    return day_rules, delay_rules, compliance_rules
+
+
+def rebuild_quality_reports_from_existing_stories(
+    supabase_url,
+    service_role_key,
+    start_date,
+    end_date,
+    dry_run=False,
+):
+    output_rows = load_existing_route_story_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    booking_table, booking_rows = load_optional_table(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        candidates=BOOKING_TABLE_CANDIDATES,
+        columns=BOOKING_COLUMNS,
+        start_date=start_date,
+        end_date=end_date,
+        order="work_date.asc,courier_id.asc,shift_text.asc",
+        chunk_by_day=True,
+        page_size=500,
+    )
+    booking_lookup = build_booking_lookup(booking_rows)
+    attendance_table, attendance_shift_rows = load_attendance_shift_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    day_rules, delay_rules, compliance_rules = load_quality_parameter_rules(
+        supabase_url,
+        service_role_key,
+    )
+    shift_quality_rows = build_shift_quality_rows(
+        output_rows=output_rows,
+        booking_lookup=booking_lookup,
+        attendance_shift_rows=attendance_shift_rows,
+    )
+    daily_quality_rows, monthly_quality_rows = build_quality_summary_rows(
+        shift_quality_rows,
+        day_rules=day_rules,
+        delay_rules=delay_rules,
+        compliance_rules=compliance_rules,
+    )
+
+    print(f"Meglevo route story forras: {TARGET_TABLE}, sorok: {len(output_rows)}")
+    print(f"Foglalas forras: {booking_table or 'nincs'}, sorok: {len(booking_rows)}")
+    print(f"Attendance muszak forras: {attendance_table or 'nincs'}, sorok: {len(attendance_shift_rows)}")
+
+    if dry_run:
+        print("Dry-run mod: quality DB feltoltes kihagyva.")
+    else:
+        delete_quality_outputs(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        upsert_quality_outputs(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            shift_quality_rows=shift_quality_rows,
+            daily_quality_rows=daily_quality_rows,
+            monthly_quality_rows=monthly_quality_rows,
+        )
+
+    print_quality_counts(
+        output_rows,
+        shift_quality_rows,
+        daily_quality_rows,
+        monthly_quality_rows,
+    )
 
 
 def load_stage_sources(supabase_url, service_role_key, start_date, end_date):
@@ -1666,6 +2879,11 @@ def parse_args():
         action="store_true",
         help="Akkor is ujraepiti a tartomanyt, ha az inkrementalis ellenorzes szerint friss.",
     )
+    parser.add_argument(
+        "--quality-only",
+        action="store_true",
+        help="Meglevo mart_dsp_route_stories sorokbol csak a quality riport tablak ujratoltese.",
+    )
     return parser.parse_args()
 
 
@@ -1677,6 +2895,15 @@ def main():
     if args.start_date:
         start_date = parse_date(args.start_date)
         end_date = parse_date(args.end_date) if args.end_date else today_budapest()
+        if args.quality_only:
+            rebuild_quality_reports_from_existing_stories(
+                supabase_url=supabase_url,
+                service_role_key=service_role_key,
+                start_date=start_date,
+                end_date=end_date,
+                dry_run=args.dry_run,
+            )
+            return
     else:
         (
             start_date,
@@ -1701,6 +2928,20 @@ def main():
         if start_date is None and end_date is None:
             if not args.force:
                 print("Route story adatok frissek, nincs uj nap amit epiteni kell.")
+                if target_latest:
+                    quality_start = target_latest.replace(day=1)
+                    quality_end = parse_date(args.end_date) if args.end_date else today_budapest()
+                    print(
+                        "Quality riport visszatoltes meglevo route story sorokbol: "
+                        f"{quality_start} - {quality_end}"
+                    )
+                    rebuild_quality_reports_from_existing_stories(
+                        supabase_url=supabase_url,
+                        service_role_key=service_role_key,
+                        start_date=quality_start,
+                        end_date=quality_end,
+                        dry_run=args.dry_run,
+                    )
                 return
 
             start_date = target_latest or parse_date(DEFAULT_START_DATE)
@@ -1744,6 +2985,16 @@ def main():
         chunk_by_day=True,
         page_size=500,
     )
+    attendance_table, attendance_shift_rows = load_attendance_shift_rows(
+        supabase_url=supabase_url,
+        service_role_key=service_role_key,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    day_rules, delay_rules, compliance_rules = load_quality_parameter_rules(
+        supabase_url,
+        service_role_key,
+    )
 
     arrival_stats = build_arrival_stats(arrivals)
     distance_lookup = build_distance_lookup(distance_rows)
@@ -1755,6 +3006,17 @@ def main():
         booking_lookup=booking_lookup,
         source_summary_table=summary_table,
         source_arrivals_table=arrivals_table,
+    )
+    shift_quality_rows = build_shift_quality_rows(
+        output_rows=output_rows,
+        booking_lookup=booking_lookup,
+        attendance_shift_rows=attendance_shift_rows,
+    )
+    daily_quality_rows, monthly_quality_rows = build_quality_summary_rows(
+        shift_quality_rows,
+        day_rules=day_rules,
+        delay_rules=delay_rules,
+        compliance_rules=compliance_rules,
     )
 
     if args.dry_run:
@@ -1772,8 +3034,26 @@ def main():
             service_role_key=service_role_key,
             rows=output_rows,
         )
+        delete_quality_outputs(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        upsert_quality_outputs(
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            shift_quality_rows=shift_quality_rows,
+            daily_quality_rows=daily_quality_rows,
+            monthly_quality_rows=monthly_quality_rows,
+        )
 
-    print(f"Kesz. Route story sorok: {len(output_rows)}")
+    print_quality_counts(
+        output_rows,
+        shift_quality_rows,
+        daily_quality_rows,
+        monthly_quality_rows,
+    )
 
 
 if __name__ == "__main__":

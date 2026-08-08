@@ -1,5 +1,6 @@
 import argparse
 import calendar
+import time
 from datetime import date, datetime
 
 import requests
@@ -100,6 +101,41 @@ def fetch_driver_detail(driver_id, work_date):
     return url, response.status_code, response.json()
 
 
+def is_statement_timeout(exc):
+    text = str(exc).lower()
+    return "57014" in text or "statement timeout" in text or "canceling statement" in text
+
+
+def post_raw_rows(endpoint, headers, rows, table_name, retries=3):
+    last_error = None
+
+    for attempt in range(1, retries + 1):
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            json=rows,
+            timeout=120,
+        )
+
+        try:
+            raise_for_supabase_error(response, table_name)
+            return
+        except requests.HTTPError as exc:
+            last_error = exc
+
+            if not is_statement_timeout(exc) or attempt >= retries:
+                break
+
+            wait_seconds = attempt * 3
+            print(
+                f"Supabase timeout, ujraprobalas {wait_seconds} mp mulva "
+                f"({attempt}/{retries})..."
+            )
+            time.sleep(wait_seconds)
+
+    raise last_error
+
+
 def upsert_raw_rows(rows):
     if not rows:
         return 0
@@ -116,13 +152,20 @@ def upsert_raw_rows(rows):
             "Prefer": "resolution=merge-duplicates,return=minimal",
         }
     )
-    response = requests.post(
-        endpoint,
-        headers=headers,
-        json=rows,
-        timeout=60,
-    )
-    raise_for_supabase_error(response, table_name)
+    try:
+        post_raw_rows(endpoint, headers, rows, table_name)
+    except requests.HTTPError as exc:
+        if len(rows) <= 1 or not is_statement_timeout(exc):
+            raise
+
+        middle = len(rows) // 2
+        print(
+            f"Supabase timeout {len(rows)} soros csomagnal, "
+            f"felezes: {middle} + {len(rows) - middle} sor."
+        )
+        upsert_raw_rows(rows[:middle])
+        upsert_raw_rows(rows[middle:])
+
     return len(rows)
 
 
@@ -191,7 +234,7 @@ def main():
         action="store_true",
         help="Honap modban jovobeli napokat is megprobal.",
     )
-    parser.add_argument("--batch-size", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

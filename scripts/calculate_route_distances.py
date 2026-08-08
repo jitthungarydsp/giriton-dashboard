@@ -115,6 +115,14 @@ def parse_date(value):
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
+def iter_dates(start_date, end_date):
+    current = start_date
+
+    while current <= end_date:
+        yield current
+        current = date.fromordinal(current.toordinal() + 1)
+
+
 def parse_timestamp(value):
     if not value:
         return None
@@ -268,20 +276,27 @@ def resolve_table(candidates, select_column="work_date"):
     )
 
 
-def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, page_size=500):
-    supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
-    table_name = resolve_table(DRIVER_DETAIL_RAW_TABLE_CANDIDATES)
+def is_statement_timeout_error(exc):
+    text = str(exc).lower()
+    return "57014" in text or "statement timeout" in text or "canceling statement" in text
+
+
+def read_driver_detail_raw_day(
+    supabase_url,
+    table_name,
+    work_date,
+    driver_id=None,
+    limit=20000,
+    page_size=100,
+):
     filters = [
         "select=driver_id,work_date,response_json,fetched_at",
-        "order=work_date.asc,driver_id.asc",
-        f"work_date=gte.{start_date.isoformat()}",
-        f"work_date=lte.{end_date.isoformat()}",
+        "order=driver_id.asc",
+        f"work_date=eq.{work_date.isoformat()}",
     ]
 
     if driver_id:
-        filters.append(
-            f"driver_id=eq.{int(driver_id)}"
-        )
+        filters.append(f"driver_id=eq.{int(driver_id)}")
 
     endpoint = (
         f"{supabase_url}/rest/v1/{table_name}"
@@ -290,7 +305,7 @@ def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, pa
     rows = []
     headers_base = supabase_headers()
     total_limit = int(limit)
-    chunk_size = max(min(int(page_size), 1000), 1)
+    chunk_size = max(min(int(page_size), 500), 1)
 
     while len(rows) < total_limit:
         range_start = len(rows)
@@ -303,9 +318,22 @@ def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, pa
         response = requests.get(
             endpoint,
             headers=headers,
-            timeout=60,
+            timeout=120,
         )
-        raise_for_supabase_error(response)
+
+        try:
+            raise_for_supabase_error(response)
+        except requests.HTTPError as exc:
+            if chunk_size <= 10 or not is_statement_timeout_error(exc):
+                raise
+
+            chunk_size = max(chunk_size // 2, 10)
+            print(
+                f"Supabase timeout {work_date.isoformat()} napon, "
+                f"kisebb lapmeret: {chunk_size}"
+            )
+            continue
+
         chunk = response.json()
 
         if not chunk:
@@ -315,6 +343,32 @@ def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, pa
 
         if len(chunk) < (range_end - range_start + 1):
             break
+
+    return rows
+
+
+def read_driver_detail_raw(start_date, end_date, driver_id=None, limit=20000, page_size=100):
+    supabase_url = get_required_env("SUPABASE_URL").rstrip("/")
+    table_name = resolve_table(DRIVER_DETAIL_RAW_TABLE_CANDIDATES)
+    rows = []
+    total_limit = int(limit)
+
+    for work_date in iter_dates(start_date, end_date):
+        remaining_limit = total_limit - len(rows)
+
+        if remaining_limit <= 0:
+            break
+
+        daily_rows = read_driver_detail_raw_day(
+            supabase_url=supabase_url,
+            table_name=table_name,
+            work_date=work_date,
+            driver_id=driver_id,
+            limit=remaining_limit,
+            page_size=page_size,
+        )
+        rows.extend(daily_rows)
+        print(f"RAW driver-detail {work_date.isoformat()}: {len(daily_rows)} sor")
 
     return rows
 
