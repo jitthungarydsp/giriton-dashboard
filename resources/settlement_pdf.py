@@ -127,23 +127,23 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     rows = [
         {
             "key": "transfer_service",
-            "label": "Szallitasi dij - atutalas",
+            "label": "Szállítási díj (494107)",
             "netHuf": service_net,
             "vatHuf": service_vat,
             "grossHuf": service_gross,
             "vatLabel": "27%" if vat_payer else "AAM",
-            "note": "KP es borravalo nelkuli szolgaltatasi dij.",
+            "note": "KP és borravaló nélküli szolgaltátasi dij.",
         }
     ]
     if tip:
         rows.append({
             "key": "tip",
-            "label": "Borravalo - adomentes",
+            "label": "Borravaló - adómentes",
             "netHuf": tip,
             "vatHuf": 0,
             "grossHuf": tip,
-            "vatLabel": "Adomentes",
-            "note": "Kulon adomentes tetel.",
+            "vatLabel": "Adómentes",
+            "note": "Külön adómentes tétel.",
         })
     if cash:
         rows.append({
@@ -153,7 +153,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
             "vatHuf": cash_vat,
             "grossHuf": cash_gross,
             "vatLabel": "27%" if vat_payer else "AAM",
-            "note": "Kulon KP sor, nem noveli az atutalasos vegosszeget.",
+            "note": "Külön KP sor, nem növeli az átutalásos végösszeget.",
         })
         rows.append({
             "key": "cash_deduction",

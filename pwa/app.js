@@ -21,7 +21,7 @@ const state = {
   statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v65";
+const APP_VERSION = "v66";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -1354,8 +1354,7 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
     return `<div class="notice">${escapeHtml(breakdown.message || "A havi pénzügyi bontás még nincs kész.")}</div>`;
   }
   const cards = breakdown.cards || [];
-  const deductionCard = cards.find((card) => card.key === "deductions");
-  const bonusMalusCard = cards.find((card) => card.key === "bonus_malus");
+  const displayCards = cards.filter((card) => card.key !== "deductions");
   const viewedUser = state.workflow?.viewingAs || {};
   const previewNotice = readOnly
     ? `<div class="notice">Előnézet: ${escapeHtml(viewedUser.username || "futár")} (${escapeHtml(viewedUser.courierId || "")}). Ebben a módban csak nézni lehet az adatokat.</div>`
@@ -1367,11 +1366,9 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       <strong>${formatHuf(breakdown.totalPayableHuf)}</strong>
       <small>${escapeHtml(breakdown.month || state.workflowMonth)}</small>
     </section>
-    ${financialHighlightPanel(deductionCard, "Ebben a honapban nincs levonas vagy korrekcio.")}
-    ${financialHighlightPanel(bonusMalusCard, "Ebben a honapban nincs bonusz vagy malusz tetel.")}
     <div class="financial-card-grid">
-      ${cards.map((card) => `
-        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "deductions", "bonus_malus"].includes(card.key) ? "open" : ""}>
+      ${displayCards.map((card) => `
+        <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
           <summary>
             <span>${escapeHtml(card.label)}</span>
             <strong>${formatFinancialValue(card)}</strong>
@@ -1444,16 +1441,27 @@ function renderTigBreakdown() {
     return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
   }
   const rows = tig.rows || [];
+  const buyer = tig.buyer || {};
+  const buyerBlock = buyer.name ? `
+    <section class="tig-buyer-card">
+      <span>${escapeHtml(buyer.label || "Vevő")}</span>
+      <strong>${escapeHtml(buyer.name || "")}</strong>
+      <small>${escapeHtml(buyer.postalCity || "")}</small>
+      <small>${escapeHtml(buyer.address || "")}</small>
+      <small>Adószám: ${escapeHtml(buyer.taxNumber || "")}</small>
+    </section>
+  ` : "";
   return `
     <section class="tig-total-card">
       <span>TIG végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
       <small>${escapeHtml(tig.month || state.workflowMonth)} · ${escapeHtml(tig.taxLabel || "")}</small>
     </section>
+    ${buyerBlock}
     <div class="tig-table">
       <div class="tig-row head"><span>Tétel</span><span>Netto</span><span>ÁFA</span><span>Brutto</span></div>
       ${rows.map((row) => `
-        <div class="tig-row ${row.key === "cash_deduction" ? "deduction" : ""}">
+        <div class="tig-row ${row.key === "cash_deduction" || Number(row.grossHuf || 0) < 0 ? "deduction" : ""}">
           <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
           <span>${tigValue(row.netHuf)}</span>
           <span>${row.vatLabel ? escapeHtml(row.vatLabel) : tigValue(row.vatHuf)}</span>

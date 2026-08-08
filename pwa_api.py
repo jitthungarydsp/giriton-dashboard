@@ -1856,22 +1856,23 @@ def read_mobile_breakdown_overrides(courier_id: str, month: date) -> dict[str, d
     return {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
 
 
-def read_courier_manual_adjustment_totals(courier_id: str, period_start: date, period_end: date) -> dict[str, int]:
+def read_courier_manual_adjustments(courier_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
     if not courier_id:
-        return {}
+        return []
     rows = optional_supabase_rows(
         "courier_settlement_adjustment",
         schema="settlement",
         params={
-            "select": "adjustment_type,amount_huf,effective_date,valid_from,valid_to",
+            "select": "id,adjustment_type,amount_huf,note,effective_date,valid_from,valid_to,created_at",
             "courier_id": f"eq.{courier_id}",
             "is_active": "eq.true",
             "deleted_at": "is.null",
+            "order": "valid_from.asc,effective_date.asc,created_at.asc",
             "limit": "500",
         },
         timeout=30,
     )
-    totals: dict[str, int] = {}
+    result: list[dict[str, Any]] = []
     for row in rows:
         valid_from = date_from_row_value(row.get("valid_from")) or date_from_row_value(row.get("effective_date"))
         valid_to = date_from_row_value(row.get("valid_to"))
@@ -1879,6 +1880,19 @@ def read_courier_manual_adjustment_totals(courier_id: str, period_start: date, p
             continue
         if valid_to and valid_to < period_start:
             continue
+        adjustment_type = str(row.get("adjustment_type") or "").strip()
+        if not adjustment_type:
+            continue
+        clean_row = dict(row)
+        clean_row["adjustment_type"] = adjustment_type
+        clean_row["amount_huf"] = abs(money_int(row.get("amount_huf")))
+        result.append(clean_row)
+    return result
+
+
+def manual_adjustment_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for row in rows:
         adjustment_type = str(row.get("adjustment_type") or "").strip()
         if not adjustment_type:
             continue
@@ -2138,6 +2152,13 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     tig["month"] = month.strftime("%Y-%m")
     tig["courierId"] = courier_id
     tig["courierName"] = courier_name
+    tig["buyer"] = {
+        "label": "Vevő",
+        "name": "Just in Time Transport Hungary Kft.",
+        "postalCity": "1201 Budapest",
+        "address": "Atléta utca 44.",
+        "taxNumber": "32649460-2-43",
+    }
     tig = align_tig_breakdown_with_financial_cards(tig, financial_breakdown)
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
 
@@ -2217,7 +2238,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     instructor_fee = money_from(row, "instructor_fee_huf")
     payable = money_from(row, "payable_total_huf", "payable_huf")
 
-    manual_adjustments = read_courier_manual_adjustment_totals(courier_id, month, period_end)
+    manual_adjustment_rows = read_courier_manual_adjustments(courier_id, month, period_end)
+    manual_adjustments = manual_adjustment_totals(manual_adjustment_rows)
     monthly_bonus += manual_adjustments.get("bonus", 0)
     customer_rating += manual_adjustments.get("customer_rating", 0)
     monthly_malus += manual_adjustments.get("malus", 0)
@@ -2253,15 +2275,34 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     if not payable:
         payable = income_total + deduction_total
 
+    manual_bonus = manual_adjustments.get("bonus", 0)
+    manual_malus = manual_adjustments.get("malus", 0)
+    manual_customer_rating = manual_adjustments.get("customer_rating", 0)
+    manual_bonus_malus_types = {"bonus", "malus", "customer_rating"}
+    manual_bonus_malus_items = [
+        signed_item(
+            f"manual_{str(row.get('adjustment_type') or 'adjustment')}_{index}",
+            {
+                "bonus": "Kézi bónusz",
+                "malus": "Kézi málusz",
+                "customer_rating": "Ügyfélértékelési korrekció",
+            }.get(str(row.get("adjustment_type") or ""), "Kézi korrekció"),
+            -money_int(row.get("amount_huf")) if str(row.get("adjustment_type") or "") == "malus" else money_int(row.get("amount_huf")),
+            source="settlement.courier_settlement_adjustment",
+            note=str(row.get("note") or ""),
+        )
+        for index, row in enumerate(manual_adjustment_rows, start=1)
+        if str(row.get("adjustment_type") or "") in manual_bonus_malus_types
+    ]
     bonus_malus_items = [
-        signed_item("monthly_bonus", "Havi bonusz", monthly_bonus),
-        signed_item("monthly_malus", "Havi malusz", -monthly_malus),
+        signed_item("monthly_bonus", "Havi bonusz", monthly_bonus - manual_bonus),
+        signed_item("monthly_malus", "Havi malusz", -(monthly_malus - manual_malus)),
         signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
         signed_item("returned_route", "Visszavett kor", -returned_route),
         signed_item("loyalty_bonus", "Lojalitasi bonusz", loyalty),
-        signed_item("customer_rating", "Ugyfelertekelesi bonusz", customer_rating),
+        signed_item("customer_rating", "Ugyfelertekelesi bonusz", customer_rating - manual_customer_rating),
     ]
-    bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]]
+    bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
     bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)
 
     route_items = [
