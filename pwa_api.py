@@ -1712,6 +1712,16 @@ def money_sum_from(row: dict[str, Any], *keys: str) -> int:
     return sum(money_int(row.get(key)) for key in keys if key in row and row.get(key) not in (None, ""))
 
 
+def date_from_row_value(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
 def signed_item(key: str, label: str, amount: int, *, source: str = "settlement.courier_settlement_summary", note: str = "") -> dict[str, Any]:
     return {
         "key": key,
@@ -1846,6 +1856,36 @@ def read_mobile_breakdown_overrides(courier_id: str, month: date) -> dict[str, d
     return {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
 
 
+def read_courier_manual_adjustment_totals(courier_id: str, period_start: date, period_end: date) -> dict[str, int]:
+    if not courier_id:
+        return {}
+    rows = optional_supabase_rows(
+        "courier_settlement_adjustment",
+        schema="settlement",
+        params={
+            "select": "adjustment_type,amount_huf,effective_date,valid_from,valid_to",
+            "courier_id": f"eq.{courier_id}",
+            "is_active": "eq.true",
+            "deleted_at": "is.null",
+            "limit": "500",
+        },
+        timeout=30,
+    )
+    totals: dict[str, int] = {}
+    for row in rows:
+        valid_from = date_from_row_value(row.get("valid_from")) or date_from_row_value(row.get("effective_date"))
+        valid_to = date_from_row_value(row.get("valid_to"))
+        if valid_from and valid_from > period_end:
+            continue
+        if valid_to and valid_to < period_start:
+            continue
+        adjustment_type = str(row.get("adjustment_type") or "").strip()
+        if not adjustment_type:
+            continue
+        totals[adjustment_type] = totals.get(adjustment_type, 0) + abs(money_int(row.get("amount_huf")))
+    return totals
+
+
 def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     def is_manual_override(row: dict[str, Any] | None) -> bool:
         note = str((row or {}).get("note") or "").strip()
@@ -1938,6 +1978,90 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     return cards
 
 
+def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_override: bool = False) -> int:
+    income_card = next((card for card in cards if card.get("key") == "income"), None)
+    deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
+    payable_card = next((card for card in cards if card.get("key") == "payable"), None)
+    income_total = money_int((income_card or {}).get("amountHuf"))
+    deduction_total = money_int((deduction_card or {}).get("amountHuf"))
+    payable_total = money_int((payable_card or {}).get("amountHuf")) if keep_payable_override else income_total + deduction_total
+    if payable_card is not None:
+        payable_card["amountHuf"] = payable_total
+        payable_card["items"] = [
+            signed_item("income_total", "Jóváírások összesen", income_total),
+            signed_item("deduction_total", "Levonások / korrekciók összesen", deduction_total),
+            signed_item("payable_total", "Kifizetendő", payable_total),
+        ]
+    return payable_total
+
+
+def tig_split_amount(amount: int, tax_mode: str) -> tuple[int, int, int, str]:
+    sign = -1 if amount < 0 else 1
+    gross = abs(money_int(amount))
+    if tax_mode == "vat":
+        net_abs = int(round(gross / 1.27))
+        vat_abs = gross - net_abs
+        return sign * net_abs, sign * vat_abs, sign * gross, "27%" if sign > 0 else "Levonás"
+    return sign * gross, 0, sign * gross, "AAM" if sign > 0 else "Levonás"
+
+
+def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financial_breakdown: dict[str, Any]) -> dict[str, Any]:
+    cards = financial_breakdown.get("cards") or []
+    income_card = next((card for card in cards if card.get("key") == "income"), None)
+    deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
+    if not deduction_card or not money_int(deduction_card.get("amountHuf")):
+        return breakdown
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in cards
+        for item in card.get("items") or []
+    }
+    income_total = money_int((income_card or {}).get("amountHuf"))
+    deduction_total = money_int((deduction_card or {}).get("amountHuf"))
+    payable_total = money_int(financial_breakdown.get("totalPayableHuf"))
+    tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
+    service_amount = income_total - tip_amount
+    tax_mode = str(breakdown.get("taxMode") or "aam")
+    rows: list[dict[str, Any]] = []
+    if service_amount:
+        net, vat, gross, vat_label = tig_split_amount(service_amount, tax_mode)
+        rows.append({
+            "key": "transfer_service",
+            "label": "Szállítási díj - átutalás",
+            "netHuf": net,
+            "vatHuf": vat,
+            "grossHuf": gross,
+            "vatLabel": vat_label,
+            "note": "Az elszámolás jóváírásai borravaló nélkül.",
+        })
+    if tip_amount:
+        rows.append({
+            "key": "tip",
+            "label": "Borravaló - adómentes",
+            "netHuf": tip_amount,
+            "vatHuf": 0,
+            "grossHuf": tip_amount,
+            "vatLabel": "Adómentes",
+            "note": "Külön adómentes tétel.",
+        })
+    net, vat, gross, vat_label = tig_split_amount(deduction_total, tax_mode)
+    rows.append({
+        "key": "settlement_deductions",
+        "label": "Levonások / korrekciók",
+        "netHuf": net,
+        "vatHuf": vat,
+        "grossHuf": gross,
+        "vatLabel": vat_label,
+        "note": "Az elszámolásban szereplő bónusz/málusz és levonás hatása.",
+    })
+    breakdown["rows"] = rows
+    breakdown["payableHuf"] = payable_total
+    breakdown["transferServiceHuf"] = service_amount
+    breakdown["finalTotalHuf"] = payable_total
+    breakdown["available"] = True
+    return breakdown
+
+
 def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not breakdown.get("available"):
         return breakdown
@@ -2014,6 +2138,7 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     tig["month"] = month.strftime("%Y-%m")
     tig["courierId"] = courier_id
     tig["courierName"] = courier_name
+    tig = align_tig_breakdown_with_financial_cards(tig, financial_breakdown)
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
 
 
@@ -2082,15 +2207,22 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         monthly_malus = abs(min(monthly_adjustment_effect, 0))
     returned_route = abs(money_from(row, "monthly_returned_route_huf"))
     accepted_route = money_from(row, "monthly_accepted_route_huf")
-    atm_effect = money_from(row, "atm_effect_huf")
+    atm_effect = money_from(row, "atm_effect_huf") or -abs(money_from(row, "atm_deduction_huf"))
     reserve_topup = money_from(row, "target_reserve_topup_huf")
     fuel = money_from(row, "fuel_huf")
     damage = money_from(row, "damage_huf")
     cash_missing = money_from(row, "cash_missing_huf")
     other_income = money_from(row, "other_income_huf")
-    other_deduction = money_from(row, "other_deduction_huf")
+    other_deduction = money_from(row, "other_deduction_huf") or -abs(money_from(row, "other_expense_huf"))
     instructor_fee = money_from(row, "instructor_fee_huf")
-    payable = money_from(row, "payable_total_huf")
+    payable = money_from(row, "payable_total_huf", "payable_huf")
+
+    manual_adjustments = read_courier_manual_adjustment_totals(courier_id, month, period_end)
+    monthly_bonus += manual_adjustments.get("bonus", 0)
+    customer_rating += manual_adjustments.get("customer_rating", 0)
+    monthly_malus += manual_adjustments.get("malus", 0)
+    atm_effect -= manual_adjustments.get("atm_deduction", 0)
+    other_deduction -= manual_adjustments.get("other_expense", 0)
 
     income_items = [
         signed_item("base", "Alapdíj", base),
@@ -2210,8 +2342,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
                     note="Ă–sszesĂ­tett mobil elszĂˇmolĂˇsi adat.",
                 )
             ]
-    payable_card = next((card for card in cards if card.get("key") == "payable"), {})
-    payable = money_int(payable_card.get("amountHuf")) if payable_card else payable
+    payable = refresh_payable_card_totals(cards, keep_payable_override=bool(overrides.get("payable")))
     complaint_options = [
         {"key": item["key"], "label": item["label"], "amountHuf": item["amountHuf"], "amountKind": item.get("amountKind", "huf")}
         for card in cards

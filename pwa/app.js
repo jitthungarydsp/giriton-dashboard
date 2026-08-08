@@ -1446,12 +1446,12 @@ function renderTigBreakdown() {
   const rows = tig.rows || [];
   return `
     <section class="tig-total-card">
-      <span>TIG vegosszeg</span>
+      <span>TIG végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
       <small>${escapeHtml(tig.month || state.workflowMonth)} · ${escapeHtml(tig.taxLabel || "")}</small>
     </section>
     <div class="tig-table">
-      <div class="tig-row head"><span>Tetel</span><span>Netto</span><span>AFA</span><span>Brutto</span></div>
+      <div class="tig-row head"><span>Tétel</span><span>Netto</span><span>ÁFA</span><span>Brutto</span></div>
       ${rows.map((row) => `
         <div class="tig-row ${row.key === "cash_deduction" ? "deduction" : ""}">
           <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
