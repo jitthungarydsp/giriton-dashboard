@@ -3388,6 +3388,7 @@ def load_courier_settlement_summary_row(
     session_id: str | None,
     courier_id: str,
     courier_name: str,
+    period_start: date | None = None,
 ) -> dict[str, object]:
     """Read one persisted settlement summary row; avoid loading the whole session in a profile."""
     if not session_id:
@@ -3395,6 +3396,21 @@ def load_courier_settlement_summary_row(
     clean_courier_id = str(courier_id or "").strip()
     clean_courier_name = str(courier_name or "").strip()
     try:
+        if clean_courier_id and period_start:
+            try:
+                rows = (
+                    get_db().schema("settlement").table("vw_courier_month_profile_snapshot")
+                    .select("*")
+                    .eq("session_id", session_id)
+                    .eq("courier_id", clean_courier_id)
+                    .eq("period_month", period_start.replace(day=1).isoformat())
+                    .limit(1)
+                    .execute().data or []
+                )
+                if rows:
+                    return rows[0]
+            except BaseException:
+                pass
         if clean_courier_id:
             rows = (
                 get_db().schema("settlement").table("courier_settlement_summary")
@@ -6704,7 +6720,7 @@ def show_courier_dialog() -> None:
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
-    summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name)
+    summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
     profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     profile_adjustment_totals = (
@@ -6722,9 +6738,13 @@ def show_courier_dialog() -> None:
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
-    contractor_quality_bonus = load_dsp_monthly_company_quality_bonus(courier_id, period_start)
-    contractor_quality_total = parse_huf_value(contractor_quality_bonus.get("company_quality_bonus_total_huf"))
-    contractor_received_total = contractor_base_total + contractor_quality_total
+    contractor_received_total = settlement_amount("contractor_total_huf")
+    if not contractor_received_total:
+        contractor_quality_total = settlement_amount("company_quality_bonus_total_huf")
+        if not contractor_quality_total:
+            contractor_quality_bonus = load_dsp_monthly_company_quality_bonus(courier_id, period_start)
+            contractor_quality_total = parse_huf_value(contractor_quality_bonus.get("company_quality_bonus_total_huf"))
+        contractor_received_total = contractor_base_total + contractor_quality_total
     if (
         str(active_calculation_mode or "").strip().casefold() == "api"
         and (not summary_available or contractor_base_total == 0)
@@ -7071,11 +7091,19 @@ def show_courier_dialog() -> None:
             imported_bonus_total + manual_bonus_total + loyalty_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
         )
-        booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
-        booked_shift_count = int(booking_summary.get("booked_shift_count") or 0)
-        advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
-        giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
-        giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
+        snapshot_has_workload = "booked_shift_count" in summary_row or "giriton_shift_count" in summary_row
+        if snapshot_has_workload:
+            booking_summary = {"source": "vw_courier_month_profile_snapshot"}
+            booked_shift_count = int(parse_huf_value(summary_row.get("booked_shift_count")))
+            advance_booked_shift_count = int(parse_huf_value(summary_row.get("advance_booked_shift_count")))
+            giriton_shift_summary = {"source": "vw_courier_month_profile_snapshot"}
+            giriton_shift_count = int(parse_huf_value(summary_row.get("giriton_shift_count")))
+        else:
+            booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
+            booked_shift_count = int(booking_summary.get("booked_shift_count") or 0)
+            advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
+            giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
+            giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
         save_monthly_workload_summary(
             courier_id=courier_id,
             courier_name=courier_name,
