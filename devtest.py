@@ -3652,7 +3652,7 @@ def _api_revenue_master_lookup() -> dict[str, dict[str, object]]:
     }
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
     target_tables = [
         "courier_financial_overview_raw_bud1",
@@ -3690,7 +3690,7 @@ def load_api_financial_overview_rows(year: int, month: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_financial_overview_rows_for_courier(year: int, month: int, courier_id: str) -> pd.DataFrame:
     courier_key = _courier_id_key(courier_id)
     if not courier_key:
@@ -3885,7 +3885,7 @@ def api_financial_routes_to_detail(
     return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_received_amounts(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     columns = ["Courier ID", "Alvállalkozói összeg"]
     summary = load_api_monthly_courier_revenue_summary(period_start, warehouse_label)
@@ -3895,7 +3895,7 @@ def load_api_received_amounts(period_start: date, warehouse_label: str | None = 
     return result.groupby("Courier ID", as_index=False)["Alvállalkozói összeg"].sum()
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_monthly_revenue_detail(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     component_columns = list(API_REVENUE_COMPONENTS.keys())
     columns = [
@@ -3946,7 +3946,7 @@ def load_api_monthly_revenue_detail(period_start: date, warehouse_label: str | N
     return result[columns].sort_values(["Raktár", "Futár", "Dátum", "Route ID"])
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_monthly_courier_payload_totals(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     columns = ["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás", "Nyers beérkezett összeg"]
     rows = load_api_financial_overview_rows(period_start.year, period_start.month)
@@ -3994,46 +3994,75 @@ def load_api_monthly_courier_payload_totals(period_start: date, warehouse_label:
     )
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_monthly_courier_revenue_summary(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
-    detail = load_api_monthly_revenue_detail(period_start, warehouse_label)
     component_columns = list(API_REVENUE_COMPONENTS.keys())
     columns = [
         "Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás", "Útvonalak",
         "Rendelések", "Nyers beérkezett összeg", "Borravaló",
         "Komponensek összesen", *component_columns,
     ]
-    if detail.empty:
+    rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+    if rows.empty:
         return pd.DataFrame(columns=columns)
+    warehouse_id = settlement_warehouse_id(warehouse_label)
+    if warehouse_id is not None and "warehouse_id" in rows.columns:
+        rows = rows.loc[
+            pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+        ]
+    master_lookup = _api_revenue_master_lookup()
+    records: list[dict[str, object]] = []
+    for source in rows.to_dict("records"):
+        courier_id = str(source.get("courier_id") or "")
+        courier_key = _courier_id_key(courier_id)
+        master_row = master_lookup.get(courier_key, {})
+        payload = source.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        routes = _api_payload_routes(payload)
+        components_total = {column: 0.0 for column in component_columns}
+        raw_total = _money_amount(payload.get("totalCost")) if isinstance(payload, dict) else 0.0
+        orders_total = 0.0
+        tip_total = 0.0
+        if not raw_total:
+            raw_total = sum(_money_amount(route.get("totalAmount")) for route in routes)
+        for route in routes:
+            orders_total += parse_huf_value(route.get("orderCount"))
+            tip_total += _money_amount(route.get("customerTipsTotal"))
+            components = _api_route_revenue_components(route)
+            for component_name, amount in components.items():
+                components_total[component_name] = components_total.get(component_name, 0.0) + amount
+        records.append({
+            "Hónap": period_start.replace(day=1),
+            "Raktár": "BUD2" if int(source.get("warehouse_id") or 0) == 2 else "BUD1",
+            "Courier ID": courier_id,
+            "Futár": str(source.get("courier_name") or master_row.get("Futár") or "Ismeretlen futár"),
+            "Vállalkozás": str(master_row.get("Vállalkozás") or ""),
+            "Útvonalak": len(routes),
+            "Rendelések": orders_total,
+            "Nyers beérkezett összeg": raw_total,
+            "Borravaló": tip_total,
+            "Komponensek összesen": sum(components_total.values()),
+            **components_total,
+        })
+    if not records:
+        return pd.DataFrame(columns=columns)
+    summary = pd.DataFrame(records)
+    value_columns = ["Útvonalak", "Rendelések", "Nyers beérkezett összeg", "Borravaló", "Komponensek összesen", *component_columns]
+    for column in value_columns:
+        summary[column] = _numeric_series(summary, column)
     summary = (
-        detail.groupby(["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"], dropna=False)
-        .agg(
-            Útvonalak=("Route ID", "count"),
-            Rendelések=("Rendelések", "sum"),
-            **{
-                column: (column, "sum")
-                for column in ["Nyers beérkezett összeg", "Borravaló", "Komponensek összesen", *component_columns]
-            },
-        )
+        summary.groupby(["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"], dropna=False)[value_columns]
+        .sum()
         .reset_index()
     )
-    payload_totals = load_api_monthly_courier_payload_totals(period_start, warehouse_label)
-    if not payload_totals.empty:
-        summary = summary.merge(
-            payload_totals,
-            on=["Hónap", "Raktár", "Courier ID", "Futár", "Vállalkozás"],
-            how="left",
-            suffixes=("", " API"),
-        )
-        summary["Nyers beérkezett összeg"] = (
-            _numeric_series(summary, "Nyers beérkezett összeg API")
-            .where(_numeric_series(summary, "Nyers beérkezett összeg API") > 0, _numeric_series(summary, "Nyers beérkezett összeg"))
-        )
-        summary = summary.drop(columns=["Nyers beérkezett összeg API"], errors="ignore")
     return summary[columns].sort_values(["Raktár", "Futár"])
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_monthly_subcontractor_revenue_summary(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     courier_summary = load_api_monthly_courier_revenue_summary(period_start, warehouse_label)
     component_columns = list(API_REVENUE_COMPONENTS.keys())
@@ -4272,7 +4301,7 @@ def _loyalty_count_record(payload: object) -> dict[str, object] | None:
     }
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_loyalty_route_counts_for_period(period_start: date, period_end: date, source_mode: str = "") -> pd.DataFrame:
     try:
         rows = (
@@ -4303,7 +4332,7 @@ def load_loyalty_route_counts_for_period(period_start: date, period_end: date, s
     return pd.DataFrame(records).groupby(["driver_key", "route_type"], as_index=False)[["routes", "orders"]].sum()
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> pd.DataFrame:
     previous_month_end = period_start - timedelta(days=1)
     try:
@@ -5075,7 +5104,7 @@ def get_demo_complaints() -> pd.DataFrame:
     ])
 
 
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=300)
 def load_courier_route_detail(
     courier_id: str,
     courier_name: str,
@@ -5119,7 +5148,7 @@ def load_courier_route_detail(
         offset = 0
 
         while True:
-            page = (
+            query = (
                 get_db()
                 .schema("settlement")
                 .table("jit_row")
@@ -5131,6 +5160,13 @@ def load_courier_route_detail(
                     "is_route_primary,base_rate_status"
                 )
                 .eq("session_id", session_id)
+                .eq("is_route_primary", True)
+            )
+            if period_start is not None:
+                _, detail_period_end = month_bounds(period_start)
+                query = query.gte("route_date", period_start.isoformat()).lte("route_date", detail_period_end.isoformat())
+            page = (
+                query
                 .range(offset, offset + page_size - 1)
                 .execute()
                 .data
@@ -6664,13 +6700,6 @@ def show_courier_dialog() -> None:
             active_calculation_mode,
             period_start,
             st.session_state.get("new_warehouse", "Összes"),
-        )
-        st.write(
-            {
-                "profil_session_id": session_id,
-                "számítási_mód": active_calculation_mode,
-                "route_detail_sorok": len(route_detail),
-            }
         )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
