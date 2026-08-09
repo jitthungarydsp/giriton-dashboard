@@ -21,7 +21,7 @@ const state = {
   statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v68";
+const APP_VERSION = "v69";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -2651,7 +2651,7 @@ $("#register-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-  setAuthMessage("#register-message", "Regisztracio ellenorzese...");
+  setAuthMessage("#register-message", "Regisztráció ellenőrzése...");
   if (button) button.disabled = true;
   const payload = {
     courier_id: $("#register-courier-id").value,
@@ -2671,13 +2671,13 @@ $("#register-form")?.addEventListener("submit", async (event) => {
       setAuthMessage(
         "#password-reset-message",
         response.emailUpdated
-          ? "A futar ID mar szerepel a torzsben. Az e-mail cimet frissitettuk, innen tudsz jelszot kerni."
-          : "A futar ID mar szerepel a torzsben. Innen tudsz jelszot kerni."
+          ? "A futár ID már szerepel a törzsben. Az e-mail címet frissítettük, innen tudsz új jelszót kérni."
+          : "A futár ID már szerepel a törzsben. Innen tudsz új jelszót kérni."
       );
       return;
     }
     form.reset();
-    setAuthMessage("#register-message", response.message || "Regisztracio rogzitve.");
+    setAuthMessage("#register-message", response.message || "Regisztráció rögzítve.");
   } catch (error) {
     setAuthMessage("#register-message", error.message, true);
   } finally {
@@ -2689,7 +2689,7 @@ $("#password-reset-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-  setAuthMessage("#password-reset-message", "Belepesi adatok kuldese...");
+  setAuthMessage("#password-reset-message", "Új jelszó küldése...");
   if (button) button.disabled = true;
   try {
     const response = await api("/api/password-reset", {
@@ -2703,8 +2703,8 @@ $("#password-reset-form")?.addEventListener("submit", async (event) => {
     setAuthMessage(
       "#password-reset-message",
       response.emailUpdated
-        ? "E-mail cim frissitve, a belepesi adatokat elkuldtuk."
-        : response.message || "A belepesi adatokat elkuldtuk."
+        ? "E-mail cím frissítve, az új jelszót elküldtük."
+        : response.message || "Az új jelszót elküldtük."
     );
   } catch (error) {
     setAuthMessage("#password-reset-message", error.message, true);

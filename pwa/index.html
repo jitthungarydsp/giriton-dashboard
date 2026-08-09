@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=67" />
+    <link rel="stylesheet" href="/styles.css?v=69" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -26,27 +26,27 @@
         </form>
         <div class="auth-links">
           <button id="show-password-reset" type="button">Elfelejtettem a jelszavam</button>
-          <button id="show-register" type="button">Regisztracio</button>
+          <button id="show-register" type="button">Regisztráció</button>
         </div>
 
         <form id="password-reset-form" class="hidden">
-          <h2>Jelszo visszaallitas</h2>
-          <label>Futar ID<input id="reset-courier-id" name="courier_id" inputmode="numeric" required /></label>
-          <label>E-mail cim<input id="reset-email" name="email" type="email" autocomplete="email" required /></label>
+          <h2>Jelszó visszaállítás</h2>
+          <label>Futár ID<input id="reset-courier-id" name="courier_id" inputmode="numeric" required /></label>
+          <label>E-mail cím<input id="reset-email" name="email" type="email" autocomplete="email" required /></label>
           <p id="password-reset-message" class="error" role="alert"></p>
-          <button class="primary" type="submit">Belepesi adatok kuldese</button>
-          <button class="secondary" data-auth-back type="button">Vissza a belepeshez</button>
+          <button class="primary" type="submit">Új jelszó küldése</button>
+          <button class="secondary" data-auth-back type="button">Vissza a belépéshez</button>
         </form>
 
         <form id="register-form" class="hidden">
-          <h2>Regisztracio</h2>
-          <label>Futar ID<input id="register-courier-id" name="courier_id" inputmode="numeric" required /></label>
-          <label>Nev<input id="register-name" name="courier_name" autocomplete="name" required /></label>
-          <label>Telefonszam<input id="register-phone" name="phone_number" inputmode="tel" autocomplete="tel" required /></label>
-          <label>E-mail cim<input id="register-email" name="email" type="email" autocomplete="email" required /></label>
+          <h2>Regisztráció</h2>
+          <label>Futár ID<input id="register-courier-id" name="courier_id" inputmode="numeric" required /></label>
+          <label>Név<input id="register-name" name="courier_name" autocomplete="name" required /></label>
+          <label>Telefonszám<input id="register-phone" name="phone_number" inputmode="tel" autocomplete="tel" required /></label>
+          <label>E-mail cím<input id="register-email" name="email" type="email" autocomplete="email" required /></label>
           <p id="register-message" class="error" role="alert"></p>
-          <button class="primary" type="submit">Regisztracio elkuldese</button>
-          <button class="secondary" data-auth-back type="button">Vissza a belepeshez</button>
+          <button class="primary" type="submit">Regisztráció elküldése</button>
+          <button class="secondary" data-auth-back type="button">Vissza a belépéshez</button>
         </form>
       </section>
     </main>

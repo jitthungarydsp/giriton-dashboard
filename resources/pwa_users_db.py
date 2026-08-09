@@ -182,6 +182,45 @@ def change_pwa_user_password(courier_id: str, current_password: str, new_passwor
     return True
 
 
+def reset_pwa_user_password(courier_id: str) -> dict[str, Any] | None:
+    clean_courier_id = normalize_courier_id(courier_id)
+    if not clean_courier_id:
+        return None
+    rows = _request(
+        "GET",
+        PWA_USERS_TABLE,
+        params={
+            "select": "courier_id,username,email,active",
+            "courier_id": f"eq.{clean_courier_id}",
+            "active": "eq.true",
+            "limit": "1",
+        },
+    )
+    if rows is None:
+        return None
+    if not rows:
+        return None
+
+    password = generate_password()
+    now = datetime.now(timezone.utc).isoformat()
+    _request(
+        "PATCH",
+        PWA_USERS_TABLE,
+        params={"courier_id": f"eq.{clean_courier_id}"},
+        payload={
+            "password_hash": hash_password(password),
+            "password_updated_at": now,
+            "updated_at": now,
+        },
+        prefer="return=minimal",
+    )
+    return {
+        "username": str(rows[0].get("username") or "").strip(),
+        "password": password,
+        "email": str(rows[0].get("email") or "").strip(),
+    }
+
+
 def sync_pwa_users_from_json_users(users: list[dict[str, Any]]) -> dict[str, int]:
     result = {"synced": 0, "skipped": 0}
     now = datetime.now(timezone.utc).isoformat()

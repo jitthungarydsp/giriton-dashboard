@@ -25,8 +25,9 @@ from pydantic import BaseModel
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
-from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password
+from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password, reset_pwa_user_password
 from resources.security import hash_password, verify_password
+from resources.users import generate_password
 from resources.settlement_pdf import build_tig_breakdown, build_tig_pdf
 
 try:
@@ -310,11 +311,36 @@ def change_legacy_user_password(user: dict[str, Any], current_password: str, new
     return False
 
 
+def reset_legacy_user_password_for_courier(courier_id: str) -> dict[str, str] | None:
+    clean_id = normalize_profile_courier_id(courier_id)
+    if not clean_id:
+        return None
+    with USERS_FILE.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    password = generate_password()
+    for row in data.get("users", []):
+        if not row.get("active", True):
+            continue
+        if user_courier_id(row) != clean_id:
+            continue
+        row["password"] = password
+        row["passwordHash"] = hash_password(password)
+        row["token"] = ""
+        row["passwordUpdatedAt"] = datetime.now(timezone.utc).isoformat()
+        save_legacy_users_data(data)
+        return {
+            "username": str(row.get("username") or "").strip(),
+            "password": password,
+        }
+    return None
+
+
 def normalize_email_address(value: str) -> str:
     try:
         return validate_email(str(value or "").strip())
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Az e-mail cim formatuma hibas.") from exc
+        raise HTTPException(status_code=422, detail="Az e-mail cím formátuma hibás.") from exc
 
 
 def create_session(user: dict[str, Any]) -> str:
@@ -3397,9 +3423,9 @@ def save_registration_request(payload: RegistrationRequest) -> dict[str, Any]:
     courier_name = clean_text(payload.courier_name, limit=160)
     phone_number = clean_text(payload.phone_number, limit=60)
     if not courier_name:
-        raise HTTPException(status_code=422, detail="A nev megadasa kotelezo.")
+        raise HTTPException(status_code=422, detail="A név megadása kötelező.")
     if not phone_number:
-        raise HTTPException(status_code=422, detail="A telefonszam megadasa kotelezo.")
+        raise HTTPException(status_code=422, detail="A telefonszám megadása kötelező.")
 
     rows = supabase_rest(
         "POST",
@@ -4446,8 +4472,8 @@ def register(payload: RegistrationRequest):
             "ok": False,
             "redirect": "password_reset",
             "message": (
-                "Ez a futar ID mar szerepel a torzsben, ezert regisztracio helyett "
-                "jelszo-visszaallitast kell inditani."
+                "Ez a futár ID már szerepel a törzsben, ezért regisztráció helyett "
+                "jelszó-visszaállítást kell indítani."
             ),
             "emailUpdated": email_updated,
         }
@@ -4455,7 +4481,7 @@ def register(payload: RegistrationRequest):
     request_row = save_registration_request(payload)
     return {
         "ok": True,
-        "message": "A regisztracios kerelmet rogzitettuk. Admin jovahagyas utan lesz belepesed.",
+        "message": "A regisztrációs kérelmet rögzítettük. Admin jóváhagyás után lesz belépésed.",
         "request": request_row,
     }
 
@@ -4464,42 +4490,41 @@ def register(payload: RegistrationRequest):
 def password_reset(payload: PasswordResetRequest):
     courier_id = normalize_profile_courier_id(payload.courier_id)
     email = normalize_email_address(payload.email)
-    user = find_user_by_courier_id(courier_id)
-    if not user:
-        raise HTTPException(
-            status_code=404,
-            detail="Ehhez a futar ID-hoz nincs aktiv mobil felhasznalo. Kerj admin segitseget.",
-        )
-
     master_row = read_master_auth_row(courier_id)
     if not master_row:
-        raise HTTPException(status_code=404, detail="Ez a futar ID nincs a futar torzsben.")
+        raise HTTPException(status_code=404, detail="Ez a futár ID nincs a futár törzsben.")
 
     existing_email = master_email(master_row)
     email_updated = False
     if existing_email and existing_email.casefold() != email.casefold():
         raise HTTPException(
             status_code=403,
-            detail="A megadott e-mail cim nem egyezik a torzsben rogzitett e-mail cimmel.",
+            detail="A megadott e-mail cím nem egyezik a törzsben rögzített e-mail címmel.",
         )
     if not existing_email:
         email_updated = update_master_email_if_missing(master_row, email)
 
-    password = str(user.get("password") or "").strip()
-    if not password:
+    reset_user = None
+    try:
+        reset_user = reset_pwa_user_password(courier_id)
+    except Exception:
+        reset_user = None
+    if not reset_user:
+        reset_user = reset_legacy_user_password_for_courier(courier_id)
+    if not reset_user:
         raise HTTPException(
-            status_code=409,
-            detail="Ehhez a felhasznalohoz nincs olvashato jelszo, admin jelszoreset szukseges.",
+            status_code=404,
+            detail="Ehhez a futár ID-hoz nincs aktív mobil felhasználó. Kérj admin segítséget.",
         )
 
     try:
-        result = send_login_credentials(email, str(user.get("username") or "").strip(), password)
+        result = send_login_credentials(email, reset_user["username"], reset_user["password"])
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Az e-mail kuldese sikertelen: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Az e-mail küldése sikertelen: {exc}") from exc
 
     return {
         "ok": True,
-        "message": "Elkuldtem a belepesi adatokat a megadott e-mail cimre.",
+        "message": "Új jelszót küldtünk a megadott e-mail címre.",
         "emailUpdated": email_updated,
         "recipient": result.get("recipient"),
     }

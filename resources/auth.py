@@ -47,10 +47,11 @@ def authenticate(
 ):
 
     data = load_users()
+    username = str(username or "").strip()
 
     for user in data["users"]:
         if (
-            user["username"] != username
+            str(user.get("username") or "").strip() != username
             or
             not user.get(
                 "active",
@@ -136,10 +137,12 @@ def _decode_token(token):
 
 def save_token(username):
     data = load_users()
+    username = str(username or "").strip()
 
     for user in data["users"]:
-        if user["username"] == username:
-            payload = f"{username}|{int(time.time())}"
+        stored_username = str(user.get("username") or "").strip()
+        if stored_username == username:
+            payload = f"{stored_username}|{int(time.time())}"
             signature = _sign_token_payload(payload, user)
             return _encode_token(payload, signature)
 
@@ -168,7 +171,7 @@ def login_by_token(
 
         for user in data["users"]:
             if (
-                user["username"] == username
+                str(user.get("username") or "").strip() == username.strip()
                 and user.get("active", True)
             ):
                 expected = _sign_token_payload(payload, user)
