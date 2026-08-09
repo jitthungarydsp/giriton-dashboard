@@ -109,7 +109,7 @@ create table if not exists settlement.cfg_jitt_periodic_fees (
     route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
     weekdays integer[] not null default '{}',
     warehouse_code text,
-    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period')),
+    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period', 'orders_over_threshold_every_n_per_route')),
     condition_min numeric,
     condition_max numeric,
     company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
@@ -137,7 +137,7 @@ alter table settlement.cfg_jitt_periodic_fees
 alter table settlement.cfg_jitt_periodic_fees
     drop constraint if exists cfg_jitt_periodic_fees_condition_metric_check,
     add constraint cfg_jitt_periodic_fees_condition_metric_check
-    check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period'));
+    check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period', 'orders_over_threshold_every_n_per_route'));
 
 alter table settlement.cfg_jitt_periodic_fees
     drop constraint if exists cfg_jitt_periodic_fees_weekdays_check,

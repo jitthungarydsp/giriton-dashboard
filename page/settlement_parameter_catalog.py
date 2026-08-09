@@ -40,7 +40,7 @@ DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bá
 ROUTE_LABELS = {"express": "Expressz", "normal": "Normál", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
 CALCULATION_MODE_LABELS = {"excel": "Közös / Excel", "api": "API előnyben", "custom": "Egyéni"}
-CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban", "every_n_routes_per_day": "Minden N. túra után naponta", "every_n_routes_in_period": "Minden N. túra után az időszakban", "orders_over_threshold_every_n_per_route": "X felett minden Y cim turankent"}
+CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban", "every_n_routes_per_day": "Minden N. túra után naponta", "every_n_routes_in_period": "Minden N. túra után az időszakban", "orders_over_threshold_every_n_per_route": "X felett minden Y cím túránként"}
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 CUSTOMER_RATING_DEFAULT_RULES = [
     {
@@ -239,7 +239,7 @@ def _weekday_text(value: Any) -> str:
 
 def _periodic_condition_text(condition: str, minimum: Any, maximum: Any) -> str:
     if condition == "orders_over_threshold_every_n_per_route":
-        return f"X>{float(minimum or 0):g}, minden {float(maximum or 0):g} cim"
+        return f"X>{float(minimum or 0):g}, minden {float(maximum or 0):g} cím"
     if condition in {"every_n_routes_per_day", "every_n_routes_in_period"}:
         return f"{CONDITION_LABELS.get(condition, condition)}: {float(minimum or 0):g}"
     return f"{CONDITION_LABELS.get(condition, condition)} · {_range(minimum, maximum)}"
@@ -459,18 +459,18 @@ def _show_periodic(client: Any) -> None:
         elif condition == "orders_over_threshold_every_n_per_route":
             c1, c2 = right.columns(2)
             condition_min = c1.number_input(
-                "X kuszob",
+                "X küszöb",
                 min_value=0.0,
                 value=_number((row or {}).get("condition_min")),
                 step=1.0,
-                help="Ennyi cim felett indul a plusz dij.",
+                help="Ennyi cím felett indul a plusz díj.",
             )
             condition_max = c2.number_input(
-                "Y lepcso",
+                "Y lépcső",
                 min_value=1.0,
                 value=_number((row or {}).get("condition_max"), 1.0) or 1.0,
                 step=1.0,
-                help="Minden ennyi extra cim utan jar a bonusz.",
+                help="Minden ennyi extra cím után jár a bónusz.",
             )
             has_max = True
         elif condition != "none":

@@ -1,9 +1,6 @@
 begin;
 
 alter table settlement.cfg_jitt_periodic_fees
-    add column if not exists weekdays integer[] not null default '{}';
-
-alter table settlement.cfg_jitt_periodic_fees
     drop constraint if exists cfg_jitt_periodic_fees_condition_metric_check;
 
 alter table settlement.cfg_jitt_periodic_fees
@@ -20,12 +17,5 @@ alter table settlement.cfg_jitt_periodic_fees
             'orders_over_threshold_every_n_per_route'
         )
     );
-
-alter table settlement.cfg_jitt_periodic_fees
-    drop constraint if exists cfg_jitt_periodic_fees_weekdays_check;
-
-alter table settlement.cfg_jitt_periodic_fees
-    add constraint cfg_jitt_periodic_fees_weekdays_check
-    check (weekdays <@ array[1,2,3,4,5,6,7]);
 
 commit;
