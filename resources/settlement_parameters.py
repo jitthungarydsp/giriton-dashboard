@@ -27,6 +27,8 @@ PERIODIC_CONDITIONS = {
     "routes_per_day",
     "routes_in_period",
     "orders_in_period",
+    "every_n_routes_per_day",
+    "every_n_routes_in_period",
 }
 
 
@@ -171,10 +173,18 @@ def validate_periodic_fee(payload: dict[str, Any]) -> dict[str, Any]:
     condition_min, condition_max = _range(payload, "condition", "bónuszfeltétel")
     if condition == "none":
         condition_min, condition_max = None, None
+    if condition in {"every_n_routes_per_day", "every_n_routes_in_period"}:
+        if condition_min is None or condition_min < 1:
+            raise ValueError("A minden N. kör után szabálynál az N értéke legalább 1 legyen.")
+        condition_max = None
+    weekdays = sorted({int(day) for day in (payload.get("weekdays") or [])})
+    if any(day not in range(1, 8) for day in weekdays):
+        raise ValueError("A hét napjai csak 1 és 7 közötti értékek lehetnek.")
     return {
         "fee_name": fee_name,
         "day_type": _choice(payload.get("day_type"), DAY_TYPES, "naptípus"),
         "route_type": _choice(payload.get("route_type"), ROUTE_TYPES, "túratípus"),
+        "weekdays": weekdays,
         "warehouse_code": _optional_text(payload.get("warehouse_code")),
         "condition_metric": condition,
         "condition_min": condition_min,

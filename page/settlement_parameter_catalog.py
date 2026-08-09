@@ -39,7 +39,7 @@ DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bá
 ROUTE_LABELS = {"express": "Expressz", "normal": "Normál", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
 CALCULATION_MODE_LABELS = {"excel": "Közös / Excel", "api": "API előnyben", "custom": "Egyéni"}
-CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban"}
+CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban", "every_n_routes_per_day": "Minden N. túra után naponta", "every_n_routes_in_period": "Minden N. túra után az időszakban"}
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 CUSTOMER_RATING_DEFAULT_RULES = [
     {
@@ -214,6 +214,28 @@ def _range(minimum: Any, maximum: Any, suffix: str = "") -> str:
     return f"{float(minimum):g}–{float(maximum):g}{suffix}"
 
 
+def _weekdays(value: Any) -> list[int]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            loaded = json.loads(value)
+            value = loaded
+        except json.JSONDecodeError:
+            value = [item for item in value.replace("{", "").replace("}", "").split(",") if item.strip()]
+    try:
+        return sorted({int(item) for item in value if int(item) in WEEKDAY_LABELS})
+    except TypeError:
+        return []
+
+
+def _weekday_text(value: Any) -> str:
+    days = _weekdays(value)
+    if not days:
+        return "Minden nap"
+    return ", ".join(WEEKDAY_LABELS.get(day, str(day)) for day in days)
+
+
 def _editor_row(data: pd.DataFrame, key: str, label_field: str) -> dict[str, Any] | None:
     rows = data.to_dict("records")
     choices = {"Új tétel": None}
@@ -372,24 +394,50 @@ def _show_periodic(client: Any) -> None:
     st.caption("Egyedi dátumtartományú díjak és bónuszok. Például: 2026-06-07–09 között, minimum 12 címes túrára 1 000 Ft.")
     data = read_items(client, PERIODIC_FEE_TABLE)
     if not data.empty:
-        view=data.copy(); view["Naptípus"] = view["day_type"].map(DAY_LABELS); view["Túratípus"] = view["route_type"].map(ROUTE_LABELS); view["Feltétel"] = [f"{CONDITION_LABELS.get(c, c)} · {_range(a,b)}" for c,a,b in zip(view["condition_metric"],view["condition_min"],view["condition_max"])]; view["JITT"] = view["company_amount_huf"].map(_money); view["Futár"] = view["courier_amount_huf"].map(_money); view["Vége"] = view["valid_to"].fillna("Folyamatos")
-        st.dataframe(view[["fee_name", "Naptípus", "Túratípus", "Feltétel", "JITT", "Futár", "valid_from", "Vége"]], use_container_width=True, hide_index=True)
+        view = data.copy()
+        view["Naptípus"] = view["day_type"].map(DAY_LABELS)
+        view["Túratípus"] = view["route_type"].map(ROUTE_LABELS)
+        view["Napok"] = view.get("weekdays", pd.Series([[]] * len(view), index=view.index)).map(_weekday_text)
+        view["Feltétel"] = [
+            f"{CONDITION_LABELS.get(condition, condition)} · {_range(minimum, maximum)}"
+            for condition, minimum, maximum in zip(view["condition_metric"], view["condition_min"], view["condition_max"])
+        ]
+        view["JITT"] = view["company_amount_huf"].map(_money)
+        view["Futár"] = view["courier_amount_huf"].map(_money)
+        view["Vége"] = view["valid_to"].fillna("Folyamatos")
+        st.dataframe(
+            view[["fee_name", "Naptípus", "Túratípus", "Napok", "Feltétel", "JITT", "Futár", "valid_from", "Vége"]],
+            use_container_width=True,
+            hide_index=True,
+        )
     row = _editor_row(data, "periodic", "fee_name")
     form_key = f"periodic_form_{_text((row or {}).get('id')) or 'new'}"
     with st.form(form_key):
-        left,right=st.columns(2); days,routes,units,conditions=list(DAY_LABELS),list(ROUTE_LABELS),list(UNIT_LABELS),list(CONDITION_LABELS)
+        left, right = st.columns(2)
+        days, routes, units, conditions = list(DAY_LABELS), list(ROUTE_LABELS), list(UNIT_LABELS), list(CONDITION_LABELS)
         fee_name = left.text_input("Megnevezés", value=_text((row or {}).get("fee_name")), placeholder="Például: 12 címes túrabónusz")
         day_type = right.selectbox("Naptípus", days, index=_index(days,(row or {}).get("day_type")), format_func=DAY_LABELS.get)
         route_type = left.selectbox("Túratípus", routes, index=_index(routes,(row or {}).get("route_type")), format_func=ROUTE_LABELS.get)
         warehouse = right.text_input("Raktár", value=_text((row or {}).get("warehouse_code")), placeholder="Üres = minden raktár")
+        selected_weekdays = st.multiselect(
+            "Hét napja",
+            options=list(WEEKDAY_LABELS),
+            default=_weekdays((row or {}).get("weekdays")),
+            format_func=WEEKDAY_LABELS.get,
+            help="Üresen hagyva minden napra érvényes. Vasárnapi Hősökhöz csak a Vasárnapot jelöld.",
+        )
         condition = left.selectbox("Feltétel", conditions, index=_index(conditions,(row or {}).get("condition_metric") or "none"), format_func=CONDITION_LABELS.get)
-        c1,c2=right.columns(2); condition_min=c1.number_input("Minimum érték", min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0); condition_max=c2.number_input("Maximum érték", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0); has_max=c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None)
+        c1, c2 = right.columns(2)
+        min_label = "N értéke" if condition in {"every_n_routes_per_day", "every_n_routes_in_period"} else "Minimum érték"
+        condition_min = c1.number_input(min_label, min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0)
+        condition_max = c2.number_input("Maximum érték", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0, disabled=condition in {"none", "every_n_routes_per_day", "every_n_routes_in_period"})
+        has_max = c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None, disabled=condition in {"none", "every_n_routes_per_day", "every_n_routes_in_period"})
         m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get)
         valid_from,valid_to,has_end,priority,is_active,note=_common_period(row or {},"periodic")
         saved=st.form_submit_button("Módosítás mentése" if row else "Időszakos díj mentése",type="primary")
     if saved:
         try:
-            save_item(client, PERIODIC_FEE_TABLE, validate_periodic_fee({"fee_name":fee_name,"day_type":day_type,"route_type":route_type,"warehouse_code":warehouse,"condition_metric":condition,"condition_min":condition_min if condition != "none" else None,"condition_max":condition_max if condition != "none" and has_max else None,"company_amount_huf":company,"courier_amount_huf":courier,"calculation_unit":unit,"valid_from":valid_from,"valid_to":valid_to if has_end else None,"priority":priority,"is_active":is_active,"note":note}),_actor(),_text((row or {}).get("id")) or None)
+            save_item(client, PERIODIC_FEE_TABLE, validate_periodic_fee({"fee_name":fee_name,"day_type":day_type,"route_type":route_type,"weekdays":selected_weekdays,"warehouse_code":warehouse,"condition_metric":condition,"condition_min":condition_min if condition != "none" else None,"condition_max":condition_max if condition != "none" and has_max else None,"company_amount_huf":company,"courier_amount_huf":courier,"calculation_unit":unit,"valid_from":valid_from,"valid_to":valid_to if has_end else None,"priority":priority,"is_active":is_active,"note":note}),_actor(),_text((row or {}).get("id")) or None)
             _mark_parameters_changed(client)
             st.success("Az időszakos díj mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")

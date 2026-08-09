@@ -107,8 +107,9 @@ create table if not exists settlement.cfg_jitt_periodic_fees (
     fee_name text not null,
     day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
     route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
+    weekdays integer[] not null default '{}',
     warehouse_code text,
-    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period')),
+    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period')),
     condition_min numeric,
     condition_max numeric,
     company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
@@ -126,8 +127,22 @@ create table if not exists settlement.cfg_jitt_periodic_fees (
     deleted_at timestamptz,
     deleted_by text,
     check (valid_to is null or valid_to >= valid_from),
-    check (condition_max is null or condition_min is null or condition_max >= condition_min)
+    check (condition_max is null or condition_min is null or condition_max >= condition_min),
+    check (weekdays <@ array[1,2,3,4,5,6,7])
 );
+
+alter table settlement.cfg_jitt_periodic_fees
+    add column if not exists weekdays integer[] not null default '{}';
+
+alter table settlement.cfg_jitt_periodic_fees
+    drop constraint if exists cfg_jitt_periodic_fees_condition_metric_check,
+    add constraint cfg_jitt_periodic_fees_condition_metric_check
+    check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period'));
+
+alter table settlement.cfg_jitt_periodic_fees
+    drop constraint if exists cfg_jitt_periodic_fees_weekdays_check,
+    add constraint cfg_jitt_periodic_fees_weekdays_check
+    check (weekdays <@ array[1,2,3,4,5,6,7]);
 
 create table if not exists settlement.cfg_jitt_reserve_insurance_rules (
     id uuid primary key default gen_random_uuid(),

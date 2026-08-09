@@ -58,6 +58,36 @@ def money_int(value: Any) -> int:
         return int(round(float(digits))) if digits else 0
 
 
+def adjustment_types_for_row(raw_type: Any, malus: int, bonus: int) -> list[tuple[str, int]]:
+    """Map the sheet type to settlement adjustment rows without mixing corrections into bonus/malus."""
+    text = normalize_text(raw_type)
+    result: list[tuple[str, int]] = []
+    is_correction = any(token in text for token in ["korrekcio", "correction", "korr"])
+    is_bonus = any(token in text for token in ["bonus", "bonusz", "jovairas", "plusz"])
+    is_malus = any(token in text for token in ["malus", "malusz", "levonas", "minusz"])
+
+    if is_correction:
+        if bonus > 0:
+            result.append(("correction_income", bonus))
+        if malus > 0:
+            result.append(("correction_deduction", malus))
+        return result
+
+    if is_bonus and bonus > 0:
+        result.append(("bonus", bonus))
+    if is_malus and malus > 0:
+        result.append(("malus", malus))
+
+    if result:
+        return result
+
+    if bonus > 0:
+        result.append(("bonus", bonus))
+    if malus > 0:
+        result.append(("malus", malus))
+    return result
+
+
 def parse_sheet_datetime(value: Any) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -161,27 +191,16 @@ def rows_from_sheet(sheet_id: str, gid: int) -> list[dict[str, Any]]:
         transaction_id = str(padded[7] or "").strip()
         if not occurred_at or not name:
             continue
-        if bonus <= 0 and malus <= 0:
+        typed_amounts = adjustment_types_for_row(raw_type, malus, bonus)
+        if not typed_amounts:
             continue
-        if bonus > 0:
+        for adjustment_type, amount_huf in typed_amounts:
             result.append({
                 "row_number": row_number,
                 "effective_date": occurred_at.date(),
                 "courier_name": name,
-                "adjustment_type": "bonus",
-                "amount_huf": bonus,
-                "note": reason,
-                "recorded_by": recorded_by,
-                "transaction_id": transaction_id,
-                "raw_type": raw_type,
-            })
-        if malus > 0:
-            result.append({
-                "row_number": row_number,
-                "effective_date": occurred_at.date(),
-                "courier_name": name,
-                "adjustment_type": "malus",
-                "amount_huf": malus,
+                "adjustment_type": adjustment_type,
+                "amount_huf": amount_huf,
                 "note": reason,
                 "recorded_by": recorded_by,
                 "transaction_id": transaction_id,
@@ -279,17 +298,37 @@ def main() -> int:
     parser.add_argument("--gid", type=int, default=DEFAULT_GID)
     parser.add_argument("--from-date", help="Inclusive YYYY-MM-DD filter.")
     parser.add_argument("--to-date", help="Inclusive YYYY-MM-DD filter.")
+    parser.add_argument("--name", help="Csak diagnosztika: futárnév részletre szűr a forrásban.")
     args = parser.parse_args()
 
     from_date = date.fromisoformat(args.from_date) if args.from_date else None
     to_date = date.fromisoformat(args.to_date) if args.to_date else None
 
-    couriers = read_courier_master()
     sheet_rows = rows_from_sheet(args.sheet_id, args.gid)
     if from_date:
         sheet_rows = [row for row in sheet_rows if row["effective_date"] >= from_date]
     if to_date:
         sheet_rows = [row for row in sheet_rows if row["effective_date"] <= to_date]
+    if args.name:
+        name_filter = normalize_text(args.name)
+        matching_rows = [
+            row for row in sheet_rows
+            if name_filter in normalize_text(row.get("courier_name"))
+        ]
+        print(f"Sheet diagnosztika: {args.name} | sorok: {len(matching_rows)}")
+        for row in matching_rows[:50]:
+            print(
+                f"  #{row['row_number']} {row['effective_date']} "
+                f"{row['courier_name']} {row['adjustment_type']} "
+                f"{row['amount_huf']} Ft | {row.get('note') or '-'} | {row.get('transaction_id') or '-'}"
+            )
+        if len(matching_rows) > 50:
+            print(f"  ... +{len(matching_rows) - 50} tovabbi")
+        if not args.apply:
+            print("DRY-RUN: csak a sheet forrást ellenőriztem, DB mentés nem történt.")
+            return 0
+
+    couriers = read_courier_master()
     existing = existing_adjustments()
 
     prepared: list[tuple[str, dict[str, Any]]] = []
@@ -324,6 +363,16 @@ def main() -> int:
     print("Mode:", "APPLY" if args.apply else "DRY-RUN")
     print(f"Sheet rows with amount: {len(sheet_rows)}")
     print(f"Prepared: {len(prepared)} | insert: {inserted} | update: {updated} | unmatched/skipped: {skipped}")
+    if prepared:
+        by_type: dict[str, int] = {}
+        by_type_amount: dict[str, int] = {}
+        for _key, payload in prepared:
+            adjustment_type = str(payload.get("adjustment_type") or "")
+            by_type[adjustment_type] = by_type.get(adjustment_type, 0) + 1
+            by_type_amount[adjustment_type] = by_type_amount.get(adjustment_type, 0) + int(payload.get("amount_huf") or 0)
+        print("Tipus osszesito:")
+        for adjustment_type in sorted(by_type):
+            print(f"  - {adjustment_type}: {by_type[adjustment_type]} sor, {by_type_amount[adjustment_type]} Ft")
     if unmatched:
         print("Unmatched couriers:")
         for item in unmatched[:50]:

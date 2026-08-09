@@ -1100,6 +1100,27 @@ def load_active_bonus_level_rules(table_name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_active_periodic_fee_rules(period_start: date, period_end: date) -> pd.DataFrame:
+    """Read JITT periodic fees that overlap the selected settlement month."""
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_periodic_fees").select("*")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", period_end.isoformat())
+            .order("priority")
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    rules = pd.DataFrame(rows)
+    if rules.empty:
+        return rules
+    valid_to = pd.to_datetime(rules.get("valid_to"), errors="coerce")
+    return rules.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_jitt_day_definitions_for_period(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (
@@ -3508,6 +3529,58 @@ def _api_route_fee(route: dict[str, object], *fee_types: str) -> float:
     return total
 
 
+def _api_route_courier_fee_from_rules(
+    route: dict[str, object],
+    raw_amount: object,
+    rules: pd.DataFrame,
+    route_date: object,
+    day_type: object,
+    route_type: object,
+) -> float:
+    raw_value = parse_huf_value(raw_amount)
+    if raw_value == 0 or rules.empty:
+        return raw_value
+
+    try:
+        work_date = date.fromisoformat(str(route_date)[:10])
+    except ValueError:
+        work_date = None
+
+    route_type_key = _performance_key_from_label(route_type, "route")
+    day_type_key = _performance_key_from_label(day_type, "day")
+    orders = parse_huf_value(route.get("orderCount"))
+
+    for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+        if str(rule.get("day_type") or "any").casefold() not in {"any", day_type_key}:
+            continue
+        if str(rule.get("route_type") or "any").casefold() not in {"any", route_type_key}:
+            continue
+        if work_date:
+            try:
+                valid_from = date.fromisoformat(str(rule.get("valid_from"))[:10])
+                valid_to_value = rule.get("valid_to")
+                valid_to = date.fromisoformat(str(valid_to_value)[:10]) if pd.notna(valid_to_value) else None
+            except ValueError:
+                continue
+            if work_date < valid_from or (valid_to and work_date > valid_to):
+                continue
+
+        company_amount = parse_huf_value(rule.get("company_amount_huf"))
+        courier_amount = parse_huf_value(rule.get("courier_amount_huf"))
+        calculation_unit = str(rule.get("calculation_unit") or "per_route").casefold()
+        expected_company_amount = company_amount
+        if calculation_unit == "per_order":
+            expected_company_amount = company_amount * orders
+
+        if abs(expected_company_amount - raw_value) > 0.5 and abs(company_amount - raw_value) > 0.5:
+            continue
+        if calculation_unit == "per_order":
+            return courier_amount * orders
+        return courier_amount
+
+    return raw_value
+
+
 def _api_route_other_bonus(route: dict[str, object]) -> float:
     excluded = {"fixed_base", "delay_performance", "dataport_delay_performance", "compliance"}
     total = 0.0
@@ -3730,6 +3803,8 @@ def api_financial_routes_to_detail(
         period_start = period_start or date.today().replace(day=1)
         _, period_end = month_bounds(period_start)
     day_rules = load_jitt_day_definitions_for_period(period_start, period_end)
+    delay_level_rules = load_active_bonus_level_rules("cfg_jitt_delay_bonus_rules")
+    compliance_level_rules = load_active_bonus_level_rules("cfg_jitt_compliance_bonus_rules")
     target_id = _courier_id_key(courier_id)
     weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
     parsed: list[dict[str, object]] = []
@@ -3751,8 +3826,23 @@ def api_financial_routes_to_detail(
             parsed_date = pd.to_datetime(delivery_date, errors="coerce")
             route_layer = str(route.get("routeLayer") or "NORMAL").strip().upper()
             route_type = {"NORMAL": "Normál", "EXPRESS": "Expressz", "REGIONAL": "Regionális"}.get(route_layer, route_layer.title())
-            delay_fee = _api_route_fee(route, "delay_performance", "dataport_delay_performance")
-            compliance_fee = _api_route_fee(route, "compliance")
+            day_type = resolve_jitt_day_type_label(parsed_date, day_rules)
+            delay_fee = _api_route_courier_fee_from_rules(
+                route,
+                _api_route_fee(route, "delay_performance", "dataport_delay_performance"),
+                delay_level_rules,
+                delivery_date,
+                day_type,
+                route_type,
+            )
+            compliance_fee = _api_route_courier_fee_from_rules(
+                route,
+                _api_route_fee(route, "compliance"),
+                compliance_level_rules,
+                delivery_date,
+                day_type,
+                route_type,
+            )
             other_bonus = _api_route_other_bonus(route)
             parsed.append({
                 "_courier_id": _courier_id_key(source.get("courier_id")),
@@ -3760,7 +3850,7 @@ def api_financial_routes_to_detail(
                 "Excel dátum": delivery_date or "–",
                 "Hét napja": weekday_names.get(int(parsed_date.dayofweek) + 1, "–") if pd.notna(parsed_date) else "–",
                 "Túratípus": route_type,
-                "Naptípus": resolve_jitt_day_type_label(parsed_date, day_rules),
+                "Naptípus": day_type,
                 "Rendelések": parse_huf_value(route.get("orderCount")),
                 "Alapdíj": _api_route_fee(route, "fixed_base"),
                 "Kapott összeg": _money_amount(route.get("totalAmount")),
@@ -4453,11 +4543,38 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
         adjustments["amount_huf"] = pd.to_numeric(adjustments["amount_huf"], errors="coerce").fillna(0.0)
         pivot = adjustments.pivot_table(index="courier_id", columns="adjustment_type", values="amount_huf", aggfunc="sum", fill_value=0.0)
         courier_ids = result["Courier ID"].map(lambda value: str(value).strip().removesuffix(".0"))
-        result["Bónusz"] = _numeric_series(result, "Bónusz") + courier_ids.map(pivot.get("bonus", pd.Series(dtype=float))).fillna(0.0)
-        deductions = (pivot.get("malus", pd.Series(dtype=float)) + pivot.get("atm_deduction", pd.Series(dtype=float)) + pivot.get("other_expense", pd.Series(dtype=float)))
+        zero_adjustments = pd.Series(0.0, index=pivot.index)
+        correction_income = (
+            pivot.get("correction", zero_adjustments)
+            + pivot.get("manual_correction", zero_adjustments)
+            + pivot.get("correction_income", zero_adjustments)
+        )
+        correction_deduction = (
+            pivot.get("correction_deduction", zero_adjustments)
+            + pivot.get("manual_correction_deduction", zero_adjustments)
+        )
+        result["Bónusz"] = (
+            _numeric_series(result, "Bónusz")
+            + courier_ids.map(pivot.get("bonus", zero_adjustments)).fillna(0.0)
+        )
+        result["Korrekció"] = (
+            _numeric_series(result, "Korrekció")
+            + courier_ids.map(correction_income - correction_deduction).fillna(0.0)
+        )
+        deductions = (
+            pivot.get("malus", zero_adjustments)
+            + pivot.get("atm_deduction", zero_adjustments)
+            + pivot.get("other_expense", zero_adjustments)
+        )
         result["Levonás"] = _numeric_series(result, "Levonás") + courier_ids.map(deductions).fillna(0.0)
-        result["Bónusz"] += courier_ids.map(pivot.get("customer_rating", pd.Series(dtype=float))).fillna(0.0)
-    result["Kifizetendő"] = _numeric_series(result, "Nettó bevétel") + _numeric_series(result, "Borravaló") + _numeric_series(result, "Bónusz") - _numeric_series(result, "Levonás")
+        result["Bónusz"] += courier_ids.map(pivot.get("customer_rating", zero_adjustments)).fillna(0.0)
+    result["Kifizetendő"] = (
+        _numeric_series(result, "Nettó bevétel")
+        + _numeric_series(result, "Borravaló")
+        + _numeric_series(result, "Bónusz")
+        + _numeric_series(result, "Korrekció")
+        - _numeric_series(result, "Levonás")
+    )
     return result
 
 
@@ -5135,6 +5252,185 @@ def build_amount_drilldown(
         axis=1,
     )
     return grouped[columns].sort_values(["Túratípus", "Naptípus", "Egységösszeg"])
+
+
+def _detail_column(data: pd.DataFrame, *names: str) -> str | None:
+    if data.empty:
+        return None
+    normalized = {_normalized_field_key(column): column for column in data.columns}
+    for name in names:
+        column = normalized.get(_normalized_field_key(name))
+        if column:
+            return column
+    return None
+
+
+def _weekdays_from_rule(value: object) -> set[int]:
+    if value in (None, ""):
+        return set()
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = re.findall(r"\d+", value)
+    try:
+        return {int(item) for item in value if int(item) in range(1, 8)}
+    except TypeError:
+        return set()
+
+
+def _rule_date(value: object) -> date | None:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def calculate_periodic_fee_corrections(
+    route_detail: pd.DataFrame,
+    period_start: date,
+    period_end: date,
+    warehouse_code: object = None,
+) -> tuple[float, pd.DataFrame]:
+    columns = ["Tétel", "Napok", "Túratípus", "Feltétel", "Darab", "Egységösszeg", "Összeg", "Számítás"]
+    rules = load_active_periodic_fee_rules(period_start, period_end)
+    if route_detail.empty or rules.empty:
+        return 0.0, pd.DataFrame(columns=columns)
+
+    date_column = _detail_column(route_detail, "Excel dátum", "work_date", "delivery_date", "date")
+    route_type_column = _detail_column(route_detail, "Túratípus", "route_type", "routeLayer")
+    day_type_column = _detail_column(route_detail, "Naptípus", "day_type")
+    order_column = _detail_column(route_detail, "Rendelések", "order_count", "orders")
+    warehouse_column = _detail_column(route_detail, "Raktár", "warehouse", "warehouse_code")
+    if not date_column:
+        return 0.0, pd.DataFrame(columns=columns)
+
+    detail = route_detail.copy()
+    detail["_periodic_date"] = pd.to_datetime(detail[date_column], errors="coerce").dt.date
+    detail = detail[detail["_periodic_date"].notna()].copy()
+    if detail.empty:
+        return 0.0, pd.DataFrame(columns=columns)
+    detail["_periodic_route_type"] = detail[route_type_column].map(lambda value: _performance_key_from_label(value, "route")) if route_type_column else "any"
+    detail["_periodic_day_type"] = detail[day_type_column].map(lambda value: _performance_key_from_label(value, "day")) if day_type_column else "any"
+    detail["_periodic_orders"] = pd.to_numeric(detail[order_column], errors="coerce").fillna(0.0) if order_column else 0.0
+    if warehouse_column:
+        detail["_periodic_warehouse"] = detail[warehouse_column].astype(str).str.strip().str.casefold()
+    else:
+        detail["_periodic_warehouse"] = str(warehouse_code or "").strip().casefold()
+
+    rows: list[dict[str, object]] = []
+    for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+        valid_from = _rule_date(rule.get("valid_from")) or period_start
+        valid_to = _rule_date(rule.get("valid_to")) or period_end
+        selected = detail[
+            (detail["_periodic_date"] >= valid_from)
+            & (detail["_periodic_date"] <= valid_to)
+        ].copy()
+        if selected.empty:
+            continue
+
+        weekdays = _weekdays_from_rule(rule.get("weekdays"))
+        if weekdays:
+            selected = selected[selected["_periodic_date"].map(lambda item: item.isoweekday() in weekdays)].copy()
+        rule_route_type = str(rule.get("route_type") or "any").casefold()
+        if rule_route_type != "any":
+            selected = selected[selected["_periodic_route_type"] == rule_route_type].copy()
+        rule_day_type = str(rule.get("day_type") or "any").casefold()
+        if rule_day_type != "any":
+            selected = selected[selected["_periodic_day_type"] == rule_day_type].copy()
+        rule_warehouse = str(rule.get("warehouse_code") or "").strip().casefold()
+        if rule_warehouse:
+            selected = selected[selected["_periodic_warehouse"] == rule_warehouse].copy()
+        if selected.empty:
+            continue
+
+        condition = str(rule.get("condition_metric") or "none").casefold()
+        minimum = parse_huf_value(rule.get("condition_min"))
+        maximum_value = rule.get("condition_max")
+        maximum = parse_huf_value(maximum_value) if pd.notna(maximum_value) else None
+        unit = str(rule.get("calculation_unit") or "per_route").casefold()
+        unit_amount = parse_huf_value(rule.get("courier_amount_huf"))
+        route_count = len(selected)
+        order_count = float(selected["_periodic_orders"].sum())
+        payable_units = 0.0
+        metric_count = route_count
+
+        if condition == "orders_per_route":
+            filtered = selected[selected["_periodic_orders"] >= minimum].copy()
+            if maximum is not None:
+                filtered = filtered[filtered["_periodic_orders"] <= maximum].copy()
+            route_count = len(filtered)
+            order_count = float(filtered["_periodic_orders"].sum())
+            payable_units = route_count if unit in {"fixed", "per_route"} else order_count
+            metric_count = route_count
+        elif condition == "routes_per_day":
+            day_counts = selected.groupby("_periodic_date").size()
+            if maximum is None:
+                eligible_days = day_counts[day_counts >= minimum]
+            else:
+                eligible_days = day_counts[(day_counts >= minimum) & (day_counts <= maximum)]
+            metric_count = int(eligible_days.sum())
+            payable_units = len(eligible_days) if unit == "fixed" else metric_count
+            if unit == "per_order":
+                payable_units = order_count
+        elif condition == "routes_in_period":
+            ok = route_count >= minimum and (maximum is None or route_count <= maximum)
+            metric_count = route_count
+            payable_units = route_count if ok else 0
+            if ok and unit == "fixed":
+                payable_units = 1
+            if ok and unit == "per_order":
+                payable_units = order_count
+        elif condition == "orders_in_period":
+            ok = order_count >= minimum and (maximum is None or order_count <= maximum)
+            metric_count = order_count
+            payable_units = order_count if ok and unit == "per_order" else (1 if ok and unit == "fixed" else route_count if ok else 0)
+        elif condition == "every_n_routes_per_day":
+            n_value = max(int(minimum), 1)
+            blocks = int(selected.groupby("_periodic_date").size().map(lambda count: int(count) // n_value).sum())
+            metric_count = blocks
+            payable_units = blocks
+        elif condition == "every_n_routes_in_period":
+            n_value = max(int(minimum), 1)
+            blocks = route_count // n_value
+            metric_count = blocks
+            payable_units = blocks
+        else:
+            payable_units = order_count if unit == "per_order" else route_count
+            metric_count = route_count
+
+        if unit == "per_hour":
+            amount = 0.0
+        else:
+            amount = payable_units * unit_amount
+        if not amount:
+            continue
+
+        day_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+        weekday_label = ", ".join(day_names.get(day, str(day)) for day in sorted(weekdays)) if weekdays else "Minden nap"
+        condition_label = {
+            "none": "Nincs feltétel",
+            "orders_per_route": "Cím / túra",
+            "routes_per_day": "Túra / nap",
+            "routes_in_period": "Túra / időszak",
+            "orders_in_period": "Cím / időszak",
+            "every_n_routes_per_day": f"Minden {int(minimum)}. túra naponta",
+            "every_n_routes_in_period": f"Minden {int(minimum)}. túra az időszakban",
+        }.get(condition, condition)
+        rows.append({
+            "Tétel": str(rule.get("fee_name") or "Időszakos díj"),
+            "Napok": weekday_label,
+            "Túratípus": {"normal": "Normál", "express": "Expressz", "regional": "Regionális", "any": "Bármely"}.get(rule_route_type, rule_route_type),
+            "Feltétel": condition_label,
+            "Darab": int(metric_count) if float(metric_count).is_integer() else metric_count,
+            "Egységösszeg": unit_amount,
+            "Összeg": amount,
+            "Számítás": f"{int(payable_units) if float(payable_units).is_integer() else payable_units} x {format_huf(unit_amount)}",
+        })
+
+    detail_rows = pd.DataFrame(rows, columns=columns)
+    total = float(detail_rows["Összeg"].sum()) if not detail_rows.empty else 0.0
+    return total, detail_rows
 
 
 def normalize_route_key(value: object) -> str:
@@ -6624,6 +6920,23 @@ def show_courier_dialog() -> None:
         malus_total = float(adjustment_totals.get("malus", 0))
         atm_deduction_total = float(adjustment_totals.get("atm_deduction", 0))
         other_expense_total = float(adjustment_totals.get("other_expense", 0))
+        correction_income_total = (
+            float(adjustment_totals.get("correction", 0))
+            + float(adjustment_totals.get("manual_correction", 0))
+            + float(adjustment_totals.get("correction_income", 0))
+        )
+        correction_deduction_total = (
+            float(adjustment_totals.get("correction_deduction", 0))
+            + float(adjustment_totals.get("manual_correction_deduction", 0))
+        )
+        periodic_correction_total, periodic_correction_detail = calculate_periodic_fee_corrections(
+            route_detail,
+            period_start,
+            period_end,
+            row.get("Raktár"),
+        )
+        correction_income_total += periodic_correction_total
+        correction_total = correction_income_total - correction_deduction_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
         imported_bonus_total = parse_huf_value(row.get("Importált bónusz"))
         imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
@@ -6633,7 +6946,8 @@ def show_courier_dialog() -> None:
         atm_deduction_total += imported_atm_total
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + bonus_total
-            + loyalty_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total - salary_advance_total
+            + loyalty_total + customer_rating_total + correction_income_total
+            - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
         profile_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
         order_total = profile_metrics["order_total"]
@@ -6687,7 +7001,8 @@ def show_courier_dialog() -> None:
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + bonus_total
-            + loyalty_total + customer_rating_total - malus_total - atm_deduction_total - other_expense_total - salary_advance_total
+            + loyalty_total + customer_rating_total + correction_income_total
+            - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
         payable_before_insurance = payable_total
         reserve_month = resolve_target_reserve_month(
@@ -6908,6 +7223,29 @@ def show_courier_dialog() -> None:
                     "Összeg": customer_rating_total,
                     "Számítás": f"{route_total} x {format_huf(unit_amount)}" if unit_amount else format_huf(customer_rating_total),
                 }])
+            if detail_label == "Korrekció":
+                detail_parts = []
+                if not periodic_correction_detail.empty:
+                    detail_parts.append(periodic_correction_detail)
+                correction_labels = {
+                    "correction": "Korrekció",
+                    "manual_correction": "Kézi korrekció +",
+                    "correction_income": "Korrekció +",
+                    "correction_deduction": "Korrekció -",
+                    "manual_correction_deduction": "Kézi korrekció -",
+                }
+                if not adjustments.empty:
+                    manual_corrections = adjustments[
+                        adjustments["adjustment_type"].astype(str).isin(correction_labels)
+                    ].copy()
+                    if not manual_corrections.empty:
+                        manual_corrections["Összeg"] = pd.to_numeric(manual_corrections["amount_huf"], errors="coerce").fillna(0.0)
+                        deduction_mask = manual_corrections["adjustment_type"].isin({"correction_deduction", "manual_correction_deduction"})
+                        manual_corrections.loc[deduction_mask, "Összeg"] = -manual_corrections.loc[deduction_mask, "Összeg"].abs()
+                        manual_corrections["Tétel"] = manual_corrections["adjustment_type"].map(correction_labels).fillna("Korrekció")
+                        manual_corrections["Számítás"] = manual_corrections.get("note", pd.Series("", index=manual_corrections.index)).fillna("")
+                        detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
+                return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
             if detail_label == "Havi bónusz/málusz":
                 return pd.DataFrame([
                     {"Tétel": "Importált bónusz", "Összeg": imported_bonus_total},
@@ -6960,7 +7298,7 @@ def show_courier_dialog() -> None:
             ("Lojalitás", format_huf(loyalty_total), "", ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
-            ("Levonás / plusz", format_huf(-other_expense_total), "", ""),
+            ("Korrekció", format_huf(correction_total), "", ""),
             ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), "", ""),
             ("ATM hatás", format_huf(-atm_deduction_total), "", ""),
             ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
@@ -6994,7 +7332,7 @@ def show_courier_dialog() -> None:
 
         detail_labels = {
             "Kör", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
-            "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
+            "Korrekció", "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
         def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
@@ -7066,7 +7404,7 @@ def show_courier_dialog() -> None:
         mobile_default_rows = pd.DataFrame([
             {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable_total, "note": "Valós elszámolási adat"},
             {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": mobile_income_total, "note": "Valós elszámolási adat"},
-            {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
+            {"item_key": "deductions", "item_label": "Bónusz / málusz tételek", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
             {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": base_total, "note": "Valós elszámolási adat"},
             {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
@@ -7074,6 +7412,7 @@ def show_courier_dialog() -> None:
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
+            {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": periodic_correction_total, "note": "Valós elszámolási adat"},
             {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": mobile_monthly_bonus, "note": "Valós elszámolási adat"},
             {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -mobile_monthly_malus, "note": "Valós elszámolási adat"},
             {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
@@ -7305,6 +7644,10 @@ def show_courier_dialog() -> None:
             "atm_deduction": "ATM levonás",
             "other_expense": "Egyéb kiadás",
             "customer_rating": "Ügyfélértékelés",
+            "correction_income": "Korrekció +",
+            "correction_deduction": "Korrekció -",
+            "manual_correction": "Kézi korrekció +",
+            "manual_correction_deduction": "Kézi korrekció -",
         }
         adjustment_type_values = {label: key for key, label in adjustment_type_labels.items()}
         editor_columns = ["id", "Típus", "Összeg", "Megjegyzés", "Érvényes ettől", "Érvényes eddig", "Törlés"]
@@ -7314,6 +7657,8 @@ def show_courier_dialog() -> None:
                     {"id": "", "Típus": "Bónusz", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
                     {"id": "", "Típus": "Ügyfélértékelés", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
                     {"id": "", "Típus": "Málusz", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Korrekció +", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
+                    {"id": "", "Típus": "Korrekció -", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
                     {"id": "", "Típus": "ATM levonás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
                     {"id": "", "Típus": "Egyéb kiadás", "Összeg": 0, "Megjegyzés": "", "Érvényes ettől": period_start, "Érvényes eddig": period_end, "Törlés": False},
                 ],
