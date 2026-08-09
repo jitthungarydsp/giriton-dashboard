@@ -177,6 +177,14 @@ def _index(options: list[str], value: Any) -> int:
         return 0
 
 
+def _condition_key(value: Any) -> str:
+    text = _text(value)
+    if text in CONDITION_LABELS:
+        return text
+    reverse = {label: key for key, label in CONDITION_LABELS.items()}
+    return reverse.get(text, text)
+
+
 def _money(value: Any) -> str:
     return f"{_int(value):,} Ft".replace(",", " ")
 
@@ -442,7 +450,8 @@ def _show_periodic(client: Any) -> None:
             format_func=WEEKDAY_LABELS.get,
             help="Üresen hagyva minden napra érvényes. Vasárnapi Hősökhöz csak a Vasárnapot jelöld.",
         )
-        condition = left.selectbox("Feltétel", conditions, index=_index(conditions,(row or {}).get("condition_metric") or "none"), format_func=CONDITION_LABELS.get)
+        condition = left.selectbox("Feltétel", conditions, index=_index(conditions,_condition_key((row or {}).get("condition_metric") or "none")), format_func=CONDITION_LABELS.get)
+        condition = _condition_key(condition)
         condition_min = None
         condition_max = None
         has_max = False
