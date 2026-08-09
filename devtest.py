@@ -1121,6 +1121,25 @@ def load_active_periodic_fee_rules(period_start: date, period_end: date) -> pd.D
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_monthly_company_quality_bonus(courier_id: str, period_start: date) -> dict[str, float]:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return {}
+    try:
+        rows = (
+            get_db().schema("public").table("dsp_courier_quality_monthly")
+            .select("company_delay_bonus_huf,company_compliance_bonus_huf,company_quality_bonus_total_huf")
+            .eq("courier_id", int(clean_id))
+            .eq("period_month", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    return rows[0] if rows else {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_jitt_day_definitions_for_period(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (
@@ -6673,10 +6692,13 @@ def show_courier_dialog() -> None:
 
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
-    contractor_received_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
+    contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
+    contractor_quality_bonus = load_dsp_monthly_company_quality_bonus(courier_id, period_start)
+    contractor_quality_total = parse_huf_value(contractor_quality_bonus.get("company_quality_bonus_total_huf"))
+    contractor_received_total = contractor_base_total + contractor_quality_total
     if (
         str(active_calculation_mode or "").strip().casefold() == "api"
-        and (not summary_available or contractor_received_total == 0)
+        and (not summary_available or contractor_base_total == 0)
     ):
         api_received = load_api_received_amounts(period_start, st.session_state.get("new_warehouse", "Összes")).copy()
         if not api_received.empty:
@@ -6764,7 +6786,7 @@ def show_courier_dialog() -> None:
             </div>
             <div class="settlement-top-kpis">
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Kapott összeg</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon red">−</div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
             </div>

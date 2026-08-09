@@ -7,6 +7,7 @@ from typing import Any, Callable
 import pandas as pd
 import streamlit as st
 
+from resources.discord_notifier import send_discord_text_message
 from resources.settlement_parameters import (
     BASE_RATE_TABLE,
     COMPLIANCE_TABLE,
@@ -236,6 +237,19 @@ def _weekday_text(value: Any) -> str:
     return ", ".join(WEEKDAY_LABELS.get(day, str(day)) for day in days)
 
 
+def _periodic_condition_text(condition: str, minimum: Any, maximum: Any) -> str:
+    if condition in {"every_n_routes_per_day", "every_n_routes_in_period"}:
+        return f"{CONDITION_LABELS.get(condition, condition)}: {float(minimum or 0):g}"
+    return f"{CONDITION_LABELS.get(condition, condition)} · {_range(minimum, maximum)}"
+
+
+def _render_bonus_discord_template(template: str, values: dict[str, object]) -> str:
+    result = str(template or "")
+    for key, value in values.items():
+        result = result.replace("{" + key + "}", str(value))
+    return result
+
+
 def _editor_row(data: pd.DataFrame, key: str, label_field: str) -> dict[str, Any] | None:
     rows = data.to_dict("records")
     choices = {"Új tétel": None}
@@ -399,7 +413,7 @@ def _show_periodic(client: Any) -> None:
         view["Túratípus"] = view["route_type"].map(ROUTE_LABELS)
         view["Napok"] = view.get("weekdays", pd.Series([[]] * len(view), index=view.index)).map(_weekday_text)
         view["Feltétel"] = [
-            f"{CONDITION_LABELS.get(condition, condition)} · {_range(minimum, maximum)}"
+            _periodic_condition_text(condition, minimum, maximum)
             for condition, minimum, maximum in zip(view["condition_metric"], view["condition_min"], view["condition_max"])
         ]
         view["JITT"] = view["company_amount_huf"].map(_money)
@@ -441,6 +455,47 @@ def _show_periodic(client: Any) -> None:
             _mark_parameters_changed(client)
             st.success("Az időszakos díj mentve. A Paraméterértékek ablak nyitva marad.")
         except Exception as exc: st.error(f"Nem menthető: {exc}")
+    with st.expander("Discord értesítés az időszakos bónuszról", expanded=False):
+        discord_values = {
+            "megnevezes": fee_name or "Időszakos bónusz",
+            "kezdete": valid_from.isoformat() if valid_from else "",
+            "vege": valid_to.isoformat() if has_end and valid_to else "visszavonásig",
+            "naptipus": DAY_LABELS.get(day_type, day_type),
+            "turatipus": ROUTE_LABELS.get(route_type, route_type),
+            "napok": _weekday_text(selected_weekdays),
+            "feltetel": _periodic_condition_text(condition, condition_min if condition != "none" else None, condition_max if condition != "none" and has_max else None),
+            "jitt_osszeg": _money(company),
+            "futar_osszeg": _money(courier),
+            "egyseg": UNIT_LABELS.get(unit, unit),
+            "raktar": warehouse.strip() or "minden raktár",
+        }
+        st.caption("Használható változók: " + ", ".join(f"{{{key}}}" for key in discord_values))
+        default_message = (
+            "Kedves Kollégák!\n\n"
+            "Örömmel értesítünk, hogy {kezdete} dátumtól {vege} időpontig elérhető a(z) {megnevezes}.\n"
+            "Érintett napok: {napok}. Túratípus: {turatipus}. Feltétel: {feltetel}.\n"
+            "Futár bónusz: {futar_osszeg} / {egyseg}.\n\n"
+            "Köszönjük a munkátokat!"
+        )
+        message_template = st.text_area(
+            "Discord üzenet szövege",
+            value=st.session_state.get("periodic_discord_template", default_message),
+            height=190,
+            key="periodic_discord_template",
+        )
+        preview_message = _render_bonus_discord_template(message_template, discord_values)
+        st.text_area("Előnézet", value=preview_message, height=190, disabled=True)
+        send_cols = st.columns([0.25, 0.75])
+        if send_cols[0].button("Discord értesítés kiküldése", type="primary", use_container_width=True, key="send_periodic_bonus_discord"):
+            if not preview_message.strip():
+                st.error("Az üzenet nem lehet üres.")
+            else:
+                ok, status_message = send_discord_text_message(preview_message, warehouse)
+                if ok:
+                    st.success(status_message)
+                else:
+                    st.error(status_message)
+        send_cols[1].caption("A raktár mező alapján raktár webhookra küld, üres raktárnál az alap Discord webhookot használja.")
     _delete_control(client, PERIODIC_FEE_TABLE, row, "periodic")
 
 
