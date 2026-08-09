@@ -271,6 +271,15 @@
             "token": ""
         },
         {
+            "username": "Koncsik Zoltán",
+            "trainer": "trainer_name",
+            "password": "DT21EpYP",
+            "role": "user",
+            "courierId": 8122,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Tinger József",
             "trainer": "trainer_name",
             "password": "H38W8OxY",
