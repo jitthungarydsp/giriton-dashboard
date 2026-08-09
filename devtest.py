@@ -5466,6 +5466,15 @@ def calculate_periodic_fee_corrections(
             blocks = route_count // n_value
             metric_count = blocks
             payable_units = blocks
+        elif condition == "orders_over_threshold_every_n_per_route":
+            threshold = max(float(minimum or 0), 0.0)
+            step_value = max(int(maximum or 1), 1)
+            extra_orders = selected["_periodic_orders"].sub(threshold).clip(lower=0)
+            route_blocks = extra_orders.map(lambda value: int(value) // step_value)
+            blocks = int(route_blocks.sum())
+            order_count = float(selected["_periodic_orders"].sum())
+            metric_count = blocks
+            payable_units = blocks
         else:
             payable_units = order_count if unit == "per_order" else route_count
             metric_count = route_count
@@ -5487,6 +5496,7 @@ def calculate_periodic_fee_corrections(
             "orders_in_period": "Cím / időszak",
             "every_n_routes_per_day": f"Minden {int(minimum)}. túra naponta",
             "every_n_routes_in_period": f"Minden {int(minimum)}. túra az időszakban",
+            "orders_over_threshold_every_n_per_route": f"{int(minimum)} felett minden {int(maximum or 1)} cím túránként",
         }.get(condition, condition)
         rows.append({
             "Tétel": str(rule.get("fee_name") or "Időszakos díj"),

@@ -29,6 +29,7 @@ PERIODIC_CONDITIONS = {
     "orders_in_period",
     "every_n_routes_per_day",
     "every_n_routes_in_period",
+    "orders_over_threshold_every_n_per_route",
 }
 
 
@@ -177,6 +178,11 @@ def validate_periodic_fee(payload: dict[str, Any]) -> dict[str, Any]:
         if condition_min is None or condition_min < 1:
             raise ValueError("A minden N. kör után szabálynál az N értéke legalább 1 legyen.")
         condition_max = None
+    if condition == "orders_over_threshold_every_n_per_route":
+        if condition_min is None or condition_min < 0:
+            raise ValueError("A cimkuszob szabaly kuszobe legalabb 0 legyen.")
+        if condition_max is None or condition_max < 1:
+            raise ValueError("A cimkuszob szabaly lepcsoje legalabb 1 legyen.")
     weekdays = sorted({int(day) for day in (payload.get("weekdays") or [])})
     if any(day not in range(1, 8) for day in weekdays):
         raise ValueError("A hét napjai csak 1 és 7 közötti értékek lehetnek.")
