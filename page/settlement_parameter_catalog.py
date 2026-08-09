@@ -441,11 +441,26 @@ def _show_periodic(client: Any) -> None:
             help="Üresen hagyva minden napra érvényes. Vasárnapi Hősökhöz csak a Vasárnapot jelöld.",
         )
         condition = left.selectbox("Feltétel", conditions, index=_index(conditions,(row or {}).get("condition_metric") or "none"), format_func=CONDITION_LABELS.get)
-        c1, c2 = right.columns(2)
-        min_label = "N értéke" if condition in {"every_n_routes_per_day", "every_n_routes_in_period"} else "Minimum érték"
-        condition_min = c1.number_input(min_label, min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0)
-        condition_max = c2.number_input("Maximum érték", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0, disabled=condition in {"none", "every_n_routes_per_day", "every_n_routes_in_period"})
-        has_max = c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None, disabled=condition in {"none", "every_n_routes_per_day", "every_n_routes_in_period"})
+        condition_min = None
+        condition_max = None
+        has_max = False
+        every_n_condition = condition in {"every_n_routes_per_day", "every_n_routes_in_period"}
+        if every_n_condition:
+            default_n = _int((row or {}).get("condition_min"), 3) or 3
+            condition_min = right.number_input(
+                "N erteke",
+                min_value=1,
+                value=default_n,
+                step=1,
+                help="Pelda: 3 = minden 3. jogosult tura utan jar a fix bonusz.",
+            )
+        elif condition != "none":
+            c1, c2 = right.columns(2)
+            condition_min = c1.number_input("Minimum ertek", min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0)
+            condition_max = c2.number_input("Maximum ertek", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0)
+            has_max = c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None)
+        else:
+            right.info("Ehhez a feltetelhez nincs N/minimum/maximum ertek.")
         m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get)
         valid_from,valid_to,has_end,priority,is_active,note=_common_period(row or {},"periodic")
         saved=st.form_submit_button("Módosítás mentése" if row else "Időszakos díj mentése",type="primary")
