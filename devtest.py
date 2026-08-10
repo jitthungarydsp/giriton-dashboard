@@ -1632,7 +1632,10 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
 def append_jitt_bonus_malus_mobile_rows(
     rows: list[dict[str, object]],
     row: dict[str, object],
+    period_start: date | None = None,
+    period_end: date | None = None,
 ) -> list[dict[str, object]]:
+    courier_id = _courier_id_key(row.get("Courier ID"))
     manual_bonus = parse_huf_value(row.get("JITT bónusz"))
     manual_malus = abs(parse_huf_value(row.get("JITT malus")))
     if not manual_bonus and not manual_malus:
@@ -1660,6 +1663,26 @@ def append_jitt_bonus_malus_mobile_rows(
             "note": "Sheet/DB tételek",
         },
     ])
+    if courier_id and period_start and period_end:
+        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+        if not adjustments.empty:
+            detail_index = 1
+            for _, adjustment in adjustments.reset_index(drop=True).iterrows():
+                adjustment_type = str(adjustment.get("adjustment_type") or "").strip()
+                if adjustment_type not in {"bonus", "malus"}:
+                    continue
+                amount = abs(parse_huf_value(adjustment.get("amount_huf")))
+                if not amount:
+                    continue
+                is_bonus = adjustment_type == "bonus"
+                rows.append({
+                    "item_key": f"{'jitt_bonus' if is_bonus else 'jitt_malus'}_{detail_index}",
+                    "item_label": "JITT bónusz" if is_bonus else "JITT malus",
+                    "amount_kind": "huf",
+                    "amount_value": amount if is_bonus else -amount,
+                    "note": str(adjustment.get("note") or "").strip() or "Sheet/DB tétel",
+                })
+                detail_index += 1
     return rows
 
 
@@ -1672,6 +1695,24 @@ def append_kiflis_bonus_malus_mobile_rows(
     courier_name = str(row.get("Futár") or "")
     details = load_imported_balance_component_items(session_id, courier_id, courier_name)
     if details.empty:
+        imported_bonus = parse_huf_value(row.get("Importált bónusz"))
+        imported_malus = abs(parse_huf_value(row.get("Importált málusz")))
+        if imported_bonus:
+            rows.append({
+                "item_key": "kiflis_bonus_1",
+                "item_label": "Kiflis bónusz",
+                "amount_kind": "huf",
+                "amount_value": imported_bonus,
+                "note": str(row.get("Importált bónusz megjegyzés") or "").strip() or "Excel import tétel",
+            })
+        if imported_malus:
+            rows.append({
+                "item_key": "kiflis_malus_1",
+                "item_label": "Kiflis malus",
+                "amount_kind": "huf",
+                "amount_value": -imported_malus,
+                "note": str(row.get("Importált málusz megjegyzés") or "").strip() or "Excel import tétel",
+            })
         return rows
     for index, detail_row in details.reset_index(drop=True).iterrows():
         label = str(detail_row.iloc[0] if len(detail_row) > 0 else "").strip()
@@ -1814,6 +1855,8 @@ def publish_mobile_settlement_snapshot(
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
+            period_start,
+            month_bounds(period_start)[1],
         )
         rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
@@ -1859,6 +1902,8 @@ def refresh_mobile_settlement_breakdown_snapshot(
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
+            period_start,
+            month_bounds(period_start)[1],
         )
         rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
