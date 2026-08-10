@@ -2788,7 +2788,7 @@ def tig_split_amount(amount: int, tax_mode: str) -> tuple[int, int, int, str]:
 def tig_document_meta(month: date, courier_id: str) -> dict[str, str]:
     period_start = month.replace(day=1)
     period_end = month_end(period_start)
-    due_date = period_end + timedelta(days=8)
+    due_date = date.today() + timedelta(days=8)
     return {
         "periodLabel": f"{period_start:%Y.%m.%d} - {period_end:%Y.%m.%d}",
         "performanceDate": due_date.isoformat(),
