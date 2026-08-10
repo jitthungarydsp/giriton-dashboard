@@ -2785,6 +2785,18 @@ def tig_split_amount(amount: int, tax_mode: str) -> tuple[int, int, int, str]:
     return sign * gross, 0, sign * gross, "AAM" if sign > 0 else "Levonás"
 
 
+def tig_document_meta(month: date, courier_id: str) -> dict[str, str]:
+    period_start = month.replace(day=1)
+    period_end = month_end(period_start)
+    due_date = period_end + timedelta(days=8)
+    return {
+        "periodLabel": f"{period_start:%Y.%m.%d} - {period_end:%Y.%m.%d}",
+        "performanceDate": due_date.isoformat(),
+        "paymentDueDate": due_date.isoformat(),
+        "note": f"Futár ID: {courier_id}",
+    }
+
+
 def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financial_breakdown: dict[str, Any]) -> dict[str, Any]:
     cards = financial_breakdown.get("cards") or []
     breakdown_items = {
@@ -2921,17 +2933,18 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     tig["month"] = month.strftime("%Y-%m")
     tig["courierId"] = courier_id
     tig["courierName"] = courier_name
-    document_meta = tig.get("documentMeta") or {}
+    fallback_meta = tig_document_meta(month, courier_id)
+    document_meta = {**fallback_meta, **(tig.get("documentMeta") or {})}
     tig["buyer"] = {
         "label": "Vevő",
         "name": "Just in Time Transport Hungary Kft.",
         "postalCity": "1201 Budapest",
         "address": "Atléta utca 44.",
         "taxNumber": "32649460-2-43",
-        "periodLabel": document_meta.get("periodLabel") or "",
-        "performanceDate": document_meta.get("performanceDate") or "",
-        "paymentDueDate": document_meta.get("paymentDueDate") or "",
-        "note": document_meta.get("note") or f"Futár ID: {courier_id}",
+        "periodLabel": document_meta.get("periodLabel") or fallback_meta["periodLabel"],
+        "performanceDate": document_meta.get("performanceDate") or fallback_meta["performanceDate"],
+        "paymentDueDate": document_meta.get("paymentDueDate") or fallback_meta["paymentDueDate"],
+        "note": document_meta.get("note") or fallback_meta["note"],
     }
     tig = align_tig_breakdown_with_financial_cards(tig, financial_breakdown)
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))
