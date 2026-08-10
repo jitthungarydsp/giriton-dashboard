@@ -249,6 +249,39 @@ alter table settlement.jit_row
     add column if not exists base_rate_status text not null default 'pending',
     add column if not exists base_rate_calculated_at timestamptz;
 
+create or replace function settlement.safe_excel_numeric(p_value text)
+returns numeric
+language plpgsql
+immutable
+as $$
+declare
+    cleaned text;
+    matched text;
+begin
+    cleaned := trim(replace(replace(coalesce(p_value, ''), chr(160), ''), ' ', ''));
+    if cleaned = '' then
+        return 0;
+    end if;
+
+    if cleaned ~ '^-?\d+(\.\d+)?$' then
+        return cleaned::numeric;
+    end if;
+
+    if cleaned ~ '^-?\d+(,\d+)?$' then
+        return replace(cleaned, ',', '.')::numeric;
+    end if;
+
+    matched := (regexp_match(cleaned, '-?\d+(?:[.,]\d+)?'))[1];
+    if matched is null then
+        return 0;
+    end if;
+
+    return replace(matched, ',', '.')::numeric;
+exception when others then
+    return 0;
+end;
+$$;
+
 create or replace function settlement.recalculate_jitt_base_rates(p_session_id uuid)
 returns void
 language sql
@@ -278,13 +311,10 @@ with raw as (
             when lower(coalesce(j.normalized_data ->> 'Route Type', j.normalized_data ->> 'route_type', '')) like '%region%' then 'regional'
             else 'normal'
         end as route_type,
-        coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders,
-        coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Tip', j.normalized_data ->> 'tip_huf', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as tip_huf,
+        settlement.safe_excel_numeric(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0')) as orders,
+        settlement.safe_excel_numeric(coalesce(j.normalized_data ->> 'Tip', j.normalized_data ->> 'tip_huf', '0')) as tip_huf,
         coalesce((
-            select sum(case when item.value like '%,%'
-                then coalesce(nullif(replace(regexp_replace(item.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
-                else coalesce(nullif(regexp_replace(item.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
-            end)
+            select sum(settlement.safe_excel_numeric(item.value))
             from jsonb_each_text(j.normalized_data) as item(key, value)
             where lower(trim(item.key)) in ('fuel bonus', 'car & fridge bonus', 'fill rate bonus', 'branding')
         ), 0) as other_bonus_huf
@@ -349,10 +379,7 @@ with raw as (
             where lower(trim(item.key)) = lower(trim(d.excel_source_field)) limit 1
         ) source_value on true
         cross join lateral (
-            select case when source_value.value like '%,%'
-                then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
-                else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
-            end as value
+            select settlement.safe_excel_numeric(source_value.value) as value
         ) excel_value
         where d.is_active and d.deleted_at is null and d.calculation_mode = 'excel'
           and nullif(trim(d.excel_source_field), '') is not null
@@ -388,10 +415,7 @@ with raw as (
             where lower(trim(item.key)) = lower(trim(d.excel_source_field)) limit 1
         ) source_value on true
         cross join lateral (
-            select case when source_value.value like '%,%'
-                then coalesce(nullif(replace(regexp_replace(source_value.value, '[^0-9,-]', '', 'g'), ',', '.'), '')::numeric, 0)
-                else coalesce(nullif(regexp_replace(source_value.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
-            end as value
+            select settlement.safe_excel_numeric(source_value.value) as value
         ) excel_value
         where d.is_active and d.deleted_at is null and d.calculation_mode = 'excel'
           and nullif(trim(d.excel_source_field), '') is not null

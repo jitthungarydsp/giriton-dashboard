@@ -4294,6 +4294,7 @@ def recompute_payable_total(data: pd.DataFrame) -> pd.DataFrame:
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
         + _numeric_series(result, "Bónusz")
+        + _numeric_series(result, "Korrekció")
         - _numeric_series(result, "Levonás")
     )
     return result
@@ -10368,7 +10369,7 @@ def show_new_settlement_page() -> None:
     _, balance_period_end = month_bounds(balance_period_start)
     if str(selected_calculation_mode or "API").strip().casefold() == "excel":
         state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-        if jit_session_has_rows_in_month(state_excel_session_id, balance_period_start):
+        if state_excel_session_id:
             import_session_id = state_excel_session_id
         else:
             import_session_id = load_latest_excel_jit_session_id(balance_period_start)
@@ -10398,7 +10399,10 @@ def show_new_settlement_page() -> None:
         status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","TIG-re vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         mobile_period_start = parse_month_option(selected_month)
-        mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
+        if str(calculation_mode or "").strip().casefold() == "excel":
+            mobile_source_session_id = st.session_state.get("settlement_excel_session_id") or load_latest_excel_jit_session_id(mobile_period_start)
+        else:
+            mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
             st.caption(f"Kiválasztott mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
         else:
@@ -10521,14 +10525,11 @@ def show_new_settlement_page() -> None:
                     load_imported_balance_components.clear()
                     load_courier_settlement_summary.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-                    try:
-                        recalculate_excel_base_rates(get_db(), result["session_id"])
-                        st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
-                            result["session_id"],
-                            parameter_revision,
-                        )
-                    except BaseException:
-                        st.session_state["settlement_base_rate_summary"] = pd.DataFrame()
+                    recalculate_excel_base_rates(get_db(), result["session_id"])
+                    st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+                        result["session_id"],
+                        parameter_revision,
+                    )
 
                 if processing_result.get("status") == "failed":
                     error_messages = [
