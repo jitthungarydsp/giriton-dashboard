@@ -4419,7 +4419,7 @@ def load_contractor_totals_for_session(session_id: str | None, period_start: dat
         try:
             rows = (
                 get_db().schema("settlement").table("courier_settlement_summary")
-                .select("courier_id,driver_name,company_base_rate_huf")
+                .select("courier_id,driver_name,contractor_total_huf,company_base_rate_huf,company_quality_bonus_total_huf")
                 .eq("session_id", session_id)
                 .execute().data or []
             )
@@ -4712,7 +4712,7 @@ def apply_received_amounts(
     amount_by_id = received.set_index("_courier_id_lookup")["Alvállalkozói összeg"]
     api_amounts = result["_courier_id_lookup"].map(amount_by_id)
     current_amounts = _numeric_series(result, "Alvállalkozói összeg")
-    result["Alvállalkozói összeg"] = current_amounts.where(current_amounts.ne(0), api_amounts.fillna(current_amounts))
+    result["Alvállalkozói összeg"] = api_amounts.where(api_amounts.fillna(0).ne(0), current_amounts)
     return result.drop(columns=["_courier_id_lookup"])
 
 
@@ -7694,7 +7694,15 @@ def show_courier_dialog() -> None:
     reserve_addition_total = parse_huf_value(reserve_month.get("reserve_addition_huf"))
     insurance_fee_total = parse_huf_value(reserve_month.get("insurance_fee_huf"))
     total_deduction += reserve_addition_total + insurance_fee_total
-    payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+    row_payable_total = parse_huf_value(row.get("Kifizetendő"))
+    reserve_payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+    payable_total = (
+        reserve_payable_total
+        if str(reserve_month.get("status") or "").casefold() == "done"
+        else (row_payable_total if row_payable_total else payable_before_insurance - reserve_addition_total - insurance_fee_total)
+    )
+    if str(reserve_month.get("status") or "").casefold() != "done" and row_payable_total:
+        total_deduction = total_income - row_payable_total
     overview_payable_total = payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"

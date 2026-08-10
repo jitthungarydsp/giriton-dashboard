@@ -2176,7 +2176,36 @@ def build_financial_breakdown_from_mobile_rows(
     )
     kiflis_items = kiflis_detail_items or detail_items((), ["monthly_bonus", "monthly_malus"])
     jitt_detail_items = detail_items(("jitt_bonus_", "jitt_malus_"), [])
-    jitt_items = jitt_detail_items or detail_items((), ["manual_bonus", "manual_malus"])
+    jitt_items = list(jitt_detail_items)
+    has_jitt_bonus_detail = any(str(current.get("key") or "").startswith("jitt_bonus_") for current in jitt_items)
+    has_jitt_malus_detail = any(str(current.get("key") or "").startswith("jitt_malus_") for current in jitt_items)
+    for fallback_key, has_detail in [("manual_bonus", has_jitt_bonus_detail), ("manual_malus", has_jitt_malus_detail)]:
+        fallback_item = item(fallback_key)
+        if fallback_item and not has_detail and money_int(fallback_item.get("amountHuf")):
+            jitt_items.append(fallback_item)
+    if not jitt_items:
+        jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
+    has_jitt_bonus_item = any(
+        str(current.get("key") or "").startswith("jitt_bonus_")
+        or str(current.get("key") or "") == "manual_bonus"
+        for current in jitt_items
+    )
+    if not has_jitt_bonus_item:
+        period_end = month_end(month)
+        for index, adjustment in enumerate(read_courier_manual_adjustments(courier_identity(user)[0], month, period_end), start=1):
+            adjustment_type = str(adjustment.get("adjustment_type") or "")
+            if adjustment_type != "bonus":
+                continue
+            amount = money_int(adjustment.get("amount_huf"))
+            if not amount:
+                continue
+            jitt_items.append(signed_item(
+                f"jitt_bonus_db_{index}",
+                "JITT bónusz",
+                amount,
+                source="settlement.courier_settlement_adjustment",
+                note=str(adjustment.get("note") or "Sheet/DB tétel"),
+            ))
     correction_items = detail_items(("correction_periodic_", "correction_manual_"), [
         "correction_income",
         "correction_deduction",
@@ -2198,6 +2227,8 @@ def build_financial_breakdown_from_mobile_rows(
     if not kiflis_total:
         kiflis_total = sum(money_int(current.get("amountHuf")) for current in kiflis_items)
     jitt_total = mobile_override_amount(overrides, "bonus_malus")
+    if jitt_items:
+        jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
     if not jitt_total:
         jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
 
