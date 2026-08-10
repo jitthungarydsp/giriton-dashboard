@@ -7027,6 +7027,7 @@ def show_courier_dialog() -> None:
     if (
         str(active_calculation_mode or "").strip().casefold() == "api"
         and (not summary_available or contractor_base_total == 0)
+        and contractor_received_total == 0
     ):
         api_received = load_api_received_amounts(period_start, st.session_state.get("new_warehouse", "Összes")).copy()
         if not api_received.empty:
