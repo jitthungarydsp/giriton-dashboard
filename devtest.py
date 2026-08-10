@@ -2053,13 +2053,15 @@ def publish_mobile_settlement_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
+        component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
+        item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
             period_start,
             period_end,
         )
-        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
+        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, component_session_id)
         try:
             rows = append_periodic_correction_mobile_rows(
                 rows,
@@ -2104,13 +2106,15 @@ def refresh_mobile_settlement_breakdown_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
+        component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
+        item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
             period_start,
             period_end,
         )
-        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
+        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, component_session_id)
         try:
             rows = append_periodic_correction_mobile_rows(
                 rows,
@@ -5747,6 +5751,50 @@ def balance_component_session_id(calculation_mode: str, period_start: date, sess
     if str(calculation_mode or "").strip().casefold() == "excel":
         return session_id
     return load_latest_excel_jit_session_id(period_start) or session_id
+
+
+def enrich_mobile_row_with_imported_balance_components(
+    row: dict[str, object],
+    component_session_id: str | None,
+) -> dict[str, object]:
+    """Overlay the latest Excel-side Kiflis bonus/malus/ATM values before publishing to PWA."""
+    if not component_session_id:
+        return row
+    try:
+        components = load_imported_balance_components(component_session_id)
+    except Exception:
+        return row
+    if components.empty:
+        return row
+    courier_id = _courier_id_key(row.get("Courier ID"))
+    courier_name = _courier_match_key(row.get("Futár") or row.get("FutĂˇr"))
+    selected = pd.DataFrame()
+    if courier_id and "courier_id_key" in components.columns:
+        selected = components.loc[components["courier_id_key"].astype(str).eq(courier_id)]
+    if selected.empty and courier_name and "courier_name_key" in components.columns:
+        selected = components.loc[components["courier_name_key"].astype(str).eq(courier_name)]
+    if selected.empty:
+        return row
+
+    enriched = dict(row)
+    amount_columns = ("Importált bónusz", "Importált málusz", "Importált ATM levonás")
+    note_columns = (
+        "Importált bónusz megjegyzés",
+        "Importált málusz megjegyzés",
+        "Importált ATM megjegyzés",
+    )
+    for column in amount_columns:
+        if column in selected.columns:
+            enriched[column] = float(pd.to_numeric(selected[column], errors="coerce").fillna(0.0).sum())
+    for column in note_columns:
+        if column in selected.columns:
+            notes = [
+                str(value).strip()
+                for value in selected[column].fillna("").tolist()
+                if str(value).strip()
+            ]
+            enriched[column] = " | ".join(dict.fromkeys(notes))
+    return enriched
 
 
 def format_huf(value: float | int) -> str:
