@@ -1581,6 +1581,12 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     compliance = parse_huf_value(row.get("Túramegfelelés"))
     loyalty = parse_huf_value(row.get("Lojalitás"))
     customer_rating = parse_huf_value(row.get("Ügyfélértékelés"))
+    correction = parse_huf_value(
+        row.get("Korrekció")
+        or row.get("Korrekciók")
+        or row.get("Időszakos díjak / korrekció")
+        or row.get("Időszakos díj")
+    )
     salary_advance = parse_huf_value(row.get("Fizetés előleg"))
     income = base + tip + bonus + delay + compliance + loyalty + customer_rating
     return [
@@ -1594,6 +1600,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -abs(salary_advance), "note": "Havi nyitáskor publikált snapshot"},
@@ -7238,6 +7245,17 @@ def show_courier_dialog() -> None:
         upload_a, upload_b, open_month_col, refresh_col = st.columns([0.18, 0.18, 0.28, 0.18])
         if closure_done:
             st.warning("A havi folyamat le van zárva, új elszámolás/TIG nem tölthető fel erre a hónapra.")
+        try:
+            individual_statuses = read_peopleforce_card_statuses(courier_id, period_start.replace(day=1))
+        except Exception:
+            individual_statuses = pd.DataFrame()
+        individual_status_by_action = {
+            str(item.get("action_key") or ""): item
+            for item in individual_statuses.to_dict("records")
+        } if not individual_statuses.empty else {}
+        individual_monthly_billing_open = str(
+            (individual_status_by_action.get("individual_monthly_billing") or {}).get("status") or ""
+        ).casefold() in {"open", "done"}
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
@@ -7275,35 +7293,45 @@ def show_courier_dialog() -> None:
             except Exception as exc:
                 st.error(f"A TIG feltöltése sikertelen: {exc}")
         if open_month_col.button(
-            "Egyedi havi számlázás nyitása",
-            type="primary",
+            "Egyedi havi számlázás zárása" if individual_monthly_billing_open else "Egyedi havi számlázás nyitása",
+            type="secondary" if individual_monthly_billing_open else "primary",
             use_container_width=True,
             disabled=closure_done or active_calculation_mode not in {"API", "Excel"},
             key=f"finance_open_individual_month_{courier_id}",
-            help="Teszteléshez egy futárnak publikálja a havi elszámolást, és admin előnézetként feltölti a TIG-et is.",
+            help="Nyitáskor publikálja a havi elszámolást. Záráskor leveszi az egyedi mobil nyitást és törli az így feltöltött tesztdokumentumokat.",
         ):
             try:
                 actor = str(st.session_state.get("user", {}).get("username") or "unknown")
-                deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
-                    row.to_dict(),
-                    period_start,
-                    period_end,
-                    active_calculation_mode,
-                    st.session_state.get("new_warehouse", "Összes"),
-                    session_id,
-                    actor,
-                )
-                if courier_count:
-                    st.success(
-                        "Egyedi havi számlázás megnyitva: "
-                        f"{uploaded_count} dokumentum feltöltve"
-                        + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                if individual_monthly_billing_open:
+                    deleted_count = close_individual_monthly_billing(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        period_start=period_start,
+                        actor=actor,
                     )
-                    rerun_courier_profile("Dokumentumok")
+                    st.success(f"Egyedi havi számlázás lezárva. Törölt tesztdokumentum: {deleted_count}.")
+                    rerun_courier_profile("Pénzügy")
                 else:
-                    st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
+                    deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
+                        row.to_dict(),
+                        period_start,
+                        period_end,
+                        active_calculation_mode,
+                        st.session_state.get("new_warehouse", "Összes"),
+                        session_id,
+                        actor,
+                    )
+                    if courier_count:
+                        st.success(
+                            "Egyedi havi számlázás megnyitva: "
+                            f"{uploaded_count} dokumentum feltöltve"
+                            + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                        )
+                        rerun_courier_profile("Dokumentumok")
+                    else:
+                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
             except Exception as exc:
-                st.error(f"Az egyedi havi számlázás nyitása sikertelen: {exc}")
+                st.error(f"Az egyedi havi számlázás módosítása sikertelen: {exc}")
         if refresh_col.button("Adatok frissítése", use_container_width=True, key=f"finance_refresh_data_{courier_id}"):
             refresh_settlement_profile_data()
             st.toast("Futárprofil adatok frissítve.", icon="✅")
@@ -7553,6 +7581,31 @@ def show_courier_dialog() -> None:
             {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
         ])
+        if not periodic_correction_detail.empty:
+            periodic_mobile_rows = []
+            for correction_index, correction_row in periodic_correction_detail.reset_index(drop=True).iterrows():
+                correction_amount = parse_huf_value(correction_row.get("Összeg"))
+                if not correction_amount:
+                    continue
+                correction_note_parts = [
+                    str(correction_row.get("Napok") or "").strip(),
+                    str(correction_row.get("Túratípus") or "").strip(),
+                    str(correction_row.get("Feltétel") or "").strip(),
+                    str(correction_row.get("Számítás") or "").strip(),
+                ]
+                correction_note = " | ".join(part for part in correction_note_parts if part)
+                periodic_mobile_rows.append({
+                    "item_key": f"correction_periodic_{correction_index + 1}",
+                    "item_label": str(correction_row.get("Tétel") or "Időszakos díj"),
+                    "amount_kind": "huf",
+                    "amount_value": correction_amount,
+                    "note": correction_note or "Időszakos díj szabály alapján",
+                })
+            if periodic_mobile_rows:
+                mobile_default_rows = pd.concat(
+                    [mobile_default_rows, pd.DataFrame(periodic_mobile_rows)],
+                    ignore_index=True,
+                )
         mobile_overrides = load_mobile_breakdown_overrides(courier_id, period_start)
         if not mobile_overrides.empty:
             mobile_default_rows = mobile_default_rows.set_index("item_key")
@@ -8556,6 +8609,9 @@ def show_courier_dialog() -> None:
         manual_invoice_skip_active = str(
             (status_by_action.get("manual_invoice_skip") or {}).get("status") or ""
         ).casefold() == "done"
+        individual_monthly_billing_open = str(
+            (status_by_action.get("individual_monthly_billing") or {}).get("status") or ""
+        ).casefold() in {"open", "done"}
         skip_col, reset_skip_col, open_billing_col = st.columns(3)
         if skip_col.button(
             "Számlázás kihagyása kézzel",
@@ -8624,34 +8680,44 @@ def show_courier_dialog() -> None:
             except Exception as exc:
                 st.error(f"A normál számlázás visszaállítása sikertelen: {exc}")
         if open_billing_col.button(
-            "Egyedi havi számlázás nyitása",
-            type="primary",
+            "Egyedi havi számlázás zárása" if individual_monthly_billing_open else "Egyedi havi számlázás nyitása",
+            type="secondary" if individual_monthly_billing_open else "primary",
             use_container_width=True,
             disabled=closure_done,
             key=f"docs_open_individual_month_{courier_id}_{workflow_month:%Y%m}",
-            help="Teszteléshez publikálja az adott futár havi elszámolását, és feltölti az elszámolás/TIG dokumentumokat.",
+            help="Nyitáskor publikálja az adott futár havi elszámolását. Záráskor leveszi az egyedi mobil nyitást és törli az így feltöltött tesztdokumentumokat.",
         ):
             try:
-                deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
-                    row.to_dict() if hasattr(row, "to_dict") else dict(row),
-                    period_start,
-                    period_end,
-                    active_calculation_mode,
-                    st.session_state.get("new_warehouse", "Összes"),
-                    session_id,
-                    actor,
-                )
-                if courier_count:
-                    st.success(
-                        "Egyedi havi számlázás megnyitva: "
-                        f"{uploaded_count} dokumentum feltöltve"
-                        + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                if individual_monthly_billing_open:
+                    deleted_count = close_individual_monthly_billing(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        period_start=workflow_month,
+                        actor=actor,
                     )
+                    st.success(f"Egyedi havi számlázás lezárva. Törölt tesztdokumentum: {deleted_count}.")
                     st.rerun()
                 else:
-                    st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont.")
+                    deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
+                        row.to_dict() if hasattr(row, "to_dict") else dict(row),
+                        period_start,
+                        period_end,
+                        active_calculation_mode,
+                        st.session_state.get("new_warehouse", "Összes"),
+                        session_id,
+                        actor,
+                    )
+                    if courier_count:
+                        st.success(
+                            "Egyedi havi számlázás megnyitva: "
+                            f"{uploaded_count} dokumentum feltöltve"
+                            + (f", {deleted_count} korábbi tesztdokumentum cserélve." if deleted_count else ".")
+                        )
+                        st.rerun()
+                    else:
+                        st.error("Az egyedi havi nyitás nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont.")
             except Exception as exc:
-                st.error(f"Az egyedi havi számlázás nyitása sikertelen: {exc}")
+                st.error(f"Az egyedi havi számlázás módosítása sikertelen: {exc}")
         with st.expander("Folyamat visszaleptetese", expanded=False):
             backstep_options = list(WORKFLOW_BACKSTEP_TARGETS.keys())
             backstep_target = st.selectbox(
@@ -10185,6 +10251,33 @@ def open_individual_monthly_billing(
         updated_by=actor,
     )
     return deleted, uploaded, courier_count
+
+
+def close_individual_monthly_billing(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    actor: str,
+) -> int:
+    deleted = delete_generated_monthly_billing_documents(courier_id, period_start)
+    payload = {
+        "courier_id": str(courier_id or "").strip(),
+        "courier_name": str(courier_name or "").strip(),
+        "action_key": "individual_monthly_billing",
+        "document_month": period_start.replace(day=1).isoformat(),
+        "status": "closed",
+        "status_note": "Egyedi havi számlázás admin által lezárva.",
+        "updated_by": str(actor or "").strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    get_db().table("peopleforce_card_statuses").upsert(
+        payload,
+        on_conflict="courier_id,document_month,action_key",
+    ).execute()
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    return deleted
 
 
 def show_new_settlement_page() -> None:

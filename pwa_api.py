@@ -2031,21 +2031,27 @@ def manual_adjustment_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
     return totals
 
 
+def is_manual_mobile_override(row: dict[str, Any] | None) -> bool:
+    note = str((row or {}).get("note") or "").strip()
+    if not note:
+        return False
+    note_key = normalize_text(note)
+    return (
+        "snapshot" not in note_key
+        and "publikalt" not in note_key
+        and "valos elszamolasi adat" not in note_key
+    )
+
+
 def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     def is_manual_override(row: dict[str, Any] | None) -> bool:
-        note = str((row or {}).get("note") or "").strip()
-        if not note:
-            return False
-        note_key = normalize_text(note)
-        return (
-            "snapshot" not in note_key
-            and "publikalt" not in note_key
-            and "valos elszamolasi adat" not in note_key
-        )
+        return is_manual_mobile_override(row)
 
-    def ensure_override_item(card_key: str, item_key: str, fallback_label: str) -> None:
+    def ensure_override_item(card_key: str, item_key: str, fallback_label: str, *, allow_snapshot: bool = False) -> None:
         override = overrides.get(item_key)
         if not override or not money_int(override.get("amount_value")):
+            return
+        if not allow_snapshot and not is_manual_override(override):
             return
         card = next((item for item in cards if item.get("key") == card_key), None)
         if not card:
@@ -2124,12 +2130,26 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         ("manual_customer_rating", "Kezi ugyfelelegedettseg"),
     ]:
         ensure_override_item("customer_rating", item_key, label)
-    for item_key, label in [
-        ("correction", "Korrekcio"),
-        ("manual_correction", "Kezi korrekcio"),
-        ("correction_total", "Korrekciok osszesen"),
-    ]:
-        ensure_override_item("corrections", item_key, label)
+    correction_detail_keys = sorted(
+        item_key
+        for item_key in overrides
+        if item_key.startswith("correction_") and item_key != "correction_total"
+    )
+    if correction_detail_keys:
+        for item_key in correction_detail_keys:
+            ensure_override_item("corrections", item_key, "Korrekcio", allow_snapshot=True)
+        for item_key, label in [
+            ("manual_correction", "Kezi korrekcio"),
+            ("correction_total", "Korrekciok osszesen"),
+        ]:
+            ensure_override_item("corrections", item_key, label)
+    else:
+        for item_key, label in [
+            ("correction", "Korrekcio"),
+            ("manual_correction", "Kezi korrekcio"),
+            ("correction_total", "Korrekciok osszesen"),
+        ]:
+            ensure_override_item("corrections", item_key, label, allow_snapshot=item_key == "correction")
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
     bonus_malus_card = next((card for card in cards if card.get("key") == "bonus_malus"), None)
     if deduction_card and not overrides.get("deductions"):
@@ -2574,12 +2594,26 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
                     note="Ă–sszesĂ­tett mobil elszĂˇmolĂˇsi adat.",
                 )
             ]
-    payable = refresh_payable_card_totals(cards, keep_payable_override=bool(overrides.get("payable")))
+    payable = refresh_payable_card_totals(
+        cards,
+        keep_payable_override=is_manual_mobile_override(overrides.get("payable")),
+    )
+    complaint_excluded_keys = {
+        "delay_bonus",
+        "compliance_bonus",
+        "late_count",
+        "delayed_orders",
+        "delay_minutes",
+        "no_show_count",
+    }
+    complaint_excluded_prefixes = ("delay_route_", "compliance_route_")
     complaint_options = [
         {"key": item["key"], "label": item["label"], "amountHuf": item["amountHuf"], "amountKind": item.get("amountKind", "huf")}
         for card in cards
         for item in card["items"]
         if item["key"] not in {"income_total", "deduction_total", "payable_total"}
+        and item["key"] not in complaint_excluded_keys
+        and not str(item["key"]).startswith(complaint_excluded_prefixes)
         and not item.get("excludeFromTotal")
     ]
     visible_cards = [card for card in cards if card.get("key") != "deductions"]
