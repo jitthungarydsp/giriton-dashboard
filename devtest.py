@@ -5137,6 +5137,74 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     )
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_imported_balance_component_items(session_id: str | None, courier_id: str, courier_name: str) -> pd.DataFrame:
+    columns = ["Tétel", "Összeg", "Megjegyzés"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    definitions = {
+        "bonus_route_row": ("Kiflis bónusz", 1, ("bonus", "bonusz", "amount", "osszeg", "total")),
+        "penalty_row": ("Kiflis málusz", -1, ("value", "amount", "osszeg", "penalty", "malus", "levonas")),
+    }
+    rows_out: list[dict[str, object]] = []
+    target_id = _courier_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    for table_name, (label, sign, amount_keys) in definitions.items():
+        try:
+            rows = (
+                get_db().schema("settlement").table(table_name)
+                .select("normalized_data")
+                .eq("session_id", session_id)
+                .execute().data or []
+            )
+        except BaseException:
+            continue
+        for source_row in rows:
+            payload = source_row.get("normalized_data") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            if not isinstance(payload, dict):
+                continue
+            normalized_payload = {_normalized_field_key(key): value for key, value in payload.items()}
+            row_id = _courier_id_key(next(
+                (value for key, value in normalized_payload.items()
+                 if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
+                "",
+            ))
+            row_name = _courier_match_key(next(
+                (value for key, value in normalized_payload.items()
+                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
+                "",
+            ))
+            if target_id and row_id and row_id != target_id:
+                continue
+            if (not row_id or not target_id) and target_name and row_name != target_name:
+                continue
+            amount_value = next((normalized_payload.get(key) for key in amount_keys if key in normalized_payload), None)
+            if amount_value is None:
+                amount_value = next(
+                    (value for key, value in normalized_payload.items() if any(token in key for token in amount_keys)),
+                    None,
+                )
+            amount = abs(parse_huf_value(amount_value))
+            if not amount:
+                continue
+            note_parts = []
+            for key in ("malusname", "bonusname", "tetel", "reason", "category", "comment", "comment2", "note", "megjegyzes", "description"):
+                value = str(normalized_payload.get(key) or "").strip()
+                if value and value.casefold() != "nan":
+                    note_parts.append(value)
+            rows_out.append({
+                "Tétel": label,
+                "Összeg": sign * amount,
+                "Megjegyzés": " | ".join(dict.fromkeys(note_parts)),
+            })
+    return pd.DataFrame(rows_out, columns=columns)
+
+
 def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
     result = data.copy()
     components = load_imported_balance_components(session_id)
@@ -6929,6 +6997,12 @@ def show_courier_dialog() -> None:
             return parse_huf_value(row.get(fallback_column))
         return 0.0
 
+    def imported_settlement_amount(summary_column: str, fallback_column: str, *, absolute: bool = False) -> float:
+        summary_value = parse_huf_value(summary_row.get(summary_column)) if summary_column in summary_row else 0.0
+        fallback_value = parse_huf_value(row.get(fallback_column))
+        value = fallback_value if fallback_value else summary_value
+        return abs(value) if absolute else value
+
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
@@ -6952,9 +7026,9 @@ def show_courier_dialog() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
-    imported_bonus_total = settlement_amount("imported_bonus_huf", "Importált bónusz")
-    imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
-    imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
+    imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
+    imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
+    imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
@@ -7203,9 +7277,9 @@ def show_courier_dialog() -> None:
         correction_income_total += periodic_correction_total
         correction_total = correction_income_total - correction_deduction_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
-        imported_bonus_total = parse_huf_value(row.get("Importált bónusz"))
-        imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
-        imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
+        imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
+        imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
+        imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
         imported_bonus_note = str(row.get("Importált bónusz megjegyzés") or "").strip()
         imported_malus_note = str(row.get("Importált málusz megjegyzés") or "").strip()
         bonus_total += imported_bonus_total
@@ -7235,7 +7309,9 @@ def show_courier_dialog() -> None:
             delay_total = amount("delay_bonus_huf")
             compliance_total = amount("compliance_bonus_huf")
             route_other_bonus_total = amount("other_route_bonus_huf")
-            imported_bonus_total = amount("imported_bonus_huf")
+            imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
+            imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
+            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             order_total = int(amount("order_count"))
             route_total = int(amount("route_count"))
         elif summary_available:
@@ -7244,7 +7320,9 @@ def show_courier_dialog() -> None:
             delay_total = parse_huf_value(summary_row.get("delay_bonus_huf"))
             compliance_total = parse_huf_value(summary_row.get("compliance_bonus_huf"))
             route_other_bonus_total = parse_huf_value(summary_row.get("other_route_bonus_huf"))
-            imported_bonus_total = parse_huf_value(summary_row.get("imported_bonus_huf"))
+            imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
+            imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
+            imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
             route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
 
@@ -7553,6 +7631,9 @@ def show_courier_dialog() -> None:
                         detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
                 return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
             if detail_label == "Kiflis levonások / bónuszok":
+                itemized_imports = load_imported_balance_component_items(session_id, courier_id, courier_name)
+                if not itemized_imports.empty:
+                    return itemized_imports
                 return pd.DataFrame([
                     {"Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total, "Megjegyzés": imported_bonus_note},
                     {"Tétel": "Kiflis málusz", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
