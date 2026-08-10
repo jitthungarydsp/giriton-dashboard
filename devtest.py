@@ -4029,6 +4029,50 @@ def load_api_received_amounts(period_start: date, warehouse_label: str | None = 
 
 
 @st.cache_data(show_spinner=False, ttl=300)
+def load_contractor_totals_for_session(session_id: str | None, period_start: date | None = None) -> pd.DataFrame:
+    columns = ["Courier ID", "Futár", "Alvállalkozói összeg"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    try:
+        query = (
+            get_db().schema("settlement").table("vw_courier_month_profile_snapshot")
+            .select("courier_id,driver_name,contractor_total_huf,company_base_rate_huf,company_quality_bonus_total_huf,period_month")
+            .eq("session_id", session_id)
+        )
+        if period_start:
+            query = query.eq("period_month", period_start.replace(day=1).isoformat())
+        rows = query.execute().data or []
+    except BaseException:
+        rows = []
+    if not rows:
+        try:
+            rows = (
+                get_db().schema("settlement").table("courier_settlement_summary")
+                .select("courier_id,driver_name,company_base_rate_huf")
+                .eq("session_id", session_id)
+                .execute().data or []
+            )
+        except BaseException:
+            rows = []
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    data = pd.DataFrame(rows)
+    contractor_total = (
+        data.get("contractor_total_huf", pd.Series(0.0, index=data.index)).map(parse_huf_value)
+        if "contractor_total_huf" in data else pd.Series(0.0, index=data.index)
+    )
+    fallback_total = (
+        data.get("company_base_rate_huf", pd.Series(0.0, index=data.index)).map(parse_huf_value)
+        + data.get("company_quality_bonus_total_huf", pd.Series(0.0, index=data.index)).map(parse_huf_value)
+    )
+    return pd.DataFrame({
+        "Courier ID": data.get("courier_id", pd.Series("", index=data.index)).astype(str),
+        "Futár": data.get("driver_name", pd.Series("", index=data.index)).astype(str),
+        "Alvállalkozói összeg": contractor_total.where(contractor_total.ne(0), fallback_total),
+    })
+
+
+@st.cache_data(show_spinner=False, ttl=300)
 def load_api_monthly_revenue_detail(period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
     component_columns = list(API_REVENUE_COMPONENTS.keys())
     columns = [
@@ -4255,9 +4299,33 @@ def api_monthly_profit_projection(courier_summary: pd.DataFrame, settlement_data
     return result
 
 
-def apply_received_amounts(data: pd.DataFrame, calculation_mode: str, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+def apply_received_amounts(
+    data: pd.DataFrame,
+    calculation_mode: str,
+    period_start: date,
+    warehouse_label: str | None = None,
+    session_id: str | None = None,
+) -> pd.DataFrame:
     result = data.copy()
     result["Alvállalkozói összeg"] = _numeric_series(result, "Vállalkozói alapdíj")
+    contractor_totals = load_contractor_totals_for_session(session_id, period_start)
+    if not contractor_totals.empty:
+        result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+        result["_courier_name_lookup"] = result["Futár"].map(_courier_match_key)
+        contractor_totals["_courier_id_lookup"] = contractor_totals["Courier ID"].map(_courier_id_key)
+        contractor_totals["_courier_name_lookup"] = contractor_totals["Futár"].map(_courier_match_key)
+        by_id = contractor_totals.loc[
+            contractor_totals["_courier_id_lookup"].ne("")
+        ].groupby("_courier_id_lookup")["Alvállalkozói összeg"].sum()
+        by_name = contractor_totals.loc[
+            contractor_totals["_courier_name_lookup"].ne("")
+        ].groupby("_courier_name_lookup")["Alvállalkozói összeg"].sum()
+        result["Alvállalkozói összeg"] = (
+            result["_courier_id_lookup"].map(by_id)
+            .fillna(result["_courier_name_lookup"].map(by_name))
+            .fillna(result["Alvállalkozói összeg"])
+        )
+        result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
     if str(calculation_mode or "API").strip().casefold() != "api":
         return result
     received = load_api_received_amounts(period_start, warehouse_label)
@@ -4266,7 +4334,9 @@ def apply_received_amounts(data: pd.DataFrame, calculation_mode: str, period_sta
     result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
     received["_courier_id_lookup"] = received["Courier ID"].map(_courier_id_key)
     amount_by_id = received.set_index("_courier_id_lookup")["Alvállalkozói összeg"]
-    result["Alvállalkozói összeg"] = result["_courier_id_lookup"].map(amount_by_id).fillna(result["Alvállalkozói összeg"])
+    api_amounts = result["_courier_id_lookup"].map(amount_by_id)
+    current_amounts = _numeric_series(result, "Alvállalkozói összeg")
+    result["Alvállalkozói összeg"] = current_amounts.where(current_amounts.ne(0), api_amounts.fillna(current_amounts))
     return result.drop(columns=["_courier_id_lookup"])
 
 
@@ -6960,7 +7030,13 @@ def show_courier_dialog() -> None:
             if dialog_api_session_id:
                 dialog_session_id = dialog_api_session_id
         data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
-        data = apply_received_amounts(data, dialog_calculation_mode, dialog_start, st.session_state.get("new_warehouse", "Összes"))
+        data = apply_received_amounts(
+            data,
+            dialog_calculation_mode,
+            dialog_start,
+            st.session_state.get("new_warehouse", "Összes"),
+            dialog_session_id,
+        )
         data = apply_imported_balance_components(
             data,
             balance_component_session_id(dialog_calculation_mode, dialog_start, dialog_session_id),
@@ -10645,7 +10721,13 @@ def show_new_settlement_page() -> None:
         if api_session_id:
             import_session_id = api_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
-    data = apply_received_amounts(data, selected_calculation_mode, balance_period_start, selected_warehouse_label)
+    data = apply_received_amounts(
+        data,
+        selected_calculation_mode,
+        balance_period_start,
+        selected_warehouse_label,
+        import_session_id,
+    )
     data = apply_imported_balance_components(
         data,
         balance_component_session_id(selected_calculation_mode, balance_period_start, import_session_id),
@@ -11131,7 +11213,13 @@ def show_new_settlement_page() -> None:
             previous_period_start,
             selected_warehouse_label,
         )
-        previous_data = apply_received_amounts(previous_data, selected_calculation_mode, previous_period_start, selected_warehouse_label)
+        previous_data = apply_received_amounts(
+            previous_data,
+            selected_calculation_mode,
+            previous_period_start,
+            selected_warehouse_label,
+            previous_session_id,
+        )
         previous_data = apply_imported_balance_components(
             previous_data,
             balance_component_session_id(selected_calculation_mode, previous_period_start, previous_session_id),
