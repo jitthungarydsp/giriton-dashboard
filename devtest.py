@@ -260,6 +260,33 @@ div[data-testid="stMetricValue"] {
     border-left: 5px solid #1FA64A;
 }
 
+.workload-kpi-card {
+    border: 1px solid #DCE8DE;
+    border-radius: 8px;
+    padding: 14px 16px;
+    min-height: 94px;
+    background: #FFFFFF;
+}
+.workload-kpi-card.is-good {
+    background: #EAF8EF;
+    border-color: #8AD39F;
+}
+.workload-kpi-label {
+    color: #52655A;
+    font-size: 13px;
+    font-weight: 800;
+    margin-bottom: 10px;
+}
+.workload-kpi-value {
+    color: #17351F;
+    font-size: 30px;
+    font-weight: 850;
+    line-height: 1.1;
+}
+.workload-kpi-card.is-good .workload-kpi-value {
+    color: #17853B;
+}
+
 
 .summary-donut-grid {
     display: grid;
@@ -7192,7 +7219,15 @@ def show_courier_dialog() -> None:
         workload_cols = st.columns(5)
         workload_cols[0].metric("MűszakPro foglalt műszak", booked_shift_count)
         workload_cols[1].metric("Előre foglalt műszak", advance_booked_shift_count)
-        workload_cols[2].metric("Giriton műszak", giriton_shift_count)
+        workload_cols[2].markdown(
+            f"""
+            <div class="workload-kpi-card {'is-good' if giriton_shift_count > 30 else ''}">
+                <div class="workload-kpi-label">Giriton műszak</div>
+                <div class="workload-kpi-value">{giriton_shift_count}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         workload_cols[3].metric("Kifutott túra", route_total)
         workload_cols[4].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])

@@ -28,6 +28,15 @@ def parse_bool(value, default=False):
     return text in {"1", "true", "yes", "on"}
 
 
+def app_login_url():
+    fallback = "https://giriton-courier-pwa.onrender.com/"
+    for name in ("PWA_LOGIN_URL", "APP_LOGIN_URL", "PUBLIC_PWA_URL", "PUBLIC_APP_URL"):
+        value = get_setting(name).strip()
+        if value and "example.com" not in value.casefold():
+            return value
+    return fallback
+
+
 def validate_email(value):
     email = str(value or "").strip()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -67,13 +76,7 @@ def smtp_config():
 
 def build_login_message(recipient, username, password):
     recipient = validate_email(recipient)
-    login_url = get_setting(
-        "PWA_LOGIN_URL",
-        get_setting(
-            "APP_LOGIN_URL",
-            "https://giriton-courier-pwa.onrender.com/",
-        ),
-    )
+    login_url = app_login_url()
     config = smtp_config()
 
     message = EmailMessage()
@@ -97,10 +100,7 @@ def build_login_message(recipient, username, password):
 
 def build_new_bill_message(recipient, username):
     recipient = validate_email(recipient)
-    login_url = get_setting(
-        "APP_LOGIN_URL",
-        "https://giriton-courier-pwa.onrender.com/",
-    )
+    login_url = app_login_url()
     config = smtp_config()
 
     message = EmailMessage()
@@ -128,13 +128,7 @@ def build_new_document_message(
     title="",
 ):
     recipient = validate_email(recipient)
-    login_url = get_setting(
-        "PWA_LOGIN_URL",
-        get_setting(
-            "APP_LOGIN_URL",
-            "https://giriton-courier-pwa.onrender.com/",
-        ),
-    )
+    login_url = app_login_url()
     config = smtp_config()
 
     labels = {
@@ -159,7 +153,7 @@ def build_new_document_message(
         f"Új {label} dokumentumod érkezett a Jitt rendszerben.\n"
         f"Hónap: {clean_month or '-'}\n"
         f"Dokumentum: {clean_title}\n\n"
-        f"Az új felületen itt tudod megnézni:\nhttps://giriton-courier-pwa.onrender.com/\n\n"
+        f"Az új felületen itt tudod megnézni:\n{login_url}\n\n"
         "Üdvözlettel:\n"
         "Jitt Hungary Kft.\n"
     )
@@ -175,13 +169,7 @@ def build_invoice_payment_message(
     amount_huf="",
 ):
     recipient = validate_email(recipient)
-    login_url = get_setting(
-        "PWA_LOGIN_URL",
-        get_setting(
-            "APP_LOGIN_URL",
-            "https://giriton-courier-pwa.onrender.com/",
-        ),
-    )
+    login_url = app_login_url()
     config = smtp_config()
 
     clean_name = str(courier_name or "Futár").strip()
