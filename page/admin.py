@@ -36,6 +36,7 @@ from resources.users import (
     toggle_active,
     update_trainer,
     delete_user,
+    approve_pwa_registration_user,
 )
 
 
@@ -213,9 +214,13 @@ def show_pwa_registration_admin_section():
         height=260,
     )
 
-    pending = requests_df[requests_df["status"].fillna("").astype(str).isin(["new", "pending", "approved"])]
+    approval_statuses = ["approved"] if status_filter == "approved" else ["new", "pending"]
+    pending = requests_df[requests_df["status"].fillna("").astype(str).isin(approval_statuses)]
     if pending.empty:
-        st.info("Nincs jóváhagyható vagy újraküldhető regisztráció.")
+        if status_filter == "approved":
+            st.info("Nincs újraküldhető, már jóváhagyott regisztráció.")
+        else:
+            st.info("Nincs jóváhagyható regisztráció.")
         return
 
     labels = []
@@ -229,7 +234,7 @@ def show_pwa_registration_admin_section():
         by_label[label] = row
 
     selected_label = st.selectbox(
-        "Jóváhagyandó / újraküldendő kérelem",
+        "Újraküldendő kérelem" if status_filter == "approved" else "Jóváhagyandó kérelem",
         labels,
         key="pwa_registration_approval_select",
     )
@@ -245,7 +250,7 @@ def show_pwa_registration_admin_section():
             "Megerősítem: PWA user létrehozása/frissítése és belépési e-mail küldése.",
             key=f"pwa_registration_confirm_approve_{selected.get('id')}",
         )
-        approve = st.form_submit_button("Jóváhagyás / újraküldés + e-mail", type="primary")
+        approve = st.form_submit_button("Újraküldés + e-mail" if status_filter == "approved" else "Jóváhagyás + e-mail", type="primary")
         reject = st.form_submit_button("Elutasítás")
 
     if approve:
@@ -254,12 +259,21 @@ def show_pwa_registration_admin_section():
             return
         try:
             recipient_email = validate_email(recipient_email)
-            result = upsert_pwa_user_with_password(
-                courier_id=courier_id,
-                username=courier_name,
-                recipient_email=recipient_email,
-            )
-            send_login_credentials(recipient_email, result["username"], result["password"])
+            try:
+                result = upsert_pwa_user_with_password(
+                    courier_id=courier_id,
+                    username=courier_name,
+                    recipient_email=recipient_email,
+                )
+                send_login_credentials(recipient_email, result["username"], result["password"])
+            except Exception as db_exc:
+                result = approve_pwa_registration_user(
+                    courier_id,
+                    courier_name,
+                    recipient_email,
+                    send_login_credentials,
+                )
+                result["action"] = f"{result.get('action', 'legacy')} (legacy fallback: {db_exc})"
             try:
                 upsert_couriers(
                     [{
