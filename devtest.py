@@ -2532,6 +2532,23 @@ def process_id_from_note(note: object) -> str:
     return normalize_process_id(match.group(1)) if match else ""
 
 
+def delete_peopleforce_process_statuses(courier_id: str, document_month: date, process_id: object) -> int:
+    clean_process = normalize_process_id(process_id)
+    if not clean_process:
+        return 0
+    deleted = 0
+    for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+        get_db().schema("public").table("peopleforce_card_statuses").delete() \
+            .eq("courier_id", str(courier_id or "").strip()) \
+            .eq("document_month", document_month.replace(day=1).isoformat()) \
+            .eq("action_key", process_action_key(action, clean_process)) \
+            .execute()
+        deleted += 1
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    return deleted
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_invoice_number(courier_id: str, period_start: date) -> str:
     month_text = period_start.strftime("%Y-%m")
@@ -3190,22 +3207,7 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
     }).eq("id", request_id).execute()
     cancel_salary_advance_plan_for_request(request_row, response)
     if process_id:
-        for action in [
-            "settlement",
-            "tig",
-            "invoice_submit",
-            "invoice_check",
-            "invoice_payment",
-        ]:
-            upsert_peopleforce_card_status(
-                courier_id=courier_id,
-                courier_name=courier_name,
-                action_key=process_action_key(action, process_id),
-                document_month=document_month,
-                status="open",
-                status_note=f"Fizetés előleg elutasítva. {response}".strip(),
-                updated_by=actor,
-            )
+        delete_peopleforce_process_statuses(courier_id, document_month, process_id)
     load_courier_salary_advance_requests.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
@@ -8079,6 +8081,15 @@ def show_courier_dialog() -> None:
         if not invoice_documents.empty:
             for item in invoice_documents.to_dict("records"):
                 invoice_rows_by_process.setdefault(process_id_from_note(item.get("note")), []).append(item)
+        rejected_advance_process_ids = {
+            normalize_process_id(item.get("process_id"))
+            for item in advance_requests.to_dict("records")
+            if (
+                normalize_process_id(item.get("process_id"))
+                and str(item.get("status") or "").strip().casefold()
+                in {"rejected", "cancelled", "closed"}
+            )
+        } if not advance_requests.empty else set()
         request_by_process = {
             normalize_process_id(item.get("process_id")): item
             for item in advance_requests.to_dict("records")
@@ -8094,6 +8105,8 @@ def show_courier_dialog() -> None:
             process_ids,
             key=lambda value: (bool(value), value),
         ):
+            if process_id and process_id in rejected_advance_process_ids:
+                continue
             request_item = request_by_process.get(process_id, {})
 
             if process_id:
@@ -8277,16 +8290,7 @@ def show_courier_dialog() -> None:
                         if request_item:
                             reject_salary_advance_request(request_item, courier_name, response)
                         else:
-                            for action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
-                                upsert_peopleforce_card_status(
-                                    courier_id=courier_id,
-                                    courier_name=str(row["Futár"]),
-                                    action_key=process_action_key(action, process_id),
-                                    document_month=payment_month,
-                                    status="done",
-                                    status_note=f"Folyamat elutasítva / visszavonva. {response}".strip(),
-                                    updated_by=actor,
-                                )
+                            delete_peopleforce_process_statuses(courier_id, payment_month, process_id)
                     else:
                         reopen_courier_monthly_closure(courier_id, period_start, period_end)
                         reopen_target_reserve_month(courier_id, period_start, period_end)
