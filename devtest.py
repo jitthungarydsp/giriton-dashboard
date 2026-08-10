@@ -4760,6 +4760,47 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
     return result
 
 
+def apply_periodic_fee_corrections(
+    data: pd.DataFrame,
+    session_id: str | None,
+    calculation_mode: str,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None = None,
+) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty:
+        return result
+    if "Korrekció" not in result.columns:
+        result["Korrekció"] = 0.0
+
+    periodic_values: list[float] = []
+    for _, item in result.iterrows():
+        courier_id = str(item.get("Courier ID") or "").strip().removesuffix(".0")
+        courier_name = str(item.get("Futár") or "").strip()
+        if not courier_id and not courier_name:
+            periodic_values.append(0.0)
+            continue
+        route_detail = load_courier_route_detail(
+            courier_id,
+            courier_name,
+            session_id,
+            calculation_mode,
+            period_start,
+            warehouse_label,
+        )
+        periodic_total, _ = calculate_periodic_fee_corrections(
+            route_detail,
+            period_start,
+            period_end,
+            item.get("Raktár"),
+        )
+        periodic_values.append(periodic_total)
+
+    result["Korrekció"] = _numeric_series(result, "Korrekció") + pd.Series(periodic_values, index=result.index)
+    return result
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_customer_rating_bonus_rows(period_start: date, period_end: date) -> pd.DataFrame:
     try:
@@ -10612,6 +10653,14 @@ def show_new_settlement_page() -> None:
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id, selected_calculation_mode)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
+    data = apply_periodic_fee_corrections(
+        data,
+        import_session_id,
+        selected_calculation_mode,
+        balance_period_start,
+        balance_period_end,
+        selected_warehouse_label,
+    )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
