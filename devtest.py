@@ -5034,19 +5034,19 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     definitions = {
         "bonus_route_row": (
             "Importált bónusz",
-            {"bonus", "bonusz", "amount", "osszeg", "total"},
+            ("bonus", "bonusz", "amount", "osszeg", "total"),
             ("bonus", "bonusz", "amount", "osszeg", "total"),
             False,
         ),
         "penalty_row": (
             "Importált málusz",
-            {"value", "amount", "osszeg", "penalty", "malus", "levonas"},
+            ("value", "amount", "osszeg", "penalty", "malus", "levonas"),
             ("value", "amount", "osszeg", "penalty", "malus", "levonas"),
             True,
         ),
         "atm_balance_row": (
             "Importált ATM levonás",
-            {"walletdeductions", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"},
+            ("walletdeductions", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
             ("wallet", "deduction", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
             True,
         ),

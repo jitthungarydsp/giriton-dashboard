@@ -1830,6 +1830,19 @@ def optional_supabase_rows(
 
 
 def money_int(value: Any) -> int:
+    if isinstance(value, str):
+        text = value.replace("\xa0", " ").replace("Ft", "").replace("HUF", "").strip()
+        text = text.replace(" ", "")
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        match = re.search(r"-?\d+(?:\.\d+)?", text)
+        if match:
+            try:
+                return int(round(float(match.group(0))))
+            except (TypeError, ValueError):
+                return 0
     try:
         return int(round(float(value or 0)))
     except (TypeError, ValueError):
@@ -1845,6 +1858,13 @@ def money_from(row: dict[str, Any], *keys: str) -> int:
 
 def money_sum_from(row: dict[str, Any], *keys: str) -> int:
     return sum(money_int(row.get(key)) for key in keys if key in row and row.get(key) not in (None, ""))
+
+
+def clean_note_part(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.casefold() == "nan":
+        return ""
+    return text
 
 
 def text_from_nested(value: Any, *keys: str) -> str:
@@ -2058,6 +2078,114 @@ def read_courier_manual_adjustments(courier_id: str, period_start: date, period_
         clean_row["amount_huf"] = abs(money_int(row.get("amount_huf")))
         result.append(clean_row)
     return result
+
+
+def imported_balance_payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("normalized_data") or {}
+    if isinstance(payload, str):
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def imported_balance_value(payload: dict[str, Any], *keys: str) -> Any:
+    if not payload:
+        return None
+    normalized = {normalized_field_key(key): value for key, value in payload.items()}
+    for key in keys:
+        clean_key = normalized_field_key(key)
+        if clean_key in normalized and normalized[clean_key] not in (None, ""):
+            return normalized[clean_key]
+    return None
+
+
+def imported_balance_note(payload: dict[str, Any]) -> str:
+    parts = [
+        clean_note_part(imported_balance_value(payload, "Comment")),
+        clean_note_part(imported_balance_value(payload, "Comment 2")),
+        clean_note_part(imported_balance_value(payload, "Note")),
+        clean_note_part(imported_balance_value(payload, "Megjegyzés")),
+        clean_note_part(imported_balance_value(payload, "Description")),
+    ]
+    return " | ".join(dict.fromkeys(part for part in parts if part))
+
+
+def imported_balance_matches_courier(payload: dict[str, Any], courier_id: str, courier_name: str) -> bool:
+    payload_id = imported_balance_value(
+        payload,
+        "Courier ID",
+        "CourierId",
+        "Courier Number",
+        "Driver ID",
+        "User ID",
+    )
+    if courier_id and str(payload_id or "").strip() == str(courier_id).strip():
+        return True
+    payload_name = imported_balance_value(
+        payload,
+        "Driver",
+        "Driver Name",
+        "Courier",
+        "Courier Name",
+        "Name",
+        "Név",
+    )
+    return bool(courier_name and normalize_text(payload_name) == normalize_text(courier_name))
+
+
+def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not session_id:
+        return [], []
+    table_definitions = [
+        (
+            "bonus_route_row",
+            "monthly_bonus_import",
+            "Kiflis bónusz",
+            1,
+            ("Bonus", "Bónusz", "Amount", "Összeg", "Total"),
+        ),
+        (
+            "penalty_row",
+            "monthly_malus_import",
+            "Kiflis málusz",
+            -1,
+            ("Value", "Amount", "Összeg", "Penalty", "Malus", "Levonás"),
+        ),
+    ]
+    bonus_items: list[dict[str, Any]] = []
+    malus_items: list[dict[str, Any]] = []
+    for table_name, key_prefix, label, sign, amount_keys in table_definitions:
+        rows = optional_supabase_rows(
+            table_name,
+            schema="settlement",
+            params={
+                "select": "normalized_data,source_row_no",
+                "session_id": f"eq.{session_id}",
+                "limit": "5000",
+            },
+            timeout=30,
+        )
+        target_items = bonus_items if sign > 0 else malus_items
+        for index, source_row in enumerate(rows, start=1):
+            payload = imported_balance_payload(source_row)
+            if not imported_balance_matches_courier(payload, courier_id, courier_name):
+                continue
+            amount = abs(money_int(imported_balance_value(payload, *amount_keys)))
+            if not amount:
+                continue
+            target_items.append(
+                signed_item(
+                    f"{key_prefix}_{source_row.get('source_row_no') or index}",
+                    label,
+                    sign * amount,
+                    source=f"settlement.{table_name}",
+                    note=imported_balance_note(payload),
+                )
+            )
+    return bonus_items, malus_items
 
 
 def read_periodic_fee_rules(period_start: date, period_end: date) -> list[dict[str, Any]]:
@@ -2626,6 +2754,11 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     monthly_malus += manual_adjustments.get("malus", 0)
     atm_effect -= manual_adjustments.get("atm_deduction", 0)
     other_deduction -= manual_adjustments.get("other_expense", 0)
+    imported_bonus_items, imported_malus_items = read_imported_bonus_malus_items(
+        str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+        courier_id,
+        _courier_name,
+    )
 
     income_items = [
         signed_item("base", "Alapdíj", base),
@@ -2721,11 +2854,17 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         for index, row in enumerate(manual_adjustment_rows, start=1)
         if str(row.get("adjustment_type") or "") in manual_bonus_malus_types
     ]
+    imported_bonus_total = sum(money_int(item.get("amountHuf")) for item in imported_bonus_items)
+    imported_malus_total = abs(sum(money_int(item.get("amountHuf")) for item in imported_malus_items))
+    aggregate_bonus_remainder = (monthly_bonus - manual_bonus) - imported_bonus_total
+    aggregate_malus_remainder = (monthly_malus - manual_malus) - imported_malus_total
     bonus_malus_items = [
-        signed_item("monthly_bonus", "Kiflis bonusz", monthly_bonus - manual_bonus),
-        signed_item("monthly_malus", "Kiflis malusz", -(monthly_malus - manual_malus)),
-        signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
-        signed_item("returned_route", "Visszavett kor", -returned_route),
+        *imported_bonus_items,
+        signed_item("monthly_bonus", "Kiflis bónusz", aggregate_bonus_remainder),
+        signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
+        signed_item("returned_route", "Visszavett kör", -returned_route),
+        *imported_malus_items,
+        signed_item("monthly_malus", "Kiflis málusz", -aggregate_malus_remainder),
     ]
     bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
     bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)

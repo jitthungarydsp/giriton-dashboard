@@ -460,9 +460,9 @@ set
     courier_tip_huf = case when resolved.route_rank = 1 then resolved.tip_huf else 0 end,
     courier_delay_bonus_huf = case when resolved.route_rank = 1 then resolved.delay_amount_huf else 0 end,
     courier_compliance_bonus_huf = case when resolved.route_rank = 1 then resolved.compliance_amount_huf else 0 end,
-    courier_other_bonus_huf = case when resolved.route_rank = 1 then resolved.other_bonus_huf else 0 end,
+    courier_other_bonus_huf = 0,
     courier_bonus_total_huf = case when resolved.route_rank = 1
-        then resolved.delay_amount_huf + resolved.compliance_amount_huf + resolved.other_bonus_huf else 0 end,
+        then resolved.delay_amount_huf + resolved.compliance_amount_huf else 0 end,
     is_route_primary = resolved.route_rank = 1,
     base_rate_status = case
         when resolved.route_rank <> 1 then 'duplicate_route_id'
