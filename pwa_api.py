@@ -2214,17 +2214,17 @@ def build_financial_breakdown_from_mobile_rows(
     jitt_total = mobile_override_amount(overrides, "bonus_malus")
     if not jitt_total:
         jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
-    income_total = sum(
+    income_total = mobile_override_amount(overrides, "income") or sum(
         money_int(current.get("amountHuf"))
         for current in income_items
         if money_int(current.get("amountHuf")) > 0
     )
-    deduction_total = sum(
+    deduction_total = mobile_override_amount(overrides, "deductions") or sum(
         money_int(current.get("amountHuf"))
         for current in [*deduction_items, *jitt_items]
         if money_int(current.get("amountHuf")) < 0
     )
-    payable = income_total + deduction_total + correction_total
+    payable = mobile_override_amount(overrides, "payable")
 
     cards = [
         {
