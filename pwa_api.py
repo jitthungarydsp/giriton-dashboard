@@ -421,6 +421,10 @@ def normalize_text(value: Any) -> str:
     return "".join(char for char in text if not unicodedata.combining(char))
 
 
+def normalized_field_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", normalize_text(value))
+
+
 def normalize_time(value: Any) -> str:
     text = str(value or "").strip().replace(".", ":")
     if not text:
@@ -1850,6 +1854,11 @@ def text_from_nested(value: Any, *keys: str) -> str:
         raw = value.get(key)
         if raw not in (None, ""):
             return str(raw)
+    normalized = {normalized_field_key(item_key): raw for item_key, raw in value.items()}
+    for key in keys:
+        raw = normalized.get(normalized_field_key(key))
+        if raw not in (None, ""):
+            return str(raw)
     return ""
 
 
@@ -2106,18 +2115,28 @@ def read_periodic_route_rows(courier_id: str, courier_name: str, session_id: str
                 data = {}
         row_courier_id = text_from_nested(data, "Courier ID", "courier_id", "courierId").strip().removesuffix(".0")
         row_name = normalize_text(text_from_nested(data, "Driver", "driver_name", "courier_name", "Futár"))
+        row_name_tokens = set(row_name.split())
+        name_tokens = set(name_key.split())
+        extended_name_match = (
+            bool(row_name_tokens)
+            and bool(name_tokens)
+            and len(row_name_tokens) >= 2
+            and len(name_tokens) >= 2
+            and (row_name_tokens <= name_tokens or name_tokens <= row_name_tokens)
+        )
         if row_courier_id:
             if row_courier_id != courier_key:
                 continue
-        elif name_key and row_name != name_key and not db_prefiltered_by_courier:
+        elif name_key and row_name != name_key and not extended_name_match and not db_prefiltered_by_courier:
             continue
         work_date = date_from_row_value(row.get("route_date") or text_from_nested(data, "Excel dátum", "work_date", "delivery_date", "date"))
         if not work_date or work_date < period_start or work_date > period_end:
             continue
+        route_type_value = text_from_nested(data, "Túratípus", "Route Type", "route_type", "routeLayer", "routeType") or "NORMAL"
         result.append({
             "work_date": work_date,
             "weekday": safe_int(row.get("weekday_iso")) or work_date.isoweekday(),
-            "route_type": route_type_key(text_from_nested(data, "Túratípus", "route_type", "routeLayer", "routeType")),
+            "route_type": route_type_key(route_type_value),
             "day_type": day_type_key(row.get("calculated_day_type") or text_from_nested(data, "Naptípus", "day_type")),
             "orders": money_int(text_from_nested(data, "Orders", "orders", "Rendelések", "order_count")),
             "warehouse": normalize_text(text_from_nested(data, "Warehouse", "warehouse", "Raktár", "warehouse_code")),
