@@ -2072,20 +2072,28 @@ def read_periodic_fee_rules(period_start: date, period_end: date) -> list[dict[s
 def read_periodic_route_rows(courier_id: str, courier_name: str, session_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
     if not courier_id or not session_id:
         return []
+    base_params = {
+        "select": "normalized_data,route_date,weekday_iso,calculated_day_type,is_route_primary",
+        "session_id": f"eq.{session_id}",
+        "is_route_primary": "eq.true",
+        "route_date": f"gte.{period_start.isoformat()}",
+        "and": f"(route_date.gte.{period_start.isoformat()},route_date.lte.{period_end.isoformat()})",
+        "limit": "5000",
+    }
     rows = optional_supabase_rows(
         "jit_row",
         schema="settlement",
-        params={
-            "select": "normalized_data,route_date,weekday_iso,calculated_day_type,is_route_primary",
-            "session_id": f"eq.{session_id}",
-            "courier_id": f"eq.{courier_id}",
-            "is_route_primary": "eq.true",
-            "route_date": f"gte.{period_start.isoformat()}",
-            "and": f"(route_date.gte.{period_start.isoformat()},route_date.lte.{period_end.isoformat()})",
-            "limit": "5000",
-        },
+        params={**base_params, "courier_id": f"eq.{courier_id}"},
         timeout=60,
     )
+    db_prefiltered_by_courier = bool(rows)
+    if not rows:
+        rows = optional_supabase_rows(
+            "jit_row",
+            schema="settlement",
+            params=base_params,
+            timeout=60,
+        )
     courier_key = str(courier_id or "").strip().removesuffix(".0")
     name_key = normalize_text(courier_name)
     result: list[dict[str, Any]] = []
@@ -2101,7 +2109,7 @@ def read_periodic_route_rows(courier_id: str, courier_name: str, session_id: str
         if row_courier_id:
             if row_courier_id != courier_key:
                 continue
-        elif name_key and row_name != name_key:
+        elif name_key and row_name != name_key and not db_prefiltered_by_courier:
             continue
         work_date = date_from_row_value(row.get("route_date") or text_from_nested(data, "Excel dátum", "work_date", "delivery_date", "date"))
         if not work_date or work_date < period_start or work_date > period_end:
