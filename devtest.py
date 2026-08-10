@@ -1591,11 +1591,13 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         or row.get("Időszakos díj")
     )
     salary_advance = parse_huf_value(row.get("Fizetés előleg"))
+    manual_bonus = parse_huf_value(row.get("JITT bónusz"))
+    manual_malus = abs(parse_huf_value(row.get("JITT malus")))
     correction_income = max(correction, 0.0)
     correction_deduction = abs(min(correction, 0.0))
-    known_deductions = imported_malus + imported_atm + salary_advance + correction_deduction
+    known_deductions = imported_malus + manual_malus + imported_atm + salary_advance + correction_deduction
     remaining_deduction = max(abs(deduction) - known_deductions, 0.0)
-    income = base + tip + imported_bonus + delay + compliance + loyalty + customer_rating + correction_income
+    income = base + tip + imported_bonus + manual_bonus + delay + compliance + loyalty + customer_rating + correction_income
     return [
         {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": income, "note": "Havi nyitáskor publikált snapshot"},
@@ -1625,6 +1627,40 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Havi nyitáskor publikált snapshot"},
     ]
+
+
+def append_jitt_bonus_malus_mobile_rows(
+    rows: list[dict[str, object]],
+    row: dict[str, object],
+) -> list[dict[str, object]]:
+    manual_bonus = parse_huf_value(row.get("JITT bónusz"))
+    manual_malus = abs(parse_huf_value(row.get("JITT malus")))
+    if not manual_bonus and not manual_malus:
+        return rows
+    rows.extend([
+        {
+            "item_key": "bonus_malus",
+            "item_label": "JITT bónusz / malus",
+            "amount_kind": "huf",
+            "amount_value": manual_bonus - manual_malus,
+            "note": "Sheet/DB tételek összesen",
+        },
+        {
+            "item_key": "manual_bonus",
+            "item_label": "JITT bónusz",
+            "amount_kind": "huf",
+            "amount_value": manual_bonus,
+            "note": "Sheet/DB tételek",
+        },
+        {
+            "item_key": "manual_malus",
+            "item_label": "JITT malus",
+            "amount_kind": "huf",
+            "amount_value": -manual_malus,
+            "note": "Sheet/DB tételek",
+        },
+    ])
+    return rows
 
 
 def append_periodic_correction_mobile_rows(
@@ -1743,7 +1779,10 @@ def publish_mobile_settlement_snapshot(
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
             continue
-        rows = mobile_breakdown_rows_from_settlement_row(item)
+        rows = append_jitt_bonus_malus_mobile_rows(
+            mobile_breakdown_rows_from_settlement_row(item),
+            item,
+        )
         try:
             route_detail = load_courier_route_detail(
                 courier_id,
@@ -1784,7 +1823,10 @@ def refresh_mobile_settlement_breakdown_snapshot(
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
             continue
-        rows = mobile_breakdown_rows_from_settlement_row(item)
+        rows = append_jitt_bonus_malus_mobile_rows(
+            mobile_breakdown_rows_from_settlement_row(item),
+            item,
+        )
         try:
             route_detail = load_courier_route_detail(
                 courier_id,
@@ -2449,6 +2491,8 @@ def load_monthly_closure_statuses(period_start: date, period_end: date) -> pd.Da
 
 def apply_monthly_closure_status(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
     result = data.copy()
+    result["JITT bónusz"] = 0.0
+    result["JITT malus"] = 0.0
     closures = load_monthly_closure_statuses(period_start, period_end)
     if closures.empty or "Courier ID" not in result.columns:
         if "Kifizetve" not in result.columns:
@@ -4858,6 +4902,10 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
         pivot = adjustments.pivot_table(index="courier_id", columns="adjustment_type", values="amount_huf", aggfunc="sum", fill_value=0.0)
         courier_ids = result["Courier ID"].map(lambda value: str(value).strip().removesuffix(".0"))
         zero_adjustments = pd.Series(0.0, index=pivot.index)
+        manual_bonus = courier_ids.map(pivot.get("bonus", zero_adjustments)).fillna(0.0)
+        manual_malus = courier_ids.map(pivot.get("malus", zero_adjustments)).fillna(0.0)
+        result["JITT bónusz"] = manual_bonus
+        result["JITT malus"] = manual_malus
         correction_income = (
             pivot.get("correction", zero_adjustments)
             + pivot.get("manual_correction", zero_adjustments)
@@ -4869,7 +4917,7 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
         )
         result["Bónusz"] = (
             _numeric_series(result, "Bónusz")
-            + courier_ids.map(pivot.get("bonus", zero_adjustments)).fillna(0.0)
+            + manual_bonus
         )
         result["Korrekció"] = (
             _numeric_series(result, "Korrekció")
