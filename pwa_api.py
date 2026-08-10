@@ -2135,24 +2135,10 @@ def build_financial_breakdown_from_mobile_rows(
             result.append(current)
         return result
 
-    def row_money_item(key: str, label: str, amount: int, *, note: str = "Elszamolasi osszesito adat") -> dict[str, Any] | None:
-        if not amount:
-            return None
-        return signed_item(
-            key,
-            label,
-            amount,
-            source="settlement.courier_settlement_summary",
-            note=note,
-        )
-
     payable = mobile_override_amount(overrides, "payable")
     income_total = mobile_override_amount(overrides, "income")
     deduction_total = mobile_override_amount(overrides, "deductions")
     correction_total = mobile_override_amount(overrides, "correction")
-    imported_bonus_total = mobile_override_amount(overrides, "monthly_bonus") or money_from(row, "imported_bonus_huf")
-    imported_malus_total = abs(mobile_override_amount(overrides, "monthly_malus") or money_from(row, "imported_malus_huf"))
-    atm_total = mobile_override_amount(overrides, "atm_effect") or money_from(row, "atm_effect_huf") or -abs(money_from(row, "atm_deduction_huf"))
 
     income_items = money_items([
         "base",
@@ -2176,20 +2162,6 @@ def build_financial_breakdown_from_mobile_rows(
         "other_deduction",
     ])
     kiflis_items = detail_items((), ["monthly_bonus", "monthly_malus"])
-    if not any(current.get("key") == "monthly_bonus" for current in kiflis_items):
-        fallback_bonus = row_money_item("monthly_bonus", "Kiflis bonusz", imported_bonus_total)
-        if fallback_bonus:
-            kiflis_items.append(fallback_bonus)
-            income_items.append(fallback_bonus)
-    if not any(current.get("key") == "monthly_malus" for current in kiflis_items):
-        fallback_malus = row_money_item("monthly_malus", "Kiflis malus", -imported_malus_total)
-        if fallback_malus:
-            kiflis_items.append(fallback_malus)
-            deduction_items.append(fallback_malus)
-    if atm_total and not any(current.get("key") == "atm_effect" for current in deduction_items):
-        fallback_atm = row_money_item("atm_effect", "ATM hatas", atm_total)
-        if fallback_atm:
-            deduction_items.append(fallback_atm)
     jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
     correction_items = detail_items(("correction_periodic_", "correction_manual_"), [
         "correction_income",
@@ -2214,17 +2186,6 @@ def build_financial_breakdown_from_mobile_rows(
     jitt_total = mobile_override_amount(overrides, "bonus_malus")
     if not jitt_total:
         jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
-    income_total = mobile_override_amount(overrides, "income") or sum(
-        money_int(current.get("amountHuf"))
-        for current in income_items
-        if money_int(current.get("amountHuf")) > 0
-    )
-    deduction_total = mobile_override_amount(overrides, "deductions") or sum(
-        money_int(current.get("amountHuf"))
-        for current in [*deduction_items, *jitt_items]
-        if money_int(current.get("amountHuf")) < 0
-    )
-    payable = mobile_override_amount(overrides, "payable")
 
     cards = [
         {

@@ -1534,6 +1534,7 @@ def save_mobile_breakdown_overrides(
     rows: list[dict[str, object]],
     updated_by: str,
 ) -> bool:
+    clean_courier_id = _courier_id_key(courier_id)
     payloads = []
     for row in rows:
         item_key = str(row.get("item_key") or row.get("Kulcs") or "").strip()
@@ -1544,7 +1545,7 @@ def save_mobile_breakdown_overrides(
             amount_kind = "huf"
         payloads.append({
             "period_start": period_start.replace(day=1).isoformat(),
-            "courier_id": str(courier_id),
+            "courier_id": clean_courier_id,
             "item_key": item_key,
             "item_label": str(row.get("item_label") or row.get("Megnevezés") or item_key),
             "amount_value": parse_huf_value(row.get("amount_value") if "amount_value" in row else row.get("Érték")),
@@ -1739,7 +1740,7 @@ def publish_mobile_settlement_snapshot(
     courier_count = 0
     row_count = 0
     for item in data.to_dict("records"):
-        courier_id = str(item.get("Courier ID") or "").strip()
+        courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
             continue
         rows = mobile_breakdown_rows_from_settlement_row(item)
@@ -1747,6 +1748,47 @@ def publish_mobile_settlement_snapshot(
             route_detail = load_courier_route_detail(
                 courier_id,
                 str(item.get("Futár") or ""),
+                session_id,
+                calculation_mode,
+                period_start,
+                warehouse_label,
+            )
+            rows = append_periodic_correction_mobile_rows(
+                rows,
+                row=item,
+                route_detail=route_detail,
+                period_start=period_start,
+                period_end=month_bounds(period_start)[1],
+            )
+        except Exception:
+            pass
+        if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
+            courier_count += 1
+            row_count += len(rows)
+    return courier_count, row_count
+
+
+def refresh_mobile_settlement_breakdown_snapshot(
+    data: pd.DataFrame,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+    updated_by: str,
+) -> tuple[int, int]:
+    if str(calculation_mode or "") not in {"API", "Excel"}:
+        return 0, 0
+    courier_count = 0
+    row_count = 0
+    for item in data.to_dict("records"):
+        courier_id = _courier_id_key(item.get("Courier ID"))
+        if not courier_id:
+            continue
+        rows = mobile_breakdown_rows_from_settlement_row(item)
+        try:
+            route_detail = load_courier_route_detail(
+                courier_id,
+                str(item.get("FutĂˇr") or ""),
                 session_id,
                 calculation_mode,
                 period_start,
@@ -11438,6 +11480,32 @@ def show_new_settlement_page() -> None:
         st.caption("A havi nyitás a kiválasztott API/Excel forrásból publikálja ugyanazokat az értékeket az admin és futár mobil nézetbe.")
 
     total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
+    if st.button(
+        f"Mobil értékek tömeges frissítése ellenőrzéshez - {selected_month} ({len(filtered)} futár)",
+        disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
+        use_container_width=True,
+        key=f"mobile_breakdown_bulk_refresh_{balance_period_start:%Y%m}",
+        help="Csak a PWA megjelenítési bontást frissíti a DB-ben. Nem indít havi folyamatot és nem nyitja meg a futároknak.",
+    ):
+        snapshot_session_id = settlement_mobile_session_for_mode(
+            selected_calculation_mode,
+            balance_period_start,
+            selected_warehouse_label,
+        )
+        courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
+            filtered,
+            balance_period_start,
+            selected_calculation_mode,
+            selected_warehouse_label,
+            snapshot_session_id,
+            str(st.session_state.get("user", {}).get("username") or "unknown"),
+        )
+        if courier_count:
+            st.success(f"Mobil ellenőrzési értékek frissítve: {courier_count} futár, {row_count} sor.")
+            st.rerun()
+        else:
+            st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont és a szűrést.")
+
     previous_total_payable = int(_numeric_series(previous_filtered, "Kifizetendő").sum()) if not previous_filtered.empty else 0
     previous_total_received = int(_numeric_series(previous_filtered, "Alvállalkozói összeg").sum()) if not previous_filtered.empty else 0
     payable_note = previous_month_delta_note(total_payable, previous_total_payable)
