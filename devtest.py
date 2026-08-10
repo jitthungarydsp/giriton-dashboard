@@ -7981,7 +7981,7 @@ def show_courier_dialog() -> None:
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
             {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
             {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-            {"Művelet": "+", "Tétel": "Egyéb út bónusz", "Összeg": route_other_bonus_total},
+            {"Művelet": "+", "Tétel": "Alapdíj kiegészítés", "Összeg": route_other_bonus_total},
             {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
             {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
             {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
