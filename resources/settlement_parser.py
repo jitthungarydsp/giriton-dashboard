@@ -161,6 +161,7 @@ def detect_sheet_type_from_name(
 
     normalized_name = normalize_text(sheet_name)
     exact_types = {
+        "atm": "atm_balance",
         "atm balance": "atm_balance",
         "bonus routes": "bonus",
         "penalties": "penalties",
@@ -176,11 +177,12 @@ def detect_sheet_type_from_name(
             reason=f"exact_normalized_sheet_name:{normalized_name}",
         )
 
-    if normalized_name.endswith(" jit"):
+    name_tokens = set(normalized_name.split())
+    if "jit" in name_tokens or normalized_name.endswith(" jit"):
         return SheetNameDetection(
             sheet_type="jit",
             confidence=1.0,
-            reason=f"normalized_sheet_name_suffix:*_JIT ({normalized_name})",
+            reason=f"normalized_sheet_name_contains:JIT ({normalized_name})",
         )
 
     return None
@@ -572,6 +574,9 @@ class ATMParser(BaseSheetParser):
     BALANCE_ALIASES: ClassVar[tuple[str, ...]] = (
         "balance",
         "egyenleg",
+        "deduction",
+        "deductions",
+        "levonas",
         "hiany",
         "tobblet",
     )
@@ -594,6 +599,7 @@ class ATMParser(BaseSheetParser):
     CASH_ALIASES: ClassVar[tuple[str, ...]] = (
         "atm",
         "cash",
+        "wallet",
         "kp",
         "keszpenz",
     )

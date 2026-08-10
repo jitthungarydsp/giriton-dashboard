@@ -1,237 +1,24 @@
-/*
-Run this file in Supabase SQL Editor.
-
-It removes only the old public JITT parameter tables, creates their settlement
-schema replacements, and writes the calculation result into existing
-settlement.jit_row rows. No new route data table is created.
-*/
-
 begin;
 
-create schema if not exists settlement;
-create extension if not exists pgcrypto;
-
-drop table if exists public.cfg_jitt_rate_parameters cascade;
-drop table if exists public.cfg_jitt_periodic_bonuses cascade;
-drop table if exists public.cfg_jitt_rate_parameter_names cascade;
-drop table if exists public.cfg_jitt_day_definitions cascade;
-drop table if exists public.cfg_jitt_base_rates cascade;
-drop table if exists public.cfg_jitt_delay_bonus_rules cascade;
-drop table if exists public.cfg_jitt_compliance_bonus_rules cascade;
-drop table if exists public.cfg_jitt_periodic_fees cascade;
-
-create table if not exists settlement.cfg_jitt_day_definitions (
-    id uuid primary key default gen_random_uuid(),
-    day_type text not null check (day_type in ('highlighted', 'normal')),
-    weekdays smallint[] not null check (cardinality(weekdays) > 0),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from)
-);
-
-create table if not exists settlement.cfg_jitt_base_rates (
-    id uuid primary key default gen_random_uuid(),
-    day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
-    route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
-    warehouse_code text,
-    company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
-    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
-    calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from)
-);
-
-create table if not exists settlement.cfg_jitt_delay_bonus_rules (
-    id uuid primary key default gen_random_uuid(),
-    level_code text not null,
-    day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
-    route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
-    warehouse_code text,
-    threshold_min numeric,
-    threshold_max numeric,
-    threshold_min_inclusive boolean not null default true,
-    threshold_max_inclusive boolean not null default true,
-    duration_min_hours numeric,
-    duration_max_hours numeric,
-    company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
-    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
-    calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
-    calculation_mode text not null default 'excel' check (calculation_mode in ('excel', 'api', 'custom')),
-    excel_source_field text,
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from),
-    check (threshold_max is null or threshold_min is null or threshold_max >= threshold_min),
-    check (duration_max_hours is null or duration_min_hours is null or duration_max_hours >= duration_min_hours)
-);
-
-create table if not exists settlement.cfg_jitt_compliance_bonus_rules (
-    like settlement.cfg_jitt_delay_bonus_rules including all
-);
+-- Safe patch for already installed settlement schemas.
+-- It keeps Excel import content-based, but persists route-level JITT bonuses
+-- from the JIT rows so devtest/PWA summaries can read one DB source.
 
 alter table settlement.cfg_jitt_delay_bonus_rules
     add column if not exists excel_source_field text;
+
 alter table settlement.cfg_jitt_compliance_bonus_rules
     add column if not exists excel_source_field text;
 
-create table if not exists settlement.cfg_jitt_periodic_fees (
-    id uuid primary key default gen_random_uuid(),
-    fee_name text not null,
-    day_type text not null check (day_type in ('highlighted', 'normal', 'any')),
-    route_type text not null check (route_type in ('express', 'normal', 'regional', 'any')),
-    weekdays integer[] not null default '{}',
-    warehouse_code text,
-    condition_metric text not null default 'none' check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period', 'orders_over_threshold_every_n_per_route')),
-    condition_min numeric,
-    condition_max numeric,
-    company_amount_huf integer not null default 0 check (company_amount_huf >= 0),
-    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
-    calculation_unit text not null default 'per_route' check (calculation_unit in ('fixed', 'per_route', 'per_order', 'per_hour')),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from),
-    check (condition_max is null or condition_min is null or condition_max >= condition_min),
-    check (weekdays <@ array[1,2,3,4,5,6,7])
-);
+update settlement.cfg_jitt_delay_bonus_rules
+set excel_source_field = 'Delay Bonus'
+where calculation_mode = 'excel'
+  and nullif(trim(coalesce(excel_source_field, '')), '') is null;
 
-alter table settlement.cfg_jitt_periodic_fees
-    add column if not exists weekdays integer[] not null default '{}';
-
-alter table settlement.cfg_jitt_periodic_fees
-    drop constraint if exists cfg_jitt_periodic_fees_condition_metric_check,
-    add constraint cfg_jitt_periodic_fees_condition_metric_check
-    check (condition_metric in ('none', 'orders_per_route', 'routes_per_day', 'routes_in_period', 'orders_in_period', 'every_n_routes_per_day', 'every_n_routes_in_period', 'orders_over_threshold_every_n_per_route'));
-
-alter table settlement.cfg_jitt_periodic_fees
-    drop constraint if exists cfg_jitt_periodic_fees_weekdays_check,
-    add constraint cfg_jitt_periodic_fees_weekdays_check
-    check (weekdays <@ array[1,2,3,4,5,6,7]);
-
-create table if not exists settlement.cfg_jitt_reserve_insurance_rules (
-    id uuid primary key default gen_random_uuid(),
-    insurance_fee_huf integer not null default 0 check (insurance_fee_huf >= 0),
-    base_insurance_total_huf integer not null default 0 check (base_insurance_total_huf >= 0),
-    reserve_target_huf integer not null default 50000 check (reserve_target_huf >= 0),
-    deduction_percent numeric not null check (deduction_percent between 0 and 100),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from)
-);
-
-create table if not exists settlement.cfg_jitt_loyalty_bonus_rules (
-    id uuid primary key default gen_random_uuid(),
-    loyalty_start_date date not null,
-    loyalty_months_required integer not null default 0 check (loyalty_months_required >= 0),
-    route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
-    calculation_unit text not null default 'per_route' check (calculation_unit in ('per_route', 'per_order')),
-    bonus_amount_huf integer not null default 0 check (bonus_amount_huf >= 0),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from)
-);
-
-alter table settlement.cfg_jitt_loyalty_bonus_rules
-    add column if not exists loyalty_months_required integer not null default 0 check (loyalty_months_required >= 0),
-    add column if not exists route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
-    add column if not exists calculation_unit text not null default 'per_route' check (calculation_unit in ('per_route', 'per_order'));
-
-create table if not exists settlement.cfg_jitt_life_insurance_rules (
-    id uuid primary key default gen_random_uuid(),
-    life_insurance_amount_huf integer not null default 0 check (life_insurance_amount_huf >= 0),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from)
-);
-
-create table if not exists settlement.cfg_jitt_customer_rating_rules (
-    id uuid primary key default gen_random_uuid(),
-    level_code text not null default 'Ügyfélértékelés',
-    route_type text not null default 'normal' check (route_type in ('normal', 'express', 'regional', 'any')),
-    rating_min_percent numeric,
-    rating_max_percent numeric,
-    courier_amount_huf integer not null default 0 check (courier_amount_huf >= 0),
-    valid_from date not null,
-    valid_to date,
-    priority integer not null default 100,
-    is_active boolean not null default true,
-    note text,
-    created_by text not null,
-    created_at timestamptz not null default now(),
-    updated_by text,
-    updated_at timestamptz not null default now(),
-    deleted_at timestamptz,
-    deleted_by text,
-    check (valid_to is null or valid_to >= valid_from),
-    check (rating_max_percent is null or rating_min_percent is null or rating_max_percent >= rating_min_percent)
-);
-
-alter table settlement.cfg_jitt_customer_rating_rules
-    add column if not exists route_type text not null default 'normal'
-    check (route_type in ('normal', 'express', 'regional', 'any'));
+update settlement.cfg_jitt_compliance_bonus_rules
+set excel_source_field = 'Compliance Bonus'
+where calculation_mode = 'excel'
+  and nullif(trim(coalesce(excel_source_field, '')), '') is null;
 
 alter table settlement.jit_row
     add column if not exists route_unique_id text,
@@ -264,14 +51,10 @@ with raw as (
         coalesce(nullif(j.normalized_data ->> 'Route Unique ID', ''), nullif(j.normalized_data ->> 'route_unique_id', ''), j.id::text) as route_unique_id,
         coalesce(nullif(j.normalized_data ->> 'Location', ''), nullif(j.normalized_data ->> 'warehouse_code', ''), '') as warehouse_code,
         case
-            when date_value.date_text ~ '^\d{4}-\d{2}-\d{2}'
-                then left(date_value.date_text, 10)::date
-            when date_value.date_text ~ '^\d{4}/\d{2}/\d{2}'
-                then to_date(left(date_value.date_text, 10), 'YYYY/MM/DD')
-            when date_value.date_text ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$'
-                then to_date(replace(replace(date_value.date_text, '.', '/'), '-', '/'), 'DD/MM/YYYY')
-            when date_value.date_text ~ '^\d{5}(\.0+)?$'
-                then date '1899-12-30' + date_value.date_text::numeric::integer
+            when date_value.date_text ~ '^\d{4}-\d{2}-\d{2}' then left(date_value.date_text, 10)::date
+            when date_value.date_text ~ '^\d{4}/\d{2}/\d{2}' then to_date(left(date_value.date_text, 10), 'YYYY/MM/DD')
+            when date_value.date_text ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$' then to_date(replace(replace(date_value.date_text, '.', '/'), '-', '/'), 'DD/MM/YYYY')
+            when date_value.date_text ~ '^\d+(\.0+)?$' then date '1899-12-30' + date_value.date_text::numeric::integer
         end as work_date,
         case
             when lower(coalesce(j.normalized_data ->> 'Route Type', j.normalized_data ->> 'route_type', '')) like '%express%' then 'express'
@@ -295,7 +78,8 @@ with raw as (
             nullif(j.normalized_data ->> 'date', ''),
             nullif(j.normalized_data ->> 'Dátum', ''),
             nullif(j.normalized_data ->> 'work_date', ''),
-            (select item.value from jsonb_each_text(j.normalized_data) as item(key, value) where lower(trim(item.key)) in ('date', 'dátum', 'datum', 'work_date') limit 1),
+            (select item.value from jsonb_each_text(j.normalized_data) as item(key, value)
+             where lower(trim(item.key)) in ('date', 'dátum', 'datum', 'work_date') limit 1),
             ''
         ) as date_text
     ) date_value
@@ -470,13 +254,9 @@ select
 from settlement.jit_row
 group by session_id, coalesce(nullif(normalized_data ->> 'Driver', ''), nullif(normalized_data ->> 'driver_name', ''), 'Ismeretlen futár');
 
-grant usage on schema settlement to service_role;
-grant select, insert, update, delete on settlement.cfg_jitt_day_definitions, settlement.cfg_jitt_base_rates, settlement.cfg_jitt_delay_bonus_rules, settlement.cfg_jitt_compliance_bonus_rules, settlement.cfg_jitt_periodic_fees, settlement.cfg_jitt_reserve_insurance_rules, settlement.cfg_jitt_loyalty_bonus_rules, settlement.cfg_jitt_life_insurance_rules, settlement.cfg_jitt_customer_rating_rules to service_role;
-grant select, update on settlement.jit_row to service_role;
 grant select on settlement.vw_parameterized_courier_base_summary to service_role;
 grant execute on function settlement.recalculate_jitt_base_rates(uuid) to service_role;
 
-/* Backfill every already imported JIT session immediately; no Excel re-upload. */
 do $$
 declare
     session_record record;
