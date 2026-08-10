@@ -1843,6 +1843,36 @@ def money_sum_from(row: dict[str, Any], *keys: str) -> int:
     return sum(money_int(row.get(key)) for key in keys if key in row and row.get(key) not in (None, ""))
 
 
+def text_from_nested(value: Any, *keys: str) -> str:
+    if not isinstance(value, dict):
+        return ""
+    for key in keys:
+        raw = value.get(key)
+        if raw not in (None, ""):
+            return str(raw)
+    return ""
+
+
+def route_type_key(value: Any) -> str:
+    text = normalize_text(value)
+    if "express" in text or "exp" == text:
+        return "express"
+    if "regional" in text or "regios" in text or "region" in text:
+        return "regional"
+    if "normal" in text or "city" in text or "kiemelt" in text or "sima" in text:
+        return "normal"
+    return "any"
+
+
+def day_type_key(value: Any) -> str:
+    text = normalize_text(value)
+    if "highlighted" in text or "kiemelt" in text:
+        return "highlighted"
+    if "normal" in text or "sima" in text:
+        return "normal"
+    return "any"
+
+
 def date_from_row_value(value: Any) -> date | None:
     text = str(value or "").strip()
     if not text:
@@ -2019,6 +2049,168 @@ def read_courier_manual_adjustments(courier_id: str, period_start: date, period_
         clean_row["amount_huf"] = abs(money_int(row.get("amount_huf")))
         result.append(clean_row)
     return result
+
+
+def read_periodic_fee_rules(period_start: date, period_end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "cfg_jitt_periodic_fees",
+        schema="settlement",
+        params={
+            "select": "*",
+            "is_active": "eq.true",
+            "deleted_at": "is.null",
+            "valid_from": f"lte.{period_end.isoformat()}",
+            "or": f"(valid_to.is.null,valid_to.gte.{period_start.isoformat()})",
+            "order": "priority.asc,valid_from.desc",
+            "limit": "200",
+        },
+        timeout=30,
+    )
+    return rows
+
+
+def read_periodic_route_rows(courier_id: str, courier_name: str, session_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
+    if not courier_id or not session_id:
+        return []
+    rows = optional_supabase_rows(
+        "jit_row",
+        schema="settlement",
+        params={
+            "select": "normalized_data,route_date,weekday_iso,calculated_day_type,is_route_primary",
+            "session_id": f"eq.{session_id}",
+            "courier_id": f"eq.{courier_id}",
+            "is_route_primary": "eq.true",
+            "route_date": f"gte.{period_start.isoformat()}",
+            "and": f"(route_date.gte.{period_start.isoformat()},route_date.lte.{period_end.isoformat()})",
+            "limit": "5000",
+        },
+        timeout=60,
+    )
+    courier_key = str(courier_id or "").strip().removesuffix(".0")
+    name_key = normalize_text(courier_name)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        data = row.get("normalized_data") or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except ValueError:
+                data = {}
+        row_courier_id = text_from_nested(data, "Courier ID", "courier_id", "courierId").strip().removesuffix(".0")
+        row_name = normalize_text(text_from_nested(data, "Driver", "driver_name", "courier_name", "Futár"))
+        if row_courier_id:
+            if row_courier_id != courier_key:
+                continue
+        elif name_key and row_name != name_key:
+            continue
+        work_date = date_from_row_value(row.get("route_date") or text_from_nested(data, "Excel dátum", "work_date", "delivery_date", "date"))
+        if not work_date or work_date < period_start or work_date > period_end:
+            continue
+        result.append({
+            "work_date": work_date,
+            "weekday": safe_int(row.get("weekday_iso")) or work_date.isoweekday(),
+            "route_type": route_type_key(text_from_nested(data, "Túratípus", "route_type", "routeLayer", "routeType")),
+            "day_type": day_type_key(row.get("calculated_day_type") or text_from_nested(data, "Naptípus", "day_type")),
+            "orders": money_int(text_from_nested(data, "Orders", "orders", "Rendelések", "order_count")),
+            "warehouse": normalize_text(text_from_nested(data, "Warehouse", "warehouse", "Raktár", "warehouse_code")),
+        })
+    return result
+
+
+def calculate_periodic_correction_items(courier_id: str, courier_name: str, session_id: str, period_start: date, period_end: date, warehouse: str = "") -> list[dict[str, Any]]:
+    rules = read_periodic_fee_rules(period_start, period_end)
+    route_rows = read_periodic_route_rows(courier_id, courier_name, session_id, period_start, period_end)
+    if not rules or not route_rows:
+        return []
+    items: list[dict[str, Any]] = []
+    day_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+    for index, rule in enumerate(rules, start=1):
+        valid_from = date_from_row_value(rule.get("valid_from")) or period_start
+        valid_to = date_from_row_value(rule.get("valid_to")) or period_end
+        weekdays = parse_weekdays(rule.get("weekdays"))
+        rule_route_type = str(rule.get("route_type") or "any").casefold()
+        rule_day_type = str(rule.get("day_type") or "any").casefold()
+        rule_warehouse = normalize_text(rule.get("warehouse_code") or "")
+        selected = [
+            route
+            for route in route_rows
+            if valid_from <= route["work_date"] <= valid_to
+            and (not weekdays or route["weekday"] in weekdays)
+            and (rule_route_type == "any" or route["route_type"] == rule_route_type)
+            and (rule_day_type == "any" or route["day_type"] == rule_day_type)
+            and (not rule_warehouse or route["warehouse"] == rule_warehouse)
+        ]
+        if not selected:
+            continue
+        condition = str(rule.get("condition_metric") or "none").casefold()
+        minimum = max(money_int(rule.get("condition_min")), 0)
+        maximum_raw = rule.get("condition_max")
+        maximum = money_int(maximum_raw) if maximum_raw not in (None, "") else None
+        unit = str(rule.get("calculation_unit") or "per_route").casefold()
+        unit_amount = money_int(rule.get("courier_amount_huf"))
+        route_count = len(selected)
+        order_count = sum(money_int(route.get("orders")) for route in selected)
+        payable_units = 0
+        metric_count = route_count
+        if condition == "orders_per_route":
+            filtered = [
+                route for route in selected
+                if money_int(route.get("orders")) >= minimum and (maximum is None or money_int(route.get("orders")) <= maximum)
+            ]
+            route_count = len(filtered)
+            order_count = sum(money_int(route.get("orders")) for route in filtered)
+            payable_units = order_count if unit == "per_order" else route_count
+            metric_count = route_count
+        elif condition == "routes_per_day":
+            day_counts: dict[date, int] = {}
+            for route in selected:
+                day_counts[route["work_date"]] = day_counts.get(route["work_date"], 0) + 1
+            eligible_counts = [count for count in day_counts.values() if count >= minimum and (maximum is None or count <= maximum)]
+            metric_count = sum(eligible_counts)
+            payable_units = len(eligible_counts) if unit == "fixed" else metric_count
+            if unit == "per_order":
+                payable_units = order_count
+        elif condition == "routes_in_period":
+            ok = route_count >= minimum and (maximum is None or route_count <= maximum)
+            metric_count = route_count
+            payable_units = 1 if ok and unit == "fixed" else route_count if ok else 0
+            if ok and unit == "per_order":
+                payable_units = order_count
+        elif condition == "orders_in_period":
+            ok = order_count >= minimum and (maximum is None or order_count <= maximum)
+            metric_count = order_count
+            payable_units = order_count if ok and unit == "per_order" else 1 if ok and unit == "fixed" else route_count if ok else 0
+        elif condition == "every_n_routes_per_day":
+            n_value = max(minimum, 1)
+            day_counts: dict[date, int] = {}
+            for route in selected:
+                day_counts[route["work_date"]] = day_counts.get(route["work_date"], 0) + 1
+            payable_units = sum(count // n_value for count in day_counts.values())
+            metric_count = payable_units
+        elif condition == "every_n_routes_in_period":
+            n_value = max(minimum, 1)
+            payable_units = route_count // n_value
+            metric_count = payable_units
+        elif condition == "orders_over_threshold_every_n_per_route":
+            threshold = max(minimum, 0)
+            step_value = max(maximum or 1, 1)
+            payable_units = sum(max(money_int(route.get("orders")) - threshold, 0) // step_value for route in selected)
+            metric_count = payable_units
+        else:
+            payable_units = order_count if unit == "per_order" else route_count
+            metric_count = route_count
+        amount = 0 if unit == "per_hour" else payable_units * unit_amount
+        if not amount:
+            continue
+        weekday_label = ", ".join(day_names.get(day, str(day)) for day in sorted(weekdays)) if weekdays else "Minden nap"
+        items.append(signed_item(
+            f"correction_periodic_auto_{index}",
+            str(rule.get("fee_name") or "Időszakos díj"),
+            amount,
+            source="settlement.cfg_jitt_periodic_fees",
+            note=f"{weekday_label} | {metric_count} db | {payable_units} x {unit_amount} Ft",
+        ))
+    return items
 
 
 def manual_adjustment_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -2468,6 +2660,24 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             )
         )
     correction_total = sum(item["amountHuf"] for item in manual_correction_items)
+    overrides = read_mobile_breakdown_overrides(courier_id, month)
+    has_mobile_correction = any(
+        (item_key == "correction" or item_key.startswith("correction_"))
+        and money_int(item.get("amount_value"))
+        for item_key, item in overrides.items()
+    )
+    if not has_mobile_correction:
+        periodic_correction_items = calculate_periodic_correction_items(
+            courier_id,
+            _courier_name,
+            str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+            month,
+            period_end,
+            str(row.get("warehouse_name") or row.get("warehouse") or ""),
+        )
+        if periodic_correction_items:
+            manual_correction_items.extend(periodic_correction_items)
+            correction_total = sum(item["amountHuf"] for item in manual_correction_items)
     manual_bonus_malus_types = {"bonus", "malus", "customer_rating"}
     manual_bonus_malus_items = [
         signed_item(
@@ -2580,7 +2790,6 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": manual_correction_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
-    overrides = read_mobile_breakdown_overrides(courier_id, month)
     cards = apply_mobile_overrides(cards, overrides)
     for card in cards:
         if card.get("key") != "deductions":
