@@ -1663,6 +1663,33 @@ def append_jitt_bonus_malus_mobile_rows(
     return rows
 
 
+def append_kiflis_bonus_malus_mobile_rows(
+    rows: list[dict[str, object]],
+    row: dict[str, object],
+    session_id: str | None,
+) -> list[dict[str, object]]:
+    courier_id = _courier_id_key(row.get("Courier ID"))
+    courier_name = str(row.get("Futár") or "")
+    details = load_imported_balance_component_items(session_id, courier_id, courier_name)
+    if details.empty:
+        return rows
+    for index, detail_row in details.reset_index(drop=True).iterrows():
+        label = str(detail_row.iloc[0] if len(detail_row) > 0 else "").strip()
+        amount = parse_huf_value(detail_row.iloc[1] if len(detail_row) > 1 else 0)
+        note = str(detail_row.iloc[2] if len(detail_row) > 2 else "").strip()
+        if not amount:
+            continue
+        key_prefix = "kiflis_bonus" if amount > 0 else "kiflis_malus"
+        rows.append({
+            "item_key": f"{key_prefix}_{index + 1}",
+            "item_label": label or ("Kiflis bónusz" if amount > 0 else "Kiflis malus"),
+            "amount_kind": "huf",
+            "amount_value": amount,
+            "note": note or "Excel import tétel",
+        })
+    return rows
+
+
 def append_periodic_correction_mobile_rows(
     rows: list[dict[str, object]],
     *,
@@ -1783,6 +1810,7 @@ def publish_mobile_settlement_snapshot(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
         )
+        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
             route_detail = load_courier_route_detail(
                 courier_id,
@@ -1827,6 +1855,7 @@ def refresh_mobile_settlement_breakdown_snapshot(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
         )
+        rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
             route_detail = load_courier_route_detail(
                 courier_id,
@@ -8222,6 +8251,16 @@ def show_courier_dialog() -> None:
             {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
         ])
+        kiflis_detail_rows = append_kiflis_bonus_malus_mobile_rows(
+            [],
+            {"Courier ID": courier_id, "Futár": courier_name},
+            session_id,
+        )
+        if kiflis_detail_rows:
+            mobile_default_rows = pd.concat(
+                [mobile_default_rows, pd.DataFrame(kiflis_detail_rows)],
+                ignore_index=True,
+            )
         if not periodic_correction_detail.empty:
             periodic_mobile_rows = []
             for correction_index, correction_row in periodic_correction_detail.reset_index(drop=True).iterrows():

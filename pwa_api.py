@@ -2161,7 +2161,8 @@ def build_financial_breakdown_from_mobile_rows(
         "correction_deduction",
         "other_deduction",
     ])
-    kiflis_items = detail_items((), ["monthly_bonus", "monthly_malus"])
+    kiflis_detail_items = detail_items(("kiflis_bonus_", "kiflis_malus_"), [])
+    kiflis_items = kiflis_detail_items or detail_items((), ["monthly_bonus", "monthly_malus"])
     jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
     correction_items = detail_items(("correction_periodic_", "correction_manual_"), [
         "correction_income",
