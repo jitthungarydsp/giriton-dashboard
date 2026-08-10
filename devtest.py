@@ -7320,6 +7320,7 @@ def show_courier_dialog() -> None:
     insurance_fee_total = parse_huf_value(reserve_month.get("insurance_fee_huf"))
     total_deduction += reserve_addition_total + insurance_fee_total
     payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+    overview_payable_total = payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
@@ -7634,6 +7635,7 @@ def show_courier_dialog() -> None:
         reserve_after_total = parse_huf_value(reserve_month.get("reserve_after_huf"))
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
         payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+        payable_total = overview_payable_total
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         monthly_bonus_malus_effect = (
