@@ -1629,6 +1629,145 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     ]
 
 
+def _set_mobile_breakdown_row_amount(
+    rows: list[dict[str, object]],
+    item_key: str,
+    amount_value: float,
+    *,
+    item_label: str | None = None,
+    amount_kind: str = "huf",
+    note: str | None = None,
+) -> None:
+    for item in rows:
+        if str(item.get("item_key") or "") == item_key:
+            item["amount_value"] = amount_value
+            if item_label is not None:
+                item["item_label"] = item_label
+            if amount_kind:
+                item["amount_kind"] = amount_kind
+            if note is not None:
+                item["note"] = note
+            return
+    rows.append({
+        "item_key": item_key,
+        "item_label": item_label or item_key,
+        "amount_kind": amount_kind,
+        "amount_value": amount_value,
+        "note": note or "Valós elszámolási adat",
+    })
+
+
+def _mobile_breakdown_amount(rows: list[dict[str, object]], item_key: str) -> float:
+    for item in rows:
+        if str(item.get("item_key") or "") == item_key:
+            return parse_huf_value(item.get("amount_value"))
+    return 0.0
+
+
+def recalculate_mobile_breakdown_totals(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    monthly_bonus = _mobile_breakdown_amount(rows, "monthly_bonus")
+    monthly_malus = abs(_mobile_breakdown_amount(rows, "monthly_malus"))
+    manual_bonus = _mobile_breakdown_amount(rows, "manual_bonus")
+    manual_malus = abs(_mobile_breakdown_amount(rows, "manual_malus"))
+    correction = _mobile_breakdown_amount(rows, "correction")
+    correction_income = max(correction, 0.0)
+    correction_deduction = abs(min(correction, 0.0))
+    _set_mobile_breakdown_row_amount(rows, "correction_income", correction_income, item_label="Korrekció +")
+    _set_mobile_breakdown_row_amount(rows, "correction_deduction", -correction_deduction, item_label="Korrekció -")
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "kiflis_bonus_malus",
+        monthly_bonus - monthly_malus,
+        item_label="Kiflis levonások / bónuszok",
+        note="Excel import tételek összesen",
+    )
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "bonus_malus",
+        manual_bonus - manual_malus,
+        item_label="JITT bónusz / malus",
+        note="Sheet/DB tételek összesen",
+    )
+    income = (
+        _mobile_breakdown_amount(rows, "base")
+        + _mobile_breakdown_amount(rows, "tip")
+        + _mobile_breakdown_amount(rows, "delay_bonus")
+        + _mobile_breakdown_amount(rows, "compliance_bonus")
+        + _mobile_breakdown_amount(rows, "loyalty_bonus")
+        + _mobile_breakdown_amount(rows, "customer_rating")
+        + monthly_bonus
+        + manual_bonus
+        + correction_income
+    )
+    deductions = -(
+        monthly_malus
+        + manual_malus
+        + abs(_mobile_breakdown_amount(rows, "atm_effect"))
+        + abs(_mobile_breakdown_amount(rows, "salary_advance"))
+        + abs(_mobile_breakdown_amount(rows, "reserve"))
+        + abs(_mobile_breakdown_amount(rows, "insurance_fee"))
+        + abs(_mobile_breakdown_amount(rows, "other_expense"))
+        + correction_deduction
+    )
+    _set_mobile_breakdown_row_amount(rows, "income", income, item_label="Jóváírások")
+    _set_mobile_breakdown_row_amount(rows, "deductions", deductions, item_label="Levonások összesen")
+    _set_mobile_breakdown_row_amount(rows, "payable", income + deductions, item_label="Teljes összeg")
+    return rows
+
+
+def enrich_mobile_settlement_row_for_snapshot(
+    row: dict[str, object],
+    *,
+    courier_id: str,
+    courier_name: str,
+    session_id: str | None,
+    calculation_mode: str,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None,
+) -> tuple[dict[str, object], pd.DataFrame]:
+    enriched = dict(row)
+    route_detail = pd.DataFrame()
+    try:
+        route_detail = load_courier_route_detail(
+            courier_id,
+            courier_name,
+            session_id,
+            calculation_mode,
+            period_start,
+            warehouse_label,
+        )
+    except Exception:
+        route_detail = pd.DataFrame()
+    if not route_detail.empty:
+        for target_column in ["Rendelések", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz"]:
+            if target_column in route_detail.columns:
+                enriched[target_column] = float(pd.to_numeric(route_detail[target_column], errors="coerce").fillna(0.0).sum())
+        route_count = int(len(route_detail))
+        enriched["Útvonalak"] = route_count
+        enriched["Számolt túrák"] = route_count
+        day_type = route_detail.get("Naptípus", pd.Series(dtype=str)).astype(str).str.casefold()
+        highlighted = int(day_type.str.contains("kiemelt", na=False).sum())
+        normal = int(day_type.str.contains("norm", na=False).sum())
+        if highlighted + normal == 0:
+            normal = route_count
+        enriched["Kiemelt túrák"] = highlighted
+        enriched["Normál túrák"] = normal
+        if parse_huf_value(enriched.get("Nettó bevétel")) == 0 and "Alapdíj" in route_detail.columns:
+            enriched["Nettó bevétel"] = float(pd.to_numeric(route_detail["Alapdíj"], errors="coerce").fillna(0.0).sum())
+        if parse_huf_value(enriched.get("Borravaló")) == 0 and "Borravaló" in route_detail.columns:
+            enriched["Borravaló"] = float(pd.to_numeric(route_detail["Borravaló"], errors="coerce").fillna(0.0).sum())
+    try:
+        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+    except Exception:
+        adjustments = pd.DataFrame()
+    if not adjustments.empty and "adjustment_type" in adjustments.columns:
+        adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
+        enriched["JITT bónusz"] = float(adjustment_totals.get("bonus", 0.0))
+        enriched["JITT malus"] = float(adjustment_totals.get("malus", 0.0))
+    return enriched, route_detail
+
+
 def append_jitt_bonus_malus_mobile_rows(
     rows: list[dict[str, object]],
     row: dict[str, object],
@@ -1638,7 +1777,38 @@ def append_jitt_bonus_malus_mobile_rows(
     courier_id = _courier_id_key(row.get("Courier ID"))
     manual_bonus = parse_huf_value(row.get("JITT bónusz"))
     manual_malus = abs(parse_huf_value(row.get("JITT malus")))
-    if not manual_bonus and not manual_malus:
+    adjustment_details: list[dict[str, object]] = []
+    adjustment_bonus = 0.0
+    adjustment_malus = 0.0
+    if courier_id and period_start and period_end:
+        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+        if not adjustments.empty:
+            detail_index = 1
+            for _, adjustment in adjustments.reset_index(drop=True).iterrows():
+                adjustment_type = str(adjustment.get("adjustment_type") or "").strip()
+                if adjustment_type not in {"bonus", "malus"}:
+                    continue
+                amount = abs(parse_huf_value(adjustment.get("amount_huf")))
+                if not amount:
+                    continue
+                is_bonus = adjustment_type == "bonus"
+                if is_bonus:
+                    adjustment_bonus += amount
+                else:
+                    adjustment_malus += amount
+                adjustment_details.append({
+                    "item_key": f"{'jitt_bonus' if is_bonus else 'jitt_malus'}_{detail_index}",
+                    "item_label": "JITT bónusz" if is_bonus else "JITT malus",
+                    "amount_kind": "huf",
+                    "amount_value": amount if is_bonus else -amount,
+                    "note": str(adjustment.get("note") or "").strip() or "Sheet/DB tétel",
+                })
+                detail_index += 1
+    if adjustment_bonus:
+        manual_bonus = adjustment_bonus
+    if adjustment_malus:
+        manual_malus = adjustment_malus
+    if not manual_bonus and not manual_malus and not adjustment_details:
         return rows
     rows.extend([
         {
@@ -1663,26 +1833,7 @@ def append_jitt_bonus_malus_mobile_rows(
             "note": "Sheet/DB tételek",
         },
     ])
-    if courier_id and period_start and period_end:
-        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
-        if not adjustments.empty:
-            detail_index = 1
-            for _, adjustment in adjustments.reset_index(drop=True).iterrows():
-                adjustment_type = str(adjustment.get("adjustment_type") or "").strip()
-                if adjustment_type not in {"bonus", "malus"}:
-                    continue
-                amount = abs(parse_huf_value(adjustment.get("amount_huf")))
-                if not amount:
-                    continue
-                is_bonus = adjustment_type == "bonus"
-                rows.append({
-                    "item_key": f"{'jitt_bonus' if is_bonus else 'jitt_malus'}_{detail_index}",
-                    "item_label": "JITT bónusz" if is_bonus else "JITT malus",
-                    "amount_kind": "huf",
-                    "amount_value": amount if is_bonus else -amount,
-                    "note": str(adjustment.get("note") or "").strip() or "Sheet/DB tétel",
-                })
-                detail_index += 1
+    rows.extend(adjustment_details)
     return rows
 
 
@@ -1789,7 +1940,7 @@ def append_periodic_correction_mobile_rows(
     if detail_rows:
         existing_keys = {str(item.get("item_key") or "") for item in rows}
         rows.extend(item for item in detail_rows if str(item.get("item_key") or "") not in existing_keys)
-    return rows
+    return recalculate_mobile_breakdown_totals(rows)
 
 
 def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -1852,31 +2003,35 @@ def publish_mobile_settlement_snapshot(
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
             continue
+        period_end = month_bounds(period_start)[1]
+        item, route_detail = enrich_mobile_settlement_row_for_snapshot(
+            item,
+            courier_id=courier_id,
+            courier_name=str(item.get("Futár") or ""),
+            session_id=session_id,
+            calculation_mode=calculation_mode,
+            period_start=period_start,
+            period_end=period_end,
+            warehouse_label=warehouse_label,
+        )
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
             period_start,
-            month_bounds(period_start)[1],
+            period_end,
         )
         rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
-            route_detail = load_courier_route_detail(
-                courier_id,
-                str(item.get("Futár") or ""),
-                session_id,
-                calculation_mode,
-                period_start,
-                warehouse_label,
-            )
             rows = append_periodic_correction_mobile_rows(
                 rows,
                 row=item,
                 route_detail=route_detail,
                 period_start=period_start,
-                period_end=month_bounds(period_start)[1],
+                period_end=period_end,
             )
         except Exception:
             pass
+        rows = recalculate_mobile_breakdown_totals(rows)
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
             row_count += len(rows)
@@ -1899,31 +2054,35 @@ def refresh_mobile_settlement_breakdown_snapshot(
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
             continue
+        period_end = month_bounds(period_start)[1]
+        item, route_detail = enrich_mobile_settlement_row_for_snapshot(
+            item,
+            courier_id=courier_id,
+            courier_name=str(item.get("Futár") or item.get("FutĂˇr") or ""),
+            session_id=session_id,
+            calculation_mode=calculation_mode,
+            period_start=period_start,
+            period_end=period_end,
+            warehouse_label=warehouse_label,
+        )
         rows = append_jitt_bonus_malus_mobile_rows(
             mobile_breakdown_rows_from_settlement_row(item),
             item,
             period_start,
-            month_bounds(period_start)[1],
+            period_end,
         )
         rows = append_kiflis_bonus_malus_mobile_rows(rows, item, session_id)
         try:
-            route_detail = load_courier_route_detail(
-                courier_id,
-                str(item.get("FutĂˇr") or ""),
-                session_id,
-                calculation_mode,
-                period_start,
-                warehouse_label,
-            )
             rows = append_periodic_correction_mobile_rows(
                 rows,
                 row=item,
                 route_detail=route_detail,
                 period_start=period_start,
-                period_end=month_bounds(period_start)[1],
+                period_end=period_end,
             )
         except Exception:
             pass
+        rows = recalculate_mobile_breakdown_totals(rows)
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
             row_count += len(rows)
