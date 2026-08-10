@@ -459,21 +459,21 @@ def _show_periodic(client: Any) -> None:
         default_min = _number((row or {}).get("condition_min"), 3.0)
         default_max = _number((row or {}).get("condition_max"), 1.0)
         condition_min_input = c1.number_input(
-            "N / minimum / X",
+            "Küszöb / minden N. túra",
             min_value=0.0,
             value=default_min if default_min is not None else 3.0,
             step=1.0,
-            help="Vasárnapi Hősök: ide 3 kell. Címküszöb szabálynál ez az X.",
+            help="Vasárnapi Hősök: ide 3 kell. Címküszöb szabálynál ez a kezdő küszöb.",
         )
         condition_max_input = c2.number_input(
-            "Maximum / Y",
+            "Lépcső / felső határ",
             min_value=0.0,
             value=default_max if default_max is not None else 1.0,
             step=1.0,
             help="Címküszöb szabálynál ez az Y. Minden N. túra szabálynál nem kell.",
         )
         has_max = c2.checkbox(
-            "Maximum / Y használata",
+            "Lépcső / felső határ használata",
             value=(
                 condition == "orders_over_threshold_every_n_per_route"
                 or _clean((row or {}).get("condition_max")) is not None
