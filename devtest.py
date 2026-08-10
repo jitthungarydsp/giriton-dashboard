@@ -1757,6 +1757,45 @@ def enrich_mobile_settlement_row_for_snapshot(
             enriched["Nettó bevétel"] = float(pd.to_numeric(route_detail["Alapdíj"], errors="coerce").fillna(0.0).sum())
         if parse_huf_value(enriched.get("Borravaló")) == 0 and "Borravaló" in route_detail.columns:
             enriched["Borravaló"] = float(pd.to_numeric(route_detail["Borravaló"], errors="coerce").fillna(0.0).sum())
+    summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
+    if summary_row:
+        summary_map = {
+            "Rendelések": "order_count",
+            "Útvonalak": "route_count",
+            "Számolt túrák": "route_count",
+            "Késedelmi díj": "delay_bonus_huf",
+            "Túramegfelelés": "compliance_bonus_huf",
+            "Egyéb bónusz": "other_route_bonus_huf",
+            "Kiemelt túrák": "highlighted_routes",
+            "Normál túrák": "normal_routes",
+        }
+        for target_column, summary_column in summary_map.items():
+            summary_value = parse_huf_value(summary_row.get(summary_column))
+            if summary_value and parse_huf_value(enriched.get(target_column)) == 0:
+                enriched[target_column] = summary_value
+        if parse_huf_value(enriched.get("Nettó bevétel")) == 0:
+            enriched["Nettó bevétel"] = parse_huf_value(summary_row.get("courier_base_rate_huf"))
+        if parse_huf_value(enriched.get("Borravaló")) == 0:
+            enriched["Borravaló"] = parse_huf_value(summary_row.get("tip_huf"))
+    if parse_huf_value(enriched.get("Korrekció")) == 0:
+        try:
+            correction_totals = load_periodic_fee_correction_totals(
+                session_id,
+                calculation_mode,
+                period_start,
+                period_end,
+                warehouse_label,
+            )
+        except Exception:
+            correction_totals = pd.DataFrame()
+        if not correction_totals.empty:
+            id_key = _courier_id_key(courier_id)
+            name_key = _courier_match_key(courier_name)
+            selected = correction_totals.loc[correction_totals["_courier_id_lookup"].eq(id_key)]
+            if selected.empty and name_key:
+                selected = correction_totals.loc[correction_totals["_courier_name_lookup"].eq(name_key)]
+            if not selected.empty:
+                enriched["Korrekció"] = float(pd.to_numeric(selected["Korrekció"], errors="coerce").fillna(0.0).sum())
     try:
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     except Exception:
@@ -2729,8 +2768,6 @@ def load_monthly_closure_statuses(period_start: date, period_end: date) -> pd.Da
 
 def apply_monthly_closure_status(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
     result = data.copy()
-    result["JITT bónusz"] = 0.0
-    result["JITT malus"] = 0.0
     closures = load_monthly_closure_statuses(period_start, period_end)
     if closures.empty or "Courier ID" not in result.columns:
         if "Kifizetve" not in result.columns:
