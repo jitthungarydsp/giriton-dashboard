@@ -4307,6 +4307,7 @@ def apply_received_amounts(
     session_id: str | None = None,
 ) -> pd.DataFrame:
     result = data.copy()
+    normalized_mode = str(calculation_mode or "API").strip().casefold()
     result["Alvállalkozói összeg"] = _numeric_series(result, "Vállalkozói alapdíj")
     contractor_totals = load_contractor_totals_for_session(session_id, period_start)
     if not contractor_totals.empty:
@@ -4320,13 +4321,14 @@ def apply_received_amounts(
         by_name = contractor_totals.loc[
             contractor_totals["_courier_name_lookup"].ne("")
         ].groupby("_courier_name_lookup")["Alvállalkozói összeg"].sum()
-        result["Alvállalkozói összeg"] = (
-            result["_courier_id_lookup"].map(by_id)
-            .fillna(result["_courier_name_lookup"].map(by_name))
-            .fillna(result["Alvállalkozói összeg"])
-        )
+        contractor_amounts = result["_courier_id_lookup"].map(by_id).fillna(result["_courier_name_lookup"].map(by_name))
+        current_amounts = _numeric_series(result, "Alvállalkozói összeg")
+        if normalized_mode == "excel":
+            result["Alvállalkozói összeg"] = current_amounts.where(current_amounts.ne(0), contractor_amounts.fillna(current_amounts))
+        else:
+            result["Alvállalkozói összeg"] = contractor_amounts.fillna(current_amounts)
         result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
-    if str(calculation_mode or "API").strip().casefold() != "api":
+    if normalized_mode != "api":
         return result
     received = load_api_received_amounts(period_start, warehouse_label)
     if received.empty:
@@ -10735,14 +10737,6 @@ def show_new_settlement_page() -> None:
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id, selected_calculation_mode)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
-    data = apply_periodic_fee_corrections(
-        data,
-        import_session_id,
-        selected_calculation_mode,
-        balance_period_start,
-        balance_period_end,
-        selected_warehouse_label,
-    )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
