@@ -6981,7 +6981,7 @@ def show_courier_dialog() -> None:
         )
         return
     route_detail = pd.DataFrame()
-    if selected_menu_hint in {"Pénzügy", "Útvonalak"}:
+    if selected_menu_hint in {"Áttekintés", "Pénzügy", "Útvonalak"}:
         route_detail = load_courier_route_detail(
             courier_id,
             courier_name,
@@ -7000,6 +7000,22 @@ def show_courier_dialog() -> None:
         profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
         if not profile_adjustments.empty else {}
     )
+    correction_income_total = (
+        float(profile_adjustment_totals.get("correction", 0.0))
+        + float(profile_adjustment_totals.get("manual_correction", 0.0))
+        + float(profile_adjustment_totals.get("correction_income", 0.0))
+    )
+    correction_deduction_total = (
+        float(profile_adjustment_totals.get("correction_deduction", 0.0))
+        + float(profile_adjustment_totals.get("manual_correction_deduction", 0.0))
+    )
+    periodic_correction_total, _overview_periodic_correction_detail = calculate_periodic_fee_corrections(
+        route_detail,
+        period_start,
+        period_end,
+        row.get("Raktár"),
+    )
+    correction_income_total += periodic_correction_total
 
     def settlement_amount(summary_column: str, fallback_column: str | None = None) -> float:
         if summary_column in summary_row:
@@ -7050,12 +7066,17 @@ def show_courier_dialog() -> None:
     other_expense_total = float(profile_adjustment_totals.get("other_expense", 0.0))
     malus_total = imported_malus_total + manual_malus_total
     atm_deduction_total = imported_atm_total + manual_atm_total
+    correction_total = correction_income_total - correction_deduction_total
     total_income = (
-        base_total + tip_total + delay_total + compliance_total + other_route_bonus_total
+        base_total + tip_total + delay_total + compliance_total
         + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
+        + correction_income_total
     )
     salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
-    total_deduction = malus_total + atm_deduction_total + other_expense_total + salary_advance_total
+    total_deduction = (
+        malus_total + atm_deduction_total + other_expense_total
+        + correction_deduction_total + salary_advance_total
+    )
     payable_before_insurance = total_income - total_deduction
     reserve_month = resolve_target_reserve_month(
         session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
@@ -7159,14 +7180,21 @@ def show_courier_dialog() -> None:
                     <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Túramegfelelés</span><strong>{format_huf(compliance_total)}</strong></div>
-                    <div class="settlement-ledger-row"><span>Egyéb bónusz</span><strong>{format_huf(other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Kiflis bónusz</span><strong>{format_huf(imported_bonus_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>JITT bónusz</span><strong>{format_huf(manual_bonus_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Lojalitás</span><strong>{format_huf(loyalty_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Ügyfélértékelés</span><strong>{format_huf(customer_rating_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Korrekció +</span><strong>{format_huf(correction_income_total)}</strong></div>
                     <div class="settlement-ledger-row total"><span>Összesen</span><strong>{format_huf(total_income)}</strong></div>
                     </div>
                     <div class="settlement-ledger outcome">
                     <div class="settlement-ledger-head">↓ Levonások</div>
-                    <div class="settlement-ledger-row"><span>Málusz</span><strong>-{format_huf(malus_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Kiflis málusz</span><strong>-{format_huf(imported_malus_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>JITT málusz</span><strong>-{format_huf(manual_malus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>ATM levonás</span><strong>-{format_huf(atm_deduction_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Egyéb kiadás</span><strong>-{format_huf(other_expense_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Korrekció -</span><strong>-{format_huf(correction_deduction_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Fizetés előleg</span><strong>-{format_huf(salary_advance_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Céltartalék 10%</span><strong>-{format_huf(reserve_addition_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Biztosítási díj</span><strong>-{format_huf(insurance_fee_total)}</strong></div>
                     <div class="settlement-ledger-row total"><span>Összesen</span><strong>-{format_huf(total_deduction)}</strong></div>
