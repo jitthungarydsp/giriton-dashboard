@@ -2066,6 +2066,170 @@ def read_mobile_breakdown_overrides(courier_id: str, month: date) -> dict[str, d
     return {str(row.get("item_key") or ""): row for row in rows if str(row.get("item_key") or "")}
 
 
+def mobile_override_item(row: dict[str, Any], fallback_key: str = "") -> dict[str, Any]:
+    key = str(row.get("item_key") or fallback_key or "").strip()
+    amount_kind = str(row.get("amount_kind") or "huf").strip() or "huf"
+    item = signed_item(
+        key,
+        str(row.get("item_label") or key or "-"),
+        money_int(row.get("amount_value")),
+        source="settlement.mobile_settlement_breakdown_overrides",
+        note=str(row.get("note") or ""),
+    )
+    item["amountKind"] = amount_kind
+    return item
+
+
+def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> int:
+    return money_int((overrides.get(key) or {}).get("amount_value"))
+
+
+def build_financial_breakdown_from_mobile_rows(
+    user: dict[str, Any],
+    month: date,
+    row: dict[str, Any],
+    overrides: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not overrides or "payable" not in overrides:
+        return None
+
+    def item(key: str, *, fallback_label: str = "") -> dict[str, Any] | None:
+        row_item = overrides.get(key)
+        if not row_item:
+            return None
+        result = mobile_override_item(row_item, key)
+        if fallback_label and not str(result.get("label") or "").strip():
+            result["label"] = fallback_label
+        return result
+
+    def money_items(keys: list[str]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for key in keys:
+            current = item(key)
+            if not current:
+                continue
+            if str(current.get("amountKind") or "huf") != "huf":
+                continue
+            if money_int(current.get("amountHuf")) or key in {"customer_rating", "loyalty_bonus"}:
+                result.append(current)
+        return result
+
+    def detail_items(prefixes: tuple[str, ...], explicit_keys: list[str]) -> list[dict[str, Any]]:
+        keys = explicit_keys + sorted(
+            key
+            for key in overrides
+            if any(key.startswith(prefix) for prefix in prefixes) and key not in explicit_keys
+        )
+        seen: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for key in keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            current = item(key)
+            if not current:
+                continue
+            if str(current.get("amountKind") or "huf") == "huf" and not money_int(current.get("amountHuf")):
+                continue
+            result.append(current)
+        return result
+
+    payable = mobile_override_amount(overrides, "payable")
+    income_total = mobile_override_amount(overrides, "income")
+    deduction_total = mobile_override_amount(overrides, "deductions")
+    correction_total = mobile_override_amount(overrides, "correction")
+
+    income_items = money_items([
+        "base",
+        "tip",
+        "delay_bonus",
+        "compliance_bonus",
+        "loyalty_bonus",
+        "customer_rating",
+        "monthly_bonus",
+        "manual_bonus",
+        "correction_income",
+    ])
+    deduction_items = money_items([
+        "monthly_malus",
+        "manual_malus",
+        "atm_effect",
+        "salary_advance",
+        "reserve",
+        "insurance_fee",
+        "correction_deduction",
+        "other_deduction",
+    ])
+    kiflis_items = detail_items((), ["monthly_bonus", "monthly_malus"])
+    jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
+    correction_items = detail_items(("correction_periodic_", "correction_manual_"), [
+        "correction_income",
+        "correction_deduction",
+    ])
+    performance_items = [
+        current for current in (
+            item("orders"),
+            item("routes"),
+            item("highlighted_routes"),
+            item("normal_routes"),
+            item("loyalty_previous_normal_routes"),
+            item("loyalty_current_normal_routes"),
+            item("loyalty_advance_booking_days"),
+            item("shift_count"),
+        )
+        if current is not None and str(current.get("amountKind") or "") == "count"
+    ]
+
+    cards = [
+        {
+            "key": "payable",
+            "label": "Teljes \u00f6sszeg",
+            "amountHuf": payable,
+            "tone": "total",
+            "items": [
+                signed_item("income_total", "J\u00f3v\u00e1\u00edr\u00e1sok \u00f6sszesen", income_total),
+                signed_item("deduction_total", "Levon\u00e1sok \u00f6sszesen", deduction_total),
+                signed_item("correction_total", "Korrekci\u00f3k \u00f6sszesen", correction_total),
+                signed_item("payable_total", "Kifizetend\u0151", payable),
+            ],
+        },
+        {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
+        {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
+        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": mobile_override_amount(overrides, "customer_rating"), "tone": "income", "items": money_items(["customer_rating"])},
+        {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": mobile_override_amount(overrides, "kiflis_bonus_malus"), "tone": "info", "items": kiflis_items},
+        {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": mobile_override_amount(overrides, "bonus_malus"), "tone": "info", "items": jitt_items},
+        {"key": "corrections", "label": "Korrekci\u00f3k", "amountHuf": correction_total, "tone": "info", "items": correction_items},
+        {"key": "performance", "label": "Teljes\u00edtm\u00e9ny", "amountHuf": mobile_override_amount(overrides, "performance"), "amountKind": "count", "tone": "info", "items": performance_items},
+    ]
+
+    complaint_excluded_keys = {"income_total", "deduction_total", "correction_total", "payable_total"}
+    complaint_options = [
+        {
+            "key": current["key"],
+            "label": current["label"],
+            "amountHuf": current["amountHuf"],
+            "amountKind": current.get("amountKind", "huf"),
+        }
+        for card in cards
+        for current in card.get("items") or []
+        if current.get("key") not in complaint_excluded_keys and not current.get("excludeFromTotal")
+    ]
+    visible_cards = [card for card in cards if card.get("key") != "deductions"]
+    return {
+        "available": True,
+        "month": month.strftime("%Y-%m"),
+        "sessionId": str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+        "sourceMode": str(row.get("_mobile_source_mode") or ""),
+        "sourceSheet": str(row.get("_mobile_source_sheet") or ""),
+        "totalPayableHuf": payable,
+        "cards": visible_cards,
+        "complaintOptions": complaint_options,
+        "source": "settlement.mobile_settlement_breakdown_overrides",
+        "message": "",
+    }
+
+
 def read_courier_manual_adjustments(courier_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
     if not courier_id:
         return []
@@ -2745,6 +2909,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     courier_id, _courier_name = courier_identity(user)
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
+    overrides = read_mobile_breakdown_overrides(courier_id, month)
+    mobile_breakdown = build_financial_breakdown_from_mobile_rows(user, month, row or {}, overrides)
+    if mobile_breakdown:
+        return mobile_breakdown
     if not row or row.get("_mobile_unavailable_message"):
         return {
             "available": False,
