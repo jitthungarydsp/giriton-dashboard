@@ -455,40 +455,43 @@ def _show_periodic(client: Any) -> None:
         condition_min = None
         condition_max = None
         has_max = False
-        every_n_condition = condition in {"every_n_routes_per_day", "every_n_routes_in_period"}
-        if every_n_condition:
-            default_n = _int((row or {}).get("condition_min"), 3) or 3
-            condition_min = right.number_input(
-                "N erteke",
-                min_value=1,
-                value=default_n,
-                step=1,
-                help="Pelda: 3 = minden 3. jogosult tura utan jar a fix bonusz.",
-            )
+        c1, c2 = right.columns(2)
+        default_min = _number((row or {}).get("condition_min"), 3.0)
+        default_max = _number((row or {}).get("condition_max"), 1.0)
+        condition_min_input = c1.number_input(
+            "N / minimum / X",
+            min_value=0.0,
+            value=default_min if default_min is not None else 3.0,
+            step=1.0,
+            help="Vasárnapi Hősök: ide 3 kell. Címküszöb szabálynál ez az X.",
+        )
+        condition_max_input = c2.number_input(
+            "Maximum / Y",
+            min_value=0.0,
+            value=default_max if default_max is not None else 1.0,
+            step=1.0,
+            help="Címküszöb szabálynál ez az Y. Minden N. túra szabálynál nem kell.",
+        )
+        has_max = c2.checkbox(
+            "Maximum / Y használata",
+            value=(
+                condition == "orders_over_threshold_every_n_per_route"
+                or _clean((row or {}).get("condition_max")) is not None
+            ),
+        )
+        if condition == "none":
+            condition_min = None
+            condition_max = None
+        elif condition in {"every_n_routes_per_day", "every_n_routes_in_period"}:
+            condition_min = condition_min_input
+            condition_max = None
         elif condition == "orders_over_threshold_every_n_per_route":
-            c1, c2 = right.columns(2)
-            condition_min = c1.number_input(
-                "X küszöb",
-                min_value=0.0,
-                value=_number((row or {}).get("condition_min")),
-                step=1.0,
-                help="Ennyi cím felett indul a plusz díj.",
-            )
-            condition_max = c2.number_input(
-                "Y lépcső",
-                min_value=1.0,
-                value=_number((row or {}).get("condition_max"), 1.0) or 1.0,
-                step=1.0,
-                help="Minden ennyi extra cím után jár a bónusz.",
-            )
+            condition_min = condition_min_input
+            condition_max = condition_max_input or 1
             has_max = True
         elif condition != "none":
-            c1, c2 = right.columns(2)
-            condition_min = c1.number_input("Minimum ertek", min_value=0.0, value=_number((row or {}).get("condition_min")), step=1.0)
-            condition_max = c2.number_input("Maximum ertek", min_value=0.0, value=_number((row or {}).get("condition_max")), step=1.0)
-            has_max = c2.checkbox("Van maximum", value=_clean((row or {}).get("condition_max")) is not None)
-        else:
-            right.info("Ehhez a feltetelhez nincs N/minimum/maximum ertek.")
+            condition_min = condition_min_input
+            condition_max = condition_max_input
         m1,m2,m3=st.columns(3); company=m1.number_input("JITT összege (Ft)", min_value=0, value=_int((row or {}).get("company_amount_huf")), step=100); courier=m2.number_input("Futár összege (Ft)", min_value=0, value=_int((row or {}).get("courier_amount_huf")), step=100); unit=m3.selectbox("Elszámolási egység",units,index=_index(units,(row or {}).get("calculation_unit") or "per_route"),format_func=UNIT_LABELS.get)
         valid_from,valid_to,has_end,priority,is_active,note=_common_period(row or {},"periodic")
         saved=st.form_submit_button("Módosítás mentése" if row else "Időszakos díj mentése",type="primary")
