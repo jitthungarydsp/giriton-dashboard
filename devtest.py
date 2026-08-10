@@ -4324,7 +4324,10 @@ def apply_received_amounts(
         contractor_amounts = result["_courier_id_lookup"].map(by_id).fillna(result["_courier_name_lookup"].map(by_name))
         current_amounts = _numeric_series(result, "Alvállalkozói összeg")
         if normalized_mode == "excel":
-            result["Alvállalkozói összeg"] = current_amounts.where(current_amounts.ne(0), contractor_amounts.fillna(current_amounts))
+            result["Alvállalkozói összeg"] = contractor_amounts.where(
+                contractor_amounts.fillna(0.0).ne(0.0),
+                current_amounts,
+            ).fillna(current_amounts)
         else:
             result["Alvállalkozói összeg"] = contractor_amounts.fillna(current_amounts)
         result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
