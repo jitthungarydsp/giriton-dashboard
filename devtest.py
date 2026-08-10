@@ -7981,17 +7981,25 @@ def show_courier_dialog() -> None:
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
             {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
             {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-            {"Művelet": "+", "Tétel": "Bónuszok", "Összeg": bonus_total},
+            {"Művelet": "+", "Tétel": "Egyéb út bónusz", "Összeg": route_other_bonus_total},
+            {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
+            {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
             {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
             {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
-            {"Művelet": "-", "Tétel": "Máluszok", "Összeg": malus_total},
+            {"Művelet": "+", "Tétel": "Korrekció +", "Összeg": correction_income_total},
+            {"Művelet": "-", "Tétel": "Kiflis málusz", "Összeg": imported_malus_total},
+            {"Művelet": "-", "Tétel": "JITT málusz", "Összeg": manual_malus_total},
             {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
             {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+            {"Művelet": "-", "Tétel": "Korrekció -", "Összeg": correction_deduction_total},
             {"Művelet": "-", "Tétel": "Fizetés előleg", "Összeg": salary_advance_total},
             {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
             {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
             {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
         ])
+        payable_sources = payable_sources.loc[
+            payable_sources["Összeg"].ne(0) | payable_sources["Művelet"].eq("=")
+        ].copy()
         payable_sources["Összeg"] = payable_sources["Összeg"].map(format_huf)
 
         finance_left, finance_right = st.columns([0.38, 0.62], gap="medium")
