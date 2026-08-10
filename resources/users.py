@@ -240,6 +240,79 @@ def approve_pwa_registration_user(courier_id, courier_name, recipient_email, sen
     }
 
 
+def upsert_legacy_user_with_password(courier_id, courier_name, password, recipient_email=""):
+    data = load_users()
+    users = data.setdefault("users", [])
+    courier_id = normalize_courier_id(courier_id)
+    courier_name = str(courier_name or "").strip()
+    password = str(password or "").strip()
+    recipient_email = str(recipient_email or "").strip()
+
+    if not courier_id:
+        raise ValueError("A Courier ID megadása kötelező.")
+    if not courier_name:
+        raise ValueError("A futár neve kötelező.")
+    if not password:
+        raise ValueError("A jelszó megadása kötelező.")
+
+    matching_index = None
+    for index, user in enumerate(users):
+        if normalize_courier_id(user.get("courierId")) == courier_id:
+            matching_index = index
+            break
+
+    if matching_index is None:
+        for user in users:
+            if normalize_name(user.get("username")) == normalize_name(courier_name):
+                raise ValueError(
+                    "Ilyen nevű felhasználó már létezik más Courier ID-val. "
+                    "Előbb rendezd a users.json felhasználót."
+                )
+
+    now = datetime.now().isoformat(timespec="seconds")
+    if matching_index is None:
+        users.append(
+            {
+                "username": courier_name,
+                "password": password,
+                "passwordHash": hash_password(password),
+                "role": "user",
+                "courierId": int(courier_id),
+                "trainer": "",
+                "active": True,
+                "token": "",
+                "createdAt": now,
+                "passwordUpdatedAt": now,
+                "credentialEmail": recipient_email,
+                "credentialEmailSentAt": now if recipient_email else "",
+                "registrationApprovedAt": now,
+            }
+        )
+        action = "legacy_created"
+    else:
+        user = users[matching_index]
+        if is_protected_user(user):
+            raise ValueError("Védett felhasználó nem módosítható PWA jóváhagyásból.")
+        user["username"] = courier_name
+        user["password"] = password
+        user["passwordHash"] = hash_password(password)
+        user["role"] = user.get("role") or "user"
+        user["courierId"] = int(courier_id)
+        user["trainer"] = user.get("trainer") or ""
+        user["active"] = True
+        user["token"] = ""
+        user["updatedAt"] = now
+        user["passwordUpdatedAt"] = now
+        if recipient_email:
+            user["credentialEmail"] = recipient_email
+            user["credentialEmailSentAt"] = now
+        user["registrationApprovedAt"] = now
+        action = "legacy_updated"
+
+    save_users(data)
+    return {"action": action, "username": courier_name}
+
+
 def build_courier_master_sync_preview(courier_rows):
     data = load_users()
     users = data.get("users", [])

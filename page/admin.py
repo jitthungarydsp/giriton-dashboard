@@ -37,6 +37,7 @@ from resources.users import (
     update_trainer,
     delete_user,
     approve_pwa_registration_user,
+    upsert_legacy_user_with_password,
 )
 
 
@@ -265,7 +266,6 @@ def show_pwa_registration_admin_section():
                     username=courier_name,
                     recipient_email=recipient_email,
                 )
-                send_login_credentials(recipient_email, result["username"], result["password"])
             except Exception as db_exc:
                 result = approve_pwa_registration_user(
                     courier_id,
@@ -274,6 +274,15 @@ def show_pwa_registration_admin_section():
                     send_login_credentials,
                 )
                 result["action"] = f"{result.get('action', 'legacy')} (legacy fallback: {db_exc})"
+            else:
+                legacy_result = upsert_legacy_user_with_password(
+                    courier_id,
+                    courier_name,
+                    result["password"],
+                    recipient_email,
+                )
+                send_login_credentials(recipient_email, result["username"], result["password"])
+                result["action"] = f"{result.get('action', 'db')} + {legacy_result['action']}"
             try:
                 upsert_couriers(
                     [{
