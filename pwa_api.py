@@ -2158,7 +2158,28 @@ def imported_balance_matches_courier(payload: dict[str, Any], courier_id: str, c
         "Name",
         "Név",
     )
-    return bool(courier_name and normalize_text(payload_name) == normalize_text(courier_name))
+    payload_name_key = normalize_text(payload_name)
+    courier_name_key = normalize_text(courier_name)
+    if not courier_name_key or not payload_name_key:
+        return False
+    if payload_name_key == courier_name_key:
+        return True
+    payload_tokens = set(payload_name_key.split())
+    courier_tokens = set(courier_name_key.split())
+    return (
+        len(payload_tokens) >= 2
+        and len(courier_tokens) >= 2
+        and (payload_tokens <= courier_tokens or courier_tokens <= payload_tokens)
+    )
+
+
+def imported_balance_amount(payload: dict[str, Any], *keys: str) -> int:
+    normalized = {normalized_field_key(key): value for key, value in (payload or {}).items()}
+    for key in keys:
+        clean_key = normalized_field_key(key)
+        if clean_key in normalized and normalized[clean_key] not in (None, ""):
+            return money_int(normalized[clean_key])
+    return 0
 
 
 def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_name: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -2170,7 +2191,7 @@ def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_na
             "monthly_bonus_import",
             "Kiflis bónusz",
             1,
-            ("Bonus", "Bónusz", "Amount", "Összeg", "Total"),
+            ("Bonus", "Bónusz", "Bonus amount", "Bonus total", "Amount", "Összeg", "Total"),
         ),
         (
             "penalty_row",
@@ -2198,7 +2219,7 @@ def read_imported_bonus_malus_items(session_id: str, courier_id: str, courier_na
             payload = imported_balance_payload(source_row)
             if not imported_balance_matches_courier(payload, courier_id, courier_name):
                 continue
-            amount = abs(money_int(imported_balance_value(payload, *amount_keys)))
+            amount = abs(imported_balance_amount(payload, *amount_keys))
             if not amount:
                 continue
             target_items.append(
@@ -2869,7 +2890,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         periodic_correction_items = calculate_periodic_correction_items(
             courier_id,
             _courier_name,
-            main_session_id,
+            imported_balance_session_id,
             month,
             period_end,
             str(row.get("warehouse_name") or row.get("warehouse") or ""),
@@ -2898,6 +2919,18 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     imported_malus_total = abs(sum(money_int(item.get("amountHuf")) for item in imported_malus_items))
     if not imported_malus_total:
         imported_malus_total = money_from(row, "imported_malus_huf") or max(summary_monthly_malus - manual_malus, 0)
+    summary_imported_bonus = money_from(row, "imported_bonus_huf")
+    summary_imported_malus = abs(money_from(row, "imported_malus_huf"))
+    imported_bonus_delta = imported_bonus_total - summary_imported_bonus
+    imported_malus_delta = imported_malus_total - summary_imported_malus
+    if imported_bonus_delta > 0:
+        income_items.append(signed_item("kiflis_bonus_income_delta", "Kiflis bónusz", imported_bonus_delta))
+    if imported_malus_delta > 0:
+        deduction_items.append(signed_item("kiflis_malus_deduction_delta", "Kiflis málusz", -imported_malus_delta))
+    income_items = [item for item in income_items if item["amountHuf"] or item["key"] == "customer_rating"]
+    deduction_items = [item for item in deduction_items if item["amountHuf"]]
+    income_total = sum(item["amountHuf"] for item in income_items)
+    deduction_total = sum(item["amountHuf"] for item in deduction_items)
     kiflis_bonus_remainder = imported_bonus_total - sum(money_int(item.get("amountHuf")) for item in imported_bonus_items)
     kiflis_malus_remainder = imported_malus_total - abs(sum(money_int(item.get("amountHuf")) for item in imported_malus_items))
     kiflis_bonus_malus_items = [
@@ -2934,6 +2967,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         item for item in customer_rating_items
         if item["amountHuf"] or item.get("amountKind") == "count"
     ]
+    payable = income_total + deduction_total + correction_total
 
     route_items = [
         count_item("orders", "Cím", money_from(row, "orders", "order_count")),
