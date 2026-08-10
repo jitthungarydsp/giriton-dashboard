@@ -4342,11 +4342,16 @@ def apply_received_amounts(
     return result.drop(columns=["_courier_id_lookup"])
 
 
-def apply_api_base_rates(data: pd.DataFrame, period_start: date, warehouse_label: str | None = None) -> pd.DataFrame:
+def apply_api_base_rates(
+    data: pd.DataFrame,
+    period_start: date,
+    warehouse_label: str | None = None,
+    session_id: str | None = None,
+) -> pd.DataFrame:
     """API mode must keep the same output contract as the Excel pipeline."""
     result = data.copy()
     result["Számítás módja"] = "API"
-    api_session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
+    api_session_id = session_id or load_latest_api_jit_session_id(period_start, warehouse_label)
     if not api_session_id:
         return result
     return apply_excel_base_rates(result, api_session_id)
@@ -4358,7 +4363,7 @@ def build_settlement_working_data(calculation_mode: str, session_id: str | None,
     if normalized_mode == "excel":
         data = load_courier_master("Excel")
         return apply_excel_base_rates(data, session_id)
-    return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label)
+    return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label, session_id)
 
 
 def recompute_payable_total(data: pd.DataFrame) -> pd.DataFrame:
@@ -4845,31 +4850,28 @@ def apply_periodic_fee_corrections(
         return result
     if "Korrekció" not in result.columns:
         result["Korrekció"] = 0.0
-
-    periodic_values: list[float] = []
-    for _, item in result.iterrows():
-        courier_id = str(item.get("Courier ID") or "").strip().removesuffix(".0")
-        courier_name = str(item.get("Futár") or "").strip()
-        if not courier_id and not courier_name:
-            periodic_values.append(0.0)
-            continue
-        route_detail = load_courier_route_detail(
-            courier_id,
-            courier_name,
-            session_id,
-            calculation_mode,
-            period_start,
-            warehouse_label,
-        )
-        periodic_total, _ = calculate_periodic_fee_corrections(
-            route_detail,
-            period_start,
-            period_end,
-            item.get("Raktár"),
-        )
-        periodic_values.append(periodic_total)
-
-    result["Korrekció"] = _numeric_series(result, "Korrekció") + pd.Series(periodic_values, index=result.index)
+    periodic_totals = load_periodic_fee_correction_totals(
+        session_id,
+        calculation_mode,
+        period_start,
+        period_end,
+        warehouse_label,
+    )
+    if periodic_totals.empty:
+        return result
+    result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+    result["_courier_name_lookup"] = result["Futár"].map(_courier_match_key)
+    by_id = periodic_totals.loc[
+        periodic_totals["_courier_id_lookup"].ne("")
+    ].groupby("_courier_id_lookup")["Korrekció"].sum()
+    by_name = periodic_totals.loc[
+        periodic_totals["_courier_name_lookup"].ne("")
+    ].groupby("_courier_name_lookup")["Korrekció"].sum()
+    result["Korrekció"] = (
+        _numeric_series(result, "Korrekció")
+        + result["_courier_id_lookup"].map(by_id).fillna(result["_courier_name_lookup"].map(by_name)).fillna(0.0)
+    )
+    result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
     return result
 
 
@@ -5884,6 +5886,117 @@ def calculate_periodic_fee_corrections(
     detail_rows = pd.DataFrame(rows, columns=columns)
     total = float(detail_rows["Összeg"].sum()) if not detail_rows.empty else 0.0
     return total, detail_rows
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def load_periodic_fee_correction_totals(
+    session_id: str | None,
+    calculation_mode: str,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None = None,
+) -> pd.DataFrame:
+    columns = ["_courier_id_lookup", "_courier_name_lookup", "Korrekció"]
+    if load_active_periodic_fee_rules(period_start, period_end).empty:
+        return pd.DataFrame(columns=columns)
+
+    detail = pd.DataFrame()
+    normalized_mode = str(calculation_mode or "Excel").strip().casefold()
+    if normalized_mode == "api":
+        rows = load_api_financial_overview_rows(period_start.year, period_start.month)
+        warehouse_id = settlement_warehouse_id(warehouse_label)
+        if warehouse_id is not None and not rows.empty and "warehouse_id" in rows.columns:
+            rows = rows.loc[
+                pd.to_numeric(rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+            ]
+        detail = api_financial_routes_to_detail(rows, None, period_start, period_end)
+    elif session_id:
+        try:
+            rows = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select(
+                    "normalized_data,route_unique_id,route_date,weekday_iso,"
+                    "calculated_day_type,courier_base_rate_huf,courier_tip_huf,"
+                    "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
+                    "courier_other_bonus_huf,courier_bonus_total_huf,"
+                    "is_route_primary,base_rate_status"
+                )
+                .eq("session_id", session_id)
+                .eq("is_route_primary", True)
+                .gte("route_date", period_start.isoformat())
+                .lte("route_date", period_end.isoformat())
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            rows = []
+        parsed: list[dict[str, object]] = []
+        weekday_names = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
+        for source in rows:
+            normalized = source.get("normalized_data") or {}
+            if isinstance(normalized, str):
+                try:
+                    normalized = json.loads(normalized)
+                except json.JSONDecodeError:
+                    normalized = {}
+            if not isinstance(normalized, dict):
+                normalized = {}
+            normalized_fields = {_normalized_field_key(key): value for key, value in normalized.items()}
+            source_id = next(
+                (value for key, value in normalized_fields.items()
+                 if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
+                None,
+            )
+            source_name = next(
+                (value for key, value in normalized_fields.items()
+                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev"}),
+                None,
+            )
+            route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
+            route_type_key = {"NORMAL": "normal", "CITY": "normal", "EXPRESS": "express", "REGIONAL": "regional"}.get(route_value, "normal")
+            day_type_key = str(source.get("calculated_day_type") or "").casefold()
+            parsed.append({
+                "_courier_id_lookup": _courier_id_key(source_id),
+                "_courier_name_lookup": _courier_match_key(source_name),
+                "Route ID": str(source.get("route_unique_id") or "-"),
+                "Excel dátum": str(source.get("route_date") or "-"),
+                "Hét napja": weekday_names.get(source.get("weekday_iso"), "-"),
+                "Túratípus": {"normal": "Normál", "express": "Expressz", "regional": "Regionális"}[route_type_key],
+                "Naptípus": {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(day_type_key, "Nincs besorolás"),
+                "Rendelések": parse_huf_value(normalized.get("Orders") or normalized.get("orders")),
+            })
+        detail = pd.DataFrame(parsed)
+
+    if detail.empty:
+        return pd.DataFrame(columns=columns)
+    if "_courier_id" in detail.columns and "_courier_id_lookup" not in detail.columns:
+        detail["_courier_id_lookup"] = detail["_courier_id"].map(_courier_id_key)
+    if "_courier_id_lookup" not in detail.columns:
+        detail["_courier_id_lookup"] = ""
+    if "_courier_name_lookup" not in detail.columns:
+        detail["_courier_name_lookup"] = ""
+
+    totals: list[dict[str, object]] = []
+    group_columns = ["_courier_id_lookup", "_courier_name_lookup"]
+    for (courier_id_key, courier_name_key), courier_detail in detail.groupby(group_columns, dropna=False):
+        correction_total, _ = calculate_periodic_fee_corrections(
+            courier_detail,
+            period_start,
+            period_end,
+            warehouse_label,
+        )
+        if correction_total:
+            totals.append({
+                "_courier_id_lookup": str(courier_id_key or ""),
+                "_courier_name_lookup": str(courier_name_key or ""),
+                "Korrekció": correction_total,
+            })
+    if not totals:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(totals, columns=columns)
 
 
 def normalize_route_key(value: object) -> str:
@@ -10737,6 +10850,14 @@ def show_new_settlement_page() -> None:
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id, selected_calculation_mode)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
+    data = apply_periodic_fee_corrections(
+        data,
+        import_session_id,
+        selected_calculation_mode,
+        balance_period_start,
+        balance_period_end,
+        selected_warehouse_label,
+    )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
