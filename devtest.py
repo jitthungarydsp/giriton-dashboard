@@ -1615,6 +1615,67 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     ]
 
 
+def append_periodic_correction_mobile_rows(
+    rows: list[dict[str, object]],
+    *,
+    row: dict[str, object],
+    route_detail: pd.DataFrame,
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, object]]:
+    periodic_total, periodic_detail = calculate_periodic_fee_corrections(
+        route_detail,
+        period_start,
+        period_end,
+        row.get("Raktár"),
+    )
+    manual_correction_total = 0
+    for item in rows:
+        if str(item.get("item_key") or "") == "correction":
+            manual_correction_total = parse_huf_value(item.get("amount_value"))
+            item["amount_value"] = manual_correction_total + periodic_total
+            break
+    else:
+        rows.append({
+            "item_key": "correction",
+            "item_label": "Időszakos díjak / korrekció",
+            "amount_kind": "huf",
+            "amount_value": periodic_total,
+            "note": "Havi nyitáskor publikált snapshot",
+        })
+    detail_rows = []
+    if manual_correction_total:
+        detail_rows.append({
+            "item_key": "correction_manual_snapshot",
+            "item_label": "Kézi korrekciók",
+            "amount_kind": "huf",
+            "amount_value": manual_correction_total,
+            "note": "Havi nyitáskor publikált snapshot",
+        })
+    if not periodic_detail.empty:
+        for correction_index, correction_row in periodic_detail.reset_index(drop=True).iterrows():
+            correction_amount = parse_huf_value(correction_row.get("Összeg"))
+            if not correction_amount:
+                continue
+            correction_note_parts = [
+                str(correction_row.get("Napok") or "").strip(),
+                str(correction_row.get("Túratípus") or "").strip(),
+                str(correction_row.get("Feltétel") or "").strip(),
+                str(correction_row.get("Számítás") or "").strip(),
+            ]
+            detail_rows.append({
+                "item_key": f"correction_periodic_{correction_index + 1}",
+                "item_label": str(correction_row.get("Tétel") or "Időszakos díj"),
+                "amount_kind": "huf",
+                "amount_value": correction_amount,
+                "note": " | ".join(part for part in correction_note_parts if part) or "Időszakos díj szabály alapján",
+            })
+    if detail_rows:
+        existing_keys = {str(item.get("item_key") or "") for item in rows}
+        rows.extend(item for item in detail_rows if str(item.get("item_key") or "") not in existing_keys)
+    return rows
+
+
 def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: pd.DataFrame | None = None) -> pd.DataFrame:
     rows = []
     override_map = {}
@@ -1671,6 +1732,24 @@ def publish_mobile_settlement_snapshot(
         if not courier_id:
             continue
         rows = mobile_breakdown_rows_from_settlement_row(item)
+        try:
+            route_detail = load_courier_route_detail(
+                courier_id,
+                str(item.get("Futár") or ""),
+                session_id,
+                calculation_mode,
+                period_start,
+                warehouse_label,
+            )
+            rows = append_periodic_correction_mobile_rows(
+                rows,
+                row=item,
+                route_detail=route_detail,
+                period_start=period_start,
+                period_end=month_bounds(period_start)[1],
+            )
+        except Exception:
+            pass
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
             row_count += len(rows)
@@ -3576,6 +3655,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
         + _numeric_series(result, "Bónusz")
+        + _numeric_series(result, "Korrekció")
         - _numeric_series(result, "Levonás")
     )
     return result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
@@ -10261,20 +10341,11 @@ def close_individual_monthly_billing(
     actor: str,
 ) -> int:
     deleted = delete_generated_monthly_billing_documents(courier_id, period_start)
-    payload = {
-        "courier_id": str(courier_id or "").strip(),
-        "courier_name": str(courier_name or "").strip(),
-        "action_key": "individual_monthly_billing",
-        "document_month": period_start.replace(day=1).isoformat(),
-        "status": "closed",
-        "status_note": "Egyedi havi számlázás admin által lezárva.",
-        "updated_by": str(actor or "").strip(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    get_db().table("peopleforce_card_statuses").upsert(
-        payload,
-        on_conflict="courier_id,document_month,action_key",
-    ).execute()
+    get_db().schema("public").table("peopleforce_card_statuses").delete() \
+        .eq("courier_id", str(courier_id or "").strip()) \
+        .eq("document_month", period_start.replace(day=1).isoformat()) \
+        .eq("action_key", "individual_monthly_billing") \
+        .execute()
     read_peopleforce_card_statuses.clear()
     read_peopleforce_card_statuses_for_month.clear()
     return deleted
