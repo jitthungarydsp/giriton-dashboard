@@ -1,0 +1,112 @@
+name: Daily PWA Settlement Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "DSP kezdő dátum YYYY-MM-DD"
+        required: false
+        default: "2026-07-01"
+      end_date:
+        description: "DSP záró dátum YYYY-MM-DD. Üresen: mai nap Budapest szerint."
+        required: false
+        default: ""
+      dry_run:
+        description: "Csak próba, DB írás nélkül ahol támogatott."
+        required: false
+        default: "false"
+  schedule:
+    # GitHub cron UTC-ben fut. Budapest szerint hajnalban frissít.
+    - cron: "35 2 * * *"
+
+concurrency:
+  group: daily-pwa-settlement-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+
+      - name: Resolve dates
+        id: dates
+        shell: bash
+        run: |
+          START_DATE="${{ inputs.start_date }}"
+          END_DATE="${{ inputs.end_date }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          START_DATE="${START_DATE:-2026-07-01}"
+          END_DATE="${END_DATE:-$(TZ=Europe/Budapest date +%F)}"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+          echo "START_DATE=$START_DATE"
+          echo "END_DATE=$END_DATE"
+          echo "DRY_RUN=$DRY_RUN"
+
+      - name: Sync vehicle assignments from Google Sheet
+        run: |
+          CMD=(python scripts/sync_vehicle_assignments_sheet.py)
+          if [ "${{ steps.dates.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Sync loyalty booking log
+        run: |
+          CMD=(python scripts/sync_loyalty_booking_log.py)
+          if [ "${{ steps.dates.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Import Google bonus/malus adjustments
+        run: |
+          CMD=(python scripts/import_google_bonus_malus_adjustments.py)
+          if [ "${{ steps.dates.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Run DSP pipeline
+        run: |
+          CMD=(python dsp.py --start-date "${{ steps.dates.outputs.start_date }}" --end-date "${{ steps.dates.outputs.end_date }}")
+          if [ "${{ steps.dates.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"

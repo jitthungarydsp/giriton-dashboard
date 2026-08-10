@@ -735,10 +735,95 @@ def read_attendance_muszakpro_shifts(
     return sorted(items, key=lambda item: (item["date"], item["start"], item["warehouse"]))
 
 
+def vehicle_assignment_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
+    if not row:
+        return None
+    car = str(row.get("car") or "").strip()
+    plate = str(row.get("license_plate") or "").strip()
+    if not car and not plate:
+        return None
+    return {
+        "car": car,
+        "licensePlate": plate,
+        "shiftStart": normalize_time(row.get("shift_start")),
+        "shiftEnd": normalize_time(row.get("shift_end")),
+        "shiftType": str(row.get("shift_type") or "").strip(),
+        "source": str(row.get("source_name") or "").strip(),
+        "fetchedAt": str(row.get("fetched_at") or "").strip(),
+    }
+
+
+def read_vehicle_assignment_rows_for_user(
+    user: dict[str, Any],
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    _courier_id, courier_name = courier_identity(user)
+    rows = optional_supabase_rows(
+        "dsp_vehicle_assignments",
+        params={
+            "select": "source_name,work_date,driver_name,shift_start,shift_end,car,license_plate,shift_type,fetched_at",
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,shift_start.asc.nullslast,fetched_at.desc",
+            "limit": "5000",
+        },
+        timeout=30,
+    )
+    wanted_names = {
+        normalize_text(courier_name),
+        normalize_text(user.get("username")),
+    }
+    return [
+        row for row in rows
+        if normalize_text(row.get("driver_name")) in wanted_names
+        and str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+
+
+def source_rank(source_name: Any) -> int:
+    text = str(source_name or "").casefold()
+    if "google" in text:
+        return 0
+    return 1
+
+
+def best_vehicle_assignment(
+    rows: list[dict[str, Any]],
+    work_date: Any,
+    shift_start: Any = "",
+) -> dict[str, str] | None:
+    date_key = str(work_date or "")[:10]
+    start_key = normalize_time(shift_start)
+    candidates = [row for row in rows if str(row.get("work_date") or "")[:10] == date_key]
+    if not candidates:
+        return None
+    exact = [
+        row for row in candidates
+        if start_key and normalize_time(row.get("shift_start")) == start_key
+    ]
+    pool = exact or candidates
+    pool = sorted(
+        pool,
+        key=lambda row: (source_rank(row.get("source_name")), str(row.get("shift_start") or ""), str(row.get("fetched_at") or "")),
+        reverse=False,
+    )
+    return vehicle_assignment_payload(pool[0])
+
+
+def attach_vehicle_assignments(
+    items: list[dict[str, Any]],
+    vehicle_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    for item in items:
+        item["vehicle"] = best_vehicle_assignment(vehicle_rows, item.get("date"), item.get("start"))
+    return items
+
+
 def read_shifts(user: dict, days: int) -> dict[str, Any]:
     start = date.today()
     end = start + timedelta(days=days - 1)
     source_errors: list[str] = []
+    vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
 
     try:
         comparison_items = read_attendance_muszakpro_shifts(user, start, end, days)
@@ -746,7 +831,7 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
             "from": start.isoformat(),
             "to": end.isoformat(),
             "days": days,
-            "items": comparison_items,
+            "items": attach_vehicle_assignments(comparison_items, vehicle_rows),
             "warnings": [],
             "source": "attendance_muszakpro_comparison",
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -824,7 +909,7 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
         "from": start.isoformat(),
         "to": end.isoformat(),
         "days": days,
-        "items": items,
+        "items": attach_vehicle_assignments(items, vehicle_rows),
         "warnings": source_errors,
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -970,6 +1055,14 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
     story = compact_route_story_row(story_row)
     if not story_row or not story:
         return None
+    courier_id = str(story_row.get("courier_id") or "").strip()
+    courier_name = str(story_row.get("courier_name") or "").strip()
+    work_date = parse_date_value(story_row.get("work_date")) or datetime.now(LOCAL_TIMEZONE).date()
+    vehicle_rows = read_vehicle_assignment_rows_for_user(
+        {"courierId": courier_id, "username": courier_name},
+        work_date,
+        work_date,
+    ) if courier_id or courier_name else []
     route_payload = {
         "routeId": str(story_row.get("route_id") or ""),
         "warehouse": str(story_row.get("warehouse_name") or ""),
@@ -990,6 +1083,7 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
         "current": None,
         "next": None,
         "routeStory": story,
+        "vehicle": best_vehicle_assignment(vehicle_rows, work_date, local_iso_time(story_row.get("shift_start"))),
     }
     return {
         "found": True,
@@ -1134,6 +1228,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
         or datetime.now(LOCAL_TIMEZONE)
     ).date()
     route_story = read_current_route_story(courier_id, route_id, route_date)
+    vehicle_rows = read_vehicle_assignment_rows_for_user(user, route_date, route_date)
 
     route_payload = {
         "routeId": route_id,
@@ -1168,6 +1263,11 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "windowFrom": local_iso_time((next_checkpoint or {}).get("deliverSince")),
             "windowTo": local_iso_time((next_checkpoint or {}).get("deliverTill")),
         } if next_checkpoint else None,
+        "vehicle": best_vehicle_assignment(
+            vehicle_rows,
+            route_date,
+            local_iso_time(route.get("plannedDeparture") or route.get("realDeparture")),
+        ),
     }
     if route_story:
         route_payload["routeStory"] = route_story

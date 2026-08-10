@@ -21,7 +21,7 @@ const state = {
   statisticsRequestSeq: 0,
   section: "home",
 };
-const APP_VERSION = "v69";
+const APP_VERSION = "v70";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -792,6 +792,26 @@ function routeStopBlock(title, checkpoint, cssClass = "") {
   `;
 }
 
+function vehicleLabel(vehicle) {
+  if (!vehicle) return "";
+  const plate = vehicle.licensePlate || "";
+  const car = vehicle.car || "";
+  return [plate, car].filter(Boolean).join(" · ");
+}
+
+function routeVehicleBlock(vehicle) {
+  const label = vehicleLabel(vehicle);
+  if (!label) return "";
+  const shift = [vehicle.shiftStart, vehicle.shiftEnd].filter(Boolean).join("–");
+  return `
+    <div class="route-current">
+      <span>Autó</span>
+      <strong>${escapeHtml(label)}</strong>
+      <small>${escapeHtml([vehicle.shiftType, shift].filter(Boolean).join(" · ") || "Aktuális hozzárendelés")}</small>
+    </div>
+  `;
+}
+
 function renderCurrentRoute() {
   const container = ensureRouteCard();
   if (!container) return;
@@ -836,6 +856,8 @@ function renderCurrentRoute() {
       <span>Visszaérkezésig</span>
       <strong>${escapeHtml(returnCountdownText(route.minutesUntilReturn))}</strong>
     </div>
+
+    ${routeVehicleBlock(route.vehicle)}
 
     ${renderCurrentRouteStory(route)}
 
@@ -1041,6 +1063,7 @@ function shiftCard(item, index = 0) {
   const delayButton = index === 0
     ? `<button class="shift-delay-button" type="button" data-shift-index="${index}">Kések a műszakból</button>`
     : "";
+  const vehicleText = vehicleLabel(item.vehicle);
   return `<article class="shift-card">
     <div class="shift-top">
       <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
@@ -1050,6 +1073,7 @@ function shiftCard(item, index = 0) {
       <span class="source ${item.muszakpro ? "ok" : ""}">MűszakPro ${item.muszakpro ? "✓" : "–"}</span>
       <span class="source ${item.attendance || item.giriton ? "ok" : ""}">Attendance ${item.attendance || item.giriton ? "✓" : "–"}</span>
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
+      ${vehicleText ? `<span class="source ok">Autó ${escapeHtml(vehicleText)}</span>` : ""}
     </div>
     ${delayButton}
   </article>`;
