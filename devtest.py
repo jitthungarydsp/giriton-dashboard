@@ -1601,8 +1601,8 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
-        {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": bonus, "note": "Havi nyitáskor publikált snapshot"},
-        {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "monthly_bonus", "item_label": "Kiflis bónusz", "amount_kind": "huf", "amount_value": bonus, "note": str(row.get("Importált bónusz megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
+        {"item_key": "monthly_malus", "item_label": "Kiflis málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": str(row.get("Importált málusz megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
         {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -abs(salary_advance), "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": orders, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": routes, "note": "Havi nyitáskor publikált snapshot"},
@@ -5026,16 +5026,33 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     columns = [
         "courier_id_key", "courier_name_key", "Importált bónusz",
         "Importált málusz", "Importált ATM levonás",
+        "Importált bónusz megjegyzés", "Importált málusz megjegyzés",
+        "Importált ATM megjegyzés",
     ]
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        "bonus_route_row": ("Importált bónusz", ("bonus", "bonusz", "amount", "osszeg", "total"), False),
-        "penalty_row": ("Importált málusz", ("penalty", "malus", "levonas", "amount", "osszeg"), True),
-        "atm_balance_row": ("Importált ATM levonás", ("balance", "egyenleg", "atm", "cash", "amount", "osszeg"), True),
+        "bonus_route_row": (
+            "Importált bónusz",
+            {"bonus", "bonusz", "amount", "osszeg", "total"},
+            ("bonus", "bonusz", "amount", "osszeg", "total"),
+            False,
+        ),
+        "penalty_row": (
+            "Importált málusz",
+            {"value", "amount", "osszeg", "penalty", "malus", "levonas"},
+            ("value", "amount", "osszeg", "penalty", "malus", "levonas"),
+            True,
+        ),
+        "atm_balance_row": (
+            "Importált ATM levonás",
+            {"walletdeductions", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"},
+            ("wallet", "deduction", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
+            True,
+        ),
     }
     records: list[dict[str, object]] = []
-    for table_name, (output_column, amount_tokens, use_absolute) in definitions.items():
+    for table_name, (output_column, exact_amount_keys, amount_tokens, use_absolute) in definitions.items():
         try:
             rows = (get_db().schema("settlement").table(table_name).select("normalized_data")
                     .eq("session_id", session_id).execute().data or [])
@@ -5064,43 +5081,87 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
                 None,
             )
-            amount_value = next(
-                (value for key, value in normalized_payload.items()
-                if any(token in key for token in amount_tokens)),
-                None,
+            amount_value = next((normalized_payload.get(key) for key in exact_amount_keys if key in normalized_payload), None)
+            if amount_value is None:
+                amount_value = next(
+                    (value for key, value in normalized_payload.items()
+                    if any(token in key for token in amount_tokens)),
+                    None,
+                )
+            note_value = next(
+                (
+                    value for key, value in normalized_payload.items()
+                    if key in {"note", "notes", "comment", "comment2", "megjegyzes", "leiras", "description"}
+                    or "comment" in key
+                    or "note" in key
+                    or "megjegyzes" in key
+                ),
+                "",
             )
             amount = parse_huf_value(amount_value)
             if (courier_id is None and courier_name is None) or amount == 0:
                 continue
+            note_column = {
+                "Importált bónusz": "Importált bónusz megjegyzés",
+                "Importált málusz": "Importált málusz megjegyzés",
+                "Importált ATM levonás": "Importált ATM megjegyzés",
+            }.get(output_column)
             records.append({
                 "courier_id_key": _courier_id_key(courier_id),
                 "courier_name_key": _courier_match_key(courier_name),
                 output_column: abs(amount) if use_absolute else amount,
+                **({note_column: str(note_value or "").strip()} if note_column else {}),
             })
     if not records:
         return pd.DataFrame(columns=columns)
     result = pd.DataFrame(records).fillna(0.0)
     for column in columns[1:]:
         if column not in result:
-            result[column] = 0.0
-    return result.groupby(columns[:2], as_index=False, dropna=False)[columns[2:]].sum()
+            result[column] = "" if "megjegyzés" in column else 0.0
+    amount_columns = ["Importált bónusz", "Importált málusz", "Importált ATM levonás"]
+    note_columns = ["Importált bónusz megjegyzés", "Importált málusz megjegyzés", "Importált ATM megjegyzés"]
+    for note_column in note_columns:
+        result[note_column] = result[note_column].fillna("").astype(str)
+
+    def join_notes(series: pd.Series) -> str:
+        values = [str(value).strip() for value in series.tolist() if str(value).strip()]
+        return " | ".join(dict.fromkeys(values))
+
+    return (
+        result.groupby(columns[:2], as_index=False, dropna=False)
+        .agg({
+            **{column: "sum" for column in amount_columns},
+            **{column: join_notes for column in note_columns},
+        })
+    )
 
 
 def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
     result = data.copy()
     components = load_imported_balance_components(session_id)
     component_columns = ("Importált bónusz", "Importált málusz", "Importált ATM levonás")
+    component_note_columns = ("Importált bónusz megjegyzés", "Importált málusz megjegyzés", "Importált ATM megjegyzés")
     for column in component_columns:
         result[column] = 0.0
+    for column in component_note_columns:
+        result[column] = ""
     if components.empty:
         return result
     component_by_id = (
         components[components["courier_id_key"] != ""]
-        .groupby("courier_id_key")[list(component_columns)].sum()
+        .groupby("courier_id_key", dropna=False)
+        .agg({
+            **{column: "sum" for column in component_columns},
+            **{column: "first" for column in component_note_columns},
+        })
     )
     component_by_name = (
         components[components["courier_name_key"] != ""]
-        .groupby("courier_name_key")[list(component_columns)].sum()
+        .groupby("courier_name_key", dropna=False)
+        .agg({
+            **{column: "sum" for column in component_columns},
+            **{column: "first" for column in component_note_columns},
+        })
     )
     result["_courier_id_component_key"] = result["Courier ID"].map(_courier_id_key)
     result["_courier_name_component_key"] = result["Futár"].map(_courier_match_key)
@@ -5109,6 +5170,11 @@ def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None
         by_id = result["_courier_id_component_key"].map(component_by_id[column]) if column in component_by_id else empty_values
         by_name = result["_courier_name_component_key"].map(component_by_name[column]) if column in component_by_name else empty_values
         result[column] = by_id.fillna(by_name).fillna(0.0)
+    for column in component_note_columns:
+        empty_values = pd.Series("", index=result.index, dtype="object")
+        by_id = result["_courier_id_component_key"].map(component_by_id[column]) if column in component_by_id else empty_values
+        by_name = result["_courier_name_component_key"].map(component_by_name[column]) if column in component_by_name else empty_values
+        result[column] = by_id.fillna(by_name).fillna("").astype(str)
     result["Bónusz"] = _numeric_series(result, "Bónusz") + result["Importált bónusz"]
     result["Levonás"] = _numeric_series(result, "Levonás") + result["Importált málusz"] + result["Importált ATM levonás"]
     return result.drop(columns=["_courier_id_component_key", "_courier_name_component_key"])
@@ -7139,6 +7205,8 @@ def show_courier_dialog() -> None:
         imported_bonus_total = parse_huf_value(row.get("Importált bónusz"))
         imported_malus_total = abs(parse_huf_value(row.get("Importált málusz")))
         imported_atm_total = abs(parse_huf_value(row.get("Importált ATM levonás")))
+        imported_bonus_note = str(row.get("Importált bónusz megjegyzés") or "").strip()
+        imported_malus_note = str(row.get("Importált málusz megjegyzés") or "").strip()
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
@@ -7481,14 +7549,30 @@ def show_courier_dialog() -> None:
                         manual_corrections["Számítás"] = manual_corrections.get("note", pd.Series("", index=manual_corrections.index)).fillna("")
                         detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
                 return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
-            if detail_label == "Havi bónusz/málusz":
+            if detail_label in {"Havi bónusz/málusz", "Kiflis bónusz/málusz"}:
+                manual_bonus_notes = " | ".join(
+                    dict.fromkeys(
+                        adjustments.loc[
+                            adjustments["adjustment_type"].astype(str).eq("bonus"),
+                            "note",
+                        ].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().tolist()
+                    )
+                ) if not adjustments.empty and "note" in adjustments.columns else ""
+                manual_malus_notes = " | ".join(
+                    dict.fromkeys(
+                        adjustments.loc[
+                            adjustments["adjustment_type"].astype(str).eq("malus"),
+                            "note",
+                        ].fillna("").astype(str).str.strip().replace("", pd.NA).dropna().tolist()
+                    )
+                ) if not adjustments.empty and "note" in adjustments.columns else ""
                 return pd.DataFrame([
-                    {"Tétel": "Importált bónusz", "Összeg": imported_bonus_total},
-                    {"Tétel": "Manuális bónusz", "Összeg": manual_bonus_total},
+                    {"Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total, "Megjegyzés": imported_bonus_note},
+                    {"Tétel": "Kiflis bónusz", "Összeg": manual_bonus_total, "Megjegyzés": manual_bonus_notes},
                     {"Tétel": "Lojalitás", "Összeg": loyalty_total},
                     {"Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
-                    {"Tétel": "Importált málusz", "Összeg": -imported_malus_total},
-                    {"Tétel": "Manuális málusz", "Összeg": -manual_malus_total},
+                    {"Tétel": "Kiflis málusz", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
+                    {"Tétel": "Kiflis málusz", "Összeg": -manual_malus_total, "Megjegyzés": manual_malus_notes},
                 ])
             if detail_label == "ATM hatás":
                 return pd.DataFrame([
@@ -7534,7 +7618,7 @@ def show_courier_dialog() -> None:
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
-            ("Havi bónusz/málusz", format_huf(monthly_bonus_malus_effect), "", ""),
+            ("Kiflis bónusz/málusz", format_huf(monthly_bonus_malus_effect), "", ""),
             ("ATM hatás", format_huf(-atm_deduction_total), "", ""),
             ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
             ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
@@ -7567,7 +7651,7 @@ def show_courier_dialog() -> None:
 
         detail_labels = {
             "Kör", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
-            "Korrekció", "Havi bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
+            "Korrekció", "Kiflis bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
         def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
@@ -7648,8 +7732,8 @@ def show_courier_dialog() -> None:
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": periodic_correction_total, "note": "Valós elszámolási adat"},
-            {"item_key": "monthly_bonus", "item_label": "Havi bónusz", "amount_kind": "huf", "amount_value": mobile_monthly_bonus, "note": "Valós elszámolási adat"},
-            {"item_key": "monthly_malus", "item_label": "Havi málusz", "amount_kind": "huf", "amount_value": -mobile_monthly_malus, "note": "Valós elszámolási adat"},
+            {"item_key": "monthly_bonus", "item_label": "Kiflis bónusz", "amount_kind": "huf", "amount_value": mobile_monthly_bonus, "note": imported_bonus_note or "Valós elszámolási adat"},
+            {"item_key": "monthly_malus", "item_label": "Kiflis málusz", "amount_kind": "huf", "amount_value": -mobile_monthly_malus, "note": imported_malus_note or "Valós elszámolási adat"},
             {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve_addition_total, "note": "Valós elszámolási adat"},
             {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},

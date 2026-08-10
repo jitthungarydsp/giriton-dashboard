@@ -2317,7 +2317,7 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         if routes > 0 and normal + highlighted == 0 and by_key.get("normal_routes"):
             by_key["normal_routes"]["amountHuf"] = routes
     deduction_override_items = [
-        ("monthly_malus", "Havi malusz"),
+        ("monthly_malus", "Kiflis malusz"),
         ("returned_route", "Visszavett kor"),
         ("atm_effect", "ATM hatas"),
         ("reserve", "Celtartalek"),
@@ -2331,8 +2331,8 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     for item_key, label in deduction_override_items:
         ensure_override_item("deductions", item_key, label)
     for item_key, label in [
-        ("monthly_bonus", "Havi bonusz"),
-        ("monthly_malus", "Havi malusz"),
+        ("monthly_bonus", "Kiflis bonusz"),
+        ("monthly_malus", "Kiflis malusz"),
         ("accepted_route", "Elfogadott kor korrekcio"),
         ("returned_route", "Visszavett kor"),
     ]:
@@ -2634,12 +2634,12 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
-        signed_item("monthly_bonus", "Havi bónusz", monthly_bonus),
+        signed_item("monthly_bonus", "Kiflis bónusz", monthly_bonus),
         signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
         signed_item("other_income", "Egyéb jóváírás", other_income),
     ]
     deduction_items = [
-        signed_item("monthly_malus", "Havi málusz", -monthly_malus),
+        signed_item("monthly_malus", "Kiflis málusz", -monthly_malus),
         signed_item("returned_route", "Visszavett kör", -returned_route),
         signed_item("atm_effect", "ATM hatás", atm_effect),
         signed_item("reserve", "Céltartalék", reserve_topup),
@@ -2710,8 +2710,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item(
             f"manual_{str(row.get('adjustment_type') or 'adjustment')}_{index}",
             {
-                "bonus": "Kézi bónusz",
-                "malus": "Kézi málusz",
+                "bonus": "Kiflis bónusz",
+                "malus": "Kiflis málusz",
                 "customer_rating": "Ügyfélelégedettség",
             }.get(str(row.get("adjustment_type") or ""), "Kézi korrekció"),
             -money_int(row.get("amount_huf")) if str(row.get("adjustment_type") or "") == "malus" else money_int(row.get("amount_huf")),
@@ -2722,8 +2722,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         if str(row.get("adjustment_type") or "") in manual_bonus_malus_types
     ]
     bonus_malus_items = [
-        signed_item("monthly_bonus", "Havi bonusz", monthly_bonus - manual_bonus),
-        signed_item("monthly_malus", "Havi malusz", -(monthly_malus - manual_malus)),
+        signed_item("monthly_bonus", "Kiflis bonusz", monthly_bonus - manual_bonus),
+        signed_item("monthly_malus", "Kiflis malusz", -(monthly_malus - manual_malus)),
         signed_item("accepted_route", "Elfogadott kor korrekcio", accepted_route),
         signed_item("returned_route", "Visszavett kor", -returned_route),
     ]
