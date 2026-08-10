@@ -1763,9 +1763,14 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
     for item in tig_breakdown.get("rows") or []:
         item_key = f"tig_{item.get('key') or ''}"
         override = override_map.get(item_key, {})
+        item_label = str(override.get("item_label") or item.get("label") or item_key)
+        if item_key == "tig_transfer_service":
+            item_label = "Szállítási díj (494107) - átutalás"
+        elif item_key == "tig_cash_service":
+            item_label = "Szállítási díj (494107) - készpénz"
         rows.append({
             "Kulcs": item_key,
-            "MegnevezĂ©s": str(override.get("item_label") or item.get("label") or item_key),
+            "MegnevezĂ©s": item_label,
             "TĂ­pus": "huf",
             "Ă‰rtĂ©k": parse_huf_value(override.get("amount_value") if override else item.get("grossHuf")),
             "MegjegyzĂ©s": str(override.get("note") or item.get("note") or ""),

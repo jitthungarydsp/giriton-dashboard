@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from calendar import monthrange
+from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,30 @@ def _add_vat_to_net(net: Any) -> tuple[int, int, int]:
     return net_value, vat, net_value + vat
 
 
+def _document_month(value: Any) -> date:
+    if isinstance(value, date):
+        return value.replace(day=1)
+    text = str(value or "").strip()
+    try:
+        return date.fromisoformat(text[:10]).replace(day=1)
+    except ValueError:
+        return date.today().replace(day=1)
+
+
+def _tig_document_dates(courier: dict[str, Any]) -> dict[str, str]:
+    month_start = _document_month(courier.get("document_month"))
+    month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+    due_date = month_end + timedelta(days=8)
+    return {
+        "periodStart": month_start.isoformat(),
+        "periodEnd": month_end.isoformat(),
+        "periodLabel": f"{month_start:%Y.%m.%d} - {month_end:%Y.%m.%d}",
+        "performanceDate": due_date.isoformat(),
+        "paymentDueDate": due_date.isoformat(),
+        "note": f"Futár ID: {courier.get('id') or courier.get('courier_id') or '-'}",
+    }
+
+
 def _tig_cash_net_deduction(cash_amount_huf: Any, courier: dict[str, Any]) -> int:
     cash = max(_int_money(cash_amount_huf), 0)
     if _tig_kind(courier) == "vat":
@@ -127,7 +152,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     rows = [
         {
             "key": "transfer_service",
-            "label": "Szállítási díj (494107)",
+            "label": "Szállítási díj (494107) - átutalás",
             "netHuf": service_net,
             "vatHuf": service_vat,
             "grossHuf": service_gross,
@@ -148,7 +173,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     if cash:
         rows.append({
             "key": "cash_service",
-            "label": "Szallitasi dij - KP",
+            "label": "Szállítási díj (494107) - készpénz",
             "netHuf": cash_net,
             "vatHuf": cash_vat,
             "grossHuf": cash_gross,
@@ -157,12 +182,12 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         })
         rows.append({
             "key": "cash_deduction",
-            "label": "KP levonasa",
+            "label": "KP levonása",
             "netHuf": -cash_net,
             "vatHuf": -cash_vat,
             "grossHuf": -cash_gross,
-            "vatLabel": "Levonas",
-            "note": "A futarnal mar kezben levo KP levonasa.",
+            "vatLabel": "Levonás",
+            "note": "A futárnál már kézben lévő KP levonása.",
         })
     return {
         "available": payable > 0 or bool(rows),
@@ -175,6 +200,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         "finalTotalHuf": final_total,
         "taxMode": "vat" if vat_payer else "aam",
         "taxLabel": tax_label,
+        "documentMeta": _tig_document_dates(courier),
         "rows": rows,
     }
 
@@ -404,6 +430,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
         bottomMargin=12 * mm,
     )
     period = _month_label(courier.get("document_month"))
+    document_meta = _tig_document_dates(courier)
     service = _tig_service_amount_without_cash_and_tip(amounts, courier)
     cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
     tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
@@ -450,7 +477,16 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
                     f"Adószám: <b>{courier.get('tax_number') or '-'}</b>",
                     styles["body"],
                 ),
-                Paragraph("<font color='red'><b>Just in Time Transport Hungary Kft.</b><br/>1201 Budapest, Atléta utca 44<br/>Adószám: 32649460-2-43</font>", styles["body"]),
+                Paragraph(
+                    "<font color='red'><b>Just in Time Transport Hungary Kft.</b><br/>"
+                    "1201 Budapest, Atléta utca 44<br/>"
+                    "Adószám: 32649460-2-43</font><br/><br/>"
+                    f"Teljesítési időszak: <b>{document_meta['periodLabel']}</b><br/>"
+                    f"Teljesítés: <b>{document_meta['performanceDate']}</b><br/>"
+                    f"Fizetési határidő: <b>{document_meta['paymentDueDate']}</b><br/>"
+                    f"Megjegyzés: <b>{document_meta['note']}</b>",
+                    styles["body"],
+                ),
             ],
         ],
         [115 * mm, 115 * mm],
@@ -459,8 +495,8 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
     story.append(Spacer(1, 6 * mm))
     story.append(_table(
         [
-            ["Számlázott időszak", "Teljesítés napja", "Fizetési határidő", "Fizetés módja"],
-            [period, "Kiállítás napja + 8 nap", "Kiállítás napja + 8 nap", "Átutalás"],
+            ["Teljesítési időszak", "Teljesítés napja", "Fizetési határidő", "Fizetés módja"],
+            [document_meta["periodLabel"], document_meta["performanceDate"], document_meta["paymentDueDate"], "Átutalás"],
         ],
         [58 * mm, 65 * mm, 65 * mm, 42 * mm],
         [
@@ -478,7 +514,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
     if vat_payer:
         service_net, service_vat, service_gross = _add_vat_to_net(service)
         amount_rows.append([
-            f"Szállítási díj - átutalás ({courier.get('document_reference') or courier_id})",
+            f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
             _money(service_net),
             _money(service_vat),
             _money(service_gross),
@@ -486,7 +522,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
     else:
         service_net, service_vat, service_gross = service, 0, service
         amount_rows.append([
-            f"Szállítási díj - átutalás ({courier.get('document_reference') or courier_id})",
+            f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
             _money(service),
             "AAM",
             _money(service),
@@ -517,7 +553,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
             [
                 ["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"],
                 [
-                    "Szállítási díj - KP (494107)",
+                    "Szállítási díj (494107) - készpénz",
                     _money(cash_net),
                     _money(cash_vat) if vat_payer else "AAM",
                     _money(cash_gross),

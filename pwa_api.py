@@ -2779,6 +2779,11 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
         for card in cards
         for item in card.get("items") or []
     }
+    cash_rows = [
+        dict(row)
+        for row in breakdown.get("rows") or []
+        if row.get("key") in {"cash_service", "cash_deduction"}
+    ]
     payable_total = money_int(financial_breakdown.get("totalPayableHuf"))
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
     service_amount = payable_total - tip_amount
@@ -2788,7 +2793,7 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
         net, vat, gross, vat_label = tig_split_amount(service_amount, tax_mode)
         rows.append({
             "key": "transfer_service",
-            "label": "Szállítási díj (494107)",
+            "label": "Szállítási díj (494107) - átutalás",
             "netHuf": net,
             "vatHuf": vat,
             "grossHuf": gross,
@@ -2805,6 +2810,10 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             "vatLabel": "Adómentes",
             "note": "Külön adómentes tétel.",
         })
+    for cash_row in cash_rows:
+        if cash_row.get("key") == "cash_service":
+            cash_row["label"] = "Szállítási díj (494107) - készpénz"
+        rows.append(cash_row)
     breakdown["rows"] = rows
     breakdown["payableHuf"] = payable_total
     breakdown["transferServiceHuf"] = service_amount
@@ -2832,11 +2841,15 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             vat = gross_abs - net
             row["netHuf"] = sign * net
             row["vatHuf"] = sign * vat
-            row["vatLabel"] = "27%" if sign > 0 else "Levonas"
+            row["vatLabel"] = "27%" if sign > 0 else "Levonás"
         else:
             row["netHuf"] = money_int(row.get("grossHuf"))
             row["vatHuf"] = 0
         row["label"] = str(override.get("item_label") or row.get("label") or "")
+        if row.get("key") == "transfer_service":
+            row["label"] = "Szállítási díj (494107) - átutalás"
+        elif row.get("key") == "cash_service":
+            row["label"] = "Szállítási díj (494107) - készpénz"
         row["note"] = str(override.get("note") or "Admin Ăˇltal mĂłdosĂ­tva")
     final_override = overrides.get("tig_final_total")
     if final_override:
@@ -2889,12 +2902,17 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     tig["month"] = month.strftime("%Y-%m")
     tig["courierId"] = courier_id
     tig["courierName"] = courier_name
+    document_meta = tig.get("documentMeta") or {}
     tig["buyer"] = {
         "label": "Vevő",
         "name": "Just in Time Transport Hungary Kft.",
         "postalCity": "1201 Budapest",
         "address": "Atléta utca 44.",
         "taxNumber": "32649460-2-43",
+        "periodLabel": document_meta.get("periodLabel") or "",
+        "performanceDate": document_meta.get("performanceDate") or "",
+        "paymentDueDate": document_meta.get("paymentDueDate") or "",
+        "note": document_meta.get("note") or f"Futár ID: {courier_id}",
     }
     tig = align_tig_breakdown_with_financial_cards(tig, financial_breakdown)
     return apply_tig_overrides(tig, read_mobile_breakdown_overrides(courier_id, month))

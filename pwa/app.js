@@ -1473,6 +1473,10 @@ function renderTigBreakdown() {
       <small>${escapeHtml(buyer.postalCity || "")}</small>
       <small>${escapeHtml(buyer.address || "")}</small>
       <small>Adószám: ${escapeHtml(buyer.taxNumber || "")}</small>
+      ${buyer.periodLabel ? `<small>Teljesítési időszak: ${escapeHtml(buyer.periodLabel)}</small>` : ""}
+      ${buyer.performanceDate ? `<small>Teljesítés: ${escapeHtml(buyer.performanceDate)}</small>` : ""}
+      ${buyer.paymentDueDate ? `<small>Fizetési határidő: ${escapeHtml(buyer.paymentDueDate)}</small>` : ""}
+      ${buyer.note ? `<small>Megjegyzés: ${escapeHtml(buyer.note)}</small>` : ""}
     </section>
   ` : "";
   return `
