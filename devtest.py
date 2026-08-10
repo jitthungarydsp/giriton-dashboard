@@ -10833,11 +10833,16 @@ def show_new_settlement_page() -> None:
             import_session_id = state_excel_session_id
         else:
             import_session_id = load_latest_excel_jit_session_id(balance_period_start)
+            if import_session_id:
+                st.session_state["settlement_excel_session_id"] = import_session_id
     else:
-        api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
+        api_session_id = st.session_state.get("settlement_api_session_id") or load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
         import_session_id = api_session_id
         if api_session_id:
+            st.session_state["settlement_api_session_id"] = api_session_id
             import_session_id = api_session_id
+    if str(selected_calculation_mode or "").strip() in {"API", "Excel"} and import_session_id:
+        st.session_state["settlement_import_session_id"] = import_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
     data = apply_received_amounts(
         data,
@@ -10961,7 +10966,10 @@ def show_new_settlement_page() -> None:
         if uploaded_excel is not None:
             st.success(f"Kiválasztva: {uploaded_excel.name}")
 
-        import_session_id = st.session_state.get("settlement_import_session_id")
+        excel_import_session_id = (
+            st.session_state.get("settlement_excel_session_id")
+            or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+        )
         excel_action1, excel_action_check, excel_action2 = st.columns(3)
 
         if excel_action1.button(
@@ -11041,19 +11049,22 @@ def show_new_settlement_page() -> None:
                 with st.expander("Technikai hiba részletei", expanded=True):
                     st.code(error_details, language="text")
 
-        import_session_id = st.session_state.get("settlement_import_session_id")
+        excel_import_session_id = (
+            st.session_state.get("settlement_excel_session_id")
+            or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+        )
 
         if excel_action_check.button(
             "SQL ellenőrzés",
             use_container_width=True,
-            disabled=not import_session_id,
+            disabled=not excel_import_session_id,
             key="check_excel_import_sql",
             help="A settlement.vw_excel_preview nézetből olvassa vissza az importot.",
         ):
             try:
                 preview_df = get_import_preview(
                     get_db(),
-                    import_session_id,
+                    excel_import_session_id,
                     limit=200,
                 )
                 st.session_state["settlement_import_preview"] = preview_df
