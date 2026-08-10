@@ -5249,6 +5249,13 @@ def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None
     return result.drop(columns=["_courier_id_component_key", "_courier_name_component_key"])
 
 
+def balance_component_session_id(calculation_mode: str, period_start: date, session_id: str | None) -> str | None:
+    """Kiflis bonus/malus/ATM sheets are Excel-side data even when the main settlement mode is API."""
+    if str(calculation_mode or "").strip().casefold() == "excel":
+        return session_id
+    return load_latest_excel_jit_session_id(period_start) or session_id
+
+
 def format_huf(value: float | int) -> str:
     try:
         if pd.isna(value):
@@ -6913,7 +6920,10 @@ def show_courier_dialog() -> None:
                 dialog_session_id = dialog_api_session_id
         data = build_settlement_working_data(dialog_calculation_mode, dialog_session_id, dialog_start, st.session_state.get("new_warehouse", "Összes"))
         data = apply_received_amounts(data, dialog_calculation_mode, dialog_start, st.session_state.get("new_warehouse", "Összes"))
-        data = apply_imported_balance_components(data, dialog_session_id)
+        data = apply_imported_balance_components(
+            data,
+            balance_component_session_id(dialog_calculation_mode, dialog_start, dialog_session_id),
+        )
         data = apply_manual_balance_adjustments(data, dialog_start, dialog_end)
         data = apply_salary_advance_deduction(data, dialog_start, dialog_end)
         data = recompute_payable_total(data)
@@ -6945,6 +6955,7 @@ def show_courier_dialog() -> None:
         api_session_id = load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
         if api_session_id:
             session_id = api_session_id
+    imported_balance_session_id = balance_component_session_id(active_calculation_mode, period_start, session_id)
     period_label = (
         f"{period_start:%Y. %m. %d.} - {period_end:%Y. %m. %d.}"
         if period_start and period_end
@@ -7006,7 +7017,7 @@ def show_courier_dialog() -> None:
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
-    contractor_received_total = settlement_amount("contractor_total_huf")
+    contractor_received_total = parse_huf_value(row.get("Alvállalkozói összeg")) or settlement_amount("contractor_total_huf")
     if not contractor_received_total:
         contractor_quality_total = settlement_amount("company_quality_bonus_total_huf")
         if not contractor_quality_total:
@@ -7631,7 +7642,7 @@ def show_courier_dialog() -> None:
                         detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
                 return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
             if detail_label == "Kiflis levonások / bónuszok":
-                itemized_imports = load_imported_balance_component_items(session_id, courier_id, courier_name)
+                itemized_imports = load_imported_balance_component_items(imported_balance_session_id, courier_id, courier_name)
                 if not itemized_imports.empty:
                     return itemized_imports
                 return pd.DataFrame([
@@ -10557,7 +10568,10 @@ def show_new_settlement_page() -> None:
             import_session_id = api_session_id
     data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
     data = apply_received_amounts(data, selected_calculation_mode, balance_period_start, selected_warehouse_label)
-    data = apply_imported_balance_components(data, import_session_id)
+    data = apply_imported_balance_components(
+        data,
+        balance_component_session_id(selected_calculation_mode, balance_period_start, import_session_id),
+    )
     data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id, selected_calculation_mode)
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
@@ -11032,7 +11046,10 @@ def show_new_settlement_page() -> None:
             selected_warehouse_label,
         )
         previous_data = apply_received_amounts(previous_data, selected_calculation_mode, previous_period_start, selected_warehouse_label)
-        previous_data = apply_imported_balance_components(previous_data, previous_session_id)
+        previous_data = apply_imported_balance_components(
+            previous_data,
+            balance_component_session_id(selected_calculation_mode, previous_period_start, previous_session_id),
+        )
         previous_data = apply_loyalty_bonus(previous_data, previous_period_start, previous_period_end, previous_session_id, selected_calculation_mode)
         previous_data = apply_customer_rating_bonus(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)

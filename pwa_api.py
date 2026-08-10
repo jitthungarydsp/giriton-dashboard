@@ -2005,6 +2005,26 @@ def latest_settlement_session_for_month(
     return {"sessionId": "", "sourceMode": config_mode, "sourceSheet": "", "message": f"Nincs {source_label} session ehhez a hónaphoz."}
 
 
+def latest_excel_balance_session_for_month(month: date) -> str:
+    period_end = month_end(month)
+    rows = optional_supabase_rows(
+        "jit_row",
+        schema="settlement",
+        params={
+            "select": "session_id,source_sheet,route_date,created_at",
+            "and": f"(route_date.gte.{month.isoformat()},route_date.lte.{period_end.isoformat()})",
+            "order": "created_at.desc",
+            "limit": "500",
+        },
+        timeout=60,
+    )
+    for row in rows:
+        source_sheet = str(row.get("source_sheet") or "").strip().lower()
+        if source_sheet and not source_sheet.startswith("api financial overview"):
+            return str(row.get("session_id") or "").strip()
+    return ""
+
+
 def read_courier_settlement_summary_row(courier_id: str, month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     config = read_mobile_settlement_period_config(month)
     session = latest_settlement_session_for_month(courier_id, month, config, allow_unpublished=allow_unpublished)
@@ -2771,8 +2791,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     monthly_malus += manual_adjustments.get("malus", 0)
     atm_effect -= manual_adjustments.get("atm_deduction", 0)
     other_deduction -= manual_adjustments.get("other_expense", 0)
+    main_session_id = str(row.get("_mobile_session_id") or row.get("session_id") or "")
+    imported_balance_session_id = latest_excel_balance_session_for_month(month) or main_session_id
     imported_bonus_items, imported_malus_items = read_imported_bonus_malus_items(
-        str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+        imported_balance_session_id,
         courier_id,
         _courier_name,
     )
@@ -2847,7 +2869,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         periodic_correction_items = calculate_periodic_correction_items(
             courier_id,
             _courier_name,
-            str(row.get("_mobile_session_id") or row.get("session_id") or ""),
+            main_session_id,
             month,
             period_end,
             str(row.get("warehouse_name") or row.get("warehouse") or ""),
