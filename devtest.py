@@ -5610,8 +5610,8 @@ def calculate_periodic_fee_corrections(
             "routes_per_day": "Túra / nap",
             "routes_in_period": "Túra / időszak",
             "orders_in_period": "Cím / időszak",
-            "every_n_routes_per_day": f"Minden {int(minimum)}. túra naponta",
-            "every_n_routes_in_period": f"Minden {int(minimum)}. túra az időszakban",
+            "every_n_routes_per_day": f"Minden {int(minimum)}. kifutott túra naponta",
+            "every_n_routes_in_period": f"Minden {int(minimum)}. kifutott túra az időszakban",
             "orders_over_threshold_every_n_per_route": f"{int(minimum)} felett minden {int(maximum or 1)} cím túránként",
         }.get(condition, condition)
         rows.append({

@@ -40,7 +40,7 @@ DAY_LABELS = {"highlighted": "Kiemelt nap", "normal": "Normál nap", "any": "Bá
 ROUTE_LABELS = {"express": "Expressz", "normal": "Normál", "regional": "Regionális", "any": "Bármely túra"}
 UNIT_LABELS = {"fixed": "Fix összeg", "per_route": "Ft / túra", "per_order": "Ft / cím", "per_hour": "Ft / óra"}
 CALCULATION_MODE_LABELS = {"excel": "Közös / Excel", "api": "API előnyben", "custom": "Egyéni"}
-CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Túrák száma naponta", "routes_in_period": "Túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban", "every_n_routes_per_day": "Minden N. túra után naponta", "every_n_routes_in_period": "Minden N. túra után az időszakban", "orders_over_threshold_every_n_per_route": "X felett minden Y cím túránként"}
+CONDITION_LABELS = {"none": "Nincs feltétel", "orders_per_route": "Címek száma túránként", "routes_per_day": "Kifutott túrák száma naponta", "routes_in_period": "Kifutott túrák száma az időszakban", "orders_in_period": "Címek száma az időszakban", "every_n_routes_per_day": "Minden N. kifutott túra után naponta", "every_n_routes_in_period": "Minden N. kifutott túra után az időszakban", "orders_over_threshold_every_n_per_route": "X felett minden Y cím túránként"}
 WEEKDAY_LABELS = {1: "Hétfő", 2: "Kedd", 3: "Szerda", 4: "Csütörtök", 5: "Péntek", 6: "Szombat", 7: "Vasárnap"}
 CUSTOMER_RATING_DEFAULT_RULES = [
     {
@@ -459,18 +459,18 @@ def _show_periodic(client: Any) -> None:
         default_min = _number((row or {}).get("condition_min"), 3.0)
         default_max = _number((row or {}).get("condition_max"), 1.0)
         condition_min_input = c1.number_input(
-            "Küszöb / minden N. túra",
+            "Küszöb / minden N. kifutott túra",
             min_value=0.0,
             value=default_min if default_min is not None else 3.0,
             step=1.0,
-            help="Vasárnapi Hősök: ide 3 kell. Címküszöb szabálynál ez a kezdő küszöb.",
+            help="Vasárnapi Hősök: ide 3 kell, ez a kifutott normál túrákat számolja. Címküszöb szabálynál ez a kezdő küszöb.",
         )
         condition_max_input = c2.number_input(
             "Lépcső / felső határ",
             min_value=0.0,
             value=default_max if default_max is not None else 1.0,
             step=1.0,
-            help="Címküszöb szabálynál ez az Y. Minden N. túra szabálynál nem kell.",
+            help="Címküszöb szabálynál ez az Y. Minden N. kifutott túra szabálynál nem kell.",
         )
         has_max = c2.checkbox(
             "Lépcső / felső határ használata",
