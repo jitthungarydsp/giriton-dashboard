@@ -2104,6 +2104,11 @@ def imported_balance_value(payload: dict[str, Any], *keys: str) -> Any:
 
 def imported_balance_note(payload: dict[str, Any]) -> str:
     parts = [
+        clean_note_part(imported_balance_value(payload, "Malus name")),
+        clean_note_part(imported_balance_value(payload, "Bonus name")),
+        clean_note_part(imported_balance_value(payload, "Tétel")),
+        clean_note_part(imported_balance_value(payload, "Reason")),
+        clean_note_part(imported_balance_value(payload, "Category")),
         clean_note_part(imported_balance_value(payload, "Comment")),
         clean_note_part(imported_balance_value(payload, "Comment 2")),
         clean_note_part(imported_balance_value(payload, "Note")),
@@ -2445,7 +2450,7 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         if routes > 0 and normal + highlighted == 0 and by_key.get("normal_routes"):
             by_key["normal_routes"]["amountHuf"] = routes
     deduction_override_items = [
-        ("monthly_malus", "Kiflis malusz"),
+        ("monthly_malus", "Levonások összesen"),
         ("returned_route", "Visszavett kor"),
         ("atm_effect", "ATM hatas"),
         ("reserve", "Celtartalek"),
@@ -2459,8 +2464,15 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     for item_key, label in deduction_override_items:
         ensure_override_item("deductions", item_key, label)
     for item_key, label in [
+        ("kiflis_bonus_total", "Kiflis bonusz"),
+        ("kiflis_malus_total", "Kiflis malusz"),
         ("monthly_bonus", "Kiflis bonusz"),
         ("monthly_malus", "Kiflis malusz"),
+    ]:
+        ensure_override_item("kiflis_bonus_malus", item_key, label)
+    for item_key, label in [
+        ("manual_bonus", "JITT bonusz"),
+        ("manual_malus", "JITT malusz"),
         ("accepted_route", "Elfogadott kor korrekcio"),
         ("returned_route", "Visszavett kor"),
     ]:
@@ -2498,9 +2510,12 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
         ]:
             ensure_override_item("corrections", item_key, label, allow_snapshot=item_key == "correction")
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
+    kiflis_bonus_malus_card = next((card for card in cards if card.get("key") == "kiflis_bonus_malus"), None)
     bonus_malus_card = next((card for card in cards if card.get("key") == "bonus_malus"), None)
     if deduction_card and not overrides.get("deductions"):
         deduction_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in deduction_card.get("items") or [])
+    if kiflis_bonus_malus_card and not overrides.get("kiflis_bonus_malus"):
+        kiflis_bonus_malus_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in kiflis_bonus_malus_card.get("items") or [])
     if bonus_malus_card and not overrides.get("bonus_malus"):
         bonus_malus_card["amountHuf"] = sum(money_int(item.get("amountHuf")) for item in bonus_malus_card.get("items") or [])
     for card_key in ["loyalty_bonus", "customer_rating", "corrections"]:
@@ -2527,7 +2542,7 @@ def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_ove
         payable_card["amountHuf"] = payable_total
         payable_card["items"] = [
             signed_item("income_total", "Jóváírások összesen", income_total),
-            signed_item("deduction_total", "Bonusz / malusz tételek", deduction_total),
+            signed_item("deduction_total", "Levonások összesen", deduction_total),
             signed_item("correction_total", "Korrekciók összesen", correction_total),
             signed_item("payable_total", "Kifizetendő", payable_total),
         ]
@@ -2735,6 +2750,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     if monthly_adjustment_effect:
         monthly_bonus = max(monthly_adjustment_effect, 0)
         monthly_malus = abs(min(monthly_adjustment_effect, 0))
+    summary_monthly_bonus = monthly_bonus
+    summary_monthly_malus = monthly_malus
     returned_route = abs(money_from(row, "monthly_returned_route_huf"))
     accepted_route = money_from(row, "monthly_accepted_route_huf")
     atm_effect = money_from(row, "atm_effect_huf") or -abs(money_from(row, "atm_deduction_huf"))
@@ -2767,12 +2784,12 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
-        signed_item("monthly_bonus", "Kiflis bónusz", monthly_bonus),
+        signed_item("monthly_bonus", "Bónuszok összesen", monthly_bonus),
         signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
         signed_item("other_income", "Egyéb jóváírás", other_income),
     ]
     deduction_items = [
-        signed_item("monthly_malus", "Kiflis málusz", -monthly_malus),
+        signed_item("monthly_malus", "Levonások összesen", -monthly_malus),
         signed_item("returned_route", "Visszavett kör", -returned_route),
         signed_item("atm_effect", "ATM hatás", atm_effect),
         signed_item("reserve", "Céltartalék", reserve_topup),
@@ -2838,14 +2855,13 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         if periodic_correction_items:
             manual_correction_items.extend(periodic_correction_items)
             correction_total = sum(item["amountHuf"] for item in manual_correction_items)
-    manual_bonus_malus_types = {"bonus", "malus", "customer_rating"}
+    manual_bonus_malus_types = {"bonus", "malus"}
     manual_bonus_malus_items = [
         signed_item(
             f"manual_{str(row.get('adjustment_type') or 'adjustment')}_{index}",
             {
-                "bonus": "Kiflis bónusz",
-                "malus": "Kiflis málusz",
-                "customer_rating": "Ügyfélelégedettség",
+                "bonus": "JITT bónusz",
+                "malus": "JITT málusz",
             }.get(str(row.get("adjustment_type") or ""), "Kézi korrekció"),
             -money_int(row.get("amount_huf")) if str(row.get("adjustment_type") or "") == "malus" else money_int(row.get("amount_huf")),
             source="settlement.courier_settlement_adjustment",
@@ -2855,19 +2871,27 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         if str(row.get("adjustment_type") or "") in manual_bonus_malus_types
     ]
     imported_bonus_total = sum(money_int(item.get("amountHuf")) for item in imported_bonus_items)
+    if not imported_bonus_total:
+        imported_bonus_total = money_from(row, "imported_bonus_huf") or max(summary_monthly_bonus - manual_bonus, 0)
     imported_malus_total = abs(sum(money_int(item.get("amountHuf")) for item in imported_malus_items))
-    aggregate_bonus_remainder = (monthly_bonus - manual_bonus) - imported_bonus_total
-    aggregate_malus_remainder = (monthly_malus - manual_malus) - imported_malus_total
-    bonus_malus_items = [
+    if not imported_malus_total:
+        imported_malus_total = money_from(row, "imported_malus_huf") or max(summary_monthly_malus - manual_malus, 0)
+    kiflis_bonus_remainder = imported_bonus_total - sum(money_int(item.get("amountHuf")) for item in imported_bonus_items)
+    kiflis_malus_remainder = imported_malus_total - abs(sum(money_int(item.get("amountHuf")) for item in imported_malus_items))
+    kiflis_bonus_malus_items = [
         *imported_bonus_items,
-        signed_item("monthly_bonus", "Kiflis bónusz", aggregate_bonus_remainder),
+        signed_item("kiflis_bonus_total", "Kiflis bónusz", kiflis_bonus_remainder),
+        *imported_malus_items,
+        signed_item("kiflis_malus_total", "Kiflis málusz", -kiflis_malus_remainder),
+    ]
+    kiflis_bonus_malus_items = [item for item in kiflis_bonus_malus_items if item["amountHuf"]]
+    kiflis_bonus_malus_total = sum(item["amountHuf"] for item in kiflis_bonus_malus_items)
+    jitt_bonus_malus_items = [
         signed_item("accepted_route", "Elfogadott kör korrekció", accepted_route),
         signed_item("returned_route", "Visszavett kör", -returned_route),
-        *imported_malus_items,
-        signed_item("monthly_malus", "Kiflis málusz", -aggregate_malus_remainder),
     ]
-    bonus_malus_items = [item for item in bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
-    bonus_malus_total = sum(item["amountHuf"] for item in bonus_malus_items)
+    jitt_bonus_malus_items = [item for item in jitt_bonus_malus_items if item["amountHuf"]] + manual_bonus_malus_items
+    jitt_bonus_malus_total = sum(item["amountHuf"] for item in jitt_bonus_malus_items)
     loyalty_items = [
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         count_item("loyalty_current_routes", "Kifutott kör", money_from(row, "loyalty_current_normal_routes", "loyalty_current_route_count", "route_count", "routes")),
@@ -2944,15 +2968,16 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             "tone": "total",
             "items": [
                 signed_item("income_total", "Jóváírások összesen", income_total),
-                signed_item("deduction_total", "Bonusz / malusz tételek", deduction_total),
+                signed_item("deduction_total", "Levonások összesen", deduction_total),
                 signed_item("payable_total", "Kifizetendő", payable),
             ],
         },
         {"key": "income", "label": "Jóváírások", "amountHuf": income_total, "tone": "income", "items": income_items},
-        {"key": "deductions", "label": "Bonusz / malusz tételek", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
+        {"key": "deductions", "label": "Levonások összesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": loyalty, "tone": "income", "items": loyalty_items},
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": customer_rating, "tone": "income", "items": customer_rating_items},
-        {"key": "bonus_malus", "label": "Bonusz / Malusz", "amountHuf": bonus_malus_total, "tone": "info", "items": bonus_malus_items},
+        {"key": "kiflis_bonus_malus", "label": "Kiflis levonások / bónuszok", "amountHuf": kiflis_bonus_malus_total, "tone": "info", "items": kiflis_bonus_malus_items},
+        {"key": "bonus_malus", "label": "JITT bónusz / málusz", "amountHuf": jitt_bonus_malus_total, "tone": "info", "items": jitt_bonus_malus_items},
         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": manual_correction_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]

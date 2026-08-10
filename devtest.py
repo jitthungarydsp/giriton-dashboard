@@ -1592,7 +1592,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     return [
         {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": income, "note": "Havi nyitáskor publikált snapshot"},
-        {"item_key": "deductions", "item_label": "Levonások / korrekciók", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "deductions", "item_label": "Levonások összesen", "amount_kind": "huf", "amount_value": -abs(deduction), "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": orders, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": base, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip, "note": "Havi nyitáskor publikált snapshot"},
@@ -1601,6 +1601,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "kiflis_bonus_malus", "item_label": "Kiflis levonások / bónuszok", "amount_kind": "huf", "amount_value": bonus - abs(deduction), "note": "Excel import tételek összesen"},
         {"item_key": "monthly_bonus", "item_label": "Kiflis bónusz", "amount_kind": "huf", "amount_value": bonus, "note": str(row.get("Importált bónusz megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
         {"item_key": "monthly_malus", "item_label": "Kiflis málusz", "amount_kind": "huf", "amount_value": -abs(deduction), "note": str(row.get("Importált málusz megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
         {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -abs(salary_advance), "note": "Havi nyitáskor publikált snapshot"},
@@ -7286,6 +7287,8 @@ def show_courier_dialog() -> None:
             imported_bonus_total + manual_bonus_total + loyalty_total + imported_customer_rating_total + manual_customer_rating_total
             - imported_malus_total - manual_malus_total
         )
+        kiflis_bonus_malus_effect = imported_bonus_total - imported_malus_total
+        jitt_bonus_malus_effect = manual_bonus_total - manual_malus_total
         snapshot_has_workload = "booked_shift_count" in summary_row or "giriton_shift_count" in summary_row
         if snapshot_has_workload:
             booking_summary = {"source": "vw_courier_month_profile_snapshot"}
@@ -7549,7 +7552,12 @@ def show_courier_dialog() -> None:
                         manual_corrections["Számítás"] = manual_corrections.get("note", pd.Series("", index=manual_corrections.index)).fillna("")
                         detail_parts.append(manual_corrections[["Tétel", "Összeg", "Számítás"]])
                 return pd.concat(detail_parts, ignore_index=True, sort=False) if detail_parts else pd.DataFrame()
-            if detail_label in {"Havi bónusz/málusz", "Kiflis bónusz/málusz"}:
+            if detail_label == "Kiflis levonások / bónuszok":
+                return pd.DataFrame([
+                    {"Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total, "Megjegyzés": imported_bonus_note},
+                    {"Tétel": "Kiflis málusz", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
+                ])
+            if detail_label in {"Havi bónusz/málusz", "JITT bónusz / málusz"}:
                 manual_bonus_notes = " | ".join(
                     dict.fromkeys(
                         adjustments.loc[
@@ -7567,12 +7575,8 @@ def show_courier_dialog() -> None:
                     )
                 ) if not adjustments.empty and "note" in adjustments.columns else ""
                 return pd.DataFrame([
-                    {"Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total, "Megjegyzés": imported_bonus_note},
-                    {"Tétel": "Kiflis bónusz", "Összeg": manual_bonus_total, "Megjegyzés": manual_bonus_notes},
-                    {"Tétel": "Lojalitás", "Összeg": loyalty_total},
-                    {"Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
-                    {"Tétel": "Kiflis málusz", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
-                    {"Tétel": "Kiflis málusz", "Összeg": -manual_malus_total, "Megjegyzés": manual_malus_notes},
+                    {"Tétel": "JITT bónusz", "Összeg": manual_bonus_total, "Megjegyzés": manual_bonus_notes},
+                    {"Tétel": "JITT málusz", "Összeg": -manual_malus_total, "Megjegyzés": manual_malus_notes},
                 ])
             if detail_label == "ATM hatás":
                 return pd.DataFrame([
@@ -7618,7 +7622,8 @@ def show_courier_dialog() -> None:
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
-            ("Kiflis bónusz/málusz", format_huf(monthly_bonus_malus_effect), "", ""),
+            ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
+            ("JITT bónusz / málusz", format_huf(jitt_bonus_malus_effect), "", ""),
             ("ATM hatás", format_huf(-atm_deduction_total), "", ""),
             ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
             ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
@@ -7651,7 +7656,7 @@ def show_courier_dialog() -> None:
 
         detail_labels = {
             "Kör", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
-            "Korrekció", "Kiflis bónusz/málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
+            "Korrekció", "Kiflis levonások / bónuszok", "JITT bónusz / málusz", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
         def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
@@ -7710,11 +7715,14 @@ def show_courier_dialog() -> None:
                 use_container_width=True,
             )
 
-        mobile_monthly_bonus = max(monthly_bonus_malus_effect, 0.0)
-        mobile_monthly_malus = abs(min(monthly_bonus_malus_effect, 0.0))
+        kiflis_bonus_malus_effect = imported_bonus_total - imported_malus_total
+        jitt_bonus_malus_effect = manual_bonus_total - manual_malus_total
+        mobile_monthly_bonus = imported_bonus_total + manual_bonus_total
+        mobile_monthly_malus = imported_malus_total + manual_malus_total
         mobile_income_total = (
             base_total + tip_total + delay_total + compliance_total
-            + route_other_bonus_total + mobile_monthly_bonus
+            + route_other_bonus_total + loyalty_total + customer_rating_total
+            + mobile_monthly_bonus
         )
         mobile_deduction_total = -(
             mobile_monthly_malus + atm_deduction_total + other_expense_total
@@ -7723,7 +7731,7 @@ def show_courier_dialog() -> None:
         mobile_default_rows = pd.DataFrame([
             {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable_total, "note": "Valós elszámolási adat"},
             {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": mobile_income_total, "note": "Valós elszámolási adat"},
-            {"item_key": "deductions", "item_label": "Bónusz / málusz tételek", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
+            {"item_key": "deductions", "item_label": "Levonások összesen", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
             {"item_key": "base", "item_label": "Alapdíj", "amount_kind": "huf", "amount_value": base_total, "note": "Valós elszámolási adat"},
             {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
@@ -7732,8 +7740,12 @@ def show_courier_dialog() -> None:
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction", "item_label": "Időszakos díjak / korrekció", "amount_kind": "huf", "amount_value": periodic_correction_total, "note": "Valós elszámolási adat"},
-            {"item_key": "monthly_bonus", "item_label": "Kiflis bónusz", "amount_kind": "huf", "amount_value": mobile_monthly_bonus, "note": imported_bonus_note or "Valós elszámolási adat"},
-            {"item_key": "monthly_malus", "item_label": "Kiflis málusz", "amount_kind": "huf", "amount_value": -mobile_monthly_malus, "note": imported_malus_note or "Valós elszámolási adat"},
+            {"item_key": "kiflis_bonus_malus", "item_label": "Kiflis levonások / bónuszok", "amount_kind": "huf", "amount_value": kiflis_bonus_malus_effect, "note": "Excel import tételek összesen"},
+            {"item_key": "monthly_bonus", "item_label": "Kiflis bónusz", "amount_kind": "huf", "amount_value": imported_bonus_total, "note": imported_bonus_note or "Valós elszámolási adat"},
+            {"item_key": "monthly_malus", "item_label": "Kiflis málusz", "amount_kind": "huf", "amount_value": -imported_malus_total, "note": imported_malus_note or "Valós elszámolási adat"},
+            {"item_key": "bonus_malus", "item_label": "JITT bónusz / málusz", "amount_kind": "huf", "amount_value": jitt_bonus_malus_effect, "note": "Sheet/DB tételek összesen"},
+            {"item_key": "manual_bonus", "item_label": "JITT bónusz", "amount_kind": "huf", "amount_value": manual_bonus_total, "note": "Sheet/DB tételek"},
+            {"item_key": "manual_malus", "item_label": "JITT málusz", "amount_kind": "huf", "amount_value": -manual_malus_total, "note": "Sheet/DB tételek"},
             {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve_addition_total, "note": "Valós elszámolási adat"},
             {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
