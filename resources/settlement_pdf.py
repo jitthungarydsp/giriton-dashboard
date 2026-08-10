@@ -161,14 +161,20 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         }
     ]
     if tip:
+        if vat_payer:
+            tip_net, tip_vat, tip_gross = _split_gross_vat_amount(tip)
+            tip_vat_label = "27%"
+        else:
+            tip_net, tip_vat, tip_gross = tip, 0, tip
+            tip_vat_label = "Adómentes"
         rows.append({
             "key": "tip",
-            "label": "Borravaló - adómentes",
-            "netHuf": tip,
-            "vatHuf": 0,
-            "grossHuf": tip,
-            "vatLabel": "Adómentes",
-            "note": "Külön adómentes tétel.",
+            "label": "Borravaló",
+            "netHuf": tip_net,
+            "vatHuf": tip_vat,
+            "grossHuf": tip_gross,
+            "vatLabel": tip_vat_label,
+            "note": "Külön tétel.",
         })
     if cash:
         rows.append({

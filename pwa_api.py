@@ -2115,11 +2115,19 @@ def build_financial_breakdown_from_mobile_rows(
                 result.append(current)
         return result
 
-    def detail_items(prefixes: tuple[str, ...], explicit_keys: list[str]) -> list[dict[str, Any]]:
+    def detail_items(
+        prefixes: tuple[str, ...],
+        explicit_keys: list[str],
+        *,
+        exclude_keys: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        excluded = exclude_keys or set()
         keys = explicit_keys + sorted(
             key
             for key in overrides
-            if any(key.startswith(prefix) for prefix in prefixes) and key not in explicit_keys
+            if any(key.startswith(prefix) for prefix in prefixes)
+            and key not in explicit_keys
+            and key not in excluded
         )
         seen: set[str] = set()
         result: list[dict[str, Any]] = []
@@ -2161,7 +2169,11 @@ def build_financial_breakdown_from_mobile_rows(
         "correction_deduction",
         "other_deduction",
     ])
-    kiflis_detail_items = detail_items(("kiflis_bonus_", "kiflis_malus_"), [])
+    kiflis_detail_items = detail_items(
+        ("kiflis_bonus_", "kiflis_malus_"),
+        [],
+        exclude_keys={"kiflis_bonus_malus"},
+    )
     kiflis_items = kiflis_detail_items or detail_items((), ["monthly_bonus", "monthly_malus"])
     jitt_detail_items = detail_items(("jitt_bonus_", "jitt_malus_"), [])
     jitt_items = jitt_detail_items or detail_items((), ["manual_bonus", "manual_malus"])
@@ -2802,14 +2814,18 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             "note": "Kifizetendő összeg borravaló nélkül.",
         })
     if tip_amount:
+        if tax_mode == "vat":
+            tip_net, tip_vat, tip_gross, tip_vat_label = tig_split_amount(tip_amount, tax_mode)
+        else:
+            tip_net, tip_vat, tip_gross, tip_vat_label = tip_amount, 0, tip_amount, "Adómentes"
         rows.append({
             "key": "tip",
-            "label": "Borravaló - adómentes",
-            "netHuf": tip_amount,
-            "vatHuf": 0,
-            "grossHuf": tip_amount,
-            "vatLabel": "Adómentes",
-            "note": "Külön adómentes tétel.",
+            "label": "Borravaló",
+            "netHuf": tip_net,
+            "vatHuf": tip_vat,
+            "grossHuf": tip_gross,
+            "vatLabel": tip_vat_label,
+            "note": "Külön tétel.",
         })
     for cash_row in cash_rows:
         if cash_row.get("key") == "cash_service":
@@ -2837,7 +2853,7 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             row["grossHuf"] = -amount
         sign = -1 if money_int(row.get("grossHuf")) < 0 else 1
         gross_abs = abs(money_int(row.get("grossHuf")))
-        if breakdown.get("taxMode") == "vat" and row.get("key") not in {"tip"}:
+        if breakdown.get("taxMode") == "vat":
             net = int(round(gross_abs / 1.27))
             vat = gross_abs - net
             row["netHuf"] = sign * net
@@ -2846,6 +2862,8 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
         else:
             row["netHuf"] = money_int(row.get("grossHuf"))
             row["vatHuf"] = 0
+            if row.get("key") == "tip":
+                row["vatLabel"] = "Adómentes"
         row["label"] = str(override.get("item_label") or row.get("label") or "")
         if row.get("key") == "transfer_service":
             row["label"] = "Szállítási díj (494107) - átutalás"
