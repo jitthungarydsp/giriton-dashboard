@@ -1,3 +1,4 @@
+/*
 const DEMO_USER={email:'admin@admin.hu',password:'admin123',name:'Kovács Ádám',role:'Admin'};
 const AUTH_KEY='jitt_hub_demo_session';
 function storedSession(){return sessionStorage.getItem(AUTH_KEY)||localStorage.getItem(AUTH_KEY)}
@@ -57,3 +58,346 @@ const pages={dashboard,shifts,couriers,orders,settlements,finance,imports,docume
 function render(){const fn=pages[state.page]||dashboard;$('#pageContent').innerHTML=fn()}
 render();
 initializeAuthentication();
+*/
+
+const DEMO_USER = {
+  email: "admin@admin.hu",
+  password: "admin123",
+  name: "Gurzó Balázs",
+  role: "Admin"
+};
+
+const links = {
+  pwa: "https://giriton-courier-pwa.onrender.com",
+  devtest: "https://devtest.streamlit.app/",
+  github: "https://github.com/jitthungarydsp/giriton-dashboard",
+  hub: "https://jitthub.jitthub.workers.dev/"
+};
+
+const pages = [
+  { id: "home", label: "Kezdőlap", icon: "⌂" },
+  { id: "ops", label: "Operáció", icon: "▦" },
+  { id: "money", label: "Pénzügy", icon: "Ft" },
+  { id: "data", label: "Adatok", icon: "∑" },
+  { id: "roadmap", label: "Bekötések", icon: "◇" }
+];
+
+const modules = [
+  { id: "pwa", title: "Futár PWA", group: "Éles", status: "online", metric: "73 aktív futár", text: "Elszámolás, TIG, útvonalak, reklamációk.", link: links.pwa },
+  { id: "settlement", title: "Elszámolás", group: "Éles", status: "figyelni", metric: "7 ellenőrzés", text: "JITT, Kiflis, korrekció, TIG végösszeg.", link: links.devtest },
+  { id: "shifts", title: "Műszak minőség", group: "Következő", status: "terv", metric: "DB készül", text: "Show, no-show, késés, műszak compliance.", link: "#" },
+  { id: "robots", title: "Robot futtatások", group: "Automata", status: "online", metric: "4 napi job", text: "DSP, bónusz/malus, booking log, járművek.", link: "#" },
+  { id: "discord", title: "Discord üzenetek", group: "Beköthető", status: "terv", metric: "12 sablon", text: "Bónusz, műszak, dokumentum értesítések.", link: "#" },
+  { id: "documents", title: "Dokumentumtár", group: "Beköthető", status: "terv", metric: "TIG + számla", text: "Feltöltések, számlák, TIG, audit.", link: "#" },
+  { id: "fleet", title: "Járművek", group: "Beköthető", status: "terv", metric: "Sheet sync", text: "Ki milyen autóval fut ma és holnap.", link: "#" },
+  { id: "bi", title: "Riportok", group: "Beköthető", status: "terv", metric: "Napi + havi", text: "Kifizetés, teljesítmény, vállalkozói díj.", link: "#" }
+];
+
+const tasks = [
+  ["Mobil snapshot frissítés", "PWA pénzügyi bontás ellenőrzése", "Ma"],
+  ["TIG ellenőrzés", "KP sor és határidő egységesítve", "Kész"],
+  ["Előleg folyamat", "Ne írja felül a havi státuszt", "Kész"],
+  ["Jármű sheet", "Napi sync job előkészítése", "Következő"],
+  ["Discord bónusz értesítés", "Sablonok és küldés", "Terv"]
+];
+
+const state = {
+  page: "home",
+  theme: localStorage.getItem("jittHubTheme") || "light"
+};
+
+const $ = (selector) => document.querySelector(selector);
+const formatMoney = (value) => new Intl.NumberFormat("hu-HU").format(value) + " Ft";
+
+function setTheme() {
+  document.documentElement.dataset.theme = state.theme;
+}
+
+function toast(message) {
+  const element = $("#toast");
+  element.textContent = message;
+  element.classList.add("show");
+  window.setTimeout(() => element.classList.remove("show"), 1800);
+}
+
+function openTarget(id) {
+  const url = links[id];
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  toast("Ez a modul még bekötésre vár.");
+}
+
+function renderNavigation() {
+  $("#mainNav").innerHTML = pages.map((page) => `
+    <button class="nav-pill ${page.id === state.page ? "active" : ""}" data-page="${page.id}">
+      <span>${page.icon}</span>
+      <b>${page.label}</b>
+    </button>
+  `).join("");
+}
+
+function statusLabel(status) {
+  const labels = { online: "Online", figyelni: "Figyelni", terv: "Terv" };
+  return `<span class="status ${status}">${labels[status] || status}</span>`;
+}
+
+function moduleCard(module) {
+  return `
+    <article class="module-card">
+      <div class="module-top">
+        <span class="module-group">${module.group}</span>
+        ${statusLabel(module.status)}
+      </div>
+      <h3>${module.title}</h3>
+      <p>${module.text}</p>
+      <div class="module-bottom">
+        <strong>${module.metric}</strong>
+        <button class="small-action" data-open="${module.id}">Megnyitás</button>
+      </div>
+    </article>
+  `;
+}
+
+function healthCard(title, value, text, tone = "good") {
+  return `
+    <article class="health-card ${tone}">
+      <span>${title}</span>
+      <b>${value}</b>
+      <small>${text}</small>
+    </article>
+  `;
+}
+
+function taskList() {
+  return `
+    <div class="task-list">
+      ${tasks.map(([title, text, tag]) => `
+        <div class="task-row">
+          <div><b>${title}</b><span>${text}</span></div>
+          <em>${tag}</em>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function homePage() {
+  $("#pageTitle").textContent = "Command Center";
+  $("#pageSubtitle").textContent = "Egy kezdőoldal, ami nem csak szép, hanem rögtön használható.";
+  return `
+    <section class="command-grid">
+      <div class="command-main">
+        <div class="focus-card">
+          <span class="eyebrow">Mai fókusz</span>
+          <h2>Elszámolás, PWA, TIG és műszakminőség egy közös belépési pontról.</h2>
+          <p>A Hub nem váltja ki a rendszereket, hanem rendet rak közöttük. Minden fontos modul egy helyről indul, a státuszok pedig később Supabase-ből vagy jobokból jöhetnek.</p>
+          <div class="action-row">
+            <button class="primary-action" data-open="pwa">Futár PWA</button>
+            <button class="secondary-action" data-open="devtest">Elszámolás admin</button>
+            <button class="secondary-action" data-open="github">GitHub</button>
+          </div>
+        </div>
+        <div class="module-grid">${modules.map(moduleCard).join("")}</div>
+      </div>
+      <aside class="command-side">
+        <div class="panel">
+          <h3>Rendszerállapot</h3>
+          <div class="health-grid">
+            ${healthCard("PWA", "OK", "Elérhető", "good")}
+            ${healthCard("Elszámolás", "7", "ellenőrizendő", "warn")}
+            ${healthCard("Robotok", "4", "napi job", "good")}
+            ${healthCard("Adatminőség", "2", "nyitott kérdés", "warn")}
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Mai teendők</h3>
+          ${taskList()}
+        </div>
+      </aside>
+    </section>
+  `;
+}
+
+function opsPage() {
+  $("#pageTitle").textContent = "Operáció";
+  $("#pageSubtitle").textContent = "Futárok, műszakok, útvonalak és napi kontroll.";
+  return `
+    <section class="section-stack">
+      <div class="metric-strip">
+        ${healthCard("Aktív futár", "73", "BUD1 + BUD2")}
+        ${healthCard("Mai műszak", "126", "foglalás alapján")}
+        ${healthCard("Kockázatos műszak", "9", "késés/no-show", "warn")}
+        ${healthCard("Jármű eltérés", "3", "sheet alapján", "warn")}
+      </div>
+      <div class="panel">
+        <h3>Operációs modulok</h3>
+        <div class="module-grid">${modules.filter((item) => ["pwa", "shifts", "robots", "fleet"].includes(item.id)).map(moduleCard).join("")}</div>
+      </div>
+      <div class="panel split-panel">
+        <div>
+          <h3>Műszakminőség terv</h3>
+          <p>Ide kötném be a show/no-show riportot, a műszak kezdését, a sorba állást, és azt, hogy a futár időben visszaért-e a következő műszakhoz.</p>
+        </div>
+        <div class="mini-table">
+          <div><b>Forrás</b><span>attendance + dsp route story</span></div>
+          <div><b>Mentés</b><span>Supabase quality táblák</span></div>
+          <div><b>Kimenet</b><span>napi és havi százalék</span></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function moneyPage() {
+  $("#pageTitle").textContent = "Pénzügy";
+  $("#pageSubtitle").textContent = "Elszámolás, TIG, bónuszok, maluszok és kifizetés.";
+  return `
+    <section class="section-stack">
+      <div class="metric-strip">
+        ${healthCard("Fizetendő", formatMoney(22929355), "jelenlegi hónap")}
+        ${healthCard("Vállalkozói díj", formatMoney(24106292), "kontroll érték")}
+        ${healthCard("Kiflis tételek", "-83 000 Ft", "részletezve", "warn")}
+        ${healthCard("JITT tételek", "-57 646 Ft", "sheet/DB", "warn")}
+      </div>
+      <div class="panel">
+        <h3>Pénzügyi modulok</h3>
+        <div class="module-grid">${modules.filter((item) => ["settlement", "documents", "bi"].includes(item.id)).map(moduleCard).join("")}</div>
+      </div>
+      <div class="panel split-panel">
+        <div>
+          <h3>Ahogy én összeraknám</h3>
+          <p>Az admin devtest számítása legyen az igazságforrás. A PWA csak publikált snapshotot olvas. A TIG ugyanabból a végösszegből épül, hogy ne legyen eltérés a kártya, PWA és TIG között.</p>
+        </div>
+        <div class="mini-table">
+          <div><b>Admin</b><span>számol és publikál</span></div>
+          <div><b>Mobil</b><span>csak megjelenít</span></div>
+          <div><b>TIG</b><span>ugyanazt a payable sort használja</span></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function dataPage() {
+  $("#pageTitle").textContent = "Adatok";
+  $("#pageSubtitle").textContent = "Importok, jobok, szinkronok és hibák.";
+  return `
+    <section class="section-stack">
+      <div class="metric-strip">
+        ${healthCard("Utolsó DSP", "OK", "ma 06:00")}
+        ${healthCard("Booking log", "OK", "Google Sheet")}
+        ${healthCard("Bonus/malus", "Friss", "Excel + Sheet")}
+        ${healthCard("Hibás sor", "12", "ellenőrzés", "warn")}
+      </div>
+      <div class="panel">
+        <h3>Jobok, amiket ide raknék</h3>
+        <div class="job-list">
+          <div><b>dsp.py</b><span>napi teljesítmény és útvonal adatok</span><button class="small-action">Futtatás</button></div>
+          <div><b>sync_loyalty_booking_log.py</b><span>MűszakPro LOG feldolgozás</span><button class="small-action">Futtatás</button></div>
+          <div><b>import_google_bonus_malus_adjustments.py</b><span>JITT bónusz/malus DB sync</span><button class="small-action">Futtatás</button></div>
+          <div><b>vehicle assignment sync</b><span>futár autó hozzárendelések</span><button class="small-action">Futtatás</button></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function roadmapPage() {
+  $("#pageTitle").textContent = "Bekötések";
+  $("#pageSubtitle").textContent = "A látványterv mögé köthető konkrét adatforrások.";
+  const rows = [
+    ["Futár PWA", "pwa_api.py", "Éles link, snapshot, TIG", "Első"],
+    ["Elszámolás admin", "devtest.py", "payable, vállalkozói díj, státusz", "Első"],
+    ["Műszakminőség", "dsp route story + attendance", "show/no-show, késés, compliance", "Második"],
+    ["Járművek", "Google Sheet", "napi autó hozzárendelés", "Második"],
+    ["Discord", "Webhook vagy bot", "bónusz és műszak értesítés", "Harmadik"],
+    ["Audit", "Supabase log táblák", "ki mit módosított", "Harmadik"]
+  ];
+  return `
+    <section class="panel">
+      <h3>Bekötési terv</h3>
+      <div class="roadmap-table">
+        ${rows.map(([name, source, output, phase]) => `
+          <div>
+            <b>${name}</b>
+            <span>${source}</span>
+            <span>${output}</span>
+            <em>${phase}</em>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function render() {
+  renderNavigation();
+  const renderer = {
+    home: homePage,
+    ops: opsPage,
+    money: moneyPage,
+    data: dataPage,
+    roadmap: roadmapPage
+  }[state.page] || homePage;
+  $("#pageContent").innerHTML = renderer();
+}
+
+function showApp() {
+  $("#loginScreen").hidden = true;
+  $("#appShell").hidden = false;
+  render();
+}
+
+function showLogin() {
+  $("#appShell").hidden = true;
+  $("#loginScreen").hidden = false;
+}
+
+function setup() {
+  setTheme();
+  $("#mainNav").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-page]");
+    if (!button) return;
+    state.page = button.dataset.page;
+    render();
+  });
+  document.body.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-open]");
+    if (!button) return;
+    openTarget(button.dataset.open);
+  });
+  $("#themeToggle").addEventListener("click", () => {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    localStorage.setItem("jittHubTheme", state.theme);
+    setTheme();
+  });
+  $("#logoutButton").addEventListener("click", () => {
+    sessionStorage.removeItem("jittHubSession");
+    showLogin();
+  });
+  $("#passwordToggle").addEventListener("click", () => {
+    const input = $("#loginPassword");
+    input.type = input.type === "password" ? "text" : "password";
+  });
+  $("#loginForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const email = $("#loginEmail").value.trim().toLowerCase();
+    const password = $("#loginPassword").value;
+    if (email === DEMO_USER.email && password === DEMO_USER.password) {
+      sessionStorage.setItem("jittHubSession", JSON.stringify({ user: DEMO_USER.name }));
+      showApp();
+      toast("Belépve a JITT Hubba.");
+      return;
+    }
+    $("#loginError").textContent = "Hibás felhasználónév vagy jelszó.";
+  });
+  if (sessionStorage.getItem("jittHubSession")) {
+    showApp();
+  } else {
+    showLogin();
+  }
+}
+
+setup();
