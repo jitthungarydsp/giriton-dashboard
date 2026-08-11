@@ -8187,11 +8187,6 @@ def show_courier_dialog() -> None:
         + correction_deduction_total + salary_advance_total
     )
     row_payable_total = parse_huf_value(row.get("Kifizetendő"))
-    calculated_payable_before_insurance = total_income - total_deduction
-    payable_income_gap = max(row_payable_total - calculated_payable_before_insurance, 0.0) if row_payable_total else 0.0
-    if payable_income_gap:
-        other_route_bonus_total += payable_income_gap
-        total_income += payable_income_gap
     payable_before_insurance = total_income - total_deduction
     reserve_month = resolve_target_reserve_month(
         session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
@@ -8309,7 +8304,7 @@ def show_courier_dialog() -> None:
                     <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Túramegfelelés</span><strong>{format_huf(compliance_total)}</strong></div>
-                    <div class="settlement-ledger-row"><span>Alapdíj kiegészítés</span><strong>{format_huf(other_route_bonus_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Egyéb route bónusz</span><strong>{format_huf(other_route_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Kiflis bónusz</span><strong>{format_huf(imported_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>JITT bónusz</span><strong>{format_huf(manual_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Lojalitás</span><strong>{format_huf(loyalty_total)}</strong></div>
@@ -8520,10 +8515,6 @@ def show_courier_dialog() -> None:
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
         row_payable_total = parse_huf_value(row.get("Kifizetendő"))
-        payable_income_gap = max(row_payable_total - payable_total, 0.0) if row_payable_total else 0.0
-        if payable_income_gap:
-            route_other_bonus_total += payable_income_gap
-            payable_total += payable_income_gap
         payable_before_insurance = payable_total
         reserve_month = resolve_target_reserve_month(
             session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
@@ -9159,7 +9150,7 @@ def show_courier_dialog() -> None:
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
             {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
             {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-            {"Művelet": "+", "Tétel": "Alapdíj kiegészítés", "Összeg": route_other_bonus_total},
+            {"Művelet": "+", "Tétel": "Egyéb route bónusz", "Összeg": route_other_bonus_total},
             {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
             {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
             {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
