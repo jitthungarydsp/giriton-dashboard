@@ -5895,6 +5895,119 @@ def import_api_financial_overview_to_jit(period_start: date, warehouse_label: st
     return str(response.data or "")
 
 
+def refresh_excel_route_coverage_audit(session_id: str | None, period_start: date, period_end: date) -> int:
+    if not session_id:
+        return 0
+    response = (
+        get_db()
+        .schema("settlement")
+        .rpc(
+            "refresh_excel_route_coverage_audit",
+            {
+                "p_session_id": str(session_id),
+                "p_period_start": period_start.isoformat(),
+                "p_period_end": period_end.isoformat(),
+            },
+        )
+        .execute()
+    )
+    try:
+        return int(response.data or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
+    columns = [
+        "session_id",
+        "courier_id",
+        "courier_name",
+        "courier_key",
+        "coverage_status",
+        "is_ok",
+        "excel_route_count",
+        "dsp_route_count",
+        "matched_route_count",
+        "missing_route_count",
+        "extra_excel_route_count",
+        "missing_route_ids",
+        "extra_excel_route_ids",
+        "updated_at",
+    ]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("excel_route_coverage_audit")
+            .select(",".join(columns))
+            .eq("session_id", str(session_id))
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return pd.DataFrame(columns=columns)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
+
+
+def apply_excel_route_coverage_audit(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
+    if data.empty or not session_id:
+        return data
+    audit = load_excel_route_coverage_audit(session_id)
+    result = data.copy()
+    result["Route audit status"] = ""
+    result["Route audit ok"] = pd.NA
+    result["Route audit text"] = ""
+    if audit.empty:
+        return result
+
+    audit = audit.copy()
+    audit["_courier_id_lookup"] = audit.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
+    audit["_courier_name_lookup"] = audit.get("courier_name", pd.Series(dtype=object)).map(_courier_match_key)
+    by_id = audit[audit["_courier_id_lookup"] != ""].set_index("_courier_id_lookup").to_dict("index")
+    by_name = audit[audit["_courier_name_lookup"] != ""].set_index("_courier_name_lookup").to_dict("index")
+
+    def resolve(row: pd.Series) -> dict[str, object] | None:
+        courier_id_key = _courier_id_key(row.get("Courier ID"))
+        courier_name_key = _courier_match_key(row.get("Futár"))
+        return by_id.get(courier_id_key) or by_name.get(courier_name_key)
+
+    statuses: list[str] = []
+    oks: list[object] = []
+    texts: list[str] = []
+    for _, row in result.iterrows():
+        audit_row = resolve(row)
+        if not audit_row:
+            statuses.append("")
+            oks.append(pd.NA)
+            texts.append("")
+            continue
+        status = str(audit_row.get("coverage_status") or "")
+        is_ok = bool(audit_row.get("is_ok"))
+        missing_count = int(audit_row.get("missing_route_count") or 0)
+        dsp_count = int(audit_row.get("dsp_route_count") or 0)
+        matched_count = int(audit_row.get("matched_route_count") or 0)
+        if is_ok:
+            text = f"Route ID OK: {matched_count}/{dsp_count}"
+        elif status:
+            text = f"Route ID eltérés: {missing_count} hiányzik az Excelből"
+        else:
+            text = ""
+        statuses.append(status)
+        oks.append(is_ok)
+        texts.append(text)
+
+    result["Route audit status"] = statuses
+    result["Route audit ok"] = oks
+    result["Route audit text"] = texts
+    return result
+
+
 def status_meta(status: str) -> tuple[str,str]:
     mapping={
         "Előkészítve":("status-red","led-red"),
@@ -7344,6 +7457,24 @@ def render_table(df: pd.DataFrame) -> None:
     )
 
     for i, row in df.reset_index(drop=True).iterrows():
+        audit_status = str(row.get("Route audit status") or "").strip().casefold()
+        audit_ok_raw = row.get("Route audit ok")
+        audit_has_result = audit_status != "" and not pd.isna(audit_ok_raw)
+        if audit_has_result:
+            audit_color = "#16A34A" if bool(audit_ok_raw) else "#DC2626"
+            audit_bg = "rgba(22, 163, 74, 0.08)" if bool(audit_ok_raw) else "rgba(220, 38, 38, 0.08)"
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-courier_row_{i}"] {{
+                    border-left: 7px solid {audit_color} !important;
+                    border-color: {audit_color}66 !important;
+                    box-shadow: inset 7px 0 0 {audit_bg};
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
                 [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
@@ -7359,6 +7490,9 @@ def render_table(df: pd.DataFrame) -> None:
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
                 show_courier_dialog()
+            audit_text = str(row.get("Route audit text") or "").strip()
+            if audit_text:
+                cols[0].caption(audit_text)
 
             cols[1].caption(str(row["Branch"]))
             cols[2].caption(str(row["Számítás módja"]))
@@ -11320,6 +11454,8 @@ def show_new_settlement_page() -> None:
     data = recompute_payable_total(data)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
+    if str(selected_calculation_mode or "").strip().casefold() == "excel":
+        data = apply_excel_route_coverage_audit(data, import_session_id)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -11361,6 +11497,20 @@ def show_new_settlement_page() -> None:
                 )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
+                current_excel_session_id = st.session_state.get("settlement_excel_session_id") or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+                if current_excel_session_id:
+                    try:
+                        current_period_start = parse_month_option(selected_month)
+                        _, current_period_end = month_bounds(current_period_start)
+                        load_excel_route_coverage_audit.clear()
+                        audited = refresh_excel_route_coverage_audit(
+                            current_excel_session_id,
+                            current_period_start,
+                            current_period_end,
+                        )
+                        st.toast(f"Route ID ellenőrzés frissítve: {audited} futár", icon="✅")
+                    except Exception as exc:
+                        st.warning(f"Route ID ellenőrzés nem futott le: {exc}")
                 st.toast(f"Betöltve: {selected_month}",icon="✅")
             else:
                 try:
@@ -11461,6 +11611,15 @@ def show_new_settlement_page() -> None:
                     load_courier_settlement_summary.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                     recalculate_excel_base_rates(get_db(), result["session_id"])
+                    try:
+                        load_excel_route_coverage_audit.clear()
+                        refresh_excel_route_coverage_audit(
+                            result["session_id"],
+                            balance_period_start,
+                            balance_period_end,
+                        )
+                    except Exception as exc:
+                        st.warning(f"Route ID ellenőrzés nem futott le: {exc}")
                     st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
                         result["session_id"],
                         parameter_revision,
@@ -11527,6 +11686,26 @@ def show_new_settlement_page() -> None:
             except Exception as exc:
                 st.error(f"SQL ellenőrzés sikertelen: {exc}")
 
+        if excel_import_session_id and st.button(
+            "Route ID ellenőrzés frissítése",
+            use_container_width=True,
+            key="refresh_excel_route_audit",
+            help="Összeveti a DSP route ID-kat az Excelben szereplő route ID-kkal, és DB-be menti az eredményt.",
+        ):
+            try:
+                route_audit_period_start = parse_month_option(selected_month)
+                _, route_audit_period_end = month_bounds(route_audit_period_start)
+                load_excel_route_coverage_audit.clear()
+                audited = refresh_excel_route_coverage_audit(
+                    excel_import_session_id,
+                    route_audit_period_start,
+                    route_audit_period_end,
+                )
+                st.success(f"Route ID ellenőrzés kész: {audited} futár.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Route ID ellenőrzés sikertelen: {exc}")
+
         if excel_action2.button(
             "Törlés",
             use_container_width=True,
@@ -11556,6 +11735,7 @@ def show_new_settlement_page() -> None:
                 load_courier_route_detail.clear()
                 load_imported_balance_components.clear()
                 load_courier_settlement_summary.clear()
+                load_excel_route_coverage_audit.clear()
 
                 st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
                 st.rerun()
