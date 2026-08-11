@@ -5940,6 +5940,27 @@ def refresh_dsp_route_delay_audit(period_start: date, period_end: date) -> dict[
     }
 
 
+def refresh_dsp_shift_attendance_audit(period_start: date, period_end: date) -> dict[str, int]:
+    response = (
+        get_db()
+        .schema("settlement")
+        .rpc(
+            "refresh_dsp_shift_attendance_audit",
+            {
+                "p_period_start": period_start.isoformat(),
+                "p_period_end": period_end.isoformat(),
+            },
+        )
+        .execute()
+    )
+    data = response.data or {}
+    if not isinstance(data, dict):
+        return {"monthly_compare_rows": 0}
+    return {
+        "monthly_compare_rows": int(data.get("monthly_compare_rows") or 0),
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_dsp_time_window_delay_audit(period_start: date, period_end: date) -> pd.DataFrame:
     columns = [
@@ -5958,6 +5979,44 @@ def load_dsp_time_window_delay_audit(period_start: date, period_end: date) -> pd
             get_db()
             .schema("settlement")
             .table("dsp_time_window_delay_audit_monthly")
+            .select(",".join(columns))
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return pd.DataFrame(columns=columns)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_shift_attendance_audit(period_start: date, period_end: date) -> pd.DataFrame:
+    columns = [
+        "period_start",
+        "period_end",
+        "courier_id",
+        "courier_name",
+        "api_shift_count",
+        "mart_shift_count",
+        "api_late_shift_count",
+        "mart_late_shift_count",
+        "late_difference_count",
+        "late_match_ok",
+        "api_no_show_count",
+        "mart_no_show_count",
+        "no_show_difference_count",
+        "no_show_match_ok",
+        "refreshed_at",
+    ]
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("dsp_shift_attendance_audit_monthly")
             .select(",".join(columns))
             .eq("period_start", period_start.isoformat())
             .eq("period_end", period_end.isoformat())
@@ -6026,6 +6085,88 @@ def apply_dsp_route_delay_audit(data: pd.DataFrame, period_start: date, period_e
     result["Delay audit has result"] = has_results
     result["Delay audit ok"] = oks
     result["Delay audit text"] = texts
+    return result
+
+
+def apply_dsp_shift_attendance_audit(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    if data.empty:
+        return data
+    audit = load_dsp_shift_attendance_audit(period_start, period_end)
+    result = data.copy()
+    result["Shift late audit has result"] = False
+    result["Shift late audit ok"] = pd.NA
+    result["Shift late audit text"] = ""
+    result["No show audit has result"] = False
+    result["No show audit ok"] = pd.NA
+    result["No show audit text"] = ""
+    if audit.empty:
+        return result
+
+    audit = audit.copy()
+    audit["_courier_id_lookup"] = audit.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
+    audit["_courier_name_lookup"] = audit.get("courier_name", pd.Series(dtype=object)).map(_courier_match_key)
+    numeric_columns = [
+        "api_late_shift_count",
+        "mart_late_shift_count",
+        "late_difference_count",
+        "api_no_show_count",
+        "mart_no_show_count",
+        "no_show_difference_count",
+    ]
+    for column in numeric_columns:
+        audit[column] = pd.to_numeric(audit.get(column, 0), errors="coerce").fillna(0)
+    audit["late_match_ok"] = audit.get("late_match_ok", False).astype(bool)
+    audit["no_show_match_ok"] = audit.get("no_show_match_ok", False).astype(bool)
+    by_id = (
+        audit[audit["_courier_id_lookup"] != ""]
+        .drop_duplicates("_courier_id_lookup", keep="first")
+        .set_index("_courier_id_lookup")
+        .to_dict("index")
+    )
+    by_name = (
+        audit[audit["_courier_name_lookup"] != ""]
+        .drop_duplicates("_courier_name_lookup", keep="first")
+        .set_index("_courier_name_lookup")
+        .to_dict("index")
+    )
+
+    late_has_results: list[bool] = []
+    late_oks: list[object] = []
+    late_texts: list[str] = []
+    no_show_has_results: list[bool] = []
+    no_show_oks: list[object] = []
+    no_show_texts: list[str] = []
+    for _, row in result.iterrows():
+        audit_row = by_id.get(_courier_id_key(row.get("Courier ID"))) or by_name.get(_courier_match_key(row.get("Futár")))
+        if not audit_row:
+            late_has_results.append(False)
+            late_oks.append(pd.NA)
+            late_texts.append("")
+            no_show_has_results.append(False)
+            no_show_oks.append(pd.NA)
+            no_show_texts.append("")
+            continue
+
+        api_late = int(audit_row.get("api_late_shift_count") or 0)
+        mart_late = int(audit_row.get("mart_late_shift_count") or 0)
+        late_ok = bool(audit_row.get("late_match_ok"))
+        late_has_results.append(True)
+        late_oks.append(late_ok)
+        late_texts.append(f"Műszak késés OK: {api_late}" if late_ok else f"Műszak késés eltérés: API {api_late} / mart {mart_late}")
+
+        api_no_show = int(audit_row.get("api_no_show_count") or 0)
+        mart_no_show = int(audit_row.get("mart_no_show_count") or 0)
+        no_show_ok = bool(audit_row.get("no_show_match_ok"))
+        no_show_has_results.append(True)
+        no_show_oks.append(no_show_ok)
+        no_show_texts.append(f"No-show OK: {api_no_show}" if no_show_ok else f"No-show eltérés: API {api_no_show} / mart {mart_no_show}")
+
+    result["Shift late audit has result"] = late_has_results
+    result["Shift late audit ok"] = late_oks
+    result["Shift late audit text"] = late_texts
+    result["No show audit has result"] = no_show_has_results
+    result["No show audit ok"] = no_show_oks
+    result["No show audit text"] = no_show_texts
     return result
 
 
@@ -7590,11 +7731,18 @@ def render_table(df: pd.DataFrame) -> None:
         audit_status = str(row.get("Route audit status") or "").strip().casefold()
         audit_ok_raw = row.get("Route audit ok")
         audit_has_result = audit_status != "" and not pd.isna(audit_ok_raw)
+        shift_late_audit_ok_raw = row.get("Shift late audit ok")
+        shift_late_audit_has_result = bool(row.get("Shift late audit has result")) and not pd.isna(shift_late_audit_ok_raw)
         delay_audit_ok_raw = row.get("Delay audit ok")
         delay_audit_has_result = bool(row.get("Delay audit has result")) and not pd.isna(delay_audit_ok_raw)
-        if audit_has_result:
-            audit_color = "#16A34A" if bool(audit_ok_raw) else "#DC2626"
-            audit_bg = "rgba(22, 163, 74, 0.08)" if bool(audit_ok_raw) else "rgba(220, 38, 38, 0.08)"
+        no_show_audit_ok_raw = row.get("No show audit ok")
+        no_show_audit_has_result = bool(row.get("No show audit has result")) and not pd.isna(no_show_audit_ok_raw)
+
+        left_audit_has_result = shift_late_audit_has_result or audit_has_result
+        left_audit_ok = bool(shift_late_audit_ok_raw) if shift_late_audit_has_result else bool(audit_ok_raw)
+        if left_audit_has_result:
+            audit_color = "#16A34A" if left_audit_ok else "#DC2626"
+            audit_bg = "rgba(22, 163, 74, 0.08)" if left_audit_ok else "rgba(220, 38, 38, 0.08)"
             st.markdown(
                 f"""
                 <style>
@@ -7607,9 +7755,11 @@ def render_table(df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
-        if delay_audit_has_result:
-            delay_audit_color = "#16A34A" if bool(delay_audit_ok_raw) else "#DC2626"
-            delay_audit_bg = "rgba(22, 163, 74, 0.08)" if bool(delay_audit_ok_raw) else "rgba(220, 38, 38, 0.08)"
+        right_audit_has_result = no_show_audit_has_result or delay_audit_has_result
+        right_audit_ok = bool(no_show_audit_ok_raw) if no_show_audit_has_result else bool(delay_audit_ok_raw)
+        if right_audit_has_result:
+            delay_audit_color = "#16A34A" if right_audit_ok else "#DC2626"
+            delay_audit_bg = "rgba(22, 163, 74, 0.08)" if right_audit_ok else "rgba(220, 38, 38, 0.08)"
             st.markdown(
                 f"""
                 <style>
@@ -7639,9 +7789,15 @@ def render_table(df: pd.DataFrame) -> None:
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
                 cols[0].caption(audit_text)
+            shift_late_audit_text = str(row.get("Shift late audit text") or "").strip()
+            if shift_late_audit_text:
+                cols[0].caption(shift_late_audit_text)
             delay_audit_text = str(row.get("Delay audit text") or "").strip()
             if delay_audit_text:
                 cols[0].caption(delay_audit_text)
+            no_show_audit_text = str(row.get("No show audit text") or "").strip()
+            if no_show_audit_text:
+                cols[0].caption(no_show_audit_text)
 
             cols[1].caption(str(row["Branch"]))
             cols[2].caption(str(row["Számítás módja"]))
@@ -11606,6 +11762,7 @@ def show_new_settlement_page() -> None:
     if str(selected_calculation_mode or "").strip().casefold() == "excel":
         data = apply_excel_route_coverage_audit(data, import_session_id)
     data = apply_dsp_route_delay_audit(data, balance_period_start, balance_period_end)
+    data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -11877,6 +12034,28 @@ def show_new_settlement_page() -> None:
                 )
             except Exception as exc:
                 st.error(f"Késés ellenőrzés sikertelen: {exc}")
+
+        if st.button(
+            "No-show ellenőrzés frissítése",
+            use_container_width=True,
+            key="refresh_dsp_shift_attendance_audit",
+            help="Az API műszak-késés és no-show darabszámait hasonlítja a saját műszak riporthoz.",
+        ):
+            try:
+                attendance_audit_period_start = parse_month_option(selected_month)
+                _, attendance_audit_period_end = month_bounds(attendance_audit_period_start)
+                load_dsp_shift_attendance_audit.clear()
+                attendance_audit_result = refresh_dsp_shift_attendance_audit(
+                    attendance_audit_period_start,
+                    attendance_audit_period_end,
+                )
+                load_dsp_shift_attendance_audit.clear()
+                st.success(
+                    "No-show ellenőrzés kész: "
+                    f"{attendance_audit_result['monthly_compare_rows']} havi futár összevetés."
+                )
+            except Exception as exc:
+                st.error(f"No-show ellenőrzés sikertelen: {exc}")
 
         if excel_action2.button(
             "Törlés",

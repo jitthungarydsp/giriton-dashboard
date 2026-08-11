@@ -241,6 +241,25 @@ create table if not exists settlement.dsp_time_window_delay_audit_monthly (
     primary key (period_start, period_end, courier_id)
 );
 
+create table if not exists settlement.dsp_shift_attendance_audit_monthly (
+    period_start date not null,
+    period_end date not null,
+    courier_id integer not null,
+    courier_name text,
+    api_shift_count integer not null default 0,
+    mart_shift_count integer not null default 0,
+    api_late_shift_count integer not null default 0,
+    mart_late_shift_count integer not null default 0,
+    late_difference_count integer not null default 0,
+    late_match_ok boolean not null default false,
+    api_no_show_count integer not null default 0,
+    mart_no_show_count integer not null default 0,
+    no_show_difference_count integer not null default 0,
+    no_show_match_ok boolean not null default false,
+    refreshed_at timestamptz not null default now(),
+    primary key (period_start, period_end, courier_id)
+);
+
 create index if not exists dsp_route_delay_audit_detail_period_idx
     on settlement.dsp_route_delay_audit_detail (period_start, period_end, courier_id);
 
@@ -253,6 +272,9 @@ create index if not exists dsp_courier_delay_audit_daily_period_idx
 
 create index if not exists dsp_time_window_delay_audit_monthly_period_idx
     on settlement.dsp_time_window_delay_audit_monthly (period_start, period_end, courier_id);
+
+create index if not exists dsp_shift_attendance_audit_monthly_period_idx
+    on settlement.dsp_shift_attendance_audit_monthly (period_start, period_end, courier_id);
 
 create or replace function settlement.refresh_dsp_route_delay_audit(
     p_period_start date,
@@ -499,12 +521,110 @@ begin
 end;
 $$;
 
+create or replace function settlement.refresh_dsp_shift_attendance_audit(
+    p_period_start date,
+    p_period_end date
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+    monthly_compare_rows integer := 0;
+begin
+    delete from settlement.dsp_shift_attendance_audit_monthly
+    where period_start = p_period_start
+      and period_end = p_period_end;
+
+    with api_attendance as (
+        select
+            courier_id,
+            max(courier_name) as courier_name,
+            sum(coalesce(shift_count, 0))::integer as api_shift_count,
+            sum(coalesce(late_shift_count, 0))::integer as api_late_shift_count,
+            sum(coalesce(no_show_count, 0))::integer as api_no_show_count
+        from public.dsp_courier_quality_daily
+        where work_date between p_period_start and p_period_end
+        group by courier_id
+    ),
+    mart_attendance as (
+        select
+            courier_id,
+            max(courier_name) as courier_name,
+            count(*)::integer as mart_shift_count,
+            count(*) filter (
+                where coalesce(queued_on_time, false) = false
+                  and coalesce(no_show, false) = false
+            )::integer as mart_late_shift_count,
+            count(*) filter (where coalesce(no_show, false) = true)::integer as mart_no_show_count
+        from public.dsp_courier_shift_quality_report
+        where work_date between p_period_start and p_period_end
+        group by courier_id
+    ),
+    compared as (
+        select
+            coalesce(api.courier_id, mart.courier_id) as courier_id,
+            coalesce(api.courier_name, mart.courier_name) as courier_name,
+            coalesce(api.api_shift_count, 0) as api_shift_count,
+            coalesce(mart.mart_shift_count, 0) as mart_shift_count,
+            coalesce(api.api_late_shift_count, 0) as api_late_shift_count,
+            coalesce(mart.mart_late_shift_count, 0) as mart_late_shift_count,
+            coalesce(api.api_no_show_count, 0) as api_no_show_count,
+            coalesce(mart.mart_no_show_count, 0) as mart_no_show_count
+        from api_attendance api
+        full join mart_attendance mart on mart.courier_id = api.courier_id
+    )
+    insert into settlement.dsp_shift_attendance_audit_monthly (
+        period_start,
+        period_end,
+        courier_id,
+        courier_name,
+        api_shift_count,
+        mart_shift_count,
+        api_late_shift_count,
+        mart_late_shift_count,
+        late_difference_count,
+        late_match_ok,
+        api_no_show_count,
+        mart_no_show_count,
+        no_show_difference_count,
+        no_show_match_ok,
+        refreshed_at
+    )
+    select
+        p_period_start,
+        p_period_end,
+        courier_id,
+        courier_name,
+        api_shift_count,
+        mart_shift_count,
+        api_late_shift_count,
+        mart_late_shift_count,
+        mart_late_shift_count - api_late_shift_count,
+        api_late_shift_count = mart_late_shift_count,
+        api_no_show_count,
+        mart_no_show_count,
+        mart_no_show_count - api_no_show_count,
+        api_no_show_count = mart_no_show_count,
+        now()
+    from compared
+    where courier_id is not null;
+
+    get diagnostics monthly_compare_rows = row_count;
+
+    return jsonb_build_object(
+        'monthly_compare_rows', monthly_compare_rows
+    );
+end;
+$$;
+
 grant select on public.vw_dsp_route_delay_detail to service_role;
 grant select on public.vw_dsp_courier_delay_daily to service_role;
 grant select on public.vw_dsp_courier_delay_monthly to service_role;
 grant select, insert, update, delete on settlement.dsp_route_delay_audit_detail to service_role;
 grant select, insert, update, delete on settlement.dsp_courier_delay_audit_daily to service_role;
 grant select, insert, update, delete on settlement.dsp_time_window_delay_audit_monthly to service_role;
+grant select, insert, update, delete on settlement.dsp_shift_attendance_audit_monthly to service_role;
 grant execute on function settlement.refresh_dsp_route_delay_audit(date, date) to service_role;
+grant execute on function settlement.refresh_dsp_shift_attendance_audit(date, date) to service_role;
 
 notify pgrst, 'reload schema';
