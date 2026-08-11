@@ -5940,6 +5940,120 @@ def refresh_dsp_route_delay_audit(period_start: date, period_end: date) -> dict[
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_route_delay_audit_daily(period_start: date, period_end: date) -> pd.DataFrame:
+    columns = [
+        "period_start",
+        "period_end",
+        "work_date",
+        "courier_id",
+        "courier_name",
+        "route_count",
+        "delayed_route_count",
+        "queue_late_route_count",
+        "departure_late_route_count",
+        "time_window_late_count",
+        "first_route_has_delay",
+        "first_route_queue_delay_minutes",
+        "first_route_departure_delay_minutes",
+        "first_route_time_window_late_count",
+        "first_route_delay_status",
+    ]
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("dsp_courier_delay_audit_daily")
+            .select(",".join(columns))
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return pd.DataFrame(columns=columns)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
+
+
+def apply_dsp_route_delay_audit(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    if data.empty:
+        return data
+    audit = load_dsp_route_delay_audit_daily(period_start, period_end)
+    result = data.copy()
+    result["Delay audit has result"] = False
+    result["Delay audit ok"] = pd.NA
+    result["Delay audit text"] = ""
+    if audit.empty:
+        return result
+
+    audit = audit.copy()
+    audit["_courier_id_lookup"] = audit.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
+    audit["_courier_name_lookup"] = audit.get("courier_name", pd.Series(dtype=object)).map(_courier_match_key)
+    numeric_columns = [
+        "route_count",
+        "delayed_route_count",
+        "queue_late_route_count",
+        "departure_late_route_count",
+        "time_window_late_count",
+        "first_route_queue_delay_minutes",
+        "first_route_departure_delay_minutes",
+        "first_route_time_window_late_count",
+    ]
+    for column in numeric_columns:
+        audit[column] = pd.to_numeric(audit.get(column, 0), errors="coerce").fillna(0)
+    audit["first_route_delay_flag"] = audit.get("first_route_has_delay", False).astype(bool)
+    grouped_by_id = pd.DataFrame()
+    if not audit[audit["_courier_id_lookup"] != ""].empty:
+        grouped_by_id = audit[audit["_courier_id_lookup"] != ""].groupby("_courier_id_lookup", as_index=False).agg(
+            route_count=("route_count", "sum"),
+            delayed_route_count=("delayed_route_count", "sum"),
+            queue_late_route_count=("queue_late_route_count", "sum"),
+            departure_late_route_count=("departure_late_route_count", "sum"),
+            time_window_late_count=("time_window_late_count", "sum"),
+            first_route_delay_day_count=("first_route_delay_flag", "sum"),
+        )
+    grouped_by_name = pd.DataFrame()
+    if not audit[audit["_courier_name_lookup"] != ""].empty:
+        grouped_by_name = audit[audit["_courier_name_lookup"] != ""].groupby("_courier_name_lookup", as_index=False).agg(
+            route_count=("route_count", "sum"),
+            delayed_route_count=("delayed_route_count", "sum"),
+            queue_late_route_count=("queue_late_route_count", "sum"),
+            departure_late_route_count=("departure_late_route_count", "sum"),
+            time_window_late_count=("time_window_late_count", "sum"),
+            first_route_delay_day_count=("first_route_delay_flag", "sum"),
+        )
+    by_id = grouped_by_id.set_index("_courier_id_lookup").to_dict("index") if not grouped_by_id.empty else {}
+    by_name = grouped_by_name.set_index("_courier_name_lookup").to_dict("index") if not grouped_by_name.empty else {}
+
+    has_results: list[bool] = []
+    oks: list[object] = []
+    texts: list[str] = []
+    for _, row in result.iterrows():
+        audit_row = by_id.get(_courier_id_key(row.get("Courier ID"))) or by_name.get(_courier_match_key(row.get("Futár")))
+        if not audit_row:
+            has_results.append(False)
+            oks.append(pd.NA)
+            texts.append("")
+            continue
+        delayed_routes = int(audit_row.get("delayed_route_count") or 0)
+        first_route_delay_days = int(audit_row.get("first_route_delay_day_count") or 0)
+        has_delay = delayed_routes > 0 or first_route_delay_days > 0
+        has_results.append(True)
+        oks.append(not has_delay)
+        if has_delay:
+            texts.append(f"Késés: {delayed_routes} túra, első túra: {first_route_delay_days} nap")
+        else:
+            texts.append("Késés OK")
+
+    result["Delay audit has result"] = has_results
+    result["Delay audit ok"] = oks
+    result["Delay audit text"] = texts
+    return result
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
         "session_id",
@@ -7500,6 +7614,8 @@ def render_table(df: pd.DataFrame) -> None:
         audit_status = str(row.get("Route audit status") or "").strip().casefold()
         audit_ok_raw = row.get("Route audit ok")
         audit_has_result = audit_status != "" and not pd.isna(audit_ok_raw)
+        delay_audit_ok_raw = row.get("Delay audit ok")
+        delay_audit_has_result = bool(row.get("Delay audit has result")) and not pd.isna(delay_audit_ok_raw)
         if audit_has_result:
             audit_color = "#16A34A" if bool(audit_ok_raw) else "#DC2626"
             audit_bg = "rgba(22, 163, 74, 0.08)" if bool(audit_ok_raw) else "rgba(220, 38, 38, 0.08)"
@@ -7510,6 +7626,20 @@ def render_table(df: pd.DataFrame) -> None:
                     border-left: 7px solid {audit_color} !important;
                     border-color: {audit_color}66 !important;
                     box-shadow: inset 7px 0 0 {audit_bg};
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+        if delay_audit_has_result:
+            delay_audit_color = "#16A34A" if bool(delay_audit_ok_raw) else "#DC2626"
+            delay_audit_bg = "rgba(22, 163, 74, 0.08)" if bool(delay_audit_ok_raw) else "rgba(220, 38, 38, 0.08)"
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-courier_row_{i}"] {{
+                    border-right: 7px solid {delay_audit_color} !important;
+                    box-shadow: inset -7px 0 0 {delay_audit_bg};
                 }}
                 </style>
                 """,
@@ -7533,6 +7663,9 @@ def render_table(df: pd.DataFrame) -> None:
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
                 cols[0].caption(audit_text)
+            delay_audit_text = str(row.get("Delay audit text") or "").strip()
+            if delay_audit_text:
+                cols[0].caption(delay_audit_text)
 
             cols[1].caption(str(row["Branch"]))
             cols[2].caption(str(row["Számítás módja"]))
@@ -11496,6 +11629,7 @@ def show_new_settlement_page() -> None:
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     if str(selected_calculation_mode or "").strip().casefold() == "excel":
         data = apply_excel_route_coverage_audit(data, import_session_id)
+    data = apply_dsp_route_delay_audit(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -11755,10 +11889,12 @@ def show_new_settlement_page() -> None:
             try:
                 delay_audit_period_start = parse_month_option(selected_month)
                 _, delay_audit_period_end = month_bounds(delay_audit_period_start)
+                load_dsp_route_delay_audit_daily.clear()
                 delay_audit_result = refresh_dsp_route_delay_audit(
                     delay_audit_period_start,
                     delay_audit_period_end,
                 )
+                load_dsp_route_delay_audit_daily.clear()
                 st.success(
                     "Késés ellenőrzés kész: "
                     f"{delay_audit_result['detail_rows']} route sor, "
