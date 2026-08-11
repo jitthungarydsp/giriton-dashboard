@@ -7739,7 +7739,11 @@ def render_table(df: pd.DataFrame) -> None:
         no_show_audit_has_result = bool(row.get("No show audit has result")) and not pd.isna(no_show_audit_ok_raw)
 
         left_audit_has_result = shift_late_audit_has_result or audit_has_result
-        left_audit_ok = bool(shift_late_audit_ok_raw) if shift_late_audit_has_result else bool(audit_ok_raw)
+        left_audit_ok = False
+        if shift_late_audit_has_result:
+            left_audit_ok = bool(shift_late_audit_ok_raw)
+        elif audit_has_result:
+            left_audit_ok = bool(audit_ok_raw)
         if left_audit_has_result:
             audit_color = "#16A34A" if left_audit_ok else "#DC2626"
             audit_bg = "rgba(22, 163, 74, 0.08)" if left_audit_ok else "rgba(220, 38, 38, 0.08)"
@@ -7756,7 +7760,11 @@ def render_table(df: pd.DataFrame) -> None:
                 unsafe_allow_html=True,
             )
         right_audit_has_result = no_show_audit_has_result or delay_audit_has_result
-        right_audit_ok = bool(no_show_audit_ok_raw) if no_show_audit_has_result else bool(delay_audit_ok_raw)
+        right_audit_ok = False
+        if no_show_audit_has_result:
+            right_audit_ok = bool(no_show_audit_ok_raw)
+        elif delay_audit_has_result:
+            right_audit_ok = bool(delay_audit_ok_raw)
         if right_audit_has_result:
             delay_audit_color = "#16A34A" if right_audit_ok else "#DC2626"
             delay_audit_bg = "rgba(22, 163, 74, 0.08)" if right_audit_ok else "rgba(220, 38, 38, 0.08)"
