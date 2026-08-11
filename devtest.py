@@ -5917,6 +5917,28 @@ def refresh_excel_route_coverage_audit(session_id: str | None, period_start: dat
         return 0
 
 
+def refresh_dsp_route_delay_audit(period_start: date, period_end: date) -> dict[str, int]:
+    response = (
+        get_db()
+        .schema("settlement")
+        .rpc(
+            "refresh_dsp_route_delay_audit",
+            {
+                "p_period_start": period_start.isoformat(),
+                "p_period_end": period_end.isoformat(),
+            },
+        )
+        .execute()
+    )
+    data = response.data or {}
+    if not isinstance(data, dict):
+        return {"detail_rows": 0, "daily_rows": 0}
+    return {
+        "detail_rows": int(data.get("detail_rows") or 0),
+        "daily_rows": int(data.get("daily_rows") or 0),
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
@@ -11723,6 +11745,27 @@ def show_new_settlement_page() -> None:
                 st.rerun()
             except Exception as exc:
                 st.error(f"Route ID ellenőrzés sikertelen: {exc}")
+
+        if st.button(
+            "Késés ellenőrzés frissítése",
+            use_container_width=True,
+            key="refresh_dsp_route_delay_audit",
+            help="DSP mart route adatokból külön DB táblába menti az összes késést és az első túra késését.",
+        ):
+            try:
+                delay_audit_period_start = parse_month_option(selected_month)
+                _, delay_audit_period_end = month_bounds(delay_audit_period_start)
+                delay_audit_result = refresh_dsp_route_delay_audit(
+                    delay_audit_period_start,
+                    delay_audit_period_end,
+                )
+                st.success(
+                    "Késés ellenőrzés kész: "
+                    f"{delay_audit_result['detail_rows']} route sor, "
+                    f"{delay_audit_result['daily_rows']} napi futár sor."
+                )
+            except Exception as exc:
+                st.error(f"Késés ellenőrzés sikertelen: {exc}")
 
         if excel_action2.button(
             "Törlés",
