@@ -95,7 +95,7 @@ st.sidebar.info(f"Jogosultság: {user['role']}")
 logout_button()
 devtest_page = st.sidebar.radio(
     "Devtest oldal",
-    ["Elszamolas", "PDF minta"],
+    ["Elszamolas", "Kimutatás"],
     key="devtest_page",
 )
 
@@ -11028,6 +11028,119 @@ def show_settlement_pdf_sample_page() -> None:
     )
 
 
+def show_bonus_report_page() -> None:
+    apply_design()
+    st.markdown(
+        """
+        <div class="premium-hero">
+        <div class="hero-left">
+            <div class="badge">KIMUTATÁS</div>
+            <h1>Delay és compliance bónusz</h1>
+            <p>Excel alapú futár kimutatás a késedelmi és túramegfelelési bónuszokról.</p>
+        </div>
+        <div class="month-pill"><div class="label">Forrás</div><div class="value">Excel</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([0.35, 0.65])
+    with left:
+        selected_month = st.selectbox(
+            "Elszámolási hónap",
+            month_options(),
+            key="bonus_report_month",
+        )
+    with right:
+        st.caption("A kimutatás mindig Excel számításból dolgozik. API adatot itt nem keverünk bele.")
+
+    period_start = parse_month_option(selected_month)
+    period_start, period_end = month_bounds(period_start)
+    session_id = (
+        st.session_state.get("settlement_excel_session_id")
+        or load_latest_excel_jit_session_id(period_start)
+    )
+    if session_id:
+        st.session_state["settlement_excel_session_id"] = session_id
+
+    if not session_id:
+        st.warning("Ehhez a hónaphoz nincs betöltött Excel számítás. Előbb az Elszámolás oldalon töltsd be az Excel fájlt.")
+        return
+
+    with st.spinner("Excel alapú kimutatás betöltése..."):
+        data = build_settlement_working_data("Excel", session_id, period_start, "Összes")
+        data = apply_received_amounts(data, "Excel", period_start, "Összes", session_id)
+        data = apply_imported_balance_components(
+            data,
+            balance_component_session_id("Excel", period_start, session_id),
+        )
+        data = apply_loyalty_bonus(data, period_start, period_end, session_id, "Excel")
+        data = apply_customer_rating_bonus(data, period_start, period_end)
+        data = apply_manual_balance_adjustments(data, period_start, period_end)
+        data = apply_periodic_fee_corrections(data, session_id, "Excel", period_start, period_end, "Összes")
+        data = apply_salary_advance_deduction(data, period_start, period_end)
+        data = recompute_payable_total(data)
+
+    if data.empty:
+        st.info("Az Excel számításból nem jött megjeleníthető futáradat.")
+        return
+
+    report = data.copy()
+    for column in ["Rendelések", "Kör", "Késedelmi díj", "Túramegfelelés", "Kifizetendő"]:
+        report[column] = _numeric_series(report, column)
+    report["Delay + compliance összesen"] = report["Késedelmi díj"] + report["Túramegfelelés"]
+
+    view_columns = [
+        "Courier ID",
+        "Futár",
+        "Raktár",
+        "Rendelések",
+        "Kör",
+        "Késedelmi díj",
+        "Túramegfelelés",
+        "Delay + compliance összesen",
+        "Kifizetendő",
+        "Státusz",
+    ]
+    for column in view_columns:
+        if column not in report.columns:
+            report[column] = ""
+    report = report[view_columns].sort_values(
+        ["Delay + compliance összesen", "Futár"],
+        ascending=[False, True],
+    )
+
+    total_delay = int(report["Késedelmi díj"].sum())
+    total_compliance = int(report["Túramegfelelés"].sum())
+    total_bonus = int(report["Delay + compliance összesen"].sum())
+    courier_with_bonus = int((report["Delay + compliance összesen"] != 0).sum())
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Késedelmi bónusz összesen", format_huf(total_delay))
+    k2.metric("Túramegfelelés összesen", format_huf(total_compliance))
+    k3.metric("Delay + compliance", format_huf(total_bonus))
+    k4.metric("Bónuszos futár", f"{courier_with_bonus} fő")
+
+    st.dataframe(
+        report,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Késedelmi díj": st.column_config.NumberColumn("Késedelmi díj", format="%d Ft"),
+            "Túramegfelelés": st.column_config.NumberColumn("Túramegfelelés", format="%d Ft"),
+            "Delay + compliance összesen": st.column_config.NumberColumn("Delay + compliance összesen", format="%d Ft"),
+            "Kifizetendő": st.column_config.NumberColumn("Kifizetendő", format="%d Ft"),
+        },
+    )
+    st.download_button(
+        "Kimutatás export Excel",
+        data=build_excel_export(report),
+        file_name=f"delay_compliance_kimutatas_{period_start:%Y_%m}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+
 def build_excel_export(df: pd.DataFrame) -> bytes:
     from io import BytesIO
     output = BytesIO()
@@ -11998,7 +12111,7 @@ def show_new_settlement_page() -> None:
 
 
 if __name__ == "__main__":
-    if devtest_page == "PDF minta":
-        show_settlement_pdf_sample_page()
+    if devtest_page == "Kimutatás":
+        show_bonus_report_page()
     else:
         show_new_settlement_page()
