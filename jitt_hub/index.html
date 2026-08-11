@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b8f48" />
+  <title>Jitt Hub Operations</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
+    <div class="login-visual">
+      <div class="login-glow login-glow-one"></div>
+      <div class="login-glow login-glow-two"></div>
+      <div class="login-visual-content">
+        <div class="login-brand"><span class="login-brand-mark">JH</span><span>Jitt Hub</span></div>
+        <div class="login-copy">
+          <span class="login-kicker">OPERATIONS OS</span>
+          <h1>Irányítsd az egész operációt egyetlen helyről.</h1>
+          <p>Futárok, műszakok, elszámolások és élő riasztások modern, biztonságos kezelőfelületen.</p>
+        </div>
+        <div class="login-feature-grid">
+          <div><strong>Valós idő</strong><span>Élő státuszok és riasztások</span></div>
+          <div><strong>Egy rendszer</strong><span>Minden raktár és folyamat</span></div>
+          <div><strong>Biztonság</strong><span>Szerepköralapú hozzáférés</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="login-panel">
+      <form class="login-card" id="loginForm" novalidate>
+        <div class="login-mobile-brand"><span class="login-brand-mark">JH</span><strong>Jitt Hub</strong></div>
+        <span class="login-eyebrow">ÜDV ÚJRA</span>
+        <h2 id="loginTitle">Bejelentkezés</h2>
+        <p class="login-intro">Add meg a hozzáférési adataidat a Jitt Hub megnyitásához.</p>
+        <label class="login-label" for="loginEmail">Felhasználónév</label>
+        <div class="login-input-wrap"><span>✉</span><input id="loginEmail" name="email" type="email" autocomplete="username" placeholder="nev@ceg.hu" required></div>
+        <label class="login-label" for="loginPassword">Jelszó</label>
+        <div class="login-input-wrap"><span>⌑</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Jelszó" required><button type="button" class="password-toggle" id="passwordToggle" aria-label="Jelszó megjelenítése">◉</button></div>
+        <div class="login-options"><label><input type="checkbox" id="rememberMe"> Emlékezz rám</label><button type="button" class="text-button" id="forgotPassword">Elfelejtett jelszó?</button></div>
+        <div class="login-error" id="loginError" role="alert" aria-live="polite"></div>
+        <button class="login-submit" type="submit"><span>Bejelentkezés</span><span>→</span></button>
+        <div class="login-demo"><span>Teszt hozzáférés</span><code>admin@admin.hu</code><code>admin123</code></div>
+        <p class="login-footer">© 2026 Jitt Hub · Belső használatra</p>
+      </form>
+    </div>
+  </section>
+
+  <div class="app-shell" id="appShell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="brand-mark">JH</div><div><strong>Jitt Hub</strong><span>Operations OS</span></div></div>
+      <nav id="mainNav"></nav>
+      <div class="sidebar-footer"><div class="version">Jitt Hub v3.0</div><small>Prototype build</small></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="icon-btn mobile-only" id="menuToggle" aria-label="Menü">☰</button>
+          <div><h1 id="pageTitle">Operations Dashboard</h1><p id="pageSubtitle">Valós idejű áttekintés az összes raktárról</p></div>
+        </div>
+        <div class="topbar-actions">
+          <div class="segmented" id="branchTabs">
+            <button data-branch="BUD1">BUD1</button><button data-branch="BUD2">BUD2</button><button class="active" data-branch="ALL">Összes</button>
+          </div>
+          <button class="status-chip"><span class="dot live"></span>Live</button>
+          <button class="status-chip">● Sync OK</button>
+          <button class="icon-btn" id="themeToggle" title="Téma">◐</button>
+          <button class="profile-btn" id="logoutButton" title="Kijelentkezés"><span class="avatar">KA</span><span><strong>Kovács Ádám</strong><small>Admin · Kilépés</small></span></button>
+        </div>
+      </header>
+      <section class="content" id="pageContent"></section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
