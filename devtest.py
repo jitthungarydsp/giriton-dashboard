@@ -2809,6 +2809,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     document_types_by_courier: dict[str, set[str]] = {}
     if not documents.empty:
         for item in documents.to_dict("records"):
+            if process_id_from_note(item.get("note")):
+                continue
             courier_key = _courier_id_key(item.get("courier_id"))
             document_type = str(item.get("document_type") or "").strip()
             if courier_key and document_type:
@@ -2819,6 +2821,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         for item in statuses.sort_values("updated_at", ascending=False, na_position="last").to_dict("records"):
             courier_key = _courier_id_key(item.get("courier_id"))
             action_key = str(item.get("action_key") or "").strip()
+            if process_id_from_action_key(action_key):
+                continue
             if courier_key and action_key:
                 status_by_courier.setdefault(courier_key, {}).setdefault(
                     action_key,
