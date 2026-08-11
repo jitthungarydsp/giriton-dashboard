@@ -78,6 +78,7 @@ const pages = [
   { id: "home", label: "Kezdőlap", icon: "⌂" },
   { id: "ops", label: "Operáció", icon: "▦" },
   { id: "money", label: "Pénzügy", icon: "Ft" },
+  { id: "report", label: "Kimutatás", icon: "Σ" },
   { id: "data", label: "Adatok", icon: "∑" },
   { id: "roadmap", label: "Bekötések", icon: "◇" }
 ];
@@ -85,6 +86,7 @@ const pages = [
 const modules = [
   { id: "pwa", title: "Futár PWA", group: "Éles", status: "online", metric: "73 aktív futár", text: "Elszámolás, TIG, útvonalak, reklamációk.", link: links.pwa },
   { id: "settlement", title: "Elszámolás", group: "Éles", status: "figyelni", metric: "7 ellenőrzés", text: "JITT, Kiflis, korrekció, TIG végösszeg.", link: links.devtest },
+  { id: "bonusReport", title: "Excel kimutatás", group: "Új", status: "terv", metric: "Delay + compliance", text: "Futár, Excel túrák, bónuszok és PWA/mart műszakadatok.", link: "#" },
   { id: "shifts", title: "Műszak minőség", group: "Következő", status: "terv", metric: "DB készül", text: "Show, no-show, késés, műszak compliance.", link: "#" },
   { id: "robots", title: "Robot futtatások", group: "Automata", status: "online", metric: "4 napi job", text: "DSP, bónusz/malus, booking log, járművek.", link: "#" },
   { id: "discord", title: "Discord üzenetek", group: "Beköthető", status: "terv", metric: "12 sablon", text: "Bónusz, műszak, dokumentum értesítések.", link: "#" },
@@ -101,9 +103,73 @@ const tasks = [
   ["Discord bónusz értesítés", "Sablonok és küldés", "Terv"]
 ];
 
+const reportCouriers = [
+  {
+    id: "demo-a",
+    name: "Futár A",
+    warehouse: "BUD2",
+    orders: 603,
+    routes: 46,
+    delayBonus: 138000,
+    complianceBonus: 46000,
+    payable: 556360,
+    excelRows: [
+      ["2026-07-03", "Route demo-01", "Normál", 13, 3000, 1000, "BUD2-10:00"],
+      ["2026-07-06", "Route demo-02", "Normál", 11, 3000, 1000, "BUD2-15:00"],
+      ["2026-07-18", "Route demo-03", "Kiemelt", 18, 6000, 2000, "BUD2-18:00"]
+    ],
+    shifts: [
+      ["2026-07-03", "BUD2-10:00", "09:54", "09:54", "Időben", "OK"],
+      ["2026-07-06", "BUD2-15:00", "14:51", "14:51", "Időben", "OK"],
+      ["2026-07-18", "BUD2-18:00", "17:49", "17:49", "Időben", "No-show nincs"]
+    ]
+  },
+  {
+    id: "demo-b",
+    name: "Futár B",
+    warehouse: "BUD2",
+    orders: 163,
+    routes: 18,
+    delayBonus: 54000,
+    complianceBonus: 18000,
+    payable: -144867,
+    excelRows: [
+      ["2026-07-25", "Route demo-04", "Normál", 7, 3000, 1000, "BUD2-10:00"],
+      ["2026-07-25", "Route demo-05", "Normál", 6, 3000, 1000, "BUD2-14:45"],
+      ["2026-07-25", "Route demo-06", "Kiemelt", 12, 6000, 2000, "BUD2-19:30"]
+    ],
+    shifts: [
+      ["2026-07-25", "BUD2-10:00", "18:50", "18:50", "Ellenőrizendő", "Későbbi bejelentkezés látszik"],
+      ["2026-07-25", "BUD2-14:45", "18:50", "18:50", "Ellenőrizendő", "Ugyanaz a bejelentkezés"],
+      ["2026-07-25", "BUD2-19:30", "18:50", "18:50", "Időben", "OK"]
+    ]
+  },
+  {
+    id: "demo-c",
+    name: "Futár C",
+    warehouse: "BUD1",
+    orders: 497,
+    routes: 39,
+    delayBonus: 118000,
+    complianceBonus: 32000,
+    payable: 588980,
+    excelRows: [
+      ["2026-07-06", "Route demo-07", "Normál", 10, 3000, 0, "BUD1-09:00"],
+      ["2026-07-13", "Route demo-08", "Normál", 12, 3000, 0, "BUD1-12:00"],
+      ["2026-07-20", "Route demo-09", "Kiemelt", 16, 6000, 10000, "BUD1-18:00"]
+    ],
+    shifts: [
+      ["2026-07-06", "BUD1-09:00", "08:51", "08:51", "Időben", "OK"],
+      ["2026-07-13", "BUD1-12:00", "11:54", "11:54", "Időben", "OK"],
+      ["2026-07-20", "BUD1-18:00", "17:50", "17:50", "Időben", "Extra bónusz ellenőrizhető"]
+    ]
+  }
+];
+
 const state = {
   page: "home",
-  theme: localStorage.getItem("jittHubTheme") || "light"
+  theme: localStorage.getItem("jittHubTheme") || "light",
+  reportCourierId: "demo-a"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -280,6 +346,107 @@ function moneyPage() {
   `;
 }
 
+function reportPage() {
+  $("#pageTitle").textContent = "Excel kimutatás";
+  $("#pageSubtitle").textContent = "Delay bónusz, compliance bónusz és a mögöttes PWA/mart műszakadatok egy futárra bontva.";
+  const selected = reportCouriers.find((courier) => courier.id === state.reportCourierId) || reportCouriers[0];
+  const totalDelay = reportCouriers.reduce((sum, courier) => sum + courier.delayBonus, 0);
+  const totalCompliance = reportCouriers.reduce((sum, courier) => sum + courier.complianceBonus, 0);
+  const totalRoutes = reportCouriers.reduce((sum, courier) => sum + courier.routes, 0);
+  const totalOrders = reportCouriers.reduce((sum, courier) => sum + courier.orders, 0);
+  return `
+    <section class="section-stack">
+      <div class="metric-strip">
+        ${healthCard("Delay bónusz", formatMoney(totalDelay), "Excel összesítő")}
+        ${healthCard("Compliance bónusz", formatMoney(totalCompliance), "Excel összesítő")}
+        ${healthCard("Kör", totalRoutes, "Excel sorok alapján")}
+        ${healthCard("Cím", totalOrders, "Excel sorok alapján")}
+      </div>
+
+      <div class="panel report-control">
+        <div>
+          <span class="eyebrow">Excel alapú forrás</span>
+          <h3>Futár kiválasztása</h3>
+          <p>A végleges bekötésnél itt nem demo adat lesz: a JITT Excel import sessionből jön a bónusz, a részletek pedig PWA/mart route és műszak táblából nyílnak le.</p>
+        </div>
+        <label>
+          Futár
+          <select class="hub-select" id="reportCourierSelect">
+            ${reportCouriers.map((courier) => `<option value="${courier.id}" ${courier.id === selected.id ? "selected" : ""}>${courier.name} · ${courier.warehouse}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+
+      <div class="report-profile">
+        <article class="panel report-summary">
+          <span class="eyebrow">Kiválasztott futár</span>
+          <h3>${selected.name}</h3>
+          <div class="report-kpi-grid">
+            <div><span>Raktár</span><b>${selected.warehouse}</b></div>
+            <div><span>Rendelés</span><b>${selected.orders}</b></div>
+            <div><span>Kör</span><b>${selected.routes}</b></div>
+            <div><span>Kifizetendő</span><b>${formatMoney(selected.payable)}</b></div>
+            <div><span>Delay bónusz</span><b>${formatMoney(selected.delayBonus)}</b></div>
+            <div><span>Compliance bónusz</span><b>${formatMoney(selected.complianceBonus)}</b></div>
+          </div>
+        </article>
+
+        <article class="panel report-flow">
+          <h3>Adatút</h3>
+          <div class="flow-steps">
+            <div><b>1</b><span>Excel import</span><small>route, cím, delay, compliance</small></div>
+            <div><b>2</b><span>PWA/mart alábontás</span><small>műszak, bejelentkezés, sorba állás</small></div>
+            <div><b>3</b><span>No-show kontroll</span><small>saját számítás vs API napi riport</small></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="panel">
+        <div class="card-head">
+          <div>
+            <h3>Excel túra és bónusz sorok</h3>
+            <p class="muted">Ez a rész mutatja, melyik Excel sorból mennyi delay és compliance bónusz jött.</p>
+          </div>
+          <button class="small-action" onclick="toast('Itt később Excel export indul.')">Export</button>
+        </div>
+        <div class="report-table">
+          <div class="report-table-head">
+            <span>Dátum</span><span>Route</span><span>Típus</span><span>Cím</span><span>Delay</span><span>Compliance</span><span>Műszak</span>
+          </div>
+          ${selected.excelRows.map((row) => `
+            <div class="report-table-row">
+              ${row.map((cell, index) => `<span>${index === 4 || index === 5 ? formatMoney(cell) : cell}</span>`).join("")}
+            </div>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="card-head">
+          <div>
+            <h3>Műszak és bejelentkezés alábontás</h3>
+            <p class="muted">A végleges verzióban ez a PWA-ban már meglévő route/műszak adatokból, illetve a mart route storyból jön.</p>
+          </div>
+          <span class="status terv">PWA + mart route</span>
+        </div>
+        <div class="shift-detail-grid">
+          ${selected.shifts.map(([date, shift, available, queued, status, note]) => `
+            <article>
+              <div><b>${date}</b><span>${shift}</span></div>
+              <dl>
+                <div><dt>Elérhető volt</dt><dd>${available}</dd></div>
+                <div><dt>Sorba állt</dt><dd>${queued}</dd></div>
+                <div><dt>Állapot</dt><dd>${status}</dd></div>
+                <div><dt>Megjegyzés</dt><dd>${note}</dd></div>
+              </dl>
+            </article>
+          `).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function dataPage() {
   $("#pageTitle").textContent = "Adatok";
   $("#pageSubtitle").textContent = "Importok, jobok, szinkronok és hibák.";
@@ -338,6 +505,7 @@ function render() {
     home: homePage,
     ops: opsPage,
     money: moneyPage,
+    report: reportPage,
     data: dataPage,
     roadmap: roadmapPage
   }[state.page] || homePage;
@@ -361,6 +529,11 @@ function setup() {
     const button = event.target.closest("[data-page]");
     if (!button) return;
     state.page = button.dataset.page;
+    render();
+  });
+  document.body.addEventListener("change", (event) => {
+    if (event.target.id !== "reportCourierSelect") return;
+    state.reportCourierId = event.target.value;
     render();
   });
   document.body.addEventListener("click", (event) => {
