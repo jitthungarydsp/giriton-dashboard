@@ -44,7 +44,36 @@ begin
     delete from settlement.excel_route_coverage_audit
     where session_id = p_session_id;
 
-    with excel_raw as (
+    with excel_import_route_candidates as (
+        select
+            ei.session_id::text as session_id,
+            count(distinct route_match.route_id) as matched_route_candidates,
+            max(ei.created_at) as last_imported_at
+        from settlement.excel_import ei
+        cross join lateral jsonb_each_text(ei.data) as raw_cell(key, value)
+        cross join lateral (
+            select r.match_value[1] as route_id
+            from regexp_matches(raw_cell.value, '([0-9]{5,12})', 'g') as r(match_value)
+        ) route_match
+        join public.mart_dsp_route_stories m
+            on m.route_id::text = route_match.route_id
+            and m.work_date between p_period_start and p_period_end
+        group by ei.session_id::text
+    ),
+    effective_excel_import_session as (
+        select session_id
+        from excel_import_route_candidates
+        order by
+            case
+                when session_id = p_session_id and matched_route_candidates > 0 then 0
+                when matched_route_candidates > 0 then 1
+                else 2
+            end,
+            matched_route_candidates desc,
+            last_imported_at desc
+        limit 1
+    ),
+    jit_excel_raw as (
         select
             nullif(trim(coalesce(
                 j.normalized_data ->> 'courier_id',
@@ -65,12 +94,74 @@ begin
             nullif(trim(coalesce(
                 j.route_unique_id,
                 j.normalized_data ->> 'route_unique_id',
+                j.normalized_data ->> 'route_id',
                 j.normalized_data ->> 'Route Unique ID',
                 j.normalized_data ->> 'routeId',
-                j.normalized_data ->> 'Route ID'
+                j.normalized_data ->> 'Route ID',
+                j.normalized_data ->> 'RouteId',
+                j.normalized_data ->> 'route',
+                j.normalized_data ->> 'Route',
+                raw_route.route_id,
+                dynamic_route.route_id
             )), '') as route_id
         from settlement.jit_row j
+        left join settlement.excel_import ei
+            on ei.session_id::text = j.session_id::text
+            and ei.sheet_name = j.source_sheet
+            and ei.source_row_no = j.source_row_no
+        left join lateral (
+            select r.match_value[1] as route_id
+            from jsonb_each_text(ei.data) as raw_cell(key, value)
+            cross join lateral regexp_matches(raw_cell.value, '([0-9]{5,12})', 'g') as r(match_value)
+            join public.mart_dsp_route_stories m
+                on m.route_id::text = r.match_value[1]
+            order by
+                case when m.work_date between p_period_start and p_period_end then 0 else 1 end,
+                m.work_date desc
+            limit 1
+        ) raw_route on true
+        left join lateral (
+            select value as route_id
+            from jsonb_each_text(j.normalized_data)
+            where regexp_replace(lower(key), '[^a-z0-9]+', '', 'g') in (
+                'routeid',
+                'routeuniqueid',
+                'routeazonosito'
+            )
+            or (
+                regexp_replace(lower(key), '[^a-z0-9]+', '', 'g') like '%route%'
+                and regexp_replace(lower(key), '[^a-z0-9]+', '', 'g') like '%id%'
+            )
+            limit 1
+        ) dynamic_route on true
         where j.session_id::text = p_session_id
+    ),
+    raw_excel_route_values as (
+        select distinct
+            m.courier_id::text as courier_id,
+            m.courier_name as courier_name,
+            route_match.route_id as route_id
+        from settlement.excel_import ei
+        cross join lateral jsonb_each_text(ei.data) as raw_cell(key, value)
+        cross join lateral (
+            select r.match_value[1] as route_id
+            from regexp_matches(raw_cell.value, '([0-9]{5,12})', 'g') as r(match_value)
+        ) route_match
+        join public.mart_dsp_route_stories m
+            on m.route_id::text = route_match.route_id
+            and m.work_date between p_period_start and p_period_end
+        where ei.session_id::text in (
+            select session_id
+            from effective_excel_import_session
+        )
+    ),
+    excel_raw as (
+        select courier_id, courier_name, route_id
+        from jit_excel_raw
+        where route_id is not null
+        union all
+        select courier_id, courier_name, route_id
+        from raw_excel_route_values
     ),
     excel_grouped as (
         select
