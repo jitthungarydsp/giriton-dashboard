@@ -103,77 +103,156 @@ const tasks = [
   ["Discord bónusz értesítés", "Sablonok és küldés", "Terv"]
 ];
 
-const reportCouriers = [
-  {
-    id: "demo-a",
-    name: "Futár A",
-    warehouse: "BUD2",
-    orders: 603,
-    routes: 46,
-    delayBonus: 138000,
-    complianceBonus: 46000,
-    payable: 556360,
-    excelRows: [
-      ["2026-07-03", "Route demo-01", "Normál", 13, 3000, 1000, "BUD2-10:00"],
-      ["2026-07-06", "Route demo-02", "Normál", 11, 3000, 1000, "BUD2-15:00"],
-      ["2026-07-18", "Route demo-03", "Kiemelt", 18, 6000, 2000, "BUD2-18:00"]
-    ],
-    shifts: [
-      ["2026-07-03", "BUD2-10:00", "09:54", "09:54", "Időben", "OK"],
-      ["2026-07-06", "BUD2-15:00", "14:51", "14:51", "Időben", "OK"],
-      ["2026-07-18", "BUD2-18:00", "17:49", "17:49", "Időben", "No-show nincs"]
-    ]
-  },
-  {
-    id: "demo-b",
-    name: "Futár B",
-    warehouse: "BUD2",
-    orders: 163,
-    routes: 18,
-    delayBonus: 54000,
-    complianceBonus: 18000,
-    payable: -144867,
-    excelRows: [
-      ["2026-07-25", "Route demo-04", "Normál", 7, 3000, 1000, "BUD2-10:00"],
-      ["2026-07-25", "Route demo-05", "Normál", 6, 3000, 1000, "BUD2-14:45"],
-      ["2026-07-25", "Route demo-06", "Kiemelt", 12, 6000, 2000, "BUD2-19:30"]
-    ],
-    shifts: [
-      ["2026-07-25", "BUD2-10:00", "18:50", "18:50", "Ellenőrizendő", "Későbbi bejelentkezés látszik"],
-      ["2026-07-25", "BUD2-14:45", "18:50", "18:50", "Ellenőrizendő", "Ugyanaz a bejelentkezés"],
-      ["2026-07-25", "BUD2-19:30", "18:50", "18:50", "Időben", "OK"]
-    ]
-  },
-  {
-    id: "demo-c",
-    name: "Futár C",
-    warehouse: "BUD1",
-    orders: 497,
-    routes: 39,
-    delayBonus: 118000,
-    complianceBonus: 32000,
-    payable: 588980,
-    excelRows: [
-      ["2026-07-06", "Route demo-07", "Normál", 10, 3000, 0, "BUD1-09:00"],
-      ["2026-07-13", "Route demo-08", "Normál", 12, 3000, 0, "BUD1-12:00"],
-      ["2026-07-20", "Route demo-09", "Kiemelt", 16, 6000, 10000, "BUD1-18:00"]
-    ],
-    shifts: [
-      ["2026-07-06", "BUD1-09:00", "08:51", "08:51", "Időben", "OK"],
-      ["2026-07-13", "BUD1-12:00", "11:54", "11:54", "Időben", "OK"],
-      ["2026-07-20", "BUD1-18:00", "17:50", "17:50", "Időben", "Extra bónusz ellenőrizhető"]
-    ]
-  }
-];
+const fallbackReport = {
+  month: "2026-07",
+  source: "fallback",
+  totals: { orders: 766, routes: 64, delayBonus: 192000, complianceBonus: 64000 },
+  couriers: [
+    {
+      courierId: "demo-a",
+      name: "Futár A",
+      warehouse: "BUD2",
+      orders: 603,
+      routes: 46,
+      delayBonus: 138000,
+      complianceBonus: 46000,
+      shifts: [
+        {
+          workDate: "2026-07-03",
+          shiftName: "BUD2-10:00",
+          checkedInAt: "2026-07-03T09:54:00",
+          availableAt: "2026-07-03T09:54:00",
+          noShow: false,
+          routes: [
+            {
+              routeId: "demo-01",
+              routeType: "normal",
+              assignedAt: "2026-07-03T10:10:00",
+              routeDurationMinutes: 150,
+              addressCount: 13,
+              plannedReturnAt: "2026-07-03T12:40:00",
+              realReturnAt: "2026-07-03T12:35:00",
+              timeWindowLateCount: 0,
+              timeWindowLateTotalMinutes: 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+};
 
 const state = {
   page: "home",
   theme: localStorage.getItem("jittHubTheme") || "light",
-  reportCourierId: "demo-a"
+  reportMonth: "2026-07",
+  reportCourierId: "",
+  reportToken: sessionStorage.getItem("jittHubReportToken") || ""
+};
+
+const reportState = {
+  loading: false,
+  loadedMonth: "",
+  data: null,
+  error: ""
 };
 
 const $ = (selector) => document.querySelector(selector);
 const formatMoney = (value) => new Intl.NumberFormat("hu-HU").format(value) + " Ft";
+
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("hu-HU", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatMinutes(value) {
+  const minutes = toNumber(value);
+  if (!minutes) return "-";
+  return `${Math.round(minutes)} perc`;
+}
+
+function formatLate(route) {
+  const count = toNumber(route.timeWindowLateCount);
+  const total = toNumber(route.timeWindowLateTotalMinutes);
+  if (!count && !total) return "Nincs";
+  if (count && total) return `${count} cím / ${Math.round(total)} perc`;
+  if (count) return `${count} cím`;
+  return `${Math.round(total)} perc`;
+}
+
+function currentReport() {
+  return reportState.data || fallbackReport;
+}
+
+function reportCouriers() {
+  const data = currentReport();
+  return Array.isArray(data.couriers) ? data.couriers : [];
+}
+
+function selectReportCourier() {
+  const couriers = reportCouriers();
+  if (!couriers.length) return null;
+  return couriers.find((courier) => String(courier.courierId) === String(state.reportCourierId)) || couriers[0];
+}
+
+function ensureReportLoaded() {
+  if (reportState.loading || reportState.loadedMonth === state.reportMonth) return;
+  window.setTimeout(loadReport, 0);
+}
+
+async function loadReport() {
+  if (reportState.loading) return;
+  reportState.loading = true;
+  reportState.error = "";
+  render();
+
+  try {
+    const response = await fetch(`/api/route-quality?month=${encodeURIComponent(state.reportMonth)}`, {
+      headers: {
+        Accept: "application/json",
+        ...(state.reportToken ? { "x-hub-report-token": state.reportToken } : {})
+      }
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    reportState.data = data;
+    reportState.loadedMonth = state.reportMonth;
+    if (!data.couriers?.some((courier) => String(courier.courierId) === String(state.reportCourierId))) {
+      state.reportCourierId = data.couriers?.[0]?.courierId ? String(data.couriers[0].courierId) : "";
+    }
+  } catch (error) {
+    reportState.error = error.message || "A riport API nem elérhető.";
+    reportState.data = null;
+    reportState.loadedMonth = state.reportMonth;
+  } finally {
+    reportState.loading = false;
+    render();
+  }
+}
 
 function setTheme() {
   document.documentElement.dataset.theme = state.theme;
@@ -347,56 +426,93 @@ function moneyPage() {
 }
 
 function reportPage() {
-  $("#pageTitle").textContent = "Excel kimutatás";
-  $("#pageSubtitle").textContent = "Delay bónusz, compliance bónusz és a mögöttes PWA/mart műszakadatok egy futárra bontva.";
-  const selected = reportCouriers.find((courier) => courier.id === state.reportCourierId) || reportCouriers[0];
-  const totalDelay = reportCouriers.reduce((sum, courier) => sum + courier.delayBonus, 0);
-  const totalCompliance = reportCouriers.reduce((sum, courier) => sum + courier.complianceBonus, 0);
-  const totalRoutes = reportCouriers.reduce((sum, courier) => sum + courier.routes, 0);
-  const totalOrders = reportCouriers.reduce((sum, courier) => sum + courier.orders, 0);
+  $("#pageTitle").textContent = "Műszak és túra kimutatás";
+  $("#pageSubtitle").textContent = "Hónap → futár → műszak → túra szintű alábontás a DSP/mart adatokból.";
+  ensureReportLoaded();
+  const data = currentReport();
+  const couriers = reportCouriers();
+  const selected = selectReportCourier();
+  const totals = data.totals || {};
+  const totalDelay = toNumber(totals.delayBonus);
+  const totalCompliance = toNumber(totals.complianceBonus);
+  const totalRoutes = toNumber(totals.routes);
+  const totalOrders = toNumber(totals.orders);
+
+  if (!selected) {
+    return `
+      <section class="section-stack">
+        <div class="panel empty-report">
+          <h3>Nincs megjeleníthető adat</h3>
+          <p>Ehhez a hónaphoz nem találtam futár/műszak sort.</p>
+        </div>
+      </section>
+    `;
+  }
+
+  const routeRows = (selected.shifts || []).flatMap((shift) =>
+    (shift.routes || []).map((route) => ({ shift, route }))
+  );
+
   return `
     <section class="section-stack">
+      ${reportState.error ? `
+        <div class="panel report-warning">
+          <b>A valós riport API még nem adott adatot.</b>
+          <span>${escapeHtml(reportState.error)}</span>
+        </div>
+      ` : ""}
       <div class="metric-strip">
-        ${healthCard("Delay bónusz", formatMoney(totalDelay), "Excel összesítő")}
-        ${healthCard("Compliance bónusz", formatMoney(totalCompliance), "Excel összesítő")}
-        ${healthCard("Kör", totalRoutes, "Excel sorok alapján")}
-        ${healthCard("Cím", totalOrders, "Excel sorok alapján")}
+        ${healthCard("Delay bónusz", formatMoney(totalDelay), "havi összesítő")}
+        ${healthCard("Compliance bónusz", formatMoney(totalCompliance), "havi összesítő")}
+        ${healthCard("Kör", totalRoutes, "kifutott túra")}
+        ${healthCard("Cím", totalOrders, "túra darabszám")}
       </div>
 
       <div class="panel report-control">
         <div>
-          <span class="eyebrow">Excel alapú forrás</span>
-          <h3>Futár kiválasztása</h3>
-          <p>A végleges bekötésnél itt nem demo adat lesz: a JITT Excel import sessionből jön a bónusz, a részletek pedig PWA/mart route és műszak táblából nyílnak le.</p>
+          <span class="eyebrow">${data.source === "supabase" ? "Élő DB adat" : "Előnézeti adat"}</span>
+          <h3>Hónap és futár kiválasztása</h3>
+          <p>A riport a meglévő route story és shift quality táblákból épül fel. A sorrend: hónap, futár, műszak, majd azon belül a túrák/megrendelések részletei.</p>
         </div>
-        <label>
-          Futár
-          <select class="hub-select" id="reportCourierSelect">
-            ${reportCouriers.map((courier) => `<option value="${courier.id}" ${courier.id === selected.id ? "selected" : ""}>${courier.name} · ${courier.warehouse}</option>`).join("")}
-          </select>
-        </label>
+        <div class="report-control-fields">
+          <label>
+            Hónap
+            <input class="hub-select" id="reportMonthInput" type="month" value="${escapeHtml(state.reportMonth)}">
+          </label>
+          <label>
+            Futár
+            <select class="hub-select" id="reportCourierSelect">
+              ${couriers.map((courier) => `<option value="${escapeHtml(courier.courierId)}" ${String(courier.courierId) === String(selected.courierId) ? "selected" : ""}>${escapeHtml(courier.name)} · ${escapeHtml(courier.warehouse || "-")}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            Riport kulcs
+            <input class="hub-select" id="reportTokenInput" type="password" value="${escapeHtml(state.reportToken)}" placeholder="belső riport kulcs">
+          </label>
+          <button class="small-action" id="reportRefreshButton" type="button">${reportState.loading ? "Töltés..." : "Frissítés"}</button>
+        </div>
       </div>
 
       <div class="report-profile">
         <article class="panel report-summary">
           <span class="eyebrow">Kiválasztott futár</span>
-          <h3>${selected.name}</h3>
+          <h3>${escapeHtml(selected.name)}</h3>
           <div class="report-kpi-grid">
-            <div><span>Raktár</span><b>${selected.warehouse}</b></div>
-            <div><span>Rendelés</span><b>${selected.orders}</b></div>
-            <div><span>Kör</span><b>${selected.routes}</b></div>
-            <div><span>Kifizetendő</span><b>${formatMoney(selected.payable)}</b></div>
-            <div><span>Delay bónusz</span><b>${formatMoney(selected.delayBonus)}</b></div>
-            <div><span>Compliance bónusz</span><b>${formatMoney(selected.complianceBonus)}</b></div>
+            <div><span>Raktár</span><b>${escapeHtml(selected.warehouse || "-")}</b></div>
+            <div><span>Megrendelés / cím</span><b>${toNumber(selected.orders)}</b></div>
+            <div><span>Kifutott túra</span><b>${toNumber(selected.routes)}</b></div>
+            <div><span>Műszak</span><b>${(selected.shifts || []).length}</b></div>
+            <div><span>Delay bónusz</span><b>${formatMoney(toNumber(selected.delayBonus))}</b></div>
+            <div><span>Compliance bónusz</span><b>${formatMoney(toNumber(selected.complianceBonus))}</b></div>
           </div>
         </article>
 
         <article class="panel report-flow">
-          <h3>Adatút</h3>
+          <h3>Adatforrás</h3>
           <div class="flow-steps">
-            <div><b>1</b><span>Excel import</span><small>route, cím, delay, compliance</small></div>
-            <div><b>2</b><span>PWA/mart alábontás</span><small>műszak, bejelentkezés, sorba állás</small></div>
-            <div><b>3</b><span>No-show kontroll</span><small>saját számítás vs API napi riport</small></div>
+            <div><b>1</b><span>mart_dsp_route_stories</span><small>túra, cím, kiosztás, visszaérkezés</small></div>
+            <div><b>2</b><span>dsp_courier_shift_quality_report</span><small>műszak, show/no-show, késés</small></div>
+            <div><b>3</b><span>raw_jitt_invoice_perf_couriers_daily</span><small>delay és compliance bónusz összesítő</small></div>
           </div>
         </article>
       </div>
@@ -404,43 +520,54 @@ function reportPage() {
       <div class="panel">
         <div class="card-head">
           <div>
-            <h3>Excel túra és bónusz sorok</h3>
-            <p class="muted">Ez a rész mutatja, melyik Excel sorból mennyi delay és compliance bónusz jött.</p>
+            <h3>Túra / megrendelés alábontás</h3>
+            <p class="muted">Minden sor egy futott túra vagy route story rekord. Itt látszik mikor kapott címet, mekkora volt a túra és volt-e időablakos késés.</p>
           </div>
           <button class="small-action" onclick="toast('Itt később Excel export indul.')">Export</button>
         </div>
-        <div class="report-table">
+        <div class="report-table route-report-table">
           <div class="report-table-head">
-            <span>Dátum</span><span>Route</span><span>Típus</span><span>Cím</span><span>Delay</span><span>Compliance</span><span>Műszak</span>
+            <span>Dátum</span><span>Műszak</span><span>Megrendelés / túra</span><span>Bejelentkezés</span><span>Túra hossza</span><span>Címet kapott</span><span>Darab</span><span>Tervezett vissza</span><span>Valós vissza</span><span>Időablak késés</span>
           </div>
-          ${selected.excelRows.map((row) => `
+          ${routeRows.length ? routeRows.map(({ shift, route }) => `
             <div class="report-table-row">
-              ${row.map((cell, index) => `<span>${index === 4 || index === 5 ? formatMoney(cell) : cell}</span>`).join("")}
+              <span>${escapeHtml(shift.workDate || "-")}</span>
+              <span>${escapeHtml(shift.shiftName || "-")}</span>
+              <span>${escapeHtml(route.routeId || "-")}</span>
+              <span>${formatDateTime(shift.checkedInAt || shift.queueStartedAt || shift.availableAt)}</span>
+              <span>${formatMinutes(route.routeDurationMinutes)}</span>
+              <span>${formatDateTime(route.assignedAt)}</span>
+              <span>${toNumber(route.addressCount)}</span>
+              <span>${formatDateTime(route.plannedReturnAt)}</span>
+              <span>${formatDateTime(route.realReturnAt)}</span>
+              <span>${formatLate(route)}</span>
             </div>
-          `).join("")}
+          `).join("") : `<div class="report-empty-row">Ehhez a futárhoz nincs túra sor ebben a hónapban.</div>`}
         </div>
       </div>
 
       <div class="panel">
         <div class="card-head">
           <div>
-            <h3>Műszak és bejelentkezés alábontás</h3>
-            <p class="muted">A végleges verzióban ez a PWA-ban már meglévő route/műszak adatokból, illetve a mart route storyból jön.</p>
+            <h3>Műszak alábontás</h3>
+            <p class="muted">A műszak kártyákon látszik a bejelentkezés, sorba állás, no-show jelölés és az adott műszak túrái.</p>
           </div>
-          <span class="status terv">PWA + mart route</span>
+          <span class="status ${reportState.loading ? "terv" : "online"}">${reportState.loading ? "Töltés" : "Betöltve"}</span>
         </div>
         <div class="shift-detail-grid">
-          ${selected.shifts.map(([date, shift, available, queued, status, note]) => `
+          ${(selected.shifts || []).map((shift) => `
             <article>
-              <div><b>${date}</b><span>${shift}</span></div>
+              <div><b>${escapeHtml(shift.workDate || "-")}</b><span>${escapeHtml(shift.shiftName || "-")}</span></div>
               <dl>
-                <div><dt>Elérhető volt</dt><dd>${available}</dd></div>
-                <div><dt>Sorba állt</dt><dd>${queued}</dd></div>
-                <div><dt>Állapot</dt><dd>${status}</dd></div>
-                <div><dt>Megjegyzés</dt><dd>${note}</dd></div>
+                <div><dt>Mikor jelentkezett be</dt><dd>${formatDateTime(shift.checkedInAt || shift.queueStartedAt || shift.availableAt)}</dd></div>
+                <div><dt>Elérhető volt</dt><dd>${formatDateTime(shift.availableAt)}</dd></div>
+                <div><dt>Sorba állt</dt><dd>${formatDateTime(shift.queueStartedAt)}</dd></div>
+                <div><dt>Túrák</dt><dd>${(shift.routes || []).length}</dd></div>
+                <div><dt>No-show</dt><dd>${shift.noShow ? "Igen" : "Nem"}</dd></div>
+                <div><dt>Megjegyzés</dt><dd>${escapeHtml(shift.noShowReason || shift.qualityNote || "OK")}</dd></div>
               </dl>
             </article>
-          `).join("")}
+          `).join("") || `<div class="report-empty-row">Ehhez a futárhoz nincs műszak sor ebben a hónapban.</div>`}
         </div>
       </div>
     </section>
@@ -532,11 +659,32 @@ function setup() {
     render();
   });
   document.body.addEventListener("change", (event) => {
-    if (event.target.id !== "reportCourierSelect") return;
-    state.reportCourierId = event.target.value;
-    render();
+    if (event.target.id === "reportCourierSelect") {
+      state.reportCourierId = event.target.value;
+      render();
+      return;
+    }
+    if (event.target.id === "reportMonthInput") {
+      state.reportMonth = event.target.value || state.reportMonth;
+      reportState.loadedMonth = "";
+      reportState.data = null;
+      state.reportCourierId = "";
+      render();
+      return;
+    }
+    if (event.target.id === "reportTokenInput") {
+      state.reportToken = event.target.value.trim();
+      if (state.reportToken) sessionStorage.setItem("jittHubReportToken", state.reportToken);
+      else sessionStorage.removeItem("jittHubReportToken");
+    }
   });
   document.body.addEventListener("click", (event) => {
+    if (event.target.closest("#reportRefreshButton")) {
+      reportState.loadedMonth = "";
+      reportState.data = null;
+      loadReport();
+      return;
+    }
     const button = event.target.closest("[data-open]");
     if (!button) return;
     openTarget(button.dataset.open);

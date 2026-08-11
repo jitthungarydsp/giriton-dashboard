@@ -33,7 +33,15 @@ Ezután: `http://localhost:8080`
 - Beállítások
 - Audit napló
 
-A jelenlegi verzió UI/UX prototípus, demóadatokkal. A következő fejlesztési lépés a Supabase adatkapcsolat, jogosultságkezelés és valósidejű frissítés bekötése.
+A riport oldal már a `/api/route-quality` végponton keresztül tud Supabase-ből adatot olvasni. A végpont csak belső riport kulccsal válaszol, hogy a futár/műszak/túra adatok ne legyenek nyilvánosan elérhetők.
+
+Cloudflare környezeti változók:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `HUB_REPORT_TOKEN`
+
+A hub felületén a Kimutatás oldalon a `Riport kulcs` mezőbe a `HUB_REPORT_TOKEN` értékét kell megadni.
 
 
 ## Teszt bejelentkezés

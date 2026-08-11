@@ -637,6 +637,12 @@ body {
   font-weight: 800;
 }
 
+.report-control-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
 .hub-select {
   width: 100%;
   border: 1px solid var(--hub-line);
@@ -749,6 +755,29 @@ body {
 
 .report-table-row:last-child span {
   border-bottom: 0;
+}
+
+.route-report-table .report-table-head,
+.route-report-table .report-table-row {
+  min-width: 1320px;
+  grid-template-columns: .8fr 1.15fr 1fr .95fr .8fr .95fr .55fr .95fr .95fr 1fr;
+}
+
+.report-warning {
+  border-color: rgba(245, 158, 11, .38);
+  background: rgba(245, 158, 11, .08);
+  display: grid;
+  gap: 6px;
+}
+
+.report-warning span,
+.report-empty-row {
+  color: var(--hub-muted);
+}
+
+.report-empty-row {
+  padding: 16px;
+  font-weight: 800;
 }
 
 .shift-detail-grid {
