@@ -8206,7 +8206,13 @@ def show_courier_dialog() -> None:
         else (row_payable_total if row_payable_total else payable_before_insurance - reserve_addition_total - insurance_fee_total)
     )
     if str(reserve_month.get("status") or "").casefold() != "done" and row_payable_total:
-        total_deduction = total_income - row_payable_total
+        itemized_deduction_total = (
+            malus_total + atm_deduction_total + other_expense_total
+            + correction_deduction_total + salary_advance_total
+            + reserve_addition_total + insurance_fee_total
+        )
+        if itemized_deduction_total:
+            total_deduction = itemized_deduction_total
     overview_payable_total = payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
