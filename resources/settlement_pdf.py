@@ -107,7 +107,7 @@ def _document_month(value: Any) -> date:
 def _tig_document_dates(courier: dict[str, Any]) -> dict[str, str]:
     month_start = _document_month(courier.get("document_month"))
     month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
-    due_date = month_end + timedelta(days=8)
+    due_date = date.today() + timedelta(days=8)
     return {
         "periodStart": month_start.isoformat(),
         "periodEnd": month_end.isoformat(),
@@ -185,15 +185,6 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
             "grossHuf": cash_gross,
             "vatLabel": "27%" if vat_payer else "AAM",
             "note": "Külön KP sor, nem növeli az átutalásos végösszeget.",
-        })
-        rows.append({
-            "key": "cash_deduction",
-            "label": "KP levonása",
-            "netHuf": -cash_net,
-            "vatHuf": -cash_vat,
-            "grossHuf": -cash_gross,
-            "vatLabel": "Levonás",
-            "note": "A futárnál már kézben lévő KP levonása.",
         })
     return {
         "available": payable > 0 or bool(rows),
