@@ -5969,8 +5969,26 @@ def apply_excel_route_coverage_audit(data: pd.DataFrame, session_id: str | None)
     audit = audit.copy()
     audit["_courier_id_lookup"] = audit.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
     audit["_courier_name_lookup"] = audit.get("courier_name", pd.Series(dtype=object)).map(_courier_match_key)
-    by_id = audit[audit["_courier_id_lookup"] != ""].set_index("_courier_id_lookup").to_dict("index")
-    by_name = audit[audit["_courier_name_lookup"] != ""].set_index("_courier_name_lookup").to_dict("index")
+    for sort_column in ["is_ok", "matched_route_count", "updated_at"]:
+        if sort_column not in audit.columns:
+            audit[sort_column] = None
+    audit_sorted = audit.sort_values(
+        ["is_ok", "matched_route_count", "updated_at"],
+        ascending=[False, False, False],
+        na_position="last",
+    )
+    by_id = (
+        audit_sorted[audit_sorted["_courier_id_lookup"] != ""]
+        .drop_duplicates("_courier_id_lookup", keep="first")
+        .set_index("_courier_id_lookup")
+        .to_dict("index")
+    )
+    by_name = (
+        audit_sorted[audit_sorted["_courier_name_lookup"] != ""]
+        .drop_duplicates("_courier_name_lookup", keep="first")
+        .set_index("_courier_name_lookup")
+        .to_dict("index")
+    )
 
     def resolve(row: pd.Series) -> dict[str, object] | None:
         courier_id_key = _courier_id_key(row.get("Courier ID"))
