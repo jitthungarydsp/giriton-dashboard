@@ -228,6 +228,19 @@ create table if not exists settlement.dsp_courier_delay_audit_daily (
     primary key (period_start, period_end, work_date, courier_id)
 );
 
+create table if not exists settlement.dsp_time_window_delay_audit_monthly (
+    period_start date not null,
+    period_end date not null,
+    courier_id integer not null,
+    courier_name text,
+    api_delayed_order_count integer not null default 0,
+    mart_time_window_late_count integer not null default 0,
+    difference_count integer not null default 0,
+    delay_match_ok boolean not null default false,
+    refreshed_at timestamptz not null default now(),
+    primary key (period_start, period_end, courier_id)
+);
+
 create index if not exists dsp_route_delay_audit_detail_period_idx
     on settlement.dsp_route_delay_audit_detail (period_start, period_end, courier_id);
 
@@ -237,6 +250,9 @@ create index if not exists dsp_route_delay_audit_detail_first_idx
 
 create index if not exists dsp_courier_delay_audit_daily_period_idx
     on settlement.dsp_courier_delay_audit_daily (period_start, period_end, courier_id);
+
+create index if not exists dsp_time_window_delay_audit_monthly_period_idx
+    on settlement.dsp_time_window_delay_audit_monthly (period_start, period_end, courier_id);
 
 create or replace function settlement.refresh_dsp_route_delay_audit(
     p_period_start date,
@@ -248,12 +264,17 @@ as $$
 declare
     detail_rows integer := 0;
     daily_rows integer := 0;
+    monthly_compare_rows integer := 0;
 begin
     delete from settlement.dsp_route_delay_audit_detail
     where period_start = p_period_start
       and period_end = p_period_end;
 
     delete from settlement.dsp_courier_delay_audit_daily
+    where period_start = p_period_start
+      and period_end = p_period_end;
+
+    delete from settlement.dsp_time_window_delay_audit_monthly
     where period_start = p_period_start
       and period_end = p_period_end;
 
@@ -417,9 +438,63 @@ begin
 
     get diagnostics daily_rows = row_count;
 
+    with api_delay as (
+        select
+            courier_id,
+            max(courier_name) as courier_name,
+            sum(coalesce(delayed_order_count, 0))::integer as api_delayed_order_count
+        from public.dsp_courier_quality_daily
+        where work_date between p_period_start and p_period_end
+        group by courier_id
+    ),
+    mart_delay as (
+        select
+            courier_id,
+            max(courier_name) as courier_name,
+            sum(coalesce(time_window_late_count, 0))::integer as mart_time_window_late_count
+        from public.mart_dsp_route_stories
+        where work_date between p_period_start and p_period_end
+        group by courier_id
+    ),
+    compared as (
+        select
+            coalesce(api.courier_id, mart.courier_id) as courier_id,
+            coalesce(api.courier_name, mart.courier_name) as courier_name,
+            coalesce(api.api_delayed_order_count, 0) as api_delayed_order_count,
+            coalesce(mart.mart_time_window_late_count, 0) as mart_time_window_late_count
+        from api_delay api
+        full join mart_delay mart on mart.courier_id = api.courier_id
+    )
+    insert into settlement.dsp_time_window_delay_audit_monthly (
+        period_start,
+        period_end,
+        courier_id,
+        courier_name,
+        api_delayed_order_count,
+        mart_time_window_late_count,
+        difference_count,
+        delay_match_ok,
+        refreshed_at
+    )
+    select
+        p_period_start,
+        p_period_end,
+        courier_id,
+        courier_name,
+        api_delayed_order_count,
+        mart_time_window_late_count,
+        mart_time_window_late_count - api_delayed_order_count,
+        api_delayed_order_count = mart_time_window_late_count,
+        now()
+    from compared
+    where courier_id is not null;
+
+    get diagnostics monthly_compare_rows = row_count;
+
     return jsonb_build_object(
         'detail_rows', detail_rows,
-        'daily_rows', daily_rows
+        'daily_rows', daily_rows,
+        'monthly_compare_rows', monthly_compare_rows
     );
 end;
 $$;
@@ -429,6 +504,7 @@ grant select on public.vw_dsp_courier_delay_daily to service_role;
 grant select on public.vw_dsp_courier_delay_monthly to service_role;
 grant select, insert, update, delete on settlement.dsp_route_delay_audit_detail to service_role;
 grant select, insert, update, delete on settlement.dsp_courier_delay_audit_daily to service_role;
+grant select, insert, update, delete on settlement.dsp_time_window_delay_audit_monthly to service_role;
 grant execute on function settlement.refresh_dsp_route_delay_audit(date, date) to service_role;
 
 notify pgrst, 'reload schema';

@@ -5932,37 +5932,32 @@ def refresh_dsp_route_delay_audit(period_start: date, period_end: date) -> dict[
     )
     data = response.data or {}
     if not isinstance(data, dict):
-        return {"detail_rows": 0, "daily_rows": 0}
+        return {"detail_rows": 0, "daily_rows": 0, "monthly_compare_rows": 0}
     return {
         "detail_rows": int(data.get("detail_rows") or 0),
         "daily_rows": int(data.get("daily_rows") or 0),
+        "monthly_compare_rows": int(data.get("monthly_compare_rows") or 0),
     }
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_dsp_route_delay_audit_daily(period_start: date, period_end: date) -> pd.DataFrame:
+def load_dsp_time_window_delay_audit(period_start: date, period_end: date) -> pd.DataFrame:
     columns = [
         "period_start",
         "period_end",
-        "work_date",
         "courier_id",
         "courier_name",
-        "route_count",
-        "delayed_route_count",
-        "queue_late_route_count",
-        "departure_late_route_count",
-        "time_window_late_count",
-        "first_route_has_delay",
-        "first_route_queue_delay_minutes",
-        "first_route_departure_delay_minutes",
-        "first_route_time_window_late_count",
-        "first_route_delay_status",
+        "api_delayed_order_count",
+        "mart_time_window_late_count",
+        "difference_count",
+        "delay_match_ok",
+        "refreshed_at",
     ]
     try:
         rows = (
             get_db()
             .schema("settlement")
-            .table("dsp_courier_delay_audit_daily")
+            .table("dsp_time_window_delay_audit_monthly")
             .select(",".join(columns))
             .eq("period_start", period_start.isoformat())
             .eq("period_end", period_end.isoformat())
@@ -5980,7 +5975,7 @@ def load_dsp_route_delay_audit_daily(period_start: date, period_end: date) -> pd
 def apply_dsp_route_delay_audit(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
     if data.empty:
         return data
-    audit = load_dsp_route_delay_audit_daily(period_start, period_end)
+    audit = load_dsp_time_window_delay_audit(period_start, period_end)
     result = data.copy()
     result["Delay audit has result"] = False
     result["Delay audit ok"] = pd.NA
@@ -5991,41 +5986,22 @@ def apply_dsp_route_delay_audit(data: pd.DataFrame, period_start: date, period_e
     audit = audit.copy()
     audit["_courier_id_lookup"] = audit.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
     audit["_courier_name_lookup"] = audit.get("courier_name", pd.Series(dtype=object)).map(_courier_match_key)
-    numeric_columns = [
-        "route_count",
-        "delayed_route_count",
-        "queue_late_route_count",
-        "departure_late_route_count",
-        "time_window_late_count",
-        "first_route_queue_delay_minutes",
-        "first_route_departure_delay_minutes",
-        "first_route_time_window_late_count",
-    ]
+    numeric_columns = ["api_delayed_order_count", "mart_time_window_late_count", "difference_count"]
     for column in numeric_columns:
         audit[column] = pd.to_numeric(audit.get(column, 0), errors="coerce").fillna(0)
-    audit["first_route_delay_flag"] = audit.get("first_route_has_delay", False).astype(bool)
-    grouped_by_id = pd.DataFrame()
-    if not audit[audit["_courier_id_lookup"] != ""].empty:
-        grouped_by_id = audit[audit["_courier_id_lookup"] != ""].groupby("_courier_id_lookup", as_index=False).agg(
-            route_count=("route_count", "sum"),
-            delayed_route_count=("delayed_route_count", "sum"),
-            queue_late_route_count=("queue_late_route_count", "sum"),
-            departure_late_route_count=("departure_late_route_count", "sum"),
-            time_window_late_count=("time_window_late_count", "sum"),
-            first_route_delay_day_count=("first_route_delay_flag", "sum"),
-        )
-    grouped_by_name = pd.DataFrame()
-    if not audit[audit["_courier_name_lookup"] != ""].empty:
-        grouped_by_name = audit[audit["_courier_name_lookup"] != ""].groupby("_courier_name_lookup", as_index=False).agg(
-            route_count=("route_count", "sum"),
-            delayed_route_count=("delayed_route_count", "sum"),
-            queue_late_route_count=("queue_late_route_count", "sum"),
-            departure_late_route_count=("departure_late_route_count", "sum"),
-            time_window_late_count=("time_window_late_count", "sum"),
-            first_route_delay_day_count=("first_route_delay_flag", "sum"),
-        )
-    by_id = grouped_by_id.set_index("_courier_id_lookup").to_dict("index") if not grouped_by_id.empty else {}
-    by_name = grouped_by_name.set_index("_courier_name_lookup").to_dict("index") if not grouped_by_name.empty else {}
+    audit["delay_match_ok"] = audit.get("delay_match_ok", False).astype(bool)
+    by_id = (
+        audit[audit["_courier_id_lookup"] != ""]
+        .drop_duplicates("_courier_id_lookup", keep="first")
+        .set_index("_courier_id_lookup")
+        .to_dict("index")
+    )
+    by_name = (
+        audit[audit["_courier_name_lookup"] != ""]
+        .drop_duplicates("_courier_name_lookup", keep="first")
+        .set_index("_courier_name_lookup")
+        .to_dict("index")
+    )
 
     has_results: list[bool] = []
     oks: list[object] = []
@@ -6037,15 +6013,15 @@ def apply_dsp_route_delay_audit(data: pd.DataFrame, period_start: date, period_e
             oks.append(pd.NA)
             texts.append("")
             continue
-        delayed_routes = int(audit_row.get("delayed_route_count") or 0)
-        first_route_delay_days = int(audit_row.get("first_route_delay_day_count") or 0)
-        has_delay = delayed_routes > 0 or first_route_delay_days > 0
+        api_count = int(audit_row.get("api_delayed_order_count") or 0)
+        mart_count = int(audit_row.get("mart_time_window_late_count") or 0)
+        is_ok = bool(audit_row.get("delay_match_ok"))
         has_results.append(True)
-        oks.append(not has_delay)
-        if has_delay:
-            texts.append(f"Késés: {delayed_routes} túra, első túra: {first_route_delay_days} nap")
+        oks.append(is_ok)
+        if is_ok:
+            texts.append(f"Késés OK: {api_count}")
         else:
-            texts.append("Késés OK")
+            texts.append(f"Késés eltérés: API {api_count} / mart {mart_count}")
 
     result["Delay audit has result"] = has_results
     result["Delay audit ok"] = oks
@@ -11884,21 +11860,20 @@ def show_new_settlement_page() -> None:
             "Késés ellenőrzés frissítése",
             use_container_width=True,
             key="refresh_dsp_route_delay_audit",
-            help="DSP mart route adatokból külön DB táblába menti az összes késést és az első túra késését.",
+            help="Az API havi késés darabszámát hasonlítja a mart időablakon belüli késéseihez.",
         ):
             try:
                 delay_audit_period_start = parse_month_option(selected_month)
                 _, delay_audit_period_end = month_bounds(delay_audit_period_start)
-                load_dsp_route_delay_audit_daily.clear()
+                load_dsp_time_window_delay_audit.clear()
                 delay_audit_result = refresh_dsp_route_delay_audit(
                     delay_audit_period_start,
                     delay_audit_period_end,
                 )
-                load_dsp_route_delay_audit_daily.clear()
+                load_dsp_time_window_delay_audit.clear()
                 st.success(
                     "Késés ellenőrzés kész: "
-                    f"{delay_audit_result['detail_rows']} route sor, "
-                    f"{delay_audit_result['daily_rows']} napi futár sor."
+                    f"{delay_audit_result['monthly_compare_rows']} havi futár összevetés."
                 )
             except Exception as exc:
                 st.error(f"Késés ellenőrzés sikertelen: {exc}")
