@@ -5682,10 +5682,24 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
 
     data = raw.copy()
     month_text = data[resolved["billing_month"]].astype(str).str.strip()
-    data["billing_month"] = pd.to_datetime(month_text.where(month_text.str.len() > 7, month_text + "-01"), errors="coerce").dt.date
+    parsed_months = pd.to_datetime(month_text.where(month_text.str.len() > 7, month_text + "-01"), errors="coerce").dt.date
+    data["billing_month"] = parsed_months
     month_start = billing_month.replace(day=1)
     data = data.loc[data["billing_month"] == month_start].copy()
     if data.empty:
+        available_months = sorted(
+            {
+                value.strftime("%Y-%m")
+                for value in parsed_months.dropna()
+                if hasattr(value, "strftime")
+            }
+        )
+        available_text = ", ".join(available_months) if available_months else "nincs felismerheto honap"
+        raise ValueError(
+            "A havi ugyfelertekeles sablonban nincs sor a kivalasztott honapra. "
+            f"Kivalasztott honap: {month_start:%Y-%m}. "
+            f"A fajlban talalt honapok: {available_text}."
+        )
         raise ValueError("A havi ĂĽgyfĂ©lĂ©rtĂ©kelĂ©s sablonban nincs sor a kivĂˇlasztott hĂłnapra.")
 
     grouped = pd.DataFrame({
