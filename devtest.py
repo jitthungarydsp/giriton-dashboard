@@ -8398,7 +8398,6 @@ def show_courier_dialog() -> None:
         malus_total + atm_deduction_total + other_expense_total
         + correction_deduction_total + salary_advance_total
     )
-    row_payable_total = parse_huf_value(row.get("Kifizetendő"))
     payable_before_insurance = total_income - total_deduction
     reserve_month = resolve_target_reserve_month(
         session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
@@ -8410,9 +8409,9 @@ def show_courier_dialog() -> None:
     payable_total = (
         reserve_payable_total
         if str(reserve_month.get("status") or "").casefold() == "done"
-        else (row_payable_total if row_payable_total else payable_before_insurance - reserve_addition_total - insurance_fee_total)
+        else payable_before_insurance - reserve_addition_total - insurance_fee_total
     )
-    if str(reserve_month.get("status") or "").casefold() != "done" and row_payable_total:
+    if str(reserve_month.get("status") or "").casefold() != "done":
         itemized_deduction_total = (
             malus_total + atm_deduction_total + other_expense_total
             + correction_deduction_total + salary_advance_total
@@ -8729,7 +8728,6 @@ def show_courier_dialog() -> None:
             + loyalty_total + customer_rating_total + correction_income_total
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
-        row_payable_total = parse_huf_value(row.get("Kifizetendő"))
         payable_before_insurance = payable_total
         reserve_month = resolve_target_reserve_month(
             session_id, courier_id, period_start, period_end, reserve_status, payable_before_insurance
@@ -8739,7 +8737,6 @@ def show_courier_dialog() -> None:
         reserve_before_total = parse_huf_value(reserve_month.get("reserve_before_huf"))
         reserve_after_total = parse_huf_value(reserve_month.get("reserve_after_huf"))
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
-        payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
         payable_total = overview_payable_total
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
