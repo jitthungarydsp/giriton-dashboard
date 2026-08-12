@@ -12002,7 +12002,7 @@ def show_new_settlement_page() -> None:
     _, balance_period_end = month_bounds(balance_period_start)
     if str(selected_calculation_mode or "API").strip().casefold() == "excel":
         state_excel_session_id = st.session_state.get("settlement_excel_session_id")
-        if state_excel_session_id:
+        if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, balance_period_start):
             import_session_id = state_excel_session_id
         else:
             import_session_id = load_latest_excel_jit_session_id(balance_period_start)
@@ -12072,7 +12072,13 @@ def show_new_settlement_page() -> None:
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         mobile_period_start = parse_month_option(selected_month)
         if str(calculation_mode or "").strip().casefold() == "excel":
-            mobile_source_session_id = st.session_state.get("settlement_excel_session_id") or load_latest_excel_jit_session_id(mobile_period_start)
+            state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+            if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, mobile_period_start):
+                mobile_source_session_id = state_excel_session_id
+            else:
+                mobile_source_session_id = load_latest_excel_jit_session_id(mobile_period_start)
+                if mobile_source_session_id:
+                    st.session_state["settlement_excel_session_id"] = mobile_source_session_id
         else:
             mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
@@ -12101,10 +12107,17 @@ def show_new_settlement_page() -> None:
                 )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
-                current_excel_session_id = st.session_state.get("settlement_excel_session_id") or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+                current_period_start = parse_month_option(selected_month)
+                state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+                if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, current_period_start):
+                    current_excel_session_id = state_excel_session_id
+                else:
+                    current_excel_session_id = load_latest_excel_jit_session_id(current_period_start)
+                    if current_excel_session_id:
+                        st.session_state["settlement_excel_session_id"] = current_excel_session_id
+                        st.session_state["settlement_import_session_id"] = current_excel_session_id
                 if current_excel_session_id:
                     try:
-                        current_period_start = parse_month_option(selected_month)
                         _, current_period_end = month_bounds(current_period_start)
                         load_excel_route_coverage_audit.clear()
                         audited = refresh_excel_route_coverage_audit(
