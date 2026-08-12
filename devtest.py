@@ -8397,6 +8397,7 @@ def show_courier_dialog() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
+    display_base_total = base_total + other_route_bonus_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -8411,8 +8412,8 @@ def show_courier_dialog() -> None:
     atm_deduction_total = imported_atm_total + manual_atm_total
     correction_total = correction_income_total - correction_deduction_total
     total_income = (
-        base_total + tip_total + delay_total + compliance_total
-        + other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
+        display_base_total + tip_total + delay_total + compliance_total
+        + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
         + correction_income_total
     )
     salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
@@ -8534,11 +8535,10 @@ def show_courier_dialog() -> None:
                 <div class="settlement-ledger-grid">
                     <div class="settlement-ledger income">
                     <div class="settlement-ledger-head">↗ Bevételek</div>
-                    <div class="settlement-ledger-row"><span>Alapdíj</span><strong>{format_huf(base_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Alapdíj</span><strong>{format_huf(display_base_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Túramegfelelés</span><strong>{format_huf(compliance_total)}</strong></div>
-                    <div class="settlement-ledger-row"><span>Egyéb route bónusz</span><strong>{format_huf(other_route_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Kiflis bónusz</span><strong>{format_huf(imported_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>JITT bónusz</span><strong>{format_huf(manual_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Lojalitás</span><strong>{format_huf(loyalty_total)}</strong></div>
@@ -8610,7 +8610,8 @@ def show_courier_dialog() -> None:
                     st.session_state.get("new_warehouse", "Összes"),
                 )
             st.rerun()
-        st.markdown("#### Bejelentések")
+        st.markdown("#### Bejelentések (public.courier_route_alerts)")
+        st.caption("Ellenőrző táblák: settlement.excel_route_coverage_audit, settlement.dsp_time_window_delay_audit_monthly, settlement.dsp_shift_attendance_audit_monthly.")
         route_alerts = load_courier_route_alerts(courier_id, limit=5)
         if route_alerts.empty:
             st.info("Nincs bejelentés ennél a futárnál.")
@@ -8743,6 +8744,7 @@ def show_courier_dialog() -> None:
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
+        display_base_total = base_total + route_other_bonus_total
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
@@ -9380,11 +9382,10 @@ def show_courier_dialog() -> None:
                 st.error("A TIG mobil Ă©rtĂ©kek mentĂ©se sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
 
         payable_sources = pd.DataFrame([
-            {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": base_total},
+            {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
             {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
             {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
             {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-            {"Művelet": "+", "Tétel": "Egyéb route bónusz", "Összeg": route_other_bonus_total},
             {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
             {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
             {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
