@@ -5540,6 +5540,169 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     ]]
 
 
+def _customer_rating_dashboard_routes(dashboard_data: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    routes_by_id = pd.Series(dtype=float)
+    routes_by_name = pd.Series(dtype=float)
+    if dashboard_data.empty:
+        return routes_by_id, routes_by_name
+
+    dash = dashboard_data.copy()
+    dash["id_key"] = dash["Courier ID"].map(_courier_id_key)
+    dash["name_key"] = dash["FutĂˇr"].map(_courier_match_key)
+    route_source = _numeric_series(dash, "Ăštvonalak")
+    if route_source.eq(0).all() and "SzĂˇmolt tĂşrĂˇk" in dash.columns:
+        route_source = _numeric_series(dash, "SzĂˇmolt tĂşrĂˇk")
+    dash["_routes"] = route_source
+    routes_by_id = dash.groupby("id_key")["_routes"].sum()
+    routes_by_name = dash.groupby("name_key")["_routes"].sum()
+    return routes_by_id, routes_by_name
+
+
+def _finalize_customer_rating_monthly_rows(
+    grouped: pd.DataFrame,
+    uploaded_file,
+    billing_month: date,
+    dashboard_data: pd.DataFrame,
+    worksheet_name: str,
+) -> pd.DataFrame:
+    month_start = billing_month.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    rules = load_customer_rating_rules_for_month(month_start, next_month - timedelta(days=1))
+    routes_by_id, routes_by_name = _customer_rating_dashboard_routes(dashboard_data)
+
+    grouped = grouped.copy()
+    grouped["courier_id"] = grouped.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+    grouped["driver_name"] = grouped.get("driver_name", pd.Series(dtype=str)).astype(str).str.strip()
+    grouped["rating_count"] = pd.to_numeric(grouped.get("rating_count"), errors="coerce").fillna(0).astype(int)
+    grouped["average_rating"] = pd.to_numeric(grouped.get("average_rating"), errors="coerce")
+    grouped = grouped.dropna(subset=["average_rating"])
+    if grouped.empty:
+        raise ValueError("Nem talĂˇlhatĂł feldolgozhatĂł havi ĂĽgyfĂ©lĂ©rtĂ©kelĂ©s sor.")
+
+    grouped["name_key"] = grouped["driver_name"].map(_courier_match_key)
+    grouped["completed_routes"] = (
+        grouped["courier_id"].map(routes_by_id)
+        .fillna(grouped["name_key"].map(routes_by_name))
+        .fillna(0)
+        .astype(int)
+    )
+
+    route_type_counts = load_customer_rating_route_type_counts(
+        str(st.session_state.get("settlement_import_session_id") or "").strip()
+    )
+    route_records: list[dict[str, object]] = []
+    for _, row in grouped.iterrows():
+        route_counts: dict[str, int] = {}
+        if not route_type_counts.empty:
+            matches = route_type_counts.loc[route_type_counts["driver_key"] == row["name_key"]]
+            route_counts = {
+                str(match["route_type"]): int(match["completed_routes"] or 0)
+                for _, match in matches.iterrows()
+            }
+        if not route_counts:
+            route_counts = {"normal": int(row["completed_routes"] or 0)}
+        for route_type, completed_routes in route_counts.items():
+            if completed_routes <= 0:
+                continue
+            bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, route_type)
+            route_records.append({
+                **row.to_dict(),
+                "route_type": route_type,
+                "completed_routes": completed_routes,
+                "bonus_per_route_huf": bonus_per_route,
+                "bonus_total_huf": bonus_per_route * completed_routes,
+            })
+
+    result = pd.DataFrame(route_records)
+    if result.empty:
+        raise ValueError("Nem talĂˇlhatĂł szĂˇmolhatĂł NormĂˇl vagy Express tĂşra az ĂĽgyfĂ©lĂ©rtĂ©kelĂ©shez.")
+
+    result["billing_month"] = month_start.isoformat()
+    result["worksheet_name"] = worksheet_name or "Feltoltes_havi"
+    result["source_row_number"] = range(2, len(result) + 2)
+    result["source_spreadsheet_id"] = f"customer_rating_monthly_upload_{month_start:%Y_%m}"
+    result["row_data"] = result.apply(
+        lambda row: {
+            "rating_count": int(row["rating_count"]),
+            "average_rating": float(row["average_rating"]),
+            "route_type": str(row["route_type"]),
+            "source_file": getattr(uploaded_file, "name", "uploaded.xlsx"),
+            "source_format": "monthly_upload",
+        },
+        axis=1,
+    )
+    now = pd.Timestamp.utcnow().isoformat()
+    result["imported_at"] = now
+    result["updated_at"] = now
+    return result[[
+        "source_spreadsheet_id", "worksheet_name", "source_row_number", "billing_month",
+        "courier_id", "driver_name", "route_type", "rating_count", "average_rating",
+        "bonus_per_route_huf", "completed_routes", "bonus_total_huf", "row_data",
+        "imported_at", "updated_at",
+    ]]
+
+
+def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    excel_file = pd.ExcelFile(uploaded_file)
+    monthly_sheet = next(
+        (
+            sheet_name
+            for sheet_name in excel_file.sheet_names
+            if _normalized_field_key(sheet_name) in {"feltolteshavi", "havisablon", "forrasmindenhonap"}
+        ),
+        "",
+    )
+    if not monthly_sheet:
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        return parse_customer_rating_excel(uploaded_file, billing_month, dashboard_data)
+
+    raw = pd.read_excel(excel_file, sheet_name=monthly_sheet)
+    normalized_columns = {_normalized_field_key(column): column for column in raw.columns}
+    aliases = {
+        "billing_month": ["elszamolasihonap", "billingmonth", "honap", "month"],
+        "courier_id": ["futarid", "courierid", "driverid"],
+        "driver_name": ["futarnev", "futarneve", "couriername", "drivername"],
+        "average_rating": ["ugyfelertekeleshaviatlag", "ugyfelertekeles", "averagerating", "atlag", "rating"],
+        "rating_count": ["ertekelesdb", "ratingcount", "darab", "count"],
+    }
+    resolved: dict[str, str] = {}
+    for output_name, names in aliases.items():
+        source_column = next((normalized_columns[name] for name in names if name in normalized_columns), "")
+        if not source_column:
+            raise ValueError(f"HiĂˇnyzĂł oszlop a havi ĂĽgyfĂ©lĂ©rtĂ©kelĂ©s sablonban: {output_name}")
+        resolved[output_name] = source_column
+
+    data = raw.copy()
+    month_text = data[resolved["billing_month"]].astype(str).str.strip()
+    data["billing_month"] = pd.to_datetime(month_text.where(month_text.str.len() > 7, month_text + "-01"), errors="coerce").dt.date
+    month_start = billing_month.replace(day=1)
+    data = data.loc[data["billing_month"] == month_start].copy()
+    if data.empty:
+        raise ValueError("A havi ĂĽgyfĂ©lĂ©rtĂ©kelĂ©s sablonban nincs sor a kivĂˇlasztott hĂłnapra.")
+
+    grouped = pd.DataFrame({
+        "courier_id": data[resolved["courier_id"]],
+        "driver_name": data[resolved["driver_name"]],
+        "rating_count": data[resolved["rating_count"]],
+        "average_rating": data[resolved["average_rating"]],
+    })
+    return _finalize_customer_rating_monthly_rows(
+        grouped,
+        uploaded_file,
+        billing_month,
+        dashboard_data,
+        monthly_sheet,
+    )
+
+
 def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None:
     month_text = billing_month.replace(day=1).isoformat()
     get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).delete().eq("billing_month", month_text).execute()
@@ -12168,10 +12331,11 @@ def show_new_settlement_page() -> None:
             key="customer_rating_excel_upload",
             help="Elvárt oszlopok: order_id, courier_name, courier_id, courier_rating, deliver_at, warehouse_name.",
         )
+        st.caption("Uj havi sablon is feltoltheto: Feltoltes_havi ful, elszamolasi_honap, futar_id, futar_nev, ugyfelertekeles_havi_atlag, ertekeles_db.")
         rating_preview = pd.DataFrame()
         if uploaded_rating_excel is not None:
             try:
-                rating_preview = parse_customer_rating_excel(
+                rating_preview = parse_customer_rating_excel_v2(
                     uploaded_rating_excel,
                     rating_month,
                     data,
