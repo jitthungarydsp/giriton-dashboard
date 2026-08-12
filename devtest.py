@@ -1064,8 +1064,10 @@ def _courier_match_key(value: object) -> str:
 
 def _courier_id_key(value: object) -> str:
     """Normalize Courier ID values such as ``7056`` and ``7056.0``."""
+    if pd.isna(value):
+        return ""
     text = str(value or "").strip().casefold()
-    if not text:
+    if not text or text in {"nan", "none", "null"}:
         return ""
     try:
         numeric = float(text.replace(" ", "").replace(",", "."))
@@ -1079,6 +1081,13 @@ def _normalized_field_key(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
     return re.sub(r"[^a-z0-9]", "", text)
+
+
+def _find_column_by_key(columns: object, aliases: set[str]) -> str:
+    for column in list(columns or []):
+        if _normalized_field_key(column) in aliases:
+            return str(column)
+    return ""
 
 
 def _search_text_key(value: object) -> str:
@@ -5777,6 +5786,8 @@ def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None
     month_text = billing_month.replace(day=1).isoformat()
     get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).delete().eq("billing_month", month_text).execute()
     payload = rows.copy()
+    if "courier_id" in payload.columns:
+        payload["courier_id"] = payload["courier_id"].map(_courier_id_key).replace("", None)
     for column in ["average_rating", "bonus_per_route_huf", "bonus_total_huf"]:
         payload[column] = pd.to_numeric(payload[column], errors="coerce").fillna(0).astype(float)
     if "route_type" in payload.columns:
