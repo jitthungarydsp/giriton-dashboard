@@ -22,7 +22,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v71";
+const APP_VERSION = "v72";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
