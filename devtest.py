@@ -2573,23 +2573,69 @@ def save_monthly_workload_summary(
         pass
 
 
+def target_reserve_id_key(value: object) -> str:
+    text = str(value or "").strip().casefold()
+    if not text:
+        return ""
+    try:
+        numeric = float(text.replace(" ", "").replace(",", "."))
+        return str(int(numeric)) if numeric.is_integer() else str(numeric)
+    except ValueError:
+        return text
+
+
+def normalized_target_reserve_column(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
+def target_reserve_status_from_rows(courier_id: str, courier_name: str, rows: list[dict[str, object]]) -> dict[str, object]:
+    target_id = target_reserve_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    if not rows:
+        return {"insurance_active": False, "row": {}}
+    for reserve_row in rows:
+        id_columns = {"courierid", "couriernumber", "usernumber", "userid", "driverid"}
+        id_values = [
+            value for column, value in reserve_row.items()
+            if normalized_target_reserve_column(column) in id_columns
+        ]
+        matches_id = target_id and any(target_reserve_id_key(value) == target_id for value in id_values if value is not None)
+        matches_name = target_name and any(
+            _courier_match_key(value) == target_name
+            for column, value in reserve_row.items()
+            if normalized_target_reserve_column(column) in {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
+        )
+        if matches_id or matches_name:
+            active_value = next(
+                (value for column, value in reserve_row.items() if normalized_target_reserve_column(column) == "insuranceactive"),
+                None,
+            )
+            active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
+            return {"insurance_active": active, "row": reserve_row}
+    return {"insurance_active": False, "row": {}}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_target_reserve_rows_bulk() -> list[dict[str, object]]:
+    try:
+        return (
+            get_db()
+            .schema("public")
+            .table("courier_target_reserve")
+            .select("*")
+            .limit(5000)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return []
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
-    def id_key(value: object) -> str:
-        text = str(value or "").strip().casefold()
-        if not text:
-            return ""
-        try:
-            numeric = float(text.replace(" ", "").replace(",", "."))
-            return str(int(numeric)) if numeric.is_integer() else str(numeric)
-        except ValueError:
-            return text
-
-    def normalized_column_name(value: object) -> str:
-        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
-
-    target_id = id_key(courier_id)
+    target_id = target_reserve_id_key(courier_id)
     target_name = _courier_match_key(courier_name)
     rows: list[dict[str, object]] = []
     for column_name in ["courier_ID", "courier_id", "courierId", "driver_id", "driverId", "user_id", "userId"]:
@@ -2612,44 +2658,17 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
         if rows:
             break
     if not rows and target_name:
-        try:
-            candidate_rows = (
-                get_db()
-                .schema("public")
-                .table("courier_target_reserve")
-                .select("*")
-                .limit(5000)
-                .execute()
-                .data
-                or []
-            )
-        except BaseException:
-            candidate_rows = []
+        candidate_rows = load_target_reserve_rows_bulk()
         name_columns = {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
         rows = [
             reserve_row for reserve_row in candidate_rows
             if any(
                 _courier_match_key(value) == target_name
                 for column, value in reserve_row.items()
-                if normalized_column_name(column) in name_columns
+                if normalized_target_reserve_column(column) in name_columns
             )
         ][:5]
-    if not rows:
-        return {"insurance_active": False, "row": {}}
-    for reserve_row in rows:
-        id_columns = {"courierid", "couriernumber", "usernumber", "userid", "driverid"}
-        id_values = [value for column, value in reserve_row.items() if normalized_column_name(column) in id_columns]
-        matches_id = target_id and any(id_key(value) == target_id for value in id_values if value is not None)
-        matches_name = target_name and any(
-            _courier_match_key(value) == target_name
-            for column, value in reserve_row.items()
-            if normalized_column_name(column) in {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
-        )
-        if matches_id or matches_name:
-            active_value = next((value for column, value in reserve_row.items() if normalized_column_name(column) == "insuranceactive"), None)
-            active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
-            return {"insurance_active": active, "row": reserve_row}
-    return {"insurance_active": False, "row": {}}
+    return target_reserve_status_from_rows(courier_id, courier_name, rows)
 
 
 def reserve_row_amount(reserve_row: dict[str, object], column: str) -> float:
@@ -12385,7 +12404,6 @@ def show_new_settlement_page() -> None:
     )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
-    data = apply_target_reserve_deductions(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     if str(selected_calculation_mode or "").strip().casefold() == "excel":

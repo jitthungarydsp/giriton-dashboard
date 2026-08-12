@@ -46,6 +46,8 @@ SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_DEVICE_PHOTO_BYTES = 8 * 1024 * 1024
 MAX_DEVICE_PHOTOS = 8
 DEVICE_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+FINANCIAL_LOOKUP_CACHE_SECONDS = 60
+_FINANCIAL_LOOKUP_CACHE: dict[tuple[str, str, str], tuple[float, Any]] = {}
 
 COURIER_DETAIL_API_BASE = (
     "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
@@ -2160,6 +2162,22 @@ def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> in
     return money_int((overrides.get(key) or {}).get("amount_value"))
 
 
+def cached_financial_lookup(cache_group: str, cache_key: str) -> Any | None:
+    cached = _FINANCIAL_LOOKUP_CACHE.get((cache_group, cache_key, ""))
+    if not cached:
+        return None
+    cached_at, value = cached
+    if time.time() - cached_at > FINANCIAL_LOOKUP_CACHE_SECONDS:
+        _FINANCIAL_LOOKUP_CACHE.pop((cache_group, cache_key, ""), None)
+        return None
+    return value
+
+
+def store_financial_lookup(cache_group: str, cache_key: str, value: Any) -> Any:
+    _FINANCIAL_LOOKUP_CACHE[(cache_group, cache_key, "")] = (time.time(), value)
+    return value
+
+
 def build_financial_breakdown_from_mobile_rows(
     user: dict[str, Any],
     month: date,
@@ -2472,6 +2490,10 @@ def build_financial_breakdown_from_mobile_rows(
 def read_target_reserve_monthly(courier_id: str, period_start: date, period_end: date) -> dict[str, Any]:
     if not courier_id:
         return {}
+    cache_key = f"{courier_id}|{period_start.isoformat()}|{period_end.isoformat()}"
+    cached = cached_financial_lookup("target_reserve_monthly", cache_key)
+    if cached is not None:
+        return dict(cached)
     rows = optional_supabase_rows(
         "courier_target_reserve_monthly",
         schema="settlement",
@@ -2484,12 +2506,18 @@ def read_target_reserve_monthly(courier_id: str, period_start: date, period_end:
         },
         timeout=30,
     )
-    return dict(rows[0]) if rows else {}
+    result = dict(rows[0]) if rows else {}
+    store_financial_lookup("target_reserve_monthly", cache_key, result)
+    return result
 
 
 def read_courier_manual_adjustments(courier_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
     if not courier_id:
         return []
+    cache_key = f"{courier_id}|{period_start.isoformat()}|{period_end.isoformat()}"
+    cached = cached_financial_lookup("manual_adjustments", cache_key)
+    if cached is not None:
+        return [dict(row) for row in cached]
     rows = optional_supabase_rows(
         "courier_settlement_adjustment",
         schema="settlement",
@@ -2518,6 +2546,7 @@ def read_courier_manual_adjustments(courier_id: str, period_start: date, period_
         clean_row["adjustment_type"] = adjustment_type
         clean_row["amount_huf"] = abs(money_int(row.get("amount_huf")))
         result.append(clean_row)
+    store_financial_lookup("manual_adjustments", cache_key, [dict(row) for row in result])
     return result
 
 
@@ -4170,6 +4199,10 @@ def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str,
 
 
 def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> list[dict[str, Any]]:
+    cache_key = f"{courier_id}|{period_start.isoformat()}"
+    cached = cached_financial_lookup("customer_rating_bonus_items", cache_key)
+    if cached is not None:
+        return [dict(item) for item in cached]
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
         params={
@@ -4202,7 +4235,9 @@ def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> lis
             source="public.bill_jitt_invoice_customer_rating_bonus",
             note=" | ".join(note_parts) or str(row.get("worksheet_name") or "Ügyfélértékelés import"),
         ))
-    return [item for item in items if item["amountHuf"]]
+    result = [item for item in items if item["amountHuf"]]
+    store_financial_lookup("customer_rating_bonus_items", cache_key, [dict(item) for item in result])
+    return result
 
 
 def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) -> dict[str, Any]:
