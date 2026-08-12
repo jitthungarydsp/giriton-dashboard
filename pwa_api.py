@@ -2222,6 +2222,20 @@ def build_financial_breakdown_from_mobile_rows(
     income_total = mobile_override_amount(overrides, "income")
     deduction_total = mobile_override_amount(overrides, "deductions")
     correction_total = mobile_override_amount(overrides, "correction")
+    customer_rating_total = mobile_override_amount(overrides, "customer_rating")
+    if not customer_rating_total:
+        customer_rating_total = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
+    customer_rating_item = item("customer_rating")
+    if customer_rating_total and (
+        not customer_rating_item
+        or not money_int(customer_rating_item.get("amountHuf"))
+    ):
+        customer_rating_item = signed_item(
+            "customer_rating",
+            "Ügyfélértékelési bónusz",
+            customer_rating_total,
+            note="Központi elszámolási adat",
+        )
 
     income_items = money_items([
         "base",
@@ -2229,11 +2243,19 @@ def build_financial_breakdown_from_mobile_rows(
         "delay_bonus",
         "compliance_bonus",
         "loyalty_bonus",
-        "customer_rating",
         "monthly_bonus",
         "manual_bonus",
         "correction_income",
     ])
+    if customer_rating_item and (
+        money_int(customer_rating_item.get("amountHuf"))
+        or str(customer_rating_item.get("amountKind") or "huf") == "huf"
+    ):
+        insert_after = next(
+            (index + 1 for index, current in enumerate(income_items) if current.get("key") == "loyalty_bonus"),
+            len(income_items),
+        )
+        income_items.insert(insert_after, customer_rating_item)
     deduction_items = money_items([
         "monthly_malus",
         "manual_malus",
@@ -2323,7 +2345,7 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
-        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": mobile_override_amount(overrides, "customer_rating"), "tone": "income", "items": money_items(["customer_rating"])},
+        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": [customer_rating_item] if customer_rating_item else []},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
         {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": mobile_override_amount(overrides, "atm_effect"), "tone": "deduction", "items": money_items(["atm_effect"])},
