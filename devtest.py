@@ -2699,13 +2699,9 @@ def calculate_target_reserve_month(
     if reserve_before == 0:
         reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
 
-    should_top_up_reserve = insurance_active_before and reserve_before < reserve_target
+    should_top_up_reserve = insurance_active_before and reserve_target > 0
     calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
-    reserve_addition = (
-        min(calculated_addition, max(0, int(round(reserve_target - reserve_before))))
-        if should_top_up_reserve
-        else 0
-    )
+    reserve_addition = min(calculated_addition, int(round(reserve_target))) if should_top_up_reserve else 0
     insurance_fee = insurance_fee_rule if insurance_active_before else 0
     reserve_after = reserve_before + reserve_addition
     insurance_active_after = insurance_active_before
