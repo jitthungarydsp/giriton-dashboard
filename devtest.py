@@ -9056,6 +9056,30 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Státusz", "Darab": 0, "Egységösszeg": 0, "Összeg": 0, "Számítás": loyalty_status or "-"},
                 ])
             if detail_label == "Ügyfélértékelési bónusz":
+                rating_rows = load_customer_rating_bonus_rows(period_start, period_end)
+                if not rating_rows.empty:
+                    rating_rows = rating_rows.copy()
+                    rating_rows["_courier_id_lookup"] = rating_rows.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+                    rating_rows["_courier_name_lookup"] = rating_rows.get("driver_name", pd.Series(dtype=str)).map(_courier_match_key)
+                    courier_id_lookup = _courier_id_key(courier_id)
+                    courier_name_lookup = _courier_match_key(courier_name)
+                    selected_rating = rating_rows.loc[rating_rows["_courier_id_lookup"].eq(courier_id_lookup)].copy()
+                    if selected_rating.empty and courier_name_lookup:
+                        selected_rating = rating_rows.loc[rating_rows["_courier_name_lookup"].eq(courier_name_lookup)].copy()
+                    if not selected_rating.empty:
+                        selected_rating["Tétel"] = "Ügyfélértékelési bónusz"
+                        selected_rating["Túratípus"] = selected_rating.get("route_type", pd.Series("", index=selected_rating.index)).map(
+                            lambda value: {"normal": "Normál", "express": "Expressz", "regional": "Regionális", "any": "Bármely"}.get(str(value or "").strip().casefold(), str(value or "").strip() or "-")
+                        )
+                        selected_rating["Értékelés"] = pd.to_numeric(selected_rating.get("average_rating", 0), errors="coerce").fillna(0.0)
+                        selected_rating["Darab"] = pd.to_numeric(selected_rating.get("completed_routes", 0), errors="coerce").fillna(0.0).astype(int)
+                        selected_rating["Egységösszeg"] = pd.to_numeric(selected_rating.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
+                        selected_rating["Összeg"] = pd.to_numeric(selected_rating.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+                        selected_rating["Számítás"] = selected_rating.apply(
+                            lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}" if item["Egységösszeg"] else format_huf(item["Összeg"]),
+                            axis=1,
+                        )
+                        return selected_rating[["Tétel", "Túratípus", "Értékelés", "Darab", "Egységösszeg", "Összeg", "Számítás"]]
                 unit_amount = customer_rating_total / route_total if route_total else 0
                 return pd.DataFrame([{
                     "Tétel": "Ügyfélértékelési bónusz",

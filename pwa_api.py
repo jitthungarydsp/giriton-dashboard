@@ -2222,11 +2222,12 @@ def build_financial_breakdown_from_mobile_rows(
     income_total = mobile_override_amount(overrides, "income")
     deduction_total = mobile_override_amount(overrides, "deductions")
     correction_total = mobile_override_amount(overrides, "correction")
-    customer_rating_total = mobile_override_amount(overrides, "customer_rating")
-    if not customer_rating_total:
-        customer_rating_total = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
+    mobile_customer_rating_total = mobile_override_amount(overrides, "customer_rating")
+    customer_rating_items = read_customer_rating_bonus_items(courier_identity(user)[0], month)
+    imported_customer_rating_total = sum(money_int(current.get("amountHuf")) for current in customer_rating_items)
+    customer_rating_total = mobile_customer_rating_total or imported_customer_rating_total or money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
     customer_rating_item = item("customer_rating")
-    if customer_rating_total and (
+    if not customer_rating_items and customer_rating_total and (
         not customer_rating_item
         or not money_int(customer_rating_item.get("amountHuf"))
     ):
@@ -2236,6 +2237,12 @@ def build_financial_breakdown_from_mobile_rows(
             customer_rating_total,
             note="Központi elszámolási adat",
         )
+    if customer_rating_items:
+        customer_rating_item = None
+    if customer_rating_total != mobile_customer_rating_total:
+        delta = customer_rating_total - mobile_customer_rating_total
+        income_total += delta
+        payable += delta
 
     income_items = money_items([
         "base",
@@ -2247,7 +2254,13 @@ def build_financial_breakdown_from_mobile_rows(
         "manual_bonus",
         "correction_income",
     ])
-    if customer_rating_item and (
+    if customer_rating_items:
+        insert_after = next(
+            (index + 1 for index, current in enumerate(income_items) if current.get("key") == "loyalty_bonus"),
+            len(income_items),
+        )
+        income_items[insert_after:insert_after] = customer_rating_items
+    elif customer_rating_item and (
         money_int(customer_rating_item.get("amountHuf"))
         or str(customer_rating_item.get("amountKind") or "huf") == "huf"
     ):
@@ -2345,7 +2358,7 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
-        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": [customer_rating_item] if customer_rating_item else []},
+        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items or ([customer_rating_item] if customer_rating_item else [])},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
         {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": mobile_override_amount(overrides, "atm_effect"), "tone": "deduction", "items": money_items(["atm_effect"])},
@@ -4073,6 +4086,42 @@ def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str,
         "averageRating": round(sum(averages) / len(averages), 2) if averages else None,
         "completedRoutes": completed_routes,
     }
+
+
+def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "bill_jitt_invoice_customer_rating_bonus",
+        params={
+            "select": "worksheet_name,route_type,rating_count,average_rating,bonus_per_route_huf,completed_routes,bonus_total_huf",
+            "courier_id": f"eq.{courier_id}",
+            "billing_month": f"eq.{period_start.isoformat()}",
+            "limit": "50",
+        },
+    )
+    items: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        amount = money_int(row.get("bonus_total_huf"))
+        completed_routes = safe_int(row.get("completed_routes"))
+        unit_amount = money_int(row.get("bonus_per_route_huf"))
+        average_rating = row.get("average_rating")
+        route_type = str(row.get("route_type") or "").strip()
+        note_parts = []
+        if average_rating not in (None, ""):
+            note_parts.append(f"Átlag: {average_rating}")
+        if completed_routes:
+            note_parts.append(f"Kör: {completed_routes}")
+        if unit_amount:
+            note_parts.append(f"{completed_routes} x {unit_amount} Ft")
+        if route_type:
+            note_parts.append(route_type)
+        items.append(signed_item(
+            f"customer_rating_import_{index}",
+            "Ügyfélértékelési bónusz",
+            amount,
+            source="public.bill_jitt_invoice_customer_rating_bonus",
+            note=" | ".join(note_parts) or str(row.get("worksheet_name") or "Ügyfélértékelés import"),
+        ))
+    return [item for item in items if item["amountHuf"]]
 
 
 def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) -> dict[str, Any]:
