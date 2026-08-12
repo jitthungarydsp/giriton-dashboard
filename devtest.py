@@ -2576,14 +2576,6 @@ def save_monthly_workload_summary(
 @st.cache_data(show_spinner=False, ttl=60)
 def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, object]:
     """Return insurance only from the insurance_active flag of a matching reserve row."""
-    clean_courier_id = str(courier_id or "").strip()
-    try:
-        query = get_db().schema("public").table("courier_target_reserve").select("*").limit(1)
-        rows = query.eq("courier_ID", clean_courier_id).execute().data or []
-    except BaseException:
-        return {"insurance_active": False, "row": {}}
-    if not rows:
-        return {"insurance_active": False, "row": {}}
     def id_key(value: object) -> str:
         text = str(value or "").strip().casefold()
         if not text:
@@ -2598,11 +2590,62 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
         return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
 
     target_id = id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    rows: list[dict[str, object]] = []
+    for column_name in ["courier_ID", "courier_id", "courierId", "driver_id", "driverId", "user_id", "userId"]:
+        if not target_id:
+            break
+        try:
+            rows = (
+                get_db()
+                .schema("public")
+                .table("courier_target_reserve")
+                .select("*")
+                .eq(column_name, target_id)
+                .limit(5)
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            rows = []
+        if rows:
+            break
+    if not rows and target_name:
+        try:
+            candidate_rows = (
+                get_db()
+                .schema("public")
+                .table("courier_target_reserve")
+                .select("*")
+                .limit(5000)
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            candidate_rows = []
+        name_columns = {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
+        rows = [
+            reserve_row for reserve_row in candidate_rows
+            if any(
+                _courier_match_key(value) == target_name
+                for column, value in reserve_row.items()
+                if normalized_column_name(column) in name_columns
+            )
+        ][:5]
+    if not rows:
+        return {"insurance_active": False, "row": {}}
     for reserve_row in rows:
         id_columns = {"courierid", "couriernumber", "usernumber", "userid", "driverid"}
         id_values = [value for column, value in reserve_row.items() if normalized_column_name(column) in id_columns]
         matches_id = target_id and any(id_key(value) == target_id for value in id_values if value is not None)
-        if matches_id:
+        matches_name = target_name and any(
+            _courier_match_key(value) == target_name
+            for column, value in reserve_row.items()
+            if normalized_column_name(column) in {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
+        )
+        if matches_id or matches_name:
             active_value = next((value for column, value in reserve_row.items() if normalized_column_name(column) == "insuranceactive"), None)
             active = str(active_value).strip().casefold() in {"true", "t", "1", "yes", "igen"}
             return {"insurance_active": active, "row": reserve_row}
@@ -9311,8 +9354,10 @@ def show_courier_dialog() -> None:
             {"item_key": "manual_malus", "item_label": "JITT malus", "amount_kind": "huf", "amount_value": -manual_malus_total, "note": "Sheet/DB tételek"},
             {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -atm_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -salary_advance_total, "note": "Valós elszámolási adat"},
+            {"item_key": "target_reserve_open", "item_label": "Céltartalék nyitó", "amount_kind": "huf", "amount_value": reserve_before_total, "note": "Biztosítási adat"},
             {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve_addition_total, "note": "Valós elszámolási adat"},
             {"item_key": "insurance_fee", "item_label": "Biztosítási díj", "amount_kind": "huf", "amount_value": -insurance_fee_total, "note": "Valós elszámolási adat"},
+            {"item_key": "target_reserve_close", "item_label": "Új nyitó / záró céltartalék", "amount_kind": "huf", "amount_value": reserve_after_total, "note": "Biztosítási adat"},
             {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
             {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": route_total, "note": "Valós elszámolási adat"},
             {"item_key": "highlighted_routes", "item_label": "Kiemelt kör", "amount_kind": "count", "amount_value": highlighted_route_total, "note": "Valós elszámolási adat"},

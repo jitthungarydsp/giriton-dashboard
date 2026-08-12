@@ -2279,6 +2279,20 @@ def build_financial_breakdown_from_mobile_rows(
         "correction_deduction",
         "other_deduction",
     ])
+    insurance_items = [
+        current for current in (
+            item("target_reserve_open"),
+            item("reserve"),
+            item("insurance_fee"),
+            item("target_reserve_close"),
+        )
+        if current is not None and (money_int(current.get("amountHuf")) or current.get("key") in {"target_reserve_open", "target_reserve_close"})
+    ]
+    insurance_total = sum(
+        money_int(current.get("amountHuf"))
+        for current in insurance_items
+        if current.get("key") in {"reserve", "insurance_fee"}
+    )
     kiflis_detail_items = detail_items(
         ("kiflis_bonus_", "kiflis_malus_"),
         [],
@@ -2362,6 +2376,7 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
         {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": mobile_override_amount(overrides, "atm_effect"), "tone": "deduction", "items": money_items(["atm_effect"])},
+        {"key": "insurance", "label": "Biztos\u00edt\u00e1s", "amountHuf": insurance_total, "tone": "deduction", "items": insurance_items},
         {"key": "corrections", "label": "Korrekci\u00f3k", "amountHuf": correction_total, "tone": "info", "items": correction_items},
         {"key": "performance", "label": "Teljes\u00edtm\u00e9ny", "amountHuf": mobile_override_amount(overrides, "performance"), "amountKind": "count", "tone": "info", "items": performance_items},
     ]
@@ -3164,7 +3179,10 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     returned_route = abs(money_from(row, "monthly_returned_route_huf"))
     accepted_route = money_from(row, "monthly_accepted_route_huf")
     atm_effect = money_from(row, "atm_effect_huf") or -abs(money_from(row, "atm_deduction_huf"))
-    reserve_topup = money_from(row, "target_reserve_topup_huf")
+    reserve_topup = -abs(money_from(row, "target_reserve_topup_huf", "reserve_deduction_huf"))
+    reserve_open = money_from(row, "target_reserve_open_huf", "reserve_before_huf")
+    reserve_close = money_from(row, "target_reserve_close_huf", "reserve_after_huf")
+    insurance_fee = -abs(money_from(row, "insurance_fee_huf", "insurance_deduction_huf"))
     fuel = money_from(row, "fuel_huf")
     damage = money_from(row, "damage_huf")
     cash_missing = money_from(row, "cash_missing_huf")
@@ -3204,6 +3222,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("returned_route", "Visszavett kör", -returned_route),
         signed_item("atm_effect", "ATM hatás", atm_effect),
         signed_item("reserve", "Céltartalék", reserve_topup),
+        signed_item("insurance_fee", "Biztosítási díj", insurance_fee),
         signed_item("fuel", "Üzemanyag", fuel),
         signed_item("damage", "Kár / levonás", damage),
         signed_item("cash_missing", "KP hiány", cash_missing),
@@ -3215,6 +3234,17 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         if item["amountHuf"] or item["key"] == "customer_rating"
     ]
     deduction_items = [item for item in deduction_items if item["amountHuf"]]
+    insurance_items = [
+        signed_item("target_reserve_open", "Céltartalék nyitó", reserve_open),
+        signed_item("reserve", "Céltartalék levonás", reserve_topup),
+        signed_item("insurance_fee", "Biztosítási havi díj", insurance_fee),
+        signed_item("target_reserve_close", "Új nyitó / záró egyenleg", reserve_close),
+    ]
+    insurance_items = [
+        current for current in insurance_items
+        if current["amountHuf"] or current["key"] in {"target_reserve_open", "target_reserve_close"}
+    ]
+    insurance_total = reserve_topup + insurance_fee
     income_total = sum(item["amountHuf"] for item in income_items)
     deduction_total = sum(item["amountHuf"] for item in deduction_items)
     if not payable:
@@ -3403,6 +3433,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         {"key": "kiflis_bonus_malus", "label": "Kiflis levonások / bónuszok", "amountHuf": kiflis_bonus_malus_total, "tone": "info", "items": kiflis_bonus_malus_items},
         {"key": "bonus_malus", "label": "JITT bónusz / málusz", "amountHuf": jitt_bonus_malus_total, "tone": "info", "items": jitt_bonus_malus_items},
         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": manual_correction_items},
+        {"key": "insurance", "label": "Biztosítás", "amountHuf": insurance_total, "tone": "deduction", "items": insurance_items},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
     cards = apply_mobile_overrides(cards, overrides)
