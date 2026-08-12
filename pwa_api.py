@@ -5432,10 +5432,16 @@ def unsubscribe_push(
 
 @app.get("/api/profile/billing")
 def get_billing_profile(
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    return {"billing": read_billing_profile(user)}
+    view_user, preview = workflow_view_user(user, courier)
+    return {
+        "billing": read_billing_profile(view_user),
+        "viewingAs": public_user(view_user) if preview else None,
+        "viewerReadOnly": preview,
+    }
 
 
 @app.put("/api/profile/password")
@@ -5543,10 +5549,12 @@ def update_billing_profile(
 @app.get("/api/devices/reports")
 def list_device_condition_reports(
     serial_number: str = Query(default=""),
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
     params = {
         "select": "id,device_id,device_type,serial_number,imei,courier_id,courier_name,event_type,condition_status,note,photo_count,reported_at",
         "courier_id": f"eq.{courier_id}",
@@ -5670,10 +5678,12 @@ async def create_device_condition_report(
 @app.get("/api/devices/photos/{photo_id}")
 def get_device_condition_photo(
     photo_id: str,
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
     photo_rows = supabase_rest(
         "GET",
         "pwa_device_condition_photos",
@@ -5712,9 +5722,12 @@ def get_device_condition_photo(
 @app.get("/api/shifts")
 def shifts(
     days: int = Query(default=5, ge=1, le=14),
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    return read_shifts(require_user(giriton_pwa_session), days)
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    return read_shifts(view_user, days)
 
 
 @app.post("/api/shifts/delay-alert")
@@ -5728,10 +5741,12 @@ def create_shift_delay_alert(
 
 @app.get("/api/routes/current")
 def current_route(
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    return build_route_card(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    return build_route_card(view_user)
 
 
 @app.post("/api/routes/delay-alert")
@@ -5989,10 +6004,12 @@ def create_workflow_complaint(
 @app.get("/api/documents/{document_id}")
 def download_document(
     document_id: str,
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
     rows = supabase_rest(
         "GET",
         "peopleforce_documents",
@@ -6390,10 +6407,12 @@ def delete_coordinator_adjustment(
 
 @app.get("/api/salary-advance/requests")
 def salary_advance_requests(
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    courier_id, _courier_name = courier_identity(user)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
     rows = supabase_rest(
         "GET",
         "courier_salary_advance_request",
@@ -6444,7 +6463,7 @@ def create_salary_advance_request(
         prefer="return=representation",
         schema="settlement",
     )
-    requests = salary_advance_requests(giriton_pwa_session)
+    requests = salary_advance_requests(giriton_pwa_session=giriton_pwa_session)
     return {
         "request": normalize_salary_advance_request(rows[0] if rows else {}),
         "requests": requests["requests"],

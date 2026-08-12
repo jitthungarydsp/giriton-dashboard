@@ -41,6 +41,10 @@ textarea { min-height: 96px; resize: vertical; }
 .topbar { display: flex; justify-content: space-between; align-items: center; padding: 4px 2px 20px; }
 .topbar h1 { margin: 0; font-size: 28px; letter-spacing: -.04em; }
 .icon-button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink); font-size: 20px; }
+.admin-preview-bar { display: grid; gap: 10px; margin: 0 0 16px; padding: 14px; border: 1px solid #b8d5b4; border-radius: 18px; background: #eff8ed; box-shadow: 0 7px 20px #3141340a; }
+.admin-preview-bar label { color: var(--green-dark); }
+.admin-preview-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.admin-preview-bar p { min-height: 18px; margin: 0; color: var(--green-dark); font-size: 12px; font-weight: 800; }
 .hero-card { display: flex; justify-content: space-between; gap: 18px; min-height: 170px; padding: 24px; border-radius: 26px; background: linear-gradient(135deg, var(--lime), #aacd62); box-shadow: 0 16px 36px #63872f24; }
 .hero-card h2 { max-width: 430px; margin: 22px 0 4px; font-size: clamp(25px, 7vw, 38px); line-height: 1.05; letter-spacing: -.045em; }
 .hero-detail { margin: 8px 0 0; color: #34503a; font-weight: 650; }

@@ -47,6 +47,27 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function previewCourierValue() {
+  if (!state.user?.canPreviewCouriers) return "";
+  return String(state.workflowPreviewCourierId || "").trim();
+}
+
+function isAdminPreviewMode() {
+  return Boolean(previewCourierValue());
+}
+
+function withPreviewCourier(path) {
+  const courier = previewCourierValue();
+  if (!courier) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}courier=${encodeURIComponent(courier)}`;
+}
+
+function setAdminPreviewStatus(message = "") {
+  const target = $("#admin-preview-status");
+  if (target) target.textContent = message;
+}
+
 function localDate(offset = 0) {
   const value = new Date();
   value.setDate(value.getDate() + offset);
@@ -115,6 +136,10 @@ function showApp() {
     const previewWrapper = $(selector);
     if (previewWrapper) previewWrapper.classList.toggle("hidden", !state.user.canPreviewCouriers);
   });
+  const adminPreviewBar = $("#admin-preview-bar");
+  if (adminPreviewBar) adminPreviewBar.classList.toggle("hidden", !state.user.canPreviewCouriers);
+  const adminPreviewInput = $("#admin-preview-courier");
+  if (adminPreviewInput) adminPreviewInput.value = state.workflowPreviewCourierId;
 }
 
 function showSection(section) {
@@ -227,7 +252,7 @@ async function loadSalaryAdvanceRequests() {
   const message = $("#salary-advance-message");
   if (message) message.textContent = "Előleg kérelmek betöltése...";
   try {
-    const payload = await api("/api/salary-advance/requests");
+    const payload = await api(withPreviewCourier("/api/salary-advance/requests"));
     state.salaryAdvanceRequests = payload.requests || [];
     renderSalaryAdvanceRequests();
     if (message) message.textContent = "";
@@ -885,7 +910,7 @@ function renderCurrentRoute() {
 
 async function loadCurrentRoute() {
   try {
-    state.currentRoute = await api("/api/routes/current");
+    state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
     renderCurrentRoute();
   } catch (error) {
     const container = ensureRouteCard();
@@ -1107,7 +1132,7 @@ function renderWarnings() {
 async function loadShifts() {
   $("#refresh").disabled = true;
   try {
-    state.data = await api("/api/shifts?days=5");
+    state.data = await api(withPreviewCourier("/api/shifts?days=5"));
     const focusShift = activeOrNextShift(state.data?.items || []);
     state.selectedDate = focusShift?.date || state.selectedDate || localDate();
     renderHero();
@@ -1246,7 +1271,7 @@ function documentList(documents) {
   return `<div class="document-list">${documents.map((document) => `
     <div class="document-row">
       <div><strong>${escapeHtml(document.title || document.file_name)}</strong><small>${escapeHtml(document.file_name)} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt</small></div>
-      <a class="download-link" href="${escapeHtml(document.downloadUrl)}">Letöltés</a>
+      <a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl || "#"))}">Letöltés</a>
     </div>`).join("")}</div>`;
 }
 
@@ -1302,7 +1327,7 @@ function complaintList(complaints) {
 function complaintResponseList(responses) {
   if (!responses.length) return "";
   return `<div class="complaint-list"><strong>Admin valaszai</strong>${responses.map((response) => `
-    <div class="complaint-row"><div><strong>${escapeHtml(response.note || response.title || "Admin valasz")}</strong><small>${escapeHtml(response.uploaded_by || "admin")} · ${response.uploaded_at ? new Date(response.uploaded_at).toLocaleString("hu-HU") : ""}</small>${response.downloadUrl ? `<a class="download-link" href="${escapeHtml(response.downloadUrl)}">Valasz letoltese</a>` : ""}</div></div>
+    <div class="complaint-row"><div><strong>${escapeHtml(response.note || response.title || "Admin valasz")}</strong><small>${escapeHtml(response.uploaded_by || "admin")} · ${response.uploaded_at ? new Date(response.uploaded_at).toLocaleString("hu-HU") : ""}</small>${response.downloadUrl ? `<a class="download-link" href="${escapeHtml(withPreviewCourier(response.downloadUrl))}">Valasz letoltese</a>` : ""}</div></div>
   `).join("")}</div>`;
 }
 
@@ -2065,13 +2090,14 @@ function setBillingMessage(message, isError = false) {
 function updateBillingProfileEditState() {
   const form = $("#billing-profile-form");
   if (!form) return;
+  const previewReadOnly = isAdminPreviewMode();
 
   const courierIdInput = $("#profile-courier-id");
   const courierId = String(courierIdInput?.value || "").trim();
   if (courierIdInput) {
-    courierIdInput.readOnly = Boolean(courierId);
-    courierIdInput.toggleAttribute("aria-readonly", Boolean(courierId));
-    courierIdInput.classList.toggle("locked", Boolean(courierId));
+    courierIdInput.readOnly = previewReadOnly || Boolean(courierId);
+    courierIdInput.toggleAttribute("aria-readonly", previewReadOnly || Boolean(courierId));
+    courierIdInput.classList.toggle("locked", previewReadOnly || Boolean(courierId));
     courierIdInput.title = courierId
       ? "A futár ID már rögzítve van, ezért nem módosítható."
       : "A futár ID csak addig írható, amíg üres.";
@@ -2079,13 +2105,13 @@ function updateBillingProfileEditState() {
 
   form.querySelectorAll("input").forEach((input) => {
     if (input.id === "profile-courier-id") return;
-    input.readOnly = false;
-    input.toggleAttribute("aria-readonly", false);
-    input.classList.remove("locked");
+    input.readOnly = previewReadOnly;
+    input.toggleAttribute("aria-readonly", previewReadOnly);
+    input.classList.toggle("locked", previewReadOnly);
   });
 
   const submitButton = form.querySelector('button[type="submit"]');
-  if (submitButton) submitButton.hidden = false;
+  if (submitButton) submitButton.hidden = previewReadOnly;
 }
 
 function fillBillingProfile(data = {}) {
@@ -2113,7 +2139,7 @@ async function loadBillingProfile() {
   setBillingMessage("Számlázási adatok betöltése…");
 
   try {
-    const payload = await api("/api/profile/billing");
+    const payload = await api(withPreviewCourier("/api/profile/billing"));
     // Kezeli mindkét válaszformát: { billing: {...} } vagy közvetlen {...}.
     const billing = payload.billing || payload || {};
     state.billingProfile = billing;
@@ -2129,6 +2155,11 @@ async function loadBillingProfile() {
 
     if (!hasData) {
       setBillingMessage("Ehhez a profilhoz még nincsenek rögzített számlázási adatok.", true);
+      return;
+    }
+
+    if (isAdminPreviewMode()) {
+      setBillingMessage("Admin előnézet: a kiválasztott futár profiladatai csak olvashatók.");
       return;
     }
 
@@ -2197,7 +2228,7 @@ function setDeviceConditionMessage(message, isError = false) {
 function deviceReportPhotos(photos = []) {
   if (!photos.length) return "";
   return `<div class="device-photo-list">${photos.map((photo, index) => `
-    <a href="${escapeHtml(photo.url || "#")}" target="_blank" rel="noopener">
+    <a href="${escapeHtml(withPreviewCourier(photo.url || "#"))}" target="_blank" rel="noopener">
       ${escapeHtml(photo.label || `Fotó ${index + 1}`)}
     </a>
   `).join("")}</div>`;
@@ -2239,7 +2270,7 @@ async function loadDeviceReports() {
   if (!target) return;
   target.innerHTML = `<div class="empty-card">Telefon előzmények betöltése...</div>`;
   try {
-    const payload = await api("/api/devices/reports");
+    const payload = await api(withPreviewCourier("/api/devices/reports"));
     state.deviceReports = payload.reports || [];
     renderDeviceReports();
   } catch (error) {
@@ -2251,6 +2282,10 @@ const deviceConditionForm = $("#device-condition-form");
 if (deviceConditionForm) {
   deviceConditionForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (isAdminPreviewMode()) {
+      setDeviceConditionMessage("Admin előnézetben nem rögzíthető telefonállapot.", true);
+      return;
+    }
     const button = deviceConditionForm.querySelector('button[type="submit"]');
     const photos = $("#device-condition-photos")?.files || [];
     if (!photos.length) {
@@ -2528,6 +2563,8 @@ const workflowPreviewCourierInput = $("#workflow-preview-courier");
 if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
 const statisticsPreviewCourierInput = $("#statistics-preview-courier");
 if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
+const adminPreviewCourierInput = $("#admin-preview-courier");
+if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
 renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
@@ -2551,13 +2588,27 @@ function updatePreviewCourier(value) {
   state.workflowPreviewCourierId = String(value || "").trim();
   if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
+  if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
   state.workflowProcess = "";
   state.workflow = null;
   state.statistics = null;
+  state.data = null;
+  state.currentRoute = null;
+  state.billingProfile = null;
+  state.deviceReports = [];
+  state.salaryAdvanceRequests = [];
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
-  loadWorkflow();
+  setAdminPreviewStatus(state.workflowPreviewCourierId ? `Előnézet aktív: ${state.workflowPreviewCourierId}` : "Saját profil aktív.");
+  if (state.section === "home") loadShifts();
+  if (state.section === "settlement" || state.section === "documents") loadWorkflow().then(() => {
+    if (state.section === "documents") renderDocumentsSection();
+  });
   if (state.section === "statistics") loadStatistics({ resetHistory: true });
+  if (state.section === "salary-advance") loadSalaryAdvanceRequests();
+  if (state.section === "profile") loadBillingProfile();
+  if (state.section === "device") loadDeviceReports();
+  if (state.section === "tours") loadCurrentRoute();
 }
 
 workflowPreviewCourierInput?.addEventListener("change", (event) => {
@@ -2566,6 +2617,25 @@ workflowPreviewCourierInput?.addEventListener("change", (event) => {
 
 statisticsPreviewCourierInput?.addEventListener("change", (event) => {
   updatePreviewCourier(event.target.value);
+});
+
+adminPreviewCourierInput?.addEventListener("change", (event) => {
+  updatePreviewCourier(event.target.value);
+});
+
+adminPreviewCourierInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    updatePreviewCourier(event.currentTarget.value);
+  }
+});
+
+$("#admin-preview-open")?.addEventListener("click", () => {
+  updatePreviewCourier(adminPreviewCourierInput?.value || "");
+});
+
+$("#admin-preview-clear")?.addEventListener("click", () => {
+  updatePreviewCourier("");
 });
 
 $("#workflow-refresh").addEventListener("click", () => {
@@ -2598,6 +2668,11 @@ updateSalaryAdvancePreview();
 $("#salary-advance-refresh")?.addEventListener("click", loadSalaryAdvanceRequests);
 $("#salary-advance-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (isAdminPreviewMode()) {
+    const message = $("#salary-advance-message");
+    if (message) message.textContent = "Admin előnézetben nem indítható előlegigény.";
+    return;
+  }
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
   const message = $("#salary-advance-message");

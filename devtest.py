@@ -3799,7 +3799,8 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     """Read persisted database-calculated courier base fees."""
     columns = [
         "Courier ID", "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
-        "Rendszerbónusz", "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
+        "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz",
+        "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
     try:
         rows = (
@@ -3850,6 +3851,9 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "tip_huf": "Borravaló",
         "route_bonus_huf": "Rendszerbónusz",
         "route_bonus_total_huf": "Rendszerbónusz",
+        "delay_bonus_huf": "Késedelmi díj",
+        "compliance_bonus_huf": "Túramegfelelés",
+        "other_route_bonus_huf": "Egyéb bónusz",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
         "calculated_routes": "Számolt túrák",
@@ -4000,7 +4004,8 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         calculated.groupby("_courier_lookup", as_index=False)[
             [
                 "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
-                "Rendszerbónusz", "Számolt túrák", "Nem számolt túrák",
+                "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz",
+                "Számolt túrák", "Nem számolt túrák",
             ]
         ]
         .sum()
@@ -4008,19 +4013,26 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     calculated_by_id = calculated[calculated["_courier_id_lookup"] != ""].groupby("_courier_id_lookup", as_index=False)[
         [
             "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
-            "Rendszerbónusz", "Számolt túrák", "Nem számolt túrák",
+            "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés", "Egyéb bónusz",
+            "Számolt túrák", "Nem számolt túrák",
         ]
     ].sum()
     amount_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nettó bevétel"] if not calculated_by_id.empty else pd.Series(dtype=float)
     company_amount_by_id = calculated_by_id.set_index("_courier_id_lookup")["Vállalkozói alapdíj"] if not calculated_by_id.empty else pd.Series(dtype=float)
     tip_by_id = calculated_by_id.set_index("_courier_id_lookup")["Borravaló"] if not calculated_by_id.empty else pd.Series(dtype=float)
     system_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Rendszerbónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    delay_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Késedelmi díj"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    compliance_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Túramegfelelés"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    other_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Egyéb bónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
     matched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
     unmatched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nem számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
     amount_by_courier = calculated_by_name.set_index("_courier_lookup")["Nettó bevétel"]
     company_amount_by_courier = calculated_by_name.set_index("_courier_lookup")["Vállalkozói alapdíj"]
     tip_by_courier = calculated_by_name.set_index("_courier_lookup")["Borravaló"]
     system_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Rendszerbónusz"]
+    delay_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Késedelmi díj"]
+    compliance_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Túramegfelelés"]
+    other_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Egyéb bónusz"]
     matched_routes = calculated_by_name.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated_by_name.set_index("_courier_lookup")["Nem számolt túrák"]
     calculated_keys = set(amount_by_courier.index)
@@ -4031,12 +4043,15 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Vállalkozói alapdíj"] = result["_courier_id_lookup"].map(company_amount_by_id).fillna(resolved_lookup.map(company_amount_by_courier)).fillna(0.0)
     result["Borravaló"] = result["_courier_id_lookup"].map(tip_by_id).fillna(resolved_lookup.map(tip_by_courier)).fillna(0.0)
     result["Bónusz"] = result["_courier_id_lookup"].map(system_bonus_by_id).fillna(resolved_lookup.map(system_bonus_by_courier)).fillna(0.0)
+    result["Késedelmi díj"] = result["_courier_id_lookup"].map(delay_bonus_by_id).fillna(resolved_lookup.map(delay_bonus_by_courier)).fillna(0.0)
+    result["Túramegfelelés"] = result["_courier_id_lookup"].map(compliance_bonus_by_id).fillna(resolved_lookup.map(compliance_bonus_by_courier)).fillna(0.0)
+    result["Egyéb bónusz"] = result["_courier_id_lookup"].map(other_bonus_by_id).fillna(resolved_lookup.map(other_bonus_by_courier)).fillna(0.0)
     result["Számolt túrák"] = result["_courier_id_lookup"].map(matched_routes_by_id).fillna(resolved_lookup.map(matched_routes)).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_id_lookup"].map(unmatched_routes_by_id).fillna(resolved_lookup.map(unmatched_routes)).fillna(0).astype(int)
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
-        + _numeric_series(result, "Bónusz")
+        + payable_bonus_total(result)
         + _numeric_series(result, "Korrekció")
         - _numeric_series(result, "Levonás")
     )
@@ -4748,12 +4763,31 @@ def build_settlement_working_data(calculation_mode: str, session_id: str | None,
     return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label, session_id)
 
 
+def payable_bonus_total(data: pd.DataFrame) -> pd.Series:
+    itemized_columns = [
+        "Késedelmi díj",
+        "Túramegfelelés",
+        "Egyéb bónusz",
+        "Importált bónusz",
+        "JITT bónusz",
+        "Lojalitás",
+        "Ügyfélértékelés",
+    ]
+    available_columns = [column for column in itemized_columns if column in data.columns]
+    if not available_columns:
+        return _numeric_series(data, "Bónusz")
+    total = pd.Series(0.0, index=data.index, dtype="float64")
+    for column in available_columns:
+        total = total + _numeric_series(data, column)
+    return total
+
+
 def recompute_payable_total(data: pd.DataFrame) -> pd.DataFrame:
     result = data.copy()
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
-        + _numeric_series(result, "Bónusz")
+        + payable_bonus_total(result)
         + _numeric_series(result, "Korrekció")
         - _numeric_series(result, "Levonás")
     )
@@ -5149,7 +5183,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
-        + _numeric_series(result, "Bónusz")
+        + payable_bonus_total(result)
         - _numeric_series(result, "Levonás")
     )
     return result
@@ -5216,7 +5250,7 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
-        + _numeric_series(result, "Bónusz")
+        + payable_bonus_total(result)
         + _numeric_series(result, "Korrekció")
         - _numeric_series(result, "Levonás")
     )
@@ -5396,7 +5430,7 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")
-        + _numeric_series(result, "Bónusz")
+        + payable_bonus_total(result)
         - _numeric_series(result, "Levonás")
     )
     return result
