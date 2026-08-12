@@ -5139,8 +5139,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         selected_missing: list[str] = []
         for _, rule in rules.iterrows():
             missing: list[str] = []
-            configured_required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
-            required_months = configured_required_months if configured_required_months > 0 else DEFAULT_LOYALTY_MONTHS_REQUIRED
+            required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
             if months_worked < required_months:
                 missing.append(f"{required_months}. hónap")
             booked_shift_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
@@ -11797,11 +11796,170 @@ def show_settlement_pdf_sample_page() -> None:
     )
 
 
-def build_excel_export(df: pd.DataFrame) -> bytes:
+@st.cache_data(show_spinner=False, ttl=60)
+def load_target_reserve_monthly_export_rows(period_start: date, period_end: date) -> pd.DataFrame:
+    columns = [
+        "courier_id",
+        "reserve_before_huf",
+        "reserve_addition_huf",
+        "insurance_fee_huf",
+        "reserve_after_huf",
+        "payable_before_insurance_huf",
+        "payable_after_insurance_huf",
+        "status",
+    ]
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_monthly")
+            .select(",".join(columns))
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(rows)
+    for column in columns:
+        if column not in result.columns:
+            result[column] = ""
+    return result[columns]
+
+
+def _export_row_value(row: dict[str, object], aliases: set[str]) -> object:
+    wanted = {_normalized_field_key(alias) for alias in aliases}
+    for column, value in row.items():
+        if _normalized_field_key(column) in wanted:
+            return value
+    return ""
+
+
+def _export_tax_mode_label(row: dict[str, object], period_start: date | None) -> str:
+    courier_id = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
+    if courier_id and period_start and load_active_efo_assignment(courier_id, period_start):
+        return "EFO"
+    courier_payload = {
+        "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
+        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
+        "vat_status": _export_row_value(row, {"ÁFA státusz", "AFA status", "vat_status"}),
+    }
+    breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
+    return "ÁFÁS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
+
+
+def _export_tig_values(row: dict[str, object], period_start: date | None) -> dict[str, float | str]:
+    courier_payload = {
+        "id": _export_row_value(row, {"Courier ID", "courier_id"}),
+        "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
+        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
+        "vat_status": _export_row_value(row, {"ÁFA státusz", "AFA status", "vat_status"}),
+        "document_month": period_start,
+    }
+    amounts = {
+        "payable": parse_huf_value(_export_row_value(row, {"Kifizetendő", "Fizetendő", "payable"})),
+        "tip": parse_huf_value(_export_row_value(row, {"Borravaló", "tip"})),
+        "cash": abs(parse_huf_value(_export_row_value(row, {"ATM hatás", "ATM levonás", "atm_effect"}))),
+    }
+    breakdown = build_tig_breakdown(courier_payload, amounts)
+    by_key = {str(item.get("key") or ""): item for item in breakdown.get("rows") or []}
+    transfer = by_key.get("transfer_service", {})
+    cash = by_key.get("cash_service", {})
+    return {
+        "Adózási mód": _export_tax_mode_label(row, period_start),
+        "TIG adó mód": str(breakdown.get("taxLabel") or ""),
+        "TIG átutalás nettó": parse_huf_value(transfer.get("netHuf")),
+        "TIG átutalás ÁFA": parse_huf_value(transfer.get("vatHuf")),
+        "TIG átutalás bruttó": parse_huf_value(transfer.get("grossHuf")),
+        "TIG KP nettó": parse_huf_value(cash.get("netHuf")),
+        "TIG KP ÁFA": parse_huf_value(cash.get("vatHuf")),
+        "TIG KP bruttó": parse_huf_value(cash.get("grossHuf")),
+        "TIG végösszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
+    }
+
+
+def build_excel_export(df: pd.DataFrame, period_start: date | None = None, period_end: date | None = None) -> bytes:
     from io import BytesIO
+    export_df = df.copy()
+    contractor_column_markers = (
+        "alvállalkoz",
+        "alvallalkoz",
+        "vállalkoz",
+        "vallalkoz",
+        "company",
+        "contractor",
+    )
+    export_df = export_df[
+        [
+            column for column in export_df.columns
+            if not any(marker in _normalized_field_key(column) for marker in contractor_column_markers)
+        ]
+    ]
+    if period_start and period_end and not export_df.empty:
+        reserve_rows = load_target_reserve_monthly_export_rows(period_start, period_end)
+        reserve_by_id: dict[str, dict[str, object]] = {}
+        if not reserve_rows.empty:
+            reserve_rows = reserve_rows.copy()
+            reserve_rows["_courier_id_lookup"] = reserve_rows["courier_id"].map(_courier_id_key)
+            reserve_by_id = {
+                courier_key: item
+                for courier_key, item in reserve_rows.set_index("_courier_id_lookup").to_dict("index").items()
+                if courier_key
+            }
+        added_columns: dict[str, list[float | str]] = {
+            "Adózási mód": [],
+            "TIG adó mód": [],
+            "TIG átutalás nettó": [],
+            "TIG átutalás ÁFA": [],
+            "TIG átutalás bruttó": [],
+            "TIG KP nettó": [],
+            "TIG KP ÁFA": [],
+            "TIG KP bruttó": [],
+            "TIG végösszeg": [],
+            "Céltartalék nyitó": [],
+            "Céltartalék levonás 10%": [],
+            "Életbiztosítás 10 000 Ft": [],
+            "Céltartalék záró": [],
+            "Új nyitó céltartalék": [],
+            "Céltartalék levonva": [],
+        }
+        for row in export_df.to_dict("records"):
+            tig_values = _export_tig_values(row, period_start)
+            for column in [
+                "Adózási mód",
+                "TIG adó mód",
+                "TIG átutalás nettó",
+                "TIG átutalás ÁFA",
+                "TIG átutalás bruttó",
+                "TIG KP nettó",
+                "TIG KP ÁFA",
+                "TIG KP bruttó",
+                "TIG végösszeg",
+            ]:
+                added_columns[column].append(tig_values.get(column, 0))
+
+            courier_key = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
+            reserve = reserve_by_id.get(courier_key, {})
+            reserve_before = parse_huf_value(reserve.get("reserve_before_huf"))
+            reserve_addition = parse_huf_value(reserve.get("reserve_addition_huf"))
+            insurance_fee = parse_huf_value(reserve.get("insurance_fee_huf"))
+            reserve_after = parse_huf_value(reserve.get("reserve_after_huf"))
+            added_columns["Céltartalék nyitó"].append(reserve_before)
+            added_columns["Céltartalék levonás 10%"].append(reserve_addition)
+            added_columns["Életbiztosítás 10 000 Ft"].append(insurance_fee)
+            added_columns["Céltartalék záró"].append(reserve_after)
+            added_columns["Új nyitó céltartalék"].append(reserve_after)
+            added_columns["Céltartalék levonva"].append("Igen" if reserve_addition or insurance_fee else "Nem")
+        for column, values in added_columns.items():
+            export_df[column] = values
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Elszámolások")
+        export_df.to_excel(writer, index=False, sheet_name="Elszámolások")
     return output.getvalue()
 
 def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
@@ -12880,7 +13038,7 @@ def show_new_settlement_page() -> None:
         show_parameter_catalog_dialog()
     e.download_button(
         "Export Excel",
-        data=build_excel_export(filtered),
+        data=build_excel_export(filtered, balance_period_start, balance_period_end),
         file_name="elszamolas_export.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
