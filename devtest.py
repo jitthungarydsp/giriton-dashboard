@@ -5632,6 +5632,56 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         pass
 
     excel_file = pd.ExcelFile(uploaded_file)
+
+    simple_aliases = {
+        "billing_month": ["datum", "date", "honap", "month", "elszamolasihonap", "billingmonth"],
+        "courier_id": ["id", "futarid", "courierid", "driverid"],
+        "driver_name": ["nev", "futarnev", "futarneve", "couriername", "drivername"],
+        "average_rating": ["ertek", "ertekszam", "ugyfelertekeles", "ertekeles", "averagerating", "atlag", "rating"],
+        "rating_count": ["ertekelesdb", "ratingcount", "darab", "count"],
+    }
+    for simple_sheet in excel_file.sheet_names:
+        simple_raw = pd.read_excel(excel_file, sheet_name=simple_sheet)
+        simple_columns = {_normalized_field_key(column): column for column in simple_raw.columns}
+        simple_resolved: dict[str, str] = {}
+        for output_name, names in simple_aliases.items():
+            source_column = next((simple_columns[name] for name in names if name in simple_columns), "")
+            if source_column:
+                simple_resolved[output_name] = source_column
+        required_simple = {"billing_month", "courier_id", "driver_name", "average_rating"}
+        if not required_simple.issubset(simple_resolved):
+            continue
+
+        month_start = billing_month.replace(day=1)
+        simple_data = simple_raw.copy()
+        month_text = simple_data[simple_resolved["billing_month"]].astype(str).str.strip()
+        parsed_months = pd.to_datetime(
+            month_text.where(month_text.str.len() > 7, month_text + "-01"),
+            errors="coerce",
+        ).dt.date
+        simple_data["billing_month"] = parsed_months.map(lambda value: value.replace(day=1) if pd.notna(value) else None)
+        simple_data = simple_data.loc[simple_data["billing_month"] == month_start].copy()
+        if simple_data.empty:
+            continue
+
+        grouped = pd.DataFrame({
+            "courier_id": simple_data[simple_resolved["courier_id"]],
+            "driver_name": simple_data[simple_resolved["driver_name"]],
+            "rating_count": (
+                simple_data[simple_resolved["rating_count"]]
+                if simple_resolved.get("rating_count")
+                else pd.Series(1, index=simple_data.index)
+            ),
+            "average_rating": simple_data[simple_resolved["average_rating"]],
+        })
+        return _finalize_customer_rating_monthly_rows(
+            grouped,
+            uploaded_file,
+            billing_month,
+            dashboard_data,
+            simple_sheet,
+        )
+
     monthly_sheet = next(
         (
             sheet_name
