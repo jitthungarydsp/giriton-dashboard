@@ -2846,10 +2846,14 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         action_statuses = status_by_courier.get(courier_key, {})
         if "settlement" not in document_types:
             return "Elszámolásra vár"
-        if "tig" not in document_types:
-            return "TIG-re vár"
+        if action_statuses.get("settlement") != "done":
+            return "Elszámolás elfogadásra vár"
         if action_statuses.get("invoice_payment") == "done":
             return "Kifizetve"
+        if "tig" not in document_types:
+            return "TIG-re vár"
+        if action_statuses.get("tig") != "done":
+            return "TIG elfogadásra vár"
         if (
             action_statuses.get("tig") == "done"
             or action_statuses.get("invoice_check") == "done"
@@ -6498,7 +6502,9 @@ def status_meta(status: str) -> tuple[str,str]:
         "Ellenőrzés alatt":("status-yellow","led-yellow"),
         "Jóváhagyva":("status-green","led-green"),
         "Elszámolásra vár":("status-blue","led-blue"),
+        "Elszámolás elfogadásra vár":("status-blue","led-blue"),
         "TIG-re vár":("status-purple","led-purple"),
+        "TIG elfogadásra vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
         "Kifizetésre vár":("status-yellow","led-yellow"),
         "Kifizetve":("status-green","led-green"),
@@ -11999,7 +12005,20 @@ def show_new_settlement_page() -> None:
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
-        status=st.selectbox("Elszámolás állapota",["Összes","Elszámolásra vár","TIG-re vár","Bejelentések","Kifizetésre vár","Kifizetve"],key="new_status")
+        status=st.selectbox(
+            "Elszámolás állapota",
+            [
+                "Összes",
+                "Elszámolásra vár",
+                "Elszámolás elfogadásra vár",
+                "TIG-re vár",
+                "TIG elfogadásra vár",
+                "Bejelentések",
+                "Kifizetésre vár",
+                "Kifizetve",
+            ],
+            key="new_status",
+        )
         search=st.text_input("Futár keresése",placeholder="Név vagy azonosító",key="new_search")
         mobile_period_start = parse_month_option(selected_month)
         if str(calculation_mode or "").strip().casefold() == "excel":
@@ -12699,7 +12718,9 @@ def show_new_settlement_page() -> None:
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
+        ("Elszámolás elfogadásra vár", "Futár elfogadására vár", "🔵"),
         ("TIG-re vár", "Még nem készült TIG", "🟣"),
+        ("TIG elfogadásra vár", "Futár TIG elfogadására vár", "🟣"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
