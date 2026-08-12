@@ -2699,12 +2699,16 @@ def calculate_target_reserve_month(
     if reserve_before == 0:
         reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
 
-    should_charge = insurance_active_before and reserve_before < reserve_target
-    calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_charge else 0
-    reserve_addition = min(calculated_addition, max(0, int(round(reserve_target - reserve_before)))) if should_charge else 0
-    insurance_fee = insurance_fee_rule if should_charge else 0
+    should_top_up_reserve = insurance_active_before and reserve_before < reserve_target
+    calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
+    reserve_addition = (
+        min(calculated_addition, max(0, int(round(reserve_target - reserve_before))))
+        if should_top_up_reserve
+        else 0
+    )
+    insurance_fee = insurance_fee_rule if insurance_active_before else 0
     reserve_after = reserve_before + reserve_addition
-    insurance_active_after = bool(insurance_active_before and reserve_after < reserve_target)
+    insurance_active_after = insurance_active_before
     payable_after = float(payable_before_insurance) - reserve_addition - insurance_fee
     return {
         "payable_before_insurance_huf": float(payable_before_insurance),
@@ -3753,6 +3757,7 @@ def resolve_target_reserve_month(
             "insurance_active_after": bool(saved.get("insurance_active_after")),
             "status": "done",
         }
+    save_target_reserve_monthly(session_id, courier_id, period_start, period_end, calculation)
     return {**calculation, "status": "in_progress"}
 
 
