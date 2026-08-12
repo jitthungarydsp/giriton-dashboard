@@ -70,8 +70,13 @@ textarea { min-height: 96px; resize: vertical; }
 .source-row { display: flex; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .source { padding: 5px 8px; border-radius: 8px; background: #eff2ee; color: var(--muted); font-size: 11px; font-weight: 750; }
 .source.ok { background: #e2f2df; color: #2e6735; }
-.shift-delay-button { width: 100%; min-height: 46px; margin-top: 14px; border: 0; border-radius: 14px; background: var(--danger); color: #fff; font-weight: 850; }
-.shift-delay-button.sent { background: var(--green-dark); }
+.shift-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.shift-delay-button, .shift-queue-button, .shift-return-button { width: 100%; min-height: 46px; border: 0; border-radius: 14px; color: #fff; font-weight: 850; }
+.shift-delay-button { background: var(--danger); }
+.shift-queue-button { background: var(--green-dark); }
+.shift-return-button { background: var(--ink); }
+.shift-delay-button.sent, .shift-queue-button.sent, .shift-return-button.sent { background: var(--green); }
+.shift-delay-button:disabled, .shift-queue-button:disabled, .shift-return-button:disabled { opacity: .65; }
 .empty-card, .warning-card { padding: 22px 18px; border-radius: 18px; text-align: center; }
 .empty-card { border: 1px dashed #c7d0c5; color: var(--muted); }
 .warning-card { margin-bottom: 10px; background: #fff3d4; color: var(--warning); font-size: 13px; }
@@ -120,8 +125,12 @@ textarea { min-height: 96px; resize: vertical; }
 .route-timeline .stat-row strong { max-width: 58%; text-align: right; overflow-wrap: anywhere; }
 .route-stop-list { display: grid; gap: 8px; }
 .route-stop { display: grid; grid-template-columns: 34px 1fr; gap: 11px; align-items: start; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.route-stop.delayed { border-color: #d46a62; background: #fff0ef; }
+.route-stop.delayed .route-stop-index { background: #b4443d; color: #fff; }
+.route-delay-note { color: #b4443d !important; }
 .route-stop-index { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: #edf1eb; color: var(--muted); font-size: 13px; font-weight: 900; }
 .route-stop strong { display: block; margin-top: 4px; line-height: 1.35; }
+.waze-button { display: grid; place-items: center; min-height: 50px; border-radius: 16px; background: #1f74ff; color: #fff; font-weight: 900; text-decoration: none; box-shadow: 0 10px 24px #1f74ff24; }
 .route-problem-button { width: 100%; min-height: 52px; border: 0; border-radius: 16px; background: var(--danger); color: #fff; font-weight: 900; box-shadow: 0 10px 24px #a8433e24; }
 .route-empty { display: flex; gap: 13px; align-items: center; padding: 22px; border: 1px dashed #c7d0c5; border-radius: 20px; background: var(--surface); }
 .route-empty-icon { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 14px; background: #edf1eb; color: var(--green-dark); font-size: 24px; font-weight: 900; }

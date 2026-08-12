@@ -98,7 +98,7 @@ class ComplaintRequest(BaseModel):
 
 
 class RouteDelayAlertRequest(BaseModel):
-    route_id: int
+    route_id: str | int
     order_id: str = ""
     message: str
     dispatcher_notified: bool = False
@@ -120,6 +120,16 @@ class ShiftDelayAlertRequest(BaseModel):
     shift_name: str = ""
     booking_code: str = ""
     message: str = ""
+
+
+class ShiftQueueCheckinRequest(BaseModel):
+    work_date: str
+    start: str = ""
+    end: str = ""
+    warehouse: str = ""
+    shift_name: str = ""
+    booking_code: str = ""
+    event_type: str = "queued"
 
 
 class BillingProfileUpdate(BaseModel):
@@ -1002,6 +1012,20 @@ def compact_route_story_row(story: dict[str, Any] | None) -> dict[str, Any] | No
     }
 
 
+def checkpoint_delay_minutes(checkpoint: dict[str, Any] | None) -> int:
+    if not checkpoint:
+        return 0
+    deadline = local_datetime(checkpoint.get("deliverTill"))
+    if not deadline:
+        return 0
+    actual = (
+        local_datetime(checkpoint.get("realArrivalTime"))
+        or local_datetime(checkpoint.get("estimatedArrivalTime"))
+        or datetime.now(LOCAL_TIMEZONE)
+    )
+    return max(0, int((actual - deadline).total_seconds() // 60))
+
+
 def read_current_route_story(
     courier_id: str,
     route_id: Any,
@@ -1259,6 +1283,8 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "plannedArrival": local_iso_time((current_checkpoint or {}).get("plannedArrivalTime")),
             "estimatedArrival": local_iso_time((current_checkpoint or {}).get("estimatedArrivalTime")),
             "realArrival": local_iso_time((current_checkpoint or {}).get("realArrivalTime")),
+            "delayMinutes": checkpoint_delay_minutes(current_checkpoint),
+            "isLate": checkpoint_delay_minutes(current_checkpoint) > 0,
         } if current_checkpoint else None,
         "next": {
             "orderId": str((next_checkpoint or {}).get("orderId") or ""),
@@ -1266,6 +1292,8 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "address": str((next_checkpoint or {}).get("address") or ""),
             "windowFrom": local_iso_time((next_checkpoint or {}).get("deliverSince")),
             "windowTo": local_iso_time((next_checkpoint or {}).get("deliverTill")),
+            "delayMinutes": checkpoint_delay_minutes(next_checkpoint),
+            "isLate": checkpoint_delay_minutes(next_checkpoint) > 0,
         } if next_checkpoint else None,
         "vehicle": best_vehicle_assignment(
             vehicle_rows,
@@ -1303,7 +1331,7 @@ def save_route_delay_alert(
         payload={
             "courier_id": int(courier_id),
             "courier_name": courier_name,
-            "route_id": payload.route_id,
+            "route_id": str(payload.route_id),
             "order_id": payload.order_id.strip(),
             "alert_type": "problem",
             "message": message,
@@ -1311,6 +1339,53 @@ def save_route_delay_alert(
             "current_address": payload.current_address.strip(),
             "current_checkpoint_position": payload.current_checkpoint_position,
             "status": "new",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def save_route_auto_delay_alert(user: dict[str, Any], payload: RouteDelayAlertRequest) -> None:
+    courier_id, courier_name = courier_identity(user)
+    message = payload.message.strip() or "Időablakhoz képest késés automatikusan rögzítve a PWA-ból."
+    supabase_rest(
+        "POST",
+        "courier_route_alerts",
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "route_id": str(payload.route_id),
+            "order_id": payload.order_id.strip(),
+            "alert_type": "delay",
+            "message": message,
+            "dispatcher_notified": False,
+            "current_address": payload.current_address.strip(),
+            "current_checkpoint_position": payload.current_checkpoint_position,
+            "status": "auto",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def save_shift_queue_checkin(user: dict[str, Any], payload: ShiftQueueCheckinRequest) -> None:
+    courier_id, courier_name = courier_identity(user)
+    event_type = payload.event_type.strip() or "queued"
+    if event_type not in {"queued", "returned", "shift_late"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen műszak esemény.")
+    supabase_rest(
+        "POST",
+        "courier_shift_checkins",
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "work_date": payload.work_date.strip() or date.today().isoformat(),
+            "start_time": payload.start.strip(),
+            "end_time": payload.end.strip(),
+            "warehouse": normalize_warehouse(payload.warehouse) or payload.warehouse.strip(),
+            "shift_name": payload.shift_name.strip(),
+            "booking_code": payload.booking_code.strip(),
+            "event_type": event_type,
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
@@ -5735,7 +5810,32 @@ def create_shift_delay_alert(
     payload: ShiftDelayAlertRequest,
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    send_shift_delay_discord_alert(require_user(giriton_pwa_session), payload)
+    user = require_user(giriton_pwa_session)
+    try:
+        save_shift_queue_checkin(
+            user,
+            ShiftQueueCheckinRequest(
+                work_date=payload.work_date,
+                start=payload.start,
+                end=payload.end,
+                warehouse=payload.warehouse,
+                shift_name=payload.shift_name,
+                booking_code=payload.booking_code,
+                event_type="shift_late",
+            ),
+        )
+    except Exception as exc:
+        print("Shift late DB log error:", exc)
+    send_shift_delay_discord_alert(user, payload)
+    return {"ok": True}
+
+
+@app.post("/api/shifts/queue-checkin")
+def create_shift_queue_checkin(
+    payload: ShiftQueueCheckinRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    save_shift_queue_checkin(require_user(giriton_pwa_session), payload)
     return {"ok": True}
 
 
@@ -5756,6 +5856,16 @@ def create_route_delay_alert(
 ):
     user = require_user(giriton_pwa_session)
     save_route_delay_alert(user, payload)
+    return {"ok": True}
+
+
+@app.post("/api/routes/auto-delay")
+def create_route_auto_delay_alert(
+    payload: RouteDelayAlertRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    save_route_auto_delay_alert(user, payload)
     return {"ok": True}
 
 

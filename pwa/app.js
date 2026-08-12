@@ -20,8 +20,9 @@ const state = {
   statisticsHistoryDate: "",
   statisticsRequestSeq: 0,
   section: "home",
+  routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v70";
+const APP_VERSION = "v71";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -61,6 +62,15 @@ function withPreviewCourier(path) {
   if (!courier) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}courier=${encodeURIComponent(courier)}`;
+}
+
+function currentSectionRefresh() {
+  if (!state.user) return Promise.resolve();
+  if (state.section === "home") return loadShifts();
+  if (state.section === "tours") return loadCurrentRoute();
+  if (state.section === "statistics") return loadStatistics();
+  if (state.section === "workflow") return loadWorkflow();
+  return Promise.resolve();
 }
 
 function setAdminPreviewStatus(message = "") {
@@ -426,19 +436,11 @@ function routeStoryShiftLabel(story = {}) {
 function renderCurrentRouteStory(route) {
   const story = route.routeStory || {};
   if (!Object.keys(story).length) {
-    return `
-      <section class="route-timeline">
-        <div class="route-timeline-head">
-          <span>API számítás</span>
-          <strong>Nincs részletes mart adat</strong>
-        </div>
-      </section>
-    `;
+    return "";
   }
   return `
     <section class="route-timeline">
       <div class="route-timeline-head">
-        <span>API számítás</span>
         <strong>${escapeHtml(routeStoryShiftLabel(story))}</strong>
       </div>
       <div class="route-timeline-grid">
@@ -475,14 +477,12 @@ function renderRouteStoryDetails(row) {
   const lateText = visibleLateCount || lateMinutes || maxDelay
     ? `${formatCount(visibleLateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
     : "Nincs";
-  const routeOk = hasApiQuality
-    ? apiLateCount <= 0 && apiDelayedOrders <= 0
-    : Number(row.plannedStartDelayMinutes || 0) <= 0 && lateCount <= 0;
+  const routeOk = visibleLateCount <= 0 || (maxDelay > 0 && lateMinutes <= maxDelay);
   return `
     <div class="daily-route-story">
       <div class="route-quality-head">
         ${renderStatusBadge(routeOk)}
-        <div><strong>${routeOk ? "Teljesült" : "Eltérés"}</strong><small>Időben sorban állt és nem volt késéses cím</small></div>
+        <div><strong>${routeOk ? "Időkapun belül" : "Időkapun kívül"}</strong><small>Időablak szerinti ellenőrzés</small></div>
       </div>
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
       ${routeStoryTime("Műszak kezdete", story.shiftStart || row.plannedStartAt)}
@@ -804,17 +804,28 @@ function routeStopBlock(title, checkpoint, cssClass = "") {
     ? `<small>${routeTimeRange(checkpoint.windowFrom, checkpoint.windowTo)}</small>`
     : "";
   const position = checkpoint.position ? `<span class="route-stop-index">${escapeHtml(checkpoint.position)}</span>` : `<span class="route-stop-index">-</span>`;
+  const delayClass = checkpoint.isLate ? " delayed" : "";
+  const delayText = checkpoint.isLate
+    ? `<small class="route-delay-note">Időablakhoz képest késés: ${formatCount(checkpoint.delayMinutes || 0)} perc</small>`
+    : "";
 
   return `
-    <div class="route-stop ${cssClass}">
+    <div class="route-stop ${cssClass}${delayClass}">
       ${position}
       <div>
         <span>${escapeHtml(title)}</span>
         <strong>${escapeHtml(checkpoint.address || "Cím nincs megadva")}</strong>
         ${windowText}
+        ${delayText}
       </div>
     </div>
   `;
+}
+
+function wazeUrl(address) {
+  const value = String(address || "").trim();
+  if (!value) return "";
+  return `https://waze.com/ul?q=${encodeURIComponent(value)}&navigate=yes`;
 }
 
 function vehicleLabel(vehicle) {
@@ -835,6 +846,29 @@ function routeVehicleBlock(vehicle) {
       <small>${escapeHtml([vehicle.shiftType, shift].filter(Boolean).join(" · ") || "Aktuális hozzárendelés")}</small>
     </div>
   `;
+}
+
+async function logRouteAutoDelay(route) {
+  const checkpoint = route?.current;
+  if (!route?.routeId || !checkpoint?.isLate || isAdminPreviewMode()) return;
+  const key = `${route.routeId}:${checkpoint.orderId || checkpoint.position || ""}`;
+  if (state.routeAutoDelayKeys.has(key) || localStorage.getItem(`route-auto-delay:${key}`)) return;
+  state.routeAutoDelayKeys.add(key);
+  try {
+    await api("/api/routes/auto-delay", {
+      method: "POST",
+      body: JSON.stringify({
+        route_id: String(route.routeId),
+        order_id: checkpoint.orderId || "",
+        message: `Időablakhoz képest késés: ${formatCount(checkpoint.delayMinutes || 0)} perc`,
+        current_address: checkpoint.address || "",
+        current_checkpoint_position: checkpoint.position || null,
+      }),
+    });
+    localStorage.setItem(`route-auto-delay:${key}`, new Date().toISOString());
+  } catch (error) {
+    state.routeAutoDelayKeys.delete(key);
+  }
 }
 
 function renderCurrentRoute() {
@@ -860,6 +894,7 @@ function renderCurrentRoute() {
   const departure = route.realDeparture || route.plannedDeparture || "";
   const returnTime = route.realReturn || route.plannedReturn || "";
   const current = route.current;
+  const nextWaze = wazeUrl(route.next?.address);
 
   container.innerHTML = `
     <div class="route-hero">
@@ -897,6 +932,8 @@ function renderCurrentRoute() {
       ${routeStopBlock("Következő", route.next)}
     </div>
 
+    ${nextWaze ? `<a class="waze-button" href="${nextWaze}" target="_blank" rel="noopener">Irány a cím felé</a>` : ""}
+
     <button id="delay-alert-button" class="route-problem-button" type="button">
       Problémám van
     </button>
@@ -906,6 +943,7 @@ function renderCurrentRoute() {
     "click",
     openDelayAlertDialog
   );
+  logRouteAutoDelay(route);
 }
 
 async function loadCurrentRoute() {
@@ -1085,9 +1123,10 @@ function renderTabs() {
 
 function shiftCard(item, index = 0) {
   const end = item.end ? `–${escapeHtml(item.end)}` : "";
-  const delayButton = index === 0
-    ? `<button class="shift-delay-button" type="button" data-shift-index="${index}">Kések a műszakból</button>`
-    : "";
+  const actionDisabled = isAdminPreviewMode() ? " disabled" : "";
+  const delayButton = `<button class="shift-delay-button" type="button" data-shift-index="${index}"${actionDisabled}>Kések a műszakból</button>`;
+  const queueButton = `<button class="shift-queue-button" type="button" data-shift-index="${index}" data-shift-event="queued"${actionDisabled}>Sorba álltam</button>`;
+  const returnButton = `<button class="shift-return-button" type="button" data-shift-index="${index}" data-shift-event="returned"${actionDisabled}>Visszaérkeztem</button>`;
   const vehicleText = vehicleLabel(item.vehicle);
   return `<article class="shift-card">
     <div class="shift-top">
@@ -1100,7 +1139,11 @@ function shiftCard(item, index = 0) {
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
       ${vehicleText ? `<span class="source ok">Autó ${escapeHtml(vehicleText)}</span>` : ""}
     </div>
-    ${delayButton}
+    <div class="shift-action-grid">
+      ${delayButton}
+      ${queueButton}
+      ${returnButton}
+    </div>
   </article>`;
 }
 
@@ -1174,11 +1217,43 @@ async function sendShiftDelayAlert(item, button) {
   }
 }
 
+async function sendShiftQueueCheckin(item, button) {
+  if (!item || isAdminPreviewMode()) return;
+  const originalText = button.textContent;
+  const eventType = button.dataset.shiftEvent || "queued";
+  button.disabled = true;
+  button.textContent = "Mentés...";
+  try {
+    await api("/api/shifts/queue-checkin", {
+      method: "POST",
+      body: JSON.stringify({
+        work_date: item.date || "",
+        start: item.start || "",
+        end: item.end || "",
+        warehouse: item.warehouse || "",
+        shift_name: item.attendanceShiftName || item.muszakproShiftText || "",
+        booking_code: item.bookingCode || "",
+        event_type: eventType,
+      }),
+    });
+    button.textContent = "Rögzítve";
+    button.classList.add("sent");
+  } catch (error) {
+    button.textContent = originalText;
+    button.disabled = false;
+    $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 $("#shift-list").addEventListener("click", async (event) => {
-  const button = event.target.closest(".shift-delay-button");
+  const button = event.target.closest(".shift-delay-button, .shift-queue-button, .shift-return-button");
   if (!button) return;
   const items = (state.data?.items || []).filter((item) => item.date === state.selectedDate);
   const index = Number(button.dataset.shiftIndex || 0);
+  if (button.classList.contains("shift-queue-button") || button.classList.contains("shift-return-button")) {
+    await sendShiftQueueCheckin(items[index], button);
+    return;
+  }
   await sendShiftDelayAlert(items[index], button);
 });
 
@@ -2839,6 +2914,32 @@ $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
+
+setInterval(() => {
+  currentSectionRefresh().catch(() => {});
+}, 5 * 60 * 1000);
+
+let pullStartY = null;
+let pullTriggered = false;
+window.addEventListener("touchstart", (event) => {
+  if (window.scrollY > 0 || $("#app-view")?.classList.contains("hidden")) return;
+  pullStartY = event.touches?.[0]?.clientY ?? null;
+  pullTriggered = false;
+}, { passive: true });
+
+window.addEventListener("touchmove", (event) => {
+  if (pullStartY === null || pullTriggered || window.scrollY > 0) return;
+  const currentY = event.touches?.[0]?.clientY ?? pullStartY;
+  if (currentY - pullStartY > 85) {
+    pullTriggered = true;
+    currentSectionRefresh().catch(() => {});
+  }
+}, { passive: true });
+
+window.addEventListener("touchend", () => {
+  pullStartY = null;
+  pullTriggered = false;
+}, { passive: true });
 
 async function start() {
   try {
