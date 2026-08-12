@@ -4840,6 +4840,56 @@ def recompute_payable_total(data: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def apply_target_reserve_deductions(
+    data: pd.DataFrame,
+    period_start: date,
+    period_end: date,
+    session_id: str | None,
+) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty:
+        return result
+    reserve_values: list[float] = []
+    insurance_values: list[float] = []
+    reserve_open_values: list[float] = []
+    reserve_close_values: list[float] = []
+    payable_after_values: list[float] = []
+    for _, row in result.iterrows():
+        courier_id = str(row.get("Courier ID") or "").strip()
+        courier_name = str(row.get("Futár") or "").strip()
+        payable_before_insurance = parse_huf_value(row.get("Kifizetendő"))
+        if not courier_id:
+            reserve_values.append(0.0)
+            insurance_values.append(0.0)
+            reserve_open_values.append(0.0)
+            reserve_close_values.append(0.0)
+            payable_after_values.append(payable_before_insurance)
+            continue
+        reserve_status = load_target_reserve_status(courier_id, courier_name)
+        reserve_month = resolve_target_reserve_month(
+            session_id,
+            courier_id,
+            period_start,
+            period_end,
+            reserve_status,
+            payable_before_insurance,
+        )
+        reserve_addition = parse_huf_value(reserve_month.get("reserve_addition_huf"))
+        insurance_fee = parse_huf_value(reserve_month.get("insurance_fee_huf"))
+        reserve_values.append(reserve_addition)
+        insurance_values.append(insurance_fee)
+        reserve_open_values.append(parse_huf_value(reserve_month.get("reserve_before_huf")))
+        reserve_close_values.append(parse_huf_value(reserve_month.get("reserve_after_huf")))
+        payable_after_values.append(payable_before_insurance - reserve_addition - insurance_fee)
+    result["Céltartalék 10%"] = reserve_values
+    result["Biztosítási díj"] = insurance_values
+    result["Céltartalék nyitó"] = reserve_open_values
+    result["Céltartalék záró"] = reserve_close_values
+    result["Levonás"] = _numeric_series(result, "Levonás") + pd.Series(reserve_values, index=result.index) + pd.Series(insurance_values, index=result.index)
+    result["Kifizetendő"] = payable_after_values
+    return result
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_loyalty_bonus_rules_for_month(period_start: date, period_end: date) -> pd.DataFrame:
     try:
@@ -5547,6 +5597,8 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
             }
         if not route_counts:
             route_counts = {"normal": int(row["completed_routes"] or 0)}
+        elif int(row["completed_routes"] or 0) > 0 and sum(route_counts.values()) != int(row["completed_routes"] or 0):
+            route_counts = {"normal": int(row["completed_routes"] or 0)}
         for route_type, completed_routes in route_counts.items():
             if completed_routes <= 0:
                 continue
@@ -5594,9 +5646,12 @@ def _customer_rating_dashboard_routes(dashboard_data: pd.DataFrame) -> tuple[pd.
     dash = dashboard_data.copy()
     dash["id_key"] = dash["Courier ID"].map(_courier_id_key)
     dash["name_key"] = dash["Futár"].map(_courier_match_key)
-    route_source = _numeric_series(dash, "Útvonalak")
-    if route_source.eq(0).all() and "Számolt túrák" in dash.columns:
-        route_source = _numeric_series(dash, "Számolt túrák")
+    route_source = pd.Series(0.0, index=dash.index, dtype="float64")
+    for route_column in ["Kör", "Számolt túrák", "Útvonalak", "route_count", "routes"]:
+        if route_column not in dash.columns:
+            continue
+        candidate = _numeric_series(dash, route_column)
+        route_source = route_source.where(route_source.ne(0), candidate)
     dash["_routes"] = route_source
     routes_by_id = dash.groupby("id_key")["_routes"].sum()
     routes_by_name = dash.groupby("name_key")["_routes"].sum()
@@ -5645,6 +5700,8 @@ def _finalize_customer_rating_monthly_rows(
                 for _, match in matches.iterrows()
             }
         if not route_counts:
+            route_counts = {"normal": int(row["completed_routes"] or 0)}
+        elif int(row["completed_routes"] or 0) > 0 and sum(route_counts.values()) != int(row["completed_routes"] or 0):
             route_counts = {"normal": int(row["completed_routes"] or 0)}
         for route_type, completed_routes in route_counts.items():
             if completed_routes <= 0:
@@ -12328,6 +12385,7 @@ def show_new_settlement_page() -> None:
     )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
+    data = apply_target_reserve_deductions(data, balance_period_start, balance_period_end, import_session_id)
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     if str(selected_calculation_mode or "").strip().casefold() == "excel":
