@@ -2408,6 +2408,24 @@ def build_financial_breakdown_from_mobile_rows(
     }
 
 
+def read_target_reserve_monthly(courier_id: str, period_start: date, period_end: date) -> dict[str, Any]:
+    if not courier_id:
+        return {}
+    rows = optional_supabase_rows(
+        "courier_target_reserve_monthly",
+        schema="settlement",
+        params={
+            "select": "reserve_before_huf,reserve_addition_huf,insurance_fee_huf,reserve_after_huf,payable_before_insurance_huf,payable_after_insurance_huf,status,updated_at",
+            "courier_id": f"eq.{courier_id}",
+            "period_start": f"eq.{period_start.isoformat()}",
+            "period_end": f"eq.{period_end.isoformat()}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    return dict(rows[0]) if rows else {}
+
+
 def read_courier_manual_adjustments(courier_id: str, period_start: date, period_end: date) -> list[dict[str, Any]]:
     if not courier_id:
         return []
@@ -3157,6 +3175,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     if route_delayed_stops:
         delayed_orders = route_delayed_stops
 
+    target_reserve_month = read_target_reserve_monthly(courier_id, month, period_end)
     base = money_from(row, "fixed_rate_huf", "courier_base_rate_huf")
     tip = money_from(row, "tip_huf")
     delay = money_from(row, "delay_bonus_huf")
@@ -3183,6 +3202,11 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     reserve_open = money_from(row, "target_reserve_open_huf", "reserve_before_huf")
     reserve_close = money_from(row, "target_reserve_close_huf", "reserve_after_huf")
     insurance_fee = -abs(money_from(row, "insurance_fee_huf", "insurance_deduction_huf"))
+    if target_reserve_month:
+        reserve_topup = -abs(money_from(target_reserve_month, "reserve_addition_huf"))
+        reserve_open = money_from(target_reserve_month, "reserve_before_huf")
+        reserve_close = money_from(target_reserve_month, "reserve_after_huf")
+        insurance_fee = -abs(money_from(target_reserve_month, "insurance_fee_huf"))
     fuel = money_from(row, "fuel_huf")
     damage = money_from(row, "damage_huf")
     cash_missing = money_from(row, "cash_missing_huf")
@@ -3253,31 +3277,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     manual_bonus = manual_adjustments.get("bonus", 0)
     manual_malus = manual_adjustments.get("malus", 0)
     manual_customer_rating = manual_adjustments.get("customer_rating", 0)
-    manual_correction_types = {
-        "correction",
-        "manual_correction",
-        "correction_income",
-        "correction_deduction",
-        "manual_correction_deduction",
-    }
     manual_correction_items = []
-    for index, adjustment_row in enumerate(manual_adjustment_rows, start=1):
-        adjustment_type = str(adjustment_row.get("adjustment_type") or "")
-        if adjustment_type not in manual_correction_types:
-            continue
-        amount = money_int(adjustment_row.get("amount_huf"))
-        if adjustment_type in {"correction_deduction", "manual_correction_deduction"}:
-            amount = -amount
-        manual_correction_items.append(
-            signed_item(
-                f"manual_correction_{index}",
-                "Kézi korrekció",
-                amount,
-                source="settlement.courier_settlement_adjustment",
-                note=str(adjustment_row.get("note") or ""),
-            )
-        )
-    correction_total = sum(item["amountHuf"] for item in manual_correction_items)
+    correction_total = 0
     overrides = read_mobile_breakdown_overrides(courier_id, month)
     has_mobile_correction = any(
         (item_key == "correction" or item_key.startswith("correction_"))
