@@ -1090,6 +1090,16 @@ def _find_column_by_key(columns: object, aliases: set[str]) -> str:
     return ""
 
 
+def _json_clean_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {str(key): _json_clean_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_clean_value(item) for item in value]
+    if pd.isna(value):
+        return None
+    return value
+
+
 def _search_text_key(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "").casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
@@ -5794,7 +5804,8 @@ def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None
         payload["route_type"] = payload["route_type"].map(normalize_customer_rating_route_type)
     payload["rating_count"] = pd.to_numeric(payload["rating_count"], errors="coerce").fillna(0).astype(int)
     payload["completed_routes"] = pd.to_numeric(payload["completed_routes"], errors="coerce").fillna(0).astype(int)
-    records = payload.to_dict("records")
+    payload = payload.astype(object).where(pd.notna(payload), None)
+    records = [_json_clean_value(record) for record in payload.to_dict("records")]
     for start in range(0, len(records), 500):
         get_db().schema("public").table(CUSTOMER_RATING_UPLOAD_TABLE).insert(records[start:start + 500]).execute()
     load_customer_rating_bonus_rows.clear()
