@@ -5069,7 +5069,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         if column not in result.columns:
             result[column] = default
 
-    if rules.empty or current_counts.empty:
+    if rules.empty:
         if "Lojalitás" not in result.columns:
             result["Lojalitás"] = 0.0
         return result
