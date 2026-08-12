@@ -11840,8 +11840,8 @@ def _export_row_value(row: dict[str, object], aliases: set[str]) -> object:
 
 
 def _export_tax_mode_label(row: dict[str, object], period_start: date | None) -> str:
-    courier_id = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
-    if courier_id and period_start and load_active_efo_assignment(courier_id, period_start):
+    employment_type = str(_export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz"})).casefold()
+    if "efo" in employment_type:
         return "EFO"
     courier_payload = {
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
@@ -11882,6 +11882,26 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
     }
 
 
+def _export_courier_profile_lookup() -> dict[str, dict[str, object]]:
+    try:
+        profiles = load_courier_master("Excel")
+    except BaseException:
+        profiles = pd.DataFrame()
+    if profiles.empty or "Courier ID" not in profiles.columns:
+        return {}
+    profiles = profiles.copy()
+    profiles["_courier_id_lookup"] = profiles["Courier ID"].map(_courier_id_key)
+    return {
+        courier_key: item
+        for courier_key, item in profiles.loc[profiles["_courier_id_lookup"].ne("")]
+        .drop_duplicates("_courier_id_lookup", keep="last")
+        .set_index("_courier_id_lookup")
+        .to_dict("index")
+        .items()
+        if courier_key
+    }
+
+
 def build_excel_export(df: pd.DataFrame, period_start: date | None = None, period_end: date | None = None) -> bytes:
     from io import BytesIO
     export_df = df.copy()
@@ -11899,12 +11919,26 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             if not any(marker in _normalized_field_key(column) for marker in contractor_column_markers)
         ]
     ]
+    audit_column_markers = (
+        "routeaudit",
+        "delayaudit",
+        "shiftlateaudit",
+        "noshowaudit",
+    )
+    export_df = export_df[
+        [
+            column for column in export_df.columns
+            if not any(marker in _normalized_field_key(column) for marker in audit_column_markers)
+        ]
+    ]
     if period_start and period_end and not export_df.empty:
         reserve_rows = load_target_reserve_monthly_export_rows(period_start, period_end)
         reserve_by_id: dict[str, dict[str, object]] = {}
         if not reserve_rows.empty:
             reserve_rows = reserve_rows.copy()
             reserve_rows["_courier_id_lookup"] = reserve_rows["courier_id"].map(_courier_id_key)
+            reserve_rows = reserve_rows.loc[reserve_rows["_courier_id_lookup"].ne("")].copy()
+            reserve_rows = reserve_rows.sort_values("status").groupby("_courier_id_lookup", as_index=False).tail(1)
             reserve_by_id = {
                 courier_key: item
                 for courier_key, item in reserve_rows.set_index("_courier_id_lookup").to_dict("index").items()
@@ -11927,8 +11961,12 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             "Új nyitó céltartalék": [],
             "Céltartalék levonva": [],
         }
+        profile_by_id = _export_courier_profile_lookup()
         for row in export_df.to_dict("records"):
-            tig_values = _export_tig_values(row, period_start)
+            courier_key = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
+            profile_row = profile_by_id.get(courier_key, {})
+            enriched_row = {**profile_row, **row}
+            tig_values = _export_tig_values(enriched_row, period_start)
             for column in [
                 "Adózási mód",
                 "TIG adó mód",
@@ -11942,7 +11980,6 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             ]:
                 added_columns[column].append(tig_values.get(column, 0))
 
-            courier_key = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
             reserve = reserve_by_id.get(courier_key, {})
             reserve_before = parse_huf_value(reserve.get("reserve_before_huf"))
             reserve_addition = parse_huf_value(reserve.get("reserve_addition_huf"))
