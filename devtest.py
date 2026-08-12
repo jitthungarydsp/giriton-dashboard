@@ -5534,6 +5534,36 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     rating_rows["courier_id"] = rating_rows.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
     rating_rows["driver_key"] = rating_rows.get("driver_name", pd.Series(dtype=str)).map(_courier_match_key)
     rating_rows["bonus_total_huf"] = pd.to_numeric(rating_rows.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+    rating_rows["completed_routes"] = pd.to_numeric(rating_rows.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
+    rating_rows["bonus_per_route_huf"] = pd.to_numeric(rating_rows.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
+    routes_by_id, routes_by_name = _customer_rating_dashboard_routes(result)
+    if not rating_rows.empty and (not routes_by_id.empty or not routes_by_name.empty):
+        rules = load_customer_rating_rules_for_month(period_start, period_end)
+        adjusted_rows: list[dict[str, object]] = []
+        for _, group in rating_rows.groupby(["courier_id", "driver_key"], dropna=False):
+            group = group.copy()
+            courier_id_key = str(group["courier_id"].iloc[0] or "")
+            driver_key = str(group["driver_key"].iloc[0] or "")
+            dashboard_routes = 0
+            if courier_id_key and courier_id_key in routes_by_id.index:
+                dashboard_routes = int(routes_by_id.loc[courier_id_key] or 0)
+            elif driver_key and driver_key in routes_by_name.index:
+                dashboard_routes = int(routes_by_name.loc[driver_key] or 0)
+            stored_routes = int(group["completed_routes"].sum())
+            if dashboard_routes > stored_routes and len(group) == 1:
+                idx = group.index[0]
+                unit_amount = parse_huf_value(group.at[idx, "bonus_per_route_huf"])
+                if not unit_amount:
+                    unit_amount = customer_rating_rule_amount(
+                        parse_huf_value(group.at[idx, "average_rating"]),
+                        rules,
+                        group.at[idx, "route_type"] if "route_type" in group.columns else "normal",
+                    )
+                group.at[idx, "completed_routes"] = dashboard_routes
+                group.at[idx, "bonus_per_route_huf"] = unit_amount
+                group.at[idx, "bonus_total_huf"] = dashboard_routes * unit_amount
+            adjusted_rows.extend(group.to_dict("records"))
+        rating_rows = pd.DataFrame(adjusted_rows) if adjusted_rows else rating_rows
     by_id = rating_rows.groupby("courier_id")["bonus_total_huf"].sum()
     by_name = rating_rows.groupby("driver_key")["bonus_total_huf"].sum()
     courier_ids = result["Courier ID"].map(_courier_id_key)
@@ -5665,12 +5695,15 @@ def _customer_rating_dashboard_routes(dashboard_data: pd.DataFrame) -> tuple[pd.
     dash = dashboard_data.copy()
     dash["id_key"] = dash["Courier ID"].map(_courier_id_key)
     dash["name_key"] = dash["Futár"].map(_courier_match_key)
-    route_source = pd.Series(0.0, index=dash.index, dtype="float64")
+    route_candidates: list[pd.Series] = []
     for route_column in ["Kör", "Számolt túrák", "Útvonalak", "route_count", "routes"]:
         if route_column not in dash.columns:
             continue
-        candidate = _numeric_series(dash, route_column)
-        route_source = route_source.where(route_source.ne(0), candidate)
+        route_candidates.append(_numeric_series(dash, route_column))
+    if route_candidates:
+        route_source = pd.concat(route_candidates, axis=1).max(axis=1).fillna(0.0)
+    else:
+        route_source = pd.Series(0.0, index=dash.index, dtype="float64")
     dash["_routes"] = route_source
     routes_by_id = dash.groupby("id_key")["_routes"].sum()
     routes_by_name = dash.groupby("name_key")["_routes"].sum()
