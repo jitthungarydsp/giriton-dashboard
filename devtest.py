@@ -5685,22 +5685,45 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
     parsed_months = pd.to_datetime(month_text.where(month_text.str.len() > 7, month_text + "-01"), errors="coerce").dt.date
     data["billing_month"] = parsed_months
     month_start = billing_month.replace(day=1)
-    data = data.loc[data["billing_month"] == month_start].copy()
+    matching_month = data.loc[data["billing_month"] == month_start].copy()
+    if matching_month.empty:
+        for candidate_sheet in excel_file.sheet_names:
+            if candidate_sheet == monthly_sheet:
+                continue
+            if _normalized_field_key(candidate_sheet) not in {"feltolteshavi", "havisablon", "forrasmindenhonap"}:
+                continue
+            candidate_raw = pd.read_excel(excel_file, sheet_name=candidate_sheet)
+            candidate_columns = {_normalized_field_key(column): column for column in candidate_raw.columns}
+            candidate_resolved: dict[str, str] = {}
+            for output_name, names in aliases.items():
+                source_column = next((candidate_columns[name] for name in names if name in candidate_columns), "")
+                if not source_column:
+                    candidate_resolved = {}
+                    break
+                candidate_resolved[output_name] = source_column
+            if not candidate_resolved:
+                continue
+            candidate_data = candidate_raw.copy()
+            candidate_month_text = candidate_data[candidate_resolved["billing_month"]].astype(str).str.strip()
+            candidate_months = pd.to_datetime(
+                candidate_month_text.where(candidate_month_text.str.len() > 7, candidate_month_text + "-01"),
+                errors="coerce",
+            ).dt.date
+            candidate_data["billing_month"] = candidate_months
+            candidate_matching = candidate_data.loc[candidate_data["billing_month"] == month_start].copy()
+            if candidate_matching.empty:
+                continue
+            monthly_sheet = candidate_sheet
+            resolved = candidate_resolved
+            data = candidate_data
+            matching_month = candidate_matching
+            break
+    if not matching_month.empty:
+        data = matching_month
+    else:
+        data = data.loc[data["billing_month"].notna()].copy()
     if data.empty:
-        available_months = sorted(
-            {
-                value.strftime("%Y-%m")
-                for value in parsed_months.dropna()
-                if hasattr(value, "strftime")
-            }
-        )
-        available_text = ", ".join(available_months) if available_months else "nincs felismerheto honap"
-        raise ValueError(
-            "A havi ugyfelertekeles sablonban nincs sor a kivalasztott honapra. "
-            f"Kivalasztott honap: {month_start:%Y-%m}. "
-            f"A fajlban talalt honapok: {available_text}."
-        )
-        raise ValueError("A havi ĂĽgyfĂ©lĂ©rtĂ©kelĂ©s sablonban nincs sor a kivĂˇlasztott hĂłnapra.")
+        raise ValueError("A havi ugyfelertekeles sablonban nincs felismerheto elszamolasi_honap.")
 
     grouped = pd.DataFrame({
         "courier_id": data[resolved["courier_id"]],
