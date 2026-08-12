@@ -5531,10 +5531,10 @@ def _customer_rating_dashboard_routes(dashboard_data: pd.DataFrame) -> tuple[pd.
 
     dash = dashboard_data.copy()
     dash["id_key"] = dash["Courier ID"].map(_courier_id_key)
-    dash["name_key"] = dash["FutĂˇr"].map(_courier_match_key)
-    route_source = _numeric_series(dash, "Ăštvonalak")
-    if route_source.eq(0).all() and "SzĂˇmolt tĂşrĂˇk" in dash.columns:
-        route_source = _numeric_series(dash, "SzĂˇmolt tĂşrĂˇk")
+    dash["name_key"] = dash["Futár"].map(_courier_match_key)
+    route_source = _numeric_series(dash, "Útvonalak")
+    if route_source.eq(0).all() and "Számolt túrák" in dash.columns:
+        route_source = _numeric_series(dash, "Számolt túrák")
     dash["_routes"] = route_source
     routes_by_id = dash.groupby("id_key")["_routes"].sum()
     routes_by_name = dash.groupby("name_key")["_routes"].sum()
@@ -10460,7 +10460,7 @@ def show_courier_dialog() -> None:
                 try:
                     saved_count = backstep_peopleforce_workflow(
                         courier_id=courier_id,
-                        courier_name=str(row["FutĂˇr"]),
+                        courier_name=courier_name,
                         document_month=workflow_month,
                         target_action=backstep_target,
                         updated_by=actor,
@@ -10999,7 +10999,7 @@ def show_courier_dialog() -> None:
         reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
         efo_assignment = load_active_efo_assignment(courier_id, date.today())
         loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
-        resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, str(row["FutĂˇr"]))
+        resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, courier_name)
         work_months = completed_months_between(resolved_work_start, period_start)
         employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
         if employment_type not in EMPLOYMENT_TYPE_LABELS:
