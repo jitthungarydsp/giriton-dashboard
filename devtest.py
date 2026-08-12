@@ -8396,8 +8396,8 @@ def show_courier_dialog() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    other_route_bonus_total = settlement_amount("other_route_bonus_huf")
-    display_base_total = base_total + other_route_bonus_total
+    other_route_bonus_total = 0.0
+    display_base_total = base_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -8412,7 +8412,7 @@ def show_courier_dialog() -> None:
     atm_deduction_total = imported_atm_total + manual_atm_total
     correction_total = correction_income_total - correction_deduction_total
     total_income = (
-        display_base_total + tip_total + delay_total + compliance_total
+        base_total + tip_total + delay_total + compliance_total
         + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
         + correction_income_total
     )
@@ -8685,8 +8685,9 @@ def show_courier_dialog() -> None:
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
+        route_other_bonus_total = 0.0
         payable_total = (
-            base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
+            base_total + tip_total + delay_total + compliance_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
@@ -8744,9 +8745,10 @@ def show_courier_dialog() -> None:
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
-        display_base_total = base_total + route_other_bonus_total
+        route_other_bonus_total = 0.0
+        display_base_total = base_total
         payable_total = (
-            base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
+            base_total + tip_total + delay_total + compliance_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
@@ -9860,7 +9862,7 @@ def show_courier_dialog() -> None:
                             {
                                 "base_huf": base_total,
                                 "tip_huf": tip_total,
-                                "bonus_huf": other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total,
+                                "bonus_huf": imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total,
                                 "malus_huf": malus_total,
                                 "atm_deduction_huf": atm_deduction_total,
                                 "other_expense_huf": other_expense_total,
