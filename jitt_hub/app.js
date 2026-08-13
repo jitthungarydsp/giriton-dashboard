@@ -75,12 +75,7 @@ const links = {
 };
 
 const pages = [
-  { id: "home", label: "Kezdőlap", icon: "⌂" },
-  { id: "ops", label: "Operáció", icon: "▦" },
-  { id: "money", label: "Pénzügy", icon: "Ft" },
-  { id: "report", label: "Kimutatás", icon: "Σ" },
-  { id: "data", label: "Adatok", icon: "∑" },
-  { id: "roadmap", label: "Bekötések", icon: "◇" }
+  { id: "vehicles", label: "Járművek", icon: "▣" }
 ];
 
 const modules = [
@@ -143,16 +138,27 @@ const fallbackReport = {
 };
 
 const state = {
-  page: "home",
+  page: "vehicles",
   theme: localStorage.getItem("jittHubTheme") || "light",
   reportMonth: "2026-07",
   reportCourierId: "",
-  reportToken: sessionStorage.getItem("jittHubReportToken") || ""
+  reportToken: sessionStorage.getItem("jittHubReportToken") || "",
+  vehicleDate: new Date().toISOString().slice(0, 10),
+  vehicleWarehouse: "all",
+  vehicleStatus: "all",
+  vehicleSearch: ""
 };
 
 const reportState = {
   loading: false,
   loadedMonth: "",
+  data: null,
+  error: ""
+};
+
+const vehicleState = {
+  loading: false,
+  loadedDate: "",
   data: null,
   error: ""
 };
@@ -626,16 +632,219 @@ function roadmapPage() {
   `;
 }
 
+function formatDateOnly(value) {
+  if (!value) return "-";
+  const date = new Date(String(value).includes("T") ? value : `${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("hu-HU", { month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function formatTimeOnly(value) {
+  if (!value) return "-";
+  const text = String(value);
+  if (/^\d{2}:\d{2}/.test(text)) return text.slice(0, 5);
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  return new Intl.DateTimeFormat("hu-HU", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function formatKm(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${new Intl.NumberFormat("hu-HU").format(Math.round(number))} km`;
+}
+
+function vehicleStatusClass(status) {
+  if (status === "Kiosztva") return "good";
+  if (status === "Tervezve") return "planned";
+  if (status === "Szerviz esedékes") return "bad";
+  if (status === "Szabad") return "free";
+  return "warn";
+}
+
+function ensureVehiclesLoaded() {
+  if (vehicleState.loading || vehicleState.loadedDate === state.vehicleDate) return;
+  window.setTimeout(loadVehicles, 0);
+}
+
+async function loadVehicles() {
+  if (vehicleState.loading) return;
+  if (!state.reportToken) {
+    vehicleState.data = null;
+    vehicleState.loadedDate = state.vehicleDate;
+    vehicleState.error = "Add meg a HUB riport kulcsot, hogy a járműadatokat DB-ből be lehessen tölteni.";
+    render();
+    return;
+  }
+  vehicleState.loading = true;
+  vehicleState.error = "";
+  render();
+  try {
+    const response = await fetch(`/api/vehicles?date=${encodeURIComponent(state.vehicleDate)}`, {
+      headers: {
+        Accept: "application/json",
+        "x-hub-report-token": state.reportToken
+      }
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    vehicleState.data = payload;
+    vehicleState.loadedDate = state.vehicleDate;
+    vehicleState.error = "";
+  } catch (error) {
+    vehicleState.data = null;
+    vehicleState.loadedDate = state.vehicleDate;
+    vehicleState.error = error.message || "A jármű API nem elérhető.";
+  } finally {
+    vehicleState.loading = false;
+    render();
+  }
+}
+
+function vehicleWarehouses() {
+  const vehicles = vehicleState.data?.vehicles || [];
+  return Array.from(new Set(vehicles.map((vehicle) => vehicle.warehouse).filter(Boolean))).sort();
+}
+
+function filteredVehicles() {
+  const search = state.vehicleSearch.trim().toLocaleLowerCase("hu-HU");
+  return (vehicleState.data?.vehicles || []).filter((vehicle) => {
+    if (state.vehicleWarehouse !== "all" && vehicle.warehouse !== state.vehicleWarehouse) return false;
+    if (state.vehicleStatus !== "all" && vehicle.status !== state.vehicleStatus) return false;
+    if (!search) return true;
+    return [
+      vehicle.plate,
+      vehicle.car,
+      vehicle.currentDriver,
+      vehicle.warehouse,
+      vehicle.servicePlace
+    ].some((value) => String(value || "").toLocaleLowerCase("hu-HU").includes(search));
+  });
+}
+
+function vehicleSummaryCard(title, value, text, tone = "") {
+  return `
+    <article class="vehicle-summary-card ${tone}">
+      <span>${escapeHtml(title)}</span>
+      <b>${escapeHtml(value)}</b>
+      <small>${escapeHtml(text || "")}</small>
+    </article>
+  `;
+}
+
+function vehicleToolbar() {
+  const warehouses = vehicleWarehouses();
+  return `
+    <section class="vehicle-toolbar">
+      <label>
+        <span>Nap</span>
+        <input id="vehicleDate" type="date" value="${escapeHtml(state.vehicleDate)}" />
+      </label>
+      <label>
+        <span>Raktár</span>
+        <select id="vehicleWarehouse">
+          <option value="all">Összes raktár</option>
+          ${warehouses.map((warehouse) => `<option value="${escapeHtml(warehouse)}" ${warehouse === state.vehicleWarehouse ? "selected" : ""}>${escapeHtml(warehouse)}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        <span>Állapot</span>
+        <select id="vehicleStatus">
+          ${["all", "Kiosztva", "Tervezve", "Szabad", "Szerviz esedékes"].map((status) => `<option value="${status}" ${status === state.vehicleStatus ? "selected" : ""}>${status === "all" ? "Minden állapot" : status}</option>`).join("")}
+        </select>
+      </label>
+      <label class="wide">
+        <span>Keresés</span>
+        <input id="vehicleSearch" type="search" value="${escapeHtml(state.vehicleSearch)}" placeholder="Rendszám, autó, futár" />
+      </label>
+      <label class="wide">
+        <span>Riport kulcs</span>
+        <input id="vehicleTokenInput" type="password" value="${escapeHtml(state.reportToken)}" placeholder="HUB_REPORT_TOKEN" />
+      </label>
+      <button class="primary-action" id="vehicleRefreshButton" type="button">Frissítés</button>
+    </section>
+  `;
+}
+
+function vehicleAssignments(vehicle) {
+  const assignments = vehicle.assignments || [];
+  if (!assignments.length) return `<div class="vehicle-assignment-empty">Nincs következő kiosztás.</div>`;
+  return assignments.map((assignment) => `
+    <div class="vehicle-assignment-row">
+      <b>${formatDateOnly(assignment.workDate)}</b>
+      <span>${escapeHtml(assignment.driverName || "-")}</span>
+      <span>${formatTimeOnly(assignment.shiftStart)}-${formatTimeOnly(assignment.shiftEnd)}</span>
+      <em>${escapeHtml(assignment.warehouse || "-")}</em>
+    </div>
+  `).join("");
+}
+
+function vehicleCard(vehicle) {
+  const statusClass = vehicleStatusClass(vehicle.status);
+  const title = vehicle.plate || vehicle.car || "Ismeretlen jármű";
+  return `
+    <article class="vehicle-card ${statusClass}">
+      <header>
+        <div>
+          <span>${escapeHtml(vehicle.warehouse || "Nincs raktár")}</span>
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(vehicle.car || "Típus nincs megadva")}</p>
+        </div>
+        <strong class="vehicle-status ${statusClass}">${escapeHtml(vehicle.status || "Nincs adat")}</strong>
+      </header>
+      <div class="vehicle-facts">
+        <div><span>Kinél van</span><b>${escapeHtml(vehicle.currentDriver || "-")}</b></div>
+        <div><span>Kiosztás napja</span><b>${formatDateOnly(vehicle.currentAssignmentDate)}</b></div>
+        <div><span>Műszak</span><b>${formatTimeOnly(vehicle.currentShiftStart)}-${formatTimeOnly(vehicle.currentShiftEnd)}</b></div>
+        <div><span>Km állás</span><b>${formatKm(vehicle.odometerKm)}</b></div>
+        <div><span>Következő szerviz</span><b>${formatDateOnly(vehicle.nextServiceAt)}</b></div>
+        <div><span>Szerviz helye</span><b>${escapeHtml(vehicle.servicePlace || "-")}</b></div>
+      </div>
+      <details>
+        <summary>Kocsi kiosztása</summary>
+        <div class="vehicle-assignment-list">${vehicleAssignments(vehicle)}</div>
+      </details>
+    </article>
+  `;
+}
+
+function vehiclesList() {
+  if (vehicleState.loading) return `<div class="vehicle-empty">Járműadatok betöltése...</div>`;
+  if (vehicleState.error) return `<div class="vehicle-empty error">${escapeHtml(vehicleState.error)}</div>`;
+  const vehicles = filteredVehicles();
+  if (!vehicles.length) return `<div class="vehicle-empty">Nincs jármű a kiválasztott szűrésre.</div>`;
+  return `<section class="vehicle-grid">${vehicles.map(vehicleCard).join("")}</section>`;
+}
+
+function vehiclesPage() {
+  ensureVehiclesLoaded();
+  const totals = vehicleState.data?.totals || {};
+  const source = vehicleState.data?.source || {};
+  $("#pageTitle").textContent = "Járművek";
+  $("#pageSubtitle").textContent = "Autóállapot, raktár, kiosztás, km és szerviz egy helyen.";
+  return `
+    ${vehicleToolbar()}
+    <section class="vehicle-summary-grid">
+      ${vehicleSummaryCard("Jármű összesen", totals.vehicles ?? "-", `Kiosztási sor: ${source.assignments ?? 0}`)}
+      ${vehicleSummaryCard("Ma kiosztva", totals.assigned ?? "-", "Az adott napra", "good")}
+      ${vehicleSummaryCard("Tervezve", totals.planned ?? "-", "Következő napokra", "planned")}
+      ${vehicleSummaryCard("Szabad", totals.free ?? "-", "Nincs mai kiosztás", "free")}
+      ${vehicleSummaryCard("Szerviz esedékes", totals.serviceDue ?? "-", "Szerviz DB alapján", "bad")}
+    </section>
+    <div class="vehicle-source">
+      <span>Frissítve: ${escapeHtml(vehicleState.data?.generatedAt ? new Date(vehicleState.data.generatedAt).toLocaleString("hu-HU") : "-")}</span>
+      <span>Route story sorok: ${source.routeStories ?? 0}</span>
+      <span>Szerviz sorok: ${source.serviceRows ?? 0}</span>
+    </div>
+    <div id="vehicleListSlot">${vehiclesList()}</div>
+  `;
+}
+
 function render() {
   renderNavigation();
   const renderer = {
-    home: homePage,
-    ops: opsPage,
-    money: moneyPage,
-    report: reportPage,
-    data: dataPage,
-    roadmap: roadmapPage
-  }[state.page] || homePage;
+    vehicles: vehiclesPage
+  }[state.page] || vehiclesPage;
   $("#pageContent").innerHTML = renderer();
 }
 
@@ -677,8 +886,43 @@ function setup() {
       if (state.reportToken) sessionStorage.setItem("jittHubReportToken", state.reportToken);
       else sessionStorage.removeItem("jittHubReportToken");
     }
+    if (event.target.id === "vehicleDate") {
+      state.vehicleDate = event.target.value || state.vehicleDate;
+      vehicleState.loadedDate = "";
+      vehicleState.data = null;
+      loadVehicles();
+      return;
+    }
+    if (event.target.id === "vehicleWarehouse") {
+      state.vehicleWarehouse = event.target.value || "all";
+      render();
+      return;
+    }
+    if (event.target.id === "vehicleStatus") {
+      state.vehicleStatus = event.target.value || "all";
+      render();
+      return;
+    }
+    if (event.target.id === "vehicleTokenInput") {
+      state.reportToken = event.target.value.trim();
+      if (state.reportToken) sessionStorage.setItem("jittHubReportToken", state.reportToken);
+      else sessionStorage.removeItem("jittHubReportToken");
+    }
+  });
+  document.body.addEventListener("input", (event) => {
+    if (event.target.id === "vehicleSearch") {
+      state.vehicleSearch = event.target.value || "";
+      const target = $("#vehicleListSlot");
+      if (target) target.innerHTML = vehiclesList();
+    }
   });
   document.body.addEventListener("click", (event) => {
+    if (event.target.closest("#vehicleRefreshButton")) {
+      vehicleState.loadedDate = "";
+      vehicleState.data = null;
+      loadVehicles();
+      return;
+    }
     if (event.target.closest("#reportRefreshButton")) {
       reportState.loadedMonth = "";
       reportState.data = null;

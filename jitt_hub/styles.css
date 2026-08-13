@@ -4,6 +4,31 @@
 @media(max-width:1100px){.app-shell{grid-template-columns:82px 1fr}.brand div:last-child,.nav-label,.sidebar-footer{display:none}.brand{justify-content:center}.nav-item{justify-content:center}.grid-6{grid-template-columns:repeat(3,1fr)}.layout-main{grid-template-columns:1fr}.topbar-actions .status-chip{display:none}}
 @media(max-width:760px){.app-shell{grid-template-columns:1fr}.sidebar{position:fixed;left:-250px;width:230px;transition:.2s}.sidebar.open{left:0}.brand div:last-child,.nav-label,.sidebar-footer{display:block}.nav-item{justify-content:flex-start}.mobile-only{display:inline-flex}.topbar{height:auto;padding:12px 14px;align-items:flex-start}.topbar-actions{flex-wrap:wrap;justify-content:flex-end}.profile-btn span:last-child{display:none}.content{padding:14px}.grid-2,.grid-3,.grid-4,.grid-6,.warehouse-stats{grid-template-columns:1fr}.warehouse-stat{border-right:0;border-bottom:1px solid var(--line)}.warehouse-stat:last-child{border-bottom:0}.segmented button{padding:8px 10px}.topbar p{display:none}}
 
+/* Final vehicle view overrides */
+.vehicles-ready .content-grid{display:block!important}
+.vehicles-ready .rail nav{display:grid;gap:8px}
+.vehicles-ready .nav-pill{justify-content:flex-start}
+.vehicles-ready .nav-pill:not(.active){display:none}
+.vehicle-toolbar{display:grid;grid-template-columns:160px 180px 190px minmax(220px,1fr) minmax(220px,1fr) 140px;gap:10px;align-items:end;margin-bottom:14px}
+.vehicle-toolbar label{display:grid;gap:6px;font-size:12px;font-weight:800;color:var(--muted)}
+.vehicle-toolbar input,.vehicle-toolbar select{width:100%;min-height:42px;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--surface);color:var(--text)}
+.vehicle-summary-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.vehicle-summary-card{border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:16px;box-shadow:var(--shadow)}
+.vehicle-summary-card span,.vehicle-summary-card small{display:block;color:var(--muted)}
+.vehicle-summary-card b{display:block;margin:8px 0 4px;font-size:30px;color:var(--text)}
+.vehicle-summary-card.good b{color:#087542}.vehicle-summary-card.planned b{color:#2463cf}.vehicle-summary-card.bad b{color:#ba2b25}.vehicle-summary-card.free b{color:#627066}
+.vehicle-source{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 16px;color:var(--muted);font-size:12px}
+.vehicle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.vehicle-card{border:1px solid var(--line);border-left-width:5px;border-radius:14px;background:var(--surface);padding:16px;box-shadow:var(--shadow)}
+.vehicle-card.good{border-left-color:#16a34a}.vehicle-card.planned{border-left-color:#2563eb}.vehicle-card.bad{border-left-color:#dc2626}.vehicle-card.free{border-left-color:#94a3b8}
+.vehicle-card header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.vehicle-card header span{color:var(--muted);font-size:11px;font-weight:900;text-transform:uppercase}.vehicle-card h3{margin:5px 0 4px;font-size:24px}.vehicle-card p{margin:0;color:var(--muted)}
+.vehicle-status{white-space:nowrap;border-radius:999px;padding:7px 10px;font-size:12px}.vehicle-status.good{background:#dcfce7;color:#166534}.vehicle-status.planned{background:#dbeafe;color:#1d4ed8}.vehicle-status.bad{background:#fee2e2;color:#b91c1c}.vehicle-status.free{background:#f1f5f9;color:#475569}
+.vehicle-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0}.vehicle-facts div{background:var(--surface-2);border-radius:10px;padding:10px}.vehicle-facts span{display:block;color:var(--muted);font-size:11px;font-weight:800}.vehicle-facts b{display:block;margin-top:5px;font-size:14px}
+.vehicle-card details{border-top:1px solid var(--line);padding-top:10px}.vehicle-card summary{cursor:pointer;font-weight:850}.vehicle-assignment-list{display:grid;gap:7px;margin-top:10px}.vehicle-assignment-row{display:grid;grid-template-columns:54px minmax(0,1fr) 90px 54px;gap:8px;align-items:center;border-radius:10px;background:var(--surface-2);padding:9px;font-size:12px}.vehicle-assignment-row span,.vehicle-assignment-row em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vehicle-assignment-empty,.vehicle-empty{border:1px dashed var(--line);border-radius:14px;padding:24px;background:var(--surface);color:var(--muted);text-align:center}.vehicle-empty.error{border-color:#fecaca;background:#fff1f2;color:#b91c1c}
+@media(max-width:1180px){.vehicle-toolbar,.vehicle-summary-grid,.vehicle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.vehicle-toolbar,.vehicle-summary-grid,.vehicle-grid,.vehicle-facts{grid-template-columns:1fr}}
+
 
 /* Authentication */
 [hidden]{display:none!important}
@@ -17,6 +42,238 @@
 .login-panel{display:grid;place-items:center;padding:40px;background:radial-gradient(circle at 90% 10%,rgba(11,143,72,.08),transparent 32%),var(--surface)}.login-card{width:min(100%,460px)}.login-mobile-brand{display:none;align-items:center;gap:12px;margin-bottom:44px}.login-eyebrow{color:var(--green)}.login-card h2{font-size:38px;letter-spacing:-.035em;margin:10px 0}.login-intro{color:var(--muted);line-height:1.6;margin:0 0 30px}.login-label{display:block;font-size:13px;font-weight:750;margin:18px 0 8px}.login-input-wrap{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0 13px;transition:.2s}.login-input-wrap:focus-within{border-color:var(--green);box-shadow:0 0 0 4px rgba(11,143,72,.11)}.login-input-wrap>span{color:var(--muted)}.login-input-wrap input{width:100%;border:0;outline:0;background:transparent;color:var(--text);padding:14px 0}.password-toggle{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:8px}.login-options{display:flex;justify-content:space-between;align-items:center;margin:17px 0;font-size:13px;color:var(--muted)}.login-options label{display:flex;align-items:center;gap:7px}.text-button{border:0;background:transparent;color:var(--green);font-weight:700;cursor:pointer}.login-error{min-height:20px;color:var(--red);font-size:13px;margin-bottom:8px}.login-submit{width:100%;border:0;border-radius:12px;background:linear-gradient(135deg,#0b8f48,#08713b);color:#fff;padding:14px 18px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:12px;cursor:pointer;box-shadow:0 14px 28px rgba(11,143,72,.22);transition:.2s}.login-submit:hover{transform:translateY(-1px);box-shadow:0 18px 34px rgba(11,143,72,.28)}.login-submit:disabled{opacity:.7;cursor:wait}.login-demo{margin-top:22px;padding:13px;border-radius:11px;background:var(--surface-2);border:1px dashed var(--line);display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}.login-demo code{background:var(--green-2);color:var(--green);padding:5px 7px;border-radius:6px}.login-footer{text-align:center;color:var(--muted);font-size:11px;margin-top:30px}
 .login-card.shake{animation:loginShake .35s linear}@keyframes loginShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-7px)}75%{transform:translateX(7px)}}
 @media(max-width:980px){.login-screen{grid-template-columns:1fr}.login-visual{display:none}.login-panel{min-height:100vh;padding:28px}.login-mobile-brand{display:flex}.login-card h2{font-size:33px}}
+
+/* Vehicles-only Hub */
+.vehicles-ready .content-grid {
+  display: block;
+}
+
+.vehicles-ready .hero-panel {
+  align-items: end;
+}
+
+.vehicle-toolbar {
+  display: grid;
+  grid-template-columns: 160px 180px 190px minmax(220px, 1fr) minmax(220px, 1fr) 140px;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.vehicle-toolbar label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.vehicle-toolbar input,
+.vehicle-toolbar select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.vehicle-toolbar .primary-action {
+  min-height: 42px;
+  padding: 10px 14px;
+}
+
+.vehicle-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.vehicle-summary-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.vehicle-summary-card span,
+.vehicle-summary-card small {
+  display: block;
+  color: var(--muted);
+}
+
+.vehicle-summary-card b {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 30px;
+  color: var(--text);
+}
+
+.vehicle-summary-card.good b { color: #087542; }
+.vehicle-summary-card.planned b { color: #2463cf; }
+.vehicle-summary-card.bad b { color: #ba2b25; }
+.vehicle-summary-card.free b { color: #627066; }
+
+.vehicle-source {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 8px 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vehicle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vehicle-card {
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.vehicle-card.good { border-left-color: #16a34a; }
+.vehicle-card.planned { border-left-color: #2563eb; }
+.vehicle-card.bad { border-left-color: #dc2626; }
+.vehicle-card.free { border-left-color: #94a3b8; }
+
+.vehicle-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.vehicle-card header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.vehicle-card h3 {
+  margin: 5px 0 4px;
+  font-size: 24px;
+}
+
+.vehicle-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.vehicle-status {
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.vehicle-status.good { background: #dcfce7; color: #166534; }
+.vehicle-status.planned { background: #dbeafe; color: #1d4ed8; }
+.vehicle-status.bad { background: #fee2e2; color: #b91c1c; }
+.vehicle-status.free { background: #f1f5f9; color: #475569; }
+
+.vehicle-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.vehicle-facts div {
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.vehicle-facts span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.vehicle-facts b {
+  display: block;
+  margin-top: 5px;
+  font-size: 14px;
+}
+
+.vehicle-card details {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.vehicle-card summary {
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.vehicle-assignment-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.vehicle-assignment-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 90px 54px;
+  gap: 8px;
+  align-items: center;
+  border-radius: 10px;
+  background: var(--surface-2);
+  padding: 9px;
+  font-size: 12px;
+}
+
+.vehicle-assignment-row span,
+.vehicle-assignment-row em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vehicle-assignment-empty,
+.vehicle-empty {
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+
+.vehicle-empty.error {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+@media (max-width: 1180px) {
+  .vehicle-toolbar,
+  .vehicle-summary-grid,
+  .vehicle-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .vehicle-toolbar,
+  .vehicle-summary-grid,
+  .vehicle-grid,
+  .vehicle-facts {
+    grid-template-columns: 1fr;
+  }
+}
 @media(max-width:520px){.login-panel{padding:22px}.login-options{align-items:flex-start;gap:12px}.login-demo{justify-content:flex-start}}
 
 /* JITT Hub Command Center concept */
@@ -898,3 +1155,12 @@ body {
     min-width: 0;
   }
 }
+
+/* Keep the deployed Hub focused on the Vehicles page. */
+.vehicles-ready .content-grid{display:block!important}
+.vehicles-ready .nav-pill:not(.active){display:none!important}
+.vehicle-toolbar{display:grid!important;grid-template-columns:160px 180px 190px minmax(220px,1fr) minmax(220px,1fr) 140px!important;gap:10px!important;align-items:end!important;margin-bottom:14px!important}
+.vehicle-summary-grid{display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:12px!important}
+.vehicle-grid{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:14px!important}
+@media(max-width:1180px){.vehicle-toolbar,.vehicle-summary-grid,.vehicle-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:720px){.vehicle-toolbar,.vehicle-summary-grid,.vehicle-grid,.vehicle-facts{grid-template-columns:1fr!important}}
