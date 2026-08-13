@@ -3202,6 +3202,17 @@ def save_courier_monthly_closure(
     load_courier_monthly_closure.clear()
 
 
+def payment_close_note_error(note: object, amount_huf: object) -> str:
+    clean_note = str(note or "").strip()
+    if not clean_note:
+        return "A kifizetés lezárási megjegyzése kötelező."
+    amount_digits = re.sub(r"\D+", "", str(int(round(abs(parse_huf_value(amount_huf))))))
+    note_digits = re.sub(r"\D+", "", clean_note)
+    if amount_digits and amount_digits not in note_digits:
+        return f"A lezárási megjegyzésben szerepelnie kell az összegnek: {format_huf(amount_huf)}."
+    return ""
+
+
 def reopen_courier_monthly_closure(courier_id: str, period_start: date, period_end: date) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     try:
@@ -9764,9 +9775,19 @@ def show_courier_dialog() -> None:
                     ("Közlemény", payment_note),
                     ("Fizetendő összeg", format_huf(payable_total)),
                 ])
+                close_note = st.text_area(
+                    "Kifizetés lezárási megjegyzés",
+                    value=str(monthly_closure.get("close_note") or f"Kifizetve: {format_huf(payable_total)}"),
+                    key=f"monthly_close_admin_note_{courier_id}",
+                    help="Kötelező. Az összegnek is szerepelnie kell benne.",
+                )
                 close_disabled = closure_done
                 if st.button("Zárás", type="primary", use_container_width=True, disabled=close_disabled, key=f"monthly_close_{courier_id}"):
                     try:
+                        note_error = payment_close_note_error(close_note, payable_total)
+                        if note_error:
+                            st.error(note_error)
+                            st.stop()
                         close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
                         close_salary_advance_installments(courier_id, period_start, period_end)
                         save_courier_monthly_closure(
@@ -9781,6 +9802,7 @@ def show_courier_dialog() -> None:
                                 "payment_note": payment_note,
                                 "invoice_number": invoice_number,
                                 "payable_huf": payable_total,
+                                "close_note": close_note,
                             },
                             {
                                 "base_huf": base_total,
@@ -10137,6 +10159,12 @@ def show_courier_dialog() -> None:
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
 
+            close_note = st.text_area(
+                "Kifizetés lezárási megjegyzés",
+                value=f"Kifizetve: {format_huf(amount_huf)}",
+                key=f"payment_close_note_{courier_id}_{process_id or 'monthly'}",
+                help="Kötelező. Az összegnek is szerepelnie kell benne.",
+            )
             reject_note = st.text_area(
                 "Elutasítás megjegyzés",
                 key=f"payment_reject_note_{courier_id}_{process_id or 'monthly'}",
@@ -10146,6 +10174,10 @@ def show_courier_dialog() -> None:
             close_col, reject_col = st.columns(2)
             if close_col.button("Havi zárás" if not process_id else "Folyamat lezárása", type="primary", use_container_width=True, disabled=close_disabled, key=f"payment_close_{courier_id}_{process_id or 'monthly'}"):
                 try:
+                    note_error = payment_close_note_error(close_note, amount_huf)
+                    if note_error:
+                        st.error(note_error)
+                        st.stop()
                     if process_id:
                         request_item = payment_item.get("request") or {}
                         if str(request_item.get("status") or "").casefold() == "approved":
@@ -10156,7 +10188,7 @@ def show_courier_dialog() -> None:
                             action_key=process_action_key("invoice_payment", process_id),
                             document_month=payment_month,
                             status="done",
-                            status_note=f"Kifizetve: {format_huf(amount_huf)}; közlemény: {payment_note}",
+                            status_note=f"{close_note}; közlemény: {payment_note}",
                             updated_by=actor,
                         )
                     else:
@@ -10174,6 +10206,7 @@ def show_courier_dialog() -> None:
                                 "payment_note": payment_note,
                                 "invoice_number": invoice_number,
                                 "payable_huf": amount_huf,
+                                "close_note": close_note,
                             },
                             {
                                 "base_huf": base_total,
@@ -10186,6 +10219,7 @@ def show_courier_dialog() -> None:
                                 "reserve_addition_huf": reserve_addition_total,
                                 "insurance_fee_huf": insurance_fee_total,
                                 "payable_huf": amount_huf,
+                                "close_note": close_note,
                             },
                         )
                         upsert_peopleforce_card_status(
@@ -10194,7 +10228,7 @@ def show_courier_dialog() -> None:
                             action_key="invoice_payment",
                             document_month=payment_month,
                             status="done",
-                            status_note=f"Havi zárás és kifizetés megtörtént: {format_huf(amount_huf)}",
+                            status_note=close_note,
                             updated_by=actor,
                         )
                     st.success("Kifizetés lezárva.")
