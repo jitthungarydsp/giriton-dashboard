@@ -12055,15 +12055,87 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
     }
 
 
+def _export_tax_mode_label(row: dict[str, object], period_start: date | None) -> str:
+    employment_type = str(_export_row_value(row, {
+        "Jogviszony", "employment_type", "EFO státusz", "EFO statusz", "EFO stĂˇtusz"
+    })).casefold()
+    if "efo" in employment_type:
+        return "EFO"
+    courier_payload = {
+        "tax_number": _export_row_value(row, {"Adószám", "Adoszam", "AdĂłszĂˇm", "tax_number"}),
+        "tig_type": _export_row_value(row, {
+            "TIG típus", "TIG tipus", "TIG tĂ­pus", "Számla típus", "Szamla tipus", "SzĂˇmla tĂ­pus"
+        }),
+        "vat_status": _export_row_value(row, {
+            "ÁFA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
+        }),
+    }
+    breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
+    return "ÁFÁS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
+
+
+def _export_tig_values(row: dict[str, object], period_start: date | None) -> dict[str, float | str]:
+    courier_payload = {
+        "id": _export_row_value(row, {"Courier ID", "courier_id"}),
+        "tax_number": _export_row_value(row, {"Adószám", "Adoszam", "AdĂłszĂˇm", "tax_number"}),
+        "tig_type": _export_row_value(row, {
+            "TIG típus", "TIG tipus", "TIG tĂ­pus", "Számla típus", "Szamla tipus", "SzĂˇmla tĂ­pus"
+        }),
+        "vat_status": _export_row_value(row, {
+            "ÁFA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
+        }),
+        "document_month": period_start,
+    }
+    amounts = {
+        "payable": parse_huf_value(_export_row_value(row, {
+            "Kifizetendő", "Kifizetendo", "KifizetendĹ‘", "Fizetendő", "Fizetendo", "FizetendĹ‘", "payable"
+        })),
+        "tip": parse_huf_value(_export_row_value(row, {"Borravaló", "Borravalo", "BorravalĂł", "tip"})),
+        "cash": abs(parse_huf_value(_export_row_value(row, {
+            "ATM hatás", "ATM hatas", "ATM hatĂˇs", "ATM levonás", "ATM levonas", "ATM levonĂˇs", "atm_effect"
+        }))),
+    }
+    breakdown = build_tig_breakdown(courier_payload, amounts)
+    by_key = {str(item.get("key") or ""): item for item in breakdown.get("rows") or []}
+    transfer = by_key.get("transfer_service", {})
+    cash = by_key.get("cash_service", {})
+    return {
+        "AdĂłzĂˇsi mĂłd": _export_tax_mode_label(row, period_start),
+        "TIG adĂł mĂłd": str(breakdown.get("taxLabel") or ""),
+        "TIG ĂˇtutalĂˇs nettĂł": parse_huf_value(transfer.get("netHuf")),
+        "TIG ĂˇtutalĂˇs ĂFA": parse_huf_value(transfer.get("vatHuf")),
+        "TIG ĂˇtutalĂˇs bruttĂł": parse_huf_value(transfer.get("grossHuf")),
+        "TIG KP nettĂł": parse_huf_value(cash.get("netHuf")),
+        "TIG KP ĂFA": parse_huf_value(cash.get("vatHuf")),
+        "TIG KP bruttĂł": parse_huf_value(cash.get("grossHuf")),
+        "TIG vĂ©gĂ¶sszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
+    }
+
+
 def _export_courier_profile_lookup() -> dict[str, dict[str, object]]:
     try:
-        profiles = load_courier_master("Excel")
+        rows = (
+            get_db()
+            .schema("public")
+            .table("courier_master")
+            .select("courier_id,courier_name,company_name,company_address,tax_number,vat_status,employment_type")
+            .limit(20000)
+            .execute()
+            .data
+            or []
+        )
     except BaseException:
-        profiles = pd.DataFrame()
-    if profiles.empty or "Courier ID" not in profiles.columns:
+        return {}
+    profiles = pd.DataFrame(rows)
+    if profiles.empty or "courier_id" not in profiles.columns:
         return {}
     profiles = profiles.copy()
-    profiles["_courier_id_lookup"] = profiles["Courier ID"].map(_courier_id_key)
+    profiles["_courier_id_lookup"] = profiles["courier_id"].map(_courier_id_key)
+    profiles["Courier ID"] = profiles["courier_id"].astype(str)
+    profiles["Futár"] = profiles.get("courier_name", pd.Series("", index=profiles.index))
+    profiles["Adószám"] = profiles.get("tax_number", pd.Series("", index=profiles.index))
+    profiles["ÁFA státusz"] = profiles.get("vat_status", pd.Series("", index=profiles.index))
+    profiles["Jogviszony"] = profiles.get("employment_type", pd.Series("", index=profiles.index))
     return {
         courier_key: item
         for courier_key, item in profiles.loc[profiles["_courier_id_lookup"].ne("")]
@@ -12138,7 +12210,7 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
         for row in export_df.to_dict("records"):
             courier_key = _courier_id_key(_export_row_value(row, {"Courier ID", "courier_id"}))
             profile_row = profile_by_id.get(courier_key, {})
-            enriched_row = {**profile_row, **row}
+            enriched_row = {**row, **profile_row}
             tig_values = _export_tig_values(enriched_row, period_start)
             for column in [
                 "Adózási mód",

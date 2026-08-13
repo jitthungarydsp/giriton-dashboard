@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+import unicodedata
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -53,6 +54,22 @@ def _tax_number_is_vat_payer(value: Any) -> bool:
     return len(parts) >= 2 and parts[1] == "2"
 
 
+def _ascii_tax_text(value: Any) -> str:
+    text = str(value or "").casefold()
+    replacements = {
+        "Ăˇ": "a", "Ă©": "e", "Ă­": "i", "Ăł": "o", "Ă¶": "o",
+        "Ĺ‘": "o", "Ăş": "u", "ĂĽ": "u", "Ĺ±": "u",
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ö": "o",
+        "ő": "o", "ú": "u", "ü": "u", "ű": "u",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(char)
+    )
+
+
 def _tig_kind(courier: dict[str, Any]) -> str:
     fields = [
         courier.get("tig_type"),
@@ -74,9 +91,10 @@ def _tig_kind(courier: dict[str, Any]) -> str:
         .replace("ü", "u")
         .replace("ű", "u")
     )
-    if any(token in text for token in ["aam", "alanyi", "nem afas", "nem afa", "non vat"]):
+    text = _ascii_tax_text(text)
+    if any(token in text for token in ["aam", "alanyi", "ado mentes", "adomentes", "nem afas", "nem afa", "non vat"]):
         return "aam"
-    if any(token in text for token in ["afas", "afa", "vat", "27"]):
+    if any(token in text for token in ["afas", "afa", "vat", "27", "belfoldi adoalany", "belfoldi ado alany"]):
         return "vat"
     return "vat" if _tax_number_is_vat_payer(courier.get("tax_number")) else "aam"
 
