@@ -2166,7 +2166,7 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
         "Courier ID", "Futár", "Branch", "Számítás módja",
         "Raktár", "Vállalkozás", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Alvállalkozói összeg", "Levonás", "Kifizetendő",
-        "Előző havi összeg", "KPI", "Munkakezdés",
+        "Előző havi összeg", "KPI", "Munkakezdés", "ÁFA státusz", "Jogviszony",
     ]
 
     if not rows:
@@ -2177,6 +2177,8 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
         "courier_name": "Futár",
         "warehouse_name": "Raktár",
         "work_start_date": "Munkakezdés",
+        "vat_status": "ÁFA státusz",
+        "employment_type": "Jogviszony",
     })
 
     df["Courier ID"] = df["Courier ID"].astype(str)
@@ -2189,6 +2191,10 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     df["Vállalkozás"] = df["Vállalkozás"].fillna("")
     if "Munkakezdés" not in df.columns:
         df["Munkakezdés"] = ""
+    if "ÁFA státusz" not in df.columns:
+        df["ÁFA státusz"] = ""
+    if "Jogviszony" not in df.columns:
+        df["Jogviszony"] = ""
 
     df["Státusz"] = "Elszámolásra vár"
 
@@ -8207,8 +8213,8 @@ def render_table(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div class="courier-list-header">
-        <div>Futár</div><div>Branch</div><div>Számítás</div>
-        <div>Nettó</div><div>Borravaló</div><div>Kifizetendő</div><div>Státusz</div>
+        <div>Futár</div><div>Adózás</div><div>Biztosítás</div>
+        <div>Lojalitás</div><div>Raktár</div><div>Kifizetendő</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -8294,10 +8300,13 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            cols[1].caption(str(row["Branch"]))
-            cols[2].caption(str(row["Számítás módja"]))
-            cols[3].caption(format_huf(row["Nettó bevétel"]))
-            cols[4].caption(format_huf(row["Borravaló"]))
+            tax_status = str(row.get("ÁFA státusz") or row.get("Jogviszony") or "-").strip() or "-"
+            insurance_active = parse_huf_value(row.get("Biztosítási díj")) > 0
+            loyalty_total = parse_huf_value(row.get("Lojalitás"))
+            cols[1].caption(tax_status)
+            cols[2].caption("Van" if insurance_active else "Nincs")
+            cols[3].caption(format_huf(loyalty_total) if loyalty_total else "Nem kap")
+            cols[4].caption(str(row.get("Raktár") or "-"))
             cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
 
             badge, led = status_meta(str(row["Státusz"]))
