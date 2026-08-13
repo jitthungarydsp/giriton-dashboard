@@ -772,10 +772,14 @@ def vehicle_assignment_payload(row: dict[str, Any] | None) -> dict[str, str] | N
 def live_vehicle_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
     if not row:
         return None
-    plate = str(row.get("license_plate") or "").strip()
+    response_json = row.get("response_json")
+    driver_json = response_json if isinstance(response_json, dict) else {}
+    vehicle_json = driver_json.get("vehicle") if isinstance(driver_json.get("vehicle"), dict) else {}
+    plate = str(vehicle_json.get("license_plate") or row.get("license_plate") or "").strip()
     if not plate:
         return None
-    state = str(row.get("current_state") or "").strip()
+    status_json = driver_json.get("status") if isinstance(driver_json.get("status"), dict) else {}
+    state = str(status_json.get("current_state") or row.get("current_state") or "").strip()
     source_parts = ["Élő felvétel"]
     if state:
         source_parts.append(state)
@@ -797,7 +801,7 @@ def read_live_vehicle_for_user(user: dict[str, Any]) -> dict[str, str] | None:
         return None
     select_columns = (
         "driver_id,courier_name,warehouse_name,license_plate,current_state,"
-        "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
+        "route_assigned_at,shift_name,shift_start,shift_end,fetched_at,response_json"
     )
     base_params = {
         "select": select_columns,
