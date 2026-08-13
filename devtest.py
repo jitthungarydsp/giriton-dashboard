@@ -12535,10 +12535,18 @@ def show_new_settlement_page() -> None:
     )
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
-    if str(selected_calculation_mode or "").strip().casefold() == "excel":
+    route_audit_enabled = (
+        str(selected_calculation_mode or "").strip().casefold() == "excel"
+        and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
+    )
+    delay_audit_enabled = st.session_state.get("settlement_show_delay_audit_for") == balance_period_start.isoformat()
+    attendance_audit_enabled = st.session_state.get("settlement_show_attendance_audit_for") == balance_period_start.isoformat()
+    if route_audit_enabled:
         data = apply_excel_route_coverage_audit(data, import_session_id)
-    data = apply_dsp_route_delay_audit(data, balance_period_start, balance_period_end)
-    data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
+    if delay_audit_enabled:
+        data = apply_dsp_route_delay_audit(data, balance_period_start, balance_period_end)
+    if attendance_audit_enabled:
+        data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
 
     with st.sidebar:
         st.markdown("## Elszámolás")
@@ -12608,18 +12616,6 @@ def show_new_settlement_page() -> None:
                     if current_excel_session_id:
                         st.session_state["settlement_excel_session_id"] = current_excel_session_id
                         st.session_state["settlement_import_session_id"] = current_excel_session_id
-                if current_excel_session_id:
-                    try:
-                        _, current_period_end = month_bounds(current_period_start)
-                        load_excel_route_coverage_audit.clear()
-                        audited = refresh_excel_route_coverage_audit(
-                            current_excel_session_id,
-                            current_period_start,
-                            current_period_end,
-                        )
-                        st.toast(f"Route ID ellenőrzés frissítve: {audited} futár", icon="✅")
-                    except Exception as exc:
-                        st.warning(f"Route ID ellenőrzés nem futott le: {exc}")
                 st.toast(f"Betöltve: {selected_month}",icon="✅")
             else:
                 try:
@@ -12656,6 +12652,9 @@ def show_new_settlement_page() -> None:
             st.session_state["new_status"]="Összes"
             st.session_state["new_search"]=""
             st.session_state.pop("dashboard_status_filter", None)
+            st.session_state.pop("settlement_show_route_audit_for", None)
+            st.session_state.pop("settlement_show_delay_audit_for", None)
+            st.session_state.pop("settlement_show_attendance_audit_for", None)
             st.rerun()
 
         st.divider()
@@ -12720,15 +12719,6 @@ def show_new_settlement_page() -> None:
                     load_courier_settlement_summary.clear()
                     parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                     recalculate_excel_base_rates(get_db(), result["session_id"])
-                    try:
-                        load_excel_route_coverage_audit.clear()
-                        refresh_excel_route_coverage_audit(
-                            result["session_id"],
-                            balance_period_start,
-                            balance_period_end,
-                        )
-                    except Exception as exc:
-                        st.warning(f"Route ID ellenőrzés nem futott le: {exc}")
                     st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
                         result["session_id"],
                         parameter_revision,
@@ -12810,6 +12800,9 @@ def show_new_settlement_page() -> None:
                     route_audit_period_start,
                     route_audit_period_end,
                 )
+                st.session_state["settlement_show_route_audit_for"] = (
+                    f"{excel_import_session_id or ''}:{route_audit_period_start.isoformat()}"
+                )
                 st.success(f"Route ID ellenőrzés kész: {audited} futár.")
                 st.rerun()
             except Exception as exc:
@@ -12834,6 +12827,8 @@ def show_new_settlement_page() -> None:
                     "Késés ellenőrzés kész: "
                     f"{delay_audit_result['monthly_compare_rows']} havi futár összevetés."
                 )
+                st.session_state["settlement_show_delay_audit_for"] = delay_audit_period_start.isoformat()
+                st.rerun()
             except Exception as exc:
                 st.error(f"Késés ellenőrzés sikertelen: {exc}")
 
@@ -12856,6 +12851,8 @@ def show_new_settlement_page() -> None:
                     "No-show ellenőrzés kész: "
                     f"{attendance_audit_result['monthly_compare_rows']} havi futár összevetés."
                 )
+                st.session_state["settlement_show_attendance_audit_for"] = attendance_audit_period_start.isoformat()
+                st.rerun()
             except Exception as exc:
                 st.error(f"No-show ellenőrzés sikertelen: {exc}")
 
@@ -12879,6 +12876,9 @@ def show_new_settlement_page() -> None:
                 st.session_state.pop("settlement_import_preview", None)
                 st.session_state.pop("settlement_processing_report", None)
                 st.session_state.pop("settlement_base_rate_summary", None)
+                st.session_state.pop("settlement_show_route_audit_for", None)
+                st.session_state.pop("settlement_show_delay_audit_for", None)
+                st.session_state.pop("settlement_show_attendance_audit_for", None)
                 load_driver_dashboard.clear()
                 load_courier_master.clear()
                 load_latest_jit_session_id.clear()
