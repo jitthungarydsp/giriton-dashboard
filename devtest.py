@@ -9271,6 +9271,17 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
                     {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
                 ])
+            if detail_label == "Alapdíj":
+                detail_df = build_amount_drilldown(route_detail, "Alapdíj")
+                detail_sum = parse_huf_value(detail_df.get("Összeg", pd.Series(dtype=float)).sum()) if not detail_df.empty else 0.0
+                if not detail_df.empty and round(detail_sum) == round(display_base_total):
+                    return detail_df
+                return pd.DataFrame([{
+                    "Tétel": "Alapdíj",
+                    "Túrák": route_total,
+                    "Összeg": display_base_total,
+                    "Számítás": "DB összesítő" if summary_available else "Elszámolási adat",
+                }])
             if detail_label == "Késedelmi díj":
                 return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
             if detail_label == "Túramegfelelés":
@@ -9426,6 +9437,7 @@ def show_courier_dialog() -> None:
             ("Kiemelt túra", str(highlighted_route_total), "", ""),
             ("Express normál", str(express_normal_total), "", ""),
             ("Express kiemelt", str(express_highlighted_total), "", ""),
+            ("Alapdíj", format_huf(display_base_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", ""),
@@ -9465,7 +9477,7 @@ def show_courier_dialog() -> None:
             )
 
         detail_labels = {
-            "Kör", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
+            "Kör", "Alapdíj", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
             "Korrekció", "Kiflis levonások / bónuszok", "JITT bónusz / malus", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
