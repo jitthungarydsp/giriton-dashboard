@@ -769,6 +769,75 @@ def vehicle_assignment_payload(row: dict[str, Any] | None) -> dict[str, str] | N
     }
 
 
+def live_vehicle_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
+    if not row:
+        return None
+    plate = str(row.get("license_plate") or "").strip()
+    if not plate:
+        return None
+    state = str(row.get("current_state") or "").strip()
+    source_parts = ["Élő felvétel"]
+    if state:
+        source_parts.append(state)
+    return {
+        "car": "",
+        "licensePlate": plate,
+        "shiftStart": normalize_time(row.get("shift_start")),
+        "shiftEnd": normalize_time(row.get("shift_end")),
+        "shiftType": str(row.get("shift_name") or row.get("warehouse_name") or "").strip(),
+        "source": " · ".join(source_parts),
+        "fetchedAt": str(row.get("last_seen_at") or row.get("fetched_at") or "").strip(),
+    }
+
+
+def read_live_vehicle_for_user(user: dict[str, Any], work_date: date | None = None) -> dict[str, str] | None:
+    courier_id = user_courier_id(user)
+    if not courier_id:
+        return None
+    rows = optional_supabase_rows(
+        "dsp_route_km_latest",
+        params={
+            "select": (
+                "driver_id,courier_name,warehouse_name,license_plate,current_state,"
+                "route_assigned_at,shift_name,shift_start,shift_end,last_seen_at"
+            ),
+            "driver_id": f"eq.{courier_id}",
+            "order": "last_seen_at.desc.nullslast,route_assigned_at.desc.nullslast",
+            "limit": "10",
+        },
+        timeout=10,
+    )
+    if not rows:
+        rows = optional_supabase_rows(
+            "dsp_drivers_live_raw",
+            params={
+                "select": (
+                    "driver_id,courier_name,warehouse_name,license_plate,current_state,"
+                    "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
+                ),
+                "driver_id": f"eq.{courier_id}",
+                "order": "fetched_at.desc.nullslast,route_assigned_at.desc.nullslast",
+                "limit": "10",
+            },
+            timeout=10,
+        )
+    if not rows:
+        return None
+    target_date = work_date or datetime.now(LOCAL_TIMEZONE).date()
+    for row in rows:
+        seen_at = (
+            local_datetime(row.get("last_seen_at"))
+            or local_datetime(row.get("fetched_at"))
+            or local_datetime(row.get("route_assigned_at"))
+        )
+        if seen_at and seen_at.date() != target_date:
+            continue
+        vehicle = live_vehicle_payload(row)
+        if vehicle:
+            return vehicle
+    return None
+
+
 def read_vehicle_assignment_rows_for_user(
     user: dict[str, Any],
     start: date,
@@ -1088,6 +1157,10 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
     courier_id = str(story_row.get("courier_id") or "").strip()
     courier_name = str(story_row.get("courier_name") or "").strip()
     work_date = parse_date_value(story_row.get("work_date")) or datetime.now(LOCAL_TIMEZONE).date()
+    live_vehicle = read_live_vehicle_for_user(
+        {"courierId": courier_id, "username": courier_name},
+        work_date,
+    )
     vehicle_rows = read_vehicle_assignment_rows_for_user(
         {"courierId": courier_id, "username": courier_name},
         work_date,
@@ -1113,7 +1186,7 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
         "current": None,
         "next": None,
         "routeStory": story,
-        "vehicle": best_vehicle_assignment(vehicle_rows, work_date, local_iso_time(story_row.get("shift_start"))),
+        "vehicle": live_vehicle or best_vehicle_assignment(vehicle_rows, work_date, local_iso_time(story_row.get("shift_start"))),
     }
     return {
         "found": True,
@@ -1258,6 +1331,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
         or datetime.now(LOCAL_TIMEZONE)
     ).date()
     route_story = read_current_route_story(courier_id, route_id, route_date)
+    live_vehicle = read_live_vehicle_for_user(user, route_date)
     vehicle_rows = read_vehicle_assignment_rows_for_user(user, route_date, route_date)
 
     route_payload = {
@@ -1297,7 +1371,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "delayMinutes": checkpoint_delay_minutes(next_checkpoint),
             "isLate": checkpoint_delay_minutes(next_checkpoint) > 0,
         } if next_checkpoint else None,
-        "vehicle": best_vehicle_assignment(
+        "vehicle": live_vehicle or best_vehicle_assignment(
             vehicle_rows,
             route_date,
             local_iso_time(route.get("plannedDeparture") or route.get("realDeparture")),

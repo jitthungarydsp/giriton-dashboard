@@ -839,11 +839,12 @@ function routeVehicleBlock(vehicle) {
   const label = vehicleLabel(vehicle);
   if (!label) return "";
   const shift = [vehicle.shiftStart, vehicle.shiftEnd].filter(Boolean).join("–");
+  const detail = [vehicle.source, vehicle.shiftType, shift].filter(Boolean).join(" · ") || "Aktuális hozzárendelés";
   return `
     <div class="route-current">
       <span>Autó</span>
       <strong>${escapeHtml(label)}</strong>
-      <small>${escapeHtml([vehicle.shiftType, shift].filter(Boolean).join(" · ") || "Aktuális hozzárendelés")}</small>
+      <small>${escapeHtml(detail)}</small>
     </div>
   `;
 }
