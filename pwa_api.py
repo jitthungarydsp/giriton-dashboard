@@ -2549,7 +2549,7 @@ def build_financial_breakdown_from_mobile_rows(
         for current in card.get("items") or []
         if current.get("key") not in complaint_excluded_keys and not current.get("excludeFromTotal")
     ]
-    visible_cards = [card for card in cards if card.get("key") != "deductions"]
+    visible_cards = [card for card in cards if card.get("key") not in {"income", "deductions"}]
     return {
         "available": True,
         "month": month.strftime("%Y-%m"),
@@ -3630,7 +3630,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         and not str(item["key"]).startswith(complaint_excluded_prefixes)
         and not item.get("excludeFromTotal")
     ]
-    visible_cards = [card for card in cards if card.get("key") != "deductions"]
+    visible_cards = [card for card in cards if card.get("key") not in {"income", "deductions"}]
     return {
         "available": True,
         "month": month.strftime("%Y-%m"),

@@ -9272,13 +9272,50 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
                 ])
             if detail_label == "Alapdíj":
-                detail_df = build_amount_drilldown(route_detail, "Alapdíj")
-                detail_sum = parse_huf_value(detail_df.get("Összeg", pd.Series(dtype=float)).sum()) if not detail_df.empty else 0.0
-                if not detail_df.empty and round(detail_sum) == round(display_base_total):
-                    return detail_df
+                if not route_detail.empty and "Alapdíj" in route_detail.columns:
+                    base_detail = route_detail.copy()
+                    base_detail["_amount"] = pd.to_numeric(base_detail["Alapdíj"], errors="coerce").fillna(0.0)
+                    base_detail = base_detail[base_detail["_amount"].ne(0)].copy()
+                    if not base_detail.empty:
+                        base_detail["_route_type"] = base_detail.get("Túratípus", pd.Series("", index=base_detail.index)).astype(str).str.casefold()
+                        base_detail["_day_type"] = base_detail.get("Naptípus", pd.Series("", index=base_detail.index)).astype(str).str.casefold()
+
+                        def base_fee_label(item: pd.Series) -> str:
+                            is_express = "express" in str(item.get("_route_type") or "")
+                            is_highlighted = "kiemelt" in str(item.get("_day_type") or "")
+                            if is_express and is_highlighted:
+                                return "Kiemelt express"
+                            if is_express:
+                                return "Express normál"
+                            if is_highlighted:
+                                return "Kiemelt normál"
+                            return "Sima normál"
+
+                        base_detail["Tétel"] = base_detail.apply(base_fee_label, axis=1)
+                        grouped = (
+                            base_detail.groupby(["Tétel", "_amount"], dropna=False)
+                            .size()
+                            .reset_index(name="Darab")
+                        )
+                        grouped["Egységösszeg"] = grouped["_amount"]
+                        grouped["Összeg"] = grouped["Darab"] * grouped["Egységösszeg"]
+                        grouped["Számítás"] = grouped.apply(
+                            lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}",
+                            axis=1,
+                        )
+                        order_map = {
+                            "Sima normál": 1,
+                            "Kiemelt normál": 2,
+                            "Express normál": 3,
+                            "Kiemelt express": 4,
+                        }
+                        grouped["_order"] = grouped["Tétel"].map(order_map).fillna(99)
+                        return grouped.sort_values(["_order", "Egységösszeg"])[
+                            ["Tétel", "Darab", "Egységösszeg", "Összeg", "Számítás"]
+                        ]
                 return pd.DataFrame([{
                     "Tétel": "Alapdíj",
-                    "Túrák": route_total,
+                    "Darab": route_total,
                     "Összeg": display_base_total,
                     "Számítás": "DB összesítő" if summary_available else "Elszámolási adat",
                 }])
