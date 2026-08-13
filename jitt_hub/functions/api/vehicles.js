@@ -1,7 +1,9 @@
 const TABLES = {
   assignments: "dsp_vehicle_assignments",
   stories: "mart_dsp_route_stories",
-  service: "dsp_vehicle_service_status"
+  service: "dsp_vehicle_service_status",
+  liveRawCandidates: ["raw_dsp_live_drivers", "dsp_drivers_live_raw"],
+  liveKmCandidates: ["stg_dsp_route_km_latest", "dsp_route_km_latest"]
 };
 
 function json(payload, status = 200) {
@@ -86,6 +88,14 @@ async function readSupabase(env, table, filters = [], order = "", limit = 5000) 
   return rows;
 }
 
+async function readFirstAvailable(env, tables, filters = [], order = "", limit = 5000) {
+  for (const table of tables) {
+    const rows = await readSupabase(env, table, filters, order, limit);
+    if (rows.length) return { table, rows };
+  }
+  return { table: tables[0] || "", rows: [] };
+}
+
 function assignmentWarehouse(row) {
   return firstValue(
     row.warehouse,
@@ -131,6 +141,14 @@ function ensureVehicle(map, seed) {
       nextServiceAt: "",
       servicePlace: "",
       serviceNote: "",
+      actualDriver: "",
+      actualWarehouse: "",
+      actualPlate: "",
+      actualState: "",
+      actualSeenAt: "",
+      actualShiftName: "",
+      actualRouteAssignedAt: "",
+      active: null,
       assignments: []
     });
   }
@@ -138,6 +156,36 @@ function ensureVehicle(map, seed) {
   if (!vehicle.plate && seed.plate) vehicle.plate = seed.plate;
   if (!vehicle.car && seed.car) vehicle.car = seed.car;
   return vehicle;
+}
+
+function liveRowDate(row) {
+  return clean(firstValue(row.fetched_at, row.last_seen_at, row.updated_at, row.created_at));
+}
+
+function latestLiveRows(rows) {
+  const byDriver = new Map();
+  for (const row of rows) {
+    const driverId = clean(firstValue(row.driver_id, row.courier_id));
+    const key = driverId || `${clean(row.courier_name)}:${plateKey(row.license_plate)}`;
+    if (!key) continue;
+    const currentSeen = liveRowDate(row);
+    const previous = byDriver.get(key);
+    if (!previous || currentSeen > liveRowDate(previous)) byDriver.set(key, row);
+  }
+  return Array.from(byDriver.values());
+}
+
+function applyLive(vehicle, row) {
+  vehicle.actualDriver = clean(firstValue(row.courier_name, row.driver_name));
+  vehicle.actualWarehouse = clean(firstValue(row.warehouse_name, row.warehouse));
+  vehicle.actualPlate = clean(firstValue(row.license_plate, row.vehicle_plate, row.plate));
+  vehicle.actualState = clean(firstValue(row.current_state, row.status));
+  vehicle.actualSeenAt = liveRowDate(row);
+  vehicle.actualShiftName = clean(row.shift_name);
+  vehicle.actualRouteAssignedAt = clean(row.route_assigned_at);
+  vehicle.active = row.active ?? vehicle.active;
+  if (!vehicle.plate && vehicle.actualPlate) vehicle.plate = vehicle.actualPlate;
+  if (!vehicle.warehouse && vehicle.actualWarehouse) vehicle.warehouse = vehicle.actualWarehouse;
 }
 
 function applyService(vehicle, row) {
@@ -184,7 +232,7 @@ function finalizeVehicle(vehicle, targetDate) {
   };
 }
 
-function buildVehicles(targetDate, assignmentRows, storyRows, serviceRows) {
+function buildVehicles(targetDate, assignmentRows, storyRows, serviceRows, liveRows) {
   const vehicles = new Map();
   for (const row of assignmentRows) {
     const seed = baseVehicle(row);
@@ -233,6 +281,16 @@ function buildVehicles(targetDate, assignmentRows, storyRows, serviceRows) {
     applyService(vehicle, row);
   }
 
+  for (const row of latestLiveRows(liveRows)) {
+    const seed = baseVehicle({
+      license_plate: firstValue(row.license_plate, row.vehicle_plate, row.plate),
+      car: firstValue(row.car, row.vehicle_model, row.vehicle)
+    });
+    const vehicle = ensureVehicle(vehicles, seed);
+    if (!vehicle) continue;
+    applyLive(vehicle, row);
+  }
+
   return Array.from(vehicles.values())
     .map((vehicle) => finalizeVehicle(vehicle, targetDate))
     .sort((a, b) => `${a.warehouse} ${a.plate || a.car}`.localeCompare(`${b.warehouse} ${b.plate || b.car}`, "hu"));
@@ -247,7 +305,10 @@ export async function onRequestGet({ request, env }) {
     const fromDate = addDays(targetDate, -45);
     const toDate = addDays(targetDate, 21);
 
-    const [assignments, stories, services] = await Promise.all([
+    const liveFrom = `${targetDate}T00:00:00Z`;
+    const liveTo = `${addDays(targetDate, 1)}T23:59:59Z`;
+
+    const [assignments, stories, services, liveRaw, liveKm] = await Promise.all([
       readSupabase(
         env,
         TABLES.assignments,
@@ -262,10 +323,25 @@ export async function onRequestGet({ request, env }) {
         "work_date.desc,updated_at.desc",
         15000
       ),
-      readSupabase(env, TABLES.service, [], "vehicle_plate.asc", 5000)
+      readSupabase(env, TABLES.service, [], "vehicle_plate.asc", 5000),
+      readFirstAvailable(
+        env,
+        TABLES.liveRawCandidates,
+        [["fetched_at", `gte.${liveFrom}`], ["fetched_at", `lte.${liveTo}`]],
+        "fetched_at.desc",
+        10000
+      ),
+      readFirstAvailable(
+        env,
+        TABLES.liveKmCandidates,
+        [["last_seen_at", `gte.${liveFrom}`], ["last_seen_at", `lte.${liveTo}`]],
+        "last_seen_at.desc",
+        10000
+      )
     ]);
 
-    const vehicles = buildVehicles(targetDate, assignments, stories, services);
+    const liveRows = [...liveRaw.rows, ...liveKm.rows];
+    const vehicles = buildVehicles(targetDate, assignments, stories, services, liveRows);
     const totals = {
       vehicles: vehicles.length,
       assigned: vehicles.filter((vehicle) => vehicle.status === "Kiosztva").length,
@@ -281,7 +357,10 @@ export async function onRequestGet({ request, env }) {
       source: {
         assignments: assignments.length,
         routeStories: stories.length,
-        serviceRows: services.length
+        serviceRows: services.length,
+        liveRows: liveRows.length,
+        liveRawTable: liveRaw.table,
+        liveKmTable: liveKm.table
       },
       totals,
       vehicles

@@ -717,7 +717,10 @@ function filteredVehicles() {
       vehicle.car,
       vehicle.currentDriver,
       vehicle.warehouse,
-      vehicle.servicePlace
+      vehicle.servicePlace,
+      vehicle.actualDriver,
+      vehicle.actualPlate,
+      vehicle.actualState
     ].some((value) => String(value || "").toLocaleLowerCase("hu-HU").includes(search));
   });
 }
@@ -794,11 +797,15 @@ function vehicleCard(vehicle) {
       </header>
       <div class="vehicle-facts">
         <div><span>Kinél van</span><b>${escapeHtml(vehicle.currentDriver || "-")}</b></div>
+        <div><span>Valósan felvette</span><b>${escapeHtml(vehicle.actualDriver || "-")}</b></div>
+        <div><span>Valós autó</span><b>${escapeHtml(vehicle.actualPlate || "-")}</b></div>
+        <div><span>Live állapot</span><b>${escapeHtml(vehicle.actualState || "-")}</b></div>
         <div><span>Kiosztás napja</span><b>${formatDateOnly(vehicle.currentAssignmentDate)}</b></div>
         <div><span>Műszak</span><b>${formatTimeOnly(vehicle.currentShiftStart)}-${formatTimeOnly(vehicle.currentShiftEnd)}</b></div>
         <div><span>Km állás</span><b>${formatKm(vehicle.odometerKm)}</b></div>
         <div><span>Következő szerviz</span><b>${formatDateOnly(vehicle.nextServiceAt)}</b></div>
         <div><span>Szerviz helye</span><b>${escapeHtml(vehicle.servicePlace || "-")}</b></div>
+        <div><span>Live frissítés</span><b>${formatDateOnly(vehicle.actualSeenAt)} ${formatTimeOnly(vehicle.actualSeenAt)}</b></div>
       </div>
       <details>
         <summary>Kocsi kiosztása</summary>
@@ -835,6 +842,8 @@ function vehiclesPage() {
       <span>Frissítve: ${escapeHtml(vehicleState.data?.generatedAt ? new Date(vehicleState.data.generatedAt).toLocaleString("hu-HU") : "-")}</span>
       <span>Route story sorok: ${source.routeStories ?? 0}</span>
       <span>Szerviz sorok: ${source.serviceRows ?? 0}</span>
+      <span>Live fetch-drivers sorok: ${source.liveRows ?? 0}</span>
+      <span>Live forrás: ${escapeHtml([source.liveRawTable, source.liveKmTable].filter(Boolean).join(" + ") || "-")}</span>
     </div>
     <div id="vehicleListSlot">${vehiclesList()}</div>
   `;
