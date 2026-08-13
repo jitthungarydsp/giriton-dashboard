@@ -2964,13 +2964,12 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             return "TIG-re vár"
         if action_statuses.get("tig") != "done":
             return "TIG elfogadásra vár"
-        if (
-            action_statuses.get("tig") == "done"
-            or action_statuses.get("invoice_check") == "done"
-            or action_statuses.get("invoice_submit") == "done"
-            or "invoice" in document_types
-        ):
+        if action_statuses.get("invoice_check") == "done":
             return "Kifizetésre vár"
+        if action_statuses.get("invoice_submit") == "done" or "invoice" in document_types:
+            return "Számlaellenőrzésre vár"
+        if action_statuses.get("tig") == "done":
+            return "Számlafeltöltésre vár"
         return "TIG-re vár"
 
     result["Státusz"] = courier_ids.map(workflow_status)
@@ -10894,6 +10893,49 @@ def show_courier_dialog() -> None:
                 except Exception as exc:
                     st.warning(f"A dokumentum tartalma nem tölthető le: {exc}")
 
+            current_month_invoice_docs = []
+            for document_item in documents.to_dict("records"):
+                document_month_value = pd.to_datetime(document_item.get("document_month"), errors="coerce")
+                if pd.isna(document_month_value):
+                    continue
+                if (
+                    base_action_key(document_item.get("document_type")) == "invoice"
+                    and document_month_value.date().replace(day=1) == workflow_month.replace(day=1)
+                ):
+                    current_month_invoice_docs.append(document_item)
+            if current_month_invoice_docs:
+                st.markdown("##### Számla admin ellenőrzése")
+                invoice_check_status = str((status_by_action.get("invoice_check") or {}).get("status") or "").casefold()
+                if invoice_check_status == "done":
+                    st.success("A számlaellenőrzés jelenleg sikeresre van állítva.")
+                else:
+                    st.warning("A számla még ellenőrzésre vár vagy hibás ellenőrzési állapotban van.")
+                invoice_reject_note = st.text_area(
+                    "Számla elutasítás megjegyzése",
+                    value=str((status_by_action.get("invoice_check") or {}).get("status_note") or "Számla hibás, új feltöltés szükséges."),
+                    key=f"invoice_reject_note_{courier_id}_{workflow_month:%Y%m}",
+                    help="Ez a megjegyzés látszani fog a folyamat státuszánál, a régi számlafájl pedig megmarad ellenőrzési nyomnak.",
+                )
+                if st.button(
+                    "Számla elutasítása és visszaküldés feltöltésre",
+                    use_container_width=True,
+                    disabled=closure_done,
+                    key=f"invoice_reject_backstep_{courier_id}_{workflow_month:%Y%m}",
+                ):
+                    try:
+                        saved_count = backstep_peopleforce_workflow(
+                            courier_id=courier_id,
+                            courier_name=courier_name,
+                            document_month=workflow_month,
+                            target_action="invoice_submit",
+                            updated_by=actor,
+                            note=f"Számla elutasítva: {invoice_reject_note}".strip(),
+                        )
+                        st.success(f"Számla elutasítva, a futár visszakerült számlafeltöltésre. Módosított státuszok: {saved_count}.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A számla elutasítása sikertelen: {exc}")
+
         st.markdown("##### Új dokumentum feltöltése")
         upload_columns = st.columns([0.22, 0.22, 0.28, 0.28])
         doc_type_label = upload_columns[0].selectbox(
@@ -12665,6 +12707,8 @@ def show_new_settlement_page() -> None:
                 "Elszámolás elfogadásra vár",
                 "TIG-re vár",
                 "TIG elfogadásra vár",
+                "Számlafeltöltésre vár",
+                "Számlaellenőrzésre vár",
                 "Bejelentések",
                 "Kifizetésre vár",
                 "Kifizetve",
@@ -13391,6 +13435,8 @@ def show_new_settlement_page() -> None:
         ("Elszámolás elfogadásra vár", "Futár elfogadására vár", "🔵"),
         ("TIG-re vár", "Még nem készült TIG", "🟣"),
         ("TIG elfogadásra vár", "Futár TIG elfogadására vár", "🟣"),
+        ("Számlafeltöltésre vár", "Futár számlafeltöltésére vár", "🟡"),
+        ("Számlaellenőrzésre vár", "Admin ellenőrzésre vár", "🟡"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),

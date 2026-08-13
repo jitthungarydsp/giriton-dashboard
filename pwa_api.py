@@ -6410,7 +6410,8 @@ async def submit_invoice(
     courier_id, courier_name = courier_identity(user)
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
-    if invoice_document_exists_for_process(_documents, process_id):
+    states = status_map(status_rows, process_id)
+    if invoice_document_exists_for_process(_documents, process_id) and workflow_done(states, "invoice_submit"):
         raise HTTPException(
             status_code=409,
             detail="Ehhez a folyamathoz már érkezett számla. Új feltöltéshez kérj admin segítséget.",
@@ -6419,7 +6420,7 @@ async def submit_invoice(
     cash_content = b""
     if cash_invoice_file is not None and cash_invoice_file.filename:
         cash_content = await cash_invoice_file.read(MAX_INVOICE_BYTES + 1)
-    override_enabled = invoice_validation_override_enabled(status_map(status_rows, process_id))
+    override_enabled = invoice_validation_override_enabled(states)
     expected_amount = expected_tig_amount(user, month_value)
     if cash_content:
         shared_validation = {

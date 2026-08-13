@@ -1743,8 +1743,7 @@ function renderWorkflow() {
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
-  const invoiceAlreadySubmitted = Boolean(workflowStep("invoice_submit").done)
-    || Boolean((state.workflow?.documents?.invoice || []).length);
+  const invoiceAlreadySubmitted = Boolean(workflowStep("invoice_submit").done);
   setPanelLocked("#invoice-submit-panel", readOnly || invoiceAlreadySubmitted || Boolean(workflowStep("invoice_submit").locked));
   setPanelLocked("#invoice-check-panel", readOnly || Boolean(workflowStep("invoice_check").locked));
   showOnlyWorkflowPanel(activeWorkflowPanel());
