@@ -5299,13 +5299,6 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
-        if courier_id:
-            try:
-                booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
-                profile_advance_booking_days = int(parse_huf_value(booking_summary.get("advance_booked_shift_count")))
-                advance_booking_days = max(advance_booking_days, profile_advance_booking_days)
-            except Exception:
-                pass
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
