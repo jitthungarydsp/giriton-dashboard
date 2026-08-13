@@ -2750,6 +2750,26 @@ def load_target_reserve_monthly(courier_id: str, period_start: date, period_end:
         return {}
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_target_reserve_monthly_bulk(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_monthly")
+            .select("*")
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .limit(5000)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        rows = []
+    return pd.DataFrame(rows)
+
+
 def save_target_reserve_monthly(
     session_id: str | None,
     courier_id: str,
@@ -2776,6 +2796,7 @@ def save_target_reserve_monthly(
             on_conflict="courier_id,period_start,period_end",
         ).execute()
         load_target_reserve_monthly.clear()
+        load_target_reserve_monthly_bulk.clear()
     except BaseException:
         pass
 
@@ -4868,6 +4889,17 @@ def apply_target_reserve_deductions(
     result = data.copy()
     if result.empty:
         return result
+    reserve_rows = load_target_reserve_rows_bulk()
+    monthly_rows = load_target_reserve_monthly_bulk(period_start, period_end)
+    monthly_by_id: dict[str, dict[str, object]] = {}
+    if not monthly_rows.empty and "courier_id" in monthly_rows.columns:
+        monthly_rows = monthly_rows.copy()
+        monthly_rows["_courier_id_lookup"] = monthly_rows["courier_id"].map(_courier_id_key)
+        monthly_by_id = {
+            str(row.get("_courier_id_lookup") or ""): row
+            for row in monthly_rows.to_dict("records")
+            if str(row.get("_courier_id_lookup") or "")
+        }
     reserve_values: list[float] = []
     insurance_values: list[float] = []
     reserve_open_values: list[float] = []
@@ -4884,15 +4916,22 @@ def apply_target_reserve_deductions(
             reserve_close_values.append(0.0)
             payable_after_values.append(payable_before_insurance)
             continue
-        reserve_status = load_target_reserve_status(courier_id, courier_name)
-        reserve_month = resolve_target_reserve_month(
-            session_id,
-            courier_id,
-            period_start,
-            period_end,
-            reserve_status,
-            payable_before_insurance,
-        )
+        reserve_status = target_reserve_status_from_rows(courier_id, courier_name, reserve_rows)
+        saved_month = monthly_by_id.get(_courier_id_key(courier_id), {})
+        if str(saved_month.get("status") or "").casefold() == "done":
+            reserve_month = {
+                "payable_before_insurance_huf": parse_huf_value(saved_month.get("payable_before_insurance_huf")),
+                "reserve_before_huf": parse_huf_value(saved_month.get("reserve_before_huf")),
+                "reserve_addition_huf": parse_huf_value(saved_month.get("reserve_addition_huf")),
+                "insurance_fee_huf": parse_huf_value(saved_month.get("insurance_fee_huf")),
+                "reserve_after_huf": parse_huf_value(saved_month.get("reserve_after_huf")),
+                "payable_after_insurance_huf": parse_huf_value(saved_month.get("payable_after_insurance_huf")),
+                "insurance_active_before": bool(saved_month.get("insurance_active_before")),
+                "insurance_active_after": bool(saved_month.get("insurance_active_after")),
+                "status": "done",
+            }
+        else:
+            reserve_month = {**calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start), "status": "preview"}
         reserve_addition = parse_huf_value(reserve_month.get("reserve_addition_huf"))
         insurance_fee = parse_huf_value(reserve_month.get("insurance_fee_huf"))
         reserve_values.append(reserve_addition)
@@ -12587,24 +12626,30 @@ def show_new_settlement_page() -> None:
             st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
         if str(calculation_mode or "API").strip().casefold() != "excel":
-            api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)
-            st.caption(f"API raw adat: {api_stats['couriers']} futár, {api_stats['routes']} útvonal")
-            api_breakdown = api_raw_overview_breakdown(parse_month_option(selected_month))
-            if not api_breakdown.empty:
-                st.dataframe(api_breakdown, hide_index=True, use_container_width=True, height=120)
-            selected_api_session_id = load_latest_api_jit_session_id(parse_month_option(selected_month), warehouse)
-            api_diagnostics = load_api_import_diagnostics(selected_api_session_id)
-            if api_diagnostics.get("error"):
-                st.caption(f"API számítás ellenőrzés hiba: {api_diagnostics['error']}")
-            else:
-                st.caption(
-                    "API számítás: "
-                    f"session={str(api_diagnostics.get('session_id') or '-')[:8]} | "
-                    f"jit_row={api_diagnostics.get('jit_rows', 0)} | "
-                    f"summary={api_diagnostics.get('summary_rows', 0)} | "
-                    f"számolt={api_diagnostics.get('calculated', 0)} | "
-                    f"hiányzó szabály={api_diagnostics.get('missing_base_rate', 0)}"
+            if st.button("API diagnosztika frissítése", use_container_width=True, key="refresh_api_sidebar_diagnostics"):
+                st.session_state["settlement_show_api_sidebar_diagnostics_for"] = (
+                    f"{selected_month}:{warehouse}"
                 )
+                st.rerun()
+            if st.session_state.get("settlement_show_api_sidebar_diagnostics_for") == f"{selected_month}:{warehouse}":
+                api_stats = api_raw_overview_stats(parse_month_option(selected_month), warehouse)
+                st.caption(f"API raw adat: {api_stats['couriers']} futár, {api_stats['routes']} útvonal")
+                api_breakdown = api_raw_overview_breakdown(parse_month_option(selected_month))
+                if not api_breakdown.empty:
+                    st.dataframe(api_breakdown, hide_index=True, use_container_width=True, height=120)
+                selected_api_session_id = load_latest_api_jit_session_id(parse_month_option(selected_month), warehouse)
+                api_diagnostics = load_api_import_diagnostics(selected_api_session_id)
+                if api_diagnostics.get("error"):
+                    st.caption(f"API számítás ellenőrzés hiba: {api_diagnostics['error']}")
+                else:
+                    st.caption(
+                        "API számítás: "
+                        f"session={str(api_diagnostics.get('session_id') or '-')[:8]} | "
+                        f"jit_row={api_diagnostics.get('jit_rows', 0)} | "
+                        f"summary={api_diagnostics.get('summary_rows', 0)} | "
+                        f"számolt={api_diagnostics.get('calculated', 0)} | "
+                        f"hiányzó szabály={api_diagnostics.get('missing_base_rate', 0)}"
+                    )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
                 current_period_start = parse_month_option(selected_month)
@@ -12655,6 +12700,7 @@ def show_new_settlement_page() -> None:
             st.session_state.pop("settlement_show_route_audit_for", None)
             st.session_state.pop("settlement_show_delay_audit_for", None)
             st.session_state.pop("settlement_show_attendance_audit_for", None)
+            st.session_state.pop("settlement_show_api_sidebar_diagnostics_for", None)
             st.rerun()
 
         st.divider()
