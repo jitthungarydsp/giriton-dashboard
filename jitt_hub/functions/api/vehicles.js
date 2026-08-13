@@ -385,7 +385,7 @@ export async function onRequestGet({ request, env }) {
       readSupabase(
         env,
         TABLES.stories,
-        [["work_date", `gte.${fromDate}`], ["work_date", `lte.${targetDate}`], ["vehicle_plate", "not.is.null"]],
+        [["work_date", `gte.${fromDate}`], ["work_date", `lte.${targetDate}`]],
         "work_date.desc,updated_at.desc",
         15000
       ),
