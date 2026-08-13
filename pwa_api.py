@@ -795,39 +795,24 @@ def read_live_vehicle_for_user(user: dict[str, Any], work_date: date | None = No
     if not courier_id:
         return None
     rows = optional_supabase_rows(
-        "dsp_route_km_latest",
+        "dsp_drivers_live_raw",
         params={
             "select": (
                 "driver_id,courier_name,warehouse_name,license_plate,current_state,"
-                "route_assigned_at,shift_name,shift_start,shift_end,last_seen_at"
+                "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
             ),
             "driver_id": f"eq.{courier_id}",
-            "order": "last_seen_at.desc.nullslast,route_assigned_at.desc.nullslast",
+            "order": "fetched_at.desc.nullslast,route_assigned_at.desc.nullslast",
             "limit": "10",
         },
         timeout=10,
     )
     if not rows:
-        rows = optional_supabase_rows(
-            "dsp_drivers_live_raw",
-            params={
-                "select": (
-                    "driver_id,courier_name,warehouse_name,license_plate,current_state,"
-                    "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
-                ),
-                "driver_id": f"eq.{courier_id}",
-                "order": "fetched_at.desc.nullslast,route_assigned_at.desc.nullslast",
-                "limit": "10",
-            },
-            timeout=10,
-        )
-    if not rows:
         return None
     target_date = work_date or datetime.now(LOCAL_TIMEZONE).date()
     for row in rows:
         seen_at = (
-            local_datetime(row.get("last_seen_at"))
-            or local_datetime(row.get("fetched_at"))
+            local_datetime(row.get("fetched_at"))
             or local_datetime(row.get("route_assigned_at"))
         )
         if seen_at and seen_at.date() != target_date:
