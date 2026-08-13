@@ -2836,6 +2836,7 @@ def close_target_reserve_month(
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
+    load_target_reserve_monthly_bulk.clear()
 
 
 @st.cache_data(show_spinner=False, ttl=30)
@@ -3242,6 +3243,7 @@ def reopen_target_reserve_month(courier_id: str, period_start: date, period_end:
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
+    load_target_reserve_monthly_bulk.clear()
 
 
 def month_bounds(value: date) -> tuple[date, date]:
@@ -8151,6 +8153,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_target_reserve_monthly.clear()
+    load_target_reserve_monthly_bulk.clear()
     load_courier_monthly_closure.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
