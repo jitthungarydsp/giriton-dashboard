@@ -9625,6 +9625,36 @@ def show_courier_dialog() -> None:
             {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
         ])
+        base_mobile_rows = []
+        base_detail_for_mobile = finance_detail_frame("Alapdíj")
+        if not base_detail_for_mobile.empty:
+            for base_index, base_row in base_detail_for_mobile.reset_index(drop=True).iterrows():
+                base_amount = parse_huf_value(base_row.get("Összeg"))
+                if not base_amount:
+                    continue
+                base_label = str(base_row.get("Tétel") or "Alapdíj").strip() or "Alapdíj"
+                base_note_parts = []
+                base_count = parse_huf_value(base_row.get("Darab"))
+                unit_amount = parse_huf_value(base_row.get("Egységösszeg"))
+                calculation = str(base_row.get("Számítás") or "").strip()
+                if base_count:
+                    base_note_parts.append(f"{int(base_count)} db")
+                if unit_amount:
+                    base_note_parts.append(format_huf(unit_amount))
+                if calculation:
+                    base_note_parts.append(calculation)
+                base_mobile_rows.append({
+                    "item_key": f"base_detail_{base_index + 1}",
+                    "item_label": base_label,
+                    "amount_kind": "huf",
+                    "amount_value": base_amount,
+                    "note": " | ".join(base_note_parts) or "Alapdíj bontás",
+                })
+        if base_mobile_rows:
+            mobile_default_rows = pd.concat(
+                [mobile_default_rows, pd.DataFrame(base_mobile_rows)],
+                ignore_index=True,
+            )
         kiflis_detail_rows = append_kiflis_bonus_malus_mobile_rows(
             [],
             {"Courier ID": courier_id, "Futár": courier_name},

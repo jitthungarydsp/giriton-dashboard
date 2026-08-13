@@ -2344,6 +2344,9 @@ def build_financial_breakdown_from_mobile_rows(
         income_total += delta
         payable += delta
 
+    base_items = detail_items(("base_detail_",), [])
+    if not base_items:
+        base_items = money_items(["base"])
     income_items = money_items([
         "base",
         "tip",
@@ -2523,7 +2526,7 @@ def build_financial_breakdown_from_mobile_rows(
             ],
         },
         {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
-        {"key": "base", "label": "Alapd\u00edj", "amountHuf": mobile_override_amount(overrides, "base"), "tone": "income", "items": money_items(["base"])},
+        {"key": "base", "label": "Alapd\u00edj", "amountHuf": mobile_override_amount(overrides, "base"), "tone": "income", "items": base_items},
         {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": mobile_override_amount(overrides, "delay_bonus"), "tone": "income", "items": money_items(["delay_bonus"])},
         {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": mobile_override_amount(overrides, "compliance_bonus"), "tone": "income", "items": money_items(["compliance_bonus"])},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
