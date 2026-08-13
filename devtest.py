@@ -2230,6 +2230,7 @@ def load_courier_profile_lookup() -> dict[str, dict[str, object]]:
         return {}
     lookup: dict[str, dict[str, object]] = {}
     for row in rows:
+        row["is_active"] = bool(row.get("active", True))
         courier_key = _courier_id_key(row.get("courier_id"))
         if courier_key:
             lookup[courier_key] = row
@@ -5284,6 +5285,12 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
+        if advance_booking_days <= 0 and courier_id:
+            try:
+                booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
+                advance_booking_days = int(parse_huf_value(booking_summary.get("advance_booked_shift_count")))
+            except Exception:
+                advance_booking_days = 0
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
@@ -5601,8 +5608,10 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
             elif driver_key and driver_key in routes_by_name.index:
                 dashboard_routes = int(routes_by_name.loc[driver_key] or 0)
             stored_routes = int(group["completed_routes"].sum())
-            if dashboard_routes > stored_routes and len(group) == 1:
-                idx = group.index[0]
+            if dashboard_routes > stored_routes and not group.empty:
+                positive_bonus = group.loc[group["bonus_per_route_huf"].astype(float).ne(0.0)]
+                idx = positive_bonus.index[0] if not positive_bonus.empty else group.index[0]
+                group.loc[group.index != idx, ["completed_routes", "bonus_total_huf"]] = 0
                 unit_amount = parse_huf_value(group.at[idx, "bonus_per_route_huf"])
                 if not unit_amount:
                     unit_amount = customer_rating_rule_amount(
