@@ -790,23 +790,48 @@ def live_vehicle_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
     }
 
 
-def read_live_vehicle_for_user(user: dict[str, Any], work_date: date | None = None) -> dict[str, str] | None:
+def read_live_vehicle_for_user(user: dict[str, Any]) -> dict[str, str] | None:
     courier_id = user_courier_id(user)
-    if not courier_id:
+    courier_name = str(user.get("username") or user.get("courier_name") or user.get("name") or "").strip()
+    if not courier_id and not courier_name:
         return None
-    rows = optional_supabase_rows(
-        "dsp_drivers_live_raw",
-        params={
-            "select": (
-                "driver_id,courier_name,warehouse_name,license_plate,current_state,"
-                "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
-            ),
-            "driver_id": f"eq.{courier_id}",
-            "order": "fetched_at.desc.nullslast,route_assigned_at.desc.nullslast",
-            "limit": "10",
-        },
-        timeout=10,
+    select_columns = (
+        "driver_id,courier_name,warehouse_name,license_plate,current_state,"
+        "route_assigned_at,shift_name,shift_start,shift_end,fetched_at"
     )
+    base_params = {
+        "select": select_columns,
+        "order": "fetched_at.desc.nullslast,route_assigned_at.desc.nullslast",
+        "limit": "10",
+    }
+    rows: list[dict[str, Any]] = []
+    if courier_id:
+        rows = optional_supabase_rows(
+            "dsp_drivers_live_raw",
+            params={
+                **base_params,
+                "driver_id": f"eq.{courier_id}",
+            },
+            timeout=10,
+        )
+    if not rows and courier_name:
+        rows = optional_supabase_rows(
+            "dsp_drivers_live_raw",
+            params={
+                **base_params,
+                "courier_name": f"eq.{courier_name}",
+            },
+            timeout=10,
+        )
+    if not rows and courier_name:
+        rows = optional_supabase_rows(
+            "dsp_drivers_live_raw",
+            params={
+                **base_params,
+                "courier_name": f"ilike.*{courier_name}*",
+            },
+            timeout=10,
+        )
     if not rows:
         return None
     for row in rows:
@@ -876,9 +901,14 @@ def best_vehicle_assignment(
 def attach_vehicle_assignments(
     items: list[dict[str, Any]],
     vehicle_rows: list[dict[str, Any]],
+    live_vehicle: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
+    today_key = datetime.now(LOCAL_TIMEZONE).date().isoformat()
     for item in items:
-        item["vehicle"] = best_vehicle_assignment(vehicle_rows, item.get("date"), item.get("start"))
+        if live_vehicle and item.get("date") == today_key:
+            item["vehicle"] = live_vehicle
+        else:
+            item["vehicle"] = best_vehicle_assignment(vehicle_rows, item.get("date"), item.get("start"))
     return items
 
 
@@ -887,6 +917,7 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     end = start + timedelta(days=days - 1)
     source_errors: list[str] = []
     vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
+    live_vehicle = read_live_vehicle_for_user(user)
 
     try:
         comparison_items = read_attendance_muszakpro_shifts(user, start, end, days)
@@ -894,7 +925,7 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
             "from": start.isoformat(),
             "to": end.isoformat(),
             "days": days,
-            "items": attach_vehicle_assignments(comparison_items, vehicle_rows),
+            "items": attach_vehicle_assignments(comparison_items, vehicle_rows, live_vehicle),
             "warnings": [],
             "source": "attendance_muszakpro_comparison",
             "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -972,7 +1003,7 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
         "from": start.isoformat(),
         "to": end.isoformat(),
         "days": days,
-        "items": attach_vehicle_assignments(items, vehicle_rows),
+        "items": attach_vehicle_assignments(items, vehicle_rows, live_vehicle),
         "warnings": source_errors,
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
@@ -1135,15 +1166,7 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
     courier_id = str(story_row.get("courier_id") or "").strip()
     courier_name = str(story_row.get("courier_name") or "").strip()
     work_date = parse_date_value(story_row.get("work_date")) or datetime.now(LOCAL_TIMEZONE).date()
-    live_vehicle = read_live_vehicle_for_user(
-        {"courierId": courier_id, "username": courier_name},
-        work_date,
-    )
-    vehicle_rows = read_vehicle_assignment_rows_for_user(
-        {"courierId": courier_id, "username": courier_name},
-        work_date,
-        work_date,
-    ) if courier_id or courier_name else []
+    live_vehicle = read_live_vehicle_for_user({"courierId": courier_id, "username": courier_name})
     route_payload = {
         "routeId": str(story_row.get("route_id") or ""),
         "warehouse": str(story_row.get("warehouse_name") or ""),
@@ -1164,7 +1187,7 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
         "current": None,
         "next": None,
         "routeStory": story,
-        "vehicle": live_vehicle or best_vehicle_assignment(vehicle_rows, work_date, local_iso_time(story_row.get("shift_start"))),
+        "vehicle": live_vehicle,
     }
     return {
         "found": True,
@@ -1309,8 +1332,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
         or datetime.now(LOCAL_TIMEZONE)
     ).date()
     route_story = read_current_route_story(courier_id, route_id, route_date)
-    live_vehicle = read_live_vehicle_for_user(user, route_date)
-    vehicle_rows = read_vehicle_assignment_rows_for_user(user, route_date, route_date)
+    live_vehicle = read_live_vehicle_for_user(user)
 
     route_payload = {
         "routeId": route_id,
@@ -1349,11 +1371,7 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             "delayMinutes": checkpoint_delay_minutes(next_checkpoint),
             "isLate": checkpoint_delay_minutes(next_checkpoint) > 0,
         } if next_checkpoint else None,
-        "vehicle": live_vehicle or best_vehicle_assignment(
-            vehicle_rows,
-            route_date,
-            local_iso_time(route.get("plannedDeparture") or route.get("realDeparture")),
-        ),
+        "vehicle": live_vehicle,
     }
     if route_story:
         route_payload["routeStory"] = route_story
