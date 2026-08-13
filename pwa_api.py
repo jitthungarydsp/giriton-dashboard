@@ -809,14 +809,7 @@ def read_live_vehicle_for_user(user: dict[str, Any], work_date: date | None = No
     )
     if not rows:
         return None
-    target_date = work_date or datetime.now(LOCAL_TIMEZONE).date()
     for row in rows:
-        seen_at = (
-            local_datetime(row.get("fetched_at"))
-            or local_datetime(row.get("route_assigned_at"))
-        )
-        if seen_at and seen_at.date() != target_date:
-            continue
         vehicle = live_vehicle_payload(row)
         if vehicle:
             return vehicle
