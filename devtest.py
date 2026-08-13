@@ -9227,6 +9227,20 @@ def show_courier_dialog() -> None:
                         selected_rating["Darab"] = pd.to_numeric(selected_rating.get("completed_routes", 0), errors="coerce").fillna(0.0).astype(int)
                         selected_rating["Egységösszeg"] = pd.to_numeric(selected_rating.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
                         selected_rating["Összeg"] = pd.to_numeric(selected_rating.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+                        if route_total > int(selected_rating["Darab"].sum()) and len(selected_rating) == 1:
+                            rating_idx = selected_rating.index[0]
+                            rating_rules = load_customer_rating_rules_for_month(period_start, period_end)
+                            route_type_value = selected_rating.at[rating_idx, "Túratípus"]
+                            unit_amount = customer_rating_rule_amount(
+                                float(selected_rating.at[rating_idx, "Értékelés"] or 0.0),
+                                rating_rules,
+                                route_type_value,
+                            )
+                            if not unit_amount:
+                                unit_amount = float(selected_rating.at[rating_idx, "Egységösszeg"] or 0.0)
+                            selected_rating.at[rating_idx, "Darab"] = route_total
+                            selected_rating.at[rating_idx, "Egységösszeg"] = unit_amount
+                            selected_rating.at[rating_idx, "Összeg"] = route_total * unit_amount
                         selected_rating["Számítás"] = selected_rating.apply(
                             lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}" if item["Egységösszeg"] else format_huf(item["Összeg"]),
                             axis=1,
