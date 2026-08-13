@@ -5210,6 +5210,19 @@ def _loyalty_rule_bool(rule: pd.Series, column: str, default: bool) -> bool:
     return bool(value)
 
 
+def loyalty_advance_booking_min_from_rule(rule: pd.Series) -> int:
+    """The old DB column name is kept for compatibility; it means advance-booked shifts."""
+    for column in (
+        "advance_booked_shifts_min",
+        "advance_booking_days_min",
+        "advance_booking_min",
+        "previous_normal_routes_min",
+    ):
+        if column in rule and pd.notna(rule.get(column)):
+            return int(parse_huf_value(rule.get(column)))
+    return 0
+
+
 def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date, session_id: str | None, source_mode: str = "") -> pd.DataFrame:
     result = data.copy()
     rules = load_loyalty_bonus_rules_for_month(period_start, period_end)
@@ -5256,7 +5269,8 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
     if "previous_normal_routes_min" not in rules.columns:
         rules["previous_normal_routes_min"] = 0
     rules["previous_normal_routes_min"] = pd.to_numeric(rules["previous_normal_routes_min"], errors="coerce").fillna(0).astype(int)
-    rules = rules.sort_values(["previous_normal_routes_min", "priority"], ascending=[False, True], kind="stable")
+    rules["_advance_booking_min"] = rules.apply(loyalty_advance_booking_min_from_rule, axis=1)
+    rules = rules.sort_values(["_advance_booking_min", "priority"], ascending=[False, True], kind="stable")
 
     loyalty_amounts: list[float] = []
     previous_route_values: list[int] = []
@@ -5285,12 +5299,13 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
         advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
-        if advance_booking_days <= 0 and courier_id:
+        if courier_id:
             try:
                 booking_summary = load_muszakpro_booking_summary(courier_id, period_start, period_end)
-                advance_booking_days = int(parse_huf_value(booking_summary.get("advance_booked_shift_count")))
+                profile_advance_booking_days = int(parse_huf_value(booking_summary.get("advance_booked_shift_count")))
+                advance_booking_days = max(advance_booking_days, profile_advance_booking_days)
             except Exception:
-                advance_booking_days = 0
+                pass
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
@@ -5313,7 +5328,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
             if months_worked < required_months:
                 missing.append(f"{required_months}. hónap")
-            booked_shift_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
+            booked_shift_min = int(parse_huf_value(rule.get("_advance_booking_min")))
             if advance_booking_days < booked_shift_min:
                 missing.append(f"előre foglalt műszak < {booked_shift_min}")
             if _loyalty_rule_bool(rule, "require_active_relationship", True):
