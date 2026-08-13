@@ -1,8 +1,10 @@
 import * as routeQualityApi from "./functions/api/route-quality.js";
+import * as sessionApi from "./functions/api/session.js";
 import * as vehiclesApi from "./functions/api/vehicles.js";
 
 const routes = {
   "/api/route-quality": routeQualityApi,
+  "/api/session": sessionApi,
   "/api/vehicles": vehiclesApi
 };
 

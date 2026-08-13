@@ -240,6 +240,7 @@ async function loadReport() {
   render();
 
   try {
+    await ensureHubSession();
     const response = await fetch(`/api/route-quality?month=${encodeURIComponent(state.reportMonth)}`, {
       headers: {
         Accept: "application/json",
@@ -264,6 +265,25 @@ async function loadReport() {
     reportState.loading = false;
     render();
   }
+}
+
+async function ensureHubSession() {
+  if (!state.reportToken) return true;
+  const response = await fetch("/api/session", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-hub-report-token": state.reportToken
+    },
+    body: "{}"
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || "A riport kulcs nem egyezik a Cloudflare beállítással.");
+  }
+  state.reportToken = "";
+  sessionStorage.removeItem("jittHubReportToken");
+  return true;
 }
 
 function setTheme() {
@@ -675,25 +695,22 @@ function ensureVehiclesLoaded() {
 
 async function loadVehicles() {
   if (vehicleState.loading) return;
-  if (!state.reportToken) {
-    vehicleState.data = null;
-    vehicleState.loadedDate = state.vehicleDate;
-    vehicleState.error = "Add meg a HUB riport kulcsot, hogy a járműadatokat DB-ből be lehessen tölteni.";
-    render();
-    return;
-  }
   vehicleState.loading = true;
   vehicleState.error = "";
   render();
   try {
+    await ensureHubSession();
     const response = await fetch(`/api/vehicles?date=${encodeURIComponent(state.vehicleDate)}`, {
       headers: {
         Accept: "application/json",
-        "x-hub-report-token": state.reportToken
+        ...(state.reportToken ? { "x-hub-report-token": state.reportToken } : {})
       }
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const hint = response.status === 401 ? "Add meg egyszer a HUB riport kulcsot, vagy ellenőrizd, hogy Cloudflare-ben pontosan ugyanaz az érték van mentve." : "";
+      throw new Error(payload.error ? `${payload.error}. ${hint}`.trim() : `HTTP ${response.status}`);
+    }
     vehicleState.data = payload;
     vehicleState.loadedDate = state.vehicleDate;
     vehicleState.error = "";
@@ -726,12 +743,6 @@ async function saveVehicleService() {
   vehicleSaveState.message = "";
   vehicleSaveState.error = "";
 
-  if (!state.reportToken) {
-    vehicleSaveState.error = "Mentéshez add meg a riport kulcsot.";
-    render();
-    return;
-  }
-
   const selectedCourier = selectedVehicleCourier();
   const payload = {
     vehicle_plate: vehicleInputValue("vehicleEditPlate").toUpperCase(),
@@ -758,11 +769,12 @@ async function saveVehicleService() {
   render();
 
   try {
+    await ensureHubSession();
     const response = await fetch("/api/vehicles", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-hub-report-token": state.reportToken
+        ...(state.reportToken ? { "x-hub-report-token": state.reportToken } : {})
       },
       body: JSON.stringify(payload)
     });

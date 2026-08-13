@@ -17,7 +17,12 @@ function json(payload, status = 200) {
 function isAuthorized(request, env) {
   const expected = String(env.HUB_REPORT_TOKEN || "").trim();
   if (!expected) return false;
-  const actual = String(request.headers.get("x-hub-report-token") || "").trim();
+  const cookieToken = String(request.headers.get("cookie") || "")
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("hub_report_token="))
+    ?.slice("hub_report_token=".length);
+  const actual = String(request.headers.get("x-hub-report-token") || (cookieToken ? decodeURIComponent(cookieToken) : "")).trim();
   return actual && actual === expected;
 }
 
