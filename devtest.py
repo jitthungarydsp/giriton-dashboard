@@ -4899,7 +4899,11 @@ def apply_target_reserve_deductions(
         insurance_values.append(insurance_fee)
         reserve_open_values.append(parse_huf_value(reserve_month.get("reserve_before_huf")))
         reserve_close_values.append(parse_huf_value(reserve_month.get("reserve_after_huf")))
-        payable_after_values.append(payable_before_insurance - reserve_addition - insurance_fee)
+        reserve_payable = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+        if str(reserve_month.get("status") or "").casefold() == "done" and reserve_payable:
+            payable_after_values.append(reserve_payable)
+        else:
+            payable_after_values.append(payable_before_insurance - reserve_addition - insurance_fee)
     result["Céltartalék 10%"] = reserve_values
     result["Biztosítási díj"] = insurance_values
     result["Céltartalék nyitó"] = reserve_open_values
@@ -12451,6 +12455,12 @@ def show_new_settlement_page() -> None:
     )
     data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
     data = recompute_payable_total(data)
+    data = apply_target_reserve_deductions(
+        data,
+        balance_period_start,
+        balance_period_end,
+        import_session_id,
+    )
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     if str(selected_calculation_mode or "").strip().casefold() == "excel":
@@ -13060,6 +13070,12 @@ def show_new_settlement_page() -> None:
         previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_salary_advance_deduction(previous_data, previous_period_start, previous_period_end)
         previous_data = recompute_payable_total(previous_data)
+        previous_data = apply_target_reserve_deductions(
+            previous_data,
+            previous_period_start,
+            previous_period_end,
+            previous_session_id,
+        )
         previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
         previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
         previous_filtered = previous_data.copy()
