@@ -163,6 +163,12 @@ const vehicleState = {
   error: ""
 };
 
+const vehicleSaveState = {
+  saving: false,
+  message: "",
+  error: ""
+};
+
 const $ = (selector) => document.querySelector(selector);
 const formatMoney = (value) => new Intl.NumberFormat("hu-HU").format(value) + " Ft";
 
@@ -701,6 +707,65 @@ async function loadVehicles() {
   }
 }
 
+function vehicleInputValue(id) {
+  return $(`#${id}`)?.value.trim() || "";
+}
+
+async function saveVehicleService() {
+  if (vehicleSaveState.saving) return;
+  vehicleSaveState.message = "";
+  vehicleSaveState.error = "";
+
+  if (!state.reportToken) {
+    vehicleSaveState.error = "Mentéshez add meg a riport kulcsot.";
+    render();
+    return;
+  }
+
+  const payload = {
+    vehicle_plate: vehicleInputValue("vehicleEditPlate").toUpperCase(),
+    car: vehicleInputValue("vehicleEditCar"),
+    warehouse: vehicleInputValue("vehicleEditWarehouse").toUpperCase(),
+    status: vehicleInputValue("vehicleEditStatus") || "active",
+    odometer_km: vehicleInputValue("vehicleEditKm"),
+    next_service_at: vehicleInputValue("vehicleEditNextService"),
+    service_place: vehicleInputValue("vehicleEditServicePlace"),
+    service_note: vehicleInputValue("vehicleEditNote"),
+    updated_by: "jitt_hub"
+  };
+
+  if (!payload.vehicle_plate) {
+    vehicleSaveState.error = "A rendszám kötelező.";
+    render();
+    return;
+  }
+
+  vehicleSaveState.saving = true;
+  render();
+
+  try {
+    const response = await fetch("/api/vehicles", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-hub-report-token": state.reportToken
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    vehicleSaveState.message = `${payload.vehicle_plate} mentve.`;
+    vehicleState.loadedDate = "";
+    vehicleState.data = null;
+    await loadVehicles();
+  } catch (error) {
+    vehicleSaveState.error = error.message || String(error);
+  } finally {
+    vehicleSaveState.saving = false;
+    render();
+  }
+}
+
 function vehicleWarehouses() {
   const vehicles = vehicleState.data?.vehicles || [];
   return Array.from(new Set(vehicles.map((vehicle) => vehicle.warehouse).filter(Boolean))).sort();
@@ -765,6 +830,67 @@ function vehicleToolbar() {
         <input id="vehicleTokenInput" type="password" value="${escapeHtml(state.reportToken)}" placeholder="HUB_REPORT_TOKEN" />
       </label>
       <button class="primary-action" id="vehicleRefreshButton" type="button">Frissítés</button>
+    </section>
+  `;
+}
+
+function vehicleEditor() {
+  const statusOptions = [
+    ["active", "Aktív"],
+    ["service", "Szerviz"],
+    ["damaged", "Sérült"],
+    ["inactive", "Inaktív"]
+  ];
+  return `
+    <section class="vehicle-editor">
+      <div class="vehicle-editor-head">
+        <div>
+          <span>DB mentés</span>
+          <h2>Új / módosított járműadat</h2>
+          <p>Rendszám alapján új sort hoz létre vagy frissíti a meglévőt.</p>
+        </div>
+        <button class="primary-action" id="vehicleSaveButton" type="button" ${vehicleSaveState.saving ? "disabled" : ""}>
+          ${vehicleSaveState.saving ? "Mentés..." : "Járműadat mentése"}
+        </button>
+      </div>
+      <div class="vehicle-editor-grid">
+        <label>
+          <span>Rendszám</span>
+          <input id="vehicleEditPlate" placeholder="pl. AIGH120" />
+        </label>
+        <label>
+          <span>Autó típusa</span>
+          <input id="vehicleEditCar" placeholder="pl. Opel Combo Van" />
+        </label>
+        <label>
+          <span>Raktár</span>
+          <input id="vehicleEditWarehouse" placeholder="pl. BUD2" />
+        </label>
+        <label>
+          <span>Állapot</span>
+          <select id="vehicleEditStatus">
+            ${statusOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Km állás</span>
+          <input id="vehicleEditKm" type="number" min="0" step="1" placeholder="pl. 124500" />
+        </label>
+        <label>
+          <span>Következő szerviz</span>
+          <input id="vehicleEditNextService" type="date" />
+        </label>
+        <label>
+          <span>Szerviz helye</span>
+          <input id="vehicleEditServicePlace" placeholder="pl. BUD2 műhely" />
+        </label>
+        <label class="wide">
+          <span>Megjegyzés</span>
+          <textarea id="vehicleEditNote" placeholder="Szerviz, sérülés, státusz vagy kiosztási megjegyzés"></textarea>
+        </label>
+      </div>
+      ${vehicleSaveState.error ? `<div class="vehicle-save-status error">${escapeHtml(vehicleSaveState.error)}</div>` : ""}
+      ${vehicleSaveState.message ? `<div class="vehicle-save-status ok">${escapeHtml(vehicleSaveState.message)}</div>` : ""}
     </section>
   `;
 }
@@ -845,6 +971,7 @@ function vehiclesPage() {
       <span>Live fetch-drivers sorok: ${source.liveRows ?? 0}</span>
       <span>Live forrás: ${escapeHtml([source.liveRawTable, source.liveKmTable].filter(Boolean).join(" + ") || "-")}</span>
     </div>
+    ${vehicleEditor()}
     <div id="vehicleListSlot">${vehiclesList()}</div>
   `;
 }
@@ -930,6 +1057,10 @@ function setup() {
       vehicleState.loadedDate = "";
       vehicleState.data = null;
       loadVehicles();
+      return;
+    }
+    if (event.target.closest("#vehicleSaveButton")) {
+      saveVehicleService();
       return;
     }
     if (event.target.closest("#reportRefreshButton")) {

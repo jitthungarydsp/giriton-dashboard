@@ -96,6 +96,54 @@ async function readFirstAvailable(env, tables, filters = [], order = "", limit =
   return { table: tables[0] || "", rows: [] };
 }
 
+async function writeSupabase(env, table, row, onConflict) {
+  const supabaseUrl = String(env.SUPABASE_URL || "").replace(/\/$/, "");
+  const key = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !key) {
+    throw new Error("Hianyzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY beallitas.");
+  }
+
+  const url = new URL(`${supabaseUrl}/rest/v1/${table}`);
+  if (onConflict) url.searchParams.set("on_conflict", onConflict);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+      prefer: "resolution=merge-duplicates,return=representation"
+    },
+    body: JSON.stringify(row)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${table}: ${response.status} ${text.slice(0, 500)}`);
+  }
+
+  return response.json();
+}
+
+function normalizeServiceInput(body) {
+  const vehiclePlate = clean(firstValue(body.vehicle_plate, body.license_plate, body.plate)).toUpperCase();
+  if (!vehiclePlate) throw new Error("A rendszám kötelező.");
+
+  const odometerKm = asNumber(firstValue(body.odometer_km, body.current_km, body.km));
+  return {
+    vehicle_plate: vehiclePlate,
+    car: clean(firstValue(body.car, body.vehicle_model, body.vehicle)) || null,
+    warehouse: clean(body.warehouse) || null,
+    status: clean(body.status) || "active",
+    odometer_km: odometerKm,
+    next_service_at: clean(firstValue(body.next_service_at, body.next_service_date, body.service_date)) || null,
+    service_place: clean(firstValue(body.service_place, body.next_service_place, body.workshop)) || null,
+    service_note: clean(firstValue(body.service_note, body.note, body.comment)) || null,
+    updated_at: new Date().toISOString(),
+    updated_by: clean(body.updated_by) || "jitt_hub"
+  };
+}
+
 function assignmentWarehouse(row) {
   return firstValue(
     row.warehouse,
@@ -365,6 +413,18 @@ export async function onRequestGet({ request, env }) {
       totals,
       vehicles
     });
+  } catch (error) {
+    return json({ error: error.message || String(error) }, 500);
+  }
+}
+
+export async function onRequestPost({ request, env }) {
+  try {
+    if (!isAuthorized(request, env)) return json({ error: "Unauthorized" }, 401);
+    const body = await request.json().catch(() => ({}));
+    const row = normalizeServiceInput(body);
+    const saved = await writeSupabase(env, TABLES.service, row, "vehicle_plate");
+    return json({ ok: true, saved: saved?.[0] || row });
   } catch (error) {
     return json({ error: error.message || String(error) }, 500);
   }
