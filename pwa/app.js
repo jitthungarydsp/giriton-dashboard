@@ -1584,7 +1584,7 @@ function renderTigBreakdown() {
     <section class="tig-total-card">
       <span>TIG végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
-      <small>${escapeHtml(tig.month || state.workflowMonth)} · ${escapeHtml(tig.taxLabel || "")}</small>
+      <small>${escapeHtml(tig.month || state.workflowMonth)}</small>
     </section>
     ${buyerBlock}
     <div class="tig-table">
