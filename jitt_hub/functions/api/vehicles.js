@@ -2,6 +2,7 @@ const TABLES = {
   assignments: "dsp_vehicle_assignments",
   stories: "mart_dsp_route_stories",
   service: "dsp_vehicle_service_status",
+  couriers: "courier_master",
   liveRawCandidates: ["raw_dsp_live_drivers", "dsp_drivers_live_raw"],
   liveKmCandidates: ["stg_dsp_route_km_latest", "dsp_route_km_latest"]
 };
@@ -130,12 +131,16 @@ function normalizeServiceInput(body) {
   if (!vehiclePlate) throw new Error("A rendszám kötelező.");
 
   const odometerKm = asNumber(firstValue(body.odometer_km, body.current_km, body.km));
+  const assignedCourierId = clean(firstValue(body.assigned_courier_id, body.courier_id, body.driver_id));
   return {
     vehicle_plate: vehiclePlate,
     car: clean(firstValue(body.car, body.vehicle_model, body.vehicle)) || null,
     warehouse: clean(body.warehouse) || null,
     status: clean(body.status) || "active",
     odometer_km: odometerKm,
+    assigned_courier_id: assignedCourierId || null,
+    assigned_courier_name: clean(firstValue(body.assigned_courier_name, body.courier_name, body.driver_name)) || null,
+    manual_assignment_date: clean(firstValue(body.manual_assignment_date, body.assignment_date, body.work_date)) || null,
     next_service_at: clean(firstValue(body.next_service_at, body.next_service_date, body.service_date)) || null,
     service_place: clean(firstValue(body.service_place, body.next_service_place, body.workshop)) || null,
     service_note: clean(firstValue(body.service_note, body.note, body.comment)) || null,
@@ -241,6 +246,9 @@ function applyService(vehicle, row) {
   vehicle.servicePlace = clean(firstValue(row.service_place, row.next_service_place, row.workshop));
   vehicle.serviceNote = clean(firstValue(row.service_note, row.note, row.comment));
   vehicle.serviceStatus = clean(firstValue(row.status, row.service_status));
+  vehicle.manualAssignedCourierId = clean(firstValue(row.assigned_courier_id, row.courier_id, row.driver_id));
+  vehicle.manualAssignedCourierName = clean(firstValue(row.assigned_courier_name, row.courier_name, row.driver_name));
+  vehicle.manualAssignmentDate = clean(firstValue(row.manual_assignment_date, row.assignment_date, row.work_date));
   const km = asNumber(firstValue(row.odometer_km, row.current_km, row.km));
   if (km !== null) vehicle.odometerKm = km;
   if (!vehicle.car) vehicle.car = clean(firstValue(row.car, row.vehicle_model, row.vehicle));
@@ -265,6 +273,11 @@ function finalizeVehicle(vehicle, targetDate) {
     vehicle.currentShiftEnd = current.shiftEnd;
     vehicle.shiftType = current.shiftType;
     vehicle.warehouse = current.warehouse || vehicle.warehouse;
+  }
+
+  if (vehicle.manualAssignedCourierName) {
+    vehicle.currentDriver = vehicle.manualAssignedCourierName;
+    vehicle.currentAssignmentDate = vehicle.manualAssignmentDate || vehicle.currentAssignmentDate;
   }
 
   const serviceDue = vehicle.nextServiceAt && vehicle.nextServiceAt <= targetDate;
@@ -356,7 +369,7 @@ export async function onRequestGet({ request, env }) {
     const liveFrom = `${targetDate}T00:00:00Z`;
     const liveTo = `${addDays(targetDate, 1)}T23:59:59Z`;
 
-    const [assignments, stories, services, liveRaw, liveKm] = await Promise.all([
+    const [assignments, stories, services, courierRows, liveRaw, liveKm] = await Promise.all([
       readSupabase(
         env,
         TABLES.assignments,
@@ -372,6 +385,7 @@ export async function onRequestGet({ request, env }) {
         15000
       ),
       readSupabase(env, TABLES.service, [], "vehicle_plate.asc", 5000),
+      readSupabase(env, TABLES.couriers, [], "courier_name.asc", 5000),
       readFirstAvailable(
         env,
         TABLES.liveRawCandidates,
@@ -387,6 +401,12 @@ export async function onRequestGet({ request, env }) {
         10000
       )
     ]);
+    const couriers = courierRows.map((row) => ({
+      courierId: clean(firstValue(row.courier_id, row.id)),
+      courierName: clean(firstValue(row.courier_name, row.name, row.full_name)),
+      warehouse: clean(firstValue(row.warehouse, row.raktar, row.warehouse_name)),
+      active: row.active ?? row.is_active ?? null
+    })).filter((courier) => courier.courierId && courier.courierName);
 
     const liveRows = [...liveRaw.rows, ...liveKm.rows];
     const vehicles = buildVehicles(targetDate, assignments, stories, services, liveRows);
@@ -406,12 +426,14 @@ export async function onRequestGet({ request, env }) {
         assignments: assignments.length,
         routeStories: stories.length,
         serviceRows: services.length,
+        couriers: couriers.length,
         liveRows: liveRows.length,
         liveRawTable: liveRaw.table,
         liveKmTable: liveKm.table
       },
       totals,
-      vehicles
+      vehicles,
+      couriers
     });
   } catch (error) {
     return json({ error: error.message || String(error) }, 500);

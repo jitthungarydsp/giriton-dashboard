@@ -711,6 +711,16 @@ function vehicleInputValue(id) {
   return $(`#${id}`)?.value.trim() || "";
 }
 
+function selectedVehicleCourier() {
+  const select = $("#vehicleEditCourier");
+  if (!select || !select.value) return { courierId: "", courierName: "" };
+  const option = select.selectedOptions?.[0];
+  return {
+    courierId: select.value,
+    courierName: option?.dataset?.name || option?.textContent?.replace(/\s+#\d+\s*$/, "").trim() || ""
+  };
+}
+
 async function saveVehicleService() {
   if (vehicleSaveState.saving) return;
   vehicleSaveState.message = "";
@@ -722,12 +732,16 @@ async function saveVehicleService() {
     return;
   }
 
+  const selectedCourier = selectedVehicleCourier();
   const payload = {
     vehicle_plate: vehicleInputValue("vehicleEditPlate").toUpperCase(),
     car: vehicleInputValue("vehicleEditCar"),
     warehouse: vehicleInputValue("vehicleEditWarehouse").toUpperCase(),
     status: vehicleInputValue("vehicleEditStatus") || "active",
     odometer_km: vehicleInputValue("vehicleEditKm"),
+    assigned_courier_id: selectedCourier.courierId,
+    assigned_courier_name: selectedCourier.courierName,
+    manual_assignment_date: vehicleInputValue("vehicleEditAssignmentDate") || state.vehicleDate,
     next_service_at: vehicleInputValue("vehicleEditNextService"),
     service_place: vehicleInputValue("vehicleEditServicePlace"),
     service_note: vehicleInputValue("vehicleEditNote"),
@@ -841,6 +855,9 @@ function vehicleEditor() {
     ["damaged", "Sérült"],
     ["inactive", "Inaktív"]
   ];
+  const couriers = (vehicleState.data?.couriers || []).slice().sort((left, right) => {
+    return `${left.courierName} ${left.courierId}`.localeCompare(`${right.courierName} ${right.courierId}`, "hu");
+  });
   return `
     <section class="vehicle-editor">
       <div class="vehicle-editor-head">
@@ -871,6 +888,17 @@ function vehicleEditor() {
           <select id="vehicleEditStatus">
             ${statusOptions.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}
           </select>
+        </label>
+        <label class="wide">
+          <span>Kiosztva futárnak</span>
+          <select id="vehicleEditCourier">
+            <option value="">Nincs kézi kiosztás</option>
+            ${couriers.map((courier) => `<option value="${escapeHtml(courier.courierId)}" data-name="${escapeHtml(courier.courierName)}">${escapeHtml(courier.courierName)} #${escapeHtml(courier.courierId)}${courier.warehouse ? ` - ${escapeHtml(courier.warehouse)}` : ""}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Kiosztás napja</span>
+          <input id="vehicleEditAssignmentDate" type="date" value="${escapeHtml(state.vehicleDate)}" />
         </label>
         <label>
           <span>Km állás</span>
@@ -923,6 +951,7 @@ function vehicleCard(vehicle) {
       </header>
       <div class="vehicle-facts">
         <div><span>Kinél van</span><b>${escapeHtml(vehicle.currentDriver || "-")}</b></div>
+        <div><span>Kézi kiosztás</span><b>${escapeHtml(vehicle.manualAssignedCourierName || "-")}</b></div>
         <div><span>Valósan felvette</span><b>${escapeHtml(vehicle.actualDriver || "-")}</b></div>
         <div><span>Valós autó</span><b>${escapeHtml(vehicle.actualPlate || "-")}</b></div>
         <div><span>Live állapot</span><b>${escapeHtml(vehicle.actualState || "-")}</b></div>
