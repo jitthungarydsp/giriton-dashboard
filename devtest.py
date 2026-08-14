@@ -13984,9 +13984,10 @@ def show_new_settlement_page() -> None:
     with metric_body:
         result = st.session_state.get(metric_result_key)
         result_matches = bool(result and result.get("metric_key") == selected_metric["key"])
-        display_value = int(result.get("value", 0)) if result_matches else 0
-        display_note = str(result.get("note") or "Kattints a számításra a mutató frissítéséhez.") if result_matches else "Nincs kiszámolva"
-        display_percent = int(result.get("percent", 0)) if result_matches else 0
+        current_value = filtered_metric_value(filtered, selected_metric)
+        display_value = int(current_value)
+        display_note = str(result.get("note") or "Aktuális szűrés alapján") if result_matches else "Aktuális szűrés alapján"
+        display_percent = int(result.get("percent", donut_percent(display_value, 0))) if result_matches else donut_percent(display_value, 0)
         center_value = f"{display_value / 1_000_000:.1f} M" if selected_metric["kind"] == "huf" else str(display_value)
         rendered_value = format_huf(display_value) if selected_metric["kind"] == "huf" else f"{display_value} db"
         st.markdown(
@@ -13994,23 +13995,22 @@ def show_new_settlement_page() -> None:
             <div class="summary-donut-card">
                 <div>
                 <div class="summary-donut-title">{html.escape(selected_metric["label"])}</div>
-                <div class="summary-donut-value">{html.escape(rendered_value) if result_matches else "-"}</div>
+                <div class="summary-donut-value">{html.escape(rendered_value)}</div>
                 <div class="summary-donut-note">{html.escape(display_note)}</div>
                 </div>
                 <div class="summary-donut summary-donut-primary" style="background: conic-gradient(#1FA64A 0 {display_percent}%, #DDF5E4 {display_percent}% 100%);">
-                <div class="summary-donut-center"><strong>{html.escape(center_value) if result_matches else "-"}</strong><span>{'Ft' if selected_metric["kind"] == "huf" else 'db'}</span></div>
+                <div class="summary-donut-center"><strong>{html.escape(center_value)}</strong><span>{'Ft' if selected_metric["kind"] == "huf" else 'db'}</span></div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         if st.button(
-            f"{selected_metric['label']} számítása",
+            f"{selected_metric['label']} előző havi összevetése",
             key=f"dashboard_metric_calculate_{balance_period_start:%Y%m}_{selected_metric['key']}",
             use_container_width=True,
             type="primary",
         ):
-            current_value = filtered_metric_value(filtered, selected_metric)
             try:
                 previous_filtered = calculate_previous_filtered_for_metric()
                 previous_value = filtered_metric_value(previous_filtered, selected_metric)
@@ -14031,7 +14031,7 @@ def show_new_settlement_page() -> None:
             }
             st.rerun()
 
-    st.markdown('<div class="section-title">ttekintés</div>',unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Áttekintés</div>', unsafe_allow_html=True)
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
