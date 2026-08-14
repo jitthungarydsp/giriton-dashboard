@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from resources.settlement_excel_import import (
@@ -877,6 +878,9 @@ details.finance-kpi-detail-card .finance-kpi {
 details.finance-kpi-detail-card[open] {
     grid-column:span 2;
 }
+details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
+    grid-column:span 3;
+}
 .finance-kpi-detail-body {
     padding:0 14px 14px;
 }
@@ -896,6 +900,9 @@ details.finance-kpi-detail-card[open] {
     border-bottom:1px solid #eef3ef;
     padding:8px 4px;
     color:var(--sp-ink);
+    vertical-align:top;
+    overflow-wrap:anywhere;
+    word-break:normal;
 }
 .finance-kpi-detail-empty {
     color:var(--sp-muted);
@@ -2166,7 +2173,7 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
         "Courier ID", "Futár", "Branch", "Számítás módja",
         "Raktár", "Vállalkozás", "Státusz", "Nettó bevétel", "Bónusz",
         "Borravaló", "Alvállalkozói összeg", "Levonás", "Kifizetendő",
-        "Előző havi összeg", "KPI", "Munkakezdés", "ÁFA státusz", "Jogviszony",
+        "Előző havi összeg", "KPI", "Munkakezdés", "FA státusz", "Jogviszony",
     ]
 
     if not rows:
@@ -2177,7 +2184,7 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
         "courier_name": "Futár",
         "warehouse_name": "Raktár",
         "work_start_date": "Munkakezdés",
-        "vat_status": "ÁFA státusz",
+        "vat_status": "FA státusz",
         "employment_type": "Jogviszony",
     })
 
@@ -2191,8 +2198,8 @@ def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     df["Vállalkozás"] = df["Vállalkozás"].fillna("")
     if "Munkakezdés" not in df.columns:
         df["Munkakezdés"] = ""
-    if "ÁFA státusz" not in df.columns:
-        df["ÁFA státusz"] = ""
+    if "FA státusz" not in df.columns:
+        df["FA státusz"] = ""
     if "Jogviszony" not in df.columns:
         df["Jogviszony"] = ""
 
@@ -3910,7 +3917,7 @@ def load_driver_dashboard(session_id: str | None = None, calculation_mode: str =
         "warehouse_name": "Raktár",
         "company_name": "Vállalkozás",
         "tax_number": "Adószám",
-        "vat_status": "ÁFA státusz",
+        "vat_status": "FA státusz",
         "fixed_rate_total": "Alap díj",
         "tip_total": "Borravaló",
         "extra_bonus_total": "Extra bónusz",
@@ -6387,7 +6394,7 @@ def parse_huf_value(value: object) -> float:
         pass
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value).strip().replace("−", "-").replace("Ft", "").replace("ft", "")
+    text = str(value).strip().replace("", "-").replace("Ft", "").replace("ft", "")
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"[^0-9,.-]", "", text)
     if "," in text and "." in text:
@@ -6820,6 +6827,168 @@ def _delay_analysis_int(value: object) -> int:
         return 0
 
 
+def _delay_analysis_bool(value: object) -> bool:
+    return str(value).strip().casefold() in {"true", "1", "igen", "yes"}
+
+
+def match_delay_analysis_courier(question: str, option_rows: list[dict[str, str]], fallback: dict[str, str]) -> dict[str, str]:
+    text = str(question or "")
+    id_tokens = set(re.findall(r"\b\d{3,6}\b", text))
+    for option in option_rows:
+        if option["courier_id"] in id_tokens:
+            return option
+
+    question_tokens = set(_courier_match_key(text).split())
+    best_option = fallback
+    best_score = 0
+    for option in option_rows:
+        name_part = option["label"].rsplit(" - ", 1)[0]
+        name_tokens = set(_courier_match_key(name_part).split())
+        if not name_tokens:
+            continue
+        score = len(question_tokens & name_tokens)
+        if score > best_score:
+            best_score = score
+            best_option = option
+    return best_option if best_score >= 2 else fallback
+
+
+def delay_analysis_issue_days(daily: pd.DataFrame) -> list[dict[str, object]]:
+    if not isinstance(daily, pd.DataFrame) or daily.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for _, item in daily.iterrows():
+        delayed_routes = _delay_analysis_int(item.get("delayed_route_count"))
+        time_window_late = _delay_analysis_int(item.get("time_window_late_count"))
+        shift_late = _delay_analysis_int(item.get("queue_late_route_count"))
+        departure_late = _delay_analysis_int(item.get("departure_late_route_count"))
+        first_route_has_delay = _delay_analysis_bool(item.get("first_route_has_delay"))
+        if not any([delayed_routes, time_window_late, shift_late, departure_late, first_route_has_delay]):
+            continue
+        rows.append({
+            "nap": str(item.get("work_date") or ""),
+            "keseses_tura": delayed_routes,
+            "muszakbol_keses": shift_late,
+            "idoablak_keses": time_window_late,
+            "indulasi_keses": departure_late,
+            "elso_tura_keses": first_route_has_delay,
+            "elso_tura_statusz": str(item.get("first_route_delay_status") or ""),
+        })
+    return rows
+
+
+def build_delay_analysis_fallback_answer(
+    question: str,
+    selected_label: str,
+    period_start: date,
+    monthly: dict,
+    daily: pd.DataFrame,
+) -> str:
+    route_count = _delay_analysis_int(monthly.get("route_count"))
+    delayed_routes = _delay_analysis_int(monthly.get("delayed_route_count"))
+    time_window_late = _delay_analysis_int(monthly.get("time_window_late_count"))
+    shift_late_routes = _delay_analysis_int(monthly.get("queue_late_route_count"))
+    shift_late_minutes = _delay_analysis_int(monthly.get("queue_late_total_minutes"))
+    first_route_delay_days = _delay_analysis_int(monthly.get("first_route_delay_day_count"))
+    issue_days = delay_analysis_issue_days(daily)
+    day_list = ", ".join(row["nap"] for row in issue_days) if issue_days else "nincs ilyen nap"
+    lines = [
+        f"{selected_label} - {period_start:%Y.%m.} késés összefoglaló:",
+        f"- Összes túra: {route_count} db.",
+        f"- Késéses túra: {delayed_routes} db.",
+        f"- Műszakból késés: {shift_late_routes} db, összesen {shift_late_minutes} perc.",
+        f"- Időablakon kívüli késés: {time_window_late} db.",
+        f"- Első túrás késés: {first_route_delay_days} nap.",
+        f"- Késéses napok: {day_list}.",
+    ]
+    if question.strip():
+        lines.insert(0, f"Kérdés: {question.strip()}")
+    return "\n".join(lines)
+
+
+def call_delay_analysis_ai(question: str, selected_label: str, period_start: date, monthly: dict, daily: pd.DataFrame, routes: pd.DataFrame) -> tuple[str, str]:
+    api_key = str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
+    if not api_key:
+        return "", "Hiányzik az OPENAI_API_KEY Streamlit secret, ezért most szabályalapú választ mutatok."
+
+    issue_days = delay_analysis_issue_days(daily)
+    route_records = []
+    if isinstance(routes, pd.DataFrame) and not routes.empty:
+        route_source = routes.copy()
+        for column in [
+            "time_window_late_count",
+            "queue_started_delay_vs_shift_start_minutes",
+            "available_delay_vs_shift_start_minutes",
+            "departure_delay_vs_plan_minutes",
+        ]:
+            source = route_source[column] if column in route_source.columns else pd.Series(0, index=route_source.index)
+            route_source[column] = pd.to_numeric(source, errors="coerce").fillna(0)
+        route_source = route_source[
+            (route_source["time_window_late_count"] > 0)
+            | (route_source["queue_started_delay_vs_shift_start_minutes"] > 0)
+            | (route_source["available_delay_vs_shift_start_minutes"] > 0)
+            | (route_source["departure_delay_vs_plan_minutes"] > 0)
+        ].head(80)
+        wanted = [
+            "work_date", "route_id", "shift_name", "delay_status",
+            "queue_started_delay_vs_shift_start_minutes",
+            "departure_delay_vs_plan_minutes", "time_window_late_count",
+            "address_count", "planned_return", "real_return",
+        ]
+        route_records = route_source[[column for column in wanted if column in route_source.columns]].to_dict("records")
+
+    payload = {
+        "model": str(st.secrets.get("OPENAI_MODEL", "") or "gpt-4.1-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": (
+                    "Te egy magyar nyelvű futárelszámolási elemző asszisztens vagy. "
+                    "Csak a kapott JSON adatok alapján válaszolj. Ha nincs adat, mondd ki röviden. "
+                    "Késésnél különítsd el: műszakból késés, időablakon kívüli késés, első túrás késés."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "kerdes": question,
+                        "futar": selected_label,
+                        "honap": period_start.isoformat(),
+                        "havi_osszesito": monthly,
+                        "keseses_napok": issue_days,
+                        "keseses_route_reszletek": route_records,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            },
+        ],
+        "temperature": 0.1,
+    }
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=25,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as exc:
+        return "", f"Az AI válasz nem sikerült: {exc}"
+
+    text = str(data.get("output_text") or "").strip()
+    if text:
+        return text, ""
+    for output_item in data.get("output", []) or []:
+        for content_item in output_item.get("content", []) or []:
+            candidate = str(content_item.get("text") or "").strip()
+            if candidate:
+                return candidate, ""
+    return "", "Az AI nem adott szöveges választ."
+
+
 def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: date, period_end: date) -> None:
     if filtered.empty or "Courier ID" not in filtered.columns:
         return
@@ -6848,20 +7017,49 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
             format_func=lambda option: option["label"],
             key=f"delay_analysis_courier_{period_start:%Y%m}",
         )
-        result_key = f"delay_analysis_result_{period_start:%Y%m}_{selected_option['courier_id']}"
+        question = st.text_input(
+            "K\u00e9rd\u00e9s az AI-nak",
+            value="",
+            placeholder="pl. Gurz\u00f3 Bal\u00e1zs melyik napokon k\u00e9sett j\u00faliusban?",
+            key=f"delay_analysis_question_{period_start:%Y%m}",
+        )
+        target_option = match_delay_analysis_courier(question, option_rows, selected_option)
+        if question.strip() and target_option["courier_id"] != selected_option["courier_id"]:
+            st.caption(f"A k\u00e9rd\u00e9s alapj\u00e1n ezt a fut\u00e1rt n\u00e9zem: {target_option['label']}")
+
+        result_key = f"delay_analysis_result_{period_start:%Y%m}_{target_option['courier_id']}"
         if st.button(
-            "Késés elemzése",
-            key=f"delay_analysis_run_{period_start:%Y%m}_{selected_option['courier_id']}",
+            "Kérdés megválaszolása",
+            key=f"delay_analysis_run_{period_start:%Y%m}_{target_option['courier_id']}",
             use_container_width=True,
             type="primary",
         ):
-            monthly = load_courier_delay_monthly_analysis(selected_option["courier_id"], period_start)
-            daily = load_courier_delay_daily_analysis(selected_option["courier_id"], period_start, period_end)
-            routes = load_courier_delay_route_analysis(selected_option["courier_id"], period_start, period_end)
+            monthly = load_courier_delay_monthly_analysis(target_option["courier_id"], period_start)
+            daily = load_courier_delay_daily_analysis(target_option["courier_id"], period_start, period_end)
+            routes = load_courier_delay_route_analysis(target_option["courier_id"], period_start, period_end)
+            fallback_answer = build_delay_analysis_fallback_answer(
+                question,
+                target_option["label"],
+                period_start,
+                monthly,
+                daily,
+            )
+            ai_answer, ai_warning = call_delay_analysis_ai(
+                question,
+                target_option["label"],
+                period_start,
+                monthly,
+                daily,
+                routes,
+            )
             st.session_state[result_key] = {
                 "monthly": monthly,
                 "daily": daily,
                 "routes": routes,
+                "question": question,
+                "selected_label": target_option["label"],
+                "answer": ai_answer or fallback_answer,
+                "ai_warning": ai_warning,
             }
 
         result = st.session_state.get(result_key)
@@ -6872,6 +7070,7 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
         monthly = result.get("monthly") or {}
         daily = result.get("daily")
         routes = result.get("routes")
+        selected_label = str(result.get("selected_label") or target_option["label"])
         if not monthly and (not isinstance(daily, pd.DataFrame) or daily.empty) and (not isinstance(routes, pd.DataFrame) or routes.empty):
             st.warning("Nincs késés elemzési adat erre a futárra és hónapra. Forrás: public.vw_dsp_courier_delay_monthly / daily / detail.")
             return
@@ -6882,6 +7081,7 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
         shift_late_routes = _delay_analysis_int(monthly.get("queue_late_route_count"))
         shift_late_minutes = _delay_analysis_int(monthly.get("queue_late_total_minutes"))
         first_route_delay_days = _delay_analysis_int(monthly.get("first_route_delay_day_count"))
+        selected_option = {**target_option, "label": selected_label}
 
         metric_columns = st.columns(5)
         metric_columns[0].metric("Túra", f"{route_count} db")
@@ -6898,6 +7098,13 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
             f"Első túrás késés: {first_route_delay_days} nap.",
         ]
         st.success(" ".join(summary_parts) if delayed_routes == 0 and time_window_late == 0 and shift_late_routes == 0 else " ".join(summary_parts))
+        ai_warning = str(result.get("ai_warning") or "").strip()
+        if ai_warning:
+            st.caption(ai_warning)
+        answer = str(result.get("answer") or "").strip()
+        if answer:
+            st.markdown("**AI v\u00e1lasz**")
+            st.info(answer)
 
         if isinstance(daily, pd.DataFrame) and not daily.empty:
             daily_display = daily.copy()
@@ -8042,7 +8249,7 @@ def render_courier_api_statistics(
             with chart_col:
                 chart_data = pd.DataFrame(
                     {
-                        "Állapot": ["Időben", "Késő"],
+                        "llapot": ["Időben", "Késő"],
                         "Darabszám": [previous_on_time_count, previous_delayed_count],
                     }
                 )
@@ -8054,12 +8261,12 @@ def render_courier_api_statistics(
                         "encoding": {
                             "theta": {"field": "Darabszám", "type": "quantitative"},
                             "color": {
-                                "field": "Állapot",
+                                "field": "llapot",
                                 "type": "nominal",
                                 "legend": {"orient": "bottom"},
                             },
                             "tooltip": [
-                                {"field": "Állapot", "type": "nominal"},
+                                {"field": "llapot", "type": "nominal"},
                                 {"field": "Darabszám", "type": "quantitative"},
                             ],
                         },
@@ -8616,7 +8823,7 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            tax_status = str(row.get("ÁFA státusz") or row.get("Jogviszony") or "-").strip() or "-"
+            tax_status = str(row.get("FA státusz") or row.get("Jogviszony") or "-").strip() or "-"
             insurance_active = parse_huf_value(row.get("Biztosítási díj")) > 0
             loyalty_total = parse_huf_value(row.get("Lojalitás"))
             cols[1].caption(tax_status)
@@ -8685,7 +8892,7 @@ def render_fast_courier_profile(
         unsafe_allow_html=True,
     )
 
-    profile_menu_items = ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
+    profile_menu_items = ["ttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(st.session_state.get("new_calculation_mode", "API")).strip().casefold() == "api":
         profile_menu_items.append("Statisztika")
     profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
@@ -8746,7 +8953,7 @@ def render_fast_courier_profile(
         company_address = st.text_input("Vállalkozás címe", value=str(profile.get("company_address") or ""), disabled=not is_editing, key=f"fast_profile_company_address_{courier_id}")
         tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"fast_profile_tax_{courier_id}")
         bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"fast_profile_bank_{courier_id}")
-        vat_status = st.text_input("ÁFA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"fast_profile_vat_status_{courier_id}")
+        vat_status = st.text_input("FA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"fast_profile_vat_status_{courier_id}")
         efo_status = "Nincs aktuális EFO bejelentés"
         if efo_assignment:
             efo_end = str(efo_assignment.get("valid_to") or "folyamatos")
@@ -8890,7 +9097,7 @@ def show_courier_dialog() -> None:
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
-    selected_menu_hint = str(st.session_state.get(menu_key) or "Áttekintés")
+    selected_menu_hint = str(st.session_state.get(menu_key) or "ttekintés")
     if selected_menu_hint == "Profil":
         render_fast_courier_profile(
             courier_id=courier_id,
@@ -8902,7 +9109,7 @@ def show_courier_dialog() -> None:
         )
         return
     route_detail = pd.DataFrame()
-    if selected_menu_hint in {"Áttekintés", "Pénzügy", "Útvonalak"}:
+    if selected_menu_hint in {"ttekintés", "Pénzügy", "Útvonalak"}:
         route_detail = load_courier_route_detail(
             courier_id,
             courier_name,
@@ -9066,14 +9273,14 @@ def show_courier_dialog() -> None:
                 <div class="settlement-meta-item"><div class="settlement-meta-label">Raktár</div><div class="settlement-meta-value">{html.escape(str(row.get('Raktár') or profile.get('warehouse_name') or '-'))}</div></div>
                 <div class="settlement-meta-item"><div class="settlement-meta-label">Státusz</div><div class="settlement-chip">{html.escape(str(row.get('Státusz') or 'Aktív'))}</div></div>
                 <div class="settlement-meta-item"><div class="settlement-meta-label">Biztosítás</div><div class="settlement-meta-value">{html.escape(insurance_label)}</div></div>
-                <div class="settlement-meta-item"><div class="settlement-meta-label">ÁFA státusz</div><div class="settlement-meta-value">{html.escape(vat_status_label)}</div></div>
+                <div class="settlement-meta-item"><div class="settlement-meta-label">FA státusz</div><div class="settlement-meta-value">{html.escape(vat_status_label)}</div></div>
                 </div>
             </div>
             </div>
             <div class="settlement-top-kpis">
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon red">−</div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon red"></div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
             </div>
         </div>
@@ -9081,7 +9288,7 @@ def show_courier_dialog() -> None:
         """,
         unsafe_allow_html=True,
     )
-    courier_menu_items = ["Áttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
+    courier_menu_items = ["ttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(active_calculation_mode or "API").strip().casefold() == "api":
         courier_menu_items.append("Statisztika")
     courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
@@ -9093,7 +9300,7 @@ def show_courier_dialog() -> None:
     def keep_courier_menu(menu_name: str) -> None:
         st.session_state[menu_target_key] = menu_name
 
-    if selected_menu == "Áttekintés":
+    if selected_menu == "ttekintés":
         missing_data_count = 0
         if not summary_available:
             missing_data_count += 1
@@ -9705,6 +9912,28 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Kiflis malus", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
                 ])
             if detail_label in {"Havi bónusz/malus", "JITT bónusz / malus"}:
+                columns = ["TĂ©tel", "Ă–sszeg", "IdĹszak", "MegjegyzĂ©s"]
+                if not adjustments.empty:
+                    jitt_items = adjustments[
+                        adjustments["adjustment_type"].astype(str).isin({"bonus", "malus"})
+                    ].copy()
+                    if not jitt_items.empty:
+                        jitt_items["Ă–sszeg"] = pd.to_numeric(jitt_items.get("amount_huf", 0), errors="coerce").fillna(0.0)
+                        malus_mask = jitt_items["adjustment_type"].astype(str).eq("malus")
+                        jitt_items.loc[malus_mask, "Ă–sszeg"] = -jitt_items.loc[malus_mask, "Ă–sszeg"].abs()
+                        jitt_items["TĂ©tel"] = jitt_items["adjustment_type"].map({
+                            "bonus": "JITT bĂłnusz",
+                            "malus": "JITT malus",
+                        }).fillna("JITT bĂłnusz / malus")
+                        valid_from_values = jitt_items.get("valid_from", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
+                        valid_to_values = jitt_items.get("valid_to", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
+                        effective_values = jitt_items.get("effective_date", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
+                        jitt_items["IdĹszak"] = [
+                            f"{start} - {end}" if start and end and end.lower() != "nat" else (start or effective or "-")
+                            for start, end, effective in zip(valid_from_values, valid_to_values, effective_values)
+                        ]
+                        jitt_items["MegjegyzĂ©s"] = jitt_items.get("note", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
+                        return jitt_items[columns]
                 manual_bonus_notes = " | ".join(
                     dict.fromkeys(
                         adjustments.loc[
@@ -9818,8 +10047,9 @@ def show_courier_dialog() -> None:
             )
             if label not in detail_labels:
                 return card
+            detail_width_class = " finance-kpi-detail-wide" if label in {"Kiflis levonĂˇsok / bĂłnuszok", "JITT bĂłnusz / malus"} else ""
             return (
-                f'<details class="finance-kpi-detail-card {css_class}">'
+                f'<details class="finance-kpi-detail-card {css_class}{detail_width_class}">'
                 f"<summary>{card}</summary>"
                 f"{finance_detail_html(label)}"
                 "</details>"
@@ -11787,7 +12017,7 @@ def show_courier_dialog() -> None:
             company_address = st.text_input("Vállalkozás címe", value=str(profile.get("company_address") or ""), disabled=not is_editing, key=f"ui_profile_company_address_{courier_id}")
             tax_number = st.text_input("Adószám", value=str(profile.get("tax_number") or ""), disabled=not is_editing, key=f"ui_profile_tax_{courier_id}")
             bank_account_number = st.text_input("Bankszámlaszám", value=str(profile.get("bank_account_number") or ""), disabled=not is_editing, key=f"ui_profile_bank_{courier_id}")
-            vat_status = st.text_input("ÁFA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"ui_profile_vat_status_{courier_id}")
+            vat_status = st.text_input("FA státusz", value=str(profile.get("vat_status") or ""), disabled=not is_editing, key=f"ui_profile_vat_status_{courier_id}")
             efo_status = "Bejelentve" if efo_assignment else "Nincs aktuális EFO bejelentés"
             if efo_assignment:
                 efo_end = str(efo_assignment.get("valid_to") or "folyamatos")
@@ -12531,10 +12761,10 @@ def _export_tax_mode_label(row: dict[str, object], period_start: date | None) ->
     courier_payload = {
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
         "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
-        "vat_status": _export_row_value(row, {"ÁFA státusz", "AFA status", "vat_status"}),
+        "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
     }
     breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
-    return "ÁFÁS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
+    return "FS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
 
 
 def _export_tig_values(row: dict[str, object], period_start: date | None) -> dict[str, float | str]:
@@ -12542,7 +12772,7 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
         "id": _export_row_value(row, {"Courier ID", "courier_id"}),
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
         "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
-        "vat_status": _export_row_value(row, {"ÁFA státusz", "AFA status", "vat_status"}),
+        "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
         "document_month": period_start,
     }
     amounts = {
@@ -12558,10 +12788,10 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
         "Adózási mód": _export_tax_mode_label(row, period_start),
         "TIG adó mód": str(breakdown.get("taxLabel") or ""),
         "TIG átutalás nettó": parse_huf_value(transfer.get("netHuf")),
-        "TIG átutalás ÁFA": parse_huf_value(transfer.get("vatHuf")),
+        "TIG átutalás FA": parse_huf_value(transfer.get("vatHuf")),
         "TIG átutalás bruttó": parse_huf_value(transfer.get("grossHuf")),
         "TIG KP nettó": parse_huf_value(cash.get("netHuf")),
-        "TIG KP ÁFA": parse_huf_value(cash.get("vatHuf")),
+        "TIG KP FA": parse_huf_value(cash.get("vatHuf")),
         "TIG KP bruttó": parse_huf_value(cash.get("grossHuf")),
         "TIG végösszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
     }
@@ -12579,11 +12809,11 @@ def _export_tax_mode_label(row: dict[str, object], period_start: date | None) ->
             "TIG típus", "TIG tipus", "TIG tĂ­pus", "Számla típus", "Szamla tipus", "SzĂˇmla tĂ­pus"
         }),
         "vat_status": _export_row_value(row, {
-            "ÁFA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
+            "FA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
         }),
     }
     breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
-    return "ÁFÁS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
+    return "FS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
 
 
 def _export_tig_values(row: dict[str, object], period_start: date | None) -> dict[str, float | str]:
@@ -12594,13 +12824,13 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
             "TIG típus", "TIG tipus", "TIG tĂ­pus", "Számla típus", "Szamla tipus", "SzĂˇmla tĂ­pus"
         }),
         "vat_status": _export_row_value(row, {
-            "ÁFA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
+            "FA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
         }),
         "document_month": period_start,
     }
     amounts = {
         "payable": parse_huf_value(_export_row_value(row, {
-            "Kifizetendő", "Kifizetendo", "KifizetendĹ‘", "Fizetendő", "Fizetendo", "FizetendĹ‘", "payable"
+            "Kifizetendő", "Kifizetendo", "KifizetendĹ", "Fizetendő", "Fizetendo", "FizetendĹ", "payable"
         })),
         "tip": parse_huf_value(_export_row_value(row, {"Borravaló", "Borravalo", "BorravalĂł", "tip"})),
         "cash": abs(parse_huf_value(_export_row_value(row, {
@@ -12615,10 +12845,10 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
         "AdĂłzĂˇsi mĂłd": _export_tax_mode_label(row, period_start),
         "TIG adĂł mĂłd": str(breakdown.get("taxLabel") or ""),
         "TIG ĂˇtutalĂˇs nettĂł": parse_huf_value(transfer.get("netHuf")),
-        "TIG ĂˇtutalĂˇs ĂFA": parse_huf_value(transfer.get("vatHuf")),
+        "TIG ĂˇtutalĂˇs ĂFA": parse_huf_value(transfer.get("vatHuf")),
         "TIG ĂˇtutalĂˇs bruttĂł": parse_huf_value(transfer.get("grossHuf")),
         "TIG KP nettĂł": parse_huf_value(cash.get("netHuf")),
-        "TIG KP ĂFA": parse_huf_value(cash.get("vatHuf")),
+        "TIG KP ĂFA": parse_huf_value(cash.get("vatHuf")),
         "TIG KP bruttĂł": parse_huf_value(cash.get("grossHuf")),
         "TIG vĂ©gĂ¶sszeg": parse_huf_value(breakdown.get("finalTotalHuf")),
     }
@@ -12646,7 +12876,7 @@ def _export_courier_profile_lookup() -> dict[str, dict[str, object]]:
     profiles["Courier ID"] = profiles["courier_id"].astype(str)
     profiles["Futár"] = profiles.get("courier_name", pd.Series("", index=profiles.index))
     profiles["Adószám"] = profiles.get("tax_number", pd.Series("", index=profiles.index))
-    profiles["ÁFA státusz"] = profiles.get("vat_status", pd.Series("", index=profiles.index))
+    profiles["FA státusz"] = profiles.get("vat_status", pd.Series("", index=profiles.index))
     profiles["Jogviszony"] = profiles.get("employment_type", pd.Series("", index=profiles.index))
     return {
         courier_key: item
@@ -12705,10 +12935,10 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
             "Adózási mód": [],
             "TIG adó mód": [],
             "TIG átutalás nettó": [],
-            "TIG átutalás ÁFA": [],
+            "TIG átutalás FA": [],
             "TIG átutalás bruttó": [],
             "TIG KP nettó": [],
-            "TIG KP ÁFA": [],
+            "TIG KP FA": [],
             "TIG KP bruttó": [],
             "TIG végösszeg": [],
             "Céltartalék nyitó": [],
@@ -12728,10 +12958,10 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
                 "Adózási mód",
                 "TIG adó mód",
                 "TIG átutalás nettó",
-                "TIG átutalás ÁFA",
+                "TIG átutalás FA",
                 "TIG átutalás bruttó",
                 "TIG KP nettó",
-                "TIG KP ÁFA",
+                "TIG KP FA",
                 "TIG KP bruttó",
                 "TIG végösszeg",
             ]:
@@ -12820,8 +13050,8 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
             "company_name": str(row.get("Vállalkozás neve") or row.get("Futár") or courier_name),
             "address": str(row.get("Cím") or ""),
             "tax_number": str(row.get("Adószám") or ""),
-            "tig_type": str(row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("ÁFA státusz") or row.get("vat_status") or ""),
-            "vat_status": str(row.get("ÁFA státusz") or row.get("vat_status") or ""),
+            "tig_type": str(row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("FA státusz") or row.get("vat_status") or ""),
+            "vat_status": str(row.get("FA státusz") or row.get("vat_status") or ""),
             "email": str(row.get("Email") or ""),
             "id": courier_id,
             "branch": str(row.get("Branch") or ""),
@@ -13463,12 +13693,12 @@ def show_new_settlement_page() -> None:
                     "driver_name": "Futár",
                     "route_type": "Túratípus",
                     "rating_count": "Értékelés db",
-                    "average_rating": "Átlag",
+                    "average_rating": "tlag",
                     "bonus_per_route_huf": "Bónusz / kör",
                     "completed_routes": "Teljesített kör",
                     "bonus_total_huf": "Ügyfélértékelési bónusz",
                 })[[
-                    "Courier ID", "Futár", "Túratípus", "Értékelés db", "Átlag",
+                    "Courier ID", "Futár", "Túratípus", "Értékelés db", "tlag",
                     "Bónusz / kör", "Teljesített kör", "Ügyfélértékelési bónusz",
                 ]].head(20)
                 st.dataframe(preview_view, use_container_width=True, hide_index=True)
@@ -13552,7 +13782,7 @@ def show_new_settlement_page() -> None:
                 st.info(f"Feldolgozás állapota: {processing_status}. {processing_message}")
 
             st.caption(
-                f"Állapot: {processing_status} | "
+                f"llapot: {processing_status} | "
                 f"Run: {processing_result.get('processing_run_id', '-')}"
             )
 
@@ -13560,7 +13790,7 @@ def show_new_settlement_page() -> None:
                 {
                     "Sheet": sheet["sheet_name"],
                     "Típus": sheet["detected_type"] or "ismeretlen",
-                    "Állapot": sheet["status"],
+                    "llapot": sheet["status"],
                     "Összes sor": sheet["total_rows"],
                     "Elfogadott": sheet["accepted_rows"],
                     "Elutasított": sheet["rejected_rows"],
@@ -13855,7 +14085,7 @@ def show_new_settlement_page() -> None:
             }
             st.rerun()
 
-    st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ttekintés</div>',unsafe_allow_html=True)
 
     workflow_cards = [
         ("Elszámolásra vár", "Még nem készült elszámolás", "🔵"),
