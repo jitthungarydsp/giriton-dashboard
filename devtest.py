@@ -8,7 +8,6 @@ from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
 import pandas as pd
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from resources.settlement_excel_import import (
@@ -6796,19 +6795,14 @@ def load_courier_delay_route_analysis(courier_id: str, period_start: date, perio
     try:
         rows = (
             get_db()
-            .table("vw_dsp_route_delay_detail")
-            .select(
-                "work_date,courier_id,courier_name,route_id,shift_name,shift_start,"
-                "available_for_shift_since,queue_started_at,assigned_at,planned_return,real_return,"
-                "queue_started_delay_vs_shift_start_minutes,available_delay_vs_shift_start_minutes,"
-                "departure_delay_vs_plan_minutes,time_window_late_count,address_count,"
-                "planned_route_minutes,real_route_minutes,total_route_minutes,delay_status,has_delay,"
-                "first_route_has_delay"
-            )
+            .table("mart_dsp_route_stories")
+            .select("*")
             .eq("courier_id", courier_key)
             .gte("work_date", period_start.isoformat())
             .lte("work_date", period_end.isoformat())
             .order("work_date")
+            .order("shift_start")
+            .order("assigned_at")
             .execute()
             .data
             or []
@@ -6831,162 +6825,115 @@ def _delay_analysis_bool(value: object) -> bool:
     return str(value).strip().casefold() in {"true", "1", "igen", "yes"}
 
 
-def match_delay_analysis_courier(question: str, option_rows: list[dict[str, str]], fallback: dict[str, str]) -> dict[str, str]:
-    text = str(question or "")
-    id_tokens = set(re.findall(r"\b\d{3,6}\b", text))
-    for option in option_rows:
-        if option["courier_id"] in id_tokens:
-            return option
-
-    question_tokens = set(_courier_match_key(text).split())
-    best_option = fallback
-    best_score = 0
-    for option in option_rows:
-        name_part = option["label"].rsplit(" - ", 1)[0]
-        name_tokens = set(_courier_match_key(name_part).split())
-        if not name_tokens:
-            continue
-        score = len(question_tokens & name_tokens)
-        if score > best_score:
-            best_score = score
-            best_option = option
-    return best_option if best_score >= 2 else fallback
-
-
-def delay_analysis_issue_days(daily: pd.DataFrame) -> list[dict[str, object]]:
-    if not isinstance(daily, pd.DataFrame) or daily.empty:
-        return []
-    rows: list[dict[str, object]] = []
-    for _, item in daily.iterrows():
-        delayed_routes = _delay_analysis_int(item.get("delayed_route_count"))
-        time_window_late = _delay_analysis_int(item.get("time_window_late_count"))
-        shift_late = _delay_analysis_int(item.get("queue_late_route_count"))
-        departure_late = _delay_analysis_int(item.get("departure_late_route_count"))
-        first_route_has_delay = _delay_analysis_bool(item.get("first_route_has_delay"))
-        if not any([delayed_routes, time_window_late, shift_late, departure_late, first_route_has_delay]):
-            continue
-        rows.append({
-            "nap": str(item.get("work_date") or ""),
-            "keseses_tura": delayed_routes,
-            "muszakbol_keses": shift_late,
-            "idoablak_keses": time_window_late,
-            "indulasi_keses": departure_late,
-            "elso_tura_keses": first_route_has_delay,
-            "elso_tura_statusz": str(item.get("first_route_delay_status") or ""),
-        })
-    return rows
-
-
-def build_delay_analysis_fallback_answer(
-    question: str,
-    selected_label: str,
-    period_start: date,
-    monthly: dict,
-    daily: pd.DataFrame,
-) -> str:
-    route_count = _delay_analysis_int(monthly.get("route_count"))
-    delayed_routes = _delay_analysis_int(monthly.get("delayed_route_count"))
-    time_window_late = _delay_analysis_int(monthly.get("time_window_late_count"))
-    shift_late_routes = _delay_analysis_int(monthly.get("queue_late_route_count"))
-    shift_late_minutes = _delay_analysis_int(monthly.get("queue_late_total_minutes"))
-    first_route_delay_days = _delay_analysis_int(monthly.get("first_route_delay_day_count"))
-    issue_days = delay_analysis_issue_days(daily)
-    day_list = ", ".join(row["nap"] for row in issue_days) if issue_days else "nincs ilyen nap"
-    lines = [
-        f"{selected_label} - {period_start:%Y.%m.} késés összefoglaló:",
-        f"- Összes túra: {route_count} db.",
-        f"- Késéses túra: {delayed_routes} db.",
-        f"- Műszakból késés: {shift_late_routes} db, összesen {shift_late_minutes} perc.",
-        f"- Időablakon kívüli késés: {time_window_late} db.",
-        f"- Első túrás késés: {first_route_delay_days} nap.",
-        f"- Késéses napok: {day_list}.",
-    ]
-    if question.strip():
-        lines.insert(0, f"Kérdés: {question.strip()}")
-    return "\n".join(lines)
-
-
-def call_delay_analysis_ai(question: str, selected_label: str, period_start: date, monthly: dict, daily: pd.DataFrame, routes: pd.DataFrame) -> tuple[str, str]:
-    api_key = str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
-    if not api_key:
-        return "", "Hiányzik az OPENAI_API_KEY Streamlit secret, ezért most szabályalapú választ mutatok."
-
-    issue_days = delay_analysis_issue_days(daily)
-    route_records = []
-    if isinstance(routes, pd.DataFrame) and not routes.empty:
-        route_source = routes.copy()
-        for column in [
-            "time_window_late_count",
-            "queue_started_delay_vs_shift_start_minutes",
-            "available_delay_vs_shift_start_minutes",
-            "departure_delay_vs_plan_minutes",
-        ]:
-            source = route_source[column] if column in route_source.columns else pd.Series(0, index=route_source.index)
-            route_source[column] = pd.to_numeric(source, errors="coerce").fillna(0)
-        route_source = route_source[
-            (route_source["time_window_late_count"] > 0)
-            | (route_source["queue_started_delay_vs_shift_start_minutes"] > 0)
-            | (route_source["available_delay_vs_shift_start_minutes"] > 0)
-            | (route_source["departure_delay_vs_plan_minutes"] > 0)
-        ].head(80)
-        wanted = [
-            "work_date", "route_id", "shift_name", "delay_status",
-            "queue_started_delay_vs_shift_start_minutes",
-            "departure_delay_vs_plan_minutes", "time_window_late_count",
-            "address_count", "planned_return", "real_return",
-        ]
-        route_records = route_source[[column for column in wanted if column in route_source.columns]].to_dict("records")
-
-    payload = {
-        "model": str(st.secrets.get("OPENAI_MODEL", "") or "gpt-4.1-mini"),
-        "input": [
-            {
-                "role": "system",
-                "content": (
-                    "Te egy magyar nyelvű futárelszámolási elemző asszisztens vagy. "
-                    "Csak a kapott JSON adatok alapján válaszolj. Ha nincs adat, mondd ki röviden. "
-                    "Késésnél különítsd el: műszakból késés, időablakon kívüli késés, első túrás késés."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "kerdes": question,
-                        "futar": selected_label,
-                        "honap": period_start.isoformat(),
-                        "havi_osszesito": monthly,
-                        "keseses_napok": issue_days,
-                        "keseses_route_reszletek": route_records,
-                    },
-                    ensure_ascii=False,
-                    default=str,
-                ),
-            },
-        ],
-        "temperature": 0.1,
-    }
+def _delay_analysis_datetime(value: object) -> pd.Timestamp | None:
+    if value in (None, ""):
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
     try:
-        response = requests.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=25,
-        )
-        response.raise_for_status()
-        data = response.json()
-    except Exception as exc:
-        return "", f"Az AI válasz nem sikerült: {exc}"
+        return parsed.tz_localize(None) if parsed.tzinfo else parsed
+    except (TypeError, AttributeError):
+        return parsed
 
-    text = str(data.get("output_text") or "").strip()
-    if text:
-        return text, ""
-    for output_item in data.get("output", []) or []:
-        for content_item in output_item.get("content", []) or []:
-            candidate = str(content_item.get("text") or "").strip()
-            if candidate:
-                return candidate, ""
-    return "", "Az AI nem adott szöveges választ."
+
+def _delay_analysis_minutes(start_value: object, end_value: object) -> int:
+    start = _delay_analysis_datetime(start_value)
+    end = _delay_analysis_datetime(end_value)
+    if start is None or end is None:
+        return 0
+    try:
+        return int(round((end - start).total_seconds() / 60.0))
+    except Exception:
+        return 0
+
+
+def enrich_mart_delay_rows(routes: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(routes, pd.DataFrame) or routes.empty:
+        return pd.DataFrame()
+    output = routes.copy()
+    for column in [
+        "time_window_late_count",
+        "time_window_late_total_minutes",
+        "time_window_late_max_minutes",
+        "queue_entry_delta_minutes",
+        "queue_wait_minutes",
+        "planned_route_minutes",
+        "real_route_minutes",
+        "assigned_to_return_minutes",
+        "total_route_minutes",
+        "address_count",
+    ]:
+        source = output[column] if column in output.columns else pd.Series(0, index=output.index)
+        output[column] = pd.to_numeric(source, errors="coerce").fillna(0).astype(int)
+
+    if "queue_started_delay_minutes" not in output.columns:
+        output["queue_started_delay_minutes"] = output["queue_entry_delta_minutes"]
+    missing_queue_delta = output["queue_started_delay_minutes"].eq(0)
+    if {"shift_start", "queue_started_at"}.issubset(output.columns):
+        output.loc[missing_queue_delta, "queue_started_delay_minutes"] = output.loc[missing_queue_delta].apply(
+            lambda row: _delay_analysis_minutes(row.get("shift_start"), row.get("queue_started_at")),
+            axis=1,
+        )
+    if {"shift_start", "available_for_shift_since"}.issubset(output.columns):
+        output["available_delay_minutes"] = output.apply(
+            lambda row: _delay_analysis_minutes(row.get("shift_start"), row.get("available_for_shift_since")),
+            axis=1,
+        )
+    else:
+        output["available_delay_minutes"] = 0
+    if {"planned_departure", "real_departure"}.issubset(output.columns):
+        output["departure_delay_minutes"] = output.apply(
+            lambda row: _delay_analysis_minutes(row.get("planned_departure"), row.get("real_departure")),
+            axis=1,
+        )
+    else:
+        output["departure_delay_minutes"] = 0
+
+    output["shift_late"] = output[["queue_started_delay_minutes", "available_delay_minutes"]].max(axis=1) > 0
+    output["time_window_late"] = output["time_window_late_count"] > 0
+    output["departure_late"] = output["departure_delay_minutes"] > 0
+    output["has_delay"] = output["shift_late"] | output["time_window_late"] | output["departure_late"]
+    output["delay_status"] = output.apply(
+        lambda row: "Keses" if row["has_delay"] else "Rendben",
+        axis=1,
+    )
+    return output
+
+
+def build_mart_delay_monthly_summary(routes: pd.DataFrame) -> dict[str, int]:
+    enriched = enrich_mart_delay_rows(routes)
+    if enriched.empty:
+        return {}
+    first_routes = enriched.sort_values(["work_date", "shift_start", "assigned_at", "route_id"], na_position="last").groupby("work_date", dropna=False).head(1)
+    return {
+        "route_count": int(len(enriched)),
+        "delayed_route_count": int(enriched["has_delay"].sum()),
+        "time_window_late_count": int(enriched["time_window_late_count"].sum()),
+        "queue_late_route_count": int(enriched["shift_late"].sum()),
+        "queue_late_total_minutes": int(enriched.loc[enriched["shift_late"], ["queue_started_delay_minutes", "available_delay_minutes"]].max(axis=1).clip(lower=0).sum()),
+        "first_route_delay_day_count": int(first_routes["has_delay"].sum()),
+    }
+
+
+def build_mart_delay_daily_summary(routes: pd.DataFrame) -> pd.DataFrame:
+    enriched = enrich_mart_delay_rows(routes)
+    if enriched.empty:
+        return pd.DataFrame()
+    daily_rows = []
+    for work_date, day_rows in enriched.groupby("work_date", dropna=False):
+        day_sorted = day_rows.sort_values(["shift_start", "assigned_at", "route_id"], na_position="last")
+        first_route = day_sorted.iloc[0] if not day_sorted.empty else {}
+        daily_rows.append({
+            "work_date": work_date,
+            "route_count": int(len(day_rows)),
+            "delayed_route_count": int(day_rows["has_delay"].sum()),
+            "time_window_late_count": int(day_rows["time_window_late_count"].sum()),
+            "queue_late_route_count": int(day_rows["shift_late"].sum()),
+            "queue_late_total_minutes": int(day_rows.loc[day_rows["shift_late"], ["queue_started_delay_minutes", "available_delay_minutes"]].max(axis=1).clip(lower=0).sum()),
+            "first_route_delay_status": "Keses" if bool(first_route.get("has_delay", False)) else "Rendben",
+        })
+    return pd.DataFrame(daily_rows).sort_values("work_date")
 
 
 def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: date, period_end: date) -> None:
@@ -7006,10 +6953,10 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
     if not option_rows:
         return
 
-    with st.expander("Késés elemző asszisztens", expanded=False):
+    with st.expander("Késés / napi route story lekérdezés", expanded=False):
         st.caption(
-            "Futár és hónap alapján a DSP mart nézetekből nézi a műszakból késést, "
-            "az időablakon kívüli késéseket és az első túrás késéseket. Csak gombnyomásra számol."
+            "Futár és hónap alapján közvetlenül a public.mart_dsp_route_stories táblából nézi a "
+            "műszakból késést, az időablakon túli késést, a sorbaállást és a napi route story-kat."
         )
         selected_option = st.selectbox(
             "Futár",
@@ -7017,49 +6964,22 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
             format_func=lambda option: option["label"],
             key=f"delay_analysis_courier_{period_start:%Y%m}",
         )
-        question = st.text_input(
-            "K\u00e9rd\u00e9s az AI-nak",
-            value="",
-            placeholder="pl. Gurz\u00f3 Bal\u00e1zs melyik napokon k\u00e9sett j\u00faliusban?",
-            key=f"delay_analysis_question_{period_start:%Y%m}",
-        )
-        target_option = match_delay_analysis_courier(question, option_rows, selected_option)
-        if question.strip() and target_option["courier_id"] != selected_option["courier_id"]:
-            st.caption(f"A k\u00e9rd\u00e9s alapj\u00e1n ezt a fut\u00e1rt n\u00e9zem: {target_option['label']}")
-
-        result_key = f"delay_analysis_result_{period_start:%Y%m}_{target_option['courier_id']}"
+        result_key = f"delay_analysis_result_{period_start:%Y%m}_{selected_option['courier_id']}"
         if st.button(
-            "Kérdés megválaszolása",
-            key=f"delay_analysis_run_{period_start:%Y%m}_{target_option['courier_id']}",
+            "Mart késés és napi jelentés lekérdezése",
+            key=f"delay_analysis_run_{period_start:%Y%m}_{selected_option['courier_id']}",
             use_container_width=True,
             type="primary",
         ):
-            monthly = load_courier_delay_monthly_analysis(target_option["courier_id"], period_start)
-            daily = load_courier_delay_daily_analysis(target_option["courier_id"], period_start, period_end)
-            routes = load_courier_delay_route_analysis(target_option["courier_id"], period_start, period_end)
-            fallback_answer = build_delay_analysis_fallback_answer(
-                question,
-                target_option["label"],
-                period_start,
-                monthly,
-                daily,
-            )
-            ai_answer, ai_warning = call_delay_analysis_ai(
-                question,
-                target_option["label"],
-                period_start,
-                monthly,
-                daily,
-                routes,
-            )
+            routes = load_courier_delay_route_analysis(selected_option["courier_id"], period_start, period_end)
+            routes = enrich_mart_delay_rows(routes)
+            monthly = build_mart_delay_monthly_summary(routes)
+            daily = build_mart_delay_daily_summary(routes)
             st.session_state[result_key] = {
                 "monthly": monthly,
                 "daily": daily,
                 "routes": routes,
-                "question": question,
-                "selected_label": target_option["label"],
-                "answer": ai_answer or fallback_answer,
-                "ai_warning": ai_warning,
+                "selected_label": selected_option["label"],
             }
 
         result = st.session_state.get(result_key)
@@ -7070,9 +6990,9 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
         monthly = result.get("monthly") or {}
         daily = result.get("daily")
         routes = result.get("routes")
-        selected_label = str(result.get("selected_label") or target_option["label"])
+        selected_label = str(result.get("selected_label") or selected_option["label"])
         if not monthly and (not isinstance(daily, pd.DataFrame) or daily.empty) and (not isinstance(routes, pd.DataFrame) or routes.empty):
-            st.warning("Nincs késés elemzési adat erre a futárra és hónapra. Forrás: public.vw_dsp_courier_delay_monthly / daily / detail.")
+            st.warning("Nincs mart route story adat erre a futárra és hónapra. Forrás: public.mart_dsp_route_stories.")
             return
 
         route_count = _delay_analysis_int(monthly.get("route_count"))
@@ -7081,7 +7001,7 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
         shift_late_routes = _delay_analysis_int(monthly.get("queue_late_route_count"))
         shift_late_minutes = _delay_analysis_int(monthly.get("queue_late_total_minutes"))
         first_route_delay_days = _delay_analysis_int(monthly.get("first_route_delay_day_count"))
-        selected_option = {**target_option, "label": selected_label}
+        selected_option = {**selected_option, "label": selected_label}
 
         metric_columns = st.columns(5)
         metric_columns[0].metric("Túra", f"{route_count} db")
@@ -7098,13 +7018,6 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
             f"Első túrás késés: {first_route_delay_days} nap.",
         ]
         st.success(" ".join(summary_parts) if delayed_routes == 0 and time_window_late == 0 and shift_late_routes == 0 else " ".join(summary_parts))
-        ai_warning = str(result.get("ai_warning") or "").strip()
-        if ai_warning:
-            st.caption(ai_warning)
-        answer = str(result.get("answer") or "").strip()
-        if answer:
-            st.markdown("**AI v\u00e1lasz**")
-            st.info(answer)
 
         if isinstance(daily, pd.DataFrame) and not daily.empty:
             daily_display = daily.copy()
@@ -7133,38 +7046,67 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
 
         if isinstance(routes, pd.DataFrame) and not routes.empty:
             route_rows = routes.copy()
-            for column in [
+            st.markdown("**Napi jelentés - mart route story**")
+            daily_story_columns = [
+                "work_date",
+                "shift_name",
+                "shift_start",
+                "route_id",
+                "assigned_at",
+                "address_count",
+                "real_route_minutes",
+                "planned_return",
+                "real_return",
                 "time_window_late_count",
-                "queue_started_delay_vs_shift_start_minutes",
-                "available_delay_vs_shift_start_minutes",
-                "departure_delay_vs_plan_minutes",
-            ]:
-                source = route_rows[column] if column in route_rows.columns else pd.Series(0, index=route_rows.index)
-                route_rows[column] = pd.to_numeric(source, errors="coerce").fillna(0)
-            raw_has_delay = route_rows["has_delay"] if "has_delay" in route_rows.columns else pd.Series(False, index=route_rows.index)
-            has_delay_series = raw_has_delay.map(lambda value: str(value).strip().casefold() in {"true", "1", "igen", "yes"})
+                "queue_started_delay_minutes",
+                "story_text",
+            ]
+            daily_story = route_rows[[column for column in daily_story_columns if column in route_rows.columns]].rename(
+                columns={
+                    "work_date": "Nap",
+                    "shift_name": "Műszak",
+                    "shift_start": "Műszak kezdete",
+                    "route_id": "Route ID",
+                    "assigned_at": "Túrát kapott",
+                    "address_count": "Cím",
+                    "real_route_minutes": "Túrahossz perc",
+                    "planned_return": "Tervezett vissza",
+                    "real_return": "Valós vissza",
+                    "time_window_late_count": "Időablakon túli késés db",
+                    "queue_started_delay_minutes": "Sorbaállás késés perc",
+                    "story_text": "Route story",
+                }
+            )
+            st.dataframe(daily_story, hide_index=True, use_container_width=True, height=320)
+
+            has_delay_series = route_rows["has_delay"] if "has_delay" in route_rows.columns else pd.Series(False, index=route_rows.index)
             issue_rows = route_rows[
                 has_delay_series
                 | (route_rows["time_window_late_count"] > 0)
-                | (route_rows["queue_started_delay_vs_shift_start_minutes"] > 0)
-                | (route_rows["available_delay_vs_shift_start_minutes"] > 0)
-                | (route_rows["departure_delay_vs_plan_minutes"] > 0)
+                | (route_rows["queue_started_delay_minutes"] > 0)
+                | (route_rows["available_delay_minutes"] > 0)
+                | (route_rows["departure_delay_minutes"] > 0)
             ].copy()
             if issue_rows.empty:
                 st.info("Route szinten nincs késéses tétel ebben a hónapban.")
             else:
+                st.markdown("**Késéses / ellenőrzendő route-ok**")
                 wanted_routes = [
                     "work_date",
                     "route_id",
                     "shift_name",
                     "delay_status",
-                    "queue_started_delay_vs_shift_start_minutes",
-                    "departure_delay_vs_plan_minutes",
+                    "available_delay_minutes",
+                    "queue_started_delay_minutes",
+                    "departure_delay_minutes",
                     "time_window_late_count",
+                    "time_window_late_total_minutes",
+                    "time_window_late_max_minutes",
                     "address_count",
                     "real_route_minutes",
                     "planned_return",
                     "real_return",
+                    "story_text",
                 ]
                 issue_rows = issue_rows[[column for column in wanted_routes if column in issue_rows.columns]].rename(
                     columns={
@@ -7172,13 +7114,17 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
                         "route_id": "Route ID",
                         "shift_name": "Műszak",
                         "delay_status": "Státusz",
-                        "queue_started_delay_vs_shift_start_minutes": "Sorbaállás késés perc",
-                        "departure_delay_vs_plan_minutes": "Indulási késés perc",
+                        "available_delay_minutes": "Elérhető késés perc",
+                        "queue_started_delay_minutes": "Sorbaállás késés perc",
+                        "departure_delay_minutes": "Indulási késés perc",
                         "time_window_late_count": "Időablak késés db",
+                        "time_window_late_total_minutes": "Időablak késés perc",
+                        "time_window_late_max_minutes": "Max időablak késés perc",
                         "address_count": "Cím",
                         "real_route_minutes": "Túrahossz perc",
                         "planned_return": "Tervezett vissza",
                         "real_return": "Valós vissza",
+                        "story_text": "Route story",
                     }
                 )
                 st.dataframe(issue_rows, hide_index=True, use_container_width=True, height=260)
