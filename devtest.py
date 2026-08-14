@@ -4127,6 +4127,229 @@ def load_courier_settlement_summary(session_id: str | None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+SETTLEMENT_AUDIT_INCOME_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("courier_base_rate_huf", "Alapdíj"),
+    ("tip_huf", "Borravaló"),
+    ("delay_bonus_huf", "Késedelmi díj"),
+    ("compliance_bonus_huf", "Túramegfelelés"),
+    ("other_route_bonus_huf", "Egyéb route bónusz"),
+    ("imported_bonus_huf", "Kiflis bónusz"),
+    ("manual_bonus_huf", "JITT bónusz"),
+    ("customer_rating_bonus_huf", "Ügyfélértékelés"),
+    ("loyalty_bonus_huf", "Lojalitás"),
+    ("periodic_fee_huf", "Időszakos díj"),
+    ("correction_bonus_huf", "Korrekció +"),
+)
+
+SETTLEMENT_AUDIT_DEDUCTION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("malus_huf", "Malus"),
+    ("imported_malus_huf", "Kiflis malus"),
+    ("manual_malus_huf", "JITT malus"),
+    ("atm_deduction_huf", "ATM levonás"),
+    ("other_expense_huf", "Egyéb kiadás"),
+    ("salary_advance_huf", "Fizetés előleg"),
+    ("target_reserve_topup_huf", "Céltartalék 10%"),
+    ("insurance_fee_huf", "Biztosítási díj"),
+    ("correction_deduction_huf", "Korrekció -"),
+)
+
+
+def _audit_amount(row: pd.Series, column: str) -> float:
+    if column not in row.index:
+        return 0.0
+    value = pd.to_numeric(row.get(column), errors="coerce")
+    if pd.isna(value):
+        return 0.0
+    return float(value)
+
+
+def _audit_sum(row: pd.Series, columns: tuple[tuple[str, str], ...], *, absolute: bool = False) -> float:
+    total = 0.0
+    for column, _label in columns:
+        value = _audit_amount(row, column)
+        total += abs(value) if absolute else value
+    return total
+
+
+def _audit_used_labels(data: pd.DataFrame, columns: tuple[tuple[str, str], ...]) -> str:
+    labels = [label for column, label in columns if column in data.columns]
+    return ", ".join(labels) if labels else "-"
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def build_excel_settlement_number_audit(session_id: str | None) -> dict[str, object]:
+    """Manual consistency report for one imported Excel settlement session."""
+    empty_report = {
+        "summary": pd.DataFrame(),
+        "raw_only": pd.DataFrame(),
+        "income_labels": "-",
+        "deduction_labels": "-",
+        "summary_count": 0,
+        "raw_courier_count": 0,
+        "issue_count": 0,
+        "total_payable_diff": 0,
+    }
+    if not session_id:
+        return empty_report
+
+    db = get_db()
+    summary_rows = (
+        db.schema("settlement")
+        .table("courier_settlement_summary")
+        .select("*")
+        .eq("session_id", str(session_id))
+        .execute()
+        .data
+        or []
+    )
+    summary = pd.DataFrame(summary_rows)
+    if summary.empty:
+        return empty_report
+
+    raw_rows = (
+        db.schema("settlement")
+        .table("jit_row")
+        .select("courier_id,driver_name,route_unique_id,is_route_primary")
+        .eq("session_id", str(session_id))
+        .limit(10000)
+        .execute()
+        .data
+        or []
+    )
+    raw = pd.DataFrame(raw_rows)
+
+    master_rows = (
+        db.schema("public")
+        .table("courier_master")
+        .select("courier_id,courier_name,warehouse_name,vat_status,insurance_status,employment_type,active")
+        .limit(10000)
+        .execute()
+        .data
+        or []
+    )
+    master = pd.DataFrame(master_rows)
+    master_by_id: dict[str, dict[str, object]] = {}
+    if not master.empty and "courier_id" in master.columns:
+        master = master.copy()
+        master["_courier_id_lookup"] = master["courier_id"].map(_courier_id_key)
+        master_by_id = (
+            master[master["_courier_id_lookup"] != ""]
+            .drop_duplicates("_courier_id_lookup", keep="first")
+            .set_index("_courier_id_lookup")
+            .to_dict("index")
+        )
+
+    raw_route_counts: dict[str, int] = {}
+    raw_courier_names: dict[str, str] = {}
+    if not raw.empty:
+        raw = raw.copy()
+        raw["_courier_id_lookup"] = raw.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
+        raw["_courier_name_lookup"] = raw.get("driver_name", pd.Series(dtype=object)).map(_courier_match_key)
+        raw["_lookup"] = raw["_courier_id_lookup"].where(raw["_courier_id_lookup"] != "", raw["_courier_name_lookup"])
+        if "is_route_primary" in raw.columns:
+            primary_raw = raw[raw["is_route_primary"].fillna(False).astype(bool)].copy()
+        else:
+            primary_raw = raw.copy()
+        if not primary_raw.empty:
+            raw_route_counts = (
+                primary_raw.groupby("_lookup")["route_unique_id"]
+                .nunique(dropna=True)
+                .astype(int)
+                .to_dict()
+            )
+        raw_courier_names = (
+            raw.drop_duplicates("_lookup", keep="first")
+            .set_index("_lookup")["driver_name"]
+            .fillna("")
+            .astype(str)
+            .to_dict()
+        )
+
+    report_rows: list[dict[str, object]] = []
+    summary_keys: set[str] = set()
+    for _index, row in summary.iterrows():
+        courier_id = _courier_id_key(row.get("courier_id")) or _courier_id_from_text(row.get("driver_name"))
+        courier_name = str(row.get("driver_name") or "").strip()
+        lookup_key = courier_id or _courier_match_key(courier_name)
+        summary_keys.add(lookup_key)
+
+        income_total = _audit_sum(row, SETTLEMENT_AUDIT_INCOME_COLUMNS)
+        deduction_total = _audit_sum(row, SETTLEMENT_AUDIT_DEDUCTION_COLUMNS, absolute=True)
+        expected_payable = income_total - deduction_total
+        stored_payable = _audit_amount(row, "payable_huf")
+        payable_diff = stored_payable - expected_payable
+
+        route_count = int(_audit_amount(row, "route_count"))
+        raw_route_count = int(raw_route_counts.get(lookup_key, 0))
+        route_diff = route_count - raw_route_count
+
+        master_row = master_by_id.get(courier_id, {}) if courier_id else {}
+        master_name = str(master_row.get("courier_name") or "").strip()
+        if not courier_id:
+            master_status = "Hiányzó futár ID"
+        elif not master_row:
+            master_status = "Hiányzik a futártörzsből"
+        elif _courier_match_key(master_name) != _courier_match_key(courier_name):
+            master_status = "Név eltérés"
+        else:
+            master_status = "OK"
+
+        issue_parts = []
+        if abs(payable_diff) >= 1:
+            issue_parts.append("fizetendő eltérés")
+        if route_diff != 0:
+            issue_parts.append("route darab eltérés")
+        if master_status != "OK":
+            issue_parts.append(master_status)
+
+        report_rows.append(
+            {
+                "Futár ID": courier_id,
+                "Futár": courier_name,
+                "Törzs név": master_name or "-",
+                "Törzs státusz": master_status,
+                "DB fizetendő": round(stored_payable),
+                "Ellenőrzött fizetendő": round(expected_payable),
+                "Eltérés": round(payable_diff),
+                "Jóváírás": round(income_total),
+                "Levonás": round(deduction_total),
+                "Summary kör": route_count,
+                "Excel route sor": raw_route_count,
+                "Route eltérés": route_diff,
+                "Ellenőrzés": ", ".join(issue_parts) if issue_parts else "OK",
+            }
+        )
+
+    raw_only_rows = [
+        {
+            "Futár kulcs": raw_key,
+            "Futár": raw_courier_names.get(raw_key, ""),
+            "Excel route sor": raw_route_counts.get(raw_key, 0),
+            "Ellenőrzés": "Van Excel sor, de nincs summary sor",
+        }
+        for raw_key in sorted(set(raw_route_counts) - summary_keys)
+        if raw_key
+    ]
+
+    report = pd.DataFrame(report_rows)
+    if not report.empty:
+        report = report.sort_values(["Ellenőrzés", "Futár"], ascending=[False, True], kind="stable")
+    raw_only = pd.DataFrame(raw_only_rows)
+    issue_count = int((report["Ellenőrzés"] != "OK").sum()) if not report.empty else 0
+    issue_count += len(raw_only_rows)
+    total_payable_diff = int(report["Eltérés"].sum()) if not report.empty and "Eltérés" in report.columns else 0
+    return {
+        "summary": report,
+        "raw_only": raw_only,
+        "income_labels": _audit_used_labels(summary, SETTLEMENT_AUDIT_INCOME_COLUMNS),
+        "deduction_labels": _audit_used_labels(summary, SETTLEMENT_AUDIT_DEDUCTION_COLUMNS),
+        "summary_count": len(summary),
+        "raw_courier_count": len(raw_route_counts),
+        "issue_count": issue_count,
+        "total_payable_diff": total_payable_diff,
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_settlement_summary_row(
     session_id: str | None,
@@ -13331,6 +13554,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.session_state["settlement_import_result"] = result
             st.session_state.pop("settlement_import_preview", None)
             st.session_state.pop("settlement_processing_report", None)
+            st.session_state.pop("settlement_number_audit_report", None)
 
             processing_report = process_settlement_session(
                 get_db(),
@@ -13349,6 +13573,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_route_detail.clear()
                 load_imported_balance_components.clear()
                 load_courier_settlement_summary.clear()
+                build_excel_settlement_number_audit.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                 recalculate_excel_base_rates(get_db(), result["session_id"])
                 master_sync = sync_excel_session_to_courier_master(
@@ -13425,6 +13650,25 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.error(f"SQL ellenőrzés sikertelen: {exc}")
 
     if st.button(
+        "Számok ellenőrzése",
+        use_container_width=True,
+        disabled=not excel_import_session_id,
+        key="audit_excel_settlement_numbers",
+        help="A DB-ben mentett Excel elszámolást ellenőrzi: fizetendő matek, route darab, futártörzs.",
+    ):
+        try:
+            build_excel_settlement_number_audit.clear()
+            audit_report = build_excel_settlement_number_audit(excel_import_session_id)
+            st.session_state["settlement_number_audit_report"] = audit_report
+            issue_count = int(audit_report.get("issue_count") or 0)
+            if issue_count:
+                st.warning(f"Számok ellenőrzése kész: {issue_count} jelzett sor.")
+            else:
+                st.success("Számok ellenőrzése OK: nincs jelzett eltérés.")
+        except Exception as exc:
+            st.error(f"Számok ellenőrzése sikertelen: {exc}")
+
+    if st.button(
         "Futártörzs frissítése Excelből",
         use_container_width=True,
         disabled=not excel_import_session_id,
@@ -13467,6 +13711,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.session_state.pop("settlement_import_preview", None)
             st.session_state.pop("settlement_processing_report", None)
             st.session_state.pop("settlement_base_rate_summary", None)
+            st.session_state.pop("settlement_number_audit_report", None)
             st.session_state.pop("settlement_show_route_audit_for", None)
             st.session_state.pop("settlement_show_delay_audit_for", None)
             st.session_state.pop("settlement_show_attendance_audit_for", None)
@@ -13479,6 +13724,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             load_courier_route_detail.clear()
             load_imported_balance_components.clear()
             load_courier_settlement_summary.clear()
+            build_excel_settlement_number_audit.clear()
             load_excel_route_coverage_audit.clear()
 
             st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
@@ -13845,6 +14091,41 @@ def show_new_settlement_page() -> None:
             )
             for sheet_name, row_count in import_result["sheet_row_counts"].items():
                 st.write(f"- {sheet_name}: {row_count} sor")
+
+        number_audit = st.session_state.get("settlement_number_audit_report")
+        if isinstance(number_audit, dict) and isinstance(number_audit.get("summary"), pd.DataFrame):
+            st.markdown("#### Számok ellenőrzése")
+            summary_count = int(number_audit.get("summary_count") or 0)
+            raw_courier_count = int(number_audit.get("raw_courier_count") or 0)
+            issue_count = int(number_audit.get("issue_count") or 0)
+            total_payable_diff = int(number_audit.get("total_payable_diff") or 0)
+            if issue_count:
+                st.warning(
+                    f"{issue_count} jelzett sor | summary futár: {summary_count} | "
+                    f"Excel futár: {raw_courier_count} | fizetendő eltérés összesen: {format_huf(total_payable_diff)}"
+                )
+            else:
+                st.success(
+                    f"Ellenőrzés OK | summary futár: {summary_count} | Excel futár: {raw_courier_count}"
+                )
+            st.caption(
+                "Jóváírás mezők: "
+                f"{number_audit.get('income_labels', '-')}. Levonás mezők: "
+                f"{number_audit.get('deduction_labels', '-')}."
+            )
+            audit_df = number_audit["summary"]
+            if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
+                issue_df = audit_df[audit_df["Ellenőrzés"] != "OK"].copy()
+                st.dataframe(
+                    issue_df if not issue_df.empty else audit_df.head(20),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=280,
+                )
+            raw_only = number_audit.get("raw_only")
+            if isinstance(raw_only, pd.DataFrame) and not raw_only.empty:
+                with st.expander("Excel sor van, summary sor nincs"):
+                    st.dataframe(raw_only, use_container_width=True, hide_index=True)
 
         base_rate_summary = st.session_state.get("settlement_base_rate_summary")
         if isinstance(base_rate_summary, pd.DataFrame) and not base_rate_summary.empty:
