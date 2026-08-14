@@ -6737,6 +6737,247 @@ def apply_dsp_shift_attendance_audit(data: pd.DataFrame, period_start: date, per
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_courier_delay_monthly_analysis(courier_id: str, period_start: date) -> dict:
+    courier_key = _courier_id_key(courier_id)
+    if not courier_key:
+        return {}
+    try:
+        rows = (
+            get_db()
+            .table("vw_dsp_courier_delay_monthly")
+            .select("*")
+            .eq("courier_id", courier_key)
+            .eq("month_start", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return {}
+    return rows[0] if rows else {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_delay_daily_analysis(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    courier_key = _courier_id_key(courier_id)
+    if not courier_key:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db()
+            .table("vw_dsp_courier_delay_daily")
+            .select("*")
+            .eq("courier_id", courier_key)
+            .gte("work_date", period_start.isoformat())
+            .lte("work_date", period_end.isoformat())
+            .order("work_date")
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_delay_route_analysis(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    courier_key = _courier_id_key(courier_id)
+    if not courier_key:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db()
+            .table("vw_dsp_route_delay_detail")
+            .select(
+                "work_date,courier_id,courier_name,route_id,shift_name,shift_start,"
+                "available_for_shift_since,queue_started_at,assigned_at,planned_return,real_return,"
+                "queue_started_delay_vs_shift_start_minutes,available_delay_vs_shift_start_minutes,"
+                "departure_delay_vs_plan_minutes,time_window_late_count,address_count,"
+                "planned_route_minutes,real_route_minutes,total_route_minutes,delay_status,has_delay,"
+                "first_route_has_delay"
+            )
+            .eq("courier_id", courier_key)
+            .gte("work_date", period_start.isoformat())
+            .lte("work_date", period_end.isoformat())
+            .order("work_date")
+            .execute()
+            .data
+            or []
+        )
+    except Exception:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+def _delay_analysis_int(value: object) -> int:
+    try:
+        if pd.isna(value):
+            return 0
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: date, period_end: date) -> None:
+    if filtered.empty or "Courier ID" not in filtered.columns:
+        return
+
+    option_rows: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for _, row in filtered.iterrows():
+        courier_id = _courier_id_key(row.get("Courier ID"))
+        if not courier_id or courier_id in seen_ids:
+            continue
+        seen_ids.add(courier_id)
+        courier_name = str(row.get("FutĂˇr") or row.get("Futár") or "").strip() or f"Futár {courier_id}"
+        option_rows.append({"courier_id": courier_id, "label": f"{courier_name} - {courier_id}"})
+
+    if not option_rows:
+        return
+
+    with st.expander("Késés elemző asszisztens", expanded=False):
+        st.caption(
+            "Futár és hónap alapján a DSP mart nézetekből nézi a műszakból késést, "
+            "az időablakon kívüli késéseket és az első túrás késéseket. Csak gombnyomásra számol."
+        )
+        selected_option = st.selectbox(
+            "Futár",
+            option_rows,
+            format_func=lambda option: option["label"],
+            key=f"delay_analysis_courier_{period_start:%Y%m}",
+        )
+        result_key = f"delay_analysis_result_{period_start:%Y%m}_{selected_option['courier_id']}"
+        if st.button(
+            "Késés elemzése",
+            key=f"delay_analysis_run_{period_start:%Y%m}_{selected_option['courier_id']}",
+            use_container_width=True,
+            type="primary",
+        ):
+            monthly = load_courier_delay_monthly_analysis(selected_option["courier_id"], period_start)
+            daily = load_courier_delay_daily_analysis(selected_option["courier_id"], period_start, period_end)
+            routes = load_courier_delay_route_analysis(selected_option["courier_id"], period_start, period_end)
+            st.session_state[result_key] = {
+                "monthly": monthly,
+                "daily": daily,
+                "routes": routes,
+            }
+
+        result = st.session_state.get(result_key)
+        if not result:
+            st.info("Válassz futárt, majd indítsd az elemzést.")
+            return
+
+        monthly = result.get("monthly") or {}
+        daily = result.get("daily")
+        routes = result.get("routes")
+        if not monthly and (not isinstance(daily, pd.DataFrame) or daily.empty) and (not isinstance(routes, pd.DataFrame) or routes.empty):
+            st.warning("Nincs késés elemzési adat erre a futárra és hónapra. Forrás: public.vw_dsp_courier_delay_monthly / daily / detail.")
+            return
+
+        route_count = _delay_analysis_int(monthly.get("route_count"))
+        delayed_routes = _delay_analysis_int(monthly.get("delayed_route_count"))
+        time_window_late = _delay_analysis_int(monthly.get("time_window_late_count"))
+        shift_late_routes = _delay_analysis_int(monthly.get("queue_late_route_count"))
+        shift_late_minutes = _delay_analysis_int(monthly.get("queue_late_total_minutes"))
+        first_route_delay_days = _delay_analysis_int(monthly.get("first_route_delay_day_count"))
+
+        metric_columns = st.columns(5)
+        metric_columns[0].metric("Túra", f"{route_count} db")
+        metric_columns[1].metric("Késéses túra", f"{delayed_routes} db")
+        metric_columns[2].metric("Műszakból késés", f"{shift_late_routes} db")
+        metric_columns[3].metric("Időablakon kívüli késés", f"{time_window_late} db")
+        metric_columns[4].metric("Első túrás késés", f"{first_route_delay_days} nap")
+
+        summary_parts = [
+            f"{selected_option['label']} {period_start:%Y.%m.} hónapban {route_count} túrát futott.",
+            f"Ebből {delayed_routes} túrán volt valamilyen késésjelzés.",
+            f"Műszakhoz képest {shift_late_routes} túrán késett, összesen {shift_late_minutes} percet.",
+            f"Időablakon kívüli késés: {time_window_late} db.",
+            f"Első túrás késés: {first_route_delay_days} nap.",
+        ]
+        st.success(" ".join(summary_parts) if delayed_routes == 0 and time_window_late == 0 and shift_late_routes == 0 else " ".join(summary_parts))
+
+        if isinstance(daily, pd.DataFrame) and not daily.empty:
+            daily_display = daily.copy()
+            wanted_daily = [
+                "work_date",
+                "route_count",
+                "delayed_route_count",
+                "time_window_late_count",
+                "queue_late_route_count",
+                "queue_late_total_minutes",
+                "first_route_delay_status",
+            ]
+            daily_display = daily_display[[column for column in wanted_daily if column in daily_display.columns]]
+            daily_display = daily_display.rename(
+                columns={
+                    "work_date": "Nap",
+                    "route_count": "Túra",
+                    "delayed_route_count": "Késéses túra",
+                    "time_window_late_count": "Időablak késés",
+                    "queue_late_route_count": "Műszakból késés",
+                    "queue_late_total_minutes": "Műszak késés perc",
+                    "first_route_delay_status": "Első túra státusz",
+                }
+            )
+            st.dataframe(daily_display, hide_index=True, use_container_width=True, height=180)
+
+        if isinstance(routes, pd.DataFrame) and not routes.empty:
+            route_rows = routes.copy()
+            for column in [
+                "time_window_late_count",
+                "queue_started_delay_vs_shift_start_minutes",
+                "available_delay_vs_shift_start_minutes",
+                "departure_delay_vs_plan_minutes",
+            ]:
+                source = route_rows[column] if column in route_rows.columns else pd.Series(0, index=route_rows.index)
+                route_rows[column] = pd.to_numeric(source, errors="coerce").fillna(0)
+            raw_has_delay = route_rows["has_delay"] if "has_delay" in route_rows.columns else pd.Series(False, index=route_rows.index)
+            has_delay_series = raw_has_delay.map(lambda value: str(value).strip().casefold() in {"true", "1", "igen", "yes"})
+            issue_rows = route_rows[
+                has_delay_series
+                | (route_rows["time_window_late_count"] > 0)
+                | (route_rows["queue_started_delay_vs_shift_start_minutes"] > 0)
+                | (route_rows["available_delay_vs_shift_start_minutes"] > 0)
+                | (route_rows["departure_delay_vs_plan_minutes"] > 0)
+            ].copy()
+            if issue_rows.empty:
+                st.info("Route szinten nincs késéses tétel ebben a hónapban.")
+            else:
+                wanted_routes = [
+                    "work_date",
+                    "route_id",
+                    "shift_name",
+                    "delay_status",
+                    "queue_started_delay_vs_shift_start_minutes",
+                    "departure_delay_vs_plan_minutes",
+                    "time_window_late_count",
+                    "address_count",
+                    "real_route_minutes",
+                    "planned_return",
+                    "real_return",
+                ]
+                issue_rows = issue_rows[[column for column in wanted_routes if column in issue_rows.columns]].rename(
+                    columns={
+                        "work_date": "Nap",
+                        "route_id": "Route ID",
+                        "shift_name": "Műszak",
+                        "delay_status": "Státusz",
+                        "queue_started_delay_vs_shift_start_minutes": "Sorbaállás késés perc",
+                        "departure_delay_vs_plan_minutes": "Indulási késés perc",
+                        "time_window_late_count": "Időablak késés db",
+                        "address_count": "Cím",
+                        "real_route_minutes": "Túrahossz perc",
+                        "planned_return": "Tervezett vissza",
+                        "real_return": "Valós vissza",
+                    }
+                )
+                st.dataframe(issue_rows, hide_index=True, use_container_width=True, height=260)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
         "session_id",
@@ -13657,6 +13898,8 @@ def show_new_settlement_page() -> None:
     else:
         selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
         st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
+
+    render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
 
     render_table(filtered)
     if st.session_state.pop("reopen_courier_dialog", False) and st.session_state.get("selected_courier_id"):
