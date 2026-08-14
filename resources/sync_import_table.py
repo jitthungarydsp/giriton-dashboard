@@ -100,10 +100,16 @@ def normalize_text(value):
     return str(value or "").strip()
 
 
+def extract_courier_id_from_text(value):
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", normalize_text(value))
+    return match.group(1) if match else ""
+
+
 def normalize_person_key(value):
     text = unicodedata.normalize("NFKD", normalize_text(value).casefold())
     text = "".join(character for character in text if not unicodedata.combining(character))
     tokens = re.findall(r"[a-z0-9]+", text)
+    tokens = [token for token in tokens if not (token.isdigit() and 3 <= len(token) <= 6)]
     return " ".join(sorted(tokens))
 
 
@@ -1149,6 +1155,11 @@ def build_driver_invoice_summary(
             grouped["external_courier_id"].fillna("").map(normalize_text),
         )
         grouped = grouped.drop(columns=["external_courier_id"])
+    embedded_courier_ids = grouped["driver_name"].map(extract_courier_id_from_text)
+    grouped["courier_id"] = grouped["courier_id"].where(
+        grouped["courier_id"] != "",
+        embedded_courier_ids,
+    )
 
     manual_summary = build_manual_item_summary(manual_df)
     if not manual_summary.empty:

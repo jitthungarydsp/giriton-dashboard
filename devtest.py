@@ -1068,6 +1068,11 @@ def _courier_match_key(value: object) -> str:
     return " ".join(sorted(tokens))
 
 
+def _courier_id_from_text(value: object) -> str:
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", str(value or ""))
+    return match.group(1) if match else ""
+
+
 def _courier_id_key(value: object) -> str:
     """Normalize Courier ID values such as ``7056`` and ``7056.0``."""
     if pd.isna(value):
@@ -4085,6 +4090,8 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     if "Courier ID" not in result.columns:
         result["Courier ID"] = ""
     result["Courier ID"] = result["Courier ID"].fillna("").astype(str)
+    embedded_ids = result["Futár"].map(_courier_id_from_text) if "Futár" in result.columns else pd.Series("", index=result.index)
+    result["Courier ID"] = result["Courier ID"].where(result["Courier ID"].map(_courier_id_key) != "", embedded_ids)
     for column in columns[2:]:
         result[column] = _numeric_series(result, column)
     return result[columns]
@@ -4268,6 +4275,63 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Túramegfelelés"] = result["_courier_id_lookup"].map(compliance_bonus_by_id).fillna(resolved_lookup.map(compliance_bonus_by_courier)).fillna(0.0)
     result["Számolt túrák"] = result["_courier_id_lookup"].map(matched_routes_by_id).fillna(resolved_lookup.map(matched_routes)).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_id_lookup"].map(unmatched_routes_by_id).fillna(resolved_lookup.map(unmatched_routes)).fillna(0).astype(int)
+
+    present_ids = set(result["_courier_id_lookup"].replace("", pd.NA).dropna().astype(str))
+    present_names = set(result["_courier_lookup"].replace("", pd.NA).dropna().astype(str))
+    calculated_extra = calculated.copy()
+    calculated_extra["_resolved_lookup"] = calculated_extra["_courier_lookup"].map(
+        lambda key: _resolve_courier_lookup_key(key, present_names)
+    )
+    missing_mask = ~(
+        calculated_extra["_courier_id_lookup"].isin(present_ids)
+        | calculated_extra["_resolved_lookup"].isin(present_names)
+    )
+    missing_calculated = calculated_extra[missing_mask].copy()
+    if not missing_calculated.empty:
+        amount_columns = [
+            "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
+            "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
+            "Számolt túrák", "Nem számolt túrák",
+        ]
+        missing_calculated["_append_key"] = missing_calculated["_courier_id_lookup"].where(
+            missing_calculated["_courier_id_lookup"] != "",
+            missing_calculated["_courier_lookup"],
+        )
+        extra_summary = (
+            missing_calculated.groupby("_append_key", as_index=False)
+            .agg({
+                "Courier ID": "first",
+                "Futár": "first",
+                **{column: "sum" for column in amount_columns},
+            })
+        )
+        extra_rows = pd.DataFrame(columns=result.columns)
+        extra_rows["Courier ID"] = extra_summary["Courier ID"].map(_courier_id_key)
+        extra_rows["Futár"] = extra_summary["Futár"].fillna("Ismeretlen futár")
+        extra_rows["Branch"] = "JIT"
+        extra_rows["Számítás módja"] = "Excel"
+        extra_rows["Raktár"] = ""
+        extra_rows["Státusz"] = "Elszámolásra vár"
+        for column in amount_columns:
+            extra_rows[column] = extra_summary[column]
+        text_defaults = {
+            "Vállalkozás": "",
+            "Adószám": "",
+            "Munkakezdés": "",
+            "FA státusz": "",
+            "Jogviszony": "",
+            "Biztosítás": "",
+            "Lojalitás státusz": "",
+        }
+        for column in result.columns:
+            if column in text_defaults and extra_rows[column].isna().all():
+                extra_rows[column] = text_defaults[column]
+            elif extra_rows[column].isna().all():
+                extra_rows[column] = 0 if column not in ["Courier ID", "Futár", "Branch", "Számítás módja", "Raktár", "Státusz"] else ""
+        extra_rows["_courier_id_lookup"] = extra_rows["Courier ID"].map(_courier_id_key)
+        extra_rows["_courier_lookup"] = extra_rows["Futár"].map(_courier_match_key)
+        result = pd.concat([result, extra_rows[result.columns]], ignore_index=True)
+
     result["Kifizetendő"] = (
         _numeric_series(result, "Nettó bevétel")
         + _numeric_series(result, "Borravaló")

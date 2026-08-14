@@ -25,7 +25,13 @@ from pydantic import BaseModel
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
-from resources.pwa_users_db import authenticate_pwa_db_user, change_pwa_user_password, reset_pwa_user_password
+from resources.pwa_users_db import (
+    authenticate_pwa_db_user,
+    change_pwa_user_password,
+    find_pwa_user_by_login,
+    public_pwa_user,
+    reset_pwa_user_password,
+)
 from resources.security import hash_password, verify_password
 from resources.users import generate_password
 from resources.settlement_pdf import build_tig_breakdown, build_tig_pdf
@@ -391,6 +397,15 @@ def read_session(token: str) -> dict[str, Any] | None:
         if str(user.get("courierId") or "") != courier_id:
             continue
         return user
+
+    try:
+        db_user = find_pwa_user_by_login(username)
+    except Exception:
+        db_user = None
+    if db_user and bool(db_user.get("active", True)):
+        db_courier_id = str(db_user.get("courier_id") or db_user.get("courierId") or "")
+        if db_courier_id == courier_id:
+            return public_pwa_user(db_user)
     return None
 
 

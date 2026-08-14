@@ -45,6 +45,15 @@
             "token": ""
         },
         {
+            "username": "Takács 8223 Attila",
+            "trainer": "trainer_name",
+            "password": "rVY48iSm",
+            "role": "user",
+            "courierId": 6956,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Kancsár Zoltán",
             "trainer": "trainer_name",
             "password": "6rXQUnOn",
