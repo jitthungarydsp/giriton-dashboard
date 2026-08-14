@@ -9286,10 +9286,10 @@ def show_courier_dialog() -> None:
                             if is_express and is_highlighted:
                                 return "Kiemelt express"
                             if is_express:
-                                return "Express normál"
+                                return "Normál express"
                             if is_highlighted:
-                                return "Kiemelt normál"
-                            return "Sima normál"
+                                return "Kiemelt city"
+                            return "Normál city"
 
                         base_detail["Tétel"] = base_detail.apply(base_fee_label, axis=1)
                         grouped = (
@@ -9304,9 +9304,9 @@ def show_courier_dialog() -> None:
                             axis=1,
                         )
                         order_map = {
-                            "Sima normál": 1,
-                            "Kiemelt normál": 2,
-                            "Express normál": 3,
+                            "Normál city": 1,
+                            "Kiemelt city": 2,
+                            "Normál express": 3,
                             "Kiemelt express": 4,
                         }
                         grouped["_order"] = grouped["Tétel"].map(order_map).fillna(99)

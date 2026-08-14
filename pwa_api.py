@@ -2318,6 +2318,24 @@ def build_financial_breakdown_from_mobile_rows(
             result.append(current)
         return result
 
+    def normalize_base_detail_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        label_map = {
+            "sima normal": "Normál city",
+            "normal city": "Normál city",
+            "kiemelt normal": "Kiemelt city",
+            "kiemelt city": "Kiemelt city",
+            "express normal": "Normál express",
+            "normal express": "Normál express",
+            "kiemelt express": "Kiemelt express",
+        }
+        normalized_items: list[dict[str, Any]] = []
+        for current in items:
+            updated = dict(current)
+            label = str(updated.get("label") or "")
+            updated["label"] = label_map.get(normalize_text(label), label)
+            normalized_items.append(updated)
+        return normalized_items
+
     payable = mobile_override_amount(overrides, "payable")
     income_total = mobile_override_amount(overrides, "income")
     deduction_total = mobile_override_amount(overrides, "deductions")
@@ -2344,7 +2362,7 @@ def build_financial_breakdown_from_mobile_rows(
         income_total += delta
         payable += delta
 
-    base_items = detail_items(("base_detail_",), [])
+    base_items = normalize_base_detail_items(detail_items(("base_detail_",), []))
     if not base_items:
         base_items = money_items(["base"])
     income_items = money_items([
