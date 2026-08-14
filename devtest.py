@@ -13163,6 +13163,180 @@ def close_individual_monthly_billing(
     return deleted
 
 
+def render_excel_import_sidebar_tools(selected_month: str) -> None:
+    st.divider()
+    st.markdown("### Excel számítás")
+    st.caption("A szűrőktől független feltöltési terület.")
+
+    if "excel_upload_version" not in st.session_state:
+        st.session_state["excel_upload_version"] = 0
+
+    uploaded_excel = st.file_uploader(
+        "Excel feltöltése",
+        type=["xlsx", "xls"],
+        key=f"calculation_excel_upload_{st.session_state['excel_upload_version']}",
+        help="Az Excel import után DB-be kerül, majd a paraméterezett szabályok számolnak.",
+    )
+
+    if uploaded_excel is not None:
+        st.success(f"Kiválasztva: {uploaded_excel.name}")
+
+    excel_import_session_id = (
+        st.session_state.get("settlement_excel_session_id")
+        or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+    )
+    excel_action1, excel_action_check, excel_action2 = st.columns(3)
+
+    if excel_action1.button(
+        "Számítás betöltése",
+        type="primary",
+        use_container_width=True,
+        disabled=uploaded_excel is None,
+        key="load_excel_calculation",
+        help="Importálja az Excelt, majd a paraméterezett szabályokkal kiszámítja a futárdíjakat.",
+    ):
+        try:
+            result = save_excel_to_supabase(
+                uploaded_excel,
+                get_db(),
+            )
+            st.session_state["excel_calculation_loaded"] = True
+            st.session_state["settlement_excel_session_id"] = result["session_id"]
+            st.session_state["settlement_import_session_id"] = result["session_id"]
+            st.session_state["settlement_import_result"] = result
+            st.session_state.pop("settlement_import_preview", None)
+            st.session_state.pop("settlement_processing_report", None)
+
+            processing_report = process_settlement_session(
+                get_db(),
+                result["session_id"],
+            )
+            processing_result = report_as_dict(processing_report)
+            st.session_state["settlement_processing_report"] = processing_result
+
+            if processing_result.get("status") in {"completed", "completed_with_warnings"}:
+                load_driver_dashboard.clear()
+                load_courier_master.clear()
+                load_latest_jit_session_id.clear()
+                load_latest_excel_jit_session_id.clear()
+                load_excel_courier_base_rates.clear()
+                load_excel_base_rate_diagnostics.clear()
+                load_courier_route_detail.clear()
+                load_imported_balance_components.clear()
+                load_courier_settlement_summary.clear()
+                parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+                recalculate_excel_base_rates(get_db(), result["session_id"])
+                st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+                    result["session_id"],
+                    parameter_revision,
+                )
+
+            if processing_result.get("status") == "failed":
+                error_messages = [
+                    f"{error.get('error_code', 'HIBA')}: "
+                    f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
+                    for error in processing_result.get("errors", [])
+                ]
+                raise RuntimeError(
+                    "A normalizált feldolgozás sikertelen. "
+                    + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
+                )
+
+            st.success(
+                f"Excel import kész: {result['sheet_count']} sheet, "
+                f"{result['inserted_rows']} sor."
+            )
+            st.rerun()
+
+        except Exception as exc:
+            st.session_state["excel_calculation_loaded"] = False
+            error_details = "".join(
+                traceback.format_exception(
+                    type(exc),
+                    exc,
+                    exc.__traceback__,
+                )
+            )
+
+            st.error(
+                f"Excel import sikertelen: {type(exc).__name__}: {exc!r}"
+            )
+            with st.expander("Technikai hiba részletei", expanded=True):
+                st.code(error_details, language="text")
+
+    if excel_action_check.button(
+        "SQL ellenőrzés",
+        use_container_width=True,
+        disabled=not excel_import_session_id,
+        key="check_excel_import_sql",
+        help="A settlement.vw_excel_preview nézetből olvassa vissza az importot.",
+    ):
+        try:
+            preview_df = get_import_preview(
+                get_db(),
+                excel_import_session_id,
+                limit=200,
+            )
+            st.session_state["settlement_import_preview"] = preview_df
+
+            if preview_df.empty:
+                st.warning("A SQL ellenőrzés lefutott, de nincs visszaolvasott sor.")
+            else:
+                st.success(f"SQL ellenőrzés OK: {len(preview_df)} sor visszaolvasva.")
+
+        except Exception as exc:
+            st.error(f"SQL ellenőrzés sikertelen: {exc}")
+
+    if excel_action2.button(
+        "Törlés",
+        use_container_width=True,
+        disabled=False,
+        key="delete_excel_calculation",
+        help="Kiüríti az importhoz és feldolgozáshoz tartozó settlement táblákat.",
+    ):
+        try:
+            deleted_by_table = delete_all_settlement_data(get_db())
+            deleted_total = sum(deleted_by_table.values())
+
+            st.session_state["excel_upload_version"] += 1
+            st.session_state["excel_calculation_loaded"] = False
+            st.session_state.pop("settlement_import_session_id", None)
+            st.session_state.pop("settlement_excel_session_id", None)
+            st.session_state.pop("settlement_api_session_id", None)
+            st.session_state.pop("settlement_import_result", None)
+            st.session_state.pop("settlement_import_preview", None)
+            st.session_state.pop("settlement_processing_report", None)
+            st.session_state.pop("settlement_base_rate_summary", None)
+            st.session_state.pop("settlement_show_route_audit_for", None)
+            st.session_state.pop("settlement_show_delay_audit_for", None)
+            st.session_state.pop("settlement_show_attendance_audit_for", None)
+            load_driver_dashboard.clear()
+            load_courier_master.clear()
+            load_latest_jit_session_id.clear()
+            load_latest_excel_jit_session_id.clear()
+            load_excel_courier_base_rates.clear()
+            load_excel_base_rate_diagnostics.clear()
+            load_courier_route_detail.clear()
+            load_imported_balance_components.clear()
+            load_courier_settlement_summary.clear()
+            load_excel_route_coverage_audit.clear()
+
+            st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
+            st.rerun()
+
+        except Exception as exc:
+            error_details = "".join(
+                traceback.format_exception(
+                    type(exc),
+                    exc,
+                    exc.__traceback__,
+                )
+            )
+            st.error(f"A settlement adatok törlése sikertelen: {exc}")
+            with st.expander("Törlési hiba részletei", expanded=True):
+                st.code(error_details, language="text")
+
+
 def show_new_settlement_page() -> None:
     apply_design()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
@@ -13243,6 +13417,8 @@ def show_new_settlement_page() -> None:
         selected_month=st.selectbox("Elszámolási hónap",month_options(),key="new_month")
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
+        if str(calculation_mode or "API").strip().casefold() == "excel":
+            render_excel_import_sidebar_tools(selected_month)
         warehouse=st.selectbox("Raktár",["Összes"]+sorted(data["Raktár"].unique().tolist()),key="new_warehouse")
         status=st.selectbox(
             "Elszámolás állapota",
@@ -13356,133 +13532,10 @@ def show_new_settlement_page() -> None:
             st.session_state.pop("settlement_show_api_sidebar_diagnostics_for", None)
             st.rerun()
 
-        st.divider()
-        st.markdown("### Excel számítás")
-        st.caption("A szűrőktől független feltöltési terület.")
-
-        if "excel_upload_version" not in st.session_state:
-            st.session_state["excel_upload_version"] = 0
-
-        uploaded_excel = st.file_uploader(
-            "Excel feltöltése",
-            type=["xlsx", "xls"],
-            key=f"calculation_excel_upload_{st.session_state['excel_upload_version']}",
-            help="Designer elem, az Excel tartalma még nem kerül feldolgozásra.",
-        )
-
-        if uploaded_excel is not None:
-            st.success(f"Kiválasztva: {uploaded_excel.name}")
-
         excel_import_session_id = (
             st.session_state.get("settlement_excel_session_id")
             or load_latest_excel_jit_session_id(parse_month_option(selected_month))
         )
-        excel_action1, excel_action_check, excel_action2 = st.columns(3)
-
-        if excel_action1.button(
-            "Számítás betöltése",
-            type="primary",
-            use_container_width=True,
-            disabled=uploaded_excel is None,
-            key="load_excel_calculation",
-            help="Importálja az Excelt, majd a paraméterezett Fixed Rate szabályokkal kiszámítja a futár alapdíját.",
-        ):
-            try:
-                result = save_excel_to_supabase(
-                    uploaded_excel,
-                    get_db(),
-                )
-                st.session_state["excel_calculation_loaded"] = True
-                st.session_state["settlement_excel_session_id"] = result["session_id"]
-                st.session_state["settlement_import_session_id"] = result["session_id"]
-                st.session_state["settlement_import_result"] = result
-                st.session_state.pop("settlement_import_preview", None)
-                st.session_state.pop("settlement_processing_report", None)
-
-                processing_report = process_settlement_session(
-                    get_db(),
-                    result["session_id"],
-                )
-                processing_result = report_as_dict(processing_report)
-                st.session_state["settlement_processing_report"] = processing_result
-
-                if processing_result.get("status") in {"completed", "completed_with_warnings"}:
-                    load_driver_dashboard.clear()
-                    load_courier_master.clear()
-                    load_latest_jit_session_id.clear()
-                    load_latest_excel_jit_session_id.clear()
-                    load_excel_courier_base_rates.clear()
-                    load_excel_base_rate_diagnostics.clear()
-                    load_courier_route_detail.clear()
-                    load_imported_balance_components.clear()
-                    load_courier_settlement_summary.clear()
-                    parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-                    recalculate_excel_base_rates(get_db(), result["session_id"])
-                    st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
-                        result["session_id"],
-                        parameter_revision,
-                    )
-
-                if processing_result.get("status") == "failed":
-                    error_messages = [
-                        f"{error.get('error_code', 'HIBA')}: "
-                        f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
-                        for error in processing_result.get("errors", [])
-                    ]
-                    raise RuntimeError(
-                        "A normalizált feldolgozás sikertelen. "
-                        + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
-                    )
-
-                st.success(
-                    f"Excel import kész: {result['sheet_count']} sheet, "
-                    f"{result['inserted_rows']} sor."
-                )
-                st.rerun()
-
-            except Exception as exc:
-                st.session_state["excel_calculation_loaded"] = False
-                error_details = "".join(
-                    traceback.format_exception(
-                        type(exc),
-                        exc,
-                        exc.__traceback__,
-                    )
-                )
-
-                st.error(
-                    f"Excel import sikertelen: {type(exc).__name__}: {exc!r}"
-                )
-                with st.expander("Technikai hiba részletei", expanded=True):
-                    st.code(error_details, language="text")
-
-        excel_import_session_id = (
-            st.session_state.get("settlement_excel_session_id")
-            or load_latest_excel_jit_session_id(parse_month_option(selected_month))
-        )
-
-        if excel_action_check.button(
-            "SQL ellenőrzés",
-            use_container_width=True,
-            disabled=not excel_import_session_id,
-            key="check_excel_import_sql",
-            help="A settlement.vw_excel_preview nézetből olvassa vissza az importot.",
-        ):
-            try:
-                preview_df = get_import_preview(
-                    get_db(),
-                    excel_import_session_id,
-                    limit=200,
-                )
-                st.session_state["settlement_import_preview"] = preview_df
-
-                if preview_df.empty:
-                    st.warning("A SQL ellenőrzés lefutott, de nincs visszaolvasott sor.")
-                else:
-                    st.success(f"SQL ellenőrzés OK: {len(preview_df)} sor visszaolvasva.")
-
-            except Exception as exc:
-                st.error(f"SQL ellenőrzés sikertelen: {exc}")
 
         if excel_import_session_id and st.button(
             "Route ID ellenőrzés frissítése",
@@ -13554,55 +13607,6 @@ def show_new_settlement_page() -> None:
                 st.rerun()
             except Exception as exc:
                 st.error(f"No-show ellenőrzés sikertelen: {exc}")
-
-        if excel_action2.button(
-            "Törlés",
-            use_container_width=True,
-            disabled=False,
-            key="delete_excel_calculation",
-            help="Kiüríti az importhoz és feldolgozáshoz tartozó settlement táblákat.",
-        ):
-            try:
-                deleted_by_table = delete_all_settlement_data(get_db())
-                deleted_total = sum(deleted_by_table.values())
-
-                st.session_state["excel_upload_version"] += 1
-                st.session_state["excel_calculation_loaded"] = False
-                st.session_state.pop("settlement_import_session_id", None)
-                st.session_state.pop("settlement_excel_session_id", None)
-                st.session_state.pop("settlement_api_session_id", None)
-                st.session_state.pop("settlement_import_result", None)
-                st.session_state.pop("settlement_import_preview", None)
-                st.session_state.pop("settlement_processing_report", None)
-                st.session_state.pop("settlement_base_rate_summary", None)
-                st.session_state.pop("settlement_show_route_audit_for", None)
-                st.session_state.pop("settlement_show_delay_audit_for", None)
-                st.session_state.pop("settlement_show_attendance_audit_for", None)
-                load_driver_dashboard.clear()
-                load_courier_master.clear()
-                load_latest_jit_session_id.clear()
-                load_latest_excel_jit_session_id.clear()
-                load_excel_courier_base_rates.clear()
-                load_excel_base_rate_diagnostics.clear()
-                load_courier_route_detail.clear()
-                load_imported_balance_components.clear()
-                load_courier_settlement_summary.clear()
-                load_excel_route_coverage_audit.clear()
-
-                st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
-                st.rerun()
-
-            except Exception as exc:
-                error_details = "".join(
-                    traceback.format_exception(
-                        type(exc),
-                        exc,
-                        exc.__traceback__,
-                    )
-                )
-                st.error(f"A settlement adatok törlése sikertelen: {exc}")
-                with st.expander("Törlési hiba részletei", expanded=True):
-                    st.code(error_details, language="text")
 
         st.divider()
         st.markdown("### Ügyfélértékelés feltöltése")
