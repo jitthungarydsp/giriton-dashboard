@@ -4,6 +4,7 @@ import re
 import traceback
 import unicodedata
 import uuid
+from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
 
@@ -14145,6 +14146,7 @@ def show_new_settlement_page() -> None:
                 f"{number_audit.get('deduction_labels', '-')}."
             )
             audit_df = number_audit["summary"]
+            raw_only = number_audit.get("raw_only")
             if isinstance(audit_df, pd.DataFrame) and not audit_df.empty:
                 issue_df = audit_df[audit_df["Ellenőrzés"] != "OK"].copy()
                 st.dataframe(
@@ -14153,7 +14155,21 @@ def show_new_settlement_page() -> None:
                     hide_index=True,
                     height=280,
                 )
-            raw_only = number_audit.get("raw_only")
+                if not issue_df.empty or (isinstance(raw_only, pd.DataFrame) and not raw_only.empty):
+                    export_buffer = BytesIO()
+                    with pd.ExcelWriter(export_buffer, engine="openpyxl") as writer:
+                        if not issue_df.empty:
+                            issue_df.to_excel(writer, sheet_name="hibas_sorok", index=False)
+                        if isinstance(raw_only, pd.DataFrame) and not raw_only.empty:
+                            raw_only.to_excel(writer, sheet_name="excel_summary_hiany", index=False)
+                    st.download_button(
+                        "Hibás sorok letöltése Excelben",
+                        data=export_buffer.getvalue(),
+                        file_name="settlement_szamok_ellenorzes_hibas_sorok.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="download_settlement_number_audit_issues",
+                    )
             if isinstance(raw_only, pd.DataFrame) and not raw_only.empty:
                 with st.expander("Excel sor van, summary sor nincs"):
                     st.dataframe(raw_only, use_container_width=True, hide_index=True)
