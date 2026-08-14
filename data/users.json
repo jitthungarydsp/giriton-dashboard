@@ -613,6 +613,15 @@
             "token": ""
         },
         {
+            "username": "Szikszai 8266 Ferenc",
+            "trainer": "trainer_name",
+            "password": "fM11f9pe",
+            "role": "user",
+            "courierId": 8266,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Gál 7927 Dominik ",
             "trainer": "trainer_name",
             "password": "8w3INWH4",
