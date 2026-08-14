@@ -1381,22 +1381,48 @@ def load_latest_jit_session_id() -> str | None:
 @st.cache_data(show_spinner=False, ttl=60)
 def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | None:
     """Find the latest non-API JIT session for Excel calculation mode."""
-    try:
-        query = (
-            get_db()
-            .schema("settlement")
-            .table("jit_row")
-            .select("session_id,source_sheet,created_at")
-        )
-        if period_start:
-            _, period_end = month_bounds(period_start)
-            query = query.gte("route_date", period_start.isoformat()).lte("route_date", period_end.isoformat())
-        rows = query.order("created_at", desc=True).limit(10000).execute().data or []
+    def _first_excel_session(rows: list[dict[str, object]]) -> str | None:
         for row in rows:
             source_sheet = str(row.get("source_sheet") or "")
             if not source_sheet.lower().startswith("api financial overview"):
                 return str(row["session_id"])
         return None
+
+    try:
+        if period_start:
+            _, period_end = month_bounds(period_start)
+            try:
+                dated_rows = (
+                    get_db()
+                    .schema("settlement")
+                    .table("jit_row")
+                    .select("session_id,source_sheet,created_at")
+                    .gte("route_date", period_start.isoformat())
+                    .lte("route_date", period_end.isoformat())
+                    .order("created_at", desc=True)
+                    .limit(1000)
+                    .execute()
+                    .data
+                    or []
+                )
+                dated_session = _first_excel_session(dated_rows)
+                if dated_session:
+                    return dated_session
+            except BaseException:
+                pass
+
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("session_id,source_sheet,created_at")
+            .order("created_at", desc=True)
+            .limit(1000)
+            .execute()
+            .data
+            or []
+        )
+        return _first_excel_session(rows)
     except BaseException:
         return None
 
@@ -1407,20 +1433,40 @@ def jit_session_has_rows_in_month(session_id: str | None, period_start: date) ->
         return False
     try:
         _, period_end = month_bounds(period_start)
-        rows = (
+        try:
+            rows = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select("session_id")
+                .eq("session_id", session_id)
+                .gte("route_date", period_start.isoformat())
+                .lte("route_date", period_end.isoformat())
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if rows:
+                return True
+        except BaseException:
+            pass
+
+        fallback_rows = (
             get_db()
             .schema("settlement")
             .table("jit_row")
-            .select("session_id")
+            .select("session_id,source_sheet")
             .eq("session_id", session_id)
-            .gte("route_date", period_start.isoformat())
-            .lte("route_date", period_end.isoformat())
-            .limit(1)
+            .limit(50)
             .execute()
             .data
             or []
         )
-        return bool(rows)
+        return any(
+            not str(row.get("source_sheet") or "").lower().startswith("api financial overview")
+            for row in fallback_rows
+        )
     except BaseException:
         return False
 
@@ -13482,6 +13528,7 @@ def show_new_settlement_page() -> None:
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
             if str(calculation_mode or "API").strip().casefold() == "excel":
                 current_period_start = parse_month_option(selected_month)
+                load_latest_excel_jit_session_id.clear()
                 state_excel_session_id = st.session_state.get("settlement_excel_session_id")
                 if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, current_period_start):
                     current_excel_session_id = state_excel_session_id
@@ -13490,7 +13537,11 @@ def show_new_settlement_page() -> None:
                     if current_excel_session_id:
                         st.session_state["settlement_excel_session_id"] = current_excel_session_id
                         st.session_state["settlement_import_session_id"] = current_excel_session_id
-                st.toast(f"Betöltve: {selected_month}",icon="✅")
+                if current_excel_session_id:
+                    st.toast(f"Excel adatok betöltve: {selected_month}", icon="✅")
+                    st.rerun()
+                else:
+                    st.warning("Ehhez a hónaphoz nem találok feldolgozott Excel importot. Töltsd fel az Excelt, majd nyomd meg a Számítás betöltése gombot.")
             else:
                 try:
                     load_api_financial_overview_rows.clear()

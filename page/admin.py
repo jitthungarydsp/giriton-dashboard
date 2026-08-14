@@ -36,7 +36,6 @@ from resources.users import (
     toggle_active,
     update_trainer,
     delete_user,
-    approve_pwa_registration_user,
     upsert_legacy_user_with_password,
 )
 
@@ -267,13 +266,12 @@ def show_pwa_registration_admin_section():
                     recipient_email=recipient_email,
                 )
             except Exception as db_exc:
-                result = approve_pwa_registration_user(
-                    courier_id,
-                    courier_name,
-                    recipient_email,
-                    send_login_credentials,
-                )
-                result["action"] = f"{result.get('action', 'legacy')} (legacy fallback: {db_exc})"
+                raise RuntimeError(
+                    "A PWA belépési DB nem frissült, ezért nem küldtem ki belépési adatot. "
+                    "Futtasd a docs/pwa_users.sql migrációt Supabase-ben, majd használd a "
+                    "'users.json → pwa_users szinkron' gombot."
+                    f" Részlet: {db_exc}"
+                ) from db_exc
             else:
                 legacy_result = upsert_legacy_user_with_password(
                     courier_id,
