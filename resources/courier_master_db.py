@@ -48,6 +48,20 @@ def _normalize_courier_id(value):
     return text
 
 
+def _extract_courier_id_from_text(value):
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", _clean_text(value))
+    return match.group(1) if match else ""
+
+
+def _warehouse_from_worksheet(value):
+    text = _clean_text(value).upper()
+    if "BUD1" in text:
+        return "BUD1"
+    if "BUD2" in text:
+        return "BUD2"
+    return ""
+
+
 def _normalize_phone(value):
     digits = re.sub(r"\D+", "", _clean_text(value))
     if digits.startswith("0036"):
@@ -497,3 +511,109 @@ def update_courier_master_profile(courier_id, profile_fields):
     read_courier_master_by_id.clear()
 
     return {"updated": True, "message": "Profil adatok mentve."}
+
+
+def sync_courier_master_from_excel_summary(db, session_id):
+    session_id = _clean_text(session_id)
+    if not session_id:
+        return {"upserted": 0, "skipped": 0}
+
+    rows = (
+        db.schema("settlement")
+        .table("courier_settlement_summary")
+        .select("courier_id,driver_name")
+        .eq("session_id", session_id)
+        .execute()
+        .data
+        or []
+    )
+
+    sheet_by_id = {}
+    sheet_by_name = {}
+    if not rows:
+        rows = (
+            db.schema("settlement")
+            .table("jit_row")
+            .select("courier_id,driver_name,source_sheet")
+            .eq("session_id", session_id)
+            .execute()
+            .data
+            or []
+        )
+    else:
+        sheet_rows = (
+            db.schema("settlement")
+            .table("jit_row")
+            .select("courier_id,driver_name,source_sheet")
+            .eq("session_id", session_id)
+            .execute()
+            .data
+            or []
+        )
+        for sheet_row in sheet_rows:
+            sheet_name = _clean_text(sheet_row.get("source_sheet"))
+            if not sheet_name:
+                continue
+            sheet_courier_name = _clean_text(sheet_row.get("driver_name"))
+            sheet_courier_id = (
+                _normalize_courier_id(sheet_row.get("courier_id"))
+                or _extract_courier_id_from_text(sheet_courier_name)
+            )
+            if sheet_courier_id and sheet_courier_id not in sheet_by_id:
+                sheet_by_id[sheet_courier_id] = sheet_name
+            if sheet_courier_name and sheet_courier_name not in sheet_by_name:
+                sheet_by_name[sheet_courier_name] = sheet_name
+
+    now = datetime.now(timezone.utc).isoformat()
+    by_id = {}
+    skipped = 0
+    for row in rows:
+        courier_name = _clean_text(row.get("driver_name"))
+        courier_id = _normalize_courier_id(row.get("courier_id")) or _extract_courier_id_from_text(courier_name)
+        if not courier_id or not courier_name:
+            skipped += 1
+            continue
+        try:
+            courier_id_value = int(courier_id)
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+
+        source_sheet = _clean_text(row.get("source_sheet"))
+        if not source_sheet:
+            source_sheet = sheet_by_id.get(courier_id) or sheet_by_name.get(courier_name) or ""
+        warehouse_name = _clean_text(row.get("warehouse_name")) or _warehouse_from_worksheet(source_sheet)
+        existing = by_id.get(courier_id)
+        if existing and len(courier_name) <= len(str(existing.get("courier_name") or "")):
+            continue
+        upsert_row = {
+            "courier_id": courier_id_value,
+            "courier_name": courier_name,
+            "source_name": "excel_settlement_import",
+            "organization_id": DEFAULT_ORGANIZATION_ID,
+            "dsp_id": "JIT",
+            "active": True,
+            "response_json": {
+                "imported_from": "excel_settlement_import",
+                "session_id": session_id,
+            },
+            "fetched_at": now,
+            "updated_at": now,
+        }
+        if warehouse_name:
+            upsert_row["warehouse_name"] = warehouse_name
+        by_id[courier_id] = upsert_row
+
+    payload = list(by_id.values())
+    if not payload:
+        return {"upserted": 0, "skipped": skipped}
+
+    (
+        db.schema("public")
+        .table("courier_master")
+        .upsert(payload, on_conflict="courier_id")
+        .execute()
+    )
+    read_courier_master.clear()
+    read_courier_master_by_id.clear()
+    return {"upserted": len(payload), "skipped": skipped}

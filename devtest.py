@@ -22,7 +22,10 @@ from resources.settlement_processor import (
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf, build_tig_breakdown, build_tig_pdf
-from resources.courier_master_db import update_courier_master_profile
+from resources.courier_master_db import (
+    sync_courier_master_from_excel_summary,
+    update_courier_master_profile,
+)
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -13336,10 +13339,16 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_settlement_summary.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                 recalculate_excel_base_rates(get_db(), result["session_id"])
+                master_sync = sync_courier_master_from_excel_summary(
+                    get_db(),
+                    result["session_id"],
+                )
+                st.session_state["settlement_courier_master_sync"] = master_sync
                 st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
                     result["session_id"],
                     parameter_revision,
                 )
+                load_courier_master.clear()
 
             if processing_result.get("status") == "failed":
                 error_messages = [
@@ -13356,6 +13365,12 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 f"Excel import kész: {result['sheet_count']} sheet, "
                 f"{result['inserted_rows']} sor."
             )
+            master_sync = st.session_state.get("settlement_courier_master_sync") or {}
+            if master_sync:
+                st.info(
+                    "Futártörzs frissítve Excel alapján: "
+                    f"{master_sync.get('upserted', 0)} sor."
+                )
             st.rerun()
 
         except Exception as exc:
@@ -13396,6 +13411,29 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 
         except Exception as exc:
             st.error(f"SQL ellenőrzés sikertelen: {exc}")
+
+    if st.button(
+        "Futártörzs frissítése Excelből",
+        use_container_width=True,
+        disabled=not excel_import_session_id,
+        key="sync_courier_master_from_excel",
+        help="A betöltött Excel session alapján felveszi/frissíti a futárokat a public.courier_master táblában.",
+    ):
+        try:
+            master_sync = sync_courier_master_from_excel_summary(
+                get_db(),
+                excel_import_session_id,
+            )
+            load_courier_master.clear()
+            load_driver_dashboard.clear()
+            st.success(
+                "Futártörzs frissítve Excel alapján: "
+                f"{master_sync.get('upserted', 0)} sor, "
+                f"kihagyva: {master_sync.get('skipped', 0)}."
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Futártörzs frissítés sikertelen: {exc}")
 
     if excel_action2.button(
         "Törlés",
