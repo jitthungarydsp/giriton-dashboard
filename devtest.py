@@ -3428,6 +3428,47 @@ def load_courier_salary_advance_requests(courier_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def load_salary_advance_requests_for_month(period_start: date, period_end: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_salary_advance_request")
+            .select("*")
+            .gte("start_date", period_start.isoformat())
+            .lte("start_date", period_end.isoformat())
+            .order("requested_at", desc=True)
+            .limit(1000)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, period_end: date) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty or "Courier ID" not in result.columns:
+        return result
+    requests = load_salary_advance_requests_for_month(period_start, period_end)
+    if requests.empty:
+        return result
+    open_statuses = {"requested", "approved"}
+    request_couriers = {
+        _courier_id_key(row.get("courier_id"))
+        for row in requests.to_dict("records")
+        if str(row.get("status") or "").strip().casefold() in open_statuses
+    }
+    request_couriers.discard("")
+    if not request_couriers:
+        return result
+    courier_ids = result["Courier ID"].map(_courier_id_key)
+    advance_mask = courier_ids.isin(request_couriers)
+    if "Státusz" in result.columns:
+        advance_mask = advance_mask & result["Státusz"].astype(str).ne("Kifizetve")
+    result.loc[advance_mask, "Státusz"] = "Új fizetés előleg"
+    return result
+
+
 def create_salary_advance_request(
     courier_id: str,
     courier_name: str,
@@ -3452,6 +3493,7 @@ def create_salary_advance_request(
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).execute()
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_requests_for_month.clear()
 
 
 def update_salary_advance_schedule(
@@ -3488,6 +3530,7 @@ def update_salary_advance_schedule(
     plan_id = str(request_row.get("plan_id") or "").strip()
     if not plan_id:
         load_courier_salary_advance_requests.clear()
+        load_salary_advance_requests_for_month.clear()
         return "Az igény ütemezése módosítva. Részlet-terv még nem jött létre."
 
     existing_installments = (
@@ -3559,6 +3602,7 @@ def update_salary_advance_schedule(
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", plan_id).execute()
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_requests_for_month.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return f"Az ütemezés módosítva. Lezárt részletek: {len(done_rows)}, új nyitott részletek: {len(new_amounts)}."
@@ -3601,6 +3645,7 @@ def approve_salary_advance_request(request_row: dict, courier_name: str) -> str:
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", request_id).execute()
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_requests_for_month.clear()
     return process_id
 
 
@@ -3639,6 +3684,7 @@ def mark_salary_advance_request_paid(request_row: dict, courier_name: str) -> st
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", request_id).execute()
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_requests_for_month.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     return plan_id
@@ -3713,6 +3759,7 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
     if process_id:
         delete_peopleforce_process_statuses(courier_id, document_month, process_id)
     load_courier_salary_advance_requests.clear()
+    load_salary_advance_requests_for_month.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     read_peopleforce_card_statuses.clear()
@@ -6808,6 +6855,7 @@ def status_meta(status: str) -> tuple[str,str]:
         "TIG-re vár":("status-purple","led-purple"),
         "TIG elfogadásra vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
+        "Új fizetés előleg":("status-yellow","led-yellow"),
         "Kifizetésre vár":("status-yellow","led-yellow"),
         "Kifizetve":("status-green","led-green"),
     }
@@ -12758,6 +12806,7 @@ def show_new_settlement_page() -> None:
     )
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
+    data = apply_salary_advance_request_status(data, balance_period_start, balance_period_end)
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
         and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
@@ -12789,6 +12838,7 @@ def show_new_settlement_page() -> None:
                 "Számlafeltöltésre vár",
                 "Számlaellenőrzésre vár",
                 "Bejelentések",
+                "Új fizetés előleg",
                 "Kifizetésre vár",
                 "Kifizetve",
             ],
@@ -13517,6 +13567,7 @@ def show_new_settlement_page() -> None:
         ("Számlafeltöltésre vár", "Futár számlafeltöltésére vár", "🟡"),
         ("Számlaellenőrzésre vár", "Admin ellenőrzésre vár", "🟡"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
+        ("Új fizetés előleg", "Előlegigénylés nyitva", "🟡"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
     ]
