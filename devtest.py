@@ -4221,7 +4221,7 @@ def build_excel_settlement_number_audit(session_id: str | None) -> dict[str, obj
     master_rows = (
         db.schema("public")
         .table("courier_master")
-        .select("courier_id,courier_name,warehouse_name,vat_status,insurance_status,employment_type,active")
+        .select("courier_id,courier_name")
         .limit(10000)
         .execute()
         .data
