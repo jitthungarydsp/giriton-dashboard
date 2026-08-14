@@ -13713,7 +13713,7 @@ def show_new_settlement_page() -> None:
         {"key": "salary_advance_requests", "label": "Új fizetés előleg", "column": "", "kind": "count"},
     ]
     metric_index_key = f"dashboard_metric_index_{balance_period_start:%Y%m}"
-    metric_filter_key = normalized_field_key(
+    metric_filter_key = _normalized_field_key(
         f"{branch}|{calculation_mode}|{warehouse}|{status}|{search}|{active_workflow_filter or ''}"
     )
     metric_result_key = f"dashboard_metric_result_{balance_period_start:%Y%m}_{selected_calculation_mode}_{selected_warehouse_label}_{metric_filter_key}"
