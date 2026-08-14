@@ -4209,7 +4209,7 @@ def build_excel_settlement_number_audit(session_id: str | None) -> dict[str, obj
     raw_rows = (
         db.schema("settlement")
         .table("jit_row")
-        .select("courier_id,driver_name,route_unique_id,is_route_primary")
+        .select("id,normalized_data,route_unique_id,is_route_primary")
         .eq("session_id", str(session_id))
         .limit(10000)
         .execute()
@@ -4243,8 +4243,39 @@ def build_excel_settlement_number_audit(session_id: str | None) -> dict[str, obj
     raw_courier_names: dict[str, str] = {}
     if not raw.empty:
         raw = raw.copy()
-        raw["_courier_id_lookup"] = raw.get("courier_id", pd.Series(dtype=object)).map(_courier_id_key)
-        raw["_courier_name_lookup"] = raw.get("driver_name", pd.Series(dtype=object)).map(_courier_match_key)
+        normalized = raw.get("normalized_data", pd.Series([{}] * len(raw), index=raw.index))
+        raw["_normalized_dict"] = normalized.map(lambda value: value if isinstance(value, dict) else {})
+        raw["_courier_id_lookup"] = raw["_normalized_dict"].map(
+            lambda value: _courier_id_key(
+                value.get("Courier ID")
+                or value.get("courier_id")
+                or value.get("CourierID")
+                or value.get("courierId")
+                or _courier_id_from_text(value.get("Driver") or value.get("driver_name") or "")
+            )
+        )
+        raw["_driver_name"] = raw["_normalized_dict"].map(
+            lambda value: str(
+                value.get("Driver")
+                or value.get("driver_name")
+                or value.get("Futár")
+                or value.get("futar")
+                or ""
+            ).strip()
+        )
+        raw["_route_unique_id"] = raw.apply(
+            lambda row: str(
+                row.get("route_unique_id")
+                or row.get("_normalized_dict", {}).get("Route Unique ID")
+                or row.get("_normalized_dict", {}).get("route_unique_id")
+                or row.get("_normalized_dict", {}).get("Route ID")
+                or row.get("_normalized_dict", {}).get("route_id")
+                or row.get("id")
+                or ""
+            ).strip(),
+            axis=1,
+        )
+        raw["_courier_name_lookup"] = raw["_driver_name"].map(_courier_match_key)
         raw["_lookup"] = raw["_courier_id_lookup"].where(raw["_courier_id_lookup"] != "", raw["_courier_name_lookup"])
         if "is_route_primary" in raw.columns:
             primary_raw = raw[raw["is_route_primary"].fillna(False).astype(bool)].copy()
@@ -4252,14 +4283,14 @@ def build_excel_settlement_number_audit(session_id: str | None) -> dict[str, obj
             primary_raw = raw.copy()
         if not primary_raw.empty:
             raw_route_counts = (
-                primary_raw.groupby("_lookup")["route_unique_id"]
+                primary_raw.groupby("_lookup")["_route_unique_id"]
                 .nunique(dropna=True)
                 .astype(int)
                 .to_dict()
             )
         raw_courier_names = (
             raw.drop_duplicates("_lookup", keep="first")
-            .set_index("_lookup")["driver_name"]
+            .set_index("_lookup")["_driver_name"]
             .fillna("")
             .astype(str)
             .to_dict()
