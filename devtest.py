@@ -22,10 +22,7 @@ from resources.settlement_processor import (
 )
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf, build_tig_breakdown, build_tig_pdf
-from resources.courier_master_db import (
-    sync_courier_master_from_excel_summary,
-    update_courier_master_profile,
-)
+from resources.courier_master_db import update_courier_master_profile
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -1074,6 +1071,21 @@ def _courier_match_key(value: object) -> str:
 def _courier_id_from_text(value: object) -> str:
     match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", str(value or ""))
     return match.group(1) if match else ""
+
+
+def sync_excel_session_to_courier_master(db, session_id: str | None) -> dict[str, int]:
+    try:
+        from resources import courier_master_db
+    except Exception as exc:
+        raise RuntimeError(f"A futártörzs modul nem tölthető be: {exc}") from exc
+
+    sync_function = getattr(courier_master_db, "sync_courier_master_from_excel_summary", None)
+    if not callable(sync_function):
+        raise RuntimeError(
+            "A futártörzs Excel-szinkron még nincs fent ezen a verzión. "
+            "Frissítsd a resources/courier_master_db.py fájlt is."
+        )
+    return sync_function(db, session_id)
 
 
 def _courier_id_key(value: object) -> str:
@@ -13339,7 +13351,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_settlement_summary.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
                 recalculate_excel_base_rates(get_db(), result["session_id"])
-                master_sync = sync_courier_master_from_excel_summary(
+                master_sync = sync_excel_session_to_courier_master(
                     get_db(),
                     result["session_id"],
                 )
@@ -13420,7 +13432,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
         help="A betöltött Excel session alapján felveszi/frissíti a futárokat a public.courier_master táblában.",
     ):
         try:
-            master_sync = sync_courier_master_from_excel_summary(
+            master_sync = sync_excel_session_to_courier_master(
                 get_db(),
                 excel_import_session_id,
             )
