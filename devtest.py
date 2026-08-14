@@ -13388,65 +13388,8 @@ def show_new_settlement_page() -> None:
 
     st.session_state["current_filtered_data"]=filtered.copy()
 
-    total_gross=int(filtered["Nettó bevétel"].sum()) if not filtered.empty else 0
-    total_deduction=int(filtered["Levonás"].sum()) if not filtered.empty else 0
-    total_payable=int(filtered["Kifizetendő"].sum()) if not filtered.empty else 0
     previous_period_start = add_months(balance_period_start, -1)
     previous_period_start, previous_period_end = month_bounds(previous_period_start)
-    previous_filtered = pd.DataFrame(columns=filtered.columns)
-    try:
-        previous_session_id = None
-        if str(selected_calculation_mode or "API").strip().casefold() == "excel":
-            previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
-        if str(selected_calculation_mode or "API").strip().casefold() == "api":
-            previous_session_id = load_latest_api_jit_session_id(previous_period_start, selected_warehouse_label)
-            if not previous_session_id:
-                raise RuntimeError("Nincs előző havi API session")
-        previous_data = build_settlement_working_data(
-            selected_calculation_mode,
-            previous_session_id,
-            previous_period_start,
-            selected_warehouse_label,
-        )
-        previous_data = apply_received_amounts(
-            previous_data,
-            selected_calculation_mode,
-            previous_period_start,
-            selected_warehouse_label,
-            previous_session_id,
-        )
-        previous_data = apply_imported_balance_components(
-            previous_data,
-            balance_component_session_id(selected_calculation_mode, previous_period_start, previous_session_id),
-        )
-        previous_data = apply_loyalty_bonus(previous_data, previous_period_start, previous_period_end, previous_session_id, selected_calculation_mode)
-        previous_data = apply_customer_rating_bonus(previous_data, previous_period_start, previous_period_end)
-        previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)
-        previous_data = apply_salary_advance_deduction(previous_data, previous_period_start, previous_period_end)
-        previous_data = recompute_payable_total(previous_data)
-        previous_data = apply_target_reserve_deductions(
-            previous_data,
-            previous_period_start,
-            previous_period_end,
-            previous_session_id,
-        )
-        previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
-        previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
-        previous_filtered = previous_data.copy()
-        if branch!="Összes":
-            previous_filtered=previous_filtered[previous_filtered["Branch"]==branch]
-        if calculation_mode!="Összes":
-            previous_filtered=previous_filtered[previous_filtered["Számítás módja"]==calculation_mode]
-        if warehouse!="Összes":
-            previous_filtered=previous_filtered[previous_filtered["Raktár"]==warehouse]
-        if status!="Összes":
-            previous_filtered=previous_filtered[previous_filtered["Státusz"]==status]
-        if search.strip():
-            previous_filtered = filter_couriers_by_search(previous_filtered, search)
-        if active_workflow_filter:
-            previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
-    except BaseException:
-        previous_filtered = pd.DataFrame(columns=filtered.columns)
 
     st.markdown(
         f"""
@@ -13494,7 +13437,6 @@ def show_new_settlement_page() -> None:
     else:
         st.caption("A havi nyitás a kiválasztott API/Excel forrásból publikálja ugyanazokat az értékeket az admin és futár mobil nézetbe.")
 
-    total_received = int(_numeric_series(filtered, "Alvállalkozói összeg").sum()) if not filtered.empty else 0
     if st.button(
         f"Mobil értékek tömeges frissítése ellenőrzéshez - {selected_month} ({len(filtered)} futár)",
         disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
@@ -13521,41 +13463,156 @@ def show_new_settlement_page() -> None:
         else:
             st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont és a szűrést.")
 
-    previous_total_payable = int(_numeric_series(previous_filtered, "Kifizetendő").sum()) if not previous_filtered.empty else 0
-    previous_total_received = int(_numeric_series(previous_filtered, "Alvállalkozói összeg").sum()) if not previous_filtered.empty else 0
-    payable_note = previous_month_delta_note(total_payable, previous_total_payable)
-    received_note = previous_month_delta_note(total_received, previous_total_received)
-    payable_percent = donut_percent(total_payable, previous_total_payable)
-    received_percent = donut_percent(total_received, previous_total_received)
-
-    st.markdown(
-        f"""
-        <div class="summary-donut-grid">
-        <div class="summary-donut-card">
-            <div>
-            <div class="summary-donut-title">Kifizetés összesen</div>
-            <div class="summary-donut-value">{format_huf(total_payable)}</div>
-            <div class="summary-donut-note">{html.escape(payable_note)}</div>
-            </div>
-            <div class="summary-donut summary-donut-primary" style="background: conic-gradient(#1FA64A 0 {payable_percent}%, #DDF5E4 {payable_percent}% 100%);">
-            <div class="summary-donut-center"><strong>{total_payable / 1_000_000:.1f} M</strong><span>Ft</span></div>
-            </div>
-        </div>
-
-        <div class="summary-donut-card">
-            <div>
-            <div class="summary-donut-title">Alvállalkozói összeg</div>
-            <div class="summary-donut-value">{format_huf(total_received)}</div>
-            <div class="summary-donut-note">{html.escape(received_note)}</div>
-            </div>
-            <div class="summary-donut summary-donut-secondary" style="background: conic-gradient(#17853B 0 {received_percent}%, #DDF5E4 {received_percent}% 100%);">
-            <div class="summary-donut-center"><strong>{total_received / 1_000_000:.1f} M</strong><span>Ft</span></div>
-            </div>
-        </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    metric_options = [
+        {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő", "kind": "huf"},
+        {"key": "contractor", "label": "Alvállalkozói összeg", "column": "Alvállalkozói összeg", "kind": "huf"},
+        {"key": "income", "label": "Összes bevétel", "column": "Nettó bevétel", "kind": "huf"},
+        {"key": "deduction", "label": "Összes levonás", "column": "Levonás", "kind": "huf"},
+        {"key": "couriers", "label": "Futárok száma", "column": "", "kind": "count"},
+        {"key": "salary_advance_requests", "label": "Új fizetés előleg", "column": "", "kind": "count"},
+    ]
+    metric_index_key = f"dashboard_metric_index_{balance_period_start:%Y%m}"
+    metric_filter_key = normalized_field_key(
+        f"{branch}|{calculation_mode}|{warehouse}|{status}|{search}|{active_workflow_filter or ''}"
     )
+    metric_result_key = f"dashboard_metric_result_{balance_period_start:%Y%m}_{selected_calculation_mode}_{selected_warehouse_label}_{metric_filter_key}"
+    current_metric_index = int(st.session_state.get(metric_index_key, 0) or 0) % len(metric_options)
+    selected_metric = metric_options[current_metric_index]
+
+    def filtered_metric_value(source: pd.DataFrame, metric: dict[str, str]) -> int:
+        metric_key = str(metric.get("key") or "")
+        if source.empty:
+            return 0
+        if metric_key == "couriers":
+            return int(len(source))
+        if metric_key == "salary_advance_requests":
+            return int((source.get("Státusz", pd.Series(dtype=str)).astype(str) == "Új fizetés előleg").sum())
+        column = str(metric.get("column") or "")
+        return int(_numeric_series(source, column).sum()) if column else 0
+
+    def calculate_previous_filtered_for_metric() -> pd.DataFrame:
+        previous_session_id = None
+        mode_key = str(selected_calculation_mode or "API").strip().casefold()
+        if mode_key == "excel":
+            previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
+        if mode_key == "api":
+            previous_session_id = load_latest_api_jit_session_id(previous_period_start, selected_warehouse_label)
+            if not previous_session_id:
+                return pd.DataFrame(columns=filtered.columns)
+        previous_data = build_settlement_working_data(
+            selected_calculation_mode,
+            previous_session_id,
+            previous_period_start,
+            selected_warehouse_label,
+        )
+        previous_data = apply_received_amounts(
+            previous_data,
+            selected_calculation_mode,
+            previous_period_start,
+            selected_warehouse_label,
+            previous_session_id,
+        )
+        previous_data = apply_imported_balance_components(
+            previous_data,
+            balance_component_session_id(selected_calculation_mode, previous_period_start, previous_session_id),
+        )
+        previous_data = apply_loyalty_bonus(previous_data, previous_period_start, previous_period_end, previous_session_id, selected_calculation_mode)
+        previous_data = apply_customer_rating_bonus(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_periodic_fee_corrections(
+            previous_data,
+            previous_session_id,
+            selected_calculation_mode,
+            previous_period_start,
+            previous_period_end,
+            selected_warehouse_label,
+        )
+        previous_data = apply_salary_advance_deduction(previous_data, previous_period_start, previous_period_end)
+        previous_data = recompute_payable_total(previous_data)
+        previous_data = apply_target_reserve_deductions(
+            previous_data,
+            previous_period_start,
+            previous_period_end,
+            previous_session_id,
+        )
+        previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
+        previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_salary_advance_request_status(previous_data, previous_period_start, previous_period_end)
+        previous_filtered = previous_data.copy()
+        if branch != "Összes":
+            previous_filtered = previous_filtered[previous_filtered["Branch"] == branch]
+        if calculation_mode != "Összes":
+            previous_filtered = previous_filtered[previous_filtered["Számítás módja"] == calculation_mode]
+        if warehouse != "Összes":
+            previous_filtered = previous_filtered[previous_filtered["Raktár"] == warehouse]
+        if status != "Összes":
+            previous_filtered = previous_filtered[previous_filtered["Státusz"] == status]
+        if search.strip():
+            previous_filtered = filter_couriers_by_search(previous_filtered, search)
+        if active_workflow_filter:
+            previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
+        return previous_filtered
+
+    st.markdown('<div class="section-title">Mutatók</div>', unsafe_allow_html=True)
+    nav_left, metric_body, nav_right = st.columns([1, 10, 1])
+    if nav_left.button("<", key=f"dashboard_metric_prev_{balance_period_start:%Y%m}", use_container_width=True):
+        st.session_state[metric_index_key] = (current_metric_index - 1) % len(metric_options)
+        st.session_state.pop(metric_result_key, None)
+        st.rerun()
+    if nav_right.button(">", key=f"dashboard_metric_next_{balance_period_start:%Y%m}", use_container_width=True):
+        st.session_state[metric_index_key] = (current_metric_index + 1) % len(metric_options)
+        st.session_state.pop(metric_result_key, None)
+        st.rerun()
+
+    with metric_body:
+        result = st.session_state.get(metric_result_key)
+        result_matches = bool(result and result.get("metric_key") == selected_metric["key"])
+        display_value = int(result.get("value", 0)) if result_matches else 0
+        display_note = str(result.get("note") or "Kattints a számításra a mutató frissítéséhez.") if result_matches else "Nincs kiszámolva"
+        display_percent = int(result.get("percent", 0)) if result_matches else 0
+        center_value = f"{display_value / 1_000_000:.1f} M" if selected_metric["kind"] == "huf" else str(display_value)
+        rendered_value = format_huf(display_value) if selected_metric["kind"] == "huf" else f"{display_value} db"
+        st.markdown(
+            f"""
+            <div class="summary-donut-card">
+                <div>
+                <div class="summary-donut-title">{html.escape(selected_metric["label"])}</div>
+                <div class="summary-donut-value">{html.escape(rendered_value) if result_matches else "-"}</div>
+                <div class="summary-donut-note">{html.escape(display_note)}</div>
+                </div>
+                <div class="summary-donut summary-donut-primary" style="background: conic-gradient(#1FA64A 0 {display_percent}%, #DDF5E4 {display_percent}% 100%);">
+                <div class="summary-donut-center"><strong>{html.escape(center_value) if result_matches else "-"}</strong><span>{'Ft' if selected_metric["kind"] == "huf" else 'db'}</span></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            f"{selected_metric['label']} számítása",
+            key=f"dashboard_metric_calculate_{balance_period_start:%Y%m}_{selected_metric['key']}",
+            use_container_width=True,
+            type="primary",
+        ):
+            current_value = filtered_metric_value(filtered, selected_metric)
+            try:
+                previous_filtered = calculate_previous_filtered_for_metric()
+                previous_value = filtered_metric_value(previous_filtered, selected_metric)
+            except BaseException:
+                previous_value = 0
+            note = (
+                previous_month_delta_note(current_value, previous_value)
+                if selected_metric["kind"] == "huf"
+                else (f"Előző hónap: {previous_value} db" if previous_value else "Előző hónap: nincs adat")
+            )
+            percent = donut_percent(current_value, previous_value)
+            st.session_state[metric_result_key] = {
+                "metric_key": selected_metric["key"],
+                "value": current_value,
+                "previous_value": previous_value,
+                "note": note,
+                "percent": percent,
+            }
+            st.rerun()
 
     st.markdown('<div class="section-title">Áttekintés</div>',unsafe_allow_html=True)
 
