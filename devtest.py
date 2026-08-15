@@ -13423,6 +13423,91 @@ def build_excel_export(df: pd.DataFrame, period_start: date | None = None, perio
         export_df.to_excel(writer, index=False, sheet_name="Elszámolások")
     return output.getvalue()
 
+
+def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None = None) -> bytes:
+    from io import BytesIO
+
+    columns = [
+        "Futár",
+        "Courier ID",
+        "Raktár",
+        "Adózás",
+        "Pénzügy végösszeg",
+        "TIG végösszeg",
+        "Kifizetésnél összeg",
+        "Eltérés Pénzügy - TIG",
+        "Eltérés TIG - Kifizetés",
+        "Ellenőrzés",
+    ]
+    rows: list[dict[str, object]] = []
+    if df is not None and not df.empty:
+        profile_by_id = _export_courier_profile_lookup()
+        for raw_row in df.to_dict("records"):
+            courier_key = _courier_id_key(_export_row_value(raw_row, {"Courier ID", "courier_id"}))
+            profile_row = profile_by_id.get(courier_key, {})
+            row = {**raw_row, **profile_row}
+            finance_total = parse_huf_value(_export_row_value(row, {
+                "Kifizetendő",
+                "Kifizetendo",
+                "Fizetendő",
+                "Fizetendo",
+                "payable",
+            }))
+            tip_total = parse_huf_value(_export_row_value(row, {"Borravaló", "Borravalo", "tip"}))
+            cash_total = abs(parse_huf_value(_export_row_value(row, {
+                "ATM hatás",
+                "ATM hatas",
+                "ATM levonás",
+                "ATM levonas",
+                "atm_effect",
+            })))
+            tig_total = tig_payment_total_from_payload(
+                tig_payment_payload_from_row(row, period_start),
+                payable=finance_total,
+                tip=tip_total,
+                cash=cash_total,
+            )
+            payment_value = _export_row_value(row, {
+                "Kifizetendő kifizetésre",
+                "Kifizetendo kifizetesre",
+                "Fizetendő kifizetésre",
+                "Fizetendo kifizetesre",
+            })
+            payment_total = (
+                parse_huf_value(payment_value)
+                if payment_value not in (None, "")
+                else effective_payment_total_from_row(row, period_start)
+            )
+            finance_tig_delta = finance_total - tig_total
+            tig_payment_delta = tig_total - payment_total
+            rows.append({
+                "Futár": _export_row_value(row, {"Futár", "Futar", "courier_name"}),
+                "Courier ID": courier_key,
+                "Raktár": _export_row_value(row, {"Raktár", "Raktar", "warehouse"}),
+                "Adózás": _export_tax_mode_label(row, period_start),
+                "Pénzügy végösszeg": round(finance_total),
+                "TIG végösszeg": round(tig_total),
+                "Kifizetésnél összeg": round(payment_total),
+                "Eltérés Pénzügy - TIG": round(finance_tig_delta),
+                "Eltérés TIG - Kifizetés": round(tig_payment_delta),
+                "Ellenőrzés": (
+                    "OK"
+                    if round(finance_tig_delta) == 0 and round(tig_payment_delta) == 0
+                    else "Eltérés"
+                ),
+            })
+    export_df = pd.DataFrame(rows, columns=columns)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False, sheet_name="Penzugy_TIG_Kifizetes")
+        worksheet = writer.sheets["Penzugy_TIG_Kifizetes"]
+        for idx, column in enumerate(export_df.columns, start=1):
+            sample_values = [str(column)] + [str(value) for value in export_df[column].head(200).tolist()]
+            width = min(max(len(value) for value in sample_values) + 2, 42)
+            worksheet.column_dimensions[worksheet.cell(row=1, column=idx).column_letter].width = width
+    return output.getvalue()
+
 def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
     if data.empty:
         return []
@@ -14689,7 +14774,7 @@ def show_new_settlement_page() -> None:
         show_courier_dialog()
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
-    a,b,c,d,e=st.columns(5)
+    a,b,c,d,e,f=st.columns(6)
     if a.button("Tömeges elszámolás",use_container_width=True):
         show_bulk_settlement_dialog()
     if b.button("Tömeges TIG",use_container_width=True):
@@ -14702,6 +14787,13 @@ def show_new_settlement_page() -> None:
         "Export Excel",
         data=build_excel_export(filtered, balance_period_start, balance_period_end),
         file_name="elszamolas_export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    f.download_button(
+        "Penzugy/TIG/Kifizetes Excel",
+        data=build_payment_tig_audit_export(filtered, balance_period_start),
+        file_name=f"penzugy_tig_kifizetes_ellenorzes_{balance_period_start:%Y_%m}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
