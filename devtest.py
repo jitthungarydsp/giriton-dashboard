@@ -14870,11 +14870,11 @@ def show_new_settlement_page() -> None:
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
     start_label = (
         f"Havi elszámolási időszak indítása - {selected_month} "
-        f"({len(monthly_document_plan)} futár)"
+        f"({len(filtered)} futár)"
     )
     if st.button(
         start_label,
-        disabled=selected_calculation_mode not in {"API", "Excel"} or not monthly_document_plan,
+        disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
         help="A futar PWA-ban megkapja az elszamolasi idoszakot. Mar inditott honapnal is ujrapublikalja a mobil ertekeket.",
