@@ -1637,8 +1637,11 @@ function renderDocumentPanel(action, title, stepNumber) {
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
   const accepted = state.workflow?.states?.[action]?.status === "done";
   const documentStep = workflowStep(`${action}_document`);
-  const locked = Boolean(documentStep.locked) && !(action === "tig" && readOnly && state.workflow?.tigBreakdown?.available);
   const breakdown = state.workflow?.financialBreakdown || {};
+  const tig = state.workflow?.tigBreakdown || {};
+  const settlementVisibleData = action === "settlement" && !isExtraWorkflow() && (Boolean(breakdown.available) || documents.length > 0);
+  const tigVisibleData = action === "tig" && !isExtraWorkflow() && (Boolean(tig.available) || documents.length > 0);
+  const locked = Boolean(documentStep.locked) && !settlementVisibleData && !tigVisibleData;
   const useLegacySettlementDocument = action === "settlement" && !breakdown.available && documents.length > 0;
   const waitingTitle = action === "settlement"
     ? "Várakozás az elszámolás elkészítésére"
@@ -1668,7 +1671,6 @@ function renderDocumentPanel(action, title, stepNumber) {
     return;
   }
   if (action === "tig" && !isExtraWorkflow()) {
-    const tig = state.workflow?.tigBreakdown || {};
     const tigReady = Boolean(tig.available);
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
@@ -1751,10 +1753,20 @@ function activeWorkflowPanel() {
 }
 
 function showOnlyWorkflowPanel(panelId) {
-  const showAdminPreviewTig = Boolean(state.workflow?.viewerReadOnly && state.workflow?.tigBreakdown?.available);
+  const docs = state.workflow?.documents || {};
+  const showSettlement = !isExtraWorkflow() && (
+    Boolean(state.workflow?.financialBreakdown?.available)
+    || Boolean((docs.settlement || []).length)
+  );
+  const showTig = !isExtraWorkflow() && (
+    Boolean(state.workflow?.tigBreakdown?.available)
+    || Boolean((docs.tig || []).length)
+  );
   ["settlement-panel", "tig-panel", "invoice-submit-panel", "invoice-check-panel"].forEach((id) => {
     const panel = $(`#${id}`);
-    const visible = id === panelId || (showAdminPreviewTig && id === "tig-panel");
+    const visible = id === panelId
+      || (showSettlement && id === "settlement-panel")
+      || (showTig && id === "tig-panel");
     if (panel) panel.classList.toggle("hidden", !visible);
   });
 }

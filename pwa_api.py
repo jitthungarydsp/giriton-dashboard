@@ -5150,9 +5150,17 @@ def build_workflow(
         and str((states.get("individual_monthly_billing") or {}).get("status") or "").lower()
         in {"open", "done"}
     )
+    monthly_workflow_visible = (
+        not process_id
+        and any(
+            str((states.get(action) or {}).get("status") or "").lower() in {"open", "done"}
+            for action in ("settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment")
+        )
+    )
     amount_access = (
         legacy_unrestricted_month
         or individual_monthly_billing_open
+        or monthly_workflow_visible
         or (can_view_financial_amounts(user) if can_view_amounts is None else bool(can_view_amounts))
     )
     financial_breakdown = build_financial_breakdown(
