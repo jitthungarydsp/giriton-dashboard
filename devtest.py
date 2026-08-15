@@ -6773,6 +6773,29 @@ def _merged_imported_payload(row: dict[str, object]) -> dict[str, object]:
     return payload
 
 
+def _load_imported_table_rows(table_names: tuple[str, ...], session_id: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    seen_signatures: set[str] = set()
+    for table_name in table_names:
+        try:
+            table_rows = (
+                get_db().schema("settlement").table(table_name).select("*")
+                .eq("session_id", session_id).execute().data or []
+            )
+        except BaseException:
+            continue
+        for row in table_rows:
+            try:
+                signature = json.dumps(row, sort_keys=True, default=str)
+            except TypeError:
+                signature = str(row)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            rows.append(row)
+    return rows
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     """Read the separate Excel bonus, penalty and ATM sheets for one session."""
@@ -6785,19 +6808,19 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        "bonus_route_row": (
+        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): (
             "Importált bónusz",
             ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total"),
             ("bonus", "bonusz", "amount", "osszeg", "total", "huf"),
             False,
         ),
-        "penalty_row": (
+        ("penalty_row", "bill_jitt_invoice_penalties", "jitt_invoice_penalties"): (
             "Importált málusz",
             ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas"),
             ("amount", "osszeg", "penalty", "malus", "levonas", "huf"),
             True,
         ),
-        "atm_balance_row": (
+        ("atm_balance_row",): (
             "Importált ATM levonás",
             ("walletdeductions", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
             ("wallet", "deduction", "balance", "egyenleg", "atm", "cash", "amount", "osszeg"),
@@ -6805,12 +6828,8 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
         ),
     }
     records: list[dict[str, object]] = []
-    for table_name, (output_column, exact_amount_keys, amount_tokens, use_absolute) in definitions.items():
-        try:
-            rows = (get_db().schema("settlement").table(table_name).select("*")
-                    .eq("session_id", session_id).execute().data or [])
-        except BaseException:
-            continue
+    for table_names, (output_column, exact_amount_keys, amount_tokens, use_absolute) in definitions.items():
+        rows = _load_imported_table_rows(table_names, session_id)
         for row in rows:
             payload = _merged_imported_payload(row)
             if not isinstance(payload, dict):
@@ -6875,20 +6894,12 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        "bonus_route_row": ("Kiflis bónusz", 1, ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total")),
-        "penalty_row": ("Kiflis malus", -1, ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas")),
+        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): ("Kiflis bónusz", 1, ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total")),
+        ("penalty_row", "bill_jitt_invoice_penalties", "jitt_invoice_penalties"): ("Kiflis malus", -1, ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas")),
     }
     rows_out: list[dict[str, object]] = []
-    for table_name, (label, sign, amount_keys) in definitions.items():
-        try:
-            rows = (
-                get_db().schema("settlement").table(table_name)
-                .select("*")
-                .eq("session_id", session_id)
-                .execute().data or []
-            )
-        except BaseException:
-            continue
+    for table_names, (label, sign, amount_keys) in definitions.items():
+        rows = _load_imported_table_rows(table_names, session_id)
         for source_row in rows:
             payload = _merged_imported_payload(source_row)
             if not isinstance(payload, dict):
