@@ -6873,10 +6873,13 @@ def load_imported_balance_component_items(session_id: str | None, courier_id: st
     selected = pd.DataFrame(columns=rows.columns)
     if target_id and "courier_id_key" in rows:
         selected = rows[rows["courier_id_key"].astype(str).eq(target_id)]
-    if selected.empty and target_name and "courier_name_key" in rows:
-        selected = rows[rows["courier_name_key"].astype(str).eq(target_name)]
+    if target_name and "courier_name_key" in rows:
+        by_name = rows[rows["courier_name_key"].astype(str).eq(target_name)]
+        if not by_name.empty:
+            selected = pd.concat([selected, by_name], ignore_index=True, sort=False)
     if selected.empty:
         return pd.DataFrame(columns=columns)
+    selected = selected.drop_duplicates(subset=columns)
     return selected[columns].reset_index(drop=True)
 
 
@@ -6913,12 +6916,17 @@ def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None
         empty_values = pd.Series(float("nan"), index=result.index, dtype="float64")
         by_id = result["_courier_id_component_key"].map(component_by_id[column]) if column in component_by_id else empty_values
         by_name = result["_courier_name_component_key"].map(component_by_name[column]) if column in component_by_name else empty_values
-        result[column] = by_id.fillna(by_name).fillna(0.0)
+        result[column] = by_id.mask(
+            by_id.fillna(0.0).eq(0.0) & by_name.fillna(0.0).ne(0.0),
+            by_name,
+        ).fillna(by_name).fillna(0.0)
     for column in component_note_columns:
         empty_values = pd.Series("", index=result.index, dtype="object")
         by_id = result["_courier_id_component_key"].map(component_by_id[column]) if column in component_by_id else empty_values
         by_name = result["_courier_name_component_key"].map(component_by_name[column]) if column in component_by_name else empty_values
-        result[column] = by_id.fillna(by_name).fillna("").astype(str)
+        by_id_text = by_id.fillna("").astype(str).str.strip()
+        by_name_text = by_name.fillna("").astype(str).str.strip()
+        result[column] = by_id_text.mask(by_id_text.eq("") & by_name_text.ne(""), by_name_text).fillna("").astype(str)
     result["Bónusz"] = _numeric_series(result, "Bónusz") + result["Importált bónusz"]
     result["Levonás"] = _numeric_series(result, "Levonás") + result["Importált málusz"] + result["Importált ATM levonás"]
     return result.drop(columns=["_courier_id_component_key", "_courier_name_component_key"])

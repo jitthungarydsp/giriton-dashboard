@@ -2424,9 +2424,9 @@ def build_financial_breakdown_from_mobile_rows(
     kiflis_detail_items = detail_items(
         ("kiflis_bonus_", "kiflis_malus_"),
         [],
-        exclude_keys={"kiflis_bonus_malus"},
+        exclude_keys={"kiflis_bonus_malus", "kiflis_bonus_total", "kiflis_malus_total"},
     )
-    kiflis_items = kiflis_detail_items or detail_items((), ["monthly_bonus", "monthly_malus"])
+    kiflis_items = kiflis_detail_items or detail_items((), ["kiflis_bonus_total", "kiflis_malus_total", "monthly_bonus", "monthly_malus"])
     jitt_detail_items = detail_items(("jitt_bonus_", "jitt_malus_"), [])
     jitt_items = list(jitt_detail_items)
     for current in jitt_items:
@@ -2638,6 +2638,19 @@ def imported_balance_value(payload: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def normalize_imported_courier_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.fullmatch(r"#?\s*(\d{3,10})(?:[,.]0+)?", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"#\s*(\d{3,10})", text)
+    if match:
+        return match.group(1)
+    return text if re.fullmatch(r"\d{3,10}", text) else ""
+
+
 def imported_balance_note(payload: dict[str, Any]) -> str:
     parts = [
         clean_note_part(imported_balance_value(payload, "Malus name")),
@@ -2663,7 +2676,7 @@ def imported_balance_matches_courier(payload: dict[str, Any], courier_id: str, c
         "Driver ID",
         "User ID",
     )
-    if courier_id and str(payload_id or "").strip() == str(courier_id).strip():
+    if courier_id and normalize_imported_courier_id(payload_id) == normalize_imported_courier_id(courier_id):
         return True
     payload_name = imported_balance_value(
         payload,
