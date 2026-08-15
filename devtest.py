@@ -6247,33 +6247,19 @@ def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_da
     )
     grouped["name_key"] = grouped["driver_name"].map(_courier_match_key)
     grouped["completed_routes"] = grouped["courier_id"].map(routes_by_id).fillna(grouped["name_key"].map(routes_by_name)).fillna(0).astype(int)
-    route_type_counts = load_customer_rating_route_type_counts(
-        str(st.session_state.get("settlement_import_session_id") or "").strip()
-    )
     route_records: list[dict[str, object]] = []
     for _, row in grouped.iterrows():
-        route_counts: dict[str, int] = {}
-        if not route_type_counts.empty:
-            matches = route_type_counts.loc[route_type_counts["driver_key"] == row["name_key"]]
-            route_counts = {
-                str(match["route_type"]): int(match["completed_routes"] or 0)
-                for _, match in matches.iterrows()
-            }
-        if not route_counts:
-            route_counts = {"normal": int(row["completed_routes"] or 0)}
-        elif int(row["completed_routes"] or 0) > 0 and sum(route_counts.values()) != int(row["completed_routes"] or 0):
-            route_counts = {"normal": int(row["completed_routes"] or 0)}
-        for route_type, completed_routes in route_counts.items():
-            if completed_routes <= 0:
-                continue
-            bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, route_type)
-            route_records.append({
-                **row.to_dict(),
-                "route_type": route_type,
-                "completed_routes": completed_routes,
-                "bonus_per_route_huf": bonus_per_route,
-                "bonus_total_huf": bonus_per_route * completed_routes,
-            })
+        completed_routes = int(row["completed_routes"] or 0)
+        if completed_routes <= 0:
+            continue
+        bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, "normal")
+        route_records.append({
+            **row.to_dict(),
+            "route_type": "normal",
+            "completed_routes": completed_routes,
+            "bonus_per_route_huf": bonus_per_route,
+            "bonus_total_huf": bonus_per_route * completed_routes,
+        })
     grouped = pd.DataFrame(route_records)
     if grouped.empty:
         raise ValueError("Nem található számolható Normál vagy Express túra az ügyfélértékeléshez.")
@@ -10444,8 +10430,10 @@ def show_courier_dialog() -> None:
                         selected_rating["Darab"] = pd.to_numeric(selected_rating.get("completed_routes", 0), errors="coerce").fillna(0.0).astype(int)
                         selected_rating["Egységösszeg"] = pd.to_numeric(selected_rating.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
                         selected_rating["Összeg"] = pd.to_numeric(selected_rating.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
-                        if route_total > int(selected_rating["Darab"].sum()) and len(selected_rating) == 1:
-                            rating_idx = selected_rating.index[0]
+                        if route_total > int(selected_rating["Darab"].sum()):
+                            positive_rows = selected_rating.loc[selected_rating["Egységösszeg"].astype(float).ne(0.0)]
+                            rating_idx = positive_rows.index[0] if not positive_rows.empty else selected_rating.index[0]
+                            selected_rating.loc[selected_rating.index != rating_idx, ["Darab", "Összeg"]] = 0
                             rating_rules = load_customer_rating_rules_for_month(period_start, period_end)
                             route_type_value = selected_rating.at[rating_idx, "Túratípus"]
                             unit_amount = customer_rating_rule_amount(
