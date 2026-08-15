@@ -6788,6 +6788,76 @@ def parse_huf_value(value: object) -> float:
         return 0.0
 
 
+def tig_payment_total_from_payload(
+    courier_payload: dict[str, object],
+    *,
+    payable: object,
+    tip: object = 0,
+    cash: object = 0,
+) -> float:
+    payable_value = parse_huf_value(payable)
+    if payable_value <= 0:
+        return payable_value
+    try:
+        breakdown = build_tig_breakdown(
+            courier_payload,
+            {
+                "payable": payable_value,
+                "tip": parse_huf_value(tip),
+                "cash": abs(parse_huf_value(cash)),
+            },
+        )
+        final_total = parse_huf_value(breakdown.get("finalTotalHuf"))
+        return final_total if final_total else payable_value
+    except Exception:
+        return payable_value
+
+
+def tig_payment_payload_from_profile(
+    profile: dict[str, object],
+    *,
+    courier_id: object,
+    courier_name: object,
+    period_start: date | None,
+) -> dict[str, object]:
+    return {
+        "name": courier_name,
+        "company_name": profile.get("company_name") or courier_name,
+        "address": profile.get("address") or "",
+        "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+        "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+        "vat_status": profile.get("vat_status") or "",
+        "employment_type": profile.get("employment_type") or "",
+        "employment_status": profile.get("employment_status") or "",
+        "efo_status": profile.get("efo_status") or "",
+        "email": profile.get("email") or "",
+        "id": courier_id,
+        "document_month": period_start,
+    }
+
+
+def tig_payment_payload_from_row(row: pd.Series | dict[str, object], period_start: date | None) -> dict[str, object]:
+    return {
+        "id": _export_row_value(row, {"Courier ID", "courier_id"}),
+        "name": _export_row_value(row, {"Futár", "Futar", "courier_name"}),
+        "tax_number": _export_row_value(row, {"Adószám", "Adoszam", "tax_number"}),
+        "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus", "Szamla tipus"}),
+        "vat_status": _export_row_value(row, {"FA státusz", "AFA státusz", "AFA status", "vat_status"}),
+        "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz", "EFO statusz"}),
+        "efo_status": _export_row_value(row, {"EFO státusz", "EFO statusz", "efo_status"}),
+        "document_month": period_start,
+    }
+
+
+def effective_payment_total_from_row(row: pd.Series | dict[str, object], period_start: date | None) -> float:
+    return tig_payment_total_from_payload(
+        tig_payment_payload_from_row(row, period_start),
+        payable=_export_row_value(row, {"Kifizetendő", "Kifizetendo", "Fizetendő", "Fizetendo", "payable"}),
+        tip=_export_row_value(row, {"Borravaló", "Borravalo", "tip"}),
+        cash=_export_row_value(row, {"ATM hatás", "ATM hatas", "ATM levonás", "ATM levonas", "atm_effect"}),
+    )
+
+
 def month_options(count: int = 24) -> list[str]:
     names = ["január","február","március","április","május","június","július","augusztus","szeptember","október","november","december"]
     today = date.today()
@@ -9164,7 +9234,8 @@ def render_table(df: pd.DataFrame) -> None:
             cols[2].caption("Van" if insurance_active else "Nincs")
             cols[3].caption(format_huf(loyalty_total) if loyalty_total else "Nem kap")
             cols[4].caption(str(row.get("Raktár") or "-"))
-            cols[5].markdown(f"**{format_huf(row['Kifizetendő'])}**")
+            display_payable = row.get("Kifizetendő kifizetésre", row.get("Kifizetendő"))
+            cols[5].markdown(f"**{format_huf(display_payable)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
             cols[6].markdown(
@@ -10935,6 +11006,17 @@ def show_courier_dialog() -> None:
             workflow_statuses = pd.DataFrame()
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
+        monthly_payment_amount = tig_payment_total_from_payload(
+            tig_payment_payload_from_profile(
+                profile,
+                courier_id=courier_id,
+                courier_name=courier_name,
+                period_start=period_start,
+            ),
+            payable=payable_total,
+            tip=tip_total,
+            cash=abs(atm_deduction_total),
+        )
 
         process_ids = {""}
         if not workflow_statuses.empty:
@@ -11047,9 +11129,7 @@ def show_courier_dialog() -> None:
                 "amount": (
                     request_amount
                     if request_item
-                    else invoice_amount or (
-                        payable_total if not process_id else 0
-                    )
+                    else (monthly_payment_amount if not process_id else invoice_amount or 0)
                 ),
                 "status": (
                     "Lezárva"
@@ -13869,6 +13949,11 @@ def show_new_settlement_page() -> None:
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     data = apply_salary_advance_request_status(data, balance_period_start, balance_period_end)
+    if not data.empty:
+        data["Kifizetendő kifizetésre"] = data.apply(
+            lambda item: effective_payment_total_from_row(item, balance_period_start),
+            axis=1,
+        )
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
         and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
