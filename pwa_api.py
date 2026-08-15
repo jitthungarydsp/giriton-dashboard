@@ -2324,6 +2324,14 @@ def build_financial_breakdown_from_mobile_rows(
                 result.append(current)
         return result
 
+    def summary_money_item(key: str, label: str, *row_keys: str, note: str = "Havi összesítő adat") -> dict[str, Any] | None:
+        if item(key):
+            return None
+        amount = money_from(row, *row_keys)
+        if not amount:
+            return None
+        return signed_item(key, label, amount, note=note)
+
     def detail_items(
         prefixes: tuple[str, ...],
         explicit_keys: list[str],
@@ -2408,6 +2416,28 @@ def build_financial_breakdown_from_mobile_rows(
         "monthly_bonus",
         "manual_bonus",
     ])
+    summary_fallbacks = [
+        summary_money_item("base", "Alapdíj", "base_huf", "base_fee_huf", "base_total_huf"),
+        summary_money_item("tip", "Borravaló", "tip_huf", "tips_huf", "tip_total_huf"),
+        summary_money_item("delay_bonus", "Késedelmi díj", "delay_bonus_huf", "delay_huf"),
+        summary_money_item("compliance_bonus", "Túramegfelelés", "compliance_bonus_huf", "compliance_huf"),
+    ]
+    summary_fallback_by_key = {
+        str(fallback.get("key") or ""): fallback
+        for fallback in summary_fallbacks
+        if fallback
+    }
+    for fallback in summary_fallbacks:
+        if fallback and not any(str(current.get("key") or "") == fallback["key"] for current in income_items):
+            income_items.append(fallback)
+    if not base_items and summary_fallback_by_key.get("base"):
+        base_items = [summary_fallback_by_key["base"]]
+    delay_items = money_items(["delay_bonus"])
+    if not delay_items and summary_fallback_by_key.get("delay_bonus"):
+        delay_items = [summary_fallback_by_key["delay_bonus"]]
+    compliance_items = money_items(["compliance_bonus"])
+    if not compliance_items and summary_fallback_by_key.get("compliance_bonus"):
+        compliance_items = [summary_fallback_by_key["compliance_bonus"]]
     if customer_rating_items:
         insert_after = next(
             (index + 1 for index, current in enumerate(income_items) if current.get("key") == "loyalty_bonus"),
@@ -2508,6 +2538,15 @@ def build_financial_breakdown_from_mobile_rows(
     kiflis_items = kiflis_detail_items or detail_items((), ["monthly_bonus", "monthly_malus"])
     jitt_detail_items = detail_items(("jitt_bonus_", "jitt_malus_"), [])
     jitt_items = list(jitt_detail_items)
+    for current in jitt_items:
+        key = str(current.get("key") or "")
+        note = clean_note_part(current.get("note"))
+        if key.startswith("jitt_malus_"):
+            current["label"] = str(current.get("label") or "JITT malus")
+            if not note:
+                current["note"] = "JITT/DB levonás részlete nincs megadva."
+        elif key.startswith("jitt_bonus_"):
+            current["label"] = str(current.get("label") or "JITT bónusz")
     has_jitt_bonus_detail = any(str(current.get("key") or "").startswith("jitt_bonus_") for current in jitt_items)
     has_jitt_malus_detail = any(str(current.get("key") or "").startswith("jitt_malus_") for current in jitt_items)
     for fallback_key, has_detail in [("manual_bonus", has_jitt_bonus_detail), ("manual_malus", has_jitt_malus_detail)]:
@@ -2563,6 +2602,9 @@ def build_financial_breakdown_from_mobile_rows(
         jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
     if not jitt_total:
         jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
+    base_total = mobile_override_amount(overrides, "base") or sum(money_int(current.get("amountHuf")) for current in base_items)
+    delay_total = mobile_override_amount(overrides, "delay_bonus") or sum(money_int(current.get("amountHuf")) for current in delay_items)
+    compliance_total = mobile_override_amount(overrides, "compliance_bonus") or sum(money_int(current.get("amountHuf")) for current in compliance_items)
 
     cards = [
         {
@@ -2578,9 +2620,9 @@ def build_financial_breakdown_from_mobile_rows(
             ],
         },
         {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
-        {"key": "base", "label": "Alapd\u00edj", "amountHuf": mobile_override_amount(overrides, "base"), "tone": "income", "items": base_items},
-        {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": mobile_override_amount(overrides, "delay_bonus"), "tone": "income", "items": money_items(["delay_bonus"])},
-        {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": mobile_override_amount(overrides, "compliance_bonus"), "tone": "income", "items": money_items(["compliance_bonus"])},
+        {"key": "base", "label": "Alapd\u00edj", "amountHuf": base_total, "tone": "income", "items": base_items},
+        {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": delay_total, "tone": "income", "items": delay_items},
+        {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": compliance_total, "tone": "income", "items": compliance_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
         {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items or ([customer_rating_item] if customer_rating_item else [])},
@@ -3211,10 +3253,7 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             "note": "Kifizetendő összeg borravaló nélkül.",
         })
     if tip_amount:
-        if tax_mode == "vat":
-            tip_net, tip_vat, tip_gross, tip_vat_label = tig_split_amount(tip_amount, tax_mode)
-        else:
-            tip_net, tip_vat, tip_gross, tip_vat_label = tip_amount, 0, tip_amount, "Adómentes"
+        tip_net, tip_vat, tip_gross, tip_vat_label = tip_amount, 0, tip_amount, "Adómentes"
         rows.append({
             "key": "tip",
             "label": "Borravaló",
