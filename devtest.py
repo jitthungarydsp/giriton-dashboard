@@ -6220,21 +6220,8 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
                 dashboard_routes = int(routes_by_id.loc[courier_id_key] or 0)
             elif driver_key and driver_key in routes_by_name.index:
                 dashboard_routes = int(routes_by_name.loc[driver_key] or 0)
-            stored_routes = int(group["completed_routes"].sum())
-            if dashboard_routes > stored_routes and not group.empty:
-                positive_bonus = group.loc[group["bonus_per_route_huf"].astype(float).ne(0.0)]
-                idx = positive_bonus.index[0] if not positive_bonus.empty else group.index[0]
-                group.loc[group.index != idx, ["completed_routes", "bonus_total_huf"]] = 0
-                unit_amount = parse_huf_value(group.at[idx, "bonus_per_route_huf"])
-                if not unit_amount:
-                    unit_amount = customer_rating_rule_amount(
-                        parse_huf_value(group.at[idx, "average_rating"]),
-                        rules,
-                        group.at[idx, "route_type"] if "route_type" in group.columns else "normal",
-                    )
-                group.at[idx, "completed_routes"] = dashboard_routes
-                group.at[idx, "bonus_per_route_huf"] = unit_amount
-                group.at[idx, "bonus_total_huf"] = dashboard_routes * unit_amount
+            if dashboard_routes > 0 and not group.empty:
+                group = recalculate_customer_rating_rows(group, dashboard_routes, period_start, period_end, rules)
             adjusted_rows.extend(group.to_dict("records"))
         rating_rows = pd.DataFrame(adjusted_rows) if adjusted_rows else rating_rows
     by_id = rating_rows.groupby("courier_id")["bonus_total_huf"].sum()
@@ -6267,6 +6254,51 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     return result
 
 
+def recalculate_customer_rating_rows(
+    selected: pd.DataFrame,
+    route_total: int,
+    period_start: date,
+    period_end: date,
+    rules: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    rows = selected.copy()
+    if rows.empty:
+        return rows
+
+    if rules is None:
+        rules = load_customer_rating_rules_for_month(period_start, period_end)
+
+    if "route_type" not in rows.columns:
+        rows["route_type"] = "normal"
+    if "average_rating" not in rows.columns:
+        rows["average_rating"] = 0.0
+
+    rows["completed_routes"] = pd.to_numeric(rows.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
+    rows["bonus_per_route_huf"] = pd.to_numeric(rows.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
+    rows["bonus_total_huf"] = pd.to_numeric(rows.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+
+    for idx in rows.index:
+        unit_amount = customer_rating_rule_amount(
+            parse_huf_value(rows.at[idx, "average_rating"]),
+            rules,
+            rows.at[idx, "route_type"],
+        )
+        if not unit_amount:
+            unit_amount = parse_huf_value(rows.at[idx, "bonus_per_route_huf"])
+        rows.at[idx, "bonus_per_route_huf"] = unit_amount
+
+    route_count = int(route_total or 0)
+    stored_routes = int(rows["completed_routes"].sum())
+    if route_count > 0 and route_count != stored_routes:
+        positive_rows = rows.loc[rows["bonus_per_route_huf"].astype(float).ne(0.0)]
+        rating_idx = positive_rows.index[0] if not positive_rows.empty else rows.index[0]
+        rows.loc[rows.index != rating_idx, ["completed_routes", "bonus_total_huf"]] = 0
+        rows.at[rating_idx, "completed_routes"] = route_count
+
+    rows["bonus_total_huf"] = rows["completed_routes"] * rows["bonus_per_route_huf"]
+    return rows
+
+
 def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object, route_total: int, period_start: date, period_end: date) -> float:
     rating_rows = load_customer_rating_bonus_rows(period_start, period_end)
     if rating_rows.empty:
@@ -6282,25 +6314,8 @@ def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object
     if selected.empty:
         return 0.0
 
-    selected["completed_routes"] = pd.to_numeric(selected.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
-    selected["bonus_per_route_huf"] = pd.to_numeric(selected.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
-    selected["bonus_total_huf"] = pd.to_numeric(selected.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
-    stored_total = float(selected["bonus_total_huf"].sum())
-    route_count = int(route_total or 0)
-    if route_count <= int(selected["completed_routes"].sum()):
-        return stored_total
-
-    positive_rows = selected.loc[selected["bonus_per_route_huf"].astype(float).ne(0.0)]
-    rating_idx = positive_rows.index[0] if not positive_rows.empty else selected.index[0]
-    unit_amount = parse_huf_value(selected.at[rating_idx, "bonus_per_route_huf"])
-    if not unit_amount:
-        rules = load_customer_rating_rules_for_month(period_start, period_end)
-        unit_amount = customer_rating_rule_amount(
-            parse_huf_value(selected.at[rating_idx, "average_rating"]),
-            rules,
-            selected.at[rating_idx, "route_type"] if "route_type" in selected.columns else "normal",
-        )
-    return float(route_count * unit_amount)
+    selected = recalculate_customer_rating_rows(selected, int(route_total or 0), period_start, period_end)
+    return float(selected["bonus_total_huf"].sum())
 
 
 def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
@@ -10543,6 +10558,12 @@ def show_courier_dialog() -> None:
                     if selected_rating.empty and courier_name_lookup:
                         selected_rating = rating_rows.loc[rating_rows["_courier_name_lookup"].eq(courier_name_lookup)].copy()
                     if not selected_rating.empty:
+                        selected_rating = recalculate_customer_rating_rows(
+                            selected_rating,
+                            route_total,
+                            period_start,
+                            period_end,
+                        )
                         selected_rating["Tétel"] = "Ügyfélértékelési bónusz"
                         selected_rating["Túratípus"] = selected_rating.get("route_type", pd.Series("", index=selected_rating.index)).map(
                             lambda value: {"normal": "Normál", "express": "Expressz", "regional": "Regionális", "any": "Bármely"}.get(str(value or "").strip().casefold(), str(value or "").strip() or "-")
@@ -10551,22 +10572,6 @@ def show_courier_dialog() -> None:
                         selected_rating["Darab"] = pd.to_numeric(selected_rating.get("completed_routes", 0), errors="coerce").fillna(0.0).astype(int)
                         selected_rating["Egységösszeg"] = pd.to_numeric(selected_rating.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
                         selected_rating["Összeg"] = pd.to_numeric(selected_rating.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
-                        if route_total > int(selected_rating["Darab"].sum()):
-                            positive_rows = selected_rating.loc[selected_rating["Egységösszeg"].astype(float).ne(0.0)]
-                            rating_idx = positive_rows.index[0] if not positive_rows.empty else selected_rating.index[0]
-                            selected_rating.loc[selected_rating.index != rating_idx, ["Darab", "Összeg"]] = 0
-                            rating_rules = load_customer_rating_rules_for_month(period_start, period_end)
-                            route_type_value = selected_rating.at[rating_idx, "Túratípus"]
-                            unit_amount = customer_rating_rule_amount(
-                                float(selected_rating.at[rating_idx, "Értékelés"] or 0.0),
-                                rating_rules,
-                                route_type_value,
-                            )
-                            if not unit_amount:
-                                unit_amount = float(selected_rating.at[rating_idx, "Egységösszeg"] or 0.0)
-                            selected_rating.at[rating_idx, "Darab"] = route_total
-                            selected_rating.at[rating_idx, "Egységösszeg"] = unit_amount
-                            selected_rating.at[rating_idx, "Összeg"] = route_total * unit_amount
                         selected_rating["Számítás"] = selected_rating.apply(
                             lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}" if item["Egységösszeg"] else format_huf(item["Összeg"]),
                             axis=1,
