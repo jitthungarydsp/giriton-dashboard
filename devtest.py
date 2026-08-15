@@ -6184,6 +6184,20 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     courier_ids = result["Courier ID"].map(_courier_id_key)
     courier_names = result["Futár"].map(_courier_match_key)
     rating_bonus = courier_ids.map(by_id).fillna(courier_names.map(by_name)).fillna(0.0)
+    rating_bonus = pd.Series(
+        [
+            resolve_customer_rating_bonus_total(
+                row.get("Courier ID"),
+                row.get("Futár"),
+                int(parse_huf_value(row.get("Kör"))),
+                period_start,
+                period_end,
+            ) or bonus
+            for bonus, (_, row) in zip(rating_bonus.tolist(), result.iterrows())
+        ],
+        index=result.index,
+        dtype="float64",
+    )
     result["Ügyfélértékelés"] = rating_bonus
     result["Bónusz"] = _numeric_series(result, "Bónusz") + rating_bonus
     result["Kifizetendő"] = (
