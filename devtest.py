@@ -10877,7 +10877,7 @@ def show_courier_dialog() -> None:
             {"Művelet": "-", "Tétel": "Fizetés előleg", "Összeg": salary_advance_total},
             {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
             {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
-            {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": tig_display_total},
+            {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": payable_total},
         ])
         payable_sources = payable_sources.loc[
             payable_sources["Összeg"].ne(0) | payable_sources["Művelet"].eq("=")
