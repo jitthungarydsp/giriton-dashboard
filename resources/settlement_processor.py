@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any, Iterable, Sequence
 
 from supabase import Client
@@ -22,6 +23,7 @@ from resources.settlement_parser import (
     ImportedExcelRow,
     ParsedSheet,
     is_empty_row,
+    normalize_text,
 )
 
 
@@ -97,6 +99,16 @@ TYPE_TO_TARGET_TABLE = {
     "bonus_routes": "bonus_route_row",
     "performance_indicator": "performance_indicator_row",
 }
+
+PENALTIES_SHEET_NAME = "penalties"
+PENALTY_POSITIONAL_HEADERS = (
+    "Warehouse",
+    "Date",
+    "Name",
+    "Comment",
+    "Comment 2",
+    "Value",
+)
 
 
 @dataclass
@@ -195,6 +207,17 @@ def _parse_localized_decimal(value: Any) -> Decimal | None:
         return None
 
 
+def _parse_money_decimal(value: Any) -> Decimal | None:
+    """Parse amount-like cells that may contain currency text."""
+
+    if not isinstance(value, str):
+        return _parse_localized_decimal(value)
+
+    cleaned = re.sub(r"(?i)\b(huf|ft)\b", "", value)
+    cleaned = cleaned.replace("\u00a0", " ").strip()
+    return _parse_localized_decimal(cleaned)
+
+
 def _decimal_to_json_number(value: Decimal, prefer_integer: bool) -> int | float:
     """Convert Decimal to a JSON-serializable numeric value."""
 
@@ -262,6 +285,110 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         else:
             normalized[key] = _normalize_scalar(key, value)
     return normalized
+
+
+def _clean_text(value: Any) -> str | None:
+    """Return stripped text or None for empty cells."""
+
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_penalty_date(value: Any) -> str | None:
+    """Normalize penalty dates from Excel or raw imported JSON."""
+
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+
+    text = _clean_text(value)
+    if not text:
+        return None
+
+    normalized_text = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized_text).date().isoformat()
+    except ValueError:
+        pass
+
+    for date_format in (
+        *DATE_FORMATS,
+        "%d. %m. %Y",
+        "%d. %m.%Y",
+        "%d.%m. %Y",
+    ):
+        try:
+            return datetime.strptime(text, date_format).date().isoformat()
+        except ValueError:
+            continue
+
+    return text
+
+
+def _build_penalty_position_fallback_rows(
+    processing_run_id: str,
+    session_id: str,
+    sheet_name: str,
+    source_rows: Sequence[ImportedExcelRow],
+) -> list[dict[str, Any]]:
+    """Build penalty rows from the raw six-column Penalties sheet layout."""
+
+    if normalize_text(sheet_name) != PENALTIES_SHEET_NAME:
+        return []
+
+    normalized_rows: list[dict[str, Any]] = []
+    for source_row in sorted(source_rows, key=lambda row: row.source_row_no):
+        data = source_row.data or {}
+        courier_name = _clean_text(data.get("column_3"))
+        amount = _parse_money_decimal(data.get("column_6"))
+
+        if not courier_name or amount is None:
+            continue
+
+        amount_value = _decimal_to_json_number(abs(amount), prefer_integer=True)
+        penalty_date = _parse_penalty_date(data.get("column_2"))
+        penalty_type = _clean_text(data.get("column_4"))
+        note = _clean_text(data.get("column_5"))
+        warehouse = _clean_text(data.get("column_1"))
+
+        normalized_data = {
+            "warehouse": warehouse,
+            "worksheet_name": warehouse,
+            "penalty_date": penalty_date,
+            "date": penalty_date,
+            "courier_name": courier_name,
+            "driver_name": courier_name,
+            "penalty_type": penalty_type,
+            "malus_name": penalty_type,
+            "comment": penalty_type,
+            "note": note,
+            "comment_2": note,
+            "amount_huf": amount_value,
+            "penalty_huf": amount_value,
+            "malus_huf": amount_value,
+            "value": amount_value,
+            "source_sheet": sheet_name,
+            "source_row_no": source_row.source_row_no,
+        }
+
+        normalized_rows.append(
+            {
+                "processing_run_id": processing_run_id,
+                "session_id": session_id,
+                "source_sheet": sheet_name,
+                "source_row_no": source_row.source_row_no,
+                "normalized_data": _normalize_record(
+                    {
+                        key: value
+                        for key, value in normalized_data.items()
+                        if value is not None
+                    }
+                ),
+            }
+        )
+
+    return normalized_rows
 
 
 def _table(client: Client, table_name: str) -> Any:
@@ -723,6 +850,41 @@ def _process_sheet(
 
     analysis = analyze_and_parse_sheet(sheet_name, source_rows)
     parsed = analysis.parsed_sheet
+    penalty_fallback_rows = _build_penalty_position_fallback_rows(
+        processing_run_id,
+        session_id,
+        sheet_name,
+        source_rows,
+    )
+
+    if penalty_fallback_rows and (
+        parsed is None
+        or (
+            parsed.sheet_type in {"penalties", "penalty"}
+            and not parsed.records
+        )
+    ):
+        return (
+            SheetProcessingReport(
+                sheet_name=sheet_name,
+                detected_type="penalties",
+                header_row=None,
+                confidence=0.8,
+                total_rows=len(source_rows),
+                accepted_rows=len(penalty_fallback_rows),
+                rejected_rows=max(len(source_rows) - len(penalty_fallback_rows), 0),
+                status="completed",
+                details={
+                    "parser_name": "penalties_position_fallback",
+                    "target_table": "penalty_row",
+                    "headers": list(PENALTY_POSITIONAL_HEADERS),
+                    "raw_row_count": len(source_rows),
+                },
+            ),
+            [],
+            "penalty_row",
+            penalty_fallback_rows,
+        )
 
     if parsed is None:
         issue = ValidationIssue(
