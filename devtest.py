@@ -1620,6 +1620,19 @@ def load_mobile_breakdown_overrides(courier_id: str, period_start: date) -> pd.D
     return pd.DataFrame(rows)
 
 
+def load_mobile_breakdown_overrides_for_period(period_start: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("mobile_settlement_breakdown_overrides")
+            .select("courier_id,item_key,amount_value")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=["courier_id", "item_key", "amount_value"])
+    return pd.DataFrame(rows)
+
+
 def save_mobile_breakdown_overrides(
     courier_id: str,
     period_start: date,
@@ -2084,6 +2097,8 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
         }
     for item in tig_breakdown.get("rows") or []:
         item_key = f"tig_{item.get('key') or ''}"
+        if item_key == "tig_cash_deduction":
+            continue
         override = override_map.get(item_key, {})
         item_label = str(override.get("item_label") or item.get("label") or item_key)
         if item_key == "tig_transfer_service":
@@ -2110,6 +2125,34 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
     return pd.DataFrame(rows, columns=["Kulcs", "MegnevezĂ©s", "TĂ­pus", "Ă‰rtĂ©k", "MegjegyzĂ©s"])
 
 
+def mobile_tig_rows_from_breakdown(tig_breakdown: dict[str, object]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for item in tig_breakdown.get("rows") or []:
+        item_key = f"tig_{item.get('key') or ''}"
+        if item_key == "tig_cash_deduction":
+            continue
+        item_label = str(item.get("label") or item_key)
+        if item_key == "tig_transfer_service":
+            item_label = "Szállítási díj (494107) - átutalás"
+        elif item_key == "tig_cash_service":
+            item_label = "Szállítási díj (494107) - készpénz"
+        rows.append({
+            "item_key": item_key,
+            "item_label": item_label,
+            "amount_kind": "huf",
+            "amount_value": parse_huf_value(item.get("grossHuf")),
+            "note": str(item.get("note") or ""),
+        })
+    rows.append({
+        "item_key": "tig_final_total",
+        "item_label": "TIG végösszeg",
+        "amount_kind": "huf",
+        "amount_value": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
+        "note": "TIG elfogadásnál látható végösszeg",
+    })
+    return rows
+
+
 def publish_mobile_settlement_snapshot(
     data: pd.DataFrame,
     period_start: date,
@@ -2131,6 +2174,7 @@ def publish_mobile_settlement_snapshot(
         return 0, 0
     courier_count = 0
     row_count = 0
+    profile_by_id = _export_courier_profile_lookup()
     for item in data.to_dict("records"):
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
@@ -2166,6 +2210,21 @@ def publish_mobile_settlement_snapshot(
         except Exception:
             pass
         rows = recalculate_mobile_breakdown_totals(rows)
+        profile_row = profile_by_id.get(courier_id, {})
+        tig_breakdown = build_tig_breakdown(
+            tig_payment_payload_from_profile(
+                profile_row,
+                courier_id=courier_id,
+                courier_name=str(item.get("FutĂˇr") or item.get("FutÄ‚Ë‡r") or ""),
+                period_start=period_start,
+            ),
+            {
+                "payable": _mobile_breakdown_amount(rows, "payable"),
+                "tip": _mobile_breakdown_amount(rows, "tip"),
+                "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
+            },
+        )
+        rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
             row_count += len(rows)
@@ -2184,6 +2243,7 @@ def refresh_mobile_settlement_breakdown_snapshot(
         return 0, 0
     courier_count = 0
     row_count = 0
+    profile_by_id = _export_courier_profile_lookup()
     for item in data.to_dict("records"):
         courier_id = _courier_id_key(item.get("Courier ID"))
         if not courier_id:
@@ -2219,6 +2279,21 @@ def refresh_mobile_settlement_breakdown_snapshot(
         except Exception:
             pass
         rows = recalculate_mobile_breakdown_totals(rows)
+        profile_row = profile_by_id.get(courier_id, {})
+        tig_breakdown = build_tig_breakdown(
+            tig_payment_payload_from_profile(
+                profile_row,
+                courier_id=courier_id,
+                courier_name=str(item.get("FutĂˇr") or item.get("FutÄ‚Ë‡r") or ""),
+                period_start=period_start,
+            ),
+            {
+                "payable": _mobile_breakdown_amount(rows, "payable"),
+                "tip": _mobile_breakdown_amount(rows, "tip"),
+                "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
+            },
+        )
+        rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
             row_count += len(rows)
@@ -13507,6 +13582,121 @@ def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None =
             width = min(max(len(value) for value in sample_values) + 2, 42)
             worksheet.column_dimensions[worksheet.cell(row=1, column=idx).column_letter].width = width
     return output.getvalue()
+
+def build_payment_tig_audit_export(df: pd.DataFrame, period_start: date | None = None) -> bytes:
+    from io import BytesIO
+
+    columns = [
+        "Futár",
+        "Courier ID",
+        "Raktár",
+        "Adózás",
+        "Pénzügy végösszeg",
+        "TIG végösszeg",
+        "Kifizetésnél összeg",
+        "PWA végösszeg",
+        "PWA TIG végösszeg",
+        "Eltérés Pénzügy - TIG",
+        "Eltérés TIG - Kifizetés",
+        "Eltérés Pénzügy - PWA",
+        "Eltérés TIG - PWA TIG",
+        "Ellenőrzés",
+    ]
+    rows: list[dict[str, object]] = []
+    if df is not None and not df.empty:
+        profile_by_id = _export_courier_profile_lookup()
+        mobile_values_by_id: dict[str, dict[str, float]] = {}
+        if period_start:
+            mobile_rows = load_mobile_breakdown_overrides_for_period(period_start)
+            if isinstance(mobile_rows, pd.DataFrame) and not mobile_rows.empty:
+                mobile_rows = mobile_rows.copy()
+                mobile_rows["_courier_id_lookup"] = mobile_rows["courier_id"].map(_courier_id_key)
+                for courier_key, part in mobile_rows.groupby("_courier_id_lookup", dropna=False):
+                    if not courier_key:
+                        continue
+                    value_map: dict[str, float] = {}
+                    for mobile_item in part.to_dict("records"):
+                        item_key = str(mobile_item.get("item_key") or "")
+                        if item_key in {"payable", "tig_final_total"}:
+                            value_map[item_key] = parse_huf_value(mobile_item.get("amount_value"))
+                    mobile_values_by_id[str(courier_key)] = value_map
+
+        for raw_row in df.to_dict("records"):
+            courier_key = _courier_id_key(_export_row_value(raw_row, {"Courier ID", "courier_id"}))
+            profile_row = profile_by_id.get(courier_key, {})
+            row = {**raw_row, **profile_row}
+            finance_total = parse_huf_value(_export_row_value(row, {
+                "Kifizetendő",
+                "Kifizetendo",
+                "Fizetendő",
+                "Fizetendo",
+                "payable",
+            }))
+            tip_total = parse_huf_value(_export_row_value(row, {"Borravaló", "Borravalo", "tip"}))
+            cash_total = abs(parse_huf_value(_export_row_value(row, {
+                "ATM hatás",
+                "ATM hatas",
+                "ATM levonás",
+                "ATM levonas",
+                "atm_effect",
+            })))
+            tig_total = tig_payment_total_from_payload(
+                tig_payment_payload_from_row(row, period_start),
+                payable=finance_total,
+                tip=tip_total,
+                cash=cash_total,
+            )
+            payment_value = _export_row_value(row, {
+                "Kifizetendő kifizetésre",
+                "Kifizetendo kifizetesre",
+                "Fizetendő kifizetésre",
+                "Fizetendo kifizetesre",
+            })
+            payment_total = (
+                parse_huf_value(payment_value)
+                if payment_value not in (None, "")
+                else effective_payment_total_from_row(row, period_start)
+            )
+            mobile_values = mobile_values_by_id.get(courier_key, {})
+            pwa_payable = mobile_values.get("payable")
+            pwa_tig_total = mobile_values.get("tig_final_total")
+            finance_tig_delta = finance_total - tig_total
+            tig_payment_delta = tig_total - payment_total
+            finance_pwa_delta = None if pwa_payable is None else finance_total - pwa_payable
+            tig_pwa_delta = None if pwa_tig_total is None else tig_total - pwa_tig_total
+            checks = [round(finance_tig_delta), round(tig_payment_delta)]
+            if finance_pwa_delta is not None:
+                checks.append(round(finance_pwa_delta))
+            if tig_pwa_delta is not None:
+                checks.append(round(tig_pwa_delta))
+            rows.append({
+                "Futár": _export_row_value(row, {"Futár", "Futar", "courier_name"}),
+                "Courier ID": courier_key,
+                "Raktár": _export_row_value(row, {"Raktár", "Raktar", "warehouse"}),
+                "Adózás": _export_tax_mode_label(row, period_start),
+                "Pénzügy végösszeg": round(finance_total),
+                "TIG végösszeg": round(tig_total),
+                "Kifizetésnél összeg": round(payment_total),
+                "PWA végösszeg": "" if pwa_payable is None else round(pwa_payable),
+                "PWA TIG végösszeg": "" if pwa_tig_total is None else round(pwa_tig_total),
+                "Eltérés Pénzügy - TIG": round(finance_tig_delta),
+                "Eltérés TIG - Kifizetés": round(tig_payment_delta),
+                "Eltérés Pénzügy - PWA": "" if finance_pwa_delta is None else round(finance_pwa_delta),
+                "Eltérés TIG - PWA TIG": "" if tig_pwa_delta is None else round(tig_pwa_delta),
+                "Ellenőrzés": "OK" if all(value == 0 for value in checks) else "Eltérés",
+            })
+
+    export_df = pd.DataFrame(rows, columns=columns)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False, sheet_name="Penzugy_TIG_Kifizetes")
+        worksheet = writer.sheets["Penzugy_TIG_Kifizetes"]
+        for idx, column in enumerate(export_df.columns, start=1):
+            sample_values = [str(column)] + [str(value) for value in export_df[column].head(200).tolist()]
+            width = min(max(len(value) for value in sample_values) + 2, 42)
+            worksheet.column_dimensions[worksheet.cell(row=1, column=idx).column_letter].width = width
+    return output.getvalue()
+
 
 def build_monthly_period_document_plan(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
     if data.empty:

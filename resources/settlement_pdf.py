@@ -154,9 +154,13 @@ def _tig_cash_net_deduction(cash_amount_huf: Any, courier: dict[str, Any]) -> in
 
 
 def _tig_service_amount_without_cash_and_tip(amounts: dict[str, float], courier: dict[str, Any]) -> int:
+    explicit_service = amounts.get("service") or amounts.get("service_amount") or amounts.get("transfer_service")
+    if explicit_service is not None:
+        return max(_int_money(explicit_service), 0)
     payable = max(_int_money(amounts.get("payable")), 0)
     tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
-    return max(payable - tip, 0)
+    cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
+    return max(payable + cash - tip, 0)
 
 
 def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> dict[str, Any]:
@@ -173,7 +177,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         service_net, service_vat, service_gross = service, 0, service
         cash_net, cash_vat, cash_gross = cash, 0, cash
         tax_label = "AAM"
-    final_total = service_gross + tip
+    final_total = max(service_gross + tip - cash_gross, 0)
     rows = [
         {
             "key": "transfer_service",
