@@ -1782,10 +1782,29 @@ def read_courier_display_name(courier_id: str) -> str:
     return str((rows[0] if rows else {}).get("courier_name") or "").strip()
 
 
+def embedded_courier_id(value: Any) -> str:
+    match = re.search(r"(?<!\d)(\d{4,6})(?!\d)", str(value or ""))
+    return match.group(1) if match else ""
+
+
 def resolve_preview_courier(query: str) -> tuple[str, str]:
     target = str(query or "").strip()
     if not target:
         return "", ""
+    target_id = target if target.isdigit() else embedded_courier_id(target)
+    if target_id:
+        rows = optional_supabase_rows(
+            "courier_master",
+            params={
+                "select": "courier_id,courier_name",
+                "courier_id": f"eq.{target_id}",
+                "limit": "1",
+            },
+        )
+        if rows:
+            row = rows[0]
+            return str(row.get("courier_id") or target_id).strip(), str(row.get("courier_name") or target).strip()
+        return target_id, target
     rows = optional_supabase_rows(
         "courier_master",
         params={
