@@ -6435,6 +6435,8 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         ],
         "rating_count": ["ertekelesdb", "ratingcount", "darab", "count"],
     }
+    recognized_simple_months: set[str] = set()
+    recognized_simple_sheets: list[str] = []
     for simple_sheet in excel_file.sheet_names:
         simple_raw = pd.read_excel(excel_file, sheet_name=simple_sheet)
         simple_columns = {_normalized_field_key(column): column for column in simple_raw.columns}
@@ -6447,6 +6449,7 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         if not required_simple.issubset(simple_resolved):
             continue
 
+        recognized_simple_sheets.append(simple_sheet)
         month_start = billing_month.replace(day=1)
         simple_data = simple_raw.copy()
         month_text = simple_data[simple_resolved["billing_month"]].astype(str).str.strip()
@@ -6454,6 +6457,11 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
             month_text.where(month_text.str.len() > 7, month_text + "-01"),
             errors="coerce",
         ).dt.date
+        recognized_simple_months.update(
+            value.replace(day=1).isoformat()
+            for value in parsed_months.dropna().unique()
+            if pd.notna(value)
+        )
         simple_data["billing_month"] = parsed_months.map(lambda value: value.replace(day=1) if pd.notna(value) else None)
         simple_data = simple_data.loc[simple_data["billing_month"] == month_start].copy()
         if simple_data.empty:
@@ -6486,6 +6494,13 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         "",
     )
     if not monthly_sheet:
+        if recognized_simple_sheets:
+            available_months = ", ".join(sorted(recognized_simple_months)) or "nincs felismerhető hónap"
+            raise ValueError(
+                "Az ügyfélértékelés havi sablon felismerhető, de nincs sor a kiválasztott hónapra. "
+                f"Kiválasztott hónap: {billing_month.replace(day=1).isoformat()}; "
+                f"Excelben talált hónapok: {available_months}."
+            )
         try:
             uploaded_file.seek(0)
         except Exception:
