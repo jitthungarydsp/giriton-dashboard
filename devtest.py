@@ -6741,13 +6741,21 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
                 None,
             )
-            amount_value = next((normalized_payload.get(key) for key in exact_amount_keys if key in normalized_payload), None)
-            if amount_value is None:
-                amount_value = next(
-                    (value for key, value in normalized_payload.items()
-                    if any(token in key for token in amount_tokens)),
-                    None,
-                )
+            amount_value = None
+            for key in exact_amount_keys:
+                if key not in normalized_payload:
+                    continue
+                candidate = normalized_payload.get(key)
+                if parse_huf_value(candidate):
+                    amount_value = candidate
+                    break
+                if amount_value is None:
+                    amount_value = candidate
+            if not parse_huf_value(amount_value):
+                for key, value in normalized_payload.items():
+                    if any(token in key for token in amount_tokens) and parse_huf_value(value):
+                        amount_value = value
+                        break
             note_value = next(
                 (
                     value for key, value in normalized_payload.items()
@@ -6836,12 +6844,21 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
                  if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
                 "",
             ))
-            amount_value = next((normalized_payload.get(key) for key in amount_keys if key in normalized_payload), None)
-            if amount_value is None:
-                amount_value = next(
-                    (value for key, value in normalized_payload.items() if any(token in key for token in amount_keys)),
-                    None,
-                )
+            amount_value = None
+            for key in amount_keys:
+                if key not in normalized_payload:
+                    continue
+                candidate = normalized_payload.get(key)
+                if parse_huf_value(candidate):
+                    amount_value = candidate
+                    break
+                if amount_value is None:
+                    amount_value = candidate
+            if not parse_huf_value(amount_value):
+                for key, value in normalized_payload.items():
+                    if any(token in key for token in amount_keys) and parse_huf_value(value):
+                        amount_value = value
+                        break
             amount = abs(parse_huf_value(amount_value))
             if not amount:
                 continue
