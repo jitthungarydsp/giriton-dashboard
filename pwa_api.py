@@ -2443,9 +2443,6 @@ def build_financial_breakdown_from_mobile_rows(
         jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
     correction_items = detail_items(("correction_periodic_",), [])
     correction_total = sum(money_int(current.get("amountHuf")) for current in correction_items)
-    income_total = override_amount_or("income", sum(money_int(current.get("amountHuf")) for current in income_items))
-    deduction_total = override_amount_or("deductions", sum(money_int(current.get("amountHuf")) for current in deduction_items))
-    payable = override_amount_or("payable", income_total + deduction_total + correction_total)
     tip_items = money_items(["tip"])
     tip_total = override_amount_or("tip", sum(money_int(current.get("amountHuf")) for current in tip_items))
     performance_items = [
@@ -2467,6 +2464,33 @@ def build_financial_breakdown_from_mobile_rows(
     delay_total = override_amount_or("delay_bonus", sum(money_int(current.get("amountHuf")) for current in delay_items))
     compliance_total = override_amount_or("compliance_bonus", sum(money_int(current.get("amountHuf")) for current in compliance_items))
     customer_rating_total = override_amount_or("customer_rating", sum(money_int(current.get("amountHuf")) for current in customer_rating_items))
+    loyalty_total = mobile_override_amount(overrides, "loyalty_bonus")
+    atm_total = mobile_override_amount(overrides, "atm_effect")
+    salary_advance_total = mobile_override_amount(overrides, "salary_advance")
+    other_deduction_total = mobile_override_amount(overrides, "other_deduction")
+
+    income_total = sum(
+        amount
+        for amount in (
+            base_total,
+            tip_total,
+            delay_total,
+            compliance_total,
+            loyalty_total,
+            customer_rating_total,
+        )
+        if amount > 0
+    )
+    deduction_total = 0
+    for adjustment_total in (kiflis_total, jitt_total):
+        if adjustment_total >= 0:
+            income_total += adjustment_total
+        else:
+            deduction_total += adjustment_total
+    for deduction_amount in (atm_total, insurance_total, salary_advance_total, other_deduction_total):
+        if deduction_amount < 0:
+            deduction_total += deduction_amount
+    payable = income_total + deduction_total + correction_total
 
     cards = [
         {
@@ -2487,11 +2511,11 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": delay_total, "tone": "income", "items": delay_items},
         {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": compliance_total, "tone": "income", "items": compliance_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
-        {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
+        {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": loyalty_total, "tone": "income", "items": money_items(["loyalty_bonus"])},
         {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
-        {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": mobile_override_amount(overrides, "atm_effect"), "tone": "deduction", "items": money_items(["atm_effect"])},
+        {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": atm_total, "tone": "deduction", "items": money_items(["atm_effect"])},
         {"key": "insurance", "label": "Biztos\u00edt\u00e1s", "amountHuf": insurance_total, "tone": "deduction", "items": insurance_items},
         {"key": "corrections", "label": "Korrekci\u00f3k", "amountHuf": correction_total, "tone": "info", "items": correction_items},
         {"key": "performance", "label": "Teljes\u00edtm\u00e9ny", "amountHuf": mobile_override_amount(overrides, "performance"), "amountKind": "count", "tone": "info", "items": performance_items},
