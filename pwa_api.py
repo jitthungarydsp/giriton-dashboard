@@ -3336,7 +3336,8 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     other_income = money_from(row, "other_income_huf")
     other_deduction = money_from(row, "other_deduction_huf") or -abs(money_from(row, "other_expense_huf"))
     instructor_fee = money_from(row, "instructor_fee_huf")
-    payable = money_from(row, "payable_total_huf", "payable_huf")
+    payable_from_summary = money_from(row, "payable_total_huf", "payable_huf")
+    payable = payable_from_summary
 
     manual_adjustment_rows = read_courier_manual_adjustments(courier_id, month, period_end)
     manual_adjustments = manual_adjustment_totals(manual_adjustment_rows)
@@ -3578,7 +3579,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
             ]
     payable = refresh_payable_card_totals(
         cards,
-        keep_payable_override=is_manual_mobile_override(overrides.get("payable")),
+        keep_payable_override=bool(payable_from_summary) or is_manual_mobile_override(overrides.get("payable")),
     )
     complaint_excluded_keys = {
         "delay_bonus",

@@ -10445,14 +10445,15 @@ def show_courier_dialog() -> None:
         mobile_income_total = (
             base_total + tip_total + delay_total + compliance_total
             + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
-            + correction_income_total
         )
         mobile_deduction_total = -(
             mobile_monthly_malus + atm_deduction_total + other_expense_total
-            + correction_deduction_total + salary_advance_total + reserve_addition_total + insurance_fee_total
+            + salary_advance_total + reserve_addition_total + insurance_fee_total
         )
+        mobile_correction_total = correction_income_total - correction_deduction_total
+        mobile_payable_total = mobile_income_total + mobile_deduction_total + mobile_correction_total
         mobile_default_rows = pd.DataFrame([
-            {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable_total, "note": "Valós elszámolási adat"},
+            {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": mobile_payable_total, "note": "Valós elszámolási adat"},
             {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": mobile_income_total, "note": "Valós elszámolási adat"},
             {"item_key": "deductions", "item_label": "Levonások összesen", "amount_kind": "huf", "amount_value": mobile_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "performance", "item_label": "Teljesítmény", "amount_kind": "count", "amount_value": order_total, "note": "Valós elszámolási adat"},
@@ -10462,7 +10463,7 @@ def show_courier_dialog() -> None:
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
-            {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": correction_total, "note": "Valós elszámolási adat"},
+            {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": mobile_correction_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction_income", "item_label": "Korrekció +", "amount_kind": "huf", "amount_value": correction_income_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction_deduction", "item_label": "Korrekció -", "amount_kind": "huf", "amount_value": -correction_deduction_total, "note": "Valós elszámolási adat"},
             {"item_key": "kiflis_bonus_malus", "item_label": "Kiflis levonások / bónuszok", "amount_kind": "huf", "amount_value": kiflis_bonus_malus_effect, "note": "Excel import tételek összesen"},

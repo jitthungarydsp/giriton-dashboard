@@ -155,11 +155,8 @@ def _tig_cash_net_deduction(cash_amount_huf: Any, courier: dict[str, Any]) -> in
 
 def _tig_service_amount_without_cash_and_tip(amounts: dict[str, float], courier: dict[str, Any]) -> int:
     payable = max(_int_money(amounts.get("payable")), 0)
-    cash = max(_int_money(amounts.get("cash") or amounts.get("cash_amount")), 0)
     tip = max(_int_money(amounts.get("tip") or amounts.get("tip_amount")), 0)
-    cash_net = _tig_cash_net_deduction(cash, courier)
-    cash_vat_adjustment = cash_net if _tig_kind(courier) == "vat" else 0
-    return max(payable + cash - tip - cash_vat_adjustment, 0)
+    return max(payable - tip, 0)
 
 
 def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> dict[str, Any]:
@@ -209,6 +206,15 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
             "grossHuf": cash_gross,
             "vatLabel": "27%" if vat_payer else "AAM",
             "note": "Külön KP sor, nem növeli az átutalásos végösszeget.",
+        })
+        rows.append({
+            "key": "cash_deduction",
+            "label": "KP levonás",
+            "netHuf": -cash_net,
+            "vatHuf": -cash_vat,
+            "grossHuf": -cash_gross,
+            "vatLabel": "Levonás",
+            "note": "A futárnál maradt KP levonása.",
         })
     return {
         "available": payable > 0 or bool(rows),
