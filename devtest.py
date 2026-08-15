@@ -1542,28 +1542,7 @@ def load_latest_api_jit_session_id(period_start: date, warehouse_label: str | No
 def settlement_mobile_session_for_mode(calculation_mode: str, period_start: date, warehouse_label: str | None) -> str | None:
     normalized_mode = str(calculation_mode or "API").strip().casefold()
     if normalized_mode == "excel":
-        _, period_end = month_bounds(period_start)
-        try:
-            rows = (
-                get_db()
-                .schema("settlement")
-                .table("jit_row")
-                .select("session_id,source_sheet,created_at")
-                .gte("route_date", period_start.isoformat())
-                .lte("route_date", period_end.isoformat())
-                .order("created_at", desc=True)
-                .limit(10000)
-                .execute()
-                .data
-                or []
-            )
-            for row in rows:
-                source_sheet = str(row.get("source_sheet") or "")
-                if not source_sheet.lower().startswith("api financial overview"):
-                    return str(row["session_id"])
-            return None
-        except BaseException:
-            return None
+        return load_latest_excel_jit_session_id(period_start)
     if normalized_mode == "api":
         return load_latest_api_jit_session_id(period_start, warehouse_label)
     return None
@@ -14884,14 +14863,18 @@ def show_new_settlement_page() -> None:
             balance_period_start,
             selected_warehouse_label,
         )
-        courier_count, row_count = publish_mobile_settlement_snapshot(
-            filtered,
-            balance_period_start,
-            selected_calculation_mode,
-            selected_warehouse_label,
-            snapshot_session_id,
-            str(st.session_state.get("user", {}).get("username") or "unknown"),
-        )
+        if selected_calculation_mode in {"API", "Excel"} and not snapshot_session_id:
+            st.error("Nincs publikálható API/Excel forrás ehhez a hónaphoz. Töltsd be vagy válaszd ki újra a számítást.")
+            st.stop()
+        with st.spinner("Havi elszámolás publikálása a futár PWA felé..."):
+            courier_count, row_count = publish_mobile_settlement_snapshot(
+                filtered,
+                balance_period_start,
+                selected_calculation_mode,
+                selected_warehouse_label,
+                snapshot_session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
         if courier_count:
             st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True
             st.success(f"Havi elszámolási időszak elindítva: {courier_count} futár, {row_count} mobil érték publikálva.")
@@ -14915,14 +14898,18 @@ def show_new_settlement_page() -> None:
             balance_period_start,
             selected_warehouse_label,
         )
-        courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
-            filtered,
-            balance_period_start,
-            selected_calculation_mode,
-            selected_warehouse_label,
-            snapshot_session_id,
-            str(st.session_state.get("user", {}).get("username") or "unknown"),
-        )
+        if selected_calculation_mode in {"API", "Excel"} and not snapshot_session_id:
+            st.error("Nincs publikálható API/Excel forrás ehhez a hónaphoz. Töltsd be vagy válaszd ki újra a számítást.")
+            st.stop()
+        with st.spinner("Mobil ellenőrzési értékek frissítése..."):
+            courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
+                filtered,
+                balance_period_start,
+                selected_calculation_mode,
+                selected_warehouse_label,
+                snapshot_session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
         if courier_count:
             st.success(f"Mobil ellenőrzési értékek frissítve: {courier_count} futár, {row_count} sor.")
             st.rerun()
