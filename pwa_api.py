@@ -3097,7 +3097,7 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
     cash_rows = [
         dict(row)
         for row in breakdown.get("rows") or []
-        if row.get("key") == "cash_service"
+        if row.get("key") in {"cash_service", "cash_deduction"}
     ]
     payable_total = money_int(financial_breakdown.get("totalPayableHuf"))
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
@@ -3129,6 +3129,8 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
     for cash_row in cash_rows:
         if cash_row.get("key") == "cash_service":
             cash_row["label"] = "Szállítási díj (494107) - készpénz"
+        elif cash_row.get("key") == "cash_deduction":
+            cash_row["label"] = "KP levonás"
         rows.append(cash_row)
     breakdown["rows"] = rows
     breakdown["payableHuf"] = payable_total

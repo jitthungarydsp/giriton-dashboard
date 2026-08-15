@@ -2090,6 +2090,8 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
             item_label = "Szállítási díj (494107) - átutalás"
         elif item_key == "tig_cash_service":
             item_label = "Szállítási díj (494107) - készpénz"
+        elif item_key == "tig_cash_deduction":
+            item_label = "KP levonás"
         rows.append({
             "Kulcs": item_key,
             "MegnevezĂ©s": item_label,
