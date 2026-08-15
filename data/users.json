@@ -27,6 +27,15 @@
             "token": ""
         },
         {
+            "username": "Baráth 8226 Dominik",
+            "trainer": "trainer_name",
+            "password": "3juAFaHC",
+            "role": "user",
+            "courierId": 8226,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Meleg Dominika",
             "trainer": "trainer_name",
             "password": "841PMZrT",
