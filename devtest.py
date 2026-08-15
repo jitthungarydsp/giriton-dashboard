@@ -2140,6 +2140,21 @@ def append_periodic_correction_mobile_rows(
     return recalculate_mobile_breakdown_totals(rows)
 
 
+def _tig_display_amount_for_item(tig_breakdown: dict[str, object], item: dict[str, object], item_key: str) -> float:
+    amount = parse_huf_value(item.get("grossHuf"))
+    if item_key != "tig_transfer_service":
+        return amount
+    final_total = parse_huf_value(tig_breakdown.get("finalTotalHuf"))
+    tip_total = 0.0
+    for breakdown_item in tig_breakdown.get("rows") or []:
+        if str(breakdown_item.get("key") or "") == "tip":
+            tip_total = parse_huf_value(breakdown_item.get("grossHuf"))
+            break
+    if final_total and tip_total:
+        return max(final_total - tip_total, 0)
+    return amount
+
+
 def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: pd.DataFrame | None = None) -> pd.DataFrame:
     rows = []
     override_map = {}
@@ -2163,7 +2178,7 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
             "Kulcs": item_key,
             "MegnevezĂ©s": item_label,
             "TĂ­pus": "huf",
-            "Ă‰rtĂ©k": parse_huf_value(item.get("grossHuf")),
+            "Ă‰rtĂ©k": _tig_display_amount_for_item(tig_breakdown, item, item_key),
             "MegjegyzĂ©s": str(override.get("note") or item.get("note") or ""),
         })
     final_override = override_map.get("tig_final_total", {})
@@ -2192,7 +2207,7 @@ def mobile_tig_rows_from_breakdown(tig_breakdown: dict[str, object]) -> list[dic
             "item_key": item_key,
             "item_label": item_label,
             "amount_kind": "huf",
-            "amount_value": parse_huf_value(item.get("grossHuf")),
+            "amount_value": _tig_display_amount_for_item(tig_breakdown, item, item_key),
             "note": str(item.get("note") or ""),
         })
     rows.append({
