@@ -4952,7 +4952,15 @@ def status_map(rows: list[dict], process_id: str | None = "") -> dict[str, dict]
 
 
 def workflow_done(states: dict[str, dict], action: str) -> bool:
-    return str((states.get(action) or {}).get("status") or "").lower() == "done"
+    return workflow_status(states, action) == "done"
+
+
+def workflow_status(states: dict[str, dict], action: str) -> str:
+    return str((states.get(action) or {}).get("status") or "").lower()
+
+
+def workflow_open(states: dict[str, dict], action: str) -> bool:
+    return workflow_status(states, action) == "open"
 
 
 def complaints_ignored_for_billing(states: dict[str, dict]) -> bool:
@@ -5218,8 +5226,9 @@ def build_workflow(
     invoice_skip = manual_invoice_skip or efo_invoice_skip
     tig_ready = bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
     tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (invoice_skip and settlement_done)
-    invoice_submit_done = workflow_done(states, "invoice_submit") or (invoice_skip and tig_done)
-    invoice_check_done = workflow_done(states, "invoice_check") or (invoice_skip and tig_done)
+    invoice_submit_open = workflow_open(states, "invoice_submit") and not invoice_skip
+    invoice_submit_done = False if invoice_submit_open else (workflow_done(states, "invoice_submit") or (invoice_skip and tig_done))
+    invoice_check_done = False if invoice_submit_open else (workflow_done(states, "invoice_check") or (invoice_skip and tig_done))
 
     steps = [
         {
@@ -5258,7 +5267,7 @@ def build_workflow(
             "key": "invoice_submit",
             "title": "Számlafeltöltés kézzel kihagyva" if manual_invoice_skip else "Számlafeltöltés",
             "done": invoice_submit_done,
-            "locked": True if manual_invoice_skip else not tig_done,
+            "locked": True if manual_invoice_skip else (False if invoice_submit_open else not tig_done),
         },
         {
             "key": "invoice_check",
@@ -6766,7 +6775,11 @@ async def submit_invoice(
     billing_profile = read_billing_profile(user)
     _documents, status_rows, _complaints = read_workflow_rows(user, month_value)
     states = status_map(status_rows, process_id)
-    if invoice_document_exists_for_process(_documents, process_id) and workflow_done(states, "invoice_submit"):
+    if (
+        invoice_document_exists_for_process(_documents, process_id)
+        and workflow_done(states, "invoice_submit")
+        and not workflow_open(states, "invoice_submit")
+    ):
         raise HTTPException(
             status_code=409,
             detail="Ehhez a folyamathoz már érkezett számla. Új feltöltéshez kérj admin segítséget.",

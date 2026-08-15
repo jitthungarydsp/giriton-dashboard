@@ -1295,7 +1295,7 @@ function applyInvoiceValidationOverride() {
     (step) => step.key === "invoice_payment"
   );
 
-  const invoiceSubmitted = Boolean(
+  const invoiceSubmitted = !invoiceUploadReopened() && Boolean(
     invoiceSubmitStep?.done || invoiceDocuments.length
   );
 
@@ -1315,6 +1315,19 @@ function applyInvoiceValidationOverride() {
 
 function workflowStep(key) {
   return state.workflow?.steps?.find((step) => step.key === key) || {};
+}
+
+function workflowStatus(key) {
+  return String(state.workflow?.states?.[key]?.status || "").toLowerCase();
+}
+
+function invoiceUploadReopened() {
+  return workflowStatus("invoice_submit") === "open";
+}
+
+function invoiceUploadBlockedByExistingDocument() {
+  return !invoiceUploadReopened()
+    && (Boolean(workflowStep("invoice_submit").done) || Boolean((state.workflow?.documents?.invoice || []).length));
 }
 
 function workflowQuery() {
@@ -1777,8 +1790,9 @@ function renderWorkflow() {
   renderDocumentPanel("settlement", "Elszámolás és elfogadás", 1);
   renderDocumentPanel("tig", "TIG és elfogadás", 3);
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
-  const invoiceAlreadySubmitted = Boolean(workflowStep("invoice_submit").done);
-  setPanelLocked("#invoice-submit-panel", readOnly || invoiceAlreadySubmitted || Boolean(workflowStep("invoice_submit").locked));
+  const invoiceAlreadySubmitted = invoiceUploadBlockedByExistingDocument();
+  const invoiceLocked = readOnly || (!invoiceUploadReopened() && Boolean(workflowStep("invoice_submit").locked)) || invoiceAlreadySubmitted;
+  setPanelLocked("#invoice-submit-panel", invoiceLocked);
   setPanelLocked("#invoice-check-panel", readOnly || Boolean(workflowStep("invoice_check").locked));
   showOnlyWorkflowPanel(activeWorkflowPanel());
   const viewedUser = state.workflow?.viewingAs;
@@ -2504,7 +2518,7 @@ if (invoiceCheckForm) invoiceCheckForm.addEventListener("submit", async (event) 
 
 $("#invoice-submit-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (workflowStep("invoice_submit").done || (state.workflow?.documents?.invoice || []).length) {
+  if (invoiceUploadBlockedByExistingDocument()) {
     showWorkflowMessage("Ehhez a folyamathoz már érkezett számla, új feltöltés nem indítható.", true);
     return;
   }
@@ -2551,7 +2565,7 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   } catch (error) {
     showWorkflowMessage(error.message, true);
   } finally {
-    if (submitButton && !workflowStep("invoice_submit").done && !(state.workflow?.documents?.invoice || []).length) {
+    if (submitButton && !invoiceUploadBlockedByExistingDocument()) {
       submitButton.disabled = false;
     }
   }
