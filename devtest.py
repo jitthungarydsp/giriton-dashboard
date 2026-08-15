@@ -8998,6 +8998,7 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
 def refresh_settlement_profile_data() -> None:
     load_api_financial_overview_rows.clear()
     load_latest_api_jit_session_id.clear()
+    load_latest_excel_jit_session_id.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
     load_active_bonus_level_rules.clear()
@@ -9013,6 +9014,11 @@ def refresh_settlement_profile_data() -> None:
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
     load_customer_rating_bonus_rows.clear()
+    load_courier_profile.clear()
+    load_active_efo_assignment.clear()
+    load_muszakpro_booking_summary.clear()
+    load_loyalty_profile_lookup.clear()
+    load_loyalty_month_requirement_for_date.clear()
     load_courier_master.clear()
 
 
@@ -9947,7 +9953,7 @@ def show_courier_dialog() -> None:
                 "vat_status": profile.get("vat_status") or "",
                 "employment_type": profile.get("employment_type") or "",
                 "employment_status": profile.get("employment_status") or "",
-                "efo_status": efo_status,
+                "efo_status": profile.get("efo_status") or "",
                 "email": profile.get("email") or "",
                 "id": courier_id,
                 "document_reference": tig_document_reference,
@@ -10608,7 +10614,7 @@ def show_courier_dialog() -> None:
                 "vat_status": profile.get("vat_status") or "",
                 "employment_type": profile.get("employment_type") or "",
                 "employment_status": profile.get("employment_status") or "",
-                "efo_status": efo_status,
+                "efo_status": profile.get("efo_status") or "",
                 "id": courier_id,
                 "document_month": period_start,
             },
@@ -13942,9 +13948,9 @@ def show_new_settlement_page() -> None:
                         f"hiányzó szabály={api_diagnostics.get('missing_base_rate', 0)}"
                     )
         if st.button("Adatok betöltése",type="primary",use_container_width=True):
+            refresh_settlement_profile_data()
             if str(calculation_mode or "API").strip().casefold() == "excel":
                 current_period_start = parse_month_option(selected_month)
-                load_latest_excel_jit_session_id.clear()
                 state_excel_session_id = st.session_state.get("settlement_excel_session_id")
                 if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, current_period_start):
                     current_excel_session_id = state_excel_session_id
@@ -13960,7 +13966,6 @@ def show_new_settlement_page() -> None:
                     st.warning("Ehhez a hónaphoz nem találok feldolgozott Excel importot. Töltsd fel az Excelt, majd nyomd meg a Számítás betöltése gombot.")
             else:
                 try:
-                    load_api_financial_overview_rows.clear()
                     api_period_start = parse_month_option(selected_month)
                     api_stats = api_raw_overview_stats(api_period_start, warehouse)
                     if api_stats["routes"] == 0:
@@ -13974,13 +13979,6 @@ def show_new_settlement_page() -> None:
                         import_api_financial_overview_to_jit(api_period_start, "Összes")
                     st.session_state["settlement_api_session_id"] = api_session_id
                     st.session_state["settlement_import_session_id"] = api_session_id
-                    load_latest_api_jit_session_id.clear()
-                    load_excel_courier_base_rates.clear()
-                    load_excel_base_rate_diagnostics.clear()
-                    load_courier_route_detail.clear()
-                    load_imported_balance_components.clear()
-                    load_courier_settlement_summary.clear()
-                    load_courier_master.clear()
                     load_api_import_diagnostics.clear()
                     st.toast(f"API adatok betöltve és újraszámolva: {selected_month}", icon="✅")
                     st.rerun()
