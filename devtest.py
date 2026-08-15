@@ -1617,7 +1617,10 @@ def load_mobile_breakdown_overrides(courier_id: str, period_start: date) -> pd.D
         )
     except BaseException:
         return pd.DataFrame(columns=["item_key", "item_label", "amount_value", "amount_kind", "note"])
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    if not result.empty and "item_key" in result.columns:
+        result = result[~result["item_key"].astype(str).isin({"tig_cash_deduction", "cash_deduction"})]
+    return result
 
 
 def load_mobile_breakdown_overrides_for_period(period_start: date) -> pd.DataFrame:
@@ -1630,7 +1633,10 @@ def load_mobile_breakdown_overrides_for_period(period_start: date) -> pd.DataFra
         )
     except BaseException:
         return pd.DataFrame(columns=["courier_id", "item_key", "amount_value"])
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    if not result.empty and "item_key" in result.columns:
+        result = result[~result["item_key"].astype(str).isin({"tig_cash_deduction", "cash_deduction"})]
+    return result
 
 
 def save_mobile_breakdown_overrides(
@@ -1643,6 +1649,8 @@ def save_mobile_breakdown_overrides(
     payloads = []
     for row in rows:
         item_key = str(row.get("item_key") or row.get("Kulcs") or "").strip()
+        if item_key in {"tig_cash_deduction", "cash_deduction"}:
+            continue
         if not item_key:
             continue
         amount_kind = str(row.get("amount_kind") or row.get("Típus") or "huf").strip()
@@ -1659,9 +1667,12 @@ def save_mobile_breakdown_overrides(
             "updated_by": updated_by,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
-    if not payloads:
-        return False
     try:
+        get_db().schema("settlement").table("mobile_settlement_breakdown_overrides").delete() \
+            .eq("period_start", period_start.replace(day=1).isoformat()) \
+            .eq("courier_id", clean_courier_id).execute()
+        if not payloads:
+            return True
         get_db().schema("settlement").table("mobile_settlement_breakdown_overrides").upsert(
             payloads,
             on_conflict="period_start,courier_id,item_key",
@@ -2105,8 +2116,6 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
             item_label = "Szállítási díj (494107) - átutalás"
         elif item_key == "tig_cash_service":
             item_label = "Szállítási díj (494107) - készpénz"
-        elif item_key == "tig_cash_deduction":
-            item_label = "KP levonás"
         rows.append({
             "Kulcs": item_key,
             "MegnevezĂ©s": item_label,
@@ -10803,28 +10812,8 @@ def show_courier_dialog() -> None:
             else:
                 st.error("A mobil értékek mentése sikertelen. Futtasd a mobile_settlement_breakdown_overrides SQL-t.")
 
-        tig_breakdown = build_tig_breakdown(
-            {
-                "name": courier_name,
-                "company_name": profile.get("company_name") or courier_name,
-                "address": profile.get("address") or profile.get("company_address") or "",
-                "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
-                "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
-                "vat_status": profile.get("vat_status") or "",
-                "employment_type": profile.get("employment_type") or "",
-                "employment_status": profile.get("employment_status") or "",
-                "efo_status": profile.get("efo_status") or "",
-                "id": courier_id,
-                "document_month": period_start,
-            },
-            {
-                "payable": payable_total,
-                "cash": abs(atm_deduction_total),
-                "tip": tip_total,
-            },
-        )
         st.markdown("#### Mobilon lĂˇthatĂł TIG")
-        st.caption("A TIG is az oldalon jelenik meg. A KP kĂĽlĂ¶n sor, a KP levonĂˇsa kĂĽlĂ¶n sor.")
+        st.caption("A TIG is az oldalon jelenik meg. A KP külön soron látszik.")
         edited_tig_mobile = st.data_editor(
             tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides),
             hide_index=True,

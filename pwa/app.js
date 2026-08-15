@@ -1580,7 +1580,22 @@ function renderTigBreakdown() {
   if (!tig.available) {
     return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
   }
-  const rows = tig.rows || [];
+  const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
+  const transferRows = rows.filter((row) => row.key !== "cash_service");
+  const cashRows = rows.filter((row) => row.key === "cash_service");
+  const renderTigRows = (items) => `
+    <div class="tig-table">
+      <div class="tig-row head"><span>Tétel</span><span>Netto</span><span>ÁFA</span><span>Brutto</span></div>
+      ${items.map((row) => `
+        <div class="tig-row ${Number(row.grossHuf || 0) < 0 ? "deduction" : ""}">
+          <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
+          <span>${tigValue(row.netHuf)}</span>
+          <span>${row.vatLabel ? escapeHtml(row.vatLabel) : tigValue(row.vatHuf)}</span>
+          <span>${tigValue(row.grossHuf)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
   const buyer = tig.buyer || {};
   const buyerBlock = buyer.name ? `
     <section class="tig-buyer-card">
@@ -1602,17 +1617,8 @@ function renderTigBreakdown() {
       <small>${escapeHtml(tig.month || state.workflowMonth)}</small>
     </section>
     ${buyerBlock}
-    <div class="tig-table">
-      <div class="tig-row head"><span>Tétel</span><span>Netto</span><span>ÁFA</span><span>Brutto</span></div>
-      ${rows.map((row) => `
-        <div class="tig-row ${row.key === "cash_deduction" || Number(row.grossHuf || 0) < 0 ? "deduction" : ""}">
-          <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
-          <span>${tigValue(row.netHuf)}</span>
-          <span>${row.vatLabel ? escapeHtml(row.vatLabel) : tigValue(row.vatHuf)}</span>
-          <span>${tigValue(row.grossHuf)}</span>
-        </div>
-      `).join("")}
-    </div>
+    ${renderTigRows(transferRows)}
+    ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP nem levonásként jelenik meg, külön számlás tétel.</small></section>${renderTigRows(cashRows)}` : ""}
   `;
 }
 
@@ -1665,7 +1671,7 @@ function renderDocumentPanel(action, title, stepNumber) {
     const tig = state.workflow?.tigBreakdown || {};
     const tigReady = Boolean(tig.available);
     panel.innerHTML = `
-      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, KP sorral és KP levonással.</p></div></div>
+      <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
       ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : renderTigBreakdown()}
       ${!locked && documents.length ? documentList(documents) : ""}
       ${accepted

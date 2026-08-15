@@ -211,15 +211,6 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
             "vatLabel": "27%" if vat_payer else "AAM",
             "note": "Külön KP sor, nem növeli az átutalásos végösszeget.",
         })
-        rows.append({
-            "key": "cash_deduction",
-            "label": "KP levonás",
-            "netHuf": -cash_net,
-            "vatHuf": -cash_vat,
-            "grossHuf": -cash_gross,
-            "vatLabel": "Levonás",
-            "note": "A futárnál maradt KP levonása.",
-        })
     return {
         "available": payable > 0 or bool(rows),
         "payableHuf": payable,
