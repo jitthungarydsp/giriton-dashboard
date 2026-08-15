@@ -6793,7 +6793,7 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_imported_balance_component_items(session_id: str | None, courier_id: str, courier_name: str) -> pd.DataFrame:
+def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.DataFrame:
     columns = ["Tétel", "Összeg", "Megjegyzés"]
     if not session_id:
         return pd.DataFrame(columns=columns)
@@ -6802,8 +6802,6 @@ def load_imported_balance_component_items(session_id: str | None, courier_id: st
         "penalty_row": ("Kiflis malus", -1, ("value", "amount", "osszeg", "penalty", "malus", "levonas")),
     }
     rows_out: list[dict[str, object]] = []
-    target_id = _courier_id_key(courier_id)
-    target_name = _courier_match_key(courier_name)
     for table_name, (label, sign, amount_keys) in definitions.items():
         try:
             rows = (
@@ -6834,10 +6832,6 @@ def load_imported_balance_component_items(session_id: str | None, courier_id: st
                  if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
                 "",
             ))
-            if target_id and row_id and row_id != target_id:
-                continue
-            if (not row_id or not target_id) and target_name and row_name != target_name:
-                continue
             amount_value = next((normalized_payload.get(key) for key in amount_keys if key in normalized_payload), None)
             if amount_value is None:
                 amount_value = next(
@@ -6853,11 +6847,33 @@ def load_imported_balance_component_items(session_id: str | None, courier_id: st
                 if value and value.casefold() != "nan":
                     note_parts.append(value)
             rows_out.append({
+                "courier_id_key": row_id,
+                "courier_name_key": row_name,
                 "Tétel": label,
                 "Összeg": sign * amount,
                 "Megjegyzés": " | ".join(dict.fromkeys(note_parts)),
             })
-    return pd.DataFrame(rows_out, columns=columns)
+    return pd.DataFrame(rows_out, columns=["courier_id_key", "courier_name_key", *columns])
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_imported_balance_component_items(session_id: str | None, courier_id: str, courier_name: str) -> pd.DataFrame:
+    columns = ["Tétel", "Összeg", "Megjegyzés"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    rows = load_imported_balance_component_detail_rows(session_id)
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    target_id = _courier_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    selected = pd.DataFrame(columns=rows.columns)
+    if target_id and "courier_id_key" in rows:
+        selected = rows[rows["courier_id_key"].astype(str).eq(target_id)]
+    if selected.empty and target_name and "courier_name_key" in rows:
+        selected = rows[rows["courier_name_key"].astype(str).eq(target_name)]
+    if selected.empty:
+        return pd.DataFrame(columns=columns)
+    return selected[columns].reset_index(drop=True)
 
 
 def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
