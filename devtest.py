@@ -6758,6 +6758,21 @@ def save_customer_rating_upload(rows: pd.DataFrame, billing_month: date) -> None
     load_customer_rating_bonus_rows.clear()
 
 
+def _merged_imported_payload(row: dict[str, object]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    normalized_data = row.get("normalized_data") if isinstance(row, dict) else None
+    if isinstance(normalized_data, str):
+        try:
+            normalized_data = json.loads(normalized_data)
+        except json.JSONDecodeError:
+            normalized_data = {}
+    if isinstance(normalized_data, dict):
+        payload.update(normalized_data)
+    if isinstance(row, dict):
+        payload.update({key: value for key, value in row.items() if key != "normalized_data"})
+    return payload
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     """Read the separate Excel bonus, penalty and ATM sheets for one session."""
@@ -6792,17 +6807,12 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     records: list[dict[str, object]] = []
     for table_name, (output_column, exact_amount_keys, amount_tokens, use_absolute) in definitions.items():
         try:
-            rows = (get_db().schema("settlement").table(table_name).select("normalized_data")
+            rows = (get_db().schema("settlement").table(table_name).select("*")
                     .eq("session_id", session_id).execute().data or [])
         except BaseException:
             continue
         for row in rows:
-            payload = row.get("normalized_data") or {}
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = {}
+            payload = _merged_imported_payload(row)
             if not isinstance(payload, dict):
                 continue
             normalized_payload = {
@@ -6873,19 +6883,14 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
         try:
             rows = (
                 get_db().schema("settlement").table(table_name)
-                .select("normalized_data")
+                .select("*")
                 .eq("session_id", session_id)
                 .execute().data or []
             )
         except BaseException:
             continue
         for source_row in rows:
-            payload = source_row.get("normalized_data") or {}
-            if isinstance(payload, str):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload = {}
+            payload = _merged_imported_payload(source_row)
             if not isinstance(payload, dict):
                 continue
             normalized_payload = {_normalized_field_key(key): value for key, value in payload.items()}
