@@ -102,6 +102,8 @@ def _tig_kind(courier: dict[str, Any]) -> str:
     employment_text = _ascii_tax_text(" ".join(str(value or "") for value in employment_fields).casefold())
     if "efo" in employment_text or "efo" in text:
         return "aam"
+    if "ellenoriz" in text or "ellenorz" in text:
+        return "aam"
     if any(token in text for token in ["aam", "alanyi", "ado mentes", "adomentes", "nem afas", "nem afa", "non vat"]):
         return "aam"
     if any(token in text for token in ["afas", "afa", "vat", "27", "belfoldi adoalany", "belfoldi ado alany"]):

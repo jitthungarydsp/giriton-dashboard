@@ -9354,7 +9354,7 @@ def render_table(df: pd.DataFrame) -> None:
             cols[2].caption("Van" if insurance_active else "Nincs")
             cols[3].caption(format_huf(loyalty_total) if loyalty_total else "Nem kap")
             cols[4].caption(str(row.get("Raktár") or "-"))
-            display_payable = row.get("Kifizetendő kifizetésre", row.get("Kifizetendő"))
+            display_payable = row.get("Kifizetendő")
             cols[5].markdown(f"**{format_huf(display_payable)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
@@ -9814,7 +9814,7 @@ def show_courier_dialog() -> None:
             </div>
             </div>
             <div class="settlement-top-kpis">
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(overview_tig_payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(overview_payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon red"></div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
@@ -9850,7 +9850,7 @@ def show_courier_dialog() -> None:
                 <div class="settlement-summary-line">
                     <div class="settlement-summary-item"><div class="settlement-summary-label">Összes bevétel</div><div class="settlement-summary-value">{format_huf(total_income)}</div></div>
                     <div class="settlement-summary-item"><div class="settlement-summary-label">Összes levonás</div><div class="settlement-summary-value red">{format_huf(total_deduction)}</div></div>
-                    <div class="settlement-summary-item payable"><div class="settlement-summary-label">Fizetendő összeg</div><div class="settlement-summary-value big">{format_huf(overview_tig_payable_total)}</div></div>
+                    <div class="settlement-summary-item payable"><div class="settlement-summary-label">Fizetendő összeg</div><div class="settlement-summary-value big">{format_huf(overview_payable_total)}</div></div>
                 </div>
                 <div class="settlement-ledger-grid">
                     <div class="settlement-ledger income">
@@ -10565,7 +10565,7 @@ def show_courier_dialog() -> None:
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("Fizetendő", format_huf(tig_display_total), "payable", ""),
+            ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
@@ -11138,7 +11138,7 @@ def show_courier_dialog() -> None:
             workflow_statuses = pd.DataFrame()
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
-        monthly_payment_amount = overview_tig_payable_total
+        monthly_payment_amount = overview_payable_total
 
         process_ids = {""}
         if not workflow_statuses.empty:
