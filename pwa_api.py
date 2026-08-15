@@ -3074,6 +3074,162 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
     return cards
 
 
+def mobile_override_row(
+    key: str,
+    label: str,
+    amount: int,
+    *,
+    kind: str = "huf",
+    note: str = "DB-ből pótolt mobil érték",
+) -> dict[str, Any]:
+    return {
+        "item_key": key,
+        "item_label": label,
+        "amount_kind": kind,
+        "amount_value": money_int(amount),
+        "note": note,
+    }
+
+
+def should_backfill_mobile_override(overrides: dict[str, dict[str, Any]], key: str) -> bool:
+    current = overrides.get(key)
+    if not current:
+        return True
+    if is_manual_mobile_override(current):
+        return False
+    return money_int(current.get("amount_value")) == 0
+
+
+def backfill_mobile_override(
+    overrides: dict[str, dict[str, Any]],
+    key: str,
+    label: str,
+    amount: int,
+    *,
+    kind: str = "huf",
+    note: str = "DB-ből pótolt mobil érték",
+    allow_zero: bool = False,
+) -> None:
+    if not allow_zero and money_int(amount) == 0:
+        return
+    if should_backfill_mobile_override(overrides, key):
+        overrides[key] = mobile_override_row(key, label, amount, kind=kind, note=note)
+
+
+def enrich_mobile_overrides_from_financial_sources(
+    user: dict[str, Any],
+    month: date,
+    row: dict[str, Any],
+    overrides: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if not overrides:
+        return overrides
+    courier_id, _courier_name = courier_identity(user)
+    period_end = month_end(month)
+    enriched = dict(overrides)
+
+    has_customer_detail = any(
+        key.startswith("customer_rating_") and key != "customer_rating" and money_int(value.get("amount_value"))
+        for key, value in enriched.items()
+    )
+    if should_backfill_mobile_override(enriched, "customer_rating") or not has_customer_detail:
+        customer_items = read_customer_rating_bonus_items(courier_id, month)
+        customer_total = sum(money_int(item.get("amountHuf")) for item in customer_items)
+        if not customer_total:
+            customer_total = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
+        backfill_mobile_override(
+            enriched,
+            "customer_rating",
+            "Ügyfélértékelési bónusz",
+            customer_total,
+            note="Ügyfélértékelés DB import alapján",
+        )
+        for item in customer_items:
+            item_key = str(item.get("key") or "")
+            if item_key and item_key not in enriched:
+                enriched[item_key] = mobile_override_row(
+                    item_key,
+                    str(item.get("label") or "Ügyfélértékelési bónusz"),
+                    money_int(item.get("amountHuf")),
+                    note=str(item.get("note") or "Ügyfélértékelés DB import alapján"),
+                )
+
+    needs_insurance_backfill = any(
+        should_backfill_mobile_override(enriched, key)
+        for key in ["reserve", "insurance_fee"]
+    ) or any(key not in enriched for key in ["target_reserve_open", "target_reserve_close"])
+    if needs_insurance_backfill:
+        target_reserve_month = read_target_reserve_monthly(courier_id, month, period_end)
+        reserve_open = money_from(row, "target_reserve_open_huf", "reserve_before_huf")
+        reserve_topup = -abs(money_from(row, "target_reserve_topup_huf", "reserve_deduction_huf"))
+        insurance_fee = -abs(money_from(row, "insurance_fee_huf", "insurance_deduction_huf"))
+        reserve_close = money_from(row, "target_reserve_close_huf", "reserve_after_huf")
+        if target_reserve_month:
+            reserve_open = money_from(target_reserve_month, "reserve_before_huf")
+            reserve_topup = -abs(money_from(target_reserve_month, "reserve_addition_huf"))
+            insurance_fee = -abs(money_from(target_reserve_month, "insurance_fee_huf"))
+            reserve_close = money_from(target_reserve_month, "reserve_after_huf")
+        for key, label, amount in [
+            ("target_reserve_open", "Céltartalék nyitó", reserve_open),
+            ("reserve", "Céltartalék levonás", reserve_topup),
+            ("insurance_fee", "Biztosítási díj", insurance_fee),
+            ("target_reserve_close", "Céltartalék záró", reserve_close),
+        ]:
+            backfill_mobile_override(
+                enriched,
+                key,
+                label,
+                amount,
+                note="Céltartalék / biztosítás DB alapján",
+                allow_zero=key in {"target_reserve_open", "target_reserve_close"},
+            )
+
+    has_periodic_correction = any(
+        key.startswith("correction_periodic_") and money_int(value.get("amount_value"))
+        for key, value in enriched.items()
+    )
+    if not has_periodic_correction:
+        correction_total = money_from(
+            row,
+            "correction_huf",
+            "periodic_correction_huf",
+            "correction_total_huf",
+            "manual_correction_huf",
+            "Időszakos díjak / korrekció",
+            "Korrekció",
+            "Korrekciók",
+        )
+        backfill_mobile_override(
+            enriched,
+            "correction_periodic_summary",
+            "Korrekció",
+            correction_total,
+            note="Elszámolási DB korrekció alapján",
+        )
+
+    performance_count = money_from(row, "orders", "order_count", "performance")
+    route_count = money_from(row, "routes", "route_count")
+    normal_routes = money_from(row, "normal_routes", "normal_route_count")
+    highlighted_routes = money_from(row, "highlighted_routes", "highlighted_route_count")
+    for key, label, amount in [
+        ("performance", "Teljesítmény", performance_count),
+        ("orders", "Cím", performance_count),
+        ("routes", "Kör", route_count),
+        ("normal_routes", "Normál kör", normal_routes),
+        ("highlighted_routes", "Kiemelt kör", highlighted_routes),
+    ]:
+        backfill_mobile_override(
+            enriched,
+            key,
+            label,
+            amount,
+            kind="count",
+            note="Teljesítmény DB alapján",
+        )
+
+    return enriched
+
+
 def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_override: bool = False) -> int:
     income_card = next((card for card in cards if card.get("key") == "income"), None)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
@@ -3262,6 +3418,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     overrides = read_mobile_breakdown_overrides(courier_id, month)
+    overrides = enrich_mobile_overrides_from_financial_sources(user, month, row or {}, overrides)
     mobile_breakdown = build_financial_breakdown_from_mobile_rows(user, month, row or {}, overrides)
     if mobile_breakdown:
         return mobile_breakdown
