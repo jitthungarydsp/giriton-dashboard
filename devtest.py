@@ -2096,7 +2096,7 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
             "Kulcs": item_key,
             "MegnevezĂ©s": item_label,
             "TĂ­pus": "huf",
-            "Ă‰rtĂ©k": parse_huf_value(override.get("amount_value") if override else item.get("grossHuf")),
+            "Ă‰rtĂ©k": parse_huf_value(item.get("grossHuf")),
             "MegjegyzĂ©s": str(override.get("note") or item.get("note") or ""),
         })
     final_override = override_map.get("tig_final_total", {})
@@ -2104,7 +2104,7 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
         "Kulcs": "tig_final_total",
         "MegnevezĂ©s": str(final_override.get("item_label") or "TIG vĂ©gĂ¶sszeg"),
         "TĂ­pus": "huf",
-        "Ă‰rtĂ©k": parse_huf_value(final_override.get("amount_value") if final_override else tig_breakdown.get("finalTotalHuf")),
+        "Ă‰rtĂ©k": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
         "MegjegyzĂ©s": str(final_override.get("note") or "TIG elfogadĂˇsnĂˇl lĂˇthatĂł vĂ©gĂ¶sszeg"),
     })
     return pd.DataFrame(rows, columns=["Kulcs", "MegnevezĂ©s", "TĂ­pus", "Ă‰rtĂ©k", "MegjegyzĂ©s"])
