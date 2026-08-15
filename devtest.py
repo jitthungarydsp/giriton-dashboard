@@ -14386,6 +14386,69 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.error(f"SQL ellenőrzés sikertelen: {exc}")
 
     if st.button(
+        "Meglévő Excel újrafeldolgozása",
+        use_container_width=True,
+        disabled=not excel_import_session_id,
+        key="reprocess_existing_excel_calculation",
+        help="A DB-ben már meglévő Excel importot dolgozza fel újra. Nem kell hozzá új fájlt feltölteni.",
+    ):
+        try:
+            st.session_state["excel_calculation_loaded"] = True
+            st.session_state["settlement_excel_session_id"] = excel_import_session_id
+            st.session_state["settlement_import_session_id"] = excel_import_session_id
+            st.session_state.pop("settlement_import_preview", None)
+            st.session_state.pop("settlement_processing_report", None)
+            st.session_state.pop("settlement_number_audit_report", None)
+
+            processing_report = process_settlement_session(
+                get_db(),
+                excel_import_session_id,
+            )
+            processing_result = report_as_dict(processing_report)
+            st.session_state["settlement_processing_report"] = processing_result
+
+            if processing_result.get("status") in {"completed", "completed_with_warnings"}:
+                load_driver_dashboard.clear()
+                load_courier_master.clear()
+                load_latest_jit_session_id.clear()
+                load_latest_excel_jit_session_id.clear()
+                load_excel_courier_base_rates.clear()
+                load_excel_base_rate_diagnostics.clear()
+                load_courier_route_detail.clear()
+                load_imported_balance_components.clear()
+                load_courier_settlement_summary.clear()
+                build_excel_settlement_number_audit.clear()
+                parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+                recalculate_excel_base_rates(get_db(), excel_import_session_id)
+                master_sync = sync_excel_session_to_courier_master(
+                    get_db(),
+                    excel_import_session_id,
+                )
+                st.session_state["settlement_courier_master_sync"] = master_sync
+                st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+                    excel_import_session_id,
+                    parameter_revision,
+                )
+                load_courier_master.clear()
+
+            if processing_result.get("status") == "failed":
+                error_messages = [
+                    f"{error.get('error_code', 'HIBA')}: "
+                    f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
+                    for error in processing_result.get("errors", [])
+                ]
+                raise RuntimeError(
+                    "A normalizált feldolgozás sikertelen. "
+                    + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
+                )
+
+            st.success("Meglévő Excel import újrafeldolgozva.")
+            st.rerun()
+        except Exception as exc:
+            st.session_state["excel_calculation_loaded"] = False
+            st.error(f"Meglévő Excel újrafeldolgozása sikertelen: {exc}")
+
+    if st.button(
         "Számok ellenőrzése",
         use_container_width=True,
         disabled=not excel_import_session_id,
