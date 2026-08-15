@@ -425,6 +425,15 @@ function routeStoryDelayLabel(story = {}) {
   return parts.length ? `Igen - ${parts.join(" - ")}` : "Nem látszik késés";
 }
 
+function routeShiftLateMinutes(row = {}, story = {}) {
+  const explicitDelay = Number(row.plannedStartDelayMinutes || 0);
+  if (explicitDelay > 0) return explicitDelay;
+  const shiftStart = story.shiftStart || row.plannedStartAt;
+  const queuedAt = story.queueStartedAt || row.actualStartAt || story.availableForShiftSince || story.availableAt || row.shiftAvailableAt;
+  const computedDelay = minutesBetween(shiftStart, queuedAt);
+  return computedDelay > 0 ? computedDelay : 0;
+}
+
 function routeStoryShiftLabel(story = {}) {
   const name = String(story.shiftName || "").trim();
   const start = shortDateTime(story.shiftStart);
@@ -478,11 +487,17 @@ function renderRouteStoryDetails(row) {
     ? `${formatCount(visibleLateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
     : "Nincs";
   const routeOk = visibleLateCount <= 0 || (maxDelay > 0 && lateMinutes <= maxDelay);
+  const shiftLateMinutes = routeShiftLateMinutes(row, story);
+  const shiftOk = shiftLateMinutes <= 0;
   return `
     <div class="daily-route-story">
       <div class="route-quality-head">
         ${renderStatusBadge(routeOk)}
         <div><strong>${routeOk ? "Időkapun belül" : "Időkapun kívül"}</strong><small>Időablak szerinti ellenőrzés</small></div>
+      </div>
+      <div class="route-quality-head">
+        ${renderStatusBadge(shiftOk)}
+        <div><strong>${shiftOk ? "Műszak időben" : "Késett a műszakból"}</strong><small>${shiftOk ? "Sorba állás rendben" : `${formatCount(shiftLateMinutes)} perc késés a műszakhoz képest`}</small></div>
       </div>
       ${story.shiftName ? `<p class="updated-at">${escapeHtml(story.shiftName)}</p>` : ""}
       ${routeStoryTime("Műszak kezdete", story.shiftStart || row.plannedStartAt)}
