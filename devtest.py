@@ -6288,11 +6288,11 @@ def recalculate_customer_rating_rows(
         rows.at[idx, "bonus_per_route_huf"] = unit_amount
 
     route_count = int(route_total or 0)
-    stored_routes = int(rows["completed_routes"].sum())
-    if route_count > 0 and route_count != stored_routes:
+    if route_count > 0:
         positive_rows = rows.loc[rows["bonus_per_route_huf"].astype(float).ne(0.0)]
         rating_idx = positive_rows.index[0] if not positive_rows.empty else rows.index[0]
         rows.loc[rows.index != rating_idx, ["completed_routes", "bonus_total_huf"]] = 0
+        rows.at[rating_idx, "route_type"] = "normal"
         rows.at[rating_idx, "completed_routes"] = route_count
 
     rows["bonus_total_huf"] = rows["completed_routes"] * rows["bonus_per_route_huf"]
@@ -6463,33 +6463,19 @@ def _finalize_customer_rating_monthly_rows(
         .astype(int)
     )
 
-    route_type_counts = load_customer_rating_route_type_counts(
-        str(st.session_state.get("settlement_import_session_id") or "").strip()
-    )
     route_records: list[dict[str, object]] = []
     for _, row in grouped.iterrows():
-        route_counts: dict[str, int] = {}
-        if not route_type_counts.empty:
-            matches = route_type_counts.loc[route_type_counts["driver_key"] == row["name_key"]]
-            route_counts = {
-                str(match["route_type"]): int(match["completed_routes"] or 0)
-                for _, match in matches.iterrows()
-            }
-        if not route_counts:
-            route_counts = {"normal": int(row["completed_routes"] or 0)}
-        elif int(row["completed_routes"] or 0) > 0 and sum(route_counts.values()) != int(row["completed_routes"] or 0):
-            route_counts = {"normal": int(row["completed_routes"] or 0)}
-        for route_type, completed_routes in route_counts.items():
-            if completed_routes <= 0:
-                continue
-            bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, route_type)
-            route_records.append({
-                **row.to_dict(),
-                "route_type": route_type,
-                "completed_routes": completed_routes,
-                "bonus_per_route_huf": bonus_per_route,
-                "bonus_total_huf": bonus_per_route * completed_routes,
-            })
+        completed_routes = int(row["completed_routes"] or 0)
+        if completed_routes <= 0:
+            continue
+        bonus_per_route = customer_rating_rule_amount(row["average_rating"], rules, "normal")
+        route_records.append({
+            **row.to_dict(),
+            "route_type": "normal",
+            "completed_routes": completed_routes,
+            "bonus_per_route_huf": bonus_per_route,
+            "bonus_total_huf": bonus_per_route * completed_routes,
+        })
 
     result = pd.DataFrame(route_records)
     if result.empty:
@@ -14888,10 +14874,10 @@ def show_new_settlement_page() -> None:
     )
     if st.button(
         start_label,
-        disabled=period_start_clicked or selected_calculation_mode not in {"API", "Excel"},
+        disabled=selected_calculation_mode not in {"API", "Excel"} or not monthly_document_plan,
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
-        help="Egyszeri inditas: a futar PWA-ban megkapja az elszamolasi idoszakot. TIG csak elszamolas elfogadasa utan keszul.",
+        help="A futar PWA-ban megkapja az elszamolasi idoszakot. Mar inditott honapnal is ujrapublikalja a mobil ertekeket.",
     ):
         snapshot_session_id = settlement_mobile_session_for_mode(
             selected_calculation_mode,
@@ -14913,7 +14899,7 @@ def show_new_settlement_page() -> None:
         else:
             st.error("A havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
     if period_start_clicked:
-        st.info("Ez a havi elszámolási időszak már el lett indítva.")
+        st.info("Ez a havi elszámolási időszak már el lett indítva, de a gombbal újra publikálható a futároknak.")
     else:
         st.caption("A havi nyitás a kiválasztott API/Excel forrásból publikálja ugyanazokat az értékeket az admin és futár mobil nézetbe.")
 
