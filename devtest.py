@@ -3168,13 +3168,17 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             return "Bejelentések"
         document_types = document_types_by_courier.get(courier_key, set())
         action_statuses = status_by_courier.get(courier_key, {})
-        if "settlement" not in document_types:
+
+        has_settlement = "settlement" in document_types or action_statuses.get("settlement") in {"open", "done"}
+        has_tig = "tig" in document_types or action_statuses.get("tig") in {"open", "done"}
+
+        if not has_settlement:
             return "Elszámolásra vár"
         if action_statuses.get("settlement") != "done":
             return "Elszámolás elfogadásra vár"
         if action_statuses.get("invoice_payment") == "done":
             return "Kifizetve"
-        if "tig" not in document_types:
+        if not has_tig:
             return "TIG-re vár"
         if action_statuses.get("tig") != "done":
             return "TIG elfogadásra vár"

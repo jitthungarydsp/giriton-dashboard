@@ -2485,7 +2485,7 @@ def render_peopleforce_acceptance_box(
     documents,
     state,
 ):
-    if action_key not in ["settlement", "tig"] or user.get("role") == "admin" or documents.empty:
+    if action_key not in ["settlement", "tig"] or user.get("role") == "admin":
         return
 
     status = clean_display_text((state or {}).get("status"), "open").lower()
@@ -2512,6 +2512,9 @@ def render_peopleforce_acceptance_box(
 
     if status == "done":
         st.success("✅ A dokumentumot elfogadtad. Ezt admin oldalon is látjuk.")
+        return
+
+    if documents.empty:
         return
 
     st.caption(
@@ -2568,8 +2571,15 @@ def render_peopleforce_monthly_documents(action_key, row, user, selected_month=N
         )
         st.caption(str(exc))
 
+    hide_uploaded_documents = action_key in ["settlement", "tig"]
+
     if documents.empty:
         st.info(config["empty"])
+    elif hide_uploaded_documents:
+        st.caption(
+            "Az elszámolás és a TIG adatai ezen az oldalon láthatók. "
+            "A feltöltött PDF-et itt nem jelenítjük meg külön."
+        )
     else:
         render_peopleforce_document_list(documents)
 
