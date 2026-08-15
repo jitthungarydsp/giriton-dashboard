@@ -2299,6 +2299,7 @@ def build_financial_breakdown_from_mobile_rows(
 ) -> dict[str, Any] | None:
     if not overrides or "payable" not in overrides:
         return None
+    payable_override = mobile_override_amount(overrides, "payable")
     fallback_courier_id, _fallback_courier_name = courier_identity(user)
     selected_courier_id = str(
         row.get("courier_id")
@@ -2495,7 +2496,8 @@ def build_financial_breakdown_from_mobile_rows(
     for deduction_amount in (atm_total, insurance_total, salary_advance_total, other_deduction_total):
         if deduction_amount < 0:
             deduction_total += deduction_amount
-    payable = income_total + deduction_total + correction_total
+    calculated_payable = income_total + deduction_total + correction_total
+    payable = payable_override if "payable" in overrides else calculated_payable
 
     cards = [
         {
