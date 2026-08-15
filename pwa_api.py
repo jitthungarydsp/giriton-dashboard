@@ -2324,13 +2324,10 @@ def build_financial_breakdown_from_mobile_rows(
                 result.append(current)
         return result
 
-    def summary_money_item(key: str, label: str, *row_keys: str, note: str = "Havi összesítő adat") -> dict[str, Any] | None:
-        if item(key):
-            return None
-        amount = money_from(row, *row_keys)
-        if not amount:
-            return None
-        return signed_item(key, label, amount, note=note)
+    def override_amount_or(key: str, fallback: int = 0) -> int:
+        if key in overrides:
+            return mobile_override_amount(overrides, key)
+        return fallback
 
     def detail_items(
         prefixes: tuple[str, ...],
@@ -2378,81 +2375,24 @@ def build_financial_breakdown_from_mobile_rows(
             normalized_items.append(updated)
         return normalized_items
 
-    payable = mobile_override_amount(overrides, "payable")
-    income_total = mobile_override_amount(overrides, "income")
-    deduction_total = mobile_override_amount(overrides, "deductions")
-    correction_total = 0
-    mobile_customer_rating_total = mobile_override_amount(overrides, "customer_rating")
-    customer_rating_items = read_customer_rating_bonus_items(selected_courier_id, month)
-    imported_customer_rating_total = sum(money_int(current.get("amountHuf")) for current in customer_rating_items)
-    customer_rating_total = mobile_customer_rating_total or imported_customer_rating_total or money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
-    customer_rating_item = item("customer_rating")
-    if not customer_rating_items and customer_rating_total and (
-        not customer_rating_item
-        or not money_int(customer_rating_item.get("amountHuf"))
-    ):
-        customer_rating_item = signed_item(
-            "customer_rating",
-            "Ügyfélértékelési bónusz",
-            customer_rating_total,
-            note="Központi elszámolási adat",
-        )
-    if customer_rating_items:
-        customer_rating_item = None
-    if customer_rating_total != mobile_customer_rating_total:
-        delta = customer_rating_total - mobile_customer_rating_total
-        income_total += delta
-        payable += delta
-
     base_items = normalize_base_detail_items(detail_items(("base_detail_",), []))
     if not base_items:
         base_items = money_items(["base"])
+    delay_items = money_items(["delay_bonus"])
+    compliance_items = money_items(["compliance_bonus"])
+    customer_rating_items = detail_items(("customer_rating_",), ["customer_rating"])
     income_items = money_items([
         "base",
         "tip",
         "delay_bonus",
         "compliance_bonus",
         "loyalty_bonus",
+        "customer_rating",
         "monthly_bonus",
         "manual_bonus",
     ])
-    summary_fallbacks = [
-        summary_money_item("base", "Alapdíj", "base_huf", "base_fee_huf", "base_total_huf"),
-        summary_money_item("tip", "Borravaló", "tip_huf", "tips_huf", "tip_total_huf"),
-        summary_money_item("delay_bonus", "Késedelmi díj", "delay_bonus_huf", "delay_huf"),
-        summary_money_item("compliance_bonus", "Túramegfelelés", "compliance_bonus_huf", "compliance_huf"),
-    ]
-    summary_fallback_by_key = {
-        str(fallback.get("key") or ""): fallback
-        for fallback in summary_fallbacks
-        if fallback
-    }
-    for fallback in summary_fallbacks:
-        if fallback and not any(str(current.get("key") or "") == fallback["key"] for current in income_items):
-            income_items.append(fallback)
-    if not base_items and summary_fallback_by_key.get("base"):
-        base_items = [summary_fallback_by_key["base"]]
-    delay_items = money_items(["delay_bonus"])
-    if not delay_items and summary_fallback_by_key.get("delay_bonus"):
-        delay_items = [summary_fallback_by_key["delay_bonus"]]
-    compliance_items = money_items(["compliance_bonus"])
-    if not compliance_items and summary_fallback_by_key.get("compliance_bonus"):
-        compliance_items = [summary_fallback_by_key["compliance_bonus"]]
-    if customer_rating_items:
-        insert_after = next(
-            (index + 1 for index, current in enumerate(income_items) if current.get("key") == "loyalty_bonus"),
-            len(income_items),
-        )
-        income_items[insert_after:insert_after] = customer_rating_items
-    elif customer_rating_item and (
-        money_int(customer_rating_item.get("amountHuf"))
-        or str(customer_rating_item.get("amountKind") or "huf") == "huf"
-    ):
-        insert_after = next(
-            (index + 1 for index, current in enumerate(income_items) if current.get("key") == "loyalty_bonus"),
-            len(income_items),
-        )
-        income_items.insert(insert_after, customer_rating_item)
+    if customer_rating_items and not any(str(current.get("key") or "").startswith("customer_rating") for current in income_items):
+        income_items.extend(customer_rating_items)
     deduction_items = money_items([
         "monthly_malus",
         "manual_malus",
@@ -2462,29 +2402,6 @@ def build_financial_breakdown_from_mobile_rows(
         "insurance_fee",
         "other_deduction",
     ])
-    period_end = month_end(month)
-    target_reserve_month = read_target_reserve_monthly(selected_courier_id, month, period_end)
-    if target_reserve_month:
-        reserve_item = signed_item(
-            "reserve",
-            "Céltartalék levonás",
-            -abs(money_from(target_reserve_month, "reserve_addition_huf")),
-            source="settlement.courier_target_reserve_monthly",
-        )
-        insurance_fee_item = signed_item(
-            "insurance_fee",
-            "Biztosítási havi díj",
-            -abs(money_from(target_reserve_month, "insurance_fee_huf")),
-            source="settlement.courier_target_reserve_monthly",
-        )
-        deduction_items = [
-            current for current in deduction_items
-            if current.get("key") not in {"reserve", "insurance_fee"}
-        ]
-        deduction_items.extend([
-            current for current in (reserve_item, insurance_fee_item)
-            if money_int(current.get("amountHuf"))
-        ])
     insurance_items = [
         current for current in (
             item("target_reserve_open"),
@@ -2494,37 +2411,6 @@ def build_financial_breakdown_from_mobile_rows(
         )
         if current is not None and (money_int(current.get("amountHuf")) or current.get("key") in {"target_reserve_open", "target_reserve_close"})
     ]
-    if target_reserve_month:
-        insurance_items = [
-            signed_item(
-                "target_reserve_open",
-                "Céltartalék nyitó",
-                money_from(target_reserve_month, "reserve_before_huf"),
-                source="settlement.courier_target_reserve_monthly",
-            ),
-            signed_item(
-                "reserve",
-                "Céltartalék levonás",
-                -abs(money_from(target_reserve_month, "reserve_addition_huf")),
-                source="settlement.courier_target_reserve_monthly",
-            ),
-            signed_item(
-                "insurance_fee",
-                "Biztosítási havi díj",
-                -abs(money_from(target_reserve_month, "insurance_fee_huf")),
-                source="settlement.courier_target_reserve_monthly",
-            ),
-            signed_item(
-                "target_reserve_close",
-                "Új nyitó / záró egyenleg",
-                money_from(target_reserve_month, "reserve_after_huf"),
-                source="settlement.courier_target_reserve_monthly",
-            ),
-        ]
-        insurance_items = [
-            current for current in insurance_items
-            if money_int(current.get("amountHuf")) or current.get("key") in {"target_reserve_open", "target_reserve_close"}
-        ]
     insurance_total = sum(
         money_int(current.get("amountHuf"))
         for current in insurance_items
@@ -2555,32 +2441,13 @@ def build_financial_breakdown_from_mobile_rows(
             jitt_items.append(fallback_item)
     if not jitt_items:
         jitt_items = detail_items((), ["manual_bonus", "manual_malus"])
-    has_jitt_bonus_item = any(
-        str(current.get("key") or "").startswith("jitt_bonus_")
-        or str(current.get("key") or "") == "manual_bonus"
-        for current in jitt_items
-    )
-    if not has_jitt_bonus_item:
-        period_end = month_end(month)
-        for index, adjustment in enumerate(read_courier_manual_adjustments(selected_courier_id, month, period_end), start=1):
-            adjustment_type = str(adjustment.get("adjustment_type") or "")
-            if adjustment_type != "bonus":
-                continue
-            amount = money_int(adjustment.get("amount_huf"))
-            if not amount:
-                continue
-            jitt_items.append(signed_item(
-                f"jitt_bonus_db_{index}",
-                "JITT bónusz",
-                amount,
-                source="settlement.courier_settlement_adjustment",
-                note=str(adjustment.get("note") or "Sheet/DB tétel"),
-            ))
     correction_items = detail_items(("correction_periodic_",), [])
     correction_total = sum(money_int(current.get("amountHuf")) for current in correction_items)
-    income_total = sum(money_int(current.get("amountHuf")) for current in income_items)
-    deduction_total = sum(money_int(current.get("amountHuf")) for current in deduction_items)
-    payable = income_total + deduction_total + correction_total
+    income_total = override_amount_or("income", sum(money_int(current.get("amountHuf")) for current in income_items))
+    deduction_total = override_amount_or("deductions", sum(money_int(current.get("amountHuf")) for current in deduction_items))
+    payable = override_amount_or("payable", income_total + deduction_total + correction_total)
+    tip_items = money_items(["tip"])
+    tip_total = override_amount_or("tip", sum(money_int(current.get("amountHuf")) for current in tip_items))
     performance_items = [
         current for current in (
             item("orders"),
@@ -2594,17 +2461,12 @@ def build_financial_breakdown_from_mobile_rows(
         )
         if current is not None and str(current.get("amountKind") or "") == "count"
     ]
-    kiflis_total = mobile_override_amount(overrides, "kiflis_bonus_malus")
-    if not kiflis_total:
-        kiflis_total = sum(money_int(current.get("amountHuf")) for current in kiflis_items)
-    jitt_total = mobile_override_amount(overrides, "bonus_malus")
-    if jitt_items:
-        jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
-    if not jitt_total:
-        jitt_total = sum(money_int(current.get("amountHuf")) for current in jitt_items)
-    base_total = mobile_override_amount(overrides, "base") or sum(money_int(current.get("amountHuf")) for current in base_items)
-    delay_total = mobile_override_amount(overrides, "delay_bonus") or sum(money_int(current.get("amountHuf")) for current in delay_items)
-    compliance_total = mobile_override_amount(overrides, "compliance_bonus") or sum(money_int(current.get("amountHuf")) for current in compliance_items)
+    kiflis_total = override_amount_or("kiflis_bonus_malus", sum(money_int(current.get("amountHuf")) for current in kiflis_items))
+    jitt_total = override_amount_or("bonus_malus", sum(money_int(current.get("amountHuf")) for current in jitt_items))
+    base_total = override_amount_or("base", sum(money_int(current.get("amountHuf")) for current in base_items))
+    delay_total = override_amount_or("delay_bonus", sum(money_int(current.get("amountHuf")) for current in delay_items))
+    compliance_total = override_amount_or("compliance_bonus", sum(money_int(current.get("amountHuf")) for current in compliance_items))
+    customer_rating_total = override_amount_or("customer_rating", sum(money_int(current.get("amountHuf")) for current in customer_rating_items))
 
     cards = [
         {
@@ -2621,11 +2483,12 @@ def build_financial_breakdown_from_mobile_rows(
         },
         {"key": "income", "label": "J\u00f3v\u00e1\u00edr\u00e1sok", "amountHuf": income_total, "tone": "income", "items": income_items},
         {"key": "base", "label": "Alapd\u00edj", "amountHuf": base_total, "tone": "income", "items": base_items},
+        {"key": "tip", "label": "Borraval\u00f3", "amountHuf": tip_total, "tone": "income", "items": tip_items},
         {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": delay_total, "tone": "income", "items": delay_items},
         {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": compliance_total, "tone": "income", "items": compliance_items},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": mobile_override_amount(overrides, "loyalty_bonus"), "tone": "income", "items": money_items(["loyalty_bonus"])},
-        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items or ([customer_rating_item] if customer_rating_item else [])},
+        {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levon\u00e1sok / b\u00f3nuszok", "amountHuf": kiflis_total, "tone": "info", "items": kiflis_items},
         {"key": "bonus_malus", "label": "JITT b\u00f3nusz / malus", "amountHuf": jitt_total, "tone": "info", "items": jitt_items},
         {"key": "atm_effect", "label": "ATM levon\u00e1s", "amountHuf": mobile_override_amount(overrides, "atm_effect"), "tone": "deduction", "items": money_items(["atm_effect"])},
@@ -3289,6 +3152,12 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             row["grossHuf"] = -amount
         sign = -1 if money_int(row.get("grossHuf")) < 0 else 1
         gross_abs = abs(money_int(row.get("grossHuf")))
+        if row.get("key") == "tip":
+            row["netHuf"] = sign * gross_abs
+            row["vatHuf"] = 0
+            row["vatLabel"] = "Adómentes"
+            row["grossHuf"] = sign * gross_abs
+            continue
         if breakdown.get("taxMode") == "vat":
             net = int(round(gross_abs / 1.27))
             vat = gross_abs - net
@@ -3349,6 +3218,9 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
             "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
             "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
             "vat_status": profile.get("vat_status") or "",
+            "employment_type": profile.get("employment_type") or "",
+            "employment_status": profile.get("employment_status") or "",
+            "efo_status": profile.get("efo_status") or "",
             "id": courier_id,
             "document_month": month,
         },
@@ -5477,6 +5349,9 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
             "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
             "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
             "vat_status": profile.get("vat_status") or "",
+            "employment_type": profile.get("employment_type") or "",
+            "employment_status": profile.get("employment_status") or "",
+            "efo_status": profile.get("efo_status") or "",
             "id": courier_id,
             "document_month": month,
             "document_reference": reference,

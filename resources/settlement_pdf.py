@@ -92,6 +92,16 @@ def _tig_kind(courier: dict[str, Any]) -> str:
         .replace("ű", "u")
     )
     text = _ascii_tax_text(text)
+    employment_fields = [
+        courier.get("employment_type"),
+        courier.get("employment_status"),
+        courier.get("employment"),
+        courier.get("jogviszony"),
+        courier.get("efo_status"),
+    ]
+    employment_text = _ascii_tax_text(" ".join(str(value or "") for value in employment_fields).casefold())
+    if "efo" in employment_text or "efo" in text:
+        return "aam"
     if any(token in text for token in ["aam", "alanyi", "ado mentes", "adomentes", "nem afas", "nem afa", "non vat"]):
         return "aam"
     if any(token in text for token in ["afas", "afa", "vat", "27", "belfoldi adoalany", "belfoldi ado alany"]):
@@ -179,12 +189,8 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         }
     ]
     if tip:
-        if vat_payer:
-            tip_net, tip_vat, tip_gross = _split_gross_vat_amount(tip)
-            tip_vat_label = "27%"
-        else:
-            tip_net, tip_vat, tip_gross = tip, 0, tip
-            tip_vat_label = "Adómentes"
+        tip_net, tip_vat, tip_gross = tip, 0, tip
+        tip_vat_label = "Adómentes"
         rows.append({
             "key": "tip",
             "label": "Borravaló",

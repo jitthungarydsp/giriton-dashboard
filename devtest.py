@@ -9945,6 +9945,9 @@ def show_courier_dialog() -> None:
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
                 "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
                 "vat_status": profile.get("vat_status") or "",
+                "employment_type": profile.get("employment_type") or "",
+                "employment_status": profile.get("employment_status") or "",
+                "efo_status": efo_status,
                 "email": profile.get("email") or "",
                 "id": courier_id,
                 "document_reference": tig_document_reference,
@@ -10141,6 +10144,13 @@ def show_courier_dialog() -> None:
                     "Összeg": display_base_total,
                     "Számítás": "DB összesítő" if summary_available else "Elszámolási adat",
                 }])
+            if detail_label == "Borravaló":
+                return pd.DataFrame([{
+                    "Tétel": "Borravaló",
+                    "Darab": route_total,
+                    "Összeg": tip_total,
+                    "Számítás": "Valós elszámolási adat",
+                }])
             if detail_label == "Késedelmi díj":
                 return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
             if detail_label == "Túramegfelelés":
@@ -10319,6 +10329,7 @@ def show_courier_dialog() -> None:
             ("Express normál", str(express_normal_total), "", ""),
             ("Express kiemelt", str(express_highlighted_total), "", ""),
             ("Alapdíj", format_huf(display_base_total), "", ""),
+            ("Borravaló", format_huf(tip_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", ""),
@@ -10358,7 +10369,7 @@ def show_courier_dialog() -> None:
             )
 
         detail_labels = {
-            "Kör", "Alapdíj", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
+            "Kör", "Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
             "Korrekció", "Kiflis levonások / bónuszok", "JITT bónusz / malus", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
@@ -10595,6 +10606,9 @@ def show_courier_dialog() -> None:
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
                 "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
                 "vat_status": profile.get("vat_status") or "",
+                "employment_type": profile.get("employment_type") or "",
+                "employment_status": profile.get("employment_status") or "",
+                "efo_status": efo_status,
                 "id": courier_id,
                 "document_month": period_start,
             },
@@ -13088,6 +13102,7 @@ def _export_tax_mode_label(row: dict[str, object], period_start: date | None) ->
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
         "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
         "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
+        "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz"}),
     }
     breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
     return "FS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
@@ -13099,6 +13114,7 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
         "tax_number": _export_row_value(row, {"Adószám", "tax_number"}),
         "tig_type": _export_row_value(row, {"TIG típus", "TIG tipus", "Számla típus"}),
         "vat_status": _export_row_value(row, {"FA státusz", "AFA status", "vat_status"}),
+        "employment_type": _export_row_value(row, {"Jogviszony", "employment_type", "EFO státusz"}),
         "document_month": period_start,
     }
     amounts = {
@@ -13137,6 +13153,9 @@ def _export_tax_mode_label(row: dict[str, object], period_start: date | None) ->
         "vat_status": _export_row_value(row, {
             "FA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
         }),
+        "employment_type": _export_row_value(row, {
+            "Jogviszony", "employment_type", "EFO státusz", "EFO statusz", "EFO stĂˇtusz"
+        }),
     }
     breakdown = build_tig_breakdown(courier_payload, {"payable": 0, "tip": 0, "cash": 0})
     return "FS" if str(breakdown.get("taxMode")) == "vat" else "AAM"
@@ -13151,6 +13170,9 @@ def _export_tig_values(row: dict[str, object], period_start: date | None) -> dic
         }),
         "vat_status": _export_row_value(row, {
             "FA státusz", "AFA státusz", "AFA status", "vat_status", "ĂFA stĂˇtusz"
+        }),
+        "employment_type": _export_row_value(row, {
+            "Jogviszony", "employment_type", "EFO státusz", "EFO statusz", "EFO stĂˇtusz"
         }),
         "document_month": period_start,
     }
@@ -13378,6 +13400,8 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
             "tax_number": str(row.get("Adószám") or ""),
             "tig_type": str(row.get("TIG típus") or row.get("TIG tipus") or row.get("Számla típus") or row.get("FA státusz") or row.get("vat_status") or ""),
             "vat_status": str(row.get("FA státusz") or row.get("vat_status") or ""),
+            "employment_type": str(row.get("Jogviszony") or row.get("employment_type") or ""),
+            "efo_status": str(row.get("EFO státusz") or row.get("efo_status") or ""),
             "email": str(row.get("Email") or ""),
             "id": courier_id,
             "branch": str(row.get("Branch") or ""),
