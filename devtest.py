@@ -6195,6 +6195,42 @@ def apply_customer_rating_bonus(data: pd.DataFrame, period_start: date, period_e
     return result
 
 
+def resolve_customer_rating_bonus_total(courier_id: object, courier_name: object, route_total: int, period_start: date, period_end: date) -> float:
+    rating_rows = load_customer_rating_bonus_rows(period_start, period_end)
+    if rating_rows.empty:
+        return 0.0
+    rows = rating_rows.copy()
+    rows["_courier_id_lookup"] = rows.get("courier_id", pd.Series(dtype=str)).map(_courier_id_key)
+    rows["_courier_name_lookup"] = rows.get("driver_name", pd.Series(dtype=str)).map(_courier_match_key)
+    courier_id_lookup = _courier_id_key(courier_id)
+    courier_name_lookup = _courier_match_key(courier_name)
+    selected = rows.loc[rows["_courier_id_lookup"].eq(courier_id_lookup)].copy()
+    if selected.empty and courier_name_lookup:
+        selected = rows.loc[rows["_courier_name_lookup"].eq(courier_name_lookup)].copy()
+    if selected.empty:
+        return 0.0
+
+    selected["completed_routes"] = pd.to_numeric(selected.get("completed_routes", 0), errors="coerce").fillna(0).astype(int)
+    selected["bonus_per_route_huf"] = pd.to_numeric(selected.get("bonus_per_route_huf", 0), errors="coerce").fillna(0.0)
+    selected["bonus_total_huf"] = pd.to_numeric(selected.get("bonus_total_huf", 0), errors="coerce").fillna(0.0)
+    stored_total = float(selected["bonus_total_huf"].sum())
+    route_count = int(route_total or 0)
+    if route_count <= int(selected["completed_routes"].sum()):
+        return stored_total
+
+    positive_rows = selected.loc[selected["bonus_per_route_huf"].astype(float).ne(0.0)]
+    rating_idx = positive_rows.index[0] if not positive_rows.empty else selected.index[0]
+    unit_amount = parse_huf_value(selected.at[rating_idx, "bonus_per_route_huf"])
+    if not unit_amount:
+        rules = load_customer_rating_rules_for_month(period_start, period_end)
+        unit_amount = customer_rating_rule_amount(
+            parse_huf_value(selected.at[rating_idx, "average_rating"]),
+            rules,
+            selected.at[rating_idx, "route_type"] if "route_type" in selected.columns else "normal",
+        )
+    return float(route_count * unit_amount)
+
+
 def parse_customer_rating_excel(uploaded_file, billing_month: date, dashboard_data: pd.DataFrame) -> pd.DataFrame:
     raw = pd.read_excel(uploaded_file)
     normalized_columns = {_normalized_field_key(column): column for column in raw.columns}
@@ -10077,6 +10113,14 @@ def show_courier_dialog() -> None:
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
         route_other_bonus_total = 0.0
         display_base_total = base_total
+        imported_customer_rating_total = resolve_customer_rating_bonus_total(
+            courier_id,
+            courier_name,
+            route_total,
+            period_start,
+            period_end,
+        )
+        customer_rating_total = imported_customer_rating_total + manual_customer_rating_total
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
