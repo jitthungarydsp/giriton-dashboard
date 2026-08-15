@@ -6960,6 +6960,24 @@ def effective_payment_total_from_row(row: pd.Series | dict[str, object], period_
     )
 
 
+def apply_effective_payment_total_column(data: pd.DataFrame, period_start: date | None) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty:
+        if "Kifizetendő kifizetésre" not in result.columns:
+            result["Kifizetendő kifizetésre"] = pd.Series(dtype=float)
+        return result
+    profile_by_id_for_payment = _export_courier_profile_lookup()
+
+    def list_payment_total(item: pd.Series) -> float:
+        raw_item = item.to_dict()
+        courier_key = _courier_id_key(raw_item.get("Courier ID") or raw_item.get("courier_id"))
+        profile_row = profile_by_id_for_payment.get(courier_key, {})
+        return effective_payment_total_from_row({**raw_item, **profile_row}, period_start)
+
+    result["Kifizetendő kifizetésre"] = result.apply(list_payment_total, axis=1)
+    return result
+
+
 def month_options(count: int = 24) -> list[str]:
     names = ["január","február","március","április","május","június","július","augusztus","szeptember","október","november","december"]
     today = date.today()
@@ -14253,19 +14271,7 @@ def show_new_settlement_page() -> None:
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     data = apply_salary_advance_request_status(data, balance_period_start, balance_period_end)
-    if not data.empty:
-        profile_by_id_for_payment = _export_courier_profile_lookup()
-
-        def list_payment_total(item: pd.Series) -> float:
-            raw_item = item.to_dict()
-            courier_key = _courier_id_key(raw_item.get("Courier ID") or raw_item.get("courier_id"))
-            profile_row = profile_by_id_for_payment.get(courier_key, {})
-            return effective_payment_total_from_row({**raw_item, **profile_row}, balance_period_start)
-
-        data["Kifizetendő kifizetésre"] = data.apply(
-            list_payment_total,
-            axis=1,
-        )
+    data = apply_effective_payment_total_column(data, balance_period_start)
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
         and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
@@ -14800,7 +14806,7 @@ def show_new_settlement_page() -> None:
             st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont és a szűrést.")
 
     metric_options = [
-        {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő", "kind": "huf"},
+        {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő kifizetésre", "kind": "huf"},
         {"key": "contractor", "label": "Alvállalkozói összeg", "column": "Alvállalkozói összeg", "kind": "huf"},
         {"key": "income", "label": "Összes bevétel", "column": "Nettó bevétel", "kind": "huf"},
         {"key": "deduction", "label": "Összes levonás", "column": "Levonás", "kind": "huf"},
@@ -14874,6 +14880,7 @@ def show_new_settlement_page() -> None:
         previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
         previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_salary_advance_request_status(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_effective_payment_total_column(previous_data, previous_period_start)
         previous_filtered = previous_data.copy()
         if branch != "Összes":
             previous_filtered = previous_filtered[previous_filtered["Branch"] == branch]
