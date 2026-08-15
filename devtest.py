@@ -6423,7 +6423,16 @@ def parse_customer_rating_excel_v2(uploaded_file, billing_month: date, dashboard
         "billing_month": ["datum", "date", "honap", "month", "elszamolasihonap", "billingmonth"],
         "courier_id": ["id", "futarid", "courierid", "driverid"],
         "driver_name": ["nev", "futarnev", "futarneve", "couriername", "drivername"],
-        "average_rating": ["ertek", "ertekszam", "ugyfelertekeles", "ertekeles", "averagerating", "atlag", "rating"],
+        "average_rating": [
+            "ertek",
+            "ertekszam",
+            "ugyfelertekeles",
+            "ugyfelertekeleshaviatlag",
+            "ertekeles",
+            "averagerating",
+            "atlag",
+            "rating",
+        ],
         "rating_count": ["ertekelesdb", "ratingcount", "darab", "count"],
     }
     for simple_sheet in excel_file.sheet_names:
