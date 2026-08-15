@@ -199,6 +199,15 @@
             "token": ""
         },
         {
+            "username": "Herkovics Andrea",
+            "trainer": "trainer_name",
+            "password": "Jli5NGaN",
+            "role": "user",
+            "courierId": 7895,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Cserna Levente Zoltán",
             "trainer": "trainer_name",
             "password": "d0SlWAc1",
