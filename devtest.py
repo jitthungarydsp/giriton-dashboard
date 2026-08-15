@@ -9616,7 +9616,7 @@ def show_courier_dialog() -> None:
         )
         return
     route_detail = pd.DataFrame()
-    if selected_menu_hint in {"ttekintés", "Pénzügy", "Útvonalak"}:
+    if selected_menu_hint in {"ttekintés", "Pénzügy", "Kifizetés", "Útvonalak"}:
         route_detail = load_courier_route_detail(
             courier_id,
             courier_name,
