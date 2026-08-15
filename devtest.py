@@ -10149,7 +10149,12 @@ def show_courier_dialog() -> None:
         reserve_before_total = parse_huf_value(reserve_month.get("reserve_before_huf"))
         reserve_after_total = parse_huf_value(reserve_month.get("reserve_after_huf"))
         reserve_month_status = str(reserve_month.get("status") or "in_progress")
-        payable_total = overview_payable_total
+        reserve_payable_total = parse_huf_value(reserve_month.get("payable_after_insurance_huf"))
+        payable_total = (
+            reserve_payable_total
+            if reserve_month_status.casefold() == "done" and reserve_payable_total
+            else payable_before_insurance - reserve_addition_total - insurance_fee_total
+        )
         tig_breakdown = build_tig_breakdown(
             {
                 "name": courier_name,
