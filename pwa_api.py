@@ -3128,17 +3128,39 @@ def enrich_mobile_overrides_from_financial_sources(
     period_end = month_end(month)
     enriched = dict(overrides)
 
-    has_customer_detail = any(
-        key.startswith("customer_rating_") and key != "customer_rating" and money_int(value.get("amount_value"))
-        for key, value in enriched.items()
-    )
-    if should_backfill_mobile_override(enriched, "customer_rating") or not has_customer_detail:
-        customer_items = read_customer_rating_bonus_items(courier_id, month)
-        customer_total = sum(money_int(item.get("amountHuf")) for item in customer_items)
-        if not customer_total:
-            customer_total = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
-        backfill_mobile_override(
-            enriched,
+    customer_items = read_customer_rating_bonus_items(courier_id, month)
+    route_count = money_from(row, "routes", "route_count", "completed_routes")
+    if customer_items and route_count > 0:
+        customer_completed_routes = sum(money_int(item.get("completedRoutes")) for item in customer_items)
+        unit_amount = next((money_int(item.get("unitAmountHuf")) for item in customer_items if money_int(item.get("unitAmountHuf"))), 0)
+        if unit_amount and customer_completed_routes != route_count:
+            first_item = customer_items[0]
+            average_rating = first_item.get("averageRating")
+            note_parts = []
+            if average_rating not in (None, ""):
+                note_parts.append(f"Átlag: {average_rating}")
+            note_parts.extend([f"Kör: {route_count}", f"{route_count} x {unit_amount} Ft", "normal"])
+            customer_items = [
+                signed_item(
+                    "customer_rating_import_1",
+                    "Ügyfélértékelési bónusz",
+                    route_count * unit_amount,
+                    source="public.bill_jitt_invoice_customer_rating_bonus",
+                    note=" | ".join(note_parts),
+                )
+            ]
+            customer_items[0]["completedRoutes"] = route_count
+            customer_items[0]["unitAmountHuf"] = unit_amount
+            customer_items[0]["averageRating"] = average_rating
+            customer_items[0]["routeType"] = "normal"
+    customer_total = sum(money_int(item.get("amountHuf")) for item in customer_items)
+    if not customer_total:
+        customer_total = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
+    if customer_total and not is_manual_mobile_override(enriched.get("customer_rating")):
+        for key in list(enriched.keys()):
+            if key.startswith("customer_rating_") and key != "customer_rating" and not is_manual_mobile_override(enriched.get(key)):
+                enriched.pop(key, None)
+        enriched["customer_rating"] = mobile_override_row(
             "customer_rating",
             "Ügyfélértékelési bónusz",
             customer_total,
@@ -3146,7 +3168,7 @@ def enrich_mobile_overrides_from_financial_sources(
         )
         for item in customer_items:
             item_key = str(item.get("key") or "")
-            if item_key and item_key not in enriched:
+            if item_key:
                 enriched[item_key] = mobile_override_row(
                     item_key,
                     str(item.get("label") or "Ügyfélértékelési bónusz"),
@@ -4430,13 +4452,18 @@ def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> lis
             note_parts.append(f"{completed_routes} x {unit_amount} Ft")
         if route_type:
             note_parts.append(route_type)
-        items.append(signed_item(
+        item = signed_item(
             f"customer_rating_import_{index}",
             "Ügyfélértékelési bónusz",
             amount,
             source="public.bill_jitt_invoice_customer_rating_bonus",
             note=" | ".join(note_parts) or str(row.get("worksheet_name") or "Ügyfélértékelés import"),
-        ))
+        )
+        item["completedRoutes"] = completed_routes
+        item["unitAmountHuf"] = unit_amount
+        item["averageRating"] = average_rating
+        item["routeType"] = route_type
+        items.append(item)
     result = [item for item in items if item["amountHuf"]]
     store_financial_lookup("customer_rating_bonus_items", cache_key, [dict(item) for item in result])
     return result
