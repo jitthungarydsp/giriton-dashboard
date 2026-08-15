@@ -1110,6 +1110,84 @@ def _normalized_field_key(value: object) -> str:
     return re.sub(r"[^a-z0-9]", "", text)
 
 
+IMPORTED_COURIER_ID_KEYS = {
+    "courierid", "couriernumber", "driverid", "usernumber", "userid",
+    "futarid", "futarazonosito", "azonosito", "id",
+}
+IMPORTED_COURIER_NAME_KEYS = {
+    "driver", "drivername", "courier", "couriername",
+    "futar", "futarnev", "futarnevesazonosito", "futarnevazonosito",
+    "name", "nev", "kollega", "munkatars",
+}
+IMPORTED_IDENTITY_TOKENS = (
+    "courier", "driver", "futar", "nev", "name", "azonosito", "kollega", "munkatars", "id",
+)
+
+
+def _clean_imported_courier_name(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or text.casefold() in {"nan", "none", "null"}:
+        return ""
+    text = re.sub(r"#?\s*\b\d{4,6}\b", "", text)
+    return re.sub(r"\s+", " ", text).strip(" -#")
+
+
+def _imported_courier_identity(normalized_payload: dict[str, object]) -> tuple[str, str]:
+    raw_id = next(
+        (value for key, value in normalized_payload.items() if key in IMPORTED_COURIER_ID_KEYS),
+        "",
+    )
+    raw_name = next(
+        (value for key, value in normalized_payload.items() if key in IMPORTED_COURIER_NAME_KEYS),
+        "",
+    )
+    if not raw_id:
+        raw_id = next(
+            (
+                _courier_id_from_text(value)
+                for key, value in normalized_payload.items()
+                if any(token in key for token in IMPORTED_IDENTITY_TOKENS)
+                and _courier_id_from_text(value)
+            ),
+            "",
+        )
+    if not raw_name:
+        raw_name = next(
+            (
+                value for key, value in normalized_payload.items()
+                if any(token in key for token in IMPORTED_IDENTITY_TOKENS)
+                and _clean_imported_courier_name(value)
+            ),
+            "",
+        )
+    return (
+        _courier_id_from_text(raw_id) or _courier_id_key(raw_id),
+        _courier_match_key(_clean_imported_courier_name(raw_name) or raw_name),
+    )
+
+
+def _imported_amount_value(
+    normalized_payload: dict[str, object],
+    exact_amount_keys: tuple[str, ...],
+    amount_tokens: tuple[str, ...],
+) -> object:
+    amount_value = None
+    for key in exact_amount_keys:
+        if key not in normalized_payload:
+            continue
+        candidate = normalized_payload.get(key)
+        if parse_huf_value(candidate):
+            return candidate
+        if amount_value is None:
+            amount_value = candidate
+    if parse_huf_value(amount_value):
+        return amount_value
+    for key, value in normalized_payload.items():
+        if any(token in key for token in amount_tokens) and parse_huf_value(value):
+            return value
+    return amount_value
+
+
 def _find_column_by_key(columns: object, aliases: set[str]) -> str:
     for column in list(columns or []):
         if _normalized_field_key(column) in aliases:
@@ -6694,14 +6772,14 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     definitions = {
         "bonus_route_row": (
             "Importált bónusz",
-            ("bonus", "bonusz", "amount", "osszeg", "total"),
-            ("bonus", "bonusz", "amount", "osszeg", "total"),
+            ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total"),
+            ("bonus", "bonusz", "amount", "osszeg", "total", "huf"),
             False,
         ),
         "penalty_row": (
             "Importált málusz",
-            ("value", "amount", "osszeg", "penalty", "malus", "levonas"),
-            ("value", "amount", "osszeg", "penalty", "malus", "levonas"),
+            ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas"),
+            ("amount", "osszeg", "penalty", "malus", "levonas", "huf"),
             True,
         ),
         "atm_balance_row": (
@@ -6731,31 +6809,8 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
                 _normalized_field_key(key): value
                 for key, value in payload.items()
             }
-            courier_id = next(
-                (value for key, value in normalized_payload.items()
-                if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
-                None,
-            )
-            courier_name = next(
-                (value for key, value in normalized_payload.items()
-                if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
-                None,
-            )
-            amount_value = None
-            for key in exact_amount_keys:
-                if key not in normalized_payload:
-                    continue
-                candidate = normalized_payload.get(key)
-                if parse_huf_value(candidate):
-                    amount_value = candidate
-                    break
-                if amount_value is None:
-                    amount_value = candidate
-            if not parse_huf_value(amount_value):
-                for key, value in normalized_payload.items():
-                    if any(token in key for token in amount_tokens) and parse_huf_value(value):
-                        amount_value = value
-                        break
+            courier_id_key, courier_name_key = _imported_courier_identity(normalized_payload)
+            amount_value = _imported_amount_value(normalized_payload, exact_amount_keys, amount_tokens)
             note_value = next(
                 (
                     value for key, value in normalized_payload.items()
@@ -6767,7 +6822,7 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
                 "",
             )
             amount = parse_huf_value(amount_value)
-            if (courier_id is None and courier_name is None) or amount == 0:
+            if (not courier_id_key and not courier_name_key) or amount == 0:
                 continue
             note_column = {
                 "Importált bónusz": "Importált bónusz megjegyzés",
@@ -6775,8 +6830,8 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
                 "Importált ATM levonás": "Importált ATM megjegyzés",
             }.get(output_column)
             records.append({
-                "courier_id_key": _courier_id_key(courier_id),
-                "courier_name_key": _courier_match_key(courier_name),
+                "courier_id_key": courier_id_key,
+                "courier_name_key": courier_name_key,
                 output_column: abs(amount) if use_absolute else amount,
                 **({note_column: str(note_value or "").strip()} if note_column else {}),
             })
@@ -6810,8 +6865,8 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        "bonus_route_row": ("Kiflis bónusz", 1, ("bonus", "bonusz", "amount", "osszeg", "total")),
-        "penalty_row": ("Kiflis malus", -1, ("value", "amount", "osszeg", "penalty", "malus", "levonas")),
+        "bonus_route_row": ("Kiflis bónusz", 1, ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total")),
+        "penalty_row": ("Kiflis malus", -1, ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas")),
     }
     rows_out: list[dict[str, object]] = []
     for table_name, (label, sign, amount_keys) in definitions.items():
@@ -6834,36 +6889,13 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
             if not isinstance(payload, dict):
                 continue
             normalized_payload = {_normalized_field_key(key): value for key, value in payload.items()}
-            row_id = _courier_id_key(next(
-                (value for key, value in normalized_payload.items()
-                 if key in {"courierid", "couriernumber", "driverid", "usernumber", "userid"}),
-                "",
-            ))
-            row_name = _courier_match_key(next(
-                (value for key, value in normalized_payload.items()
-                 if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev", "name", "nev"}),
-                "",
-            ))
-            amount_value = None
-            for key in amount_keys:
-                if key not in normalized_payload:
-                    continue
-                candidate = normalized_payload.get(key)
-                if parse_huf_value(candidate):
-                    amount_value = candidate
-                    break
-                if amount_value is None:
-                    amount_value = candidate
-            if not parse_huf_value(amount_value):
-                for key, value in normalized_payload.items():
-                    if any(token in key for token in amount_keys) and parse_huf_value(value):
-                        amount_value = value
-                        break
+            row_id, row_name = _imported_courier_identity(normalized_payload)
+            amount_value = _imported_amount_value(normalized_payload, amount_keys, amount_keys)
             amount = abs(parse_huf_value(amount_value))
             if not amount:
                 continue
             note_parts = []
-            for key in ("malusname", "bonusname", "tetel", "reason", "category", "comment", "comment2", "note", "megjegyzes", "description"):
+            for key in ("penaltytype", "malusname", "bonusname", "tetel", "reason", "category", "comment", "comment2", "note", "extranote", "megjegyzes", "description"):
                 value = str(normalized_payload.get(key) or "").strip()
                 if value and value.casefold() != "nan":
                     note_parts.append(value)
@@ -7020,7 +7052,15 @@ def parse_huf_value(value: object) -> float:
         pass
     if isinstance(value, (int, float)):
         return float(value)
-    text = str(value).strip().replace("", "-").replace("Ft", "").replace("ft", "")
+    text = (
+        str(value)
+        .strip()
+        .replace("\u2212", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("Ft", "")
+        .replace("ft", "")
+    )
     text = re.sub(r"\s+", "", text)
     text = re.sub(r"[^0-9,.-]", "", text)
     if "," in text and "." in text:
