@@ -1706,12 +1706,36 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         or row.get("Időszakos díjak / korrekció")
         or row.get("Időszakos díj")
     )
+    reserve = abs(parse_huf_value(
+        row.get("Céltartalék 10%")
+        or row.get("Céltartalék levonás 10%")
+        or row.get("target_reserve_topup_huf")
+    ))
+    insurance_fee = abs(parse_huf_value(
+        row.get("Biztosítási díj")
+        or row.get("Életbiztosítás 10 000 Ft")
+        or row.get("insurance_fee_huf")
+    ))
+    reserve_open = parse_huf_value(row.get("Céltartalék nyitó") or row.get("target_reserve_open_huf"))
+    reserve_close = parse_huf_value(
+        row.get("Céltartalék záró")
+        or row.get("Új nyitó / záró céltartalék")
+        or row.get("target_reserve_close_huf")
+    )
     salary_advance = parse_huf_value(row.get("Fizetés előleg"))
     manual_bonus = parse_huf_value(row.get("JITT bónusz"))
     manual_malus = abs(parse_huf_value(row.get("JITT malus")))
     correction_income = max(correction, 0.0)
     correction_deduction = abs(min(correction, 0.0))
-    known_deductions = imported_malus + manual_malus + imported_atm + salary_advance + correction_deduction
+    known_deductions = (
+        imported_malus
+        + manual_malus
+        + imported_atm
+        + salary_advance
+        + reserve
+        + insurance_fee
+        + correction_deduction
+    )
     remaining_deduction = max(abs(deduction) - known_deductions, 0.0)
     income = base + tip + imported_bonus + manual_bonus + delay + compliance + loyalty + customer_rating + correction_income
     return [
@@ -1733,6 +1757,10 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "monthly_malus", "item_label": "Kiflis malus", "amount_kind": "huf", "amount_value": -imported_malus, "note": str(row.get("Importált málusz megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
         {"item_key": "atm_effect", "item_label": "ATM hatás", "amount_kind": "huf", "amount_value": -imported_atm, "note": str(row.get("Importált ATM megjegyzés") or "").strip() or "Havi nyitáskor publikált snapshot"},
         {"item_key": "salary_advance", "item_label": "Fizetés előleg", "amount_kind": "huf", "amount_value": -abs(salary_advance), "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "target_reserve_open", "item_label": "Céltartalék nyitó", "amount_kind": "huf", "amount_value": reserve_open, "note": "Biztosítási adat"},
+        {"item_key": "reserve", "item_label": "Céltartalék", "amount_kind": "huf", "amount_value": -reserve, "note": "Valós elszámolási adat"},
+        {"item_key": "insurance_fee", "item_label": "Biztosítási díj", "amount_kind": "huf", "amount_value": -insurance_fee, "note": "Valós elszámolási adat"},
+        {"item_key": "target_reserve_close", "item_label": "Új nyitó / záró céltartalék", "amount_kind": "huf", "amount_value": reserve_close, "note": "Biztosítási adat"},
         {"item_key": "other_expense", "item_label": "Egyéb levonás", "amount_kind": "huf", "amount_value": -remaining_deduction, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "orders", "item_label": "Cím", "amount_kind": "count", "amount_value": orders, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "routes", "item_label": "Kör", "amount_kind": "count", "amount_value": routes, "note": "Havi nyitáskor publikált snapshot"},
@@ -1919,6 +1947,21 @@ def enrich_mobile_settlement_row_for_snapshot(
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
         enriched["JITT bónusz"] = float(adjustment_totals.get("bonus", 0.0))
         enriched["JITT malus"] = float(adjustment_totals.get("malus", 0.0))
+    if parse_huf_value(enriched.get("Ügyfélértékelés")) == 0:
+        route_total = int(parse_huf_value(
+            enriched.get("Útvonalak")
+            or enriched.get("Számolt túrák")
+            or enriched.get("Kör")
+        ))
+        customer_rating_total = resolve_customer_rating_bonus_total(
+            courier_id,
+            courier_name,
+            route_total,
+            period_start,
+            period_end,
+        )
+        if customer_rating_total:
+            enriched["Ügyfélértékelés"] = customer_rating_total
     return enriched, route_detail
 
 
