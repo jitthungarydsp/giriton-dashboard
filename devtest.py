@@ -14079,6 +14079,71 @@ def open_individual_monthly_billing(
     return deleted, uploaded, courier_count
 
 
+def open_monthly_billing_visibility(
+    data: pd.DataFrame,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str,
+    session_id: str | None,
+    actor: str,
+) -> int:
+    if data is None or data.empty:
+        return 0
+
+    period_month = period_start.replace(day=1)
+    opened = 0
+    seen: set[str] = set()
+    note = "Havi elszámolás megnyitva a futár PWA felé."
+
+    save_mobile_settlement_period_config(
+        period_month,
+        calculation_mode,
+        warehouse_label,
+        session_id,
+        actor,
+    )
+
+    for _, row in data.iterrows():
+        courier_id = str(row.get("Courier ID") or "").strip()
+        courier_name = str(row.get("Futár") or "").strip()
+        if not courier_id or courier_id in seen:
+            continue
+        seen.add(courier_id)
+
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key="individual_monthly_billing",
+            document_month=period_month,
+            status="done",
+            status_note=note,
+            updated_by=actor,
+        )
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key="settlement",
+            document_month=period_month,
+            status="open",
+            status_note=note,
+            updated_by=actor,
+        )
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key="tig",
+            document_month=period_month,
+            status="open",
+            status_note="TIG admin előnézetben elérhető; futárnak elszámolás elfogadása után aktív.",
+            updated_by=actor,
+        )
+        opened += 1
+
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    return opened
+
+
 def close_individual_monthly_billing(
     *,
     courier_id: str,
@@ -14872,18 +14937,15 @@ def show_new_settlement_page() -> None:
         disabled=selected_calculation_mode not in {"API", "Excel"} or filtered.empty,
         use_container_width=True,
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
-        help="A futar PWA-ban megkapja az elszamolasi idoszakot. Mar inditott honapnal is ujrapublikalja a mobil ertekeket.",
+        help="A futár PWA-ban láthatóvá teszi a már mentett havi elszámolást. Nem számol újra mobil értékeket.",
     ):
         snapshot_session_id = settlement_mobile_session_for_mode(
             selected_calculation_mode,
             balance_period_start,
             selected_warehouse_label,
         )
-        if selected_calculation_mode in {"API", "Excel"} and not snapshot_session_id:
-            st.error("Nincs publikálható API/Excel forrás ehhez a hónaphoz. Töltsd be vagy válaszd ki újra a számítást.")
-            st.stop()
-        with st.spinner("Havi elszámolás publikálása a futár PWA felé..."):
-            courier_count, row_count = publish_mobile_settlement_snapshot(
+        with st.spinner("Havi elszámolás láthatóvá tétele a futár PWA felé..."):
+            courier_count = open_monthly_billing_visibility(
                 filtered,
                 balance_period_start,
                 selected_calculation_mode,
@@ -14893,14 +14955,14 @@ def show_new_settlement_page() -> None:
             )
         if courier_count:
             st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True
-            st.success(f"Havi elszámolási időszak elindítva: {courier_count} futár, {row_count} mobil érték publikálva.")
+            st.success(f"Havi elszámolás láthatóvá téve: {courier_count} futár.")
             st.rerun()
         else:
-            st.error("A havi nyitás nem sikerült. Ellenőrizd a mobil SQL táblákat és a kiválasztott API/Excel sessiont.")
+            st.error("A havi nyitás nem sikerült. Nincs láthatóvá tehető futár a szűrésben.")
     if period_start_clicked:
-        st.info("Ez a havi elszámolási időszak már el lett indítva, de a gombbal újra publikálható a futároknak.")
+        st.info("Ez a havi elszámolási időszak már el lett indítva, de a gombbal újra láthatóvá tehető a futároknak.")
     else:
-        st.caption("A havi nyitás a kiválasztott API/Excel forrásból publikálja ugyanazokat az értékeket az admin és futár mobil nézetbe.")
+        st.caption("A havi nyitás csak a futár PWA láthatóságát kapcsolja be. A mentett összegekhez nem nyúl.")
 
     if st.button(
         f"Mobil értékek tömeges frissítése ellenőrzéshez - {selected_month} ({len(filtered)} futár)",
