@@ -217,6 +217,15 @@
             "token": ""
         },
         {
+            "username": "Komjáti 8185 Ákos",
+            "trainer": "trainer_name",
+            "password": "sr2TZCZd",
+            "role": "user",
+            "courierId": 8185,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Lulaj 8001 Brendon",
             "trainer": "trainer_name",
             "password": "kdj4Fddd",
