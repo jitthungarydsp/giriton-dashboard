@@ -2297,7 +2297,40 @@ def build_financial_breakdown_from_mobile_rows(
     row: dict[str, Any],
     overrides: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if not overrides or "payable" not in overrides:
+    if not overrides:
+        return None
+    financial_detail_keys = {
+        "base",
+        "tip",
+        "delay_bonus",
+        "compliance_bonus",
+        "loyalty_bonus",
+        "customer_rating",
+        "monthly_bonus",
+        "monthly_malus",
+        "manual_bonus",
+        "manual_malus",
+        "bonus_malus",
+        "kiflis_bonus_malus",
+        "atm_effect",
+        "salary_advance",
+        "reserve",
+        "insurance_fee",
+        "other_deduction",
+    }
+    financial_detail_prefixes = (
+        "base_detail_",
+        "customer_rating_",
+        "kiflis_bonus_",
+        "kiflis_malus_",
+        "jitt_bonus_",
+        "jitt_malus_",
+        "correction_periodic_",
+    )
+    has_financial_detail_rows = any(key in overrides for key in financial_detail_keys) or any(
+        key.startswith(financial_detail_prefixes) for key in overrides
+    )
+    if "payable" not in overrides and not has_financial_detail_rows:
         return None
     payable_row = overrides.get("payable")
     payable_override = None if is_tig_payable_snapshot(payable_row) else mobile_override_amount(overrides, "payable")
@@ -2498,7 +2531,7 @@ def build_financial_breakdown_from_mobile_rows(
         if deduction_amount < 0:
             deduction_total += deduction_amount
     calculated_payable = income_total + deduction_total + correction_total
-    payable = payable_override if payable_override is not None else calculated_payable
+    payable = calculated_payable if has_financial_detail_rows else (payable_override if payable_override is not None else calculated_payable)
 
     cards = [
         {
