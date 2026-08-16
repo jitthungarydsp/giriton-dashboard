@@ -179,6 +179,13 @@ def apply_design() -> None:
         .status-blue { background:#eaf2ff; color:#1f5fbf; }
         .status-purple { background:#f2eaff; color:#6b21c9; }
         .status-orange { background:#fff2e5; color:#c85b00; }
+        .complaint-status-wrap { display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
+        .complaint-status-badge {
+            display:inline-flex; align-items:center; gap:7px; border-radius:999px;
+            padding:5px 9px; font-size:11px; font-weight:850; white-space:nowrap;
+            cursor:help; border:1px solid rgba(0,0,0,.04);
+        }
+        .complaint-status-none { background:#f3f4f6; color:#4b5563; }
         .led {
             display:inline-block; width:14px; height:14px; border-radius:50%;
             box-shadow:inset 0 1px 1px rgba(255,255,255,.7), 0 0 0 3px rgba(0,0,0,.03), 0 2px 6px rgba(0,0,0,.18);
@@ -3216,13 +3223,39 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
 
     complaint_couriers: set[str] = set()
     invoice_attention_couriers: set[str] = set()
+    complaint_details_by_courier: dict[str, dict[str, str]] = {}
     if not complaints.empty:
-        for item in complaints.to_dict("records"):
+        complaint_records = complaints.copy()
+        if "updated_at" in complaint_records.columns or "created_at" in complaint_records.columns:
+            sort_columns = [
+                column
+                for column in ["updated_at", "created_at"]
+                if column in complaint_records.columns
+            ]
+            complaint_records = complaint_records.sort_values(
+                sort_columns,
+                ascending=False,
+                na_position="last",
+            )
+        for item in complaint_records.to_dict("records"):
             status = str(item.get("status") or "").strip().casefold()
             has_admin_answer = bool(str(item.get("admin_response") or "").strip() or str(item.get("responded_at") or "").strip())
+            courier_key = _courier_id_key(item.get("courier_id"))
+            if courier_key and courier_key not in complaint_details_by_courier:
+                status_label, badge_class, led_class = complaint_status_meta(status)
+                note = str(
+                    item.get("message")
+                    or item.get("admin_response")
+                    or ""
+                ).strip()
+                complaint_details_by_courier[courier_key] = {
+                    "label": status_label,
+                    "note": note or "Nincs megjegyzés.",
+                    "badge": badge_class,
+                    "led": led_class,
+                }
             if status in {"resolved", "closed"} or has_admin_answer:
                 continue
-            courier_key = _courier_id_key(item.get("courier_id"))
             if courier_key:
                 complaint_couriers.add(courier_key)
                 document_type = item.get("document_type")
@@ -3259,6 +3292,30 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     result["Státusz"] = courier_ids.map(workflow_status)
     result["Számlaellenőrzés reklamáció"] = courier_ids.map(
         lambda value: _courier_id_key(value) in invoice_attention_couriers
+    )
+    result["Bejelentés státusz"] = courier_ids.map(
+        lambda value: complaint_details_by_courier.get(
+            _courier_id_key(value),
+            {},
+        ).get("label", "Nincs bejelentés")
+    )
+    result["Bejelentés megjegyzés"] = courier_ids.map(
+        lambda value: complaint_details_by_courier.get(
+            _courier_id_key(value),
+            {},
+        ).get("note", "Nincs megjegyzés.")
+    )
+    result["_bejelentes_badge"] = courier_ids.map(
+        lambda value: complaint_details_by_courier.get(
+            _courier_id_key(value),
+            {},
+        ).get("badge", "complaint-status-none")
+    )
+    result["_bejelentes_led"] = courier_ids.map(
+        lambda value: complaint_details_by_courier.get(
+            _courier_id_key(value),
+            {},
+        ).get("led", "led-blue")
     )
     return result
 
@@ -8018,6 +8075,32 @@ def status_meta(status: str) -> tuple[str,str]:
     return mapping.get(status,("status-yellow","led-yellow"))
 
 
+def complaint_status_meta(status: str) -> tuple[str, str, str]:
+    normalized = str(status or "").strip().casefold()
+    mapping = {
+        "new": ("Folyamatban", "status-yellow", "led-yellow"),
+        "open": ("Folyamatban", "status-yellow", "led-yellow"),
+        "in_progress": ("Folyamatban", "status-yellow", "led-yellow"),
+        "pending": ("Folyamatban", "status-yellow", "led-yellow"),
+        "accepted": ("Elfogadva", "status-green", "led-green"),
+        "approved": ("Elfogadva", "status-green", "led-green"),
+        "resolved": ("Elfogadva", "status-green", "led-green"),
+        "done": ("Elfogadva", "status-green", "led-green"),
+        "rejected": ("Elutasítva", "status-red", "led-red"),
+        "declined": ("Elutasítva", "status-red", "led-red"),
+        "closed": ("Lezárva", "status-green", "led-green"),
+    }
+    return mapping.get(normalized, ("Nincs bejelentés", "complaint-status-none", "led-blue"))
+
+
+def render_complaint_status_badge(label: str, note: str, css_class: str, led_class: str) -> str:
+    tooltip = str(note or "").strip() or "Nincs megjegyzés."
+    return (
+        f'<span class="complaint-status-badge {css_class}" title="{html.escape(tooltip)}">'
+        f'<span class="led {led_class}"></span>{html.escape(str(label or "Nincs bejelentés"))}</span>'
+    )
+
+
 def get_demo_documents() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
@@ -9562,8 +9645,23 @@ def render_table(df: pd.DataFrame) -> None:
             cols[5].markdown(f"**{format_huf(display_payable)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
+            complaint_label = str(row.get("Bejelentés státusz") or "Nincs bejelentés")
+            complaint_note = str(row.get("Bejelentés megjegyzés") or "Nincs megjegyzés.")
+            complaint_badge = str(row.get("_bejelentes_badge") or "complaint-status-none")
+            complaint_led = str(row.get("_bejelentes_led") or "led-blue")
+            complaint_status_html = render_complaint_status_badge(
+                complaint_label,
+                complaint_note,
+                complaint_badge,
+                complaint_led,
+            )
             cols[6].markdown(
-                f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>',
+                (
+                    '<div class="complaint-status-wrap">'
+                    f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>'
+                    f'{complaint_status_html}'
+                    '</div>'
+                ),
                 unsafe_allow_html=True,
             )
 
