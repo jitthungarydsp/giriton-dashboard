@@ -12585,13 +12585,36 @@ def show_courier_dialog() -> None:
         if complaint_note_key not in st.session_state:
             st.session_state[complaint_note_key] = saved_complaint_note
 
+        def save_complaint_note_inline():
+            try:
+                upsert_courier_complaint_note(
+                    courier_id,
+                    complaint_note_month,
+                    st.session_state.get(complaint_note_key, ""),
+                    actor,
+                )
+                st.session_state[
+                    f"{complaint_note_key}_save_status"
+                ] = "A megjegyzes automatikusan mentve."
+            except Exception as exc:
+                st.session_state[
+                    f"{complaint_note_key}_save_status"
+                ] = f"Megjegyzes automatikus mentese sikertelen: {exc}"
+
         st.markdown("##### Reklamacios megjegyzes")
         st.text_area(
             "Megjegyzes",
             key=complaint_note_key,
             height=120,
             placeholder="Ide irhato a reklamaciohoz kapcsolodo belso megjegyzes.",
+            on_change=save_complaint_note_inline,
         )
+        complaint_note_save_status = st.session_state.get(f"{complaint_note_key}_save_status")
+        if complaint_note_save_status:
+            if "sikertelen" in complaint_note_save_status:
+                st.warning(complaint_note_save_status)
+            else:
+                st.caption(complaint_note_save_status)
         if st.button(
             "Megjegyzes mentese",
             key=f"save_complaint_note_{_courier_id_key(courier_id)}_{complaint_note_month:%Y_%m}",
