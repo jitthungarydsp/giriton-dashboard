@@ -2348,15 +2348,6 @@ def publish_mobile_settlement_snapshot(
                 "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
             },
         )
-        tig_final_total = parse_huf_value(tig_breakdown.get("finalTotalHuf"))
-        if tig_final_total:
-            _set_mobile_breakdown_row_amount(
-                rows,
-                "payable",
-                tig_final_total,
-                item_label="Teljes összeg",
-                note="TIG végösszeg alapján",
-            )
         rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
@@ -2426,15 +2417,6 @@ def refresh_mobile_settlement_breakdown_snapshot(
                 "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
             },
         )
-        tig_final_total = parse_huf_value(tig_breakdown.get("finalTotalHuf"))
-        if tig_final_total:
-            _set_mobile_breakdown_row_amount(
-                rows,
-                "payable",
-                tig_final_total,
-                item_label="Teljes összeg",
-                note="TIG végösszeg alapján",
-            )
         rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
         if save_mobile_breakdown_overrides(courier_id, period_start, rows, updated_by):
             courier_count += 1
@@ -10878,7 +10860,7 @@ def show_courier_dialog() -> None:
             + salary_advance_total + reserve_addition_total + insurance_fee_total
         )
         mobile_correction_total = correction_income_total - correction_deduction_total
-        mobile_payable_total = tig_display_total
+        mobile_payable_total = mobile_income_total + mobile_deduction_total + mobile_correction_total
         mobile_default_rows = pd.DataFrame([
             {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": mobile_payable_total, "note": "Valós elszámolási adat"},
             {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": mobile_income_total, "note": "Valós elszámolási adat"},
