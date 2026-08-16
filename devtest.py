@@ -12592,6 +12592,27 @@ def show_courier_dialog() -> None:
                 complaint_view["Üzenet"] = complaint_view.get("message", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Admin válasz"] = complaint_view.get("admin_response", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Válaszolta"] = complaint_view.get("responded_by", pd.Series("", index=complaint_view.index)).fillna("")
+                invoice_attention_mask = complaint_view.get(
+                    "document_type",
+                    pd.Series("", index=complaint_view.index),
+                ).map(lambda value: base_action_key(value) in {"invoice_check", "invoice_submit"})
+                if bool(invoice_attention_mask.any()):
+                    invoice_attention_rows = complaint_view.loc[invoice_attention_mask]
+                    for attention_index, attention_row in invoice_attention_rows.iterrows():
+                        st.markdown(
+                            f"""
+                            <style>
+                            [class*="st-key-invoice_attention_{courier_id}_{attention_index}"] {{
+                                border-color: rgba(22, 163, 74, 0.70) !important;
+                                box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+                            }}
+                            </style>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        with st.container(border=True, key=f"invoice_attention_{courier_id}_{attention_index}"):
+                            st.markdown(f"**{attention_row.get('Típus', 'Számlás elakadás')}**")
+                            st.caption(str(attention_row.get("Üzenet") or "Számlafeltöltéshez vagy számlaellenőrzéshez kapcsolódó elakadás."))
                 st.dataframe(
                     complaint_view[["Dátum", "Típus", "Státusz", "Üzenet", "Admin válasz", "Válaszolta"]],
                     use_container_width=True,
