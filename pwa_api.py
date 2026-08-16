@@ -3363,6 +3363,41 @@ def tig_document_meta(month: date, courier_id: str) -> dict[str, str]:
     }
 
 
+def has_financial_detail_override_rows(overrides: dict[str, dict[str, Any]]) -> bool:
+    financial_detail_keys = {
+        "base",
+        "tip",
+        "delay_bonus",
+        "compliance_bonus",
+        "loyalty_bonus",
+        "customer_rating",
+        "monthly_bonus",
+        "monthly_malus",
+        "bonus_malus",
+        "manual_bonus",
+        "manual_malus",
+        "atm_effect",
+        "reserve",
+        "insurance_fee",
+        "correction",
+        "salary_advance",
+        "other_expense",
+    }
+    financial_detail_prefixes = (
+        "base_",
+        "delay_bonus_",
+        "compliance_bonus_",
+        "customer_rating_",
+        "correction_periodic_",
+        "kiflis_",
+        "jitt_",
+    )
+    return any(
+        key in financial_detail_keys or key.startswith(financial_detail_prefixes)
+        for key in (str(raw_key or "") for raw_key in overrides)
+    )
+
+
 def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not breakdown.get("available"):
         return breakdown
@@ -3371,6 +3406,9 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
         if str(row.get("key") or "") not in {"cash_deduction", "tig_cash_deduction"}
     ]
     breakdown["rows"] = rows
+    if has_financial_detail_override_rows(overrides):
+        breakdown["finalTotalHuf"] = money_int(breakdown.get("finalTotalHuf"))
+        return breakdown
     for row in rows:
         override = overrides.get(f"tig_{row.get('key') or ''}")
         if not override:
