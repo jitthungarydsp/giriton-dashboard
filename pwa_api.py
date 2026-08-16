@@ -2299,7 +2299,8 @@ def build_financial_breakdown_from_mobile_rows(
 ) -> dict[str, Any] | None:
     if not overrides or "payable" not in overrides:
         return None
-    payable_override = mobile_override_amount(overrides, "payable")
+    payable_row = overrides.get("payable")
+    payable_override = None if is_tig_payable_snapshot(payable_row) else mobile_override_amount(overrides, "payable")
     fallback_courier_id, _fallback_courier_name = courier_identity(user)
     selected_courier_id = str(
         row.get("courier_id")
@@ -2967,6 +2968,14 @@ def is_manual_mobile_override(row: dict[str, Any] | None) -> bool:
     )
 
 
+def is_tig_payable_snapshot(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    note_key = normalize_text(str(row.get("note") or ""))
+    label_key = normalize_text(str(row.get("item_label") or ""))
+    return "tig vegosszeg" in note_key or "tig vegosszeg" in label_key
+
+
 def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     def is_manual_override(row: dict[str, Any] | None) -> bool:
         return is_manual_mobile_override(row)
@@ -2994,6 +3003,8 @@ def apply_mobile_overrides(cards: list[dict[str, Any]], overrides: dict[str, dic
 
     for card in cards:
         card_override = overrides.get(str(card.get("key") or ""))
+        if str(card.get("key") or "") == "payable" and is_tig_payable_snapshot(card_override):
+            card_override = None
         if card_override and (
             is_manual_override(card_override)
             or (not money_int(card.get("amountHuf")) and money_int(card_override.get("amount_value")))
@@ -3777,12 +3788,17 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
                     note="Ă–sszesĂ­tett mobil elszĂˇmolĂˇsi adat.",
                 )
             ]
+    payable_override_row = overrides.get("payable")
+    payable_override_is_tig = is_tig_payable_snapshot(payable_override_row)
     payable = refresh_payable_card_totals(
         cards,
-        keep_payable_override=bool(payable_from_summary) or is_manual_mobile_override(overrides.get("payable")),
+        keep_payable_override=(
+            not payable_override_is_tig
+            and (bool(payable_from_summary) or is_manual_mobile_override(payable_override_row))
+        ),
         payable_override_huf=(
             mobile_override_amount(overrides, "payable")
-            if "payable" in overrides
+            if "payable" in overrides and not payable_override_is_tig
             else None
         ),
     )
