@@ -12334,7 +12334,6 @@ def show_courier_dialog() -> None:
         )
         uploaded_file = upload_columns[3].file_uploader(
             "Fájl",
-            type=["pdf", "png", "jpg", "jpeg"],
             key=f"new_doc_upload_{courier_id}",
         )
         doc_note = st.text_input("Megjegyzés", key=f"new_doc_note_{courier_id}")
