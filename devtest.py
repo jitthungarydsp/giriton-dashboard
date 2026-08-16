@@ -9518,6 +9518,20 @@ def render_table(df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+        invoice_check_attention = str(row.get("Státusz") or "").strip() == "Számlaellenőrzésre vár"
+        if invoice_check_attention:
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-courier_row_{i}"] {{
+                    outline: 3px solid rgba(22, 163, 74, 0.55) !important;
+                    outline-offset: 2px;
+                    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.08);
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
                 [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
@@ -12263,6 +12277,32 @@ def show_courier_dialog() -> None:
                     st.success("A számlaellenőrzés jelenleg sikeresre van állítva.")
                 else:
                     st.warning("A számla még ellenőrzésre vár vagy hibás ellenőrzési állapotban van.")
+                if st.button(
+                    "Számla jóváhagyása és kifizetésre küldés",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=closure_done,
+                    key=f"invoice_approve_to_payment_{courier_id}_{workflow_month:%Y%m}",
+                ):
+                    try:
+                        for approved_action, approved_status, approved_note in [
+                            ("invoice_submit", "done", "Számla feltöltve, admin jóváhagyásra került."),
+                            ("invoice_check", "done", "Számla admin által jóváhagyva."),
+                            ("invoice_payment", "open", "Számla jóváhagyva, kifizetésre vár."),
+                        ]:
+                            upsert_peopleforce_card_status(
+                                courier_id=courier_id,
+                                courier_name=courier_name,
+                                action_key=approved_action,
+                                document_month=workflow_month,
+                                status=approved_status,
+                                status_note=approved_note,
+                                updated_by=actor,
+                            )
+                        st.success("Számla jóváhagyva, a futár kifizetésre vár állapotba került.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A számla jóváhagyása sikertelen: {exc}")
                 invoice_reject_note = st.text_area(
                     "Számla elutasítás megjegyzése",
                     value=str((status_by_action.get("invoice_check") or {}).get("status_note") or "Számla hibás, új feltöltés szükséges."),

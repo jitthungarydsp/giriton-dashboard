@@ -1688,7 +1688,6 @@ function renderDocumentPanel(action, title, stepNumber) {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
       ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : renderTigBreakdown()}
-      ${!locked && documents.length ? documentList(documents) : ""}
       ${accepted
         ? `<div class="accept-row done">A TIG-et elfogadtad.</div>`
         : readOnly
