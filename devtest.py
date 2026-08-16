@@ -9518,20 +9518,6 @@ def render_table(df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
-        invoice_check_attention = str(row.get("Státusz") or "").strip() == "Számlaellenőrzésre vár"
-        if invoice_check_attention:
-            st.markdown(
-                f"""
-                <style>
-                [class*="st-key-courier_row_{i}"] {{
-                    outline: 3px solid rgba(22, 163, 74, 0.55) !important;
-                    outline-offset: 2px;
-                    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.08);
-                }}
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
                 [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
@@ -12565,6 +12551,9 @@ def show_courier_dialog() -> None:
         reverse_complaint_status_labels = {
             label: key for key, label in complaint_status_labels.items()
         }
+
+        invoice_upload_waiting = str(row.get("Státusz") or "").strip() == "Számlafeltöltésre vár"
+
         def complaint_type_label(value: object) -> str:
             action_key = str(value or "").strip()
             base_key = base_action_key(action_key)
@@ -12587,6 +12576,8 @@ def show_courier_dialog() -> None:
         complaint_list, complaint_editor = st.columns([1.35, 0.65])
 
         with complaint_list:
+            if invoice_upload_waiting:
+                st.success("A futár számlafeltöltésnél akadt el. Innen látható, hogy a következő teendő számla feltöltése.")
             if complaints.empty:
                 st.info("Ehhez a futárhoz nincs reklamáció az aktuális hónapban.")
             else:
@@ -13043,9 +13034,25 @@ def show_reports_dialog() -> None:
     ids = set(df["Courier ID"].astype(str))
 
     complaints = get_demo_complaints()
+    complaints["_invoice_upload_stuck"] = False
     complaints = complaints[
         complaints["Courier ID"].astype(str).isin(ids)
     ].copy()
+    invoice_upload_stuck = df.loc[
+        df.get("Státusz", pd.Series("", index=df.index)).astype(str).str.strip().eq("Számlafeltöltésre vár")
+    ].copy()
+    if not invoice_upload_stuck.empty:
+        invoice_reports = pd.DataFrame(
+            {
+                "Courier ID": invoice_upload_stuck["Courier ID"].astype(str),
+                "Típus": "Számlafeltöltés",
+                "Státusz": "Elakadt",
+                "Dátum": "-",
+                "Üzenet": "A futár számlafeltöltésére vár.",
+                "_invoice_upload_stuck": True,
+            }
+        )
+        complaints = pd.concat([complaints, invoice_reports], ignore_index=True)
 
     if complaints.empty:
         st.success("Nincs bejelentés a szűrésben.")
@@ -13068,23 +13075,36 @@ def show_reports_dialog() -> None:
         col.markdown(f"**{label}**")
 
     for index, report in merged.iterrows():
-        cols = st.columns(
-            [1.35, 0.8, 0.8, 0.8, 1.8],
-            vertical_alignment="center",
-        )
+        if bool(report.get("_invoice_upload_stuck", False)):
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-report_row_{index}"] {{
+                    border-color: rgba(22, 163, 74, 0.65) !important;
+                    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+        with st.container(border=True, key=f"report_row_{index}"):
+            cols = st.columns(
+                [1.35, 0.8, 0.8, 0.8, 1.8],
+                vertical_alignment="center",
+            )
 
-        if cols[0].button(
-            f"{report['Futár']} · {report['Courier ID']}",
-            use_container_width=True,
-            key=f"open_report_{report['Courier ID']}_{index}",
-        ):
-            st.session_state["selected_report"] = report.to_dict()
-            show_report_detail_dialog()
+            if cols[0].button(
+                f"{report['Futár']} · {report['Courier ID']}",
+                use_container_width=True,
+                key=f"open_report_{report['Courier ID']}_{index}",
+            ):
+                st.session_state["selected_report"] = report.to_dict()
+                show_report_detail_dialog()
 
-        cols[1].caption(str(report["Típus"]))
-        cols[2].caption(str(report["Státusz"]))
-        cols[3].caption(str(report["Dátum"]))
-        cols[4].caption(str(report["Üzenet"]))
+            cols[1].caption(str(report["Típus"]))
+            cols[2].caption(str(report["Státusz"]))
+            cols[3].caption(str(report["Dátum"]))
+            cols[4].caption(str(report["Üzenet"]))
 
 
 @st.dialog("Bejelentés részletei", width="large")
