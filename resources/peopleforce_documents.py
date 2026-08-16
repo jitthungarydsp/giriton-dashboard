@@ -50,6 +50,14 @@ COMPLAINT_COLUMNS = [
     "responded_at",
 ]
 
+COMPLAINT_NOTE_COLUMNS = [
+    "period_start",
+    "courier_id",
+    "note",
+    "updated_by",
+    "updated_at",
+]
+
 STATUS_COLUMNS = [
     "id",
     "courier_id",
@@ -325,6 +333,72 @@ def read_peopleforce_complaints_for_month(document_month, document_type=None, li
     raise_for_supabase_error(response)
     rows = response.json()
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=COMPLAINT_COLUMNS)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def read_courier_complaint_note(courier_id, period_start):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+    if not courier_id:
+        return ""
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/peopleforce_complaint_notes",
+        headers=supabase_headers(),
+        params={
+            "select": ",".join(COMPLAINT_NOTE_COLUMNS),
+            "courier_id": f"eq.{courier_id}",
+            "period_start": f"eq.{format_month(period_start)}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    if response.status_code in (400, 404) and (
+        "peopleforce_complaint_notes" in response.text or "PGRST205" in response.text
+    ):
+        raise RuntimeError(
+            "A peopleforce_complaint_notes tabla nem erheto el. "
+            "Futtasd a sql/peopleforce_complaint_notes.sql fajlt."
+        )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    if not rows:
+        return ""
+    return str((rows[0] or {}).get("note") or "")
+
+
+def upsert_courier_complaint_note(courier_id, period_start, note, updated_by=""):
+    supabase_url = require_supabase()
+    courier_id = str(courier_id or "").strip()
+    if not courier_id:
+        raise ValueError("Hianyzik a futar azonosito.")
+
+    headers = supabase_headers(prefer_return=True)
+    headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+    payload = {
+        "period_start": format_month(period_start),
+        "courier_id": courier_id,
+        "note": str(note or ""),
+        "updated_by": str(updated_by or ""),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = requests.post(
+        f"{supabase_url}/rest/v1/peopleforce_complaint_notes",
+        headers=headers,
+        params={"on_conflict": "period_start,courier_id"},
+        json=payload,
+        timeout=30,
+    )
+    if response.status_code in (400, 404) and (
+        "peopleforce_complaint_notes" in response.text or "PGRST205" in response.text
+    ):
+        raise RuntimeError(
+            "A peopleforce_complaint_notes tabla nem erheto el. "
+            "Futtasd a sql/peopleforce_complaint_notes.sql fajlt."
+        )
+    raise_for_supabase_error(response)
+    read_courier_complaint_note.clear()
+    return response.json()
 
 
 @st.cache_data(show_spinner=False, ttl=120)

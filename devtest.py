@@ -29,6 +29,7 @@ from resources.peopleforce_documents import (
     delete_peopleforce_complaint,
     delete_peopleforce_document,
     decode_document_content,
+    read_courier_complaint_note,
     read_peopleforce_document_content,
     read_peopleforce_documents_for_courier,
     read_peopleforce_documents_for_month,
@@ -39,6 +40,7 @@ from resources.peopleforce_documents import (
     update_peopleforce_complaints_status_for_process,
     update_peopleforce_complaint_status,
     upsert_peopleforce_card_status,
+    upsert_courier_complaint_note,
     upload_peopleforce_document,
     upload_peopleforce_document_bytes,
 )
@@ -12566,6 +12568,45 @@ def show_courier_dialog() -> None:
         except Exception as exc:
             st.error(f"A reklamációk nem tölthetők be: {exc}")
             complaints = pd.DataFrame()
+
+        complaint_note_month = period_start.replace(day=1)
+        complaint_note_key = (
+            f"complaint_note_{_courier_id_key(courier_id)}_{complaint_note_month:%Y_%m}"
+        )
+        try:
+            saved_complaint_note = read_courier_complaint_note(courier_id, complaint_note_month)
+        except Exception as exc:
+            saved_complaint_note = ""
+            st.warning(
+                "A reklamacios megjegyzes nem olvashato. "
+                "Ha eloszor hasznalod, futtasd a sql/peopleforce_complaint_notes.sql fajlt. "
+                f"Reszlet: {exc}"
+            )
+        if complaint_note_key not in st.session_state:
+            st.session_state[complaint_note_key] = saved_complaint_note
+
+        st.markdown("##### Reklamacios megjegyzes")
+        st.text_area(
+            "Megjegyzes",
+            key=complaint_note_key,
+            height=120,
+            placeholder="Ide irhato a reklamaciohoz kapcsolodo belso megjegyzes.",
+        )
+        if st.button(
+            "Megjegyzes mentese",
+            key=f"save_complaint_note_{_courier_id_key(courier_id)}_{complaint_note_month:%Y_%m}",
+            use_container_width=True,
+        ):
+            try:
+                upsert_courier_complaint_note(
+                    courier_id,
+                    complaint_note_month,
+                    st.session_state.get(complaint_note_key, ""),
+                    actor,
+                )
+                st.success("Megjegyzes mentve.")
+            except Exception as exc:
+                st.error(f"Megjegyzes mentese sikertelen: {exc}")
 
         complaint_list, complaint_editor = st.columns([1.35, 0.65])
 
