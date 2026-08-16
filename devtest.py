@@ -3215,6 +3215,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
                 )
 
     complaint_couriers: set[str] = set()
+    invoice_attention_couriers: set[str] = set()
     if not complaints.empty:
         for item in complaints.to_dict("records"):
             status = str(item.get("status") or "").strip().casefold()
@@ -3224,6 +3225,9 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             courier_key = _courier_id_key(item.get("courier_id"))
             if courier_key:
                 complaint_couriers.add(courier_key)
+                document_type = item.get("document_type")
+                if base_action_key(document_type) in {"invoice_check", "invoice_submit"}:
+                    invoice_attention_couriers.add(courier_key)
 
     def workflow_status(courier_key: str) -> str:
         if courier_key in complaint_couriers:
@@ -3253,6 +3257,9 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
         return "TIG-re vár"
 
     result["Státusz"] = courier_ids.map(workflow_status)
+    result["Számlaellenőrzés reklamáció"] = courier_ids.map(
+        lambda value: _courier_id_key(value) in invoice_attention_couriers
+    )
     return result
 
 
@@ -9502,6 +9509,20 @@ def render_table(df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+        invoice_attention_raw = row.get("Számlaellenőrzés reklamáció", False)
+        invoice_attention = False if pd.isna(invoice_attention_raw) else bool(invoice_attention_raw)
+        if invoice_attention:
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-courier_row_{i}"] {{
+                    border: 2px solid rgba(22, 163, 74, 0.95) !important;
+                    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.16), 0 12px 28px rgba(22, 163, 74, 0.10) !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
                 [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
@@ -12539,7 +12560,7 @@ def show_courier_dialog() -> None:
         }
         complaint_status_labels = {
             "new": "Új",
-            "open": "Nyitott",
+            "open": "Új",
             "in_progress": "Folyamatban",
             "resolved": "Megválaszolva",
             "closed": "Lezárt",
@@ -12650,6 +12671,12 @@ def show_courier_dialog() -> None:
                 complaint_view["Üzenet"] = complaint_view.get("message", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Admin válasz"] = complaint_view.get("admin_response", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Válaszolta"] = complaint_view.get("responded_by", pd.Series("", index=complaint_view.index)).fillna("")
+                complaint_view["Bejelentések"] = complaint_view["Üzenet"].astype(str)
+                empty_message_mask = complaint_view["Bejelentések"].str.strip().eq("")
+                complaint_view.loc[empty_message_mask, "Bejelentések"] = complaint_view.loc[
+                    empty_message_mask,
+                    "Dátum",
+                ].astype(str)
                 invoice_attention_mask = complaint_view.get(
                     "document_type",
                     pd.Series("", index=complaint_view.index),
@@ -12672,9 +12699,14 @@ def show_courier_dialog() -> None:
                             st.markdown(f"**{attention_row.get('Típus', 'Számlás elakadás')}**")
                             st.caption(str(attention_row.get("Üzenet") or "Számlafeltöltéshez vagy számlaellenőrzéshez kapcsolódó elakadás."))
                 st.dataframe(
-                    complaint_view[["Dátum", "Típus", "Státusz", "Üzenet", "Admin válasz", "Válaszolta"]],
+                    complaint_view[["Bejelentések", "Státusz", "Típus"]],
                     use_container_width=True,
                     hide_index=True,
+                    column_config={
+                        "Bejelentések": st.column_config.TextColumn("Bejelentések", width="large"),
+                        "Státusz": st.column_config.TextColumn("Státusz", width="small"),
+                        "Típus": st.column_config.TextColumn("Típus", width="medium"),
+                    },
                 )
 
         with complaint_editor:
