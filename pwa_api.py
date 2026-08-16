@@ -2297,9 +2297,15 @@ def build_financial_breakdown_from_mobile_rows(
     row: dict[str, Any],
     overrides: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    if not overrides or "payable" not in overrides:
+    tig_final_total_has_override = "tig_final_total" in overrides
+    if not overrides or ("payable" not in overrides and not tig_final_total_has_override):
         return None
-    payable_override = mobile_override_amount(overrides, "payable")
+    tig_final_total_override = mobile_override_amount(overrides, "tig_final_total")
+    payable_override = (
+        tig_final_total_override
+        if tig_final_total_has_override
+        else mobile_override_amount(overrides, "payable")
+    )
     fallback_courier_id, _fallback_courier_name = courier_identity(user)
     selected_courier_id = str(
         row.get("courier_id")
@@ -2497,7 +2503,7 @@ def build_financial_breakdown_from_mobile_rows(
         if deduction_amount < 0:
             deduction_total += deduction_amount
     calculated_payable = income_total + deduction_total + correction_total
-    payable = payable_override if "payable" in overrides else calculated_payable
+    payable = payable_override if ("payable" in overrides or tig_final_total_has_override) else calculated_payable
 
     cards = [
         {
@@ -3267,7 +3273,12 @@ def enrich_mobile_overrides_from_financial_sources(
     return enriched
 
 
-def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_override: bool = False) -> int:
+def refresh_payable_card_totals(
+    cards: list[dict[str, Any]],
+    *,
+    keep_payable_override: bool = False,
+    payable_override_huf: int | None = None,
+) -> int:
     income_card = next((card for card in cards if card.get("key") == "income"), None)
     deduction_card = next((card for card in cards if card.get("key") == "deductions"), None)
     correction_card = next((card for card in cards if card.get("key") == "corrections"), None)
@@ -3275,7 +3286,12 @@ def refresh_payable_card_totals(cards: list[dict[str, Any]], *, keep_payable_ove
     income_total = money_int((income_card or {}).get("amountHuf"))
     deduction_total = money_int((deduction_card or {}).get("amountHuf"))
     correction_total = money_int((correction_card or {}).get("amountHuf"))
-    payable_total = money_int((payable_card or {}).get("amountHuf")) if keep_payable_override else income_total + deduction_total + correction_total
+    if payable_override_huf is not None:
+        payable_total = money_int(payable_override_huf)
+    elif keep_payable_override:
+        payable_total = money_int((payable_card or {}).get("amountHuf"))
+    else:
+        payable_total = income_total + deduction_total + correction_total
     if payable_card is not None:
         payable_card["amountHuf"] = payable_total
         payable_card["items"] = [
@@ -3770,6 +3786,11 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     payable = refresh_payable_card_totals(
         cards,
         keep_payable_override=bool(payable_from_summary) or is_manual_mobile_override(overrides.get("payable")),
+        payable_override_huf=(
+            mobile_override_amount(overrides, "tig_final_total")
+            if "tig_final_total" in overrides
+            else None
+        ),
     )
     complaint_excluded_keys = {
         "delay_bonus",
