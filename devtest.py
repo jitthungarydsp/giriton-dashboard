@@ -10485,8 +10485,11 @@ def show_courier_dialog() -> None:
                     st.success(f"Egyedi havi számlázás lezárva. Törölt tesztdokumentum: {deleted_count}.")
                     rerun_courier_profile("Pénzügy")
                 else:
+                    billing_row = row.to_dict()
+                    billing_row["Courier ID"] = courier_id or billing_row.get("Courier ID")
+                    billing_row["Futár"] = courier_name or billing_row.get("Futár")
                     deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
-                        row.to_dict(),
+                        billing_row,
                         period_start,
                         period_end,
                         active_calculation_mode,
@@ -12070,8 +12073,18 @@ def show_courier_dialog() -> None:
                     st.success(f"Egyedi havi számlázás lezárva. Törölt tesztdokumentum: {deleted_count}.")
                     st.rerun()
                 else:
+                    billing_row = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+                    billing_row["Courier ID"] = courier_id or billing_row.get("Courier ID")
+                    billing_row["Futár"] = str(
+                        row.get("Futár")
+                        or row.get("FutĂˇr")
+                        or row.get("courier_name")
+                        or row.get("name")
+                        or billing_row.get("Futár")
+                        or ""
+                    )
                     deleted_count, uploaded_count, courier_count = open_individual_monthly_billing(
-                        row.to_dict() if hasattr(row, "to_dict") else dict(row),
+                        billing_row,
                         period_start,
                         period_end,
                         active_calculation_mode,
@@ -14142,6 +14155,34 @@ def delete_generated_monthly_billing_documents(
     return deleted
 
 
+def normalize_individual_monthly_billing_row(row: dict[str, object]) -> dict[str, object]:
+    normalized = dict(row or {})
+    courier_id = _courier_id_key(
+        normalized.get("Courier ID")
+        or normalized.get("Futár azonosító")
+        or normalized.get("FutĂˇr azonosító")
+        or normalized.get("courier_id")
+        or normalized.get("driver_id")
+        or normalized.get("id")
+    )
+    courier_name = str(
+        normalized.get("Futár")
+        or normalized.get("FutĂˇr")
+        or normalized.get("courier_name")
+        or normalized.get("name")
+        or normalized.get("Név")
+        or normalized.get("Nev")
+        or ""
+    ).strip()
+    if not courier_id:
+        courier_id = _courier_id_from_text(courier_name)
+    if courier_id:
+        normalized["Courier ID"] = courier_id
+    if courier_name:
+        normalized["Futár"] = courier_name
+    return normalized
+
+
 def open_individual_monthly_billing(
     row: dict[str, object],
     period_start: date,
@@ -14151,19 +14192,21 @@ def open_individual_monthly_billing(
     session_id: str | None,
     actor: str,
 ) -> tuple[int, int, int]:
-    courier_id = str(row.get("Courier ID") or "").strip()
+    row = normalize_individual_monthly_billing_row(row)
+    courier_id = _courier_id_key(row.get("Courier ID"))
     courier_name = str(row.get("Futár") or "").strip()
     if not courier_id or not courier_name:
         return 0, 0, 0
 
     single_row = pd.DataFrame([row])
     deleted = delete_generated_monthly_billing_documents(courier_id, period_start)
+    effective_session_id = session_id or settlement_mobile_session_for_mode(calculation_mode, period_start, warehouse_label)
     courier_count, _row_count = publish_mobile_settlement_snapshot(
         single_row,
         period_start,
         calculation_mode,
         warehouse_label,
-        session_id,
+        effective_session_id,
         actor,
     )
     if not courier_count:
