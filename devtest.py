@@ -2101,6 +2101,8 @@ def append_jitt_bonus_malus_mobile_rows(
     manual_bonus = parse_huf_value(row.get("JITT bónusz"))
     manual_malus = abs(parse_huf_value(row.get("JITT malus")))
     adjustment_details: list[dict[str, object]] = []
+    bonus_detail_notes: list[str] = []
+    malus_detail_notes: list[str] = []
     adjustment_bonus = 0.0
     adjustment_malus = 0.0
     if courier_id and period_start and period_end:
@@ -2119,12 +2121,18 @@ def append_jitt_bonus_malus_mobile_rows(
                     adjustment_bonus += amount
                 else:
                     adjustment_malus += amount
+                adjustment_note = str(adjustment.get("note") or "").strip() or "Sheet/DB tétel"
+                detail_note = f"{format_huf(amount)} - {adjustment_note}"
+                if is_bonus:
+                    bonus_detail_notes.append(detail_note)
+                else:
+                    malus_detail_notes.append(detail_note)
                 adjustment_details.append({
                     "item_key": f"{'jitt_bonus' if is_bonus else 'jitt_malus'}_{detail_index}",
                     "item_label": "JITT bónusz" if is_bonus else "JITT malus",
                     "amount_kind": "huf",
                     "amount_value": amount if is_bonus else -amount,
-                    "note": str(adjustment.get("note") or "").strip() or "Sheet/DB tétel",
+                    "note": adjustment_note,
                 })
                 detail_index += 1
     if adjustment_bonus:
@@ -2133,29 +2141,33 @@ def append_jitt_bonus_malus_mobile_rows(
         manual_malus = adjustment_malus
     if not manual_bonus and not manual_malus and not adjustment_details:
         return rows
-    rows.extend([
-        {
-            "item_key": "bonus_malus",
-            "item_label": "JITT bónusz / malus",
-            "amount_kind": "huf",
-            "amount_value": manual_bonus - manual_malus,
-            "note": "Sheet/DB tételek összesen",
-        },
-        {
-            "item_key": "manual_bonus",
-            "item_label": "JITT bónusz",
-            "amount_kind": "huf",
-            "amount_value": manual_bonus,
-            "note": "Sheet/DB tételek",
-        },
-        {
-            "item_key": "manual_malus",
-            "item_label": "JITT malus",
-            "amount_kind": "huf",
-            "amount_value": -manual_malus,
-            "note": "Sheet/DB tételek",
-        },
-    ])
+    summary_note_parts = []
+    if bonus_detail_notes:
+        summary_note_parts.append("Bónusz: " + " | ".join(bonus_detail_notes))
+    if malus_detail_notes:
+        summary_note_parts.append("Malus: " + " | ".join(malus_detail_notes))
+    summary_note = " ; ".join(summary_note_parts) or "Sheet/DB tételek összesen"
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "bonus_malus",
+        manual_bonus - manual_malus,
+        item_label="JITT bónusz / malus",
+        note=summary_note,
+    )
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "manual_bonus",
+        manual_bonus,
+        item_label="JITT bónusz",
+        note=" | ".join(bonus_detail_notes) or "Sheet/DB tételek",
+    )
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "manual_malus",
+        -manual_malus,
+        item_label="JITT malus",
+        note=" | ".join(malus_detail_notes) or "Sheet/DB tételek",
+    )
     rows.extend(adjustment_details)
     return rows
 
@@ -11548,6 +11560,16 @@ def show_courier_dialog() -> None:
             {"item_key": "delayed_orders", "item_label": "Késéses cím", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
             {"item_key": "no_show_count", "item_label": "Nem jelent meg műszakban", "amount_kind": "count", "amount_value": 0, "note": "Valós elszámolási adat"},
         ])
+        mobile_default_rows = pd.DataFrame(append_jitt_bonus_malus_mobile_rows(
+            mobile_default_rows.to_dict("records"),
+            {
+                "Courier ID": courier_id,
+                "JITT bónusz": manual_bonus_total,
+                "JITT malus": manual_malus_total,
+            },
+            period_start,
+            period_end,
+        ))
         base_mobile_rows = []
         base_detail_for_mobile = finance_detail_frame("Alapdíj")
         if not base_detail_for_mobile.empty:
