@@ -10330,6 +10330,39 @@ def show_courier_dialog() -> None:
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     if loyalty_total == 0 and summary_available:
         loyalty_total = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
+    try:
+        overview_route_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
+        overview_order_total = int(overview_route_metrics.get("order_total") or 0)
+        overview_route_total = int(overview_route_metrics.get("route_total") or 0)
+        if summary_available:
+            overview_order_total = max(overview_order_total, int(parse_huf_value(summary_row.get("order_count"))))
+            overview_route_total = max(overview_route_total, int(parse_huf_value(summary_row.get("route_count"))))
+        loyalty_recalc_payload = row.to_dict()
+        loyalty_recalc_payload["Kör"] = overview_route_total
+        loyalty_recalc_payload["Számolt túrák"] = overview_route_total
+        loyalty_recalc_payload["Rendelés"] = overview_order_total
+        loyalty_recalc_payload["Cím / rendelés"] = overview_order_total
+        recalculated_overview_loyalty = apply_loyalty_bonus(
+            pd.DataFrame([loyalty_recalc_payload]),
+            period_start,
+            period_end,
+            session_id,
+            active_calculation_mode,
+        ).iloc[0]
+        loyalty_total = parse_huf_value(recalculated_overview_loyalty.get("Lojalitás"))
+        row = row.copy()
+        for loyalty_column in [
+            "Lojalitás",
+            "Lojalitás előző havi normál kör",
+            "Lojalitás aktuális normál kör",
+            "Lojalitás Ft/kör",
+            "Lojalitás előre foglalt nap",
+            "Lojalitás státusz",
+        ]:
+            if loyalty_column in recalculated_overview_loyalty:
+                row[loyalty_column] = recalculated_overview_loyalty.get(loyalty_column)
+    except BaseException:
+        pass
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
