@@ -10,6 +10,7 @@ from urllib.parse import quote_plus, urlencode
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from resources.dsp_dashboard_statistics import (
@@ -60,6 +61,8 @@ from resources.peopleforce_documents import (
     read_peopleforce_complaints,
     read_peopleforce_document_markers,
     read_peopleforce_documents,
+    require_supabase,
+    supabase_headers,
     upload_peopleforce_document,
     upsert_peopleforce_card_status,
 )
@@ -1988,6 +1991,75 @@ def get_peopleforce_month(action_key):
     )
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def read_mobile_loyalty_bonus(courier_id, selected_month):
+    supabase_url = require_supabase()
+    courier_id = normalize_id(courier_id)
+    month_start = selected_month.replace(day=1) if isinstance(selected_month, date) else selected_month
+    if not courier_id or not month_start:
+        return {}
+
+    headers = supabase_headers()
+    headers["Accept-Profile"] = "settlement"
+
+    try:
+        response = requests.get(
+            f"{supabase_url}/rest/v1/mobile_settlement_breakdown_overrides",
+            headers=headers,
+            params={
+                "select": "item_key,item_label,amount_value,amount_kind,note,updated_at",
+                "period_start": f"eq.{month_start.isoformat()}",
+                "courier_id": f"eq.{courier_id}",
+                "item_key": "in.(loyalty_bonus,loyalty_previous_normal_routes,loyalty_current_normal_routes,loyalty_advance_booking_days)",
+                "limit": "20",
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        rows = response.json() or []
+    except Exception:
+        rows = []
+
+    result = {}
+    for row in rows:
+        result[str(row.get("item_key") or "")] = row
+
+    if "loyalty_bonus" not in result:
+        try:
+            response = requests.get(
+                f"{supabase_url}/rest/v1/courier_settlement_summary",
+                headers=headers,
+                params={
+                    "select": "loyalty_bonus_huf,normal_routes,route_count",
+                    "courier_id": f"eq.{courier_id}",
+                    "period_start": f"eq.{month_start.isoformat()}",
+                    "order": "created_at.desc",
+                    "limit": "1",
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            summary_rows = response.json() or []
+            if summary_rows:
+                summary = summary_rows[0]
+                result["loyalty_bonus"] = {
+                    "item_key": "loyalty_bonus",
+                    "item_label": "Lojalitási bónusz",
+                    "amount_value": summary.get("loyalty_bonus_huf"),
+                    "amount_kind": "huf",
+                    "note": "Elszámolási summary",
+                }
+                result.setdefault("loyalty_current_normal_routes", {
+                    "item_key": "loyalty_current_normal_routes",
+                    "amount_value": summary.get("normal_routes") or summary.get("route_count"),
+                    "amount_kind": "count",
+                })
+        except Exception:
+            pass
+
+    return result
+
+
 def get_peopleforce_document_config(action_key):
     configs = {
         "tig": {
@@ -2854,13 +2926,28 @@ def render_peopleforce_action_content(action_key, row, user, selected_month=None
     card = get_peopleforce_card(action_key)
 
     if action_key == "loyalty_bonus":
+        selected_month = selected_month or get_peopleforce_month(action_key)
+        courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+        loyalty_rows = read_mobile_loyalty_bonus(courier_id, selected_month)
+        loyalty_bonus = loyalty_rows.get("loyalty_bonus", {})
+        loyalty_amount = loyalty_bonus.get("amount_value")
+        current_routes = loyalty_rows.get("loyalty_current_normal_routes", {}).get("amount_value")
+        advance_days = loyalty_rows.get("loyalty_advance_booking_days", {}).get("amount_value")
         st.subheader("Lojalitási Bónusz")
+        st.metric("Aktuális lojalitási bónusz", format_currency(loyalty_amount))
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("Aktuális normál kör", format_number(current_routes, 0))
+        metric_cols[1].metric("Előre foglalt műszak", format_number(advance_days, 0))
         st.write(
             "+1 000 Ft / normál kör 45 előző havi normál körtől; "
             "+500 Ft / normál kör 25–44 kör között. A bónusz a jogviszony "
             "7. hónapjától, aktív jogviszony és előre leadott foglalás mellett "
             "jár, 2026.06.01-től."
         )
+        if not loyalty_rows:
+            st.caption("Ehhez a hónaphoz még nincs mentett mobil lojalitási sor.")
+        elif loyalty_bonus.get("note"):
+            st.caption(str(loyalty_bonus.get("note")))
         st.info("A lojalitási bónuszhoz külön elfogadás nem szükséges.")
         return
 
