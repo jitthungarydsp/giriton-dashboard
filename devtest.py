@@ -10401,6 +10401,7 @@ def show_courier_dialog() -> None:
             "booking_row_count": advance_booking_row_count_value,
             "deleted_shift_count": advance_deleted_shift_count_value,
             "remaining_shift_count": advance_remaining_shift_count_value,
+            "advance_booking_source": str(advance_summary.get("source") or "-"),
             "row_values": updated_row_values,
         }
 
@@ -10806,6 +10807,7 @@ def show_courier_dialog() -> None:
         advance_booking_row_count = int(parse_huf_value(loyalty_values.get("booking_row_count")))
         advance_deleted_shift_count = int(parse_huf_value(loyalty_values.get("deleted_shift_count")))
         advance_remaining_shift_count = int(parse_huf_value(loyalty_values.get("remaining_shift_count")))
+        advance_booking_summary = {"source": str(loyalty_values.get("advance_booking_source") or "-")}
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
