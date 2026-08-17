@@ -4,6 +4,7 @@ import argparse
 from io import StringIO
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,9 +67,9 @@ def raise_for_response(response: requests.Response, label: str) -> None:
 
 
 def normalize_key(value: object) -> str:
-    text = str(value or "").casefold().strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    text = unicodedata.normalize("NFKD", str(value or "").casefold())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def parse_datetime(value: object) -> str | None:

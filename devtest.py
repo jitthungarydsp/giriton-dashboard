@@ -2671,15 +2671,18 @@ def load_courier_booking_emails(courier_id: str, courier_name: str = "") -> list
     except BaseException:
         pass
     if clean_courier_name:
+        target_name_key = _courier_match_key(clean_courier_name)
         try:
             rows = (
                 get_db().schema("public").table("courier_master_sheet_import")
                 .select("email,billing_email,courier_name")
-                .eq("courier_name", clean_courier_name)
-                .limit(50)
+                .limit(20000)
                 .execute().data or []
             )
-            source_rows.extend(rows)
+            source_rows.extend(
+                row for row in rows
+                if _courier_match_key(row.get("courier_name")) == target_name_key
+            )
         except BaseException:
             pass
     emails: list[str] = []
@@ -2857,16 +2860,14 @@ def load_advance_booking_cancellation_summary(
 ) -> dict[str, object]:
     """Summarize previous-month booking rows for the currently selected settlement month."""
     clean_courier_id = _courier_id_key(courier_id)
-    booking_emails = set(load_courier_booking_emails(courier_id, courier_name))
     empty_result = {
         "booking_row_count": 0,
         "deleted_shift_count": 0,
         "remaining_shift_count": 0,
         "unique_shift_count": 0,
-        "email_count": 0,
         "source": "",
     }
-    if not clean_courier_id and not booking_emails:
+    if not clean_courier_id:
         return empty_result
 
     previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
@@ -2874,6 +2875,7 @@ def load_advance_booking_cancellation_summary(
         rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
             .select("courier_id,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
+            .eq("courier_id", clean_courier_id)
             .gte("shift_date", period_start.isoformat())
             .lte("shift_date", period_end.isoformat())
             .limit(50000)
@@ -2887,9 +2889,6 @@ def load_advance_booking_cancellation_summary(
     deleted_pairs: set[tuple[str, ...]] = set()
     for row in rows:
         row_email = _booking_user_email_key(row.get("user_email"))
-        row_courier_id = _courier_id_key(row.get("courier_id"))
-        if row_courier_id != clean_courier_id and row_email not in booking_emails:
-            continue
         pair_key = _loyalty_booking_pair_key(row, row_email)
         if not all(pair_key):
             continue
@@ -2910,8 +2909,7 @@ def load_advance_booking_cancellation_summary(
         "deleted_shift_count": len(deleted_booked_pairs),
         "remaining_shift_count": len(remaining_pairs),
         "unique_shift_count": len(booked_pairs),
-        "email_count": len(booking_emails),
-        "source": "courier_loyalty_booking_log + courier email lookup",
+        "source": "courier_loyalty_booking_log",
     }
 
 
