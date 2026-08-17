@@ -9630,6 +9630,20 @@ def refresh_settlement_profile_data() -> None:
     load_courier_master.clear()
 
 
+def refresh_loyalty_calculation_data() -> None:
+    load_active_bonus_level_rules.clear()
+    load_courier_route_detail.clear()
+    load_courier_settlement_summary.clear()
+    load_courier_settlement_summary_row.clear()
+    load_courier_booking_emails.clear()
+    load_advance_booking_cancellation_summary.clear()
+    load_loyalty_advance_booking_days.clear()
+    load_loyalty_profile_lookup.clear()
+    load_loyalty_month_requirement_for_date.clear()
+    load_courier_profile.clear()
+    load_courier_master.clear()
+
+
 def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
     """The Bonus and Malus menus use the same persistent, period-aware rows."""
     title = "Bónuszok" if adjustment_type == "bonus" else "Máluszok"
@@ -15201,6 +15215,15 @@ def show_new_settlement_page() -> None:
                     st.rerun()
                 except Exception as exc:
                     st.error(f"API adatok betöltése sikertelen: {exc}")
+        if st.button(
+            "Lojalitás újraszámítása",
+            use_container_width=True,
+            key="refresh_loyalty_calculation_only",
+            help="Csak az admin elszámolási nézet lojalitás számítását frissíti. Nem ír PWA/mobil bontást.",
+        ):
+            refresh_loyalty_calculation_data()
+            st.toast(f"Lojalitás újraszámítva: {selected_month}", icon="✅")
+            st.rerun()
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
             st.session_state["new_calculation_mode"]="API"
