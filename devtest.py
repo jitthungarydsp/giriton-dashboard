@@ -1925,6 +1925,65 @@ def recalculate_mobile_breakdown_totals(rows: list[dict[str, object]]) -> list[d
     return rows
 
 
+def mobile_loyalty_amount_from_finance_source(
+    row: dict[str, object],
+    *,
+    courier_id: str,
+    courier_name: str,
+    session_id: str | None,
+    period_start: date,
+    calculation_mode: str,
+) -> float:
+    cache_rows = st.session_state.get(settlement_loyalty_cache_key(session_id, period_start, calculation_mode)) or {}
+    cached_values = (
+        cache_rows.get(f"id:{_courier_id_key(courier_id)}")
+        or cache_rows.get(f"name:{_courier_match_key(courier_name)}")
+    )
+    if cached_values:
+        cached_amount = parse_huf_value(cached_values.get("Lojalitás"))
+        if cached_amount:
+            return cached_amount
+
+    try:
+        summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
+    except Exception:
+        summary_row = {}
+    if summary_row:
+        summary_amount = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
+        if summary_amount:
+            return summary_amount
+
+    return parse_huf_value(row.get("Lojalitás"))
+
+
+def apply_mobile_loyalty_amount_from_finance_source(
+    rows: list[dict[str, object]],
+    row: dict[str, object],
+    *,
+    courier_id: str,
+    courier_name: str,
+    session_id: str | None,
+    period_start: date,
+    calculation_mode: str,
+) -> list[dict[str, object]]:
+    loyalty_amount = mobile_loyalty_amount_from_finance_source(
+        row,
+        courier_id=courier_id,
+        courier_name=courier_name,
+        session_id=session_id,
+        period_start=period_start,
+        calculation_mode=calculation_mode,
+    )
+    _set_mobile_breakdown_row_amount(
+        rows,
+        "loyalty_bonus",
+        loyalty_amount,
+        item_label="Lojalitási bónusz",
+        note="Pénzügy oldalon számolt érték",
+    )
+    return rows
+
+
 def enrich_mobile_settlement_row_for_snapshot(
     row: dict[str, object],
     *,
@@ -2349,6 +2408,15 @@ def publish_mobile_settlement_snapshot(
             )
         except Exception:
             pass
+        rows = apply_mobile_loyalty_amount_from_finance_source(
+            rows,
+            item,
+            courier_id=courier_id,
+            courier_name=str(item.get("Futár") or ""),
+            session_id=session_id,
+            period_start=period_start,
+            calculation_mode=calculation_mode,
+        )
         rows = recalculate_mobile_breakdown_totals(rows)
         profile_row = profile_by_id.get(courier_id, {})
         tig_breakdown = build_tig_breakdown(
@@ -2424,6 +2492,15 @@ def refresh_mobile_settlement_breakdown_snapshot(
             )
         except Exception:
             pass
+        rows = apply_mobile_loyalty_amount_from_finance_source(
+            rows,
+            item,
+            courier_id=courier_id,
+            courier_name=str(item.get("Futár") or item.get("FutĂˇr") or ""),
+            session_id=session_id,
+            period_start=period_start,
+            calculation_mode=calculation_mode,
+        )
         rows = recalculate_mobile_breakdown_totals(rows)
         profile_row = profile_by_id.get(courier_id, {})
         tig_breakdown = build_tig_breakdown(
