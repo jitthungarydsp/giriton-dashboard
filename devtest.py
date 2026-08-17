@@ -2505,7 +2505,7 @@ def load_courier_profile_lookup() -> dict[str, dict[str, object]]:
     try:
         rows = (
             get_db().schema("public").table("courier_master")
-            .select("courier_id,courier_name,work_start_date,active")
+            .select("*")
             .limit(20000)
             .execute().data or []
         )
@@ -2513,7 +2513,6 @@ def load_courier_profile_lookup() -> dict[str, dict[str, object]]:
         return {}
     lookup: dict[str, dict[str, object]] = {}
     for row in rows:
-        row["is_active"] = bool(row.get("active", True))
         courier_key = _courier_id_key(row.get("courier_id"))
         if courier_key:
             lookup[courier_key] = row
@@ -6137,6 +6136,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         if profile.get("work_start_date"):
             profile["start_date"] = profile.get("work_start_date")
         start_value = row.get("Munkakezdés") or profile.get("start_date")
+        work_end_value = profile.get("work_end_date")
         months_worked = completed_months_between(start_value, period_start)
         driver_counts = current_by_driver.get(driver_key)
         settlement_route_count = int(parse_huf_value(row.get("Számolt túrák") or row.get("Útvonalak") or row.get("Kör")))
@@ -6162,6 +6162,11 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             rate_values.append(0.0)
             status_values.append("Hiányzik: munkakezdés")
             continue
+        if pd.notna(pd.to_datetime(work_end_value, errors="coerce")):
+            loyalty_amounts.append(0.0)
+            rate_values.append(0.0)
+            status_values.append("Munkavégzés lezárva")
+            continue
         if current_route_count <= 0 and current_order_count <= 0:
             loyalty_amounts.append(0.0)
             rate_values.append(0.0)
@@ -6179,9 +6184,8 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             if advance_booking_days < booked_shift_min:
                 missing.append(f"előre foglalt műszak < {booked_shift_min}")
             if _loyalty_rule_bool(rule, "require_active_relationship", True):
-                is_active = bool(profile.get("is_active", True))
                 is_notice_period = bool(profile.get("is_notice_period", False))
-                if not is_active or is_notice_period:
+                if is_notice_period:
                     missing.append("aktív jogviszony")
             if _loyalty_rule_bool(rule, "require_advance_booking", True) and advance_booking_days <= 0:
                 missing.append("előfoglalás")
@@ -9842,11 +9846,15 @@ def render_fast_courier_profile(
     efo_assignment = load_active_efo_assignment(courier_id, date.today())
     loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
     resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, courier_name)
+    resolved_work_end = pd.to_datetime(profile.get("work_end_date"), errors="coerce")
+    resolved_work_end = resolved_work_end.date() if pd.notna(resolved_work_end) else None
     work_months = completed_months_between(resolved_work_start, period_start)
     employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
     if employment_type not in EMPLOYMENT_TYPE_LABELS:
         employment_type = "egyeni_vallalkozo"
-    if work_months < 0:
+    if resolved_work_end:
+        loyalty_status = "Munkavégzés lezárva"
+    elif work_months < 0:
         loyalty_status = "Hiányzik a munkakezdés"
     elif work_months >= loyalty_required_months:
         loyalty_status = "Beleszámít"
@@ -9918,6 +9926,12 @@ def render_fast_courier_profile(
             disabled=not is_editing,
             key=f"fast_profile_work_start_{courier_id}",
         )
+        work_end_date = st.date_input(
+            "Munkabefejezés dátuma",
+            value=resolved_work_end,
+            disabled=not is_editing,
+            key=f"fast_profile_work_end_{courier_id}",
+        )
         st.caption(f"ForrĂˇs: {work_start_source}")
         employment_options = list(EMPLOYMENT_TYPE_LABELS)
         employment_type = st.selectbox(
@@ -9957,6 +9971,7 @@ def render_fast_courier_profile(
             "warehouse_name": warehouse_name,
             "billing_email": billing_email,
             "work_start_date": work_start_date.isoformat() if work_start_date else "",
+            "work_end_date": work_end_date.isoformat() if work_end_date else "",
             "employment_type": employment_type,
             "employment_note": employment_note,
             "company_name": company_name,
@@ -13149,11 +13164,15 @@ def show_courier_dialog() -> None:
         efo_assignment = load_active_efo_assignment(courier_id, date.today())
         loyalty_required_months = load_loyalty_month_requirement_for_date(period_start)
         resolved_work_start, work_start_source, _loyalty_profile = resolve_loyalty_work_start(profile, courier_name)
+        resolved_work_end = pd.to_datetime(profile.get("work_end_date"), errors="coerce")
+        resolved_work_end = resolved_work_end.date() if pd.notna(resolved_work_end) else None
         work_months = completed_months_between(resolved_work_start, period_start)
         employment_type = str(profile.get("employment_type") or "egyeni_vallalkozo").strip()
         if employment_type not in EMPLOYMENT_TYPE_LABELS:
             employment_type = "egyeni_vallalkozo"
-        if work_months < 0:
+        if resolved_work_end:
+            loyalty_status = "Munkavégzés lezárva"
+        elif work_months < 0:
             loyalty_status = "Hiányzik a munkakezdés"
         elif work_months >= loyalty_required_months:
             loyalty_status = "Beleszámít"
@@ -13186,6 +13205,12 @@ def show_courier_dialog() -> None:
             value=resolved_work_start or date.today(),
                 disabled=not is_editing,
                 key=f"ui_profile_work_start_{courier_id}",
+            )
+            work_end_date = st.date_input(
+                "Munkabefejezés dátuma",
+                value=resolved_work_end,
+                disabled=not is_editing,
+                key=f"ui_profile_work_end_{courier_id}",
             )
             st.caption(f"ForrĂˇs: {work_start_source}")
             employment_options = list(EMPLOYMENT_TYPE_LABELS)
@@ -13232,6 +13257,7 @@ def show_courier_dialog() -> None:
                 "warehouse_name": warehouse_name,
                 "billing_email": billing_email,
                 "work_start_date": work_start_date.isoformat() if work_start_date else "",
+                "work_end_date": work_end_date.isoformat() if work_end_date else "",
                 "employment_type": employment_type,
                 "employment_note": employment_note,
                 "company_name": company_name,

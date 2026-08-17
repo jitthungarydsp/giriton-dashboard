@@ -456,6 +456,7 @@ def update_courier_master_profile(courier_id, profile_fields):
         "billing_email",
         "vat_status",
         "work_start_date",
+        "work_end_date",
         "employment_type",
         "employment_note",
     }
@@ -468,7 +469,7 @@ def update_courier_master_profile(courier_id, profile_fields):
         cleaned = _clean_text(value)
         if field == "tax_number":
             cleaned = _normalize_tax_number(cleaned)
-        if field == "work_start_date":
+        if field in {"work_start_date", "work_end_date"}:
             cleaned = cleaned or None
         if field == "employment_type":
             cleaned = cleaned or "egyeni_vallalkozo"

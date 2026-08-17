@@ -1,7 +1,8 @@
 begin;
 
 alter table public.courier_master
-    add column if not exists work_start_date date;
+    add column if not exists work_start_date date,
+    add column if not exists work_end_date date;
 
 alter table settlement.cfg_jitt_loyalty_bonus_rules
     add column if not exists loyalty_months_required integer not null default 0 check (loyalty_months_required >= 0),
@@ -10,6 +11,9 @@ alter table settlement.cfg_jitt_loyalty_bonus_rules
 
 create index if not exists idx_courier_master_work_start_date
     on public.courier_master using btree (work_start_date);
+
+create index if not exists idx_courier_master_work_end_date
+    on public.courier_master using btree (work_end_date);
 
 notify pgrst, 'reload schema';
 
