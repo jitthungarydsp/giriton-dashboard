@@ -2641,6 +2641,31 @@ def _booked_in_period(value: object, period_start: date, period_end: date) -> bo
     return bool(pd.notna(booked_at) and period_start <= booked_at.date() <= period_end)
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_courier_booking_emails(courier_id: str) -> list[str]:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return []
+    try:
+        rows = (
+            get_db().schema("public").table("courier_master")
+            .select("email,billing_email")
+            .eq("courier_id", clean_courier_id)
+            .limit(1)
+            .execute().data or []
+        )
+    except BaseException:
+        return []
+    if not rows:
+        return []
+    emails: list[str] = []
+    for value in [rows[0].get("email"), rows[0].get("billing_email")]:
+        email_key = _booking_user_email_key(value)
+        if email_key and email_key not in emails:
+            emails.append(email_key)
+    return emails
+
+
 def _booked_by_period_cutoff(value: object, cutoff_date: date) -> bool:
     booked_at = pd.to_datetime(value, errors="coerce")
     return bool(pd.notna(booked_at) and booked_at.date() <= cutoff_date)
@@ -2799,17 +2824,18 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_advance_booking_cancellation_summary(user_email: str, period_start: date, period_end: date) -> dict[str, object]:
+def load_advance_booking_cancellation_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
     """Summarize previous-month booking rows for the currently selected settlement month."""
-    clean_email = _booking_user_email_key(user_email)
+    booking_emails = set(load_courier_booking_emails(courier_id))
     empty_result = {
         "booking_row_count": 0,
         "deleted_shift_count": 0,
         "remaining_shift_count": 0,
         "unique_shift_count": 0,
+        "email_count": 0,
         "source": "",
     }
-    if not clean_email:
+    if not booking_emails:
         return empty_result
 
     previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
@@ -2829,9 +2855,10 @@ def load_advance_booking_cancellation_summary(user_email: str, period_start: dat
     booked_pairs: set[tuple[str, ...]] = set()
     deleted_pairs: set[tuple[str, ...]] = set()
     for row in rows:
-        if _booking_user_email_key(row.get("user_email")) != clean_email:
+        row_email = _booking_user_email_key(row.get("user_email"))
+        if row_email not in booking_emails:
             continue
-        pair_key = _loyalty_booking_pair_key(row, clean_email)
+        pair_key = _loyalty_booking_pair_key(row, row_email)
         if not all(pair_key):
             continue
         if _is_clean_booking_operation(row.get("operation")) and _booked_in_period(
@@ -2851,6 +2878,7 @@ def load_advance_booking_cancellation_summary(user_email: str, period_start: dat
         "deleted_shift_count": len(deleted_booked_pairs),
         "remaining_shift_count": len(remaining_pairs),
         "unique_shift_count": len(booked_pairs),
+        "email_count": len(booking_emails),
         "source": "courier_loyalty_booking_log",
     }
 
@@ -9556,6 +9584,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_profile.clear()
     load_active_efo_assignment.clear()
     load_muszakpro_booking_summary.clear()
+    load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
@@ -9893,6 +9922,7 @@ def render_fast_courier_profile(
             load_courier_profile.clear()
             load_active_efo_assignment.clear()
             load_muszakpro_booking_summary.clear()
+            load_courier_booking_emails.clear()
             load_advance_booking_cancellation_summary.clear()
             load_loyalty_profile_lookup.clear()
             load_loyalty_month_requirement_for_date.clear()
@@ -9908,6 +9938,7 @@ def render_fast_courier_profile(
         load_courier_profile.clear()
         load_active_efo_assignment.clear()
         load_muszakpro_booking_summary.clear()
+        load_courier_booking_emails.clear()
         load_advance_booking_cancellation_summary.clear()
         load_loyalty_profile_lookup.clear()
         load_loyalty_month_requirement_for_date.clear()
@@ -10516,13 +10547,7 @@ def show_courier_dialog() -> None:
             advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
             giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
             giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
-        worker_email = str(
-            profile.get("email")
-            or profile.get("billing_email")
-            or row.get("Email")
-            or ""
-        ).strip()
-        advance_booking_summary = load_advance_booking_cancellation_summary(worker_email, period_start, period_end)
+        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, period_start, period_end)
         advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
         advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
         advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
