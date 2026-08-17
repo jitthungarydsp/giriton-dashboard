@@ -10962,6 +10962,11 @@ def show_courier_dialog() -> None:
             },
         )
         tig_display_total = parse_huf_value(tig_breakdown.get("finalTotalHuf")) or payable_total
+        st.session_state[f"finance_payment_sync_{courier_id}_{period_start:%Y%m}"] = {
+            "payable_huf": payable_total,
+            "tig_final_huf": tig_display_total,
+            "tig_breakdown": tig_breakdown,
+        }
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         monthly_bonus_malus_effect = (
@@ -12011,7 +12016,11 @@ def show_courier_dialog() -> None:
             workflow_statuses = pd.DataFrame()
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
-        monthly_payment_amount = overview_tig_payable_total
+        finance_payment_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+        monthly_payment_amount = (
+            parse_huf_value(finance_payment_sync.get("tig_final_huf"))
+            or overview_tig_payable_total
+        )
 
         process_ids = {""}
         if not workflow_statuses.empty:
@@ -12155,20 +12164,26 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
-            payment_tig_breakdown = build_tig_breakdown(
-                tig_payment_payload_from_profile(
-                    profile,
-                    courier_id=courier_id,
-                    courier_name=courier_name,
-                    period_start=period_start,
-                ),
-                {
-                    "payable": amount_huf,
-                    "tip": tip_total,
-                    "cash": abs(atm_deduction_total),
-                },
+            payment_tig_breakdown = finance_payment_sync.get("tig_breakdown")
+            if not isinstance(payment_tig_breakdown, dict):
+                payment_tig_breakdown = build_tig_breakdown(
+                    tig_payment_payload_from_profile(
+                        profile,
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        period_start=period_start,
+                    ),
+                    {
+                        "payable": amount_huf,
+                        "tip": tip_total,
+                        "cash": abs(atm_deduction_total),
+                    },
+                )
+            tig_final_huf = (
+                parse_huf_value(finance_payment_sync.get("tig_final_huf"))
+                or parse_huf_value(payment_tig_breakdown.get("finalTotalHuf"))
+                or amount_huf
             )
-            tig_final_huf = parse_huf_value(payment_tig_breakdown.get("finalTotalHuf")) or amount_huf
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
             invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
