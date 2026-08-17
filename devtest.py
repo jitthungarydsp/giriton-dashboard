@@ -10512,6 +10512,33 @@ def show_courier_dialog() -> None:
         loyalty_rate = parse_huf_value(row.get("Lojalitás Ft/kör"))
         loyalty_advance_booking_days = int(parse_huf_value(row.get("Lojalitás előre foglalt nap")))
         loyalty_status = str(row.get("Lojalitás státusz") or "").strip()
+        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, courier_name, period_start, period_end)
+        advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
+        advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
+        advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
+        try:
+            if advance_remaining_shift_count != loyalty_advance_booking_days:
+                load_loyalty_advance_booking_days.clear()
+            loyalty_recalc_payload = row.to_dict()
+            loyalty_recalc_payload["Kör"] = route_total
+            loyalty_recalc_payload["Számolt túrák"] = route_total
+            loyalty_recalc_payload["Rendelés"] = order_total
+            loyalty_recalc_payload["Cím / rendelés"] = order_total
+            recalculated_loyalty = apply_loyalty_bonus(
+                pd.DataFrame([loyalty_recalc_payload]),
+                period_start,
+                period_end,
+                session_id,
+                active_calculation_mode,
+            ).iloc[0]
+            loyalty_total = parse_huf_value(recalculated_loyalty.get("Lojalitás"))
+            loyalty_previous_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előző havi normál kör")))
+            loyalty_current_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás aktuális normál kör")))
+            loyalty_rate = parse_huf_value(recalculated_loyalty.get("Lojalitás Ft/kör"))
+            loyalty_advance_booking_days = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előre foglalt nap")))
+            loyalty_status = str(recalculated_loyalty.get("Lojalitás státusz") or "").strip()
+        except BaseException:
+            loyalty_advance_booking_days = advance_remaining_shift_count
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
@@ -10587,10 +10614,6 @@ def show_courier_dialog() -> None:
             advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
             giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
             giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
-        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, courier_name, period_start, period_end)
-        advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
-        advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
-        advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
         save_monthly_workload_summary(
             courier_id=courier_id,
             courier_name=courier_name,
