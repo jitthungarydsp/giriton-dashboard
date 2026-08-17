@@ -10103,7 +10103,9 @@ def render_fast_courier_profile(
         unsafe_allow_html=True,
     )
 
-    profile_menu_items = ["ttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
+    if st.session_state.get(menu_key) == "ttekintés":
+        st.session_state[menu_key] = "Pénzügy"
+    profile_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(st.session_state.get("new_calculation_mode", "API")).strip().casefold() == "api":
         profile_menu_items.append("Statisztika")
     profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
@@ -10343,7 +10345,9 @@ def show_courier_dialog() -> None:
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
-    selected_menu_hint = str(st.session_state.get(menu_key) or "ttekintés")
+    if st.session_state.get(menu_key) == "ttekintés":
+        st.session_state[menu_key] = "Pénzügy"
+    selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
     if selected_menu_hint == "Profil":
         render_fast_courier_profile(
             courier_id=courier_id,
@@ -10355,7 +10359,7 @@ def show_courier_dialog() -> None:
         )
         return
     route_detail = pd.DataFrame()
-    if selected_menu_hint in {"ttekintés", "Pénzügy", "Kifizetés", "Útvonalak"}:
+    if selected_menu_hint in {"Pénzügy", "Kifizetés", "Útvonalak"}:
         route_detail = load_courier_route_detail(
             courier_id,
             courier_name,
@@ -10659,7 +10663,9 @@ def show_courier_dialog() -> None:
         """,
         unsafe_allow_html=True,
     )
-    courier_menu_items = ["ttekintés", "Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
+    if st.session_state.get(menu_key) == "ttekintés":
+        st.session_state[menu_key] = "Pénzügy"
+    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(active_calculation_mode or "API").strip().casefold() == "api":
         courier_menu_items.append("Statisztika")
     courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
