@@ -4447,6 +4447,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     columns = [
         "Courier ID", "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
         "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
+        "Lojalitás",
         "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
     try:
@@ -4500,6 +4501,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "route_bonus_total_huf": "Rendszerbónusz",
         "delay_bonus_huf": "Késedelmi díj",
         "compliance_bonus_huf": "Túramegfelelés",
+        "loyalty_bonus_huf": "Lojalitás",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
         "calculated_routes": "Számolt túrák",
@@ -4907,6 +4909,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
             [
                 "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
                 "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
+                "Lojalitás",
                 "Számolt túrák", "Nem számolt túrák",
             ]
         ]
@@ -4916,6 +4919,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         [
             "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
             "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
+            "Lojalitás",
             "Számolt túrák", "Nem számolt túrák",
         ]
     ].sum()
@@ -4925,6 +4929,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     system_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Rendszerbónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
     delay_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Késedelmi díj"] if not calculated_by_id.empty else pd.Series(dtype=float)
     compliance_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Túramegfelelés"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    loyalty_by_id = calculated_by_id.set_index("_courier_id_lookup")["Lojalitás"] if not calculated_by_id.empty else pd.Series(dtype=float)
     matched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
     unmatched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nem számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
     amount_by_courier = calculated_by_name.set_index("_courier_lookup")["Nettó bevétel"]
@@ -4933,6 +4938,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     system_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Rendszerbónusz"]
     delay_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Késedelmi díj"]
     compliance_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Túramegfelelés"]
+    loyalty_by_courier = calculated_by_name.set_index("_courier_lookup")["Lojalitás"]
     matched_routes = calculated_by_name.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated_by_name.set_index("_courier_lookup")["Nem számolt túrák"]
     calculated_keys = set(amount_by_courier.index)
@@ -4945,6 +4951,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Bónusz"] = result["_courier_id_lookup"].map(system_bonus_by_id).fillna(resolved_lookup.map(system_bonus_by_courier)).fillna(0.0)
     result["Késedelmi díj"] = result["_courier_id_lookup"].map(delay_bonus_by_id).fillna(resolved_lookup.map(delay_bonus_by_courier)).fillna(0.0)
     result["Túramegfelelés"] = result["_courier_id_lookup"].map(compliance_bonus_by_id).fillna(resolved_lookup.map(compliance_bonus_by_courier)).fillna(0.0)
+    result["Lojalitás"] = result["_courier_id_lookup"].map(loyalty_by_id).fillna(resolved_lookup.map(loyalty_by_courier)).fillna(_numeric_series(result, "Lojalitás"))
     result["Számolt túrák"] = result["_courier_id_lookup"].map(matched_routes_by_id).fillna(resolved_lookup.map(matched_routes)).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_id_lookup"].map(unmatched_routes_by_id).fillna(resolved_lookup.map(unmatched_routes)).fillna(0).astype(int)
 
@@ -4963,6 +4970,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         amount_columns = [
             "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
             "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
+            "Lojalitás",
             "Számolt túrák", "Nem számolt túrák",
         ]
         missing_calculated["_append_key"] = missing_calculated["_courier_id_lookup"].where(
@@ -9648,6 +9656,98 @@ def refresh_loyalty_calculation_data() -> None:
     load_courier_master.clear()
 
 
+def settlement_loyalty_cache_key(session_id: str | None, period_start: date, calculation_mode: str) -> str:
+    return (
+        "settlement_loyalty_values_"
+        f"{period_start:%Y%m}_"
+        f"{str(calculation_mode or '').strip().casefold()}_"
+        f"{str(session_id or '')}"
+    )
+
+
+def store_loyalty_recalculation_for_session(
+    data: pd.DataFrame,
+    *,
+    period_start: date,
+    period_end: date,
+    session_id: str | None,
+    calculation_mode: str,
+) -> int:
+    recalculated = apply_loyalty_bonus(data, period_start, period_end, session_id, calculation_mode)
+    cache_rows: dict[str, dict[str, object]] = {}
+    value_columns = [
+        "Lojalitás",
+        "Lojalitás előző havi normál kör",
+        "Lojalitás aktuális normál kör",
+        "Lojalitás Ft/kör",
+        "Lojalitás előre foglalt nap",
+        "Lojalitás státusz",
+    ]
+    for item in recalculated.to_dict("records"):
+        keys = [
+            f"id:{_courier_id_key(item.get('Courier ID'))}",
+            f"name:{_courier_match_key(item.get('Futár'))}",
+        ]
+        values = {column: item.get(column) for column in value_columns if column in item}
+        for key in keys:
+            if key.split(":", 1)[1]:
+                cache_rows[key] = values
+        if session_id:
+            try:
+                update_query = (
+                    get_db().schema("settlement").table("courier_settlement_summary")
+                    .update({"loyalty_bonus_huf": parse_huf_value(item.get("Lojalitás"))})
+                    .eq("session_id", session_id)
+                )
+                courier_id_key = _courier_id_key(item.get("Courier ID"))
+                if courier_id_key:
+                    update_query = update_query.eq("courier_id", courier_id_key)
+                else:
+                    update_query = update_query.eq("driver_name", str(item.get("Futár") or ""))
+                update_query.execute()
+            except BaseException:
+                pass
+    st.session_state[settlement_loyalty_cache_key(session_id, period_start, calculation_mode)] = cache_rows
+    load_excel_courier_base_rates.clear()
+    load_courier_settlement_summary.clear()
+    load_courier_settlement_summary_row.clear()
+    return len({key for key in cache_rows if key.startswith("id:")})
+
+
+def apply_cached_loyalty_values(
+    data: pd.DataFrame,
+    *,
+    period_start: date,
+    session_id: str | None,
+    calculation_mode: str,
+) -> pd.DataFrame:
+    cache_rows = st.session_state.get(settlement_loyalty_cache_key(session_id, period_start, calculation_mode))
+    if not cache_rows:
+        return data
+    result = data.copy()
+    value_columns = [
+        "Lojalitás",
+        "Lojalitás előző havi normál kör",
+        "Lojalitás aktuális normál kör",
+        "Lojalitás Ft/kör",
+        "Lojalitás előre foglalt nap",
+        "Lojalitás státusz",
+    ]
+    for column in value_columns:
+        if column not in result.columns:
+            result[column] = 0 if column != "Lojalitás státusz" else ""
+    for index, row in result.iterrows():
+        values = (
+            cache_rows.get(f"id:{_courier_id_key(row.get('Courier ID'))}")
+            or cache_rows.get(f"name:{_courier_match_key(row.get('Futár'))}")
+        )
+        if not values:
+            continue
+        for column, value in values.items():
+            result.at[index, column] = value
+    return result
+
+
 def render_bonus_malus_manager(courier_id: str, adjustment_type: str) -> None:
     """The Bonus and Malus menus use the same persistent, period-aware rows."""
     title = "Bónuszok" if adjustment_type == "bonus" else "Máluszok"
@@ -10546,29 +10646,6 @@ def show_courier_dialog() -> None:
         advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
         advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
         advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
-        try:
-            if advance_remaining_shift_count != loyalty_advance_booking_days:
-                load_loyalty_advance_booking_days.clear()
-            loyalty_recalc_payload = row.to_dict()
-            loyalty_recalc_payload["Kör"] = route_total
-            loyalty_recalc_payload["Számolt túrák"] = route_total
-            loyalty_recalc_payload["Rendelés"] = order_total
-            loyalty_recalc_payload["Cím / rendelés"] = order_total
-            recalculated_loyalty = apply_loyalty_bonus(
-                pd.DataFrame([loyalty_recalc_payload]),
-                period_start,
-                period_end,
-                session_id,
-                active_calculation_mode,
-            ).iloc[0]
-            loyalty_total = parse_huf_value(recalculated_loyalty.get("Lojalitás"))
-            loyalty_previous_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előző havi normál kör")))
-            loyalty_current_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás aktuális normál kör")))
-            loyalty_rate = parse_huf_value(recalculated_loyalty.get("Lojalitás Ft/kör"))
-            loyalty_advance_booking_days = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előre foglalt nap")))
-            loyalty_status = str(recalculated_loyalty.get("Lojalitás státusz") or "").strip()
-        except BaseException:
-            loyalty_advance_booking_days = advance_remaining_shift_count
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
@@ -15100,7 +15177,12 @@ def show_new_settlement_page() -> None:
         data,
         balance_component_session_id(selected_calculation_mode, balance_period_start, import_session_id),
     )
-    data = apply_loyalty_bonus(data, balance_period_start, balance_period_end, import_session_id, selected_calculation_mode)
+    data = apply_cached_loyalty_values(
+        data,
+        period_start=balance_period_start,
+        session_id=import_session_id,
+        calculation_mode=selected_calculation_mode,
+    )
     data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
     data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
     data = apply_periodic_fee_corrections(
@@ -15248,7 +15330,15 @@ def show_new_settlement_page() -> None:
             help="Csak az admin elszámolási nézet lojalitás számítását frissíti. Nem ír PWA/mobil bontást.",
         ):
             refresh_loyalty_calculation_data()
-            st.toast(f"Lojalitás újraszámítva: {selected_month}", icon="✅")
+            with st.spinner("Lojalitás újraszámítása..."):
+                refreshed_count = store_loyalty_recalculation_for_session(
+                    data,
+                    period_start=balance_period_start,
+                    period_end=balance_period_end,
+                    session_id=import_session_id,
+                    calculation_mode=selected_calculation_mode,
+                )
+            st.toast(f"Lojalitás újraszámítva: {selected_month} ({refreshed_count} futár)", icon="✅")
             st.rerun()
         if st.button("Szűrők törlése",use_container_width=True):
             st.session_state["new_branch"]="Összes"
@@ -15723,7 +15813,12 @@ def show_new_settlement_page() -> None:
             previous_data,
             balance_component_session_id(selected_calculation_mode, previous_period_start, previous_session_id),
         )
-        previous_data = apply_loyalty_bonus(previous_data, previous_period_start, previous_period_end, previous_session_id, selected_calculation_mode)
+        previous_data = apply_cached_loyalty_values(
+            previous_data,
+            period_start=previous_period_start,
+            session_id=previous_session_id,
+            calculation_mode=selected_calculation_mode,
+        )
         previous_data = apply_customer_rating_bonus(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_manual_balance_adjustments(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_periodic_fee_corrections(
