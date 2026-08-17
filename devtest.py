@@ -2646,6 +2646,7 @@ def load_courier_booking_emails(courier_id: str) -> list[str]:
     clean_courier_id = str(courier_id or "").strip()
     if not clean_courier_id:
         return []
+    source_rows: list[dict[str, object]] = []
     try:
         rows = (
             get_db().schema("public").table("courier_master")
@@ -2654,15 +2655,26 @@ def load_courier_booking_emails(courier_id: str) -> list[str]:
             .limit(1)
             .execute().data or []
         )
+        source_rows.extend(rows)
     except BaseException:
-        return []
-    if not rows:
-        return []
+        pass
+    try:
+        rows = (
+            get_db().schema("public").table("courier_master_sheet_import")
+            .select("email,billing_email")
+            .eq("courier_id", clean_courier_id)
+            .limit(50)
+            .execute().data or []
+        )
+        source_rows.extend(rows)
+    except BaseException:
+        pass
     emails: list[str] = []
-    for value in [rows[0].get("email"), rows[0].get("billing_email")]:
-        email_key = _booking_user_email_key(value)
-        if email_key and email_key not in emails:
-            emails.append(email_key)
+    for row in source_rows:
+        for value in [row.get("email"), row.get("billing_email")]:
+            email_key = _booking_user_email_key(value)
+            if email_key and email_key not in emails:
+                emails.append(email_key)
     return emails
 
 
@@ -2881,7 +2893,7 @@ def load_advance_booking_cancellation_summary(courier_id: str, period_start: dat
         "remaining_shift_count": len(remaining_pairs),
         "unique_shift_count": len(booked_pairs),
         "email_count": len(booking_emails),
-        "source": "courier_loyalty_booking_log",
+        "source": "courier_loyalty_booking_log + courier email lookup",
     }
 
 

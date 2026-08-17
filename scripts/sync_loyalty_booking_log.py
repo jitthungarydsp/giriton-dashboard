@@ -102,25 +102,33 @@ def parse_shift_data(value: object) -> dict[str, str]:
 
 def read_courier_lookup() -> dict[str, dict[str, str]]:
     url, _ = supabase_config()
-    response = requests.get(
-        f"{url}/rest/v1/courier_master",
-        headers=headers(),
-        params={
-            "select": "courier_id,courier_name,email,billing_email",
-            "limit": "20000",
-        },
-        timeout=30,
-    )
-    raise_for_response(response, "courier_master")
+    lookup_sources = []
+    for table_name in ["courier_master", "courier_master_sheet_import"]:
+        response = requests.get(
+            f"{url}/rest/v1/{table_name}",
+            headers=headers(),
+            params={
+                "select": "courier_id,courier_name,email,billing_email",
+                "limit": "20000",
+            },
+            timeout=30,
+        )
+        if response.status_code >= 400 and table_name == "courier_master_sheet_import":
+            continue
+        raise_for_response(response, table_name)
+        lookup_sources.extend(response.json() or [])
     lookup: dict[str, dict[str, str]] = {}
-    for row in response.json() or []:
+    for row in lookup_sources:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if not courier_id:
+            continue
         payload = {
-            "courier_id": str(row.get("courier_id") or "").strip(),
+            "courier_id": courier_id,
             "courier_name": str(row.get("courier_name") or "").strip(),
         }
         for key in [row.get("email"), row.get("billing_email")]:
             normalized = normalize_key(key)
-            if normalized:
+            if normalized and normalized not in lookup:
                 lookup[normalized] = payload
     return lookup
 
