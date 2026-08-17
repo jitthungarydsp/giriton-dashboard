@@ -10298,6 +10298,66 @@ def show_courier_dialog() -> None:
         value = fallback_value if fallback_value else summary_value
         return abs(value) if absolute else value
 
+    def resolve_profile_loyalty_values(source_row: pd.Series, order_count: int, route_count: int) -> dict[str, object]:
+        loyalty_previous_routes_value = int(parse_huf_value(source_row.get("Lojalitás előző havi normál kör")))
+        loyalty_current_routes_value = int(parse_huf_value(source_row.get("Lojalitás aktuális normál kör")))
+        loyalty_rate_value = parse_huf_value(source_row.get("Lojalitás Ft/kör"))
+        loyalty_advance_booking_days_value = int(parse_huf_value(source_row.get("Lojalitás előre foglalt nap")))
+        loyalty_status_value = str(source_row.get("Lojalitás státusz") or "").strip()
+        advance_summary = load_advance_booking_cancellation_summary(courier_id, courier_name, period_start, period_end)
+        advance_booking_row_count_value = int(advance_summary.get("booking_row_count") or 0)
+        advance_deleted_shift_count_value = int(advance_summary.get("deleted_shift_count") or 0)
+        advance_remaining_shift_count_value = int(advance_summary.get("remaining_shift_count") or 0)
+        loyalty_amount_value = parse_huf_value(source_row.get("Lojalitás"))
+        if loyalty_amount_value == 0 and summary_available:
+            loyalty_amount_value = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
+        updated_row_values: dict[str, object] = {"Lojalitás": loyalty_amount_value}
+        try:
+            if advance_remaining_shift_count_value != loyalty_advance_booking_days_value:
+                load_loyalty_advance_booking_days.clear()
+            loyalty_recalc_payload = source_row.to_dict()
+            loyalty_recalc_payload["Kör"] = route_count
+            loyalty_recalc_payload["Számolt túrák"] = route_count
+            loyalty_recalc_payload["Rendelés"] = order_count
+            loyalty_recalc_payload["Cím / rendelés"] = order_count
+            recalculated = apply_loyalty_bonus(
+                pd.DataFrame([loyalty_recalc_payload]),
+                period_start,
+                period_end,
+                session_id,
+                active_calculation_mode,
+            ).iloc[0]
+            loyalty_amount_value = parse_huf_value(recalculated.get("Lojalitás"))
+            loyalty_previous_routes_value = int(parse_huf_value(recalculated.get("Lojalitás előző havi normál kör")))
+            loyalty_current_routes_value = int(parse_huf_value(recalculated.get("Lojalitás aktuális normál kör")))
+            loyalty_rate_value = parse_huf_value(recalculated.get("Lojalitás Ft/kör"))
+            loyalty_advance_booking_days_value = int(parse_huf_value(recalculated.get("Lojalitás előre foglalt nap")))
+            loyalty_status_value = str(recalculated.get("Lojalitás státusz") or "").strip()
+            for loyalty_column in [
+                "Lojalitás",
+                "Lojalitás előző havi normál kör",
+                "Lojalitás aktuális normál kör",
+                "Lojalitás Ft/kör",
+                "Lojalitás előre foglalt nap",
+                "Lojalitás státusz",
+            ]:
+                if loyalty_column in recalculated:
+                    updated_row_values[loyalty_column] = recalculated.get(loyalty_column)
+        except BaseException:
+            loyalty_advance_booking_days_value = advance_remaining_shift_count_value
+        return {
+            "total": loyalty_amount_value,
+            "previous_routes": loyalty_previous_routes_value,
+            "current_routes": loyalty_current_routes_value,
+            "rate": loyalty_rate_value,
+            "advance_booking_days": loyalty_advance_booking_days_value,
+            "status": loyalty_status_value,
+            "booking_row_count": advance_booking_row_count_value,
+            "deleted_shift_count": advance_deleted_shift_count_value,
+            "remaining_shift_count": advance_remaining_shift_count_value,
+            "row_values": updated_row_values,
+        }
+
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
@@ -10330,39 +10390,17 @@ def show_courier_dialog() -> None:
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     if loyalty_total == 0 and summary_available:
         loyalty_total = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
-    try:
-        overview_route_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
-        overview_order_total = int(overview_route_metrics.get("order_total") or 0)
-        overview_route_total = int(overview_route_metrics.get("route_total") or 0)
-        if summary_available:
-            overview_order_total = max(overview_order_total, int(parse_huf_value(summary_row.get("order_count"))))
-            overview_route_total = max(overview_route_total, int(parse_huf_value(summary_row.get("route_count"))))
-        loyalty_recalc_payload = row.to_dict()
-        loyalty_recalc_payload["Kör"] = overview_route_total
-        loyalty_recalc_payload["Számolt túrák"] = overview_route_total
-        loyalty_recalc_payload["Rendelés"] = overview_order_total
-        loyalty_recalc_payload["Cím / rendelés"] = overview_order_total
-        recalculated_overview_loyalty = apply_loyalty_bonus(
-            pd.DataFrame([loyalty_recalc_payload]),
-            period_start,
-            period_end,
-            session_id,
-            active_calculation_mode,
-        ).iloc[0]
-        loyalty_total = parse_huf_value(recalculated_overview_loyalty.get("Lojalitás"))
-        row = row.copy()
-        for loyalty_column in [
-            "Lojalitás",
-            "Lojalitás előző havi normál kör",
-            "Lojalitás aktuális normál kör",
-            "Lojalitás Ft/kör",
-            "Lojalitás előre foglalt nap",
-            "Lojalitás státusz",
-        ]:
-            if loyalty_column in recalculated_overview_loyalty:
-                row[loyalty_column] = recalculated_overview_loyalty.get(loyalty_column)
-    except BaseException:
-        pass
+    overview_route_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
+    overview_order_total = int(overview_route_metrics.get("order_total") or 0)
+    overview_route_total = int(overview_route_metrics.get("route_total") or 0)
+    if summary_available:
+        overview_order_total = max(overview_order_total, int(parse_huf_value(summary_row.get("order_count"))))
+        overview_route_total = max(overview_route_total, int(parse_huf_value(summary_row.get("route_count"))))
+    overview_loyalty = resolve_profile_loyalty_values(row, overview_order_total, overview_route_total)
+    loyalty_total = parse_huf_value(overview_loyalty.get("total"))
+    row = row.copy()
+    for loyalty_column, loyalty_value in dict(overview_loyalty.get("row_values") or {}).items():
+        row[loyalty_column] = loyalty_value
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
@@ -10712,33 +10750,16 @@ def show_courier_dialog() -> None:
         loyalty_rate = parse_huf_value(row.get("Lojalitás Ft/kör"))
         loyalty_advance_booking_days = int(parse_huf_value(row.get("Lojalitás előre foglalt nap")))
         loyalty_status = str(row.get("Lojalitás státusz") or "").strip()
-        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, courier_name, period_start, period_end)
-        advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
-        advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
-        advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
-        try:
-            if advance_remaining_shift_count != loyalty_advance_booking_days:
-                load_loyalty_advance_booking_days.clear()
-            loyalty_recalc_payload = row.to_dict()
-            loyalty_recalc_payload["Kör"] = route_total
-            loyalty_recalc_payload["Számolt túrák"] = route_total
-            loyalty_recalc_payload["Rendelés"] = order_total
-            loyalty_recalc_payload["Cím / rendelés"] = order_total
-            recalculated_loyalty = apply_loyalty_bonus(
-                pd.DataFrame([loyalty_recalc_payload]),
-                period_start,
-                period_end,
-                session_id,
-                active_calculation_mode,
-            ).iloc[0]
-            loyalty_total = parse_huf_value(recalculated_loyalty.get("Lojalitás"))
-            loyalty_previous_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előző havi normál kör")))
-            loyalty_current_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás aktuális normál kör")))
-            loyalty_rate = parse_huf_value(recalculated_loyalty.get("Lojalitás Ft/kör"))
-            loyalty_advance_booking_days = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előre foglalt nap")))
-            loyalty_status = str(recalculated_loyalty.get("Lojalitás státusz") or "").strip()
-        except BaseException:
-            loyalty_advance_booking_days = advance_remaining_shift_count
+        loyalty_values = resolve_profile_loyalty_values(row, order_total, route_total)
+        loyalty_total = parse_huf_value(loyalty_values.get("total"))
+        loyalty_previous_routes = int(parse_huf_value(loyalty_values.get("previous_routes")))
+        loyalty_current_routes = int(parse_huf_value(loyalty_values.get("current_routes")))
+        loyalty_rate = parse_huf_value(loyalty_values.get("rate"))
+        loyalty_advance_booking_days = int(parse_huf_value(loyalty_values.get("advance_booking_days")))
+        loyalty_status = str(loyalty_values.get("status") or "").strip()
+        advance_booking_row_count = int(parse_huf_value(loyalty_values.get("booking_row_count")))
+        advance_deleted_shift_count = int(parse_huf_value(loyalty_values.get("deleted_shift_count")))
+        advance_remaining_shift_count = int(parse_huf_value(loyalty_values.get("remaining_shift_count")))
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
