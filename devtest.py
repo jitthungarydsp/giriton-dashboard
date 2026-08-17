@@ -10646,6 +10646,29 @@ def show_courier_dialog() -> None:
         advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
         advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
         advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
+        try:
+            if advance_remaining_shift_count != loyalty_advance_booking_days:
+                load_loyalty_advance_booking_days.clear()
+            loyalty_recalc_payload = row.to_dict()
+            loyalty_recalc_payload["Kör"] = route_total
+            loyalty_recalc_payload["Számolt túrák"] = route_total
+            loyalty_recalc_payload["Rendelés"] = order_total
+            loyalty_recalc_payload["Cím / rendelés"] = order_total
+            recalculated_loyalty = apply_loyalty_bonus(
+                pd.DataFrame([loyalty_recalc_payload]),
+                period_start,
+                period_end,
+                session_id,
+                active_calculation_mode,
+            ).iloc[0]
+            loyalty_total = parse_huf_value(recalculated_loyalty.get("Lojalitás"))
+            loyalty_previous_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előző havi normál kör")))
+            loyalty_current_routes = int(parse_huf_value(recalculated_loyalty.get("Lojalitás aktuális normál kör")))
+            loyalty_rate = parse_huf_value(recalculated_loyalty.get("Lojalitás Ft/kör"))
+            loyalty_advance_booking_days = int(parse_huf_value(recalculated_loyalty.get("Lojalitás előre foglalt nap")))
+            loyalty_status = str(recalculated_loyalty.get("Lojalitás státusz") or "").strip()
+        except BaseException:
+            loyalty_advance_booking_days = advance_remaining_shift_count
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
@@ -11844,6 +11867,7 @@ def show_courier_dialog() -> None:
                 "invoice_number": invoice_number,
                 "invoice_file": str(latest_invoice.get("file_name") or ""),
                 "invoice_title": str(latest_invoice.get("title") or ""),
+                "invoice_amount": invoice_amount,
                 "amount": (
                     request_amount
                     if request_item
@@ -11880,6 +11904,9 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
+            invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
+            invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
+            invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
             payment_note = f"{courier_id}-{invoice_number}".strip("-")
 
             st.markdown(
@@ -11889,6 +11916,8 @@ def show_courier_dialog() -> None:
                     <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(str(payment_item['status']))}</div></div>
                     <div class="finance-kpi payable"><div class="finance-kpi-label">Összeg</div><div class="finance-kpi-value">{format_huf(amount_huf)}</div></div>
+                    <div class="finance-kpi"><div class="finance-kpi-label">Számla összege</div><div class="finance-kpi-value">{format_huf(invoice_amount_huf) if invoice_amount_huf else '-'}</div></div>
+                    <div class="finance-kpi"><div class="finance-kpi-label">Eltérés</div><div class="finance-kpi-value">{invoice_difference_label}</div></div>
                 </div>
                 </div>
                 """,
@@ -11899,6 +11928,8 @@ def show_courier_dialog() -> None:
                 ("Közlemény", payment_note),
                 ("Név", recipient_name),
                 ("Összeg", format_huf(amount_huf)),
+                ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
+                ("Eltérés", invoice_difference_label),
             ])
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
