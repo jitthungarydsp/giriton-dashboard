@@ -7468,10 +7468,23 @@ def apply_effective_payment_total_column(data: pd.DataFrame, period_start: date 
             result["Kifizetendő kifizetésre"] = pd.Series(dtype=float)
         return result
     profile_by_id_for_payment = _export_courier_profile_lookup()
+    mobile_payable_by_id: dict[str, float] = {}
+    if period_start:
+        mobile_rows = load_mobile_breakdown_overrides_for_period(period_start)
+        if isinstance(mobile_rows, pd.DataFrame) and not mobile_rows.empty:
+            mobile_rows = mobile_rows.copy()
+            mobile_rows["_courier_id_lookup"] = mobile_rows["courier_id"].map(_courier_id_key)
+            payable_rows = mobile_rows.loc[mobile_rows["item_key"].astype(str).eq("payable")]
+            for mobile_row in payable_rows.to_dict("records"):
+                courier_key = _courier_id_key(mobile_row.get("courier_id"))
+                if courier_key:
+                    mobile_payable_by_id[courier_key] = parse_huf_value(mobile_row.get("amount_value"))
 
     def list_payment_total(item: pd.Series) -> float:
         raw_item = item.to_dict()
         courier_key = _courier_id_key(raw_item.get("Courier ID") or raw_item.get("courier_id"))
+        if courier_key in mobile_payable_by_id:
+            return mobile_payable_by_id[courier_key]
         profile_row = profile_by_id_for_payment.get(courier_key, {})
         return effective_payment_total_from_row({**raw_item, **profile_row}, period_start)
 
