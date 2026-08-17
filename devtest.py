@@ -12155,17 +12155,20 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
-            tig_final_huf = tig_payment_total_from_payload(
+            payment_tig_breakdown = build_tig_breakdown(
                 tig_payment_payload_from_profile(
                     profile,
                     courier_id=courier_id,
                     courier_name=courier_name,
                     period_start=period_start,
                 ),
-                payable=amount_huf,
-                tip=tip_total,
-                cash=abs(atm_deduction_total),
+                {
+                    "payable": amount_huf,
+                    "tip": tip_total,
+                    "cash": abs(atm_deduction_total),
+                },
             )
+            tig_final_huf = parse_huf_value(payment_tig_breakdown.get("finalTotalHuf")) or amount_huf
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
             invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
@@ -12197,6 +12200,65 @@ def show_courier_dialog() -> None:
             ])
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
+
+            payment_payable_sources = pd.DataFrame([
+                {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
+                {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
+                {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
+                {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
+                {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
+                {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
+                {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
+                {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
+                {"Művelet": "+", "Tétel": "Korrekció +", "Összeg": correction_income_total},
+                {"Művelet": "-", "Tétel": "Kiflis malus", "Összeg": imported_malus_total},
+                {"Művelet": "-", "Tétel": "JITT malus", "Összeg": manual_malus_total},
+                {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
+                {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+                {"Művelet": "-", "Tétel": "Korrekció -", "Összeg": correction_deduction_total},
+                {"Művelet": "-", "Tétel": "Fizetés előleg", "Összeg": salary_advance_total},
+                {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
+                {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
+                {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": amount_huf},
+            ])
+            payment_payable_sources = payment_payable_sources.loc[
+                payment_payable_sources["Összeg"].ne(0) | payment_payable_sources["Művelet"].eq("=")
+            ].copy()
+            payment_payable_sources["Összeg"] = payment_payable_sources["Összeg"].map(format_huf)
+            payment_tig_rows = pd.DataFrame([
+                {
+                    "Tétel": str(item.get("label") or item.get("key") or "-"),
+                    "Nettó": format_huf(item.get("netHuf")),
+                    "ÁFA": format_huf(item.get("vatHuf")),
+                    "Bruttó": format_huf(item.get("grossHuf")),
+                    "Megjegyzés": str(item.get("note") or ""),
+                }
+                for item in payment_tig_breakdown.get("rows") or []
+            ])
+            if not payment_tig_rows.empty:
+                payment_tig_rows = pd.concat(
+                    [
+                        payment_tig_rows,
+                        pd.DataFrame([{
+                            "Tétel": "TIG végösszeg",
+                            "Nettó": "",
+                            "ÁFA": "",
+                            "Bruttó": format_huf(tig_final_huf),
+                            "Megjegyzés": "",
+                        }]),
+                    ],
+                    ignore_index=True,
+                )
+            detail_left, detail_right = st.columns(2)
+            with detail_left:
+                with st.popover("Összeg részletei", use_container_width=True):
+                    st.dataframe(payment_payable_sources, use_container_width=True, hide_index=True)
+            with detail_right:
+                with st.popover("TIG részletei", use_container_width=True):
+                    if payment_tig_rows.empty:
+                        st.info("Nincs TIG bontás ehhez a folyamathoz.")
+                    else:
+                        st.dataframe(payment_tig_rows, use_container_width=True, hide_index=True)
 
             close_note = st.text_area(
                 "Kifizetés lezárási megjegyzés",
