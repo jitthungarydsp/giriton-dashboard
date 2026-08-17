@@ -131,10 +131,13 @@ def read_booking_rows() -> list[dict[str, Any]]:
         if not any([booked_at, user_email, operation, raw_shift_data]):
             continue
         shift = parse_shift_data(raw_shift_data)
+        raw_user_email = str(user_email or "").strip()
+        lookup_email = str(shift["proxy_email"] or raw_user_email).strip()
         source_key = f"loyalty_booking:{BOOKING_SHEET_ID}:{BOOKING_WORKSHEET_GID}:{row_number}"
         rows.append(
             {
-                "user_email": str(shift["proxy_email"] or user_email or "").strip(),
+                "user_email": raw_user_email,
+                "_lookup_email": lookup_email,
                 "booked_at": parse_datetime(booked_at),
                 "operation": str(operation or "").strip(),
                 "shift_date": shift["shift_date"] or None,
@@ -192,7 +195,7 @@ def main() -> int:
     lookup = read_courier_lookup()
     rows = read_booking_rows()
     for row in rows:
-        match = lookup.get(normalize_key(row.get("user_email"))) or {}
+        match = lookup.get(normalize_key(row.pop("_lookup_email", "") or row.get("user_email"))) or {}
         row["courier_id"] = match.get("courier_id") or None
         row["courier_name"] = match.get("courier_name") or ""
 

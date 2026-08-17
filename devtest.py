@@ -2624,6 +2624,23 @@ def _is_clean_booking_operation(value: object) -> bool:
     return any(marker in operation for marker in ["foglal", "book"])
 
 
+def _booking_user_email_key(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _loyalty_booking_pair_key(row: dict[str, object], email: object | None = None) -> tuple[str, ...]:
+    user_email = _booking_user_email_key(email if email is not None else row.get("user_email"))
+    shift_date = str(row.get("shift_date") or "").strip()[:10]
+    shift_time = str(row.get("shift_time") or "").strip().casefold()
+    warehouse = str(row.get("warehouse") or "").strip().casefold()
+    return (user_email, shift_date, shift_time, warehouse)
+
+
+def _booked_in_period(value: object, period_start: date, period_end: date) -> bool:
+    booked_at = pd.to_datetime(value, errors="coerce")
+    return bool(pd.notna(booked_at) and period_start <= booked_at.date() <= period_end)
+
+
 def _booked_by_period_cutoff(value: object, cutoff_date: date) -> bool:
     booked_at = pd.to_datetime(value, errors="coerce")
     return bool(pd.notna(booked_at) and booked_at.date() <= cutoff_date)
@@ -2778,6 +2795,63 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
         "booked_shift_count": len(unique_keys),
         "advance_booked_shift_count": len(advance_keys),
         "source": source_table,
+    }
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_advance_booking_cancellation_summary(user_email: str, period_start: date, period_end: date) -> dict[str, object]:
+    """Summarize previous-month booking rows for the currently selected settlement month."""
+    clean_email = _booking_user_email_key(user_email)
+    empty_result = {
+        "booking_row_count": 0,
+        "deleted_shift_count": 0,
+        "remaining_shift_count": 0,
+        "unique_shift_count": 0,
+        "source": "",
+    }
+    if not clean_email:
+        return empty_result
+
+    previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_loyalty_booking_log")
+            .select("user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
+            .gte("shift_date", period_start.isoformat())
+            .lte("shift_date", period_end.isoformat())
+            .limit(50000)
+            .execute().data or []
+        )
+    except BaseException:
+        return empty_result
+
+    booking_row_count = 0
+    booked_pairs: set[tuple[str, ...]] = set()
+    deleted_pairs: set[tuple[str, ...]] = set()
+    for row in rows:
+        if _booking_user_email_key(row.get("user_email")) != clean_email:
+            continue
+        pair_key = _loyalty_booking_pair_key(row, clean_email)
+        if not all(pair_key):
+            continue
+        if _is_clean_booking_operation(row.get("operation")) and _booked_in_period(
+            row.get("booked_at"),
+            previous_period_start,
+            previous_period_end,
+        ):
+            booking_row_count += 1
+            booked_pairs.add(pair_key)
+        elif _is_booking_change_operation(row.get("operation")):
+            deleted_pairs.add(pair_key)
+
+    deleted_booked_pairs = booked_pairs & deleted_pairs
+    remaining_pairs = booked_pairs - deleted_booked_pairs
+    return {
+        "booking_row_count": booking_row_count,
+        "deleted_shift_count": len(deleted_booked_pairs),
+        "remaining_shift_count": len(remaining_pairs),
+        "unique_shift_count": len(booked_pairs),
+        "source": "courier_loyalty_booking_log",
     }
 
 
@@ -9482,6 +9556,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_profile.clear()
     load_active_efo_assignment.clear()
     load_muszakpro_booking_summary.clear()
+    load_advance_booking_cancellation_summary.clear()
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
     load_courier_master.clear()
@@ -9818,6 +9893,7 @@ def render_fast_courier_profile(
             load_courier_profile.clear()
             load_active_efo_assignment.clear()
             load_muszakpro_booking_summary.clear()
+            load_advance_booking_cancellation_summary.clear()
             load_loyalty_profile_lookup.clear()
             load_loyalty_month_requirement_for_date.clear()
             load_courier_master.clear()
@@ -9832,6 +9908,7 @@ def render_fast_courier_profile(
         load_courier_profile.clear()
         load_active_efo_assignment.clear()
         load_muszakpro_booking_summary.clear()
+        load_advance_booking_cancellation_summary.clear()
         load_loyalty_profile_lookup.clear()
         load_loyalty_month_requirement_for_date.clear()
         load_target_reserve_status.clear()
@@ -10439,6 +10516,16 @@ def show_courier_dialog() -> None:
             advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
             giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
             giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
+        worker_email = str(
+            profile.get("email")
+            or profile.get("billing_email")
+            or row.get("Email")
+            or ""
+        ).strip()
+        advance_booking_summary = load_advance_booking_cancellation_summary(worker_email, period_start, period_end)
+        advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
+        advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
+        advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
         save_monthly_workload_summary(
             courier_id=courier_id,
             courier_name=courier_name,
@@ -10517,10 +10604,11 @@ def show_courier_dialog() -> None:
             """,
             unsafe_allow_html=True,
         )
-        workload_cols = st.columns(5)
-        workload_cols[0].metric("MűszakPro foglalt műszak", booked_shift_count)
-        workload_cols[1].metric("Előre foglalt műszak", advance_booked_shift_count)
-        workload_cols[2].markdown(
+        workload_cols = st.columns(6)
+        workload_cols[0].metric("Foglalás sor", advance_booking_row_count)
+        workload_cols[1].metric("Visszatörölt", advance_deleted_shift_count)
+        workload_cols[2].metric("Megmaradt", advance_remaining_shift_count)
+        workload_cols[3].markdown(
             f"""
             <div class="workload-kpi-card {'is-good' if giriton_shift_count > 30 else ''}">
                 <div class="workload-kpi-label">Giriton műszak</div>
@@ -10529,8 +10617,8 @@ def show_courier_dialog() -> None:
             """,
             unsafe_allow_html=True,
         )
-        workload_cols[3].metric("Kifutott túra", route_total)
-        workload_cols[4].metric("Cím / rendelés", order_total)
+        workload_cols[4].metric("Kifutott túra", route_total)
+        workload_cols[5].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
@@ -10640,6 +10728,9 @@ def show_courier_dialog() -> None:
         def finance_detail_frame(detail_label: str) -> pd.DataFrame:
             if detail_label == "Kör":
                 return pd.DataFrame([
+                    {"Tétel": "Foglalás sor", "Darab": advance_booking_row_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
+                    {"Tétel": "Visszatörölt", "Darab": advance_deleted_shift_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
+                    {"Tétel": "Megmaradt", "Darab": advance_remaining_shift_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
                     {"Tétel": "MűszakPro foglalt műszak", "Darab": booked_shift_count, "Forrás": str(booking_summary.get("source") or "-")},
                     {"Tétel": "Giriton műszak", "Darab": giriton_shift_count, "Forrás": str(giriton_shift_summary.get("source") or "-")},
                     {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
