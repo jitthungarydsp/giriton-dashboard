@@ -10312,6 +10312,25 @@ def show_courier_dialog() -> None:
         if loyalty_amount_value == 0 and summary_available:
             loyalty_amount_value = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
         updated_row_values: dict[str, object] = {"Lojalitás": loyalty_amount_value}
+        cache_key = settlement_loyalty_cache_key(session_id, period_start, active_calculation_mode)
+        existing_cache_rows = st.session_state.get(cache_key) or {}
+        existing_cache_values = (
+            existing_cache_rows.get(f"id:{_courier_id_key(courier_id)}")
+            or existing_cache_rows.get(f"name:{_courier_match_key(courier_name)}")
+        )
+        if selected_menu_hint != "Pénzügy" and existing_cache_values:
+            return {
+                "total": parse_huf_value(existing_cache_values.get("Lojalitás")),
+                "previous_routes": int(parse_huf_value(existing_cache_values.get("Lojalitás előző havi normál kör"))),
+                "current_routes": int(parse_huf_value(existing_cache_values.get("Lojalitás aktuális normál kör"))),
+                "rate": parse_huf_value(existing_cache_values.get("Lojalitás Ft/kör")),
+                "advance_booking_days": int(parse_huf_value(existing_cache_values.get("Lojalitás előre foglalt nap"))),
+                "status": str(existing_cache_values.get("Lojalitás státusz") or "").strip(),
+                "booking_row_count": advance_booking_row_count_value,
+                "deleted_shift_count": advance_deleted_shift_count_value,
+                "remaining_shift_count": advance_remaining_shift_count_value,
+                "row_values": dict(existing_cache_values),
+            }
         try:
             if advance_remaining_shift_count_value != loyalty_advance_booking_days_value:
                 load_loyalty_advance_booking_days.clear()
@@ -10345,6 +10364,33 @@ def show_courier_dialog() -> None:
                     updated_row_values[loyalty_column] = recalculated.get(loyalty_column)
         except BaseException:
             loyalty_advance_booking_days_value = advance_remaining_shift_count_value
+        if selected_menu_hint == "Pénzügy":
+            cache_rows = dict(st.session_state.get(cache_key) or {})
+            cache_values = {
+                "Lojalitás": loyalty_amount_value,
+                "Lojalitás előző havi normál kör": loyalty_previous_routes_value,
+                "Lojalitás aktuális normál kör": loyalty_current_routes_value,
+                "Lojalitás Ft/kör": loyalty_rate_value,
+                "Lojalitás előre foglalt nap": loyalty_advance_booking_days_value,
+                "Lojalitás státusz": loyalty_status_value,
+            }
+            for cache_row_key in [
+                f"id:{_courier_id_key(courier_id)}",
+                f"name:{_courier_match_key(courier_name)}",
+            ]:
+                if cache_row_key.split(":", 1)[1]:
+                    cache_rows[cache_row_key] = cache_values
+            st.session_state[cache_key] = cache_rows
+            if session_id:
+                try:
+                    get_db().schema("settlement").table("courier_settlement_summary").update(
+                        {"loyalty_bonus_huf": loyalty_amount_value}
+                    ).eq("session_id", session_id).eq("courier_id", _courier_id_key(courier_id)).execute()
+                    load_excel_courier_base_rates.clear()
+                    load_courier_settlement_summary.clear()
+                    load_courier_settlement_summary_row.clear()
+                except BaseException:
+                    pass
         return {
             "total": loyalty_amount_value,
             "previous_routes": loyalty_previous_routes_value,
