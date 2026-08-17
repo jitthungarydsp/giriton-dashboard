@@ -15793,7 +15793,7 @@ def show_new_settlement_page() -> None:
         key=f"monthly_period_start_{balance_period_start:%Y%m}",
         help="A futár PWA-ban láthatóvá teszi a már mentett havi elszámolást. Nem számol újra mobil értékeket.",
     ):
-        snapshot_session_id = settlement_mobile_session_for_mode(
+        snapshot_session_id = import_session_id or settlement_mobile_session_for_mode(
             selected_calculation_mode,
             balance_period_start,
             selected_warehouse_label,
@@ -15825,7 +15825,7 @@ def show_new_settlement_page() -> None:
         key=f"mobile_breakdown_bulk_refresh_{balance_period_start:%Y%m}",
         help="Csak a PWA megjelenítési bontást frissíti a DB-ben. Nem indít havi folyamatot és nem nyitja meg a futároknak.",
     ):
-        snapshot_session_id = settlement_mobile_session_for_mode(
+        snapshot_session_id = import_session_id or settlement_mobile_session_for_mode(
             selected_calculation_mode,
             balance_period_start,
             selected_warehouse_label,
