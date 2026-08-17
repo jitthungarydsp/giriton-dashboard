@@ -10593,7 +10593,11 @@ def show_courier_dialog() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    overview_payable_total = parse_huf_value(row.get("Kifizetendő")) or payable_total
+    overview_payable_total = (
+        parse_huf_value(row.get("Kifizetendő kifizetésre"))
+        or parse_huf_value(row.get("Kifizetendő"))
+        or payable_total
+    )
     overview_tig_payable_total = overview_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
