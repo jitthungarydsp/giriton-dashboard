@@ -3710,10 +3710,14 @@ def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.Da
         return pd.DataFrame()
     if documents.empty:
         return documents
-    return documents[
+    result = documents[
         documents.get("courier_id", pd.Series("", index=documents.index))
         .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
     ].copy()
+    if "uploaded_at" in result.columns:
+        result["_uploaded_at_sort"] = pd.to_datetime(result["uploaded_at"], errors="coerce")
+        result = result.sort_values("_uploaded_at_sort", ascending=False, na_position="last").drop(columns=["_uploaded_at_sort"])
+    return result
 
 
 def copy_cards_html(items: list[tuple[str, str]]) -> None:
@@ -12085,10 +12089,7 @@ def show_courier_dialog() -> None:
                 if latest_invoice
                 else ""
             )
-            invoice_amount = sum(
-                invoice_amount_from_document(item)
-                for item in invoice_rows
-            )
+            invoice_amount = invoice_amount_from_document(latest_invoice) if latest_invoice else 0.0
             request_amount = (
                 parse_huf_value(request_item.get("requested_amount_huf"))
                 if request_item
@@ -12150,6 +12151,17 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
+            tig_final_huf = tig_payment_total_from_payload(
+                tig_payment_payload_from_profile(
+                    profile,
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    period_start=period_start,
+                ),
+                payable=amount_huf,
+                tip=tip_total,
+                cash=abs(atm_deduction_total),
+            )
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
             invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
@@ -12162,6 +12174,7 @@ def show_courier_dialog() -> None:
                     <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(str(payment_item['status']))}</div></div>
                     <div class="finance-kpi payable"><div class="finance-kpi-label">Összeg</div><div class="finance-kpi-value">{format_huf(amount_huf)}</div></div>
+                    <div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{format_huf(tig_final_huf)}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Számla összege</div><div class="finance-kpi-value">{format_huf(invoice_amount_huf) if invoice_amount_huf else '-'}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Eltérés</div><div class="finance-kpi-value">{invoice_difference_label}</div></div>
                 </div>
@@ -12174,6 +12187,7 @@ def show_courier_dialog() -> None:
                 ("Közlemény", payment_note),
                 ("Név", recipient_name),
                 ("Összeg", format_huf(amount_huf)),
+                ("TIG végösszeg", format_huf(tig_final_huf)),
                 ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
                 ("Eltérés", invoice_difference_label),
             ])
