@@ -10025,6 +10025,24 @@ def render_fast_courier_profile(
         st.session_state[edit_key] = False
         st.session_state[menu_target_key] = "Profil"
 
+    top_profile_actions = st.columns([1, 1, 3])
+    if not is_editing:
+        top_profile_actions[0].button(
+            "Profil szerkesztése",
+            type="primary",
+            use_container_width=True,
+            key=f"fast_profile_top_edit_{courier_id}",
+            on_click=enable_profile_edit,
+        )
+    else:
+        top_profile_actions[0].success("Szerkesztés aktív")
+        top_profile_actions[1].button(
+            "Mégse",
+            use_container_width=True,
+            key=f"fast_profile_top_cancel_{courier_id}",
+            on_click=cancel_profile_edit,
+        )
+
     profile1, profile2 = st.columns(2)
     with profile1:
         profile_courier_name = st.text_input("Név", value=str(profile.get("courier_name") or courier_name), disabled=not is_editing, key=f"fast_profile_name_{courier_id}")
@@ -13315,6 +13333,24 @@ def show_courier_dialog() -> None:
         def cancel_profile_edit() -> None:
             st.session_state[edit_key] = False
             keep_courier_menu("Profil")
+
+        top_profile_actions = st.columns([1, 1, 3])
+        if not is_editing:
+            top_profile_actions[0].button(
+                "Profil szerkesztése",
+                type="primary",
+                use_container_width=True,
+                key=f"ui_profile_top_edit_{courier_id}",
+                on_click=enable_profile_edit,
+            )
+        else:
+            top_profile_actions[0].success("Szerkesztés aktív")
+            top_profile_actions[1].button(
+                "Mégse",
+                use_container_width=True,
+                key=f"ui_profile_top_cancel_{courier_id}",
+                on_click=cancel_profile_edit,
+            )
 
         profile1, profile2 = st.columns(2)
 
