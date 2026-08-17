@@ -1975,6 +1975,7 @@ def enrich_mobile_settlement_row_for_snapshot(
             "Számolt túrák": "route_count",
             "Késedelmi díj": "delay_bonus_huf",
             "Túramegfelelés": "compliance_bonus_huf",
+            "Lojalitás": "loyalty_bonus_huf",
             "Kiemelt túrák": "highlighted_routes",
             "Normál túrák": "normal_routes",
         }
@@ -2323,6 +2324,12 @@ def publish_mobile_settlement_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
+        item = apply_cached_loyalty_values(
+            pd.DataFrame([item]),
+            period_start=period_start,
+            session_id=session_id,
+            calculation_mode=calculation_mode,
+        ).iloc[0].to_dict()
         component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
         item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
         rows = append_jitt_bonus_malus_mobile_rows(
@@ -2392,6 +2399,12 @@ def refresh_mobile_settlement_breakdown_snapshot(
             period_end=period_end,
             warehouse_label=warehouse_label,
         )
+        item = apply_cached_loyalty_values(
+            pd.DataFrame([item]),
+            period_start=period_start,
+            session_id=session_id,
+            calculation_mode=calculation_mode,
+        ).iloc[0].to_dict()
         component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
         item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
         rows = append_jitt_bonus_malus_mobile_rows(
@@ -10015,7 +10028,7 @@ def render_fast_courier_profile(
     profile1, profile2 = st.columns(2)
     with profile1:
         profile_courier_name = st.text_input("Név", value=str(profile.get("courier_name") or courier_name), disabled=not is_editing, key=f"fast_profile_name_{courier_id}")
-        st.text_input("Courier ID", value=courier_id, disabled=True, key=f"fast_profile_id_{courier_id}")
+        profile_courier_id = st.text_input("Courier ID", value=str(profile.get("courier_id") or courier_id), disabled=not is_editing, key=f"fast_profile_id_{courier_id}")
         phone_number = st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=not is_editing, key=f"fast_profile_phone_{courier_id}")
         email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"fast_profile_email_{courier_id}")
         warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row.get("Raktár") or ""), disabled=not is_editing, key=f"fast_profile_warehouse_{courier_id}")
@@ -10065,6 +10078,7 @@ def render_fast_courier_profile(
         profile_actions[0].button("Profil szerkesztése", type="primary", use_container_width=True, key=f"fast_profile_edit_{courier_id}", on_click=enable_profile_edit)
     if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"fast_profile_save_{courier_id}"):
         new_fields = {
+            "courier_id": profile_courier_id,
             "courier_name": profile_courier_name,
             "phone_number": phone_number,
             "email": email,
@@ -10080,11 +10094,12 @@ def render_fast_courier_profile(
             "bank_account_number": bank_account_number,
             "vat_status": vat_status,
         }
-        changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
+        changes = {field: {"old": str((profile.get(field) if field != "courier_id" else courier_id) or ""), "new": str(value or "")} for field, value in new_fields.items() if str((profile.get(field) if field != "courier_id" else courier_id) or "") != str(value or "")}
         try:
             if changes:
-                update_courier_master_profile(courier_id, new_fields)
-                log_profile_change(courier_id, changes)
+                saved_profile_id = str(profile_courier_id or courier_id).strip()
+                update_courier_master_profile(saved_profile_id, new_fields)
+                log_profile_change(saved_profile_id, changes)
             st.session_state[edit_key] = False
             st.session_state[menu_target_key] = "Profil"
             load_courier_profile.clear()
@@ -10096,6 +10111,8 @@ def render_fast_courier_profile(
             load_loyalty_profile_lookup.clear()
             load_loyalty_month_requirement_for_date.clear()
             load_courier_master.clear()
+            if str(profile_courier_id or "").strip() and str(profile_courier_id).strip() != str(courier_id).strip():
+                st.session_state["selected_courier_id"] = str(profile_courier_id).strip()
             st.success("A profil mentve, a változás naplózva.")
             st.rerun()
         except Exception as exc:
@@ -13303,7 +13320,7 @@ def show_courier_dialog() -> None:
 
         with profile1:
             courier_name = st.text_input("Név", value=str(profile.get("courier_name") or row["Futár"]), disabled=not is_editing, key=f"ui_profile_name_{courier_id}")
-            st.text_input("Courier ID", value=courier_id, disabled=True, key=f"ui_profile_id_{courier_id}")
+            profile_courier_id = st.text_input("Courier ID", value=str(profile.get("courier_id") or courier_id), disabled=not is_editing, key=f"ui_profile_id_{courier_id}")
             phone_number = st.text_input("Telefonszám", value=str(profile.get("phone_number") or ""), disabled=not is_editing, key=f"ui_profile_phone_{courier_id}")
             email = st.text_input("E-mail", value=str(profile.get("email") or ""), disabled=not is_editing, key=f"ui_profile_email_{courier_id}")
             warehouse_name = st.text_input("Raktár", value=str(profile.get("warehouse_name") or row["Raktár"] or ""), disabled=not is_editing, key=f"ui_profile_warehouse_{courier_id}")
@@ -13359,6 +13376,7 @@ def show_courier_dialog() -> None:
             )
         if is_editing and profile_actions[0].button("Profil mentése", type="primary", use_container_width=True, key=f"ui_profile_save_{courier_id}"):
             new_fields = {
+                "courier_id": profile_courier_id,
                 "courier_name": courier_name,
                 "phone_number": phone_number,
                 "email": email,
@@ -13374,11 +13392,12 @@ def show_courier_dialog() -> None:
                 "bank_account_number": bank_account_number,
                 "vat_status": vat_status,
             }
-            changes = {field: {"old": str(profile.get(field) or ""), "new": str(value or "")} for field, value in new_fields.items() if str(profile.get(field) or "") != str(value or "")}
+            changes = {field: {"old": str((profile.get(field) if field != "courier_id" else courier_id) or ""), "new": str(value or "")} for field, value in new_fields.items() if str((profile.get(field) if field != "courier_id" else courier_id) or "") != str(value or "")}
             try:
                 if changes:
-                    update_courier_master_profile(courier_id, new_fields)
-                    log_profile_change(courier_id, changes)
+                    saved_profile_id = str(profile_courier_id or courier_id).strip()
+                    update_courier_master_profile(saved_profile_id, new_fields)
+                    log_profile_change(saved_profile_id, changes)
                 st.session_state[edit_key] = False
                 keep_courier_menu("Profil")
                 load_courier_profile.clear()
@@ -13386,6 +13405,8 @@ def show_courier_dialog() -> None:
                 load_loyalty_profile_lookup.clear()
                 load_loyalty_month_requirement_for_date.clear()
                 load_courier_master.clear()
+                if str(profile_courier_id or "").strip() and str(profile_courier_id).strip() != str(courier_id).strip():
+                    st.session_state["selected_courier_id"] = str(profile_courier_id).strip()
                 st.success("A profil mentve, a változás naplózva.")
                 st.rerun()
             except Exception as exc:

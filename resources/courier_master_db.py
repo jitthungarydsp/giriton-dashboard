@@ -436,7 +436,7 @@ def apply_billing_staging_updates(updates, inserts=None):
 
 def update_courier_master_profile(courier_id, profile_fields):
     supabase_url, service_role_key = get_supabase_config()
-    courier_id = _normalize_courier_id(courier_id)
+    courier_id = _normalize_courier_id((profile_fields or {}).get("courier_id") or courier_id)
 
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hianyzik a Supabase kapcsolat.")
@@ -445,6 +445,7 @@ def update_courier_master_profile(courier_id, profile_fields):
         raise RuntimeError("Hianyzik a futar ID.")
 
     allowed_fields = {
+        "courier_id",
         "courier_name",
         "email",
         "phone_number",
@@ -467,6 +468,10 @@ def update_courier_master_profile(courier_id, profile_fields):
             continue
 
         cleaned = _clean_text(value)
+        if field == "courier_id":
+            cleaned = _normalize_courier_id(cleaned)
+            if not cleaned:
+                continue
         if field == "tax_number":
             cleaned = _normalize_tax_number(cleaned)
         if field in {"work_start_date", "work_end_date"}:
@@ -486,9 +491,9 @@ def update_courier_master_profile(courier_id, profile_fields):
 
     upsert_row = dict(patch)
     try:
-        upsert_row["courier_id"] = int(courier_id)
+        upsert_row["courier_id"] = int(patch.pop("courier_id", courier_id))
     except (TypeError, ValueError):
-        upsert_row["courier_id"] = courier_id
+        upsert_row["courier_id"] = patch.pop("courier_id", courier_id)
 
     upsert_row.setdefault("source_name", "profile_form")
     upsert_row.setdefault("organization_id", DEFAULT_ORGANIZATION_ID)
