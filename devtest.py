@@ -12260,6 +12260,14 @@ def show_courier_dialog() -> None:
                     else:
                         st.dataframe(payment_tig_rows, use_container_width=True, hide_index=True)
 
+            payment_admin_note_key = f"payment_admin_note_{courier_id}_{payment_month:%Y%m}_{process_id or 'monthly'}"
+            if payment_admin_note_key not in st.session_state:
+                st.session_state[payment_admin_note_key] = ""
+            payment_admin_note = st.text_area(
+                "Kifizetési megjegyzés",
+                key=payment_admin_note_key,
+                placeholder="Ide írhatsz belső megjegyzést. Elkattintás után is megmarad ezen a nézeten.",
+            )
             close_note = st.text_area(
                 "Kifizetés lezárási megjegyzés",
                 value=f"Kifizetve: {format_huf(amount_huf)}",
@@ -12289,7 +12297,10 @@ def show_courier_dialog() -> None:
                             action_key=process_action_key("invoice_payment", process_id),
                             document_month=payment_month,
                             status="done",
-                            status_note=f"{close_note}; közlemény: {payment_note}",
+                            status_note=(
+                                f"{close_note}; közlemény: {payment_note}"
+                                + (f"; megjegyzés: {payment_admin_note}" if str(payment_admin_note).strip() else "")
+                            ),
                             updated_by=actor,
                         )
                     else:
