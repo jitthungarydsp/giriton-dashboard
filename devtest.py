@@ -11627,8 +11627,13 @@ def show_courier_dialog() -> None:
                     continue
                 item_key = str(override_row.get("item_key") or "")
                 if item_key in mobile_default_rows.index:
-                    for column in ["item_label", "amount_value", "amount_kind", "note"]:
-                        mobile_default_rows.loc[item_key, column] = override_row.get(column)
+                    continue
+                mobile_default_rows.loc[item_key, ["item_label", "amount_value", "amount_kind", "note"]] = [
+                    override_row.get("item_label"),
+                    override_row.get("amount_value"),
+                    override_row.get("amount_kind"),
+                    override_row.get("note"),
+                ]
             mobile_default_rows = mobile_default_rows.reset_index()
         mobile_editor = mobile_default_rows.rename(columns={
             "item_key": "Kulcs",
