@@ -382,7 +382,7 @@ div[data-testid="stMetricValue"] {
 /* --- Lekerekített futárlista --- */
 .courier-list-header {
     display:grid;
-    grid-template-columns:1.45fr .75fr .85fr 1fr 1fr 1fr .9fr;
+    grid-template-columns:1.55fr 1fr 1fr 1fr 1fr 1fr;
     gap:1rem;
     align-items:center;
     padding:0 18px 8px 18px;
@@ -9909,12 +9909,28 @@ def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
         return
+    period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+    profile_by_id = _export_courier_profile_lookup()
+    mobile_values_by_id: dict[str, dict[str, float]] = {}
+    mobile_rows = load_mobile_breakdown_overrides_for_period(period_start)
+    if isinstance(mobile_rows, pd.DataFrame) and not mobile_rows.empty:
+        mobile_rows = mobile_rows.copy()
+        mobile_rows["_courier_id_lookup"] = mobile_rows["courier_id"].map(_courier_id_key)
+        for courier_key, part in mobile_rows.groupby("_courier_id_lookup", dropna=False):
+            if not courier_key:
+                continue
+            value_map: dict[str, float] = {}
+            for mobile_item in part.to_dict("records"):
+                item_key = str(mobile_item.get("item_key") or "")
+                if item_key in {"payable", "tig_final_total"}:
+                    value_map[item_key] = parse_huf_value(mobile_item.get("amount_value"))
+            mobile_values_by_id[str(courier_key)] = value_map
 
     st.markdown(
         """
         <div class="courier-list-header">
-        <div>Futár</div><div>Adózás</div><div>Biztosítás</div>
-        <div>Lojalitás</div><div>Raktár</div><div>Kifizetendő</div><div>Státusz</div>
+        <div>Futár</div><div>Elszámolás</div><div>PWA elszámolás</div>
+        <div>TIG</div><div>TIG PWA</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -9988,7 +10004,7 @@ def render_table(df: pd.DataFrame) -> None:
             )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
-                [1.45, 0.75, 0.85, 1, 1, 1, 0.9],
+                [1.55, 1, 1, 1, 1, 1],
                 vertical_alignment="center",
             )
 
@@ -10014,15 +10030,18 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            tax_status = str(row.get("FA státusz") or row.get("Jogviszony") or "-").strip() or "-"
-            insurance_active = parse_huf_value(row.get("Biztosítási díj")) > 0
-            loyalty_total = parse_huf_value(row.get("Lojalitás"))
-            cols[1].caption(tax_status)
-            cols[2].caption("Van" if insurance_active else "Nincs")
-            cols[3].caption(format_huf(loyalty_total) if loyalty_total else "Nem kap")
-            cols[4].caption(str(row.get("Raktár") or "-"))
-            display_payable = row.get("Kifizetendő kifizetésre", row.get("Kifizetendő"))
-            cols[5].markdown(f"**{format_huf(display_payable)}**")
+            courier_key = _courier_id_key(row.get("Courier ID") or row.get("courier_id"))
+            profile_row = profile_by_id.get(courier_key, {})
+            raw_row = row.to_dict()
+            finance_payable = parse_huf_value(row.get("Kifizetendő"))
+            finance_tig = effective_payment_total_from_row({**raw_row, **profile_row}, period_start)
+            mobile_values = mobile_values_by_id.get(courier_key, {})
+            pwa_payable = mobile_values.get("payable")
+            pwa_tig = mobile_values.get("tig_final_total")
+            cols[1].markdown(f"**{format_huf(finance_payable)}**")
+            cols[2].markdown(f"**{format_huf(pwa_payable) if pwa_payable is not None else '-'}**")
+            cols[3].markdown(f"**{format_huf(finance_tig)}**")
+            cols[4].markdown(f"**{format_huf(pwa_tig) if pwa_tig is not None else '-'}**")
 
             badge, led = status_meta(str(row["Státusz"]))
             complaint_label = str(row.get("Bejelentés státusz") or "Nincs bejelentés")
@@ -10035,7 +10054,7 @@ def render_table(df: pd.DataFrame) -> None:
                 complaint_badge,
                 complaint_led,
             )
-            cols[6].markdown(
+            cols[5].markdown(
                 (
                     '<div class="complaint-status-wrap">'
                     f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>'
