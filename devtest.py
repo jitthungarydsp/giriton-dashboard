@@ -10033,8 +10033,15 @@ def render_table(df: pd.DataFrame) -> None:
             courier_key = _courier_id_key(row.get("Courier ID") or row.get("courier_id"))
             profile_row = profile_by_id.get(courier_key, {})
             raw_row = row.to_dict()
-            finance_payable = parse_huf_value(row.get("Kifizetendő"))
-            finance_tig = effective_payment_total_from_row({**raw_row, **profile_row}, period_start)
+            finance_sync = st.session_state.get(f"finance_payment_sync_{courier_key}_{period_start:%Y%m}") or {}
+            finance_payable = (
+                parse_huf_value(finance_sync.get("payable_huf"))
+                or parse_huf_value(row.get("Kifizetendő"))
+            )
+            finance_tig = (
+                parse_huf_value(finance_sync.get("tig_final_huf"))
+                or effective_payment_total_from_row({**raw_row, **profile_row}, period_start)
+            )
             mobile_values = mobile_values_by_id.get(courier_key, {})
             pwa_payable = mobile_values.get("payable")
             pwa_tig = mobile_values.get("tig_final_total")
