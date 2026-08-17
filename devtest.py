@@ -10328,6 +10328,8 @@ def show_courier_dialog() -> None:
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
+    if loyalty_total == 0 and summary_available:
+        loyalty_total = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
