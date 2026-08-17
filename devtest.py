@@ -5974,7 +5974,7 @@ def load_loyalty_route_counts_for_period(period_start: date, period_end: date, s
 
 @st.cache_data(show_spinner=False, ttl=300)
 def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> pd.DataFrame:
-    previous_month_end = period_start - timedelta(days=1)
+    previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
     try:
         rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
@@ -5985,36 +5985,46 @@ def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> p
             .execute().data or []
         )
     except BaseException:
-        return pd.DataFrame(columns=["driver_key", "advance_booking_days"])
+        return pd.DataFrame(columns=["courier_id", "driver_key", "advance_booking_days"])
     changed_keys = {
-        _loyalty_booking_shift_key(row, include_driver=True)
+        (
+            _courier_id_key(row.get("courier_id")),
+            *_loyalty_booking_pair_key(row, row.get("user_email"))[1:],
+        )
         for row in rows
         if _is_booking_change_operation(row.get("operation"))
     }
     records = []
     for row in rows:
-        shift_key = _loyalty_booking_shift_key(row, include_driver=True)
+        courier_id = _courier_id_key(row.get("courier_id"))
+        shift_key = (
+            courier_id,
+            *_loyalty_booking_pair_key(row, row.get("user_email"))[1:],
+        )
         if not all(shift_key[:3]) or shift_key in changed_keys:
             continue
         if not _is_clean_booking_operation(row.get("operation")):
             continue
-        if not _booked_by_period_cutoff(row.get("booked_at"), previous_month_end):
+        if not _booked_in_period(row.get("booked_at"), previous_period_start, previous_period_end):
             continue
-        identity = _loyalty_booking_effective_identity(row)
-        driver_key = _courier_match_key(
-            identity.get("courier_name") or identity.get("user_email") or identity.get("courier_id")
-        )
-        if driver_key:
-            records.append({"driver_key": driver_key, "shift_key": "|".join(shift_key)})
+        driver_key = _courier_match_key(row.get("courier_name") or row.get("user_email") or courier_id)
+        if courier_id:
+            records.append({"courier_id": courier_id, "driver_key": driver_key, "shift_key": "|".join(shift_key)})
     if not records:
-        return pd.DataFrame(columns=["driver_key", "advance_booking_days"])
-    return (
+        return pd.DataFrame(columns=["courier_id", "driver_key", "advance_booking_days"])
+    summary = (
         pd.DataFrame(records)
-        .drop_duplicates(["driver_key", "shift_key"])
-        .groupby("driver_key", as_index=False)["shift_key"]
+        .drop_duplicates(["courier_id", "shift_key"])
+        .groupby("courier_id", as_index=False)["shift_key"]
         .nunique()
         .rename(columns={"shift_key": "advance_booking_days"})
     )
+    driver_keys = (
+        pd.DataFrame(records)
+        .drop_duplicates(["courier_id"])
+        .loc[:, ["courier_id", "driver_key"]]
+    )
+    return summary.merge(driver_keys, on="courier_id", how="left")
 
 
 @st.cache_data(show_spinner=False, ttl=900)
@@ -6110,6 +6120,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         if not previous_counts.empty
         else {}
     )
+    booking_by_courier_id = dict(zip(booking_days.get("courier_id", []), booking_days.get("advance_booking_days", [])))
     booking_by_driver = dict(zip(booking_days.get("driver_key", []), booking_days.get("advance_booking_days", [])))
     rules = rules.copy()
     if "previous_normal_routes_min" not in rules.columns:
@@ -6144,7 +6155,10 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         current_route_count = max(source_route_count, settlement_route_count)
         current_order_count = max(source_order_count, settlement_order_count)
         previous_normal_routes = int(float(previous_normal.get(driver_key, 0) or 0))
-        advance_booking_days = int(float(booking_by_driver.get(driver_key, 0) or 0))
+        courier_id_key = _courier_id_key(courier_id)
+        advance_booking_days = int(float(
+            booking_by_courier_id.get(courier_id_key, booking_by_driver.get(driver_key, 0)) or 0
+        ))
         previous_route_values.append(previous_normal_routes)
         current_route_values.append(current_route_count)
         booking_day_values.append(advance_booking_days)
@@ -9616,6 +9630,7 @@ def refresh_settlement_profile_data() -> None:
     load_muszakpro_booking_summary.clear()
     load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
+    load_loyalty_advance_booking_days.clear()
     load_loyalty_profile_lookup.clear()
     load_loyalty_month_requirement_for_date.clear()
     load_courier_master.clear()
@@ -9954,6 +9969,7 @@ def render_fast_courier_profile(
             load_muszakpro_booking_summary.clear()
             load_courier_booking_emails.clear()
             load_advance_booking_cancellation_summary.clear()
+            load_loyalty_advance_booking_days.clear()
             load_loyalty_profile_lookup.clear()
             load_loyalty_month_requirement_for_date.clear()
             load_courier_master.clear()
@@ -9970,6 +9986,7 @@ def render_fast_courier_profile(
         load_muszakpro_booking_summary.clear()
         load_courier_booking_emails.clear()
         load_advance_booking_cancellation_summary.clear()
+        load_loyalty_advance_booking_days.clear()
         load_loyalty_profile_lookup.clear()
         load_loyalty_month_requirement_for_date.clear()
         load_target_reserve_status.clear()
