@@ -2826,6 +2826,7 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
 @st.cache_data(show_spinner=False, ttl=60)
 def load_advance_booking_cancellation_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
     """Summarize previous-month booking rows for the currently selected settlement month."""
+    clean_courier_id = _courier_id_key(courier_id)
     booking_emails = set(load_courier_booking_emails(courier_id))
     empty_result = {
         "booking_row_count": 0,
@@ -2835,14 +2836,14 @@ def load_advance_booking_cancellation_summary(courier_id: str, period_start: dat
         "email_count": 0,
         "source": "",
     }
-    if not booking_emails:
+    if not clean_courier_id and not booking_emails:
         return empty_result
 
     previous_period_start, previous_period_end = month_bounds(add_months(period_start, -1))
     try:
         rows = (
             get_db().schema("settlement").table("courier_loyalty_booking_log")
-            .select("user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
+            .select("courier_id,user_email,operation,booked_at,shift_date,shift_time,warehouse,raw_shift_data,source_key")
             .gte("shift_date", period_start.isoformat())
             .lte("shift_date", period_end.isoformat())
             .limit(50000)
@@ -2856,7 +2857,8 @@ def load_advance_booking_cancellation_summary(courier_id: str, period_start: dat
     deleted_pairs: set[tuple[str, ...]] = set()
     for row in rows:
         row_email = _booking_user_email_key(row.get("user_email"))
-        if row_email not in booking_emails:
+        row_courier_id = _courier_id_key(row.get("courier_id"))
+        if row_courier_id != clean_courier_id and row_email not in booking_emails:
             continue
         pair_key = _loyalty_booking_pair_key(row, row_email)
         if not all(pair_key):

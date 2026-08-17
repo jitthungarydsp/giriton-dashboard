@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from io import StringIO
 import re
 import sys
 from datetime import datetime, timezone
@@ -18,9 +19,24 @@ from resources.google_auth import get_client
 from resources.supabase_raw import get_supabase_config
 
 
+def load_dotenv_if_available() -> None:
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(ROOT / ".env")
+
+
+load_dotenv_if_available()
+
+
 BOOKING_SHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 BOOKING_WORKSHEET_GID = 1961182696
 TARGET_TABLE = "courier_loyalty_booking_log"
+BOOKING_EXPORT_URL = (
+    f"https://docs.google.com/spreadsheets/d/{BOOKING_SHEET_ID}/export"
+    f"?format=csv&gid={BOOKING_WORKSHEET_GID}"
+)
 
 
 def supabase_config() -> tuple[str, str]:
@@ -109,7 +125,7 @@ def read_courier_lookup() -> dict[str, dict[str, str]]:
     return lookup
 
 
-def read_booking_rows() -> list[dict[str, Any]]:
+def read_booking_values_from_gspread() -> list[tuple[int, list[str]]]:
     worksheet = get_client().open_by_key(BOOKING_SHEET_ID).get_worksheet_by_id(BOOKING_WORKSHEET_GID)
     values = worksheet.get_all_values()
     if not values:
@@ -122,8 +138,35 @@ def read_booking_rows() -> list[dict[str, Any]]:
         ),
         0,
     )
+    return [
+        (row_number, row)
+        for row_number, row in enumerate(values[header_index + 1 :], start=header_index + 2)
+    ]
+
+
+def read_booking_values_from_csv_export() -> list[tuple[int, list[str]]]:
+    response = requests.get(BOOKING_EXPORT_URL, timeout=60)
+    raise_for_response(response, "booking_google_csv_export")
+    response.encoding = "utf-8"
+    df = pd.read_csv(StringIO(response.text), dtype=str).fillna("")
+    return [
+        (index + 2, [str(value or "") for value in row.tolist()])
+        for index, (_, row) in enumerate(df.iterrows())
+    ]
+
+
+def read_booking_rows(source: str = "csv") -> list[dict[str, Any]]:
+    if source == "gspread":
+        values = read_booking_values_from_gspread()
+    elif source == "auto":
+        try:
+            values = read_booking_values_from_csv_export()
+        except Exception:
+            values = read_booking_values_from_gspread()
+    else:
+        values = read_booking_values_from_csv_export()
     rows = []
-    for row_number, row in enumerate(values[header_index + 1 :], start=header_index + 2):
+    for row_number, row in values:
         booked_at = row[0] if len(row) > 0 else ""
         user_email = row[1] if len(row) > 1 else ""
         operation = row[2] if len(row) > 2 else ""
@@ -132,7 +175,7 @@ def read_booking_rows() -> list[dict[str, Any]]:
             continue
         shift = parse_shift_data(raw_shift_data)
         raw_user_email = str(user_email or "").strip()
-        lookup_email = str(shift["proxy_email"] or raw_user_email).strip()
+        lookup_email = raw_user_email
         source_key = f"loyalty_booking:{BOOKING_SHEET_ID}:{BOOKING_WORKSHEET_GID}:{row_number}"
         rows.append(
             {
@@ -190,10 +233,16 @@ def upsert_rows(rows: list[dict[str, Any]]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Lojalitasi muszakfoglalas LOG Google Sheet szinkron.")
     parser.add_argument("--apply", action="store_true", help="Ment Supabase-be. Enelkul csak dry-run.")
+    parser.add_argument(
+        "--source",
+        choices=["csv", "gspread", "auto"],
+        default="csv",
+        help="Google tabla olvasasi mod. Alap: publikus CSV export.",
+    )
     args = parser.parse_args()
 
     lookup = read_courier_lookup()
-    rows = read_booking_rows()
+    rows = read_booking_rows(args.source)
     for row in rows:
         match = lookup.get(normalize_key(row.pop("_lookup_email", "") or row.get("user_email"))) or {}
         row["courier_id"] = match.get("courier_id") or None
