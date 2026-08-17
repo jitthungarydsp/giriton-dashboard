@@ -10589,18 +10589,8 @@ def show_courier_dialog() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    overview_payable_total = payable_total
-    overview_tig_payable_total = tig_payment_total_from_payload(
-        tig_payment_payload_from_profile(
-            profile,
-            courier_id=courier_id,
-            courier_name=courier_name,
-            period_start=period_start,
-        ),
-        payable=overview_payable_total,
-        tip=tip_total,
-        cash=abs(atm_deduction_total),
-    )
+    overview_payable_total = parse_huf_value(row.get("Kifizetendő")) or payable_total
+    overview_tig_payable_total = overview_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
