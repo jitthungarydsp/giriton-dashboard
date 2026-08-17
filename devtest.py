@@ -5986,45 +5986,36 @@ def load_loyalty_advance_booking_days(period_start: date, period_end: date) -> p
         )
     except BaseException:
         return pd.DataFrame(columns=["courier_id", "driver_key", "advance_booking_days"])
-    changed_keys = {
-        (
-            _courier_id_key(row.get("courier_id")),
-            *_loyalty_booking_pair_key(row, row.get("user_email"))[1:],
-        )
-        for row in rows
-        if _is_booking_change_operation(row.get("operation"))
-    }
-    records = []
+    booked_pairs: dict[str, set[tuple[str, ...]]] = {}
+    deleted_pairs: dict[str, set[tuple[str, ...]]] = {}
+    driver_keys: dict[str, str] = {}
     for row in rows:
         courier_id = _courier_id_key(row.get("courier_id"))
-        shift_key = (
-            courier_id,
-            *_loyalty_booking_pair_key(row, row.get("user_email"))[1:],
-        )
-        if not all(shift_key[:3]) or shift_key in changed_keys:
-            continue
-        if not _is_clean_booking_operation(row.get("operation")):
-            continue
-        if not _booked_in_period(row.get("booked_at"), previous_period_start, previous_period_end):
+        pair_key = _loyalty_booking_pair_key(row, row.get("user_email"))
+        if not courier_id or not all(pair_key):
             continue
         driver_key = _courier_match_key(row.get("courier_name") or row.get("user_email") or courier_id)
-        if courier_id:
-            records.append({"courier_id": courier_id, "driver_key": driver_key, "shift_key": "|".join(shift_key)})
+        if driver_key:
+            driver_keys[courier_id] = driver_key
+        if _is_clean_booking_operation(row.get("operation")) and _booked_in_period(
+            row.get("booked_at"),
+            previous_period_start,
+            previous_period_end,
+        ):
+            booked_pairs.setdefault(courier_id, set()).add(pair_key)
+        elif _is_booking_change_operation(row.get("operation")):
+            deleted_pairs.setdefault(courier_id, set()).add(pair_key)
+    records = []
+    for courier_id, pairs in booked_pairs.items():
+        remaining_pairs = pairs - deleted_pairs.get(courier_id, set())
+        records.append({
+            "courier_id": courier_id,
+            "driver_key": driver_keys.get(courier_id, ""),
+            "advance_booking_days": len(remaining_pairs),
+        })
     if not records:
         return pd.DataFrame(columns=["courier_id", "driver_key", "advance_booking_days"])
-    summary = (
-        pd.DataFrame(records)
-        .drop_duplicates(["courier_id", "shift_key"])
-        .groupby("courier_id", as_index=False)["shift_key"]
-        .nunique()
-        .rename(columns={"shift_key": "advance_booking_days"})
-    )
-    driver_keys = (
-        pd.DataFrame(records)
-        .drop_duplicates(["courier_id"])
-        .loc[:, ["courier_id", "driver_key"]]
-    )
-    return summary.merge(driver_keys, on="courier_id", how="left")
+    return pd.DataFrame(records)
 
 
 @st.cache_data(show_spinner=False, ttl=900)
@@ -6072,7 +6063,6 @@ def loyalty_advance_booking_min_from_rule(rule: pd.Series) -> int:
         "advance_booked_shifts_min",
         "advance_booking_days_min",
         "advance_booking_min",
-        "previous_normal_routes_min",
     ):
         if column in rule and pd.notna(rule.get(column)):
             return int(parse_huf_value(rule.get(column)))
@@ -6127,7 +6117,7 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
         rules["previous_normal_routes_min"] = 0
     rules["previous_normal_routes_min"] = pd.to_numeric(rules["previous_normal_routes_min"], errors="coerce").fillna(0).astype(int)
     rules["_advance_booking_min"] = rules.apply(loyalty_advance_booking_min_from_rule, axis=1)
-    rules = rules.sort_values(["_advance_booking_min", "priority"], ascending=[False, True], kind="stable")
+    rules = rules.sort_values(["previous_normal_routes_min", "_advance_booking_min", "priority"], ascending=[False, False, True], kind="stable")
 
     loyalty_amounts: list[float] = []
     previous_route_values: list[int] = []
@@ -6181,6 +6171,9 @@ def apply_loyalty_bonus(data: pd.DataFrame, period_start: date, period_end: date
             required_months = int(parse_huf_value(rule.get("loyalty_months_required")))
             if months_worked < required_months:
                 missing.append(f"{required_months}. hónap")
+            previous_route_min = int(parse_huf_value(rule.get("previous_normal_routes_min")))
+            if previous_normal_routes < previous_route_min:
+                missing.append(f"előző havi normál kör < {previous_route_min}")
             booked_shift_min = int(parse_huf_value(rule.get("_advance_booking_min")))
             if advance_booking_days < booked_shift_min:
                 missing.append(f"előre foglalt műszak < {booked_shift_min}")
