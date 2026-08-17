@@ -2642,8 +2642,9 @@ def _booked_in_period(value: object, period_start: date, period_end: date) -> bo
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_courier_booking_emails(courier_id: str) -> list[str]:
+def load_courier_booking_emails(courier_id: str, courier_name: str = "") -> list[str]:
     clean_courier_id = str(courier_id or "").strip()
+    clean_courier_name = str(courier_name or "").strip()
     if not clean_courier_id:
         return []
     source_rows: list[dict[str, object]] = []
@@ -2669,6 +2670,18 @@ def load_courier_booking_emails(courier_id: str) -> list[str]:
         source_rows.extend(rows)
     except BaseException:
         pass
+    if clean_courier_name:
+        try:
+            rows = (
+                get_db().schema("public").table("courier_master_sheet_import")
+                .select("email,billing_email,courier_name")
+                .eq("courier_name", clean_courier_name)
+                .limit(50)
+                .execute().data or []
+            )
+            source_rows.extend(rows)
+        except BaseException:
+            pass
     emails: list[str] = []
     for row in source_rows:
         for value in [row.get("email"), row.get("billing_email")]:
@@ -2836,10 +2849,15 @@ def load_muszakpro_booking_summary(courier_id: str, period_start: date, period_e
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_advance_booking_cancellation_summary(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
+def load_advance_booking_cancellation_summary(
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    period_end: date,
+) -> dict[str, object]:
     """Summarize previous-month booking rows for the currently selected settlement month."""
     clean_courier_id = _courier_id_key(courier_id)
-    booking_emails = set(load_courier_booking_emails(courier_id))
+    booking_emails = set(load_courier_booking_emails(courier_id, courier_name))
     empty_result = {
         "booking_row_count": 0,
         "deleted_shift_count": 0,
@@ -10561,7 +10579,7 @@ def show_courier_dialog() -> None:
             advance_booked_shift_count = int(booking_summary.get("advance_booked_shift_count") or 0)
             giriton_shift_summary = load_giriton_shift_summary(courier_id, period_start, period_end)
             giriton_shift_count = int(giriton_shift_summary.get("giriton_shift_count") or 0)
-        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, period_start, period_end)
+        advance_booking_summary = load_advance_booking_cancellation_summary(courier_id, courier_name, period_start, period_end)
         advance_booking_row_count = int(advance_booking_summary.get("booking_row_count") or 0)
         advance_deleted_shift_count = int(advance_booking_summary.get("deleted_shift_count") or 0)
         advance_remaining_shift_count = int(advance_booking_summary.get("remaining_shift_count") or 0)
