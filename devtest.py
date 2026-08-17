@@ -10672,6 +10672,28 @@ def show_courier_dialog() -> None:
         st.session_state[menu_target_key] = menu_name
 
     if selected_menu == "ttekintés":
+        finance_overview_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+        if finance_overview_sync:
+            total_income = parse_huf_value(finance_overview_sync.get("total_income"))
+            total_deduction = parse_huf_value(finance_overview_sync.get("total_deduction"))
+            overview_tig_payable_total = parse_huf_value(finance_overview_sync.get("tig_final_huf")) or overview_tig_payable_total
+            display_base_total = parse_huf_value(finance_overview_sync.get("display_base_total"))
+            tip_total = parse_huf_value(finance_overview_sync.get("tip_total"))
+            delay_total = parse_huf_value(finance_overview_sync.get("delay_total"))
+            compliance_total = parse_huf_value(finance_overview_sync.get("compliance_total"))
+            imported_bonus_total = parse_huf_value(finance_overview_sync.get("imported_bonus_total"))
+            manual_bonus_total = parse_huf_value(finance_overview_sync.get("manual_bonus_total"))
+            loyalty_total = parse_huf_value(finance_overview_sync.get("loyalty_total"))
+            customer_rating_total = parse_huf_value(finance_overview_sync.get("customer_rating_total"))
+            correction_income_total = parse_huf_value(finance_overview_sync.get("correction_income_total"))
+            imported_malus_total = parse_huf_value(finance_overview_sync.get("imported_malus_total"))
+            manual_malus_total = parse_huf_value(finance_overview_sync.get("manual_malus_total"))
+            atm_deduction_total = parse_huf_value(finance_overview_sync.get("atm_deduction_total"))
+            other_expense_total = parse_huf_value(finance_overview_sync.get("other_expense_total"))
+            correction_deduction_total = parse_huf_value(finance_overview_sync.get("correction_deduction_total"))
+            salary_advance_total = parse_huf_value(finance_overview_sync.get("salary_advance_total"))
+            reserve_addition_total = parse_huf_value(finance_overview_sync.get("reserve_addition_total"))
+            insurance_fee_total = parse_huf_value(finance_overview_sync.get("insurance_fee_total"))
         missing_data_count = 0
         if not summary_available:
             missing_data_count += 1
@@ -10966,6 +10988,33 @@ def show_courier_dialog() -> None:
             "payable_huf": payable_total,
             "tig_final_huf": tig_display_total,
             "tig_breakdown": tig_breakdown,
+            "total_income": (
+                base_total + tip_total + delay_total + compliance_total
+                + imported_bonus_total + manual_bonus_total + loyalty_total
+                + customer_rating_total + correction_income_total
+            ),
+            "total_deduction": (
+                malus_total + atm_deduction_total + other_expense_total
+                + correction_deduction_total + salary_advance_total
+                + reserve_addition_total + insurance_fee_total
+            ),
+            "display_base_total": display_base_total,
+            "tip_total": tip_total,
+            "delay_total": delay_total,
+            "compliance_total": compliance_total,
+            "imported_bonus_total": imported_bonus_total,
+            "manual_bonus_total": manual_bonus_total,
+            "loyalty_total": loyalty_total,
+            "customer_rating_total": customer_rating_total,
+            "correction_income_total": correction_income_total,
+            "imported_malus_total": imported_malus_total,
+            "manual_malus_total": manual_malus_total,
+            "atm_deduction_total": atm_deduction_total,
+            "other_expense_total": other_expense_total,
+            "correction_deduction_total": correction_deduction_total,
+            "salary_advance_total": salary_advance_total,
+            "reserve_addition_total": reserve_addition_total,
+            "insurance_fee_total": insurance_fee_total,
         }
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
