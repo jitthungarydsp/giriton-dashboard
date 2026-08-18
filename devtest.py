@@ -16235,7 +16235,7 @@ def show_new_settlement_page() -> None:
             st.error("A mobil ellenőrzési frissítés nem sikerült. Ellenőrizd a kiválasztott API/Excel sessiont és a szűrést.")
 
     metric_options = [
-        {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő kifizetésre", "kind": "huf"},
+        {"key": "payable", "label": "Kifizetés összesen", "column": "Kifizetendő", "kind": "huf"},
         {"key": "contractor", "label": "Alvállalkozói összeg", "column": "Alvállalkozói összeg", "kind": "huf"},
         {"key": "income", "label": "Összes bevétel", "column": "Nettó bevétel", "kind": "huf"},
         {"key": "deduction", "label": "Összes levonás", "column": "Levonás", "kind": "huf"},
