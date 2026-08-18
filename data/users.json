@@ -190,6 +190,15 @@
             "token": ""
         },
         {
+            "username": "Kövesdi Zsolt",
+            "trainer": "trainer_name",
+            "password": "P0dISJOc",
+            "role": "user",
+            "courierId": 0002,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Jamal Nasir ",
             "trainer": "trainer_name",
             "password": "8kkEgECO",
