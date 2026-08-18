@@ -21,6 +21,7 @@ selenium
 
 reportlab
 pypdf
+PyMuPDF
 
 fastapi
 uvicorn[standard]

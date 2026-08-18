@@ -3720,6 +3720,25 @@ def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.Da
     return result
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def render_pdf_preview_pages(pdf_bytes: bytes, max_pages: int = 3, zoom: float = 1.45) -> list[bytes]:
+    import fitz
+
+    images: list[bytes] = []
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+        for page_index in range(min(len(document), max_pages)):
+            page = document.load_page(page_index)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+            images.append(pixmap.tobytes("png"))
+    return images
+
+
+def extract_transaction_id_from_note(note: object) -> str:
+    text = str(note or "")
+    match = re.search(r"Tranzakci[oó]\s*:\s*([^|;\n]+)", text, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
 def copy_cards_html(items: list[tuple[str, str]]) -> None:
     payload = json.dumps([{"label": label, "value": value} for label, value in items])
     components.html(
@@ -11411,28 +11430,39 @@ def show_courier_dialog() -> None:
                     {"Tétel": "Kiflis malus", "Összeg": -imported_malus_total, "Megjegyzés": imported_malus_note},
                 ])
             if detail_label in {"Havi bónusz/malus", "JITT bónusz / malus"}:
-                columns = ["TĂ©tel", "Ă–sszeg", "IdĹszak", "MegjegyzĂ©s"]
+                columns = ["Tétel", "Tranzakció", "Összeg", "Időszak", "Megjegyzés"]
                 if not adjustments.empty:
                     jitt_items = adjustments[
                         adjustments["adjustment_type"].astype(str).isin({"bonus", "malus"})
                     ].copy()
                     if not jitt_items.empty:
-                        jitt_items["Ă–sszeg"] = pd.to_numeric(jitt_items.get("amount_huf", 0), errors="coerce").fillna(0.0)
+                        jitt_items["Összeg"] = pd.to_numeric(jitt_items.get("amount_huf", 0), errors="coerce").fillna(0.0)
                         malus_mask = jitt_items["adjustment_type"].astype(str).eq("malus")
-                        jitt_items.loc[malus_mask, "Ă–sszeg"] = -jitt_items.loc[malus_mask, "Ă–sszeg"].abs()
-                        jitt_items["TĂ©tel"] = jitt_items["adjustment_type"].map({
-                            "bonus": "JITT bĂłnusz",
+                        jitt_items.loc[malus_mask, "Összeg"] = -jitt_items.loc[malus_mask, "Összeg"].abs()
+                        jitt_items["Tétel"] = jitt_items["adjustment_type"].map({
+                            "bonus": "JITT bónusz",
                             "malus": "JITT malus",
-                        }).fillna("JITT bĂłnusz / malus")
+                        }).fillna("JITT bónusz / malus")
                         valid_from_values = jitt_items.get("valid_from", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
                         valid_to_values = jitt_items.get("valid_to", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
                         effective_values = jitt_items.get("effective_date", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
-                        jitt_items["IdĹszak"] = [
+                        jitt_items["Időszak"] = [
                             f"{start} - {end}" if start and end and end.lower() != "nat" else (start or effective or "-")
                             for start, end, effective in zip(valid_from_values, valid_to_values, effective_values)
                         ]
-                        jitt_items["MegjegyzĂ©s"] = jitt_items.get("note", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
-                        return jitt_items[columns]
+                        jitt_items["Megjegyzés"] = jitt_items.get("note", pd.Series("", index=jitt_items.index)).fillna("").astype(str)
+                        jitt_items["Tranzakció"] = jitt_items["Megjegyzés"].map(extract_transaction_id_from_note)
+                        jitt_items["_group_key"] = jitt_items["Tranzakció"].where(jitt_items["Tranzakció"].astype(str).ne(""), jitt_items.get("id", pd.Series("", index=jitt_items.index)).astype(str))
+                        grouped = (
+                            jitt_items.groupby(["Tétel", "_group_key", "Tranzakció", "Időszak"], dropna=False)
+                            .agg(
+                                Összeg=("Összeg", "sum"),
+                                Megjegyzés=("Megjegyzés", lambda values: " | ".join(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))),
+                            )
+                            .reset_index()
+                            .drop(columns=["_group_key"])
+                        )
+                        return grouped[columns]
                 manual_bonus_notes = " | ".join(
                     dict.fromkeys(
                         adjustments.loc[
@@ -12343,33 +12373,14 @@ def show_courier_dialog() -> None:
                             or "application/pdf"
                         )
                         if "pdf" in document_mime.casefold() and document_base64:
-                            preview_id = f"payment-pdf-preview-{selected_payment_document_id}"
-                            preview_payload = json.dumps(document_base64)
-                            preview_mime = json.dumps(document_mime)
-                            components.html(
-                                f"""
-                                <div id="{html.escape(preview_id)}" style="width:100%;height:720px;border:1px solid #dfe7e2;border-radius:8px;background:#fff;overflow:hidden;"></div>
-                                <script>
-                                (() => {{
-                                    const base64 = {preview_payload};
-                                    const mime = {preview_mime};
-                                    const binary = atob(base64);
-                                    const bytes = new Uint8Array(binary.length);
-                                    for (let i = 0; i < binary.length; i += 1) {{
-                                        bytes[i] = binary.charCodeAt(i);
-                                    }}
-                                    const blob = new Blob([bytes], {{ type: mime }});
-                                    const url = URL.createObjectURL(blob);
-                                    const frame = document.createElement("iframe");
-                                    frame.src = url;
-                                    frame.style.cssText = "width:100%;height:100%;border:0;background:#fff;";
-                                    frame.onload = () => setTimeout(() => URL.revokeObjectURL(url), 30000);
-                                    document.getElementById("{html.escape(preview_id)}").appendChild(frame);
-                                }})();
-                                </script>
-                                """,
-                                height=740,
-                            )
+                            document_bytes = decode_document_content(document_base64)
+                            preview_images = render_pdf_preview_pages(document_bytes)
+                            if preview_images:
+                                for page_number, page_image in enumerate(preview_images, start=1):
+                                    st.caption(f"{page_number}. oldal")
+                                    st.image(page_image, use_container_width=True)
+                            else:
+                                st.info("A PDF előnézete üres.")
                         else:
                             st.info("Ez a dokumentumtípus nem előnézetezhető itt.")
                     except Exception as exc:
