@@ -27,6 +27,15 @@
             "token": ""
         },
         {
+            "username": "Bari Anett",
+            "trainer": "trainer_name",
+            "password": "3juAFaHC",
+            "role": "user",
+            "courierId": 7747,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Baráth 8226 Dominik",
             "trainer": "trainer_name",
             "password": "3juAFaHC",
