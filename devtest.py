@@ -12343,12 +12343,30 @@ def show_courier_dialog() -> None:
                             or "application/pdf"
                         )
                         if "pdf" in document_mime.casefold() and document_base64:
+                            preview_id = f"payment-pdf-preview-{selected_payment_document_id}"
+                            preview_payload = json.dumps(document_base64)
+                            preview_mime = json.dumps(document_mime)
                             components.html(
                                 f"""
-                                <iframe
-                                    src="data:{html.escape(document_mime)};base64,{document_base64}"
-                                    style="width:100%;height:720px;border:1px solid #dfe7e2;border-radius:8px;background:#fff;"
-                                ></iframe>
+                                <div id="{html.escape(preview_id)}" style="width:100%;height:720px;border:1px solid #dfe7e2;border-radius:8px;background:#fff;overflow:hidden;"></div>
+                                <script>
+                                (() => {{
+                                    const base64 = {preview_payload};
+                                    const mime = {preview_mime};
+                                    const binary = atob(base64);
+                                    const bytes = new Uint8Array(binary.length);
+                                    for (let i = 0; i < binary.length; i += 1) {{
+                                        bytes[i] = binary.charCodeAt(i);
+                                    }}
+                                    const blob = new Blob([bytes], {{ type: mime }});
+                                    const url = URL.createObjectURL(blob);
+                                    const frame = document.createElement("iframe");
+                                    frame.src = url;
+                                    frame.style.cssText = "width:100%;height:100%;border:0;background:#fff;";
+                                    frame.onload = () => setTimeout(() => URL.revokeObjectURL(url), 30000);
+                                    document.getElementById("{html.escape(preview_id)}").appendChild(frame);
+                                }})();
+                                </script>
                                 """,
                                 height=740,
                             )
