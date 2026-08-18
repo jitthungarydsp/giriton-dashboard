@@ -12284,6 +12284,55 @@ def show_courier_dialog() -> None:
             ])
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
+            st.markdown("##### Aktuális havi dokumentumok")
+            doc_cols = st.columns(3)
+            doc_cols[0].download_button(
+                "Elszámolás PDF letöltése",
+                data=pdf_bytes,
+                file_name=settlement_file_name,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"payment_settlement_pdf_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
+            )
+            doc_cols[1].download_button(
+                "TIG PDF letöltése",
+                data=tig_bytes,
+                file_name=tig_file_name,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"payment_tig_pdf_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
+            )
+            current_invoice_rows = invoice_rows_by_process.get(process_id, [])
+            current_invoice_doc = current_invoice_rows[0] if current_invoice_rows else {}
+            if current_invoice_doc.get("id"):
+                try:
+                    invoice_content = read_peopleforce_document_content(str(current_invoice_doc["id"]))
+                    invoice_bytes = decode_document_content(invoice_content.get("file_content_base64"))
+                    doc_cols[2].download_button(
+                        "Számla letöltése",
+                        data=invoice_bytes,
+                        file_name=str(
+                            invoice_content.get("file_name")
+                            or current_invoice_doc.get("file_name")
+                            or "szamla.pdf"
+                        ),
+                        mime=str(
+                            invoice_content.get("mime_type")
+                            or current_invoice_doc.get("mime_type")
+                            or "application/octet-stream"
+                        ),
+                        use_container_width=True,
+                        key=f"payment_invoice_doc_{courier_id}_{process_id or 'monthly'}_{current_invoice_doc.get('id')}",
+                    )
+                except Exception as exc:
+                    doc_cols[2].warning(f"A számla nem tölthető le: {exc}")
+            else:
+                doc_cols[2].button(
+                    "Nincs feltöltött számla",
+                    disabled=True,
+                    use_container_width=True,
+                    key=f"payment_invoice_doc_missing_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
+                )
 
             payment_payable_sources = pd.DataFrame([
                 {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
