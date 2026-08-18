@@ -12285,54 +12285,77 @@ def show_courier_dialog() -> None:
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
             st.markdown("##### Aktuális havi dokumentumok")
-            doc_cols = st.columns(3)
-            doc_cols[0].download_button(
-                "Elszámolás PDF letöltése",
-                data=pdf_bytes,
-                file_name=settlement_file_name,
-                mime="application/pdf",
-                use_container_width=True,
-                key=f"payment_settlement_pdf_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
-            )
-            doc_cols[1].download_button(
-                "TIG PDF letöltése",
-                data=tig_bytes,
-                file_name=tig_file_name,
-                mime="application/pdf",
-                use_container_width=True,
-                key=f"payment_tig_pdf_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
-            )
-            current_invoice_rows = invoice_rows_by_process.get(process_id, [])
-            current_invoice_doc = current_invoice_rows[0] if current_invoice_rows else {}
-            if current_invoice_doc.get("id"):
-                try:
-                    invoice_content = read_peopleforce_document_content(str(current_invoice_doc["id"]))
-                    invoice_bytes = decode_document_content(invoice_content.get("file_content_base64"))
-                    doc_cols[2].download_button(
-                        "Számla letöltése",
-                        data=invoice_bytes,
-                        file_name=str(
-                            invoice_content.get("file_name")
-                            or current_invoice_doc.get("file_name")
-                            or "szamla.pdf"
-                        ),
-                        mime=str(
-                            invoice_content.get("mime_type")
-                            or current_invoice_doc.get("mime_type")
-                            or "application/octet-stream"
-                        ),
-                        use_container_width=True,
-                        key=f"payment_invoice_doc_{courier_id}_{process_id or 'monthly'}_{current_invoice_doc.get('id')}",
-                    )
-                except Exception as exc:
-                    doc_cols[2].warning(f"A számla nem tölthető le: {exc}")
+            try:
+                payment_documents = read_peopleforce_documents_for_courier(courier_id)
+            except Exception as exc:
+                st.warning(f"A dokumentumok nem tölthetők be: {exc}")
+                payment_documents = pd.DataFrame()
+            current_month_documents = []
+            if not payment_documents.empty:
+                payment_doc_type_labels = {
+                    "settlement": "Elszámolás",
+                    "tig": "TIG",
+                    "invoice": "Számla",
+                }
+                for document_item in payment_documents.to_dict("records"):
+                    document_month_value = pd.to_datetime(document_item.get("document_month"), errors="coerce")
+                    document_type = str(document_item.get("document_type") or "").strip().lower()
+                    if (
+                        not pd.isna(document_month_value)
+                        and document_month_value.date().replace(day=1) == payment_month
+                        and document_type in payment_doc_type_labels
+                    ):
+                        current_month_documents.append(document_item)
+            if not current_month_documents:
+                st.info("Nincs aktuális havi dokumentum a Dokumentumok fülön.")
             else:
-                doc_cols[2].button(
-                    "Nincs feltöltött számla",
-                    disabled=True,
-                    use_container_width=True,
-                    key=f"payment_invoice_doc_missing_{courier_id}_{process_id or 'monthly'}_{period_start:%Y%m}",
+                current_month_document_view = pd.DataFrame([
+                    {
+                        "Típus": payment_doc_type_labels.get(str(item.get("document_type") or "").strip().lower(), item.get("document_type") or ""),
+                        "Megnevezés": str(item.get("title") or item.get("file_name") or "dokumentum"),
+                        "Feltöltve": pd.to_datetime(item.get("uploaded_at"), errors="coerce").strftime("%Y-%m-%d %H:%M")
+                        if not pd.isna(pd.to_datetime(item.get("uploaded_at"), errors="coerce")) else "",
+                    }
+                    for item in current_month_documents
+                ])
+                st.dataframe(current_month_document_view, use_container_width=True, hide_index=True)
+                payment_document_by_id = {
+                    str(item.get("id")): item
+                    for item in current_month_documents
+                    if item.get("id")
+                }
+                selected_payment_document_id = st.selectbox(
+                    "Megtekintendő dokumentum",
+                    list(payment_document_by_id),
+                    format_func=lambda value: (
+                        f"{payment_doc_type_labels.get(str(payment_document_by_id[value].get('document_type') or '').lower(), payment_document_by_id[value].get('document_type') or '')} - "
+                        f"{payment_document_by_id[value].get('title') or payment_document_by_id[value].get('file_name') or 'dokumentum'}"
+                    ),
+                    key=f"payment_document_preview_select_{courier_id}_{payment_month:%Y%m}_{process_id or 'monthly'}",
                 )
+                if selected_payment_document_id:
+                    try:
+                        document_content = read_peopleforce_document_content(selected_payment_document_id)
+                        document_base64 = str(document_content.get("file_content_base64") or "")
+                        document_mime = str(
+                            document_content.get("mime_type")
+                            or payment_document_by_id[selected_payment_document_id].get("mime_type")
+                            or "application/pdf"
+                        )
+                        if "pdf" in document_mime.casefold() and document_base64:
+                            components.html(
+                                f"""
+                                <iframe
+                                    src="data:{html.escape(document_mime)};base64,{document_base64}"
+                                    style="width:100%;height:720px;border:1px solid #dfe7e2;border-radius:8px;background:#fff;"
+                                ></iframe>
+                                """,
+                                height=740,
+                            )
+                        else:
+                            st.info("Ez a dokumentumtípus nem előnézetezhető itt.")
+                    except Exception as exc:
+                        st.warning(f"A dokumentum előnézete nem tölthető be: {exc}")
 
             payment_payable_sources = pd.DataFrame([
                 {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
