@@ -1666,6 +1666,7 @@ function renderDocumentPanel(action, title, stepNumber) {
       ? "Nézd meg a dokumentumot, majd fogadd el vagy küldj reklamációt."
       : "Amint az admin elkészíti és elküldi, itt automatikusan megjelenik.";
   panel.classList.toggle("locked", locked);
+  panel.classList.toggle("accepted", accepted);
   if (action === "settlement") {
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>Elszámolásom</h3><p>A kártyákra nyitva látod, miből áll össze a havi összeg.</p></div></div>

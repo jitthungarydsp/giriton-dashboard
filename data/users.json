@@ -125,6 +125,15 @@
             "active": true,
             "token": ""
         },
+                {
+            "username": "Pardi Ottó",
+            "trainer": "trainer_name",
+            "password": "f5d4nPxb",
+            "role": "user",
+            "courierId": 5836,
+            "active": true,
+            "token": ""
+        },
         {
             "username": "Abonyi György",
             "trainer": "trainer_name",

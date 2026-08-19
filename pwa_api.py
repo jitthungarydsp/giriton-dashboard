@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import base64
+import html
+import io
 import json
 import os
 import re
@@ -5244,6 +5246,260 @@ def upsert_workflow_status(
     )
 
 
+def format_snapshot_huf(value: Any) -> str:
+    return f"{money_int(value):,} Ft".replace(",", " ")
+
+
+def acceptance_action_label(action: str) -> str:
+    return {
+        "settlement": "Elszámolás",
+        "tig": "TIG",
+    }.get(str(action or "").strip(), str(action or "").strip() or "Dokumentum")
+
+
+def acceptance_snapshot_rows(action: str, financial_breakdown: dict[str, Any], tig_breakdown: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if action == "tig":
+        for item in tig_breakdown.get("rows") or []:
+            rows.append(
+                {
+                    "label": str(item.get("label") or item.get("key") or "-"),
+                    "amount_huf": money_int(item.get("grossHuf")),
+                    "note": str(item.get("note") or ""),
+                }
+            )
+        return rows
+
+    for card in financial_breakdown.get("cards") or []:
+        card_label = str(card.get("label") or card.get("key") or "")
+        for item in card.get("items") or []:
+            rows.append(
+                {
+                    "label": str(item.get("label") or item.get("key") or "-"),
+                    "amount_huf": money_int(item.get("amountHuf")),
+                    "note": " | ".join(
+                        part
+                        for part in [
+                            card_label,
+                            str(item.get("note") or ""),
+                            str(item.get("source") or ""),
+                        ]
+                        if part
+                    ),
+                }
+            )
+    return rows
+
+
+def build_acceptance_snapshot_payload(
+    user: dict[str, Any],
+    month: date,
+    action: str,
+    process_id: str,
+    financial_breakdown: dict[str, Any],
+    tig_breakdown: dict[str, Any],
+) -> dict[str, Any]:
+    courier_id, courier_name = courier_identity(user)
+    payable_huf = money_int(financial_breakdown.get("totalPayableHuf"))
+    tig_final_huf = money_int(tig_breakdown.get("finalTotalHuf")) if tig_breakdown.get("available") else payable_huf
+    accepted_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "courier_id": courier_id,
+        "courier_name": courier_name,
+        "period_start": month.isoformat(),
+        "action_key": action,
+        "process_id": process_id,
+        "payable_huf": payable_huf,
+        "tig_final_total_huf": tig_final_huf,
+        "accepted_by": courier_name,
+        "accepted_at": accepted_at,
+        "snapshot": {
+            "action": action,
+            "actionLabel": acceptance_action_label(action),
+            "processId": process_id,
+            "month": month.strftime("%Y-%m"),
+            "payableHuf": payable_huf,
+            "tigFinalTotalHuf": tig_final_huf,
+            "financialBreakdown": financial_breakdown,
+            "tigBreakdown": tig_breakdown,
+            "rows": acceptance_snapshot_rows(action, financial_breakdown, tig_breakdown),
+        },
+    }
+
+
+def snapshot_font_names() -> tuple[str, str]:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    candidates = [
+        (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
+        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+    ]
+    for regular, bold in candidates:
+        if regular.exists() and bold.exists():
+            pdfmetrics.registerFont(TTFont("PWA-Snapshot-Regular", str(regular)))
+            pdfmetrics.registerFont(TTFont("PWA-Snapshot-Bold", str(bold)))
+            return "PWA-Snapshot-Regular", "PWA-Snapshot-Bold"
+    return "Helvetica", "Helvetica-Bold"
+
+
+def build_acceptance_snapshot_pdf(payload: dict[str, Any]) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    regular, bold = snapshot_font_names()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+    )
+    styles = {
+        "title": ParagraphStyle("title", fontName=bold, fontSize=18, leading=22, textColor=colors.HexColor("#17231c")),
+        "body": ParagraphStyle("body", fontName=regular, fontSize=9, leading=12, textColor=colors.HexColor("#17231c")),
+        "small": ParagraphStyle("small", fontName=regular, fontSize=8, leading=10, textColor=colors.HexColor("#66726a")),
+        "amount": ParagraphStyle("amount", fontName=bold, fontSize=20, leading=24, textColor=colors.HexColor("#2e5b36"), alignment=1),
+    }
+    snapshot = payload.get("snapshot") or {}
+    action_label = str(snapshot.get("actionLabel") or acceptance_action_label(payload.get("action_key")))
+    title = f"PWA elfogadási másolat - {action_label}"
+    accepted_at = str(payload.get("accepted_at") or "")[:19].replace("T", " ")
+    story = [
+        Paragraph(html.escape(title), styles["title"]),
+        Spacer(1, 4 * mm),
+        Paragraph(
+            html.escape(
+                f"{payload.get('courier_name') or ''} | Futár ID: {payload.get('courier_id') or ''} | "
+                f"Hónap: {snapshot.get('month') or payload.get('period_start') or ''} | Elfogadva: {accepted_at}"
+            ),
+            styles["body"],
+        ),
+        Spacer(1, 6 * mm),
+        Table(
+            [
+                [Paragraph("PWA elszámolás végösszeg", styles["body"]), Paragraph("TIG végösszeg", styles["body"])],
+                [
+                    Paragraph(format_snapshot_huf(payload.get("payable_huf")), styles["amount"]),
+                    Paragraph(format_snapshot_huf(payload.get("tig_final_total_huf")), styles["amount"]),
+                ],
+            ],
+            colWidths=[86 * mm, 86 * mm],
+        ),
+        Spacer(1, 7 * mm),
+        Paragraph("Látható PWA tételek az elfogadás pillanatában", styles["body"]),
+        Spacer(1, 3 * mm),
+    ]
+    table_data = [[Paragraph("Tétel", styles["body"]), Paragraph("Összeg", styles["body"]), Paragraph("Megjegyzés", styles["body"])]]
+    for row in snapshot.get("rows") or []:
+        table_data.append(
+            [
+                Paragraph(html.escape(str(row.get("label") or "-")), styles["small"]),
+                Paragraph(html.escape(format_snapshot_huf(row.get("amount_huf"))), styles["small"]),
+                Paragraph(html.escape(str(row.get("note") or "")), styles["small"]),
+            ]
+        )
+    if len(table_data) == 1:
+        table_data.append([Paragraph("-", styles["small"]), Paragraph("-", styles["small"]), Paragraph("Nincs tételes bontás.", styles["small"])])
+    detail_table = Table(table_data, colWidths=[54 * mm, 34 * mm, 84 * mm], repeatRows=1)
+    detail_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#edf3e9")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#17231c")),
+                ("FONTNAME", (0, 0), (-1, 0), bold),
+                ("FONTNAME", (0, 1), (-1, -1), regular),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#dce3da")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9faf8")]),
+            ]
+        )
+    )
+    story.append(detail_table)
+    story.append(Spacer(1, 5 * mm))
+    story.append(Paragraph("Ez a dokumentum a PWA elfogadás pillanatában látható értékek automatikus másolata.", styles["small"]))
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def persist_acceptance_snapshot_row(payload: dict[str, Any]) -> None:
+    try:
+        supabase_rest(
+            "POST",
+            "pwa_workflow_acceptance_snapshots",
+            payload=payload,
+            schema="settlement",
+            prefer="return=minimal",
+            timeout=30,
+        )
+    except HTTPException as exc:
+        print("PWA acceptance snapshot table unavailable:", exc.detail)
+
+
+def upload_acceptance_snapshot_document(payload: dict[str, Any], pdf_bytes: bytes) -> None:
+    snapshot = payload.get("snapshot") or {}
+    action = str(payload.get("action_key") or "").strip()
+    action_label = acceptance_action_label(action)
+    process_id = str(payload.get("process_id") or "").strip()
+    process_marker = process_note_marker(process_id)
+    note_parts = [
+        part
+        for part in [
+            process_marker,
+            f"PWA elfogadási másolat: {action_label}.",
+            f"PWA végösszeg: {format_snapshot_huf(payload.get('payable_huf'))}.",
+            f"TIG végösszeg: {format_snapshot_huf(payload.get('tig_final_total_huf'))}.",
+            f"Elfogadva: {str(payload.get('accepted_at') or '')}.",
+        ]
+        if part
+    ]
+    month_text = str(snapshot.get("month") or payload.get("period_start") or "")[:7]
+    file_name = (
+        f"pwa_elfogadas_{action}_{payload.get('courier_id')}_{month_text}_"
+        f"{hashlib.sha1(str(payload.get('accepted_at') or '').encode('utf-8')).hexdigest()[:8]}.pdf"
+    )
+    supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload={
+            "courier_id": str(payload.get("courier_id") or ""),
+            "courier_name": str(payload.get("courier_name") or ""),
+            "document_type": action,
+            "document_month": str(payload.get("period_start") or ""),
+            "title": f"PWA elfogadási másolat - {action_label} - {month_text}",
+            "file_name": file_name,
+            "mime_type": "application/pdf",
+            "file_size": len(pdf_bytes),
+            "file_content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "note": " ".join(note_parts),
+            "uploaded_by": "PWA automata",
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+
+
+def save_acceptance_snapshot(
+    user: dict[str, Any],
+    month: date,
+    action: str,
+    process_id: str,
+    financial_breakdown: dict[str, Any],
+    tig_breakdown: dict[str, Any],
+) -> dict[str, Any]:
+    payload = build_acceptance_snapshot_payload(user, month, action, process_id, financial_breakdown, tig_breakdown)
+    pdf_bytes = build_acceptance_snapshot_pdf(payload)
+    upload_acceptance_snapshot_document(payload, pdf_bytes)
+    persist_acceptance_snapshot_row(payload)
+    return payload
+
+
 def build_workflow(
     user: dict[str, Any],
     month: date,
@@ -6631,8 +6887,9 @@ def accept_workflow_document(
     ]
     has_action_document = any(base_action_key(str(row.get("document_type") or "")) == action for row in documents)
     financial_breakdown = build_financial_breakdown(user, month)
+    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown)
     has_financial_breakdown = action == "settlement" and bool(financial_breakdown.get("available"))
-    has_tig_breakdown = action == "tig" and bool(build_workflow_tig_breakdown(user, month, financial_breakdown).get("available"))
+    has_tig_breakdown = action == "tig" and bool(tig_breakdown.get("available"))
     if not has_action_document and not has_financial_breakdown and not has_tig_breakdown:
         raise HTTPException(status_code=409, detail="Nincs elfogadható dokumentum ehhez a hónaphoz.")
     if has_open_complaint(complaints, action) and not complaints_ignored_for_billing(states):
@@ -6640,6 +6897,14 @@ def accept_workflow_document(
             status_code=409,
             detail="Nyitott reklamacio mellett nem fogadhato el a dokumentum.",
         )
+    save_acceptance_snapshot(
+        user,
+        month,
+        action,
+        process_id,
+        financial_breakdown,
+        tig_breakdown,
+    )
     upsert_workflow_status(
         user,
         month,

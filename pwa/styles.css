@@ -96,9 +96,11 @@ textarea { min-height: 96px; resize: vertical; }
 .workflow-step.done .workflow-step-index { background: var(--green-dark); color: #fff; }
 .workflow-step.locked { opacity: .5; }
 .workflow-step-state { font-size: 18px; }
-.process-card { margin-top: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.process-card { position: relative; margin-top: 14px; padding: 20px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
 .process-card.locked { opacity: .5; }
 .process-card.locked form, .process-card.locked button, .process-card.locked input, .process-card.locked textarea, .process-card.locked select, .process-card.locked a { pointer-events: none; }
+.process-card.accepted { border-color: #9ccc96; box-shadow: 0 7px 20px #3141340a, 0 0 0 3px #6f9d3d1f; }
+.process-card.accepted::after { content: "✓"; position: absolute; top: 12px; right: 12px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--green-dark); color: #fff; font-size: 19px; font-weight: 950; box-shadow: 0 8px 18px #2e5b362f; }
 .process-title { display: flex; align-items: flex-start; gap: 12px; }
 .process-title h3 { margin: 2px 0 4px; font-size: 20px; }
 .process-title p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
