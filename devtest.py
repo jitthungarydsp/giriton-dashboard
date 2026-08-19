@@ -13608,6 +13608,9 @@ def show_courier_dialog() -> None:
                 complaint_view["Üzenet"] = complaint_view.get("message", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Admin válasz"] = complaint_view.get("admin_response", pd.Series("", index=complaint_view.index)).fillna("")
                 complaint_view["Válaszolta"] = complaint_view.get("responded_by", pd.Series("", index=complaint_view.index)).fillna("")
+                complaint_view["Válasz"] = complaint_view["Admin válasz"].astype(str).str.strip()
+                empty_response_mask = complaint_view["Válasz"].eq("")
+                complaint_view.loc[empty_response_mask, "Válasz"] = "-"
                 complaint_view["Bejelentések"] = complaint_view["Üzenet"].astype(str)
                 empty_message_mask = complaint_view["Bejelentések"].str.strip().eq("")
                 complaint_view.loc[empty_message_mask, "Bejelentések"] = complaint_view.loc[
@@ -13636,11 +13639,12 @@ def show_courier_dialog() -> None:
                             st.markdown(f"**{attention_row.get('Típus', 'Számlás elakadás')}**")
                             st.caption(str(attention_row.get("Üzenet") or "Számlafeltöltéshez vagy számlaellenőrzéshez kapcsolódó elakadás."))
                 st.dataframe(
-                    complaint_view[["Bejelentések", "Státusz", "Típus"]],
+                    complaint_view[["Bejelentések", "Válasz", "Státusz", "Típus"]],
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Bejelentések": st.column_config.TextColumn("Bejelentések", width="large"),
+                        "Válasz": st.column_config.TextColumn("Válasz", width="large"),
                         "Státusz": st.column_config.TextColumn("Státusz", width="small"),
                         "Típus": st.column_config.TextColumn("Típus", width="medium"),
                     },
