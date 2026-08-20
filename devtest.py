@@ -8233,6 +8233,112 @@ def render_courier_delay_analysis_panel(filtered: pd.DataFrame, period_start: da
                 st.dataframe(issue_rows, hide_index=True, use_container_width=True, height=260)
 
 
+STATUS_EMAIL_TEMPLATE_KEYS = {
+    "Elszámolásra vár": "status_settlement_missing",
+    "Elszámolás elfogadásra vár": "status_settlement_acceptance_waiting",
+    "TIG-re vár": "status_tig_missing",
+    "TIG elfogadásra vár": "status_tig_acceptance_waiting",
+    "Számlafeltöltésre vár": "status_invoice_upload_waiting",
+    "Számlaellenőrzésre vár": "status_invoice_check_waiting",
+    "Bejelentések": "status_complaint_open",
+    "Új fizetés előleg": "status_salary_advance_open",
+    "Kifizetésre vár": "status_payment_waiting",
+    "Kifizetve": "status_paid",
+}
+
+
+def render_bulk_status_email_panel(filtered: pd.DataFrame, active_status: str, period_start: date) -> None:
+    if filtered.empty or not active_status:
+        return
+    template_key = STATUS_EMAIL_TEMPLATE_KEYS.get(str(active_status or "").strip())
+    if not template_key:
+        return
+
+    st.markdown("#### Tömeges e-mail kiküldése")
+    with st.expander(f"{active_status} státuszú futárok értesítése", expanded=False):
+        actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+        try:
+            template_rows = read_email_templates(active_only=True)
+        except Exception:
+            template_rows = []
+        template_by_key = {
+            str(item.get("template_key") or ""): item
+            for item in template_rows
+            if str(item.get("template_key") or "").strip()
+        }
+        selected_template = template_by_key.get(template_key) or {}
+        template_name = str(selected_template.get("template_name") or template_key)
+
+        recipients: list[dict[str, object]] = []
+        missing_email: list[str] = []
+        for _, courier_row in filtered.iterrows():
+            courier_id = str(courier_row.get("Courier ID") or courier_row.get("courier_id") or "").strip()
+            courier_name = str(
+                courier_row.get("Futár")
+                or courier_row.get("courier_name")
+                or courier_row.get("name")
+                or ""
+            ).strip()
+            if not courier_id:
+                continue
+            profile = load_courier_profile(courier_id)
+            recipient_email = str(profile.get("email") or profile.get("billing_email") or "").strip()
+            if not recipient_email:
+                missing_email.append(f"{courier_name or 'Ismeretlen'} ({courier_id})")
+                continue
+            recipients.append({
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "recipient_email": recipient_email,
+                "amount_huf": format_huf(parse_huf_value(courier_row.get("Kifizetendő"))),
+            })
+
+        info_cols = st.columns(3)
+        info_cols[0].metric("Szűrt futárok", len(filtered))
+        info_cols[1].metric("Küldhető", len(recipients))
+        info_cols[2].metric("Hiányzó e-mail", len(missing_email))
+        st.caption(f"Használt sablon: {template_name}")
+        if missing_email:
+            with st.popover("Hiányzó e-mail címek"):
+                st.write("\n".join(missing_email[:300]))
+
+        confirm = st.checkbox(
+            "Megerősítem, hogy az aktív státuszszűrésben lévő futároknak kiküldjük az e-mailt.",
+            key=f"bulk_status_email_confirm_{active_status}",
+        )
+        if st.button(
+            f"Tömeges e-mail küldése - {active_status}",
+            type="primary",
+            use_container_width=True,
+            disabled=not recipients or not confirm,
+            key=f"bulk_status_email_send_{active_status}",
+        ):
+            sent_count = 0
+            failed_rows: list[str] = []
+            for recipient in recipients:
+                result = send_courier_template_email(
+                    courier_id=str(recipient["courier_id"]),
+                    courier_name=str(recipient["courier_name"]),
+                    recipient_email=str(recipient["recipient_email"]),
+                    template_key=template_key,
+                    variables={
+                        "month": f"{period_start:%Y-%m}",
+                        "amount_huf": str(recipient.get("amount_huf") or ""),
+                        "status_note": active_status,
+                    },
+                    sent_by=actor,
+                )
+                if result.get("error"):
+                    failed_rows.append(f"{recipient['courier_name']} ({recipient['courier_id']}): {result.get('error')}")
+                else:
+                    sent_count += 1
+            if sent_count:
+                st.success(f"Tömeges e-mail kiküldve: {sent_count} db.")
+            if failed_rows:
+                with st.expander(f"Sikertelen küldések ({len(failed_rows)} db)", expanded=True):
+                    st.write("\n".join(failed_rows[:300]))
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
@@ -16656,6 +16762,9 @@ def show_new_settlement_page() -> None:
     else:
         selected_warehouse_label = warehouse if warehouse != "Összes" else "összes raktár"
         st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
+
+    if active_workflow_filter:
+        render_bulk_status_email_panel(filtered, active_workflow_filter, balance_period_start)
 
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
 

@@ -199,6 +199,111 @@ DEFAULT_EMAIL_TEMPLATES = {
             "Üdvözlettel:\nJITT"
         ),
     },
+    "status_settlement_missing": {
+        "name": "Státusz - elszámolásra vár",
+        "subject": "Elszámolás előkészítés alatt",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi elszámolásod még előkészítés alatt van.\n"
+            "Amint elérhető lesz, a PWA felületen látni fogod.\n\n"
+            "Belépés:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_settlement_acceptance_waiting": {
+        "name": "Státusz - elszámolás elfogadásra vár",
+        "subject": "Elfogadásra vár az elszámolásod",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi elszámolásod elfogadásra vár.\n"
+            "Kérjük, nézd át és fogadd el a PWA felületen.\n\n"
+            "Belépés:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_tig_missing": {
+        "name": "Státusz - TIG-re vár",
+        "subject": "A TIG előkészítés alatt van",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi TIG még előkészítés alatt van.\n"
+            "Amint elkészül, a PWA felületen fogod látni.\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_tig_acceptance_waiting": {
+        "name": "Státusz - TIG elfogadásra vár",
+        "subject": "Elfogadásra vár a TIG-ed",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi TIG-ed elfogadásra vár.\n"
+            "Kérjük, nézd át és fogadd el a PWA felületen.\n\n"
+            "Belépés:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_invoice_upload_waiting": {
+        "name": "Státusz - számlafeltöltésre vár",
+        "subject": "Számlafeltöltés szükséges",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi folyamatod számlafeltöltésre vár.\n"
+            "Kérjük, töltsd fel a számlát a PWA felületen.\n"
+            "Várt összeg: {amount_huf}\n\n"
+            "Belépés:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_invoice_check_waiting": {
+        "name": "Státusz - számlaellenőrzésre vár",
+        "subject": "A számlád ellenőrzés alatt van",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi számlád ellenőrzés alatt van.\n"
+            "Ha szükség lesz javításra, külön jelezni fogjuk.\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_complaint_open": {
+        "name": "Státusz - bejelentések",
+        "subject": "Nyitott bejelentésed van",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi folyamatodban nyitott bejelentés szerepel.\n"
+            "Amint válasz érkezik rá, értesítünk.\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_salary_advance_open": {
+        "name": "Státusz - új fizetés előleg",
+        "subject": "Fizetés előleg igénylésed nyitva van",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A fizetés előleg igénylésed nyitott státuszban van.\n"
+            "A feldolgozás állapotát a PWA felületen tudod követni.\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_payment_waiting": {
+        "name": "Státusz - kifizetésre vár",
+        "subject": "Kifizetésre vár a havi folyamatod",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi folyamatod kifizetésre vár.\n"
+            "Aktuális összeg: {amount_huf}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "status_paid": {
+        "name": "Státusz - kifizetve",
+        "subject": "A havi folyamatod lezárva",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A {month} havi folyamatod lezárva, kifizetett státuszban van.\n"
+            "Végösszeg: {amount_huf}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
 }
 
 

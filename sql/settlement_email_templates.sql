@@ -101,6 +101,99 @@ JITT', true, 'system'),
 {free_text}
 
 Üdvözlettel:
+JITT', true, 'system'),
+    ('status_settlement_missing', 'Státusz - elszámolásra vár', 'Elszámolás előkészítés alatt',
+     'Kedves {courier_name}!
+
+A {month} havi elszámolásod még előkészítés alatt van.
+Amint elérhető lesz, a PWA felületen látni fogod.
+
+Belépés:
+{login_url}
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_settlement_acceptance_waiting', 'Státusz - elszámolás elfogadásra vár', 'Elfogadásra vár az elszámolásod',
+     'Kedves {courier_name}!
+
+A {month} havi elszámolásod elfogadásra vár.
+Kérjük, nézd át és fogadd el a PWA felületen.
+
+Belépés:
+{login_url}
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_tig_missing', 'Státusz - TIG-re vár', 'A TIG előkészítés alatt van',
+     'Kedves {courier_name}!
+
+A {month} havi TIG még előkészítés alatt van.
+Amint elkészül, a PWA felületen fogod látni.
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_tig_acceptance_waiting', 'Státusz - TIG elfogadásra vár', 'Elfogadásra vár a TIG-ed',
+     'Kedves {courier_name}!
+
+A {month} havi TIG-ed elfogadásra vár.
+Kérjük, nézd át és fogadd el a PWA felületen.
+
+Belépés:
+{login_url}
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_invoice_upload_waiting', 'Státusz - számlafeltöltésre vár', 'Számlafeltöltés szükséges',
+     'Kedves {courier_name}!
+
+A {month} havi folyamatod számlafeltöltésre vár.
+Kérjük, töltsd fel a számlát a PWA felületen.
+Várt összeg: {amount_huf}
+
+Belépés:
+{login_url}
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_invoice_check_waiting', 'Státusz - számlaellenőrzésre vár', 'A számlád ellenőrzés alatt van',
+     'Kedves {courier_name}!
+
+A {month} havi számlád ellenőrzés alatt van.
+Ha szükség lesz javításra, külön jelezni fogjuk.
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_complaint_open', 'Státusz - bejelentések', 'Nyitott bejelentésed van',
+     'Kedves {courier_name}!
+
+A {month} havi folyamatodban nyitott bejelentés szerepel.
+Amint válasz érkezik rá, értesítünk.
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_salary_advance_open', 'Státusz - új fizetés előleg', 'Fizetés előleg igénylésed nyitva van',
+     'Kedves {courier_name}!
+
+A fizetés előleg igénylésed nyitott státuszban van.
+A feldolgozás állapotát a PWA felületen tudod követni.
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_payment_waiting', 'Státusz - kifizetésre vár', 'Kifizetésre vár a havi folyamatod',
+     'Kedves {courier_name}!
+
+A {month} havi folyamatod kifizetésre vár.
+Aktuális összeg: {amount_huf}
+
+Üdvözlettel:
+JITT', true, 'system'),
+    ('status_paid', 'Státusz - kifizetve', 'A havi folyamatod lezárva',
+     'Kedves {courier_name}!
+
+A {month} havi folyamatod lezárva, kifizetett státuszban van.
+Végösszeg: {amount_huf}
+
+Üdvözlettel:
 JITT', true, 'system')
 on conflict (template_key) do nothing;
 
