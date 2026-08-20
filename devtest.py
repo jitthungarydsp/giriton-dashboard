@@ -31,6 +31,7 @@ from resources.email_templates_db import (
     read_email_templates,
     send_courier_template_email,
 )
+from resources.pwa_invoice_validation import extract_expected_amount, validate_invoice
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -3724,6 +3725,134 @@ def load_courier_payment_documents(courier_id: str, period_start: date) -> pd.Da
     if "uploaded_at" in result.columns:
         result["_uploaded_at_sort"] = pd.to_datetime(result["uploaded_at"], errors="coerce")
         result = result.sort_values("_uploaded_at_sort", ascending=False, na_position="last").drop(columns=["_uploaded_at_sort"])
+    return result
+
+
+def latest_peopleforce_document(
+    *,
+    courier_id: str,
+    period_start: date,
+    document_type: str,
+    process_id: object = "",
+) -> dict[str, object]:
+    try:
+        documents = read_peopleforce_documents_for_month(period_start.replace(day=1), document_type)
+    except Exception:
+        return {}
+    if documents.empty:
+        return {}
+    clean_process = normalize_process_id(process_id)
+    result = documents[
+        documents.get("courier_id", pd.Series("", index=documents.index))
+        .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
+    ].copy()
+    if clean_process:
+        result = result[
+            result.get("note", pd.Series("", index=result.index))
+            .astype(str).map(process_id_from_note).eq(clean_process)
+        ].copy()
+    if result.empty:
+        return {}
+    if "uploaded_at" in result.columns:
+        result["_uploaded_at_sort"] = pd.to_datetime(result["uploaded_at"], errors="coerce")
+        result = result.sort_values("_uploaded_at_sort", ascending=False, na_position="last")
+    return result.iloc[0].to_dict()
+
+
+def expected_tig_amount_for_admin(
+    courier_id: str,
+    period_start: date,
+    fallback_amount_huf: object = 0,
+    process_id: object = "",
+) -> int:
+    tig_document = latest_peopleforce_document(
+        courier_id=courier_id,
+        period_start=period_start,
+        document_type="tig",
+        process_id=process_id,
+    )
+    if tig_document.get("id"):
+        try:
+            content_row = read_peopleforce_document_content(str(tig_document.get("id")))
+            amount = extract_expected_amount(decode_document_content(content_row.get("file_content_base64")))
+            if amount:
+                return int(amount)
+        except Exception:
+            pass
+    return int(round(parse_huf_value(fallback_amount_huf)))
+
+
+def invoice_validation_failure_note(result: dict[str, object], prefix: str = "Számlaellenőrzési hiba") -> str:
+    error_details = [
+        f"{check.get('title')}: {check.get('detail')}"
+        for check in result.get("checks", []) or []
+        if str(check.get("status") or "").casefold() == "error"
+    ]
+    return f"{prefix}: " + (" | ".join(error_details) if error_details else "Ismeretlen ellenőrzési hiba.")
+
+
+def rerun_courier_invoice_validation(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    expected_amount_huf: object,
+    updated_by: str,
+    process_id: object = "",
+) -> dict[str, object]:
+    clean_month = period_start.replace(day=1)
+    clean_process = normalize_process_id(process_id)
+    invoice_document = latest_peopleforce_document(
+        courier_id=courier_id,
+        period_start=clean_month,
+        document_type="invoice",
+        process_id=clean_process,
+    )
+    if not invoice_document.get("id"):
+        raise RuntimeError("Nincs aktuális havi feltöltött számla ehhez a futárhoz.")
+    content_row = read_peopleforce_document_content(str(invoice_document.get("id")))
+    file_bytes = decode_document_content(content_row.get("file_content_base64"))
+    profile = load_courier_profile(courier_id)
+    expected_amount = expected_tig_amount_for_admin(
+        courier_id,
+        clean_month,
+        expected_amount_huf,
+        clean_process,
+    )
+    result = validate_invoice(
+        file_name=str(content_row.get("file_name") or invoice_document.get("file_name") or "szamla"),
+        content=file_bytes,
+        invoice_month=clean_month,
+        courier_name=str(courier_name or ""),
+        courier_id=str(courier_id or ""),
+        expected_gross_amount=expected_amount,
+        expected_seller_name=str(profile.get("company_name") or ""),
+        expected_seller_tax_number=str(profile.get("tax_number") or ""),
+        expected_seller_address=str(profile.get("company_address") or ""),
+    )
+    action_key = process_action_key("invoice_check", clean_process)
+    if result.get("ok"):
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=action_key,
+            document_month=clean_month,
+            status="done",
+            status_note="A számla automatikus ellenőrzése újrafuttatva és sikeres.",
+            updated_by=updated_by,
+        )
+    else:
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=action_key,
+            document_month=clean_month,
+            status="open",
+            status_note=invoice_validation_failure_note(result)[:1500],
+            updated_by=updated_by,
+        )
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
     return result
 
 
@@ -13343,6 +13472,27 @@ def show_courier_dialog() -> None:
                 else:
                     st.warning("A számla még ellenőrzésre vár vagy hibás ellenőrzési állapotban van.")
                 if st.button(
+                    "Számlaellenőrzés újrafuttatása",
+                    use_container_width=True,
+                    disabled=closure_done,
+                    key=f"invoice_validation_rerun_docs_{courier_id}_{workflow_month:%Y%m}",
+                ):
+                    try:
+                        validation_result = rerun_courier_invoice_validation(
+                            courier_id=courier_id,
+                            courier_name=courier_name,
+                            period_start=workflow_month,
+                            expected_amount_huf=overview_tig_payable_total,
+                            updated_by=actor,
+                        )
+                        if validation_result.get("ok"):
+                            st.success("A számlaellenőrzés sikeres, a státusz frissítve.")
+                        else:
+                            st.error(invoice_validation_failure_note(validation_result))
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A számlaellenőrzés újrafuttatása sikertelen: {exc}")
+                if st.button(
                     "Számla jóváhagyása és kifizetésre küldés",
                     type="primary",
                     use_container_width=True,
@@ -13762,6 +13912,31 @@ def show_courier_dialog() -> None:
                         with st.container(border=True, key=f"invoice_attention_{courier_id}_{attention_index}"):
                             st.markdown(f"**{attention_row.get('Típus', 'Számlás elakadás')}**")
                             st.caption(str(attention_row.get("Üzenet") or "Számlafeltöltéshez vagy számlaellenőrzéshez kapcsolódó elakadás."))
+                            attention_action_key = str(attention_row.get("document_type") or "")
+                            attention_process_id = process_id_from_action_key(attention_action_key)
+                            if base_action_key(attention_action_key) == "invoice_check":
+                                if st.button(
+                                    "Számlaellenőrzés újrafuttatása",
+                                    use_container_width=True,
+                                    disabled=closure_done,
+                                    key=f"invoice_validation_rerun_complaint_{courier_id}_{attention_index}",
+                                ):
+                                    try:
+                                        validation_result = rerun_courier_invoice_validation(
+                                            courier_id=courier_id,
+                                            courier_name=courier_name,
+                                            period_start=period_start,
+                                            expected_amount_huf=overview_tig_payable_total,
+                                            updated_by=actor,
+                                            process_id=attention_process_id,
+                                        )
+                                        if validation_result.get("ok"):
+                                            st.success("A számlaellenőrzés sikeres, a státusz frissítve.")
+                                        else:
+                                            st.error(invoice_validation_failure_note(validation_result))
+                                        st.rerun()
+                                    except Exception as exc:
+                                        st.error(f"A számlaellenőrzés újrafuttatása sikertelen: {exc}")
                 st.dataframe(
                     complaint_view[["Bejelentések", "Válasz", "Státusz", "Típus"]],
                     use_container_width=True,
