@@ -4,6 +4,7 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
+from string import Formatter
 
 import streamlit as st
 
@@ -118,6 +119,128 @@ def build_new_bill_message(recipient, username):
     )
 
     return message, config
+
+
+DEFAULT_EMAIL_TEMPLATES = {
+    "new_settlement": {
+        "name": "Új elszámolás érkezett",
+        "subject": "Új elszámolásod érkezett",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "Új elszámolásod érkezett a JITT felületén.\n"
+            "Hónap: {month}\n\n"
+            "Itt tudod megnézni:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "settlement_accepted": {
+        "name": "Elszámolás elfogadva",
+        "subject": "Elszámolás elfogadva",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "Rögzítettük, hogy elfogadtad az elszámolásodat.\n"
+            "Hónap: {month}\n"
+            "Összeg: {amount_huf}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "tig_accepted": {
+        "name": "TIG elfogadva",
+        "subject": "TIG elfogadva",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "Rögzítettük, hogy elfogadtad a TIG-et.\n"
+            "Hónap: {month}\n"
+            "TIG végösszeg: {amount_huf}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "document_uploaded": {
+        "name": "Új dokumentum",
+        "subject": "Új dokumentumod érkezett",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "Új dokumentum érkezett a JITT felületén.\n"
+            "Típus: {document_type}\n"
+            "Hónap: {month}\n"
+            "Dokumentum: {document_title}\n\n"
+            "Itt tudod megnézni:\n{login_url}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "complaint_response": {
+        "name": "Reklamáció válasz",
+        "subject": "Válasz érkezett a reklamációdra",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "Válasz érkezett a reklamációdra.\n"
+            "Hónap: {month}\n\n"
+            "Válasz:\n{admin_message}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "payment_rejected": {
+        "name": "Kifizetés elutasítva / visszanyitva",
+        "subject": "Kifizetés státusza módosult",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "A kifizetésed státusza módosult.\n"
+            "Hónap: {month}\n\n"
+            "Megjegyzés:\n{status_note}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+    "free_text": {
+        "name": "Szabad szöveges e-mail",
+        "subject": "JITT üzenet",
+        "body": (
+            "Kedves {courier_name}!\n\n"
+            "{free_text}\n\n"
+            "Üdvözlettel:\nJITT"
+        ),
+    },
+}
+
+
+def _safe_format(value, variables):
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+
+    return str(value or "").format_map(SafeDict({key: str(item or "") for key, item in variables.items()}))
+
+
+def template_variables(template_text):
+    fields = []
+    for _literal, field_name, _format_spec, _conversion in Formatter().parse(str(template_text or "")):
+        if field_name and field_name not in fields:
+            fields.append(field_name)
+    return fields
+
+
+def render_template_text(subject, body, variables):
+    return _safe_format(subject, variables), _safe_format(body, variables)
+
+
+def build_custom_message(recipient, subject, body):
+    recipient = validate_email(recipient)
+    config = smtp_config()
+
+    message = EmailMessage()
+    message["Subject"] = str(subject or "").strip() or "JITT üzenet"
+    message["From"] = formataddr((config["from_name"], config["from_email"]))
+    message["To"] = recipient
+    message.set_content(str(body or "").strip())
+    return message, config
+
+
+def send_custom_email(recipient, subject, body):
+    message, config = build_custom_message(recipient, subject, body)
+    send_message(message, config)
+    return {
+        "recipient": validate_email(recipient),
+        "subject": str(message["Subject"]),
+    }
 
 
 def build_new_document_message(

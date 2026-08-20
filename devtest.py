@@ -24,6 +24,13 @@ from resources.settlement_processor import (
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf, build_tig_breakdown, build_tig_pdf
 from resources.courier_master_db import update_courier_master_profile
+from resources.email_sender import app_login_url, render_template_text, send_custom_email, validate_email
+from resources.email_templates_db import (
+    build_template_variables,
+    log_email_event,
+    read_email_templates,
+    send_courier_template_email,
+)
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -10141,7 +10148,7 @@ def render_fast_courier_profile(
     profile_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(st.session_state.get("new_calculation_mode", "API")).strip().casefold() == "api":
         profile_menu_items.append("Statisztika")
-    profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
+    profile_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
     selected_menu = st.radio(
         "Futármenü",
         profile_menu_items,
@@ -10701,7 +10708,7 @@ def show_courier_dialog() -> None:
     courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
     if str(active_calculation_mode or "API").strip().casefold() == "api":
         courier_menu_items.append("Statisztika")
-    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "Profil"])
+    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
     selected_menu = st.radio(
         "Futármenü", courier_menu_items,
         horizontal=True, label_visibility="collapsed", key=menu_key,
@@ -12555,6 +12562,17 @@ def show_courier_dialog() -> None:
                             status_note=f"Havi kifizetés elutasítva / visszanyitva. {response}".strip(),
                             updated_by=actor,
                         )
+                    send_courier_template_email(
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        template_key="payment_rejected",
+                        variables={
+                            "month": f"{payment_month:%Y-%m}",
+                            "status_note": f"Havi kifizetés elutasítva / visszanyitva. {response}".strip(),
+                            "amount_huf": format_huf(amount_huf),
+                        },
+                        sent_by=actor,
+                    )
                     st.success("A kifizetés elutasítva, a kapcsolódó folyamat visszavonva.")
                     st.rerun()
                 except Exception as exc:
@@ -13791,6 +13809,105 @@ def show_courier_dialog() -> None:
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A reklamáció lezárása sikertelen: {exc}")
+
+    if selected_menu == "E-mail küldése":
+        st.markdown("#### E-mail küldése")
+        profile = load_courier_profile(courier_id)
+        actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+        current_email = str(profile.get("email") or profile.get("billing_email") or "").strip()
+        email_cols = st.columns([2, 1])
+        recipient_email = email_cols[0].text_input(
+            "Futár e-mail címe",
+            value=current_email,
+            key=f"courier_email_recipient_{courier_id}",
+            placeholder="pelda@email.hu",
+        )
+        if email_cols[1].button("E-mail mentése profilba", use_container_width=True, key=f"courier_email_save_{courier_id}"):
+            try:
+                clean_email = validate_email(recipient_email)
+                update_courier_master_profile(courier_id, {"email": clean_email})
+                load_courier_profile.clear()
+                load_courier_master.clear()
+                st.success("E-mail cím mentve a futár profiljába.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Az e-mail cím nem menthető: {exc}")
+
+        try:
+            template_rows = read_email_templates(active_only=True)
+        except Exception as exc:
+            st.warning(f"A sablonok nem tölthetők be: {exc}")
+            template_rows = []
+        template_by_key = {
+            str(item.get("template_key") or ""): item
+            for item in template_rows
+            if str(item.get("template_key") or "").strip()
+        }
+        template_keys = list(template_by_key) or ["free_text"]
+        selected_template_key = st.selectbox(
+            "Sablon",
+            template_keys,
+            format_func=lambda value: str(template_by_key.get(value, {}).get("template_name") or value),
+            key=f"courier_email_template_{courier_id}",
+        )
+        free_text = st.text_area(
+            "Szabad szöveg",
+            key=f"courier_email_free_text_{courier_id}",
+            placeholder="Ide írd az egyedi üzenetet. A {free_text} mezővel bekerülhet a sablonba.",
+            height=120,
+        )
+        selected_template = template_by_key.get(selected_template_key) or {}
+        variables = build_template_variables(
+            courier_id=courier_id,
+            courier_name=str(row.get("Futár") or courier_name),
+            month=period_start,
+            amount_huf=format_huf(overview_tig_payable_total),
+            free_text=free_text,
+            document_type="",
+            document_title="",
+            admin_message=free_text,
+            status_note=free_text,
+            extra={"login_url": app_login_url()},
+        )
+        rendered_subject, rendered_body = render_template_text(
+            selected_template.get("subject") or "JITT üzenet",
+            selected_template.get("body") or "Kedves {courier_name}!\n\n{free_text}\n\nÜdvözlettel:\nJITT",
+            variables,
+        )
+        with st.form(f"courier_email_send_form_{courier_id}_{selected_template_key}"):
+            subject = st.text_input("Tárgy", value=rendered_subject)
+            body = st.text_area("E-mail szövege", value=rendered_body, height=280)
+            send_email = st.form_submit_button("E-mail kiküldése", type="primary")
+        if send_email:
+            try:
+                clean_email = validate_email(recipient_email)
+                result = send_custom_email(clean_email, subject, body)
+                log_email_event(
+                    courier_id=courier_id,
+                    courier_name=str(row.get("Futár") or courier_name),
+                    recipient_email=clean_email,
+                    template_key=selected_template_key,
+                    subject=subject,
+                    body=body,
+                    status="sent",
+                    sent_by=actor,
+                    context=variables,
+                )
+                st.success(f"E-mail kiküldve: {result.get('recipient')}")
+            except Exception as exc:
+                log_email_event(
+                    courier_id=courier_id,
+                    courier_name=str(row.get("Futár") or courier_name),
+                    recipient_email=str(recipient_email or ""),
+                    template_key=selected_template_key,
+                    subject=str(subject or ""),
+                    body=str(body or ""),
+                    status="failed",
+                    error_message=str(exc),
+                    sent_by=actor,
+                    context=variables,
+                )
+                st.error(f"Az e-mail kiküldése sikertelen: {exc}")
 
     if selected_menu == "Profil":
         profile = load_courier_profile(courier_id)

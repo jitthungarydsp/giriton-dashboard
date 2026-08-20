@@ -8,6 +8,12 @@ import pandas as pd
 import streamlit as st
 
 from resources.discord_notifier import send_discord_text_message
+from resources.email_sender import DEFAULT_EMAIL_TEMPLATES, template_variables
+from resources.email_templates_db import (
+    ensure_default_email_templates,
+    read_email_templates,
+    save_email_template,
+)
 from resources.settlement_parameters import (
     BASE_RATE_TABLE,
     COMPLIANCE_TABLE,
@@ -744,11 +750,110 @@ def _show_customer_rating(client: Any) -> None:
     _delete_control(client, CUSTOMER_RATING_TABLE, row, "customer_rating")
 
 
+def _show_email_templates(client: Any) -> None:
+    st.markdown("#### E-mail sablonok")
+    st.caption("Ezeket a sablonokat használja a futár profil E-mail küldése menüpontja és az automatikus értesítés.")
+    action_cols = st.columns([1, 2])
+    if action_cols[0].button("Alap sablonok létrehozása", use_container_width=True, key="email_template_seed_defaults"):
+        try:
+            created = ensure_default_email_templates(_actor())
+            st.success(f"Alap sablonok ellenőrizve. Érintett sorok: {created}")
+        except Exception as exc:
+            st.error(f"Az alap sablonok nem menthetők: {exc}")
+
+    try:
+        template_rows = read_email_templates(active_only=False)
+    except Exception as exc:
+        st.warning(f"Az e-mail sablonok nem olvashatók: {exc}")
+        template_rows = []
+
+    if template_rows:
+        view = pd.DataFrame(template_rows)
+        view = view.rename(columns={
+            "template_key": "Kulcs",
+            "template_name": "Megnevezés",
+            "subject": "Tárgy",
+            "is_active": "Aktív",
+            "updated_by": "Módosította",
+            "updated_at": "Módosítva",
+        })
+        visible_columns = [column for column in ["Kulcs", "Megnevezés", "Tárgy", "Aktív", "Módosította", "Módosítva"] if column in view.columns]
+        st.dataframe(view[visible_columns], use_container_width=True, hide_index=True)
+
+    default_options = [
+        {
+            "template_key": key,
+            "template_name": str(value.get("name") or key),
+            "subject": str(value.get("subject") or ""),
+            "body": str(value.get("body") or ""),
+            "is_active": True,
+        }
+        for key, value in DEFAULT_EMAIL_TEMPLATES.items()
+    ]
+    options = template_rows or default_options
+    option_keys = [str(item.get("template_key") or "") for item in options]
+    selected_key = st.selectbox(
+        "Sablon kiválasztása",
+        ["__new__"] + option_keys,
+        format_func=lambda value: "Új sablon" if value == "__new__" else next(
+            (
+                f"{item.get('template_name') or item.get('template_key')} ({item.get('template_key')})"
+                for item in options
+                if str(item.get("template_key") or "") == value
+            ),
+            value,
+        ),
+        key="email_template_selector",
+    )
+    selected_row = {}
+    if selected_key != "__new__":
+        selected_row = next((item for item in options if str(item.get("template_key") or "") == selected_key), {})
+
+    with st.form(f"email_template_form_{selected_key}"):
+        template_key = st.text_input(
+            "Sablon kulcs",
+            value=_text(selected_row.get("template_key")) if selected_row else "",
+            disabled=selected_key != "__new__",
+            help="Rövid technikai kulcs, például payment_rejected.",
+        )
+        template_name = st.text_input("Megnevezés", value=_text(selected_row.get("template_name")))
+        subject = st.text_input("Tárgy", value=_text(selected_row.get("subject")))
+        body = st.text_area("Sablon szövege", value=_text(selected_row.get("body")), height=280)
+        is_active = st.checkbox("Aktív", value=bool(selected_row.get("is_active", True)))
+        saved = st.form_submit_button("Sablon mentése", type="primary")
+    if saved:
+        try:
+            save_email_template(template_key, template_name, subject, body, is_active, _actor())
+            st.success("E-mail sablon mentve.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"A sablon nem menthető: {exc}")
+
+    used_variables = sorted(set(template_variables(subject) + template_variables(body)))
+    st.info(
+        "Használható mezők: "
+        + ", ".join([
+            "{courier_name}",
+            "{courier_id}",
+            "{month}",
+            "{amount_huf}",
+            "{document_type}",
+            "{document_title}",
+            "{admin_message}",
+            "{status_note}",
+            "{free_text}",
+            "{login_url}",
+        ])
+    )
+    if used_variables:
+        st.caption("A kiválasztott sablonban szereplő változók: " + ", ".join(f"{{{name}}}" for name in used_variables))
+
+
 def render_parameter_catalog(client: Any) -> None:
     st.subheader("Paraméterértékek")
     st.caption("Minden szabály külön menüpontban kezelhető. A dátum nélküli zárás folyamatos érvényességet jelent.")
     try:
-        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "EFO", "Életbiztosítás", "Ügyfélértékelés"])
+        tabs = st.tabs(["Kiemelt / Normál napok", "Alap díjak", "Delay bónusz", "Compliance bónusz", "Időszakos díjak", "Céltartalék / Biztosítás", "Lojalitási bónusz", "EFO", "Életbiztosítás", "Ügyfélértékelés", "E-mail sablonok"])
         with tabs[0]: _show_days(client)
         with tabs[1]: _show_base_rates(client)
         with tabs[2]: _show_performance(client, DELAY_TABLE, "Delay bónusz", "delay")
@@ -759,6 +864,7 @@ def render_parameter_catalog(client: Any) -> None:
         with tabs[7]: _show_efo_assignments(client)
         with tabs[8]: _show_life_insurance(client)
         with tabs[9]: _show_customer_rating(client)
+        with tabs[10]: _show_email_templates(client)
     except ValueError as exc:
         st.error(f"A paraméter értéke hibás: {exc}")
     except Exception as exc:

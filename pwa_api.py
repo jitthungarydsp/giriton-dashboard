@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from resources.email_sender import send_login_credentials, send_message, smtp_config, validate_email
+from resources.email_templates_db import send_courier_template_email
 from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected_amount, validate_invoice
 from resources.pwa_users_db import (
     authenticate_pwa_db_user,
@@ -5500,6 +5501,42 @@ def save_acceptance_snapshot(
     return payload
 
 
+def format_email_huf(value: Any) -> str:
+    try:
+        amount = int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        amount = 0
+    return f"{amount:,}".replace(",", " ") + " Ft"
+
+
+def send_acceptance_email(
+    user: dict[str, Any],
+    month: date,
+    action: str,
+    snapshot_payload: dict[str, Any],
+) -> None:
+    courier_id, courier_name = courier_identity(user)
+    amount = (
+        snapshot_payload.get("tig_final_total_huf")
+        if action == "tig"
+        else snapshot_payload.get("payable_huf")
+    )
+    template_key = "tig_accepted" if action == "tig" else "settlement_accepted"
+    try:
+        send_courier_template_email(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            template_key=template_key,
+            variables={
+                "month": month.strftime("%Y-%m"),
+                "amount_huf": format_email_huf(amount),
+            },
+            sent_by="pwa",
+        )
+    except Exception as exc:
+        print("Acceptance email failed:", exc)
+
+
 def build_workflow(
     user: dict[str, Any],
     month: date,
@@ -6897,7 +6934,7 @@ def accept_workflow_document(
             status_code=409,
             detail="Nyitott reklamacio mellett nem fogadhato el a dokumentum.",
         )
-    save_acceptance_snapshot(
+    snapshot_payload = save_acceptance_snapshot(
         user,
         month,
         action,
@@ -6913,6 +6950,7 @@ def accept_workflow_document(
         "A futár elfogadta a dokumentumot.",
         process_id,
     )
+    send_acceptance_email(user, month, action, snapshot_payload)
     efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
     invoice_skip = efo_invoice_skip or manual_invoice_skip
@@ -7255,6 +7293,18 @@ async def submit_invoice(
     stored_count = len(document_payloads)
     stored_label = "A két számla" if stored_count == 2 else "A számla"
     upsert_workflow_status(user, month_value, "invoice_submit", "done", f"{stored_label} feltöltve és eltárolva.", process_id)
+    send_courier_template_email(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        template_key="document_uploaded",
+        variables={
+            "month": month_value.strftime("%Y-%m"),
+            "document_type": "invoice",
+            "document_title": ", ".join(str(item.get("title") or item.get("file_name") or "számla") for item in document_payloads),
+            "amount_huf": format_email_huf(gross_amount),
+        },
+        sent_by="pwa",
+    )
     if result["ok"]:
         upsert_workflow_status(user, month_value, "invoice_check", "done", f"{stored_label} automatikus ellenőrzése sikeres.", process_id)
     else:

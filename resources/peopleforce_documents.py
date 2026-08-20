@@ -12,7 +12,8 @@ from resources.supabase_raw import (
     raise_for_supabase_error,
 )
 from resources.courier_master_db import read_courier_master_by_id
-from resources.email_sender import send_new_document_notification
+from resources.email_sender import app_login_url
+from resources.email_templates_db import send_courier_template_email
 from resources.pwa_push_notifications import notify_new_peopleforce_document
 
 
@@ -106,12 +107,24 @@ def _email_document_uploaded(payload):
         return
 
     try:
-        send_new_document_notification(
-            recipient=recipient,
-            courier_name=payload.get("courier_name"),
-            document_type=payload.get("document_type"),
-            document_month=payload.get("document_month"),
-            title=payload.get("title") or payload.get("file_name"),
+        document_type = str(payload.get("document_type") or "").strip().lower()
+        template_key = {
+            "settlement": "new_settlement",
+            "complaint_response": "complaint_response",
+        }.get(document_type, "document_uploaded")
+        send_courier_template_email(
+            courier_id=str(payload.get("courier_id") or ""),
+            courier_name=str(payload.get("courier_name") or ""),
+            recipient_email=recipient,
+            template_key=template_key,
+            variables={
+                "month": str(payload.get("document_month") or "")[:7],
+                "document_type": document_type or "dokumentum",
+                "document_title": str(payload.get("title") or payload.get("file_name") or "dokumentum"),
+                "admin_message": str(payload.get("note") or ""),
+                "login_url": app_login_url(),
+            },
+            sent_by=str(payload.get("uploaded_by") or "system"),
         )
     except Exception:
         # A dokumentum feltoltese fontosabb, mint az e-mail ertesites.
