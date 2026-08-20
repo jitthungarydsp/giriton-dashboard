@@ -5760,7 +5760,7 @@ def build_workflow(
             "key": "invoice_check",
             "title": "Számlaellenőrzés kézzel kihagyva" if manual_invoice_skip else "Számlaellenőrzés",
             "done": invoice_check_done,
-            "locked": True if manual_invoice_skip else not workflow_done(states, "invoice_submit"),
+            "locked": True if manual_invoice_skip else not invoice_submit_done,
         },
         {
             "key": "invoice_payment",

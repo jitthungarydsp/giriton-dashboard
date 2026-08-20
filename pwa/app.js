@@ -1100,6 +1100,11 @@ async function loadCurrentRoute() {
     state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
     if (state.currentRoute?.found) {
       clearActiveQueue();
+      if (state.section === "tours" && !isAdminPreviewMode()) {
+        showSection("home");
+        await loadShifts();
+        return;
+      }
     }
     renderCurrentRoute();
   } catch (error) {
@@ -1400,8 +1405,6 @@ async function sendShiftQueueCheckin(item, button) {
       };
       queueStorageWrite(state.queueStatus);
       renderQueueStatus();
-    } else if (eventType === "returned") {
-      clearActiveQueue();
     }
     button.textContent = "Rögzítve";
     button.classList.add("sent");

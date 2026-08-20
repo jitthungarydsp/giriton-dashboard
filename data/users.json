@@ -450,6 +450,15 @@
             "active": "true",
             "token": ""
         },
+                {
+            "username": "",
+            "trainer": "trainer_name",
+            "password": "dfFDFdfd",
+            "role": "user",
+            "courierId": "7938",
+            "active": "true",
+            "token": ""
+        },
         {
             "username": "Jenei Tibor",
             "trainer": "trainer_name",
