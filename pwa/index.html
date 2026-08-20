@@ -192,6 +192,40 @@
         <section id="salary-advance-list" class="process-card"></section>
       </div>
 
+      <div id="expense-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">TANKOLÁS</p>
+            <h2>Tankolás és egyéb számlák</h2>
+            <p class="muted">Ez külön kifizetési folyamat, nincs hatással a havi elszámolásra.</p>
+          </div>
+          <button id="expense-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">T</span>
+            <div>
+              <h3>Számla feltöltése</h3>
+              <p>Rögzítsd a rendszámot, a kilométeróra állást és a számla összegét.</p>
+            </div>
+          </div>
+          <form id="expense-form" class="process-form two-column">
+            <label>Típus<select id="expense-type" name="request_type"><option value="fuel">Tankolás</option><option value="other">Egyéb számla</option></select></label>
+            <label>Rendszám<input id="expense-license-plate" name="license_plate" autocomplete="off" required /></label>
+            <label>Kilométeróra állás<input id="expense-odometer" name="odometer_km" type="number" min="1" step="1" required /></label>
+            <label>Összeg (Ft)<input id="expense-amount" name="amount_huf" inputmode="numeric" autocomplete="off" required /></label>
+            <label>Számlaszám<input id="expense-invoice-number" name="invoice_number" autocomplete="off" /></label>
+            <label class="full-width">Megjegyzés<textarea id="expense-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Számla feltöltése<input id="expense-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" required /></label>
+            <button class="primary full-width" type="submit">Költségszámla beküldése</button>
+          </form>
+          <p id="expense-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="expense-list" class="process-card"></section>
+      </div>
+
       <div id="documents-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -363,6 +397,7 @@
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
         <button id="nav-statistics"><span>∑</span>Statisztika</button>
         <button id="nav-salary-advance"><span>Ft</span>Előleg</button>
+        <button id="nav-expense"><span>T</span>Tankolás</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-device"><span>□</span>Telefon</button>
@@ -371,6 +406,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=67" defer></script>
+    <script src="/app.js?v=73" defer></script>
   </body>
 </html>

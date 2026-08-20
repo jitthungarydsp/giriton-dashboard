@@ -4188,6 +4188,35 @@ def load_courier_salary_advance_requests(courier_id: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=30)
+def load_courier_expense_requests(courier_id: str, document_month: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_expense_request")
+            .select("*")
+            .eq("courier_id", str(courier_id or "").strip())
+            .eq("document_month", document_month.replace(day=1).isoformat())
+            .order("requested_at", desc=True)
+            .limit(100)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def expense_request_type_label(value: object) -> str:
+    return "Tankolás" if str(value or "").strip().casefold() == "fuel" else "Egyéb számla"
+
+
+def expense_request_process_label(request_row: dict) -> str:
+    label = expense_request_type_label(request_row.get("request_type"))
+    plate = str(request_row.get("license_plate") or "").strip()
+    odometer = int(round(parse_huf_value(request_row.get("odometer_km"))))
+    suffix = " / ".join(part for part in [plate, f"{odometer} km" if odometer else ""] if part)
+    return f"{label}: {suffix}" if suffix else label
+
+
+@st.cache_data(show_spinner=False, ttl=30)
 def load_salary_advance_requests_for_month(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (
@@ -4521,6 +4550,64 @@ def reject_salary_advance_request(request_row: dict, courier_name: str, response
     load_salary_advance_requests_for_month.clear()
     load_salary_advance_installments_for_month.clear()
     load_courier_salary_advance_history.clear()
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+
+
+def mark_expense_request_paid(request_row: dict, courier_name: str) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    document_month_value = pd.to_datetime(request_row.get("document_month"), errors="coerce")
+    document_month = (
+        document_month_value.date().replace(day=1)
+        if not pd.isna(document_month_value)
+        else date.today().replace(day=1)
+    )
+    process_id = normalize_process_id(request_row.get("process_id"))
+    get_db().schema("settlement").table("courier_expense_request").update({
+        "status": "paid",
+        "paid_by": actor,
+        "paid_at": pd.Timestamp.utcnow().isoformat(),
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    if process_id:
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=process_action_key("invoice_payment", process_id),
+            document_month=document_month,
+            status="done",
+            status_note=f"{expense_request_process_label(request_row)} kifizetve.",
+            updated_by=actor,
+        )
+    load_courier_expense_requests.clear()
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+
+
+def reject_expense_request(request_row: dict, courier_name: str, response_message: str) -> None:
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    request_id = str(request_row.get("id") or "").strip()
+    courier_id = str(request_row.get("courier_id") or "").strip()
+    document_month_value = pd.to_datetime(request_row.get("document_month"), errors="coerce")
+    document_month = (
+        document_month_value.date().replace(day=1)
+        if not pd.isna(document_month_value)
+        else date.today().replace(day=1)
+    )
+    process_id = normalize_process_id(request_row.get("process_id"))
+    response = str(response_message or "").strip()
+    get_db().schema("settlement").table("courier_expense_request").update({
+        "status": "rejected",
+        "rejected_by": actor,
+        "rejected_at": pd.Timestamp.utcnow().isoformat(),
+        "rejection_note": response,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }).eq("id", request_id).execute()
+    if process_id:
+        delete_peopleforce_process_statuses(courier_id, document_month, process_id)
+    load_courier_expense_requests.clear()
     read_peopleforce_card_statuses.clear()
     read_peopleforce_card_statuses_for_month.clear()
 
@@ -8491,6 +8578,48 @@ def render_bulk_status_email_panel(filtered: pd.DataFrame, active_status: str, p
                     st.write("\n".join(failed_rows[:300]))
 
 
+def render_bulk_mobile_sync_panel(
+    filtered: pd.DataFrame,
+    active_status: str,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+) -> None:
+    if filtered.empty or not active_status:
+        return
+    st.markdown("#### Tömeges mobil frissítés")
+    with st.expander(f"Mobil adatok frissítése - {active_status} ({len(filtered)} futár)", expanded=False):
+        st.caption("Csak az aktuális státuszszűrésben szereplő futárok mobil/PWA értékeit írja újra.")
+        confirm = st.checkbox(
+            "Megerősítem, hogy csak az aktív szűrésben lévő futárok mobil adatait frissítjük.",
+            key=f"bulk_mobile_sync_confirm_{active_status}",
+        )
+        if st.button(
+            f"Tömeges frissítés - {active_status}",
+            type="primary",
+            use_container_width=True,
+            disabled=not confirm,
+            key=f"bulk_mobile_sync_send_{active_status}",
+        ):
+            try:
+                updated_by = str(st.session_state.get("user", {}).get("username") or "unknown")
+                courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
+                    filtered,
+                    period_start,
+                    calculation_mode,
+                    warehouse_label,
+                    session_id,
+                    updated_by,
+                )
+                load_mobile_breakdown_overrides_for_period.clear()
+                load_mobile_breakdown_overrides.clear()
+                st.success(f"Mobil adatok frissítve: {courier_count} futár, {row_count} sor.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A tömeges mobil frissítés sikertelen: {exc}")
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
@@ -12380,6 +12509,7 @@ def show_courier_dialog() -> None:
             workflow_statuses = pd.DataFrame()
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
+        expense_requests = load_courier_expense_requests(courier_id, payment_month)
         finance_payment_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
         monthly_payment_amount = (
             parse_huf_value(finance_payment_sync.get("tig_final_huf"))
@@ -12410,6 +12540,16 @@ def show_courier_dialog() -> None:
                     not in {"rejected", "cancelled", "closed"}
                 )
             )
+        if not expense_requests.empty:
+            process_ids.update(
+                normalize_process_id(item.get("process_id"))
+                for item in expense_requests.to_dict("records")
+                if (
+                    normalize_process_id(item.get("process_id"))
+                    and str(item.get("status") or "").strip().casefold()
+                    not in {"rejected", "cancelled", "closed", "paid"}
+                )
+            )
 
         status_by_key = {
             str(item.get("action_key") or ""): item
@@ -12428,22 +12568,38 @@ def show_courier_dialog() -> None:
                 in {"rejected", "cancelled", "closed"}
             )
         } if not advance_requests.empty else set()
-        request_by_process = {
-            normalize_process_id(item.get("process_id")): item
-            for item in advance_requests.to_dict("records")
+        rejected_expense_process_ids = {
+            normalize_process_id(item.get("process_id"))
+            for item in expense_requests.to_dict("records")
             if (
                 normalize_process_id(item.get("process_id"))
                 and str(item.get("status") or "").strip().casefold()
-                not in {"rejected", "cancelled", "closed"}
+                in {"rejected", "cancelled", "closed", "paid"}
             )
-} if not advance_requests.empty else {}
+        } if not expense_requests.empty else set()
+        rejected_process_ids = rejected_advance_process_ids | rejected_expense_process_ids
+        request_by_process = {}
+        if not advance_requests.empty:
+            for item in advance_requests.to_dict("records"):
+                clean_process_id = normalize_process_id(item.get("process_id"))
+                if clean_process_id and str(item.get("status") or "").strip().casefold() not in {"rejected", "cancelled", "closed"}:
+                    request_by_process[clean_process_id] = {**item, "_request_kind": "salary_advance"}
+        if not expense_requests.empty:
+            for item in expense_requests.to_dict("records"):
+                clean_process_id = normalize_process_id(item.get("process_id"))
+                if clean_process_id and str(item.get("status") or "").strip().casefold() not in {"rejected", "cancelled", "closed", "paid"}:
+                    request_by_process[clean_process_id] = {
+                        **item,
+                        "_request_kind": "expense",
+                        "_process_label": expense_request_process_label(item),
+                    }
 
         process_options = []
         for process_id in sorted(
             process_ids,
             key=lambda value: (bool(value), value),
         ):
-            if process_id and process_id in rejected_advance_process_ids:
+            if process_id and process_id in rejected_process_ids:
                 continue
             request_item = request_by_process.get(process_id, {})
 
@@ -12468,7 +12624,9 @@ def show_courier_dialog() -> None:
             )
             invoice_amount = invoice_amount_from_document(latest_invoice) if latest_invoice else 0.0
             request_amount = (
-                parse_huf_value(request_item.get("requested_amount_huf"))
+                parse_huf_value(request_item.get("amount_huf"))
+                if str(request_item.get("_request_kind") or "") == "expense"
+                else parse_huf_value(request_item.get("requested_amount_huf"))
                 if request_item
                 else 0
             )
@@ -12486,7 +12644,7 @@ def show_courier_dialog() -> None:
                 "label": (
                     "Havi folyamat"
                     if not process_id
-                    else f"Egyéb folyamat: {process_id}"
+                    else str(request_item.get("_process_label") or f"Egyéb folyamat: {process_id}")
                 ),
                 "invoice_number": invoice_number,
                 "invoice_file": str(latest_invoice.get("file_name") or ""),
@@ -12517,6 +12675,8 @@ def show_courier_dialog() -> None:
             )
             payment_item = process_options[option_labels.index(selected_payment_label)]
             process_id = str(payment_item["process_id"])
+            payment_request_kind = str((payment_item.get("request") or {}).get("_request_kind") or "")
+            is_expense_payment = payment_request_kind == "expense"
             invoice_number_default = str(payment_item.get("invoice_number") or "")
             if not invoice_number_default and not process_id:
                 invoice_number_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
@@ -12529,6 +12689,8 @@ def show_courier_dialog() -> None:
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
             payment_tig_breakdown = finance_payment_sync.get("tig_breakdown")
+            if is_expense_payment:
+                payment_tig_breakdown = {"rows": [], "finalTotalHuf": amount_huf}
             if not isinstance(payment_tig_breakdown, dict):
                 payment_tig_breakdown = build_tig_breakdown(
                     tig_payment_payload_from_profile(
@@ -12544,13 +12706,16 @@ def show_courier_dialog() -> None:
                     },
                 )
             tig_final_huf = (
-                parse_huf_value(finance_payment_sync.get("tig_final_huf"))
+                0
+                if is_expense_payment
+                else parse_huf_value(finance_payment_sync.get("tig_final_huf"))
                 or parse_huf_value(payment_tig_breakdown.get("finalTotalHuf"))
                 or amount_huf
             )
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
             invoice_difference_huf = invoice_amount_huf - amount_huf if invoice_amount_huf else 0.0
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
+            tig_final_label = "-" if is_expense_payment else format_huf(tig_final_huf)
             payment_note = f"{courier_id}-{invoice_number}".strip("-")
 
             st.markdown(
@@ -12560,7 +12725,7 @@ def show_courier_dialog() -> None:
                     <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(str(payment_item['status']))}</div></div>
                     <div class="finance-kpi payable"><div class="finance-kpi-label">Összeg</div><div class="finance-kpi-value">{format_huf(amount_huf)}</div></div>
-                    <div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{format_huf(tig_final_huf)}</div></div>
+                    <div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{tig_final_label}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Számla összege</div><div class="finance-kpi-value">{format_huf(invoice_amount_huf) if invoice_amount_huf else '-'}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Eltérés</div><div class="finance-kpi-value">{invoice_difference_label}</div></div>
                 </div>
@@ -12573,7 +12738,7 @@ def show_courier_dialog() -> None:
                 ("Közlemény", payment_note),
                 ("Név", recipient_name),
                 ("Összeg", format_huf(amount_huf)),
-                ("TIG végösszeg", format_huf(tig_final_huf)),
+                ("TIG végösszeg", tig_final_label),
                 ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
                 ("Eltérés", invoice_difference_label),
             ])
@@ -12651,26 +12816,32 @@ def show_courier_dialog() -> None:
                     except Exception as exc:
                         st.warning(f"A dokumentum előnézete nem tölthető be: {exc}")
 
-            payment_payable_sources = pd.DataFrame([
-                {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
-                {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
-                {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
-                {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
-                {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
-                {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
-                {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
-                {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
-                {"Művelet": "+", "Tétel": "Korrekció +", "Összeg": correction_income_total},
-                {"Művelet": "-", "Tétel": "Kiflis malus", "Összeg": imported_malus_total},
-                {"Művelet": "-", "Tétel": "JITT malus", "Összeg": manual_malus_total},
-                {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
-                {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
-                {"Művelet": "-", "Tétel": "Korrekció -", "Összeg": correction_deduction_total},
-                {"Művelet": "-", "Tétel": "Fizetés előleg", "Összeg": salary_advance_total},
-                {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
-                {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
-                {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": amount_huf},
-            ])
+            if is_expense_payment:
+                payment_payable_sources = pd.DataFrame([
+                    {"Művelet": "+", "Tétel": str(payment_item.get("label") or "Költségszámla"), "Összeg": amount_huf},
+                    {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": amount_huf},
+                ])
+            else:
+                payment_payable_sources = pd.DataFrame([
+                    {"Művelet": "+", "Tétel": "Alapdíj", "Összeg": display_base_total},
+                    {"Művelet": "+", "Tétel": "Borravaló", "Összeg": tip_total},
+                    {"Művelet": "+", "Tétel": "Késedelmi díj", "Összeg": delay_total},
+                    {"Művelet": "+", "Tétel": "Túramegfelelés", "Összeg": compliance_total},
+                    {"Művelet": "+", "Tétel": "Kiflis bónusz", "Összeg": imported_bonus_total},
+                    {"Művelet": "+", "Tétel": "JITT bónusz", "Összeg": manual_bonus_total},
+                    {"Művelet": "+", "Tétel": "Lojalitás", "Összeg": loyalty_total},
+                    {"Művelet": "+", "Tétel": "Ügyfélértékelés", "Összeg": customer_rating_total},
+                    {"Művelet": "+", "Tétel": "Korrekció +", "Összeg": correction_income_total},
+                    {"Művelet": "-", "Tétel": "Kiflis malus", "Összeg": imported_malus_total},
+                    {"Művelet": "-", "Tétel": "JITT malus", "Összeg": manual_malus_total},
+                    {"Művelet": "-", "Tétel": "ATM levonás", "Összeg": atm_deduction_total},
+                    {"Művelet": "-", "Tétel": "Egyéb kiadás", "Összeg": other_expense_total},
+                    {"Művelet": "-", "Tétel": "Korrekció -", "Összeg": correction_deduction_total},
+                    {"Művelet": "-", "Tétel": "Fizetés előleg", "Összeg": salary_advance_total},
+                    {"Művelet": "-", "Tétel": "Céltartalék 10%", "Összeg": reserve_addition_total},
+                    {"Művelet": "-", "Tétel": "Biztosítási díj", "Összeg": insurance_fee_total},
+                    {"Művelet": "=", "Tétel": "Kifizetendő", "Összeg": amount_huf},
+                ])
             payment_payable_sources = payment_payable_sources.loc[
                 payment_payable_sources["Összeg"].ne(0) | payment_payable_sources["Művelet"].eq("=")
             ].copy()
@@ -12739,7 +12910,10 @@ def show_courier_dialog() -> None:
                         st.stop()
                     if process_id:
                         request_item = payment_item.get("request") or {}
-                        if str(request_item.get("status") or "").casefold() == "approved":
+                        request_kind = str(request_item.get("_request_kind") or "")
+                        if request_kind == "expense":
+                            mark_expense_request_paid(request_item, courier_name)
+                        elif str(request_item.get("status") or "").casefold() == "approved":
                             mark_salary_advance_request_paid(request_item, courier_name)
                         upsert_peopleforce_card_status(
                             courier_id=courier_id,
@@ -12803,7 +12977,10 @@ def show_courier_dialog() -> None:
                     response = str(reject_note or "").strip()
                     if process_id:
                         request_item = payment_item.get("request") or {}
-                        if request_item:
+                        request_kind = str(request_item.get("_request_kind") or "")
+                        if request_kind == "expense":
+                            reject_expense_request(request_item, courier_name, response)
+                        elif request_item:
                             reject_salary_advance_request(request_item, courier_name, response)
                         else:
                             delete_peopleforce_process_statuses(courier_id, payment_month, process_id)
@@ -16967,6 +17144,14 @@ def show_new_settlement_page() -> None:
         st.caption(f"Nincs felső státuszszűrés: minden futár megjelenik ({selected_warehouse_label}).")
 
     if active_workflow_filter:
+        render_bulk_mobile_sync_panel(
+            filtered,
+            active_workflow_filter,
+            balance_period_start,
+            selected_calculation_mode,
+            selected_warehouse_label,
+            import_session_id,
+        )
         render_bulk_status_email_panel(filtered, active_workflow_filter, balance_period_start)
 
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)

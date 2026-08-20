@@ -10,6 +10,7 @@ const state = {
   coordinatorSetup: null,
   deviceReports: [],
   salaryAdvanceRequests: [],
+  expenseRequests: [],
   statistics: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
@@ -22,7 +23,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v72";
+const APP_VERSION = "v73";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -70,6 +71,7 @@ function currentSectionRefresh() {
   if (state.section === "tours") return loadCurrentRoute();
   if (state.section === "statistics") return loadStatistics();
   if (state.section === "workflow") return loadWorkflow();
+  if (state.section === "expense") return loadExpenseRequests();
   return Promise.resolve();
 }
 
@@ -140,7 +142,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-expense", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
     const previewWrapper = $(selector);
@@ -158,6 +160,7 @@ function showSection(section) {
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
   $("#salary-advance-content").classList.toggle("hidden", section !== "salary-advance");
+  $("#expense-content").classList.toggle("hidden", section !== "expense");
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#device-content").classList.toggle("hidden", section !== "device");
@@ -168,6 +171,7 @@ function showSection(section) {
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-statistics").classList.toggle("active", section === "statistics");
   $("#nav-salary-advance").classList.toggle("active", section === "salary-advance");
+  $("#nav-expense").classList.toggle("active", section === "expense");
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-device").classList.toggle("active", section === "device");
@@ -177,6 +181,7 @@ function showSection(section) {
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "statistics" && !state.statistics) loadStatistics();
   if (section === "salary-advance") loadSalaryAdvanceRequests();
+  if (section === "expense") loadExpenseRequests();
   if (section === "documents") loadDocuments();
   if (section === "profile") {
     loadBillingProfile();
@@ -265,6 +270,57 @@ async function loadSalaryAdvanceRequests() {
     const payload = await api(withPreviewCourier("/api/salary-advance/requests"));
     state.salaryAdvanceRequests = payload.requests || [];
     renderSalaryAdvanceRequests();
+    if (message) message.textContent = "";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  }
+}
+
+function renderExpenseRequests() {
+  const target = $("#expense-list");
+  if (!target) return;
+  const rows = state.expenseRequests || [];
+  if (!rows.length) {
+    target.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">T</span>
+        <div><h3>Beküldött költségszámlák</h3><p>Még nincs rögzített tankolás vagy egyéb számla.</p></div>
+      </div>
+    `;
+    return;
+  }
+  target.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">T</span>
+      <div><h3>Beküldött költségszámlák</h3><p>Ezek külön kifizetési folyamatként mennek tovább.</p></div>
+    </div>
+    <div class="financial-card-grid salary-advance-grid">
+      ${rows.map((item) => `
+        <article class="financial-card">
+          <summary>
+            <span>${escapeHtml(item.typeLabel || "Költségszámla")}</span>
+            <strong>${formatHuf(item.amountHuf)}</strong>
+          </summary>
+          <div class="stat-breakdown-list">
+            <div class="stat-row"><span>Státusz</span><strong>${escapeHtml(item.statusLabel || item.status || "-")}</strong></div>
+            <div class="stat-row"><span>Rendszám</span><strong>${escapeHtml(item.licensePlate || "-")}</strong></div>
+            <div class="stat-row"><span>Km óra</span><strong>${formatCount(item.odometerKm || 0)}</strong></div>
+            <div class="stat-row"><span>Számlaszám</span><strong>${escapeHtml(item.invoiceNumber || "-")}</strong></div>
+            ${item.processId ? `<div class="stat-row"><span>Folyamat</span><strong>${escapeHtml(item.processId)}</strong></div>` : ""}
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function loadExpenseRequests() {
+  const message = $("#expense-message");
+  if (message) message.textContent = "Költségszámlák betöltése...";
+  try {
+    const payload = await api(withPreviewCourier("/api/expense-requests"));
+    state.expenseRequests = payload.requests || [];
+    renderExpenseRequests();
     if (message) message.textContent = "";
   } catch (error) {
     if (message) message.textContent = error.message;
@@ -2719,6 +2775,7 @@ function updatePreviewCourier(value) {
   state.billingProfile = null;
   state.deviceReports = [];
   state.salaryAdvanceRequests = [];
+  state.expenseRequests = [];
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   setAdminPreviewStatus(state.workflowPreviewCourierId ? `Előnézet aktív: ${state.workflowPreviewCourierId}` : "Saját profil aktív.");
@@ -2728,6 +2785,7 @@ function updatePreviewCourier(value) {
   });
   if (state.section === "statistics") loadStatistics({ resetHistory: true });
   if (state.section === "salary-advance") loadSalaryAdvanceRequests();
+  if (state.section === "expense") loadExpenseRequests();
   if (state.section === "profile") loadBillingProfile();
   if (state.section === "device") loadDeviceReports();
   if (state.section === "tours") loadCurrentRoute();
@@ -2818,6 +2876,44 @@ $("#salary-advance-form")?.addEventListener("submit", async (event) => {
     $("#salary-advance-months").value = "1";
     updateSalaryAdvancePreview();
     if (message) message.textContent = "Az előleg igény rögzítve, jóváhagyásra vár.";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
+$("#expense-refresh")?.addEventListener("click", loadExpenseRequests);
+$("#expense-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (isAdminPreviewMode()) {
+    const message = $("#expense-message");
+    if (message) message.textContent = "Admin előnézetben nem küldhető be költségszámla.";
+    return;
+  }
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const message = $("#expense-message");
+  if (button) button.disabled = true;
+  if (message) message.textContent = "Költségszámla beküldése...";
+  try {
+    const formData = new FormData();
+    formData.append("request_type", $("#expense-type").value || "fuel");
+    formData.append("license_plate", $("#expense-license-plate").value || "");
+    formData.append("odometer_km", $("#expense-odometer").value || "0");
+    formData.append("amount_huf", String(parseHufInput($("#expense-amount").value)));
+    formData.append("invoice_number", $("#expense-invoice-number").value || "");
+    formData.append("note", $("#expense-note").value || "");
+    const file = $("#expense-file").files?.[0];
+    if (file) formData.append("invoice_file", file);
+    const payload = await api("/api/expense-requests", {
+      method: "POST",
+      body: formData,
+    });
+    state.expenseRequests = payload.requests || [];
+    renderExpenseRequests();
+    form.reset();
+    if (message) message.textContent = "A költségszámla beküldve, külön kifizetési folyamatként jelenik meg.";
   } catch (error) {
     if (message) message.textContent = error.message;
   } finally {
@@ -2948,6 +3044,7 @@ $("#logout").addEventListener("click", async () => {
   state.coordinatorSetup = null;
   state.deviceReports = [];
   state.salaryAdvanceRequests = [];
+  state.expenseRequests = [];
   state.statistics = null;
   showLogin();
 });
@@ -2956,6 +3053,7 @@ $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));
 $("#nav-salary-advance").addEventListener("click", () => showSection("salary-advance"));
+$("#nav-expense").addEventListener("click", () => showSection("expense"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));

@@ -1699,6 +1699,41 @@ def normalize_salary_advance_request(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def expense_request_type_label(value: str | None) -> str:
+    return "Tankolás" if str(value or "").strip().casefold() == "fuel" else "Egyéb számla"
+
+
+def normalize_expense_request(row: dict[str, Any]) -> dict[str, Any]:
+    request_type = str(row.get("request_type") or "fuel").strip().casefold()
+    if request_type not in {"fuel", "other"}:
+        request_type = "other"
+    status = str(row.get("status") or "approved").strip().casefold()
+    status_labels = {
+        "submitted": "Beküldve",
+        "approved": "Kifizetésre vár",
+        "paid": "Kifizetve",
+        "rejected": "Elutasítva",
+        "cancelled": "Visszavonva",
+    }
+    return {
+        "id": str(row.get("id") or ""),
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or ""),
+        "requestType": request_type,
+        "typeLabel": expense_request_type_label(request_type),
+        "documentMonth": str(row.get("document_month") or ""),
+        "processId": str(row.get("process_id") or ""),
+        "licensePlate": str(row.get("license_plate") or ""),
+        "odometerKm": int(row.get("odometer_km") or 0),
+        "amountHuf": int(row.get("amount_huf") or 0),
+        "invoiceNumber": str(row.get("invoice_number") or ""),
+        "note": str(row.get("note") or ""),
+        "status": status,
+        "statusLabel": status_labels.get(status, status or "-"),
+        "requestedAt": str(row.get("requested_at") or ""),
+    }
+
+
 def clean_text(value: Any, *, limit: int = 500) -> str:
     text = str(value or "").strip()
     text = re.sub(r"\s+", " ", text)
@@ -7551,6 +7586,144 @@ def create_salary_advance_request(
     requests = salary_advance_requests(giriton_pwa_session=giriton_pwa_session)
     return {
         "request": normalize_salary_advance_request(rows[0] if rows else {}),
+        "requests": requests["requests"],
+    }
+
+
+@app.get("/api/expense-requests")
+def expense_requests(
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
+    rows = supabase_rest(
+        "GET",
+        "courier_expense_request",
+        params={
+            "select": "*",
+            "courier_id": f"eq.{courier_id}",
+            "order": "requested_at.desc",
+            "limit": "100",
+        },
+        schema="settlement",
+    )
+    return {"requests": [normalize_expense_request(row) for row in rows]}
+
+
+@app.post("/api/expense-requests")
+async def create_expense_request(
+    request_type: str = Form(default="fuel"),
+    license_plate: str = Form(...),
+    odometer_km: int = Form(...),
+    amount_huf: int = Form(...),
+    invoice_number: str = Form(default=""),
+    note: str = Form(default=""),
+    invoice_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, courier_name = courier_identity(user)
+    clean_type = str(request_type or "fuel").strip().casefold()
+    if clean_type not in {"fuel", "other"}:
+        clean_type = "fuel"
+    clean_plate = clean_text(license_plate, limit=32).upper()
+    clean_invoice_number = clean_text(invoice_number, limit=80)
+    clean_note = clean_text(note, limit=1000)
+    odometer_value = int(odometer_km or 0)
+    amount_value = int(amount_huf or 0)
+    if not clean_plate:
+        raise HTTPException(status_code=422, detail="A rendszám megadása kötelező.")
+    if odometer_value <= 0:
+        raise HTTPException(status_code=422, detail="A kilométeróra állásnak pozitívnak kell lennie.")
+    if amount_value <= 0:
+        raise HTTPException(status_code=422, detail="Az összegnek pozitívnak kell lennie.")
+    if not invoice_file.filename:
+        raise HTTPException(status_code=422, detail="Számla feltöltése kötelező.")
+
+    content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
+    if len(content) > MAX_INVOICE_BYTES:
+        raise HTTPException(status_code=413, detail="A feltöltött számla túl nagy.")
+    if not content:
+        raise HTTPException(status_code=422, detail="A feltöltött számla üres.")
+
+    local_now = datetime.now(LOCAL_TIMEZONE)
+    now = datetime.now(timezone.utc)
+    document_month = local_now.date().replace(day=1)
+    process_id = normalize_process_id(
+        f"koltseg-{clean_type}-{courier_id}-{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    )
+    type_label = expense_request_type_label(clean_type)
+    marker = process_note_marker(process_id)
+    document_rows = supabase_rest(
+        "POST",
+        "peopleforce_documents",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "document_type": "invoice",
+            "document_month": document_month.isoformat(),
+            "title": f"{type_label} számla {clean_invoice_number or clean_plate}",
+            "file_name": invoice_file.filename or f"{process_id}.pdf",
+            "mime_type": invoice_file.content_type or "application/octet-stream",
+            "file_size": len(content),
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "note": (
+                f"{marker}; Típus: {type_label}; Számlaszám: {clean_invoice_number or '-'}; "
+                f"Rendszám: {clean_plate}; Km óra: {odometer_value}; bruttó összesen: {amount_value} Ft; {clean_note}"
+            ).strip(),
+            "uploaded_by": courier_name,
+        },
+        prefer="return=representation",
+        timeout=60,
+    )
+    document_id = str((document_rows[0] if isinstance(document_rows, list) and document_rows else {}).get("id") or "")
+    rows = supabase_rest(
+        "POST",
+        "courier_expense_request",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "request_type": clean_type,
+            "document_month": document_month.isoformat(),
+            "process_id": process_id,
+            "license_plate": clean_plate,
+            "odometer_km": odometer_value,
+            "amount_huf": amount_value,
+            "invoice_number": clean_invoice_number,
+            "note": clean_note,
+            "document_id": document_id or None,
+            "status": "approved",
+            "requested_by": courier_name,
+            "updated_at": now.isoformat(),
+        },
+        prefer="return=representation",
+        schema="settlement",
+    )
+    for action, status, status_note in [
+        ("settlement", "done", f"{type_label} költségfolyamat létrehozva."),
+        ("tig", "done", f"{type_label} költségfolyamat TIG nélkül."),
+        ("invoice_submit", "done", f"{type_label} számla feltöltve."),
+        ("invoice_check", "done", f"{type_label} számla admin kifizetésre előkészítve."),
+        ("invoice_payment", "open", f"{type_label} kifizetésre vár: {amount_value} Ft."),
+    ]:
+        upsert_workflow_status(user, document_month, action, status, status_note, process_id)
+    send_courier_template_email(
+        courier_id=courier_id,
+        courier_name=courier_name,
+        template_key="document_uploaded",
+        variables={
+            "month": document_month.strftime("%Y-%m"),
+            "document_type": type_label,
+            "document_title": f"{type_label} számla",
+            "amount_huf": f"{amount_value:,.0f} Ft".replace(",", " "),
+        },
+        sent_by="pwa",
+    )
+    requests = expense_requests(giriton_pwa_session=giriton_pwa_session)
+    return {
+        "request": normalize_expense_request(rows[0] if rows else {}),
         "requests": requests["requests"],
     }
 
