@@ -3674,7 +3674,38 @@ def invoice_number_from_document(document: dict[str, object]) -> str:
     return ""
 
 
+def is_cash_invoice_document(document: dict[str, object]) -> bool:
+    title = str(document.get("title") or "").casefold()
+    file_name = str(document.get("file_name") or "").casefold()
+    note = str(document.get("note") or "").casefold()
+    return (
+        title.startswith("kp ")
+        or "kp számla" in title
+        or "kp szamla" in title
+        or "kp_szamla" in file_name
+        or "fizetési mód: kp" in note
+        or "fizetesi mod: kp" in note
+    )
+
+
+def preferred_invoice_document(invoice_rows: list[dict[str, object]]) -> dict[str, object]:
+    if not invoice_rows:
+        return {}
+    return next(
+        (row for row in invoice_rows if not is_cash_invoice_document(row)),
+        invoice_rows[0],
+    )
+
+
 def invoice_amount_from_document(document: dict[str, object]) -> float:
+    if document.get("id") and not is_cash_invoice_document(document):
+        try:
+            content_row = read_peopleforce_document_content(str(document.get("id")))
+            amount = extract_expected_amount(decode_document_content(content_row.get("file_content_base64")))
+            if amount:
+                return amount
+        except Exception:
+            pass
     note = str(document.get("note") or "")
     for pattern in [
         r"brutt[óo]\s+[öo]sszesen\s*:?\s*([0-9\s.,]+)\s*Ft",
@@ -12620,7 +12651,7 @@ def show_courier_dialog() -> None:
                     continue
 
             invoice_rows = invoice_rows_by_process.get(process_id, [])
-            latest_invoice = invoice_rows[0] if invoice_rows else {}
+            latest_invoice = preferred_invoice_document(invoice_rows)
             invoice_number = (
                 invoice_number_from_document(latest_invoice)
                 if latest_invoice

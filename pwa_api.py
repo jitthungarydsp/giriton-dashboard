@@ -7571,6 +7571,8 @@ async def submit_invoice(
             expected_seller_address=billing_profile["company_address"],
         )
     result = apply_invoice_validation_override(result, override_enabled)
+    main_gross_amount = money_int((main_result if cash_content else result).get("parsed", {}).get("gross_total"))
+    cash_gross_amount = money_int((cash_result if cash_content else {}).get("parsed", {}).get("gross_total"))
 
     upload_documents = [
         {
@@ -7579,6 +7581,7 @@ async def submit_invoice(
             "content": content,
             "title": f"Számla {invoice_number}",
             "payment_type": "Átutalás",
+            "gross_amount": main_gross_amount or (gross_amount - cash_gross_amount if cash_gross_amount else gross_amount),
         }
     ]
     if cash_content and cash_invoice_file is not None:
@@ -7589,6 +7592,7 @@ async def submit_invoice(
                 "content": cash_content,
                 "title": f"KP számla {invoice_number}",
                 "payment_type": "KP",
+                "gross_amount": cash_gross_amount,
             }
         )
     document_payloads = [
@@ -7605,7 +7609,7 @@ async def submit_invoice(
             "note": (
                 (process_note_marker(process_id) + "; " if process_note_marker(process_id) else "")
                 +
-                f"Fizetési mód: {document['payment_type']}; bruttó összesen: {gross_amount} Ft; "
+                f"Fizetési mód: {document['payment_type']}; bruttó összesen: {document.get('gross_amount') or 0} Ft; "
                 f"TIG/elszámolás: {tig_reference}. {note}"
             ).strip(),
             "uploaded_by": courier_name,
