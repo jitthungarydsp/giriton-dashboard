@@ -531,6 +531,15 @@
             "active": true,
             "token": ""
         },
+                {
+            "username": "Szombati 8054 Márk",
+            "trainer": "trainer_name",
+            "password": "3R75ruSm",
+            "role": "user",
+            "courierId": 8054,
+            "active": true,
+            "token": ""
+        },
         {
             "username": "Kristóf Attila",
             "trainer": "trainer_name",
