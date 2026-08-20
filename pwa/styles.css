@@ -280,8 +280,14 @@ textarea { min-height: 96px; resize: vertical; }
 .device-report small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .device-report p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
 .device-report-meta { display: flex; gap: 8px; color: var(--muted); font-size: 11px; font-weight: 800; }
-.device-photo-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.device-photo-list a { padding: 8px 10px; border-radius: 10px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 850; text-decoration: none; }
+.device-photo-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.device-photo-list a { display: grid; gap: 6px; padding: 7px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 850; text-decoration: none; }
+.device-photo-list img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 9px; background: #0d1510; }
+.device-photo-list span { overflow-wrap: anywhere; }
+.ai-comparison { display: grid; gap: 5px; padding: 10px; border: 1px solid #cddbc7; border-radius: 12px; background: #eff8ed; }
+.ai-comparison.possible_new_damage, .ai-comparison.failed { border-color: #e2aaa5; background: #fff0ef; }
+.ai-comparison strong { font-size: 12px; }
+.ai-comparison p { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.45; }
 
 @media (min-width: 760px) {
   .workflow-header { grid-template-columns: 1fr auto; }

@@ -6082,11 +6082,18 @@ def normalize_device_imei(value: str) -> str:
 
 
 def normalize_device_status(value: str) -> str:
-    allowed = {"ok", "scratched", "cracked", "broken", "missing_accessory", "other"}
+    allowed = {"ok", "scratched", "dented", "cracked", "broken", "missing_accessory", "other"}
     status = clean_text(value, limit=40).lower() or "ok"
     if status not in allowed:
         raise HTTPException(status_code=422, detail="Ismeretlen eszkozallapot.")
     return status
+
+
+def normalize_device_type(value: str) -> str:
+    device_type = clean_text(value, limit=40).lower() or "phone"
+    if device_type not in {"phone", "vehicle"}:
+        raise HTTPException(status_code=422, detail="Ismeretlen eszkoztipus.")
+    return device_type
 
 
 def normalize_device_event_type(value: str) -> str:
@@ -6107,6 +6114,7 @@ def device_report_label(row: dict[str, Any]) -> str:
     statuses = {
         "ok": "Rendben",
         "scratched": "Karcos",
+        "dented": "Horpadás",
         "cracked": "Torott",
         "broken": "Hibas",
         "missing_accessory": "Hianyzo tartozek",
@@ -6130,6 +6138,11 @@ def safe_device_report(row: dict[str, Any]) -> dict[str, Any]:
         "note": row.get("note") or "",
         "photoCount": int(row.get("photo_count") or 0),
         "reportedAt": row.get("reported_at") or "",
+        "comparisonStatus": row.get("comparison_status") or "not_run",
+        "comparisonNote": row.get("comparison_note") or "",
+        "comparisonModel": row.get("comparison_model") or "",
+        "comparedReportId": row.get("compared_report_id") or "",
+        "comparisonCheckedAt": row.get("comparison_checked_at") or "",
     }
 
 
@@ -6170,6 +6183,154 @@ def attach_device_report_photos(reports: list[dict[str, Any]]) -> list[dict[str,
     for report in reports:
         report["photos"] = photos_by_report.get(str(report.get("id") or ""), [])
     return reports
+
+
+def device_photo_data_url(photo_payload: dict[str, Any]) -> str:
+    mime_type = str(photo_payload.get("mime_type") or "image/jpeg")
+    content = str(photo_payload.get("file_content_base64") or "")
+    return f"data:{mime_type};base64,{content}"
+
+
+def load_report_photos_with_content(report_id: str) -> list[dict[str, Any]]:
+    if not report_id:
+        return []
+    try:
+        return supabase_rest(
+            "GET",
+            "pwa_device_condition_photos",
+            params={
+                "select": "id,report_id,file_name,mime_type,file_content_base64,photo_label,uploaded_at",
+                "report_id": f"eq.{report_id}",
+                "order": "uploaded_at.asc",
+                "limit": "8",
+            },
+        ) or []
+    except HTTPException:
+        return []
+
+
+def latest_previous_vehicle_report(courier_id: str, serial: str, current_report_id: str) -> dict[str, Any] | None:
+    try:
+        rows = supabase_rest(
+            "GET",
+            "pwa_device_condition_reports",
+            params={
+                "select": "id,serial_number,condition_status,note,reported_at",
+                "courier_id": f"eq.{courier_id}",
+                "device_type": "eq.vehicle",
+                "serial_number": f"eq.{serial}",
+                "id": f"neq.{current_report_id}",
+                "order": "reported_at.desc",
+                "limit": "1",
+            },
+        )
+    except HTTPException:
+        rows = []
+    return rows[0] if rows else None
+
+
+def update_vehicle_comparison_result(report_id: str, payload: dict[str, Any]) -> None:
+    if not report_id:
+        return
+    try:
+        supabase_rest(
+            "PATCH",
+            "pwa_device_condition_reports",
+            params={"id": f"eq.{report_id}"},
+            payload={
+                "comparison_status": payload.get("status") or "not_run",
+                "comparison_note": clean_text(payload.get("note"), limit=1800),
+                "comparison_model": clean_text(payload.get("model"), limit=120),
+                "compared_report_id": payload.get("compared_report_id") or None,
+                "comparison_checked_at": datetime.now(timezone.utc).isoformat(),
+            },
+            prefer="return=minimal",
+        )
+    except HTTPException:
+        pass
+
+
+def compare_vehicle_damage_with_ai(
+    *,
+    current_report: dict[str, Any],
+    current_photos: list[dict[str, Any]],
+    previous_report: dict[str, Any],
+    previous_photos: list[dict[str, Any]],
+) -> dict[str, Any]:
+    api_key = load_setting("OPENAI_API_KEY").strip()
+    if not api_key:
+        return {
+            "status": "not_configured",
+            "note": "AI összehasonlítás nincs konfigurálva: hiányzik az OPENAI_API_KEY.",
+            "model": "",
+            "compared_report_id": previous_report.get("id"),
+        }
+    model = load_setting("OPENAI_VEHICLE_DAMAGE_MODEL").strip() or "gpt-4.1-mini"
+    previous_images = previous_photos[:4]
+    current_images = current_photos[:4]
+    if not previous_images or not current_images:
+        return {
+            "status": "missing_photos",
+            "note": "AI összehasonlítás nem futott: nincs elég előző vagy aktuális fotó.",
+            "model": model,
+            "compared_report_id": previous_report.get("id"),
+        }
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "Magyarul válaszolj. Futár autó állapotfotókat hasonlítasz össze. "
+                "Először az ELŐZŐ fotók jönnek, utána az AKTUÁLIS fotók. "
+                "Feladat: jelezd, látszik-e valószínű új sérülés az aktuális fotókon az előzőkhöz képest. "
+                "Adj rövid eredményt: 'Nincs egyértelmű új sérülés' vagy 'Gyanús új sérülés', majd írd le, hol és mit látsz. "
+                "Ha a kameraállás vagy fényviszony miatt bizonytalan, ezt külön mondd ki."
+            ),
+        },
+        {"type": "text", "text": "ELŐZŐ FOTÓK"},
+    ]
+    for photo in previous_images:
+        content.append({"type": "image_url", "image_url": {"url": device_photo_data_url(photo)}})
+    content.append({"type": "text", "text": "AKTUÁLIS FOTÓK"})
+    for photo in current_images:
+        content.append({"type": "image_url", "image_url": {"url": device_photo_data_url(photo)}})
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "max_tokens": 500,
+                "temperature": 0.1,
+            },
+            timeout=60,
+        )
+        if not response.ok:
+            return {
+                "status": "failed",
+                "note": f"AI összehasonlítás hibára futott: {response.status_code} {response.text[:300]}",
+                "model": model,
+                "compared_report_id": previous_report.get("id"),
+            }
+        data = response.json()
+        note = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        status = "possible_new_damage" if re.search(r"gyan[uú]s|[uú]j s[eé]r[uü]l", note, flags=re.IGNORECASE) else "checked"
+        return {
+            "status": status,
+            "note": note or "AI összehasonlítás lefutott, de nem adott szöveges választ.",
+            "model": model,
+            "compared_report_id": previous_report.get("id"),
+        }
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "note": f"AI összehasonlítás hibára futott: {exc}",
+            "model": model,
+            "compared_report_id": previous_report.get("id"),
+        }
 
 
 def normalize_pem_private_key(value: str) -> str:
@@ -6607,21 +6768,29 @@ def update_billing_profile(
 @app.get("/api/devices/reports")
 def list_device_condition_reports(
     serial_number: str = Query(default=""),
+    device_type: str = Query(default="phone"),
     courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     courier_id, _courier_name = courier_identity(view_user)
+    clean_device_type = normalize_device_type(device_type)
+    base_select = "id,device_id,device_type,serial_number,imei,courier_id,courier_name,event_type,condition_status,note,photo_count,reported_at"
     params = {
-        "select": "id,device_id,device_type,serial_number,imei,courier_id,courier_name,event_type,condition_status,note,photo_count,reported_at",
+        "select": base_select + ",comparison_status,comparison_note,comparison_model,compared_report_id,comparison_checked_at",
         "courier_id": f"eq.{courier_id}",
+        "device_type": f"eq.{clean_device_type}",
         "order": "reported_at.desc",
         "limit": "20",
     }
     if clean_text(serial_number, limit=80):
         params["serial_number"] = f"eq.{normalize_device_serial(serial_number)}"
-    rows = supabase_rest("GET", "pwa_device_condition_reports", params=params)
+    try:
+        rows = supabase_rest("GET", "pwa_device_condition_reports", params=params)
+    except HTTPException:
+        params["select"] = base_select
+        rows = supabase_rest("GET", "pwa_device_condition_reports", params=params)
     reports = [safe_device_report(row) for row in rows or []]
     return {"reports": attach_device_report_photos(reports)}
 
@@ -6629,6 +6798,7 @@ def list_device_condition_reports(
 @app.post("/api/devices/reports")
 async def create_device_condition_report(
     serial_number: str = Form(...),
+    device_type: str = Form(default="phone"),
     imei: str = Form(default=""),
     event_type: str = Form(default="inspection"),
     condition_status: str = Form(default="ok"),
@@ -6639,6 +6809,7 @@ async def create_device_condition_report(
     user = require_user(giriton_pwa_session)
     courier_id, courier_name = courier_identity(user)
     serial = normalize_device_serial(serial_number)
+    clean_device_type = normalize_device_type(device_type)
     clean_imei = normalize_device_imei(imei)
     clean_event_type = normalize_device_event_type(event_type)
     clean_status = normalize_device_status(condition_status)
@@ -6655,7 +6826,7 @@ async def create_device_condition_report(
         "pwa_devices",
         params={"on_conflict": "device_type,serial_number"},
         payload={
-            "device_type": "phone",
+            "device_type": clean_device_type,
             "serial_number": serial,
             "imei": clean_imei,
             "status": "active",
@@ -6673,7 +6844,7 @@ async def create_device_condition_report(
         "pwa_device_condition_reports",
         payload={
             "device_id": device_id,
-            "device_type": "phone",
+            "device_type": clean_device_type,
             "serial_number": serial,
             "imei": clean_imei,
             "courier_id": int(courier_id),
@@ -6704,7 +6875,7 @@ async def create_device_condition_report(
         photo_payloads.append(
             {
                 "report_id": report_id,
-                "file_name": clean_text(photo.filename or f"telefon_{index}.jpg", limit=160),
+                "file_name": clean_text(photo.filename or f"{clean_device_type}_{index}.jpg", limit=160),
                 "mime_type": mime_type,
                 "file_size": len(content),
                 "file_content_base64": base64.b64encode(content).decode("ascii"),
@@ -6719,6 +6890,31 @@ async def create_device_condition_report(
         prefer="return=minimal",
         timeout=90,
     )
+    if clean_device_type == "vehicle":
+        previous_report = latest_previous_vehicle_report(courier_id, serial, str(report_id))
+        if previous_report:
+            previous_photos = load_report_photos_with_content(str(previous_report.get("id") or ""))
+            comparison = compare_vehicle_damage_with_ai(
+                current_report=report,
+                current_photos=photo_payloads,
+                previous_report=previous_report,
+                previous_photos=previous_photos,
+            )
+        else:
+            comparison = {
+                "status": "no_previous",
+                "note": "Nincs korábbi fotós állapot ehhez a rendszámhoz, ezért AI összehasonlítás még nem készült.",
+                "model": "",
+                "compared_report_id": None,
+            }
+        update_vehicle_comparison_result(str(report_id), comparison)
+        report.update({
+            "comparison_status": comparison.get("status"),
+            "comparison_note": comparison.get("note"),
+            "comparison_model": comparison.get("model"),
+            "compared_report_id": comparison.get("compared_report_id"),
+            "comparison_checked_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     safe_report = safe_device_report(report)
     safe_report["photos"] = [

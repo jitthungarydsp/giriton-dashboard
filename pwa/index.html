@@ -358,6 +358,53 @@
           <section id="device-condition-history" class="device-history"></section>
         </section>
       </div>
+
+      <div id="vehicle-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">AUTÓ</p>
+            <h2>Autó állapot</h2>
+            <p class="muted">Tölts fel több fotót az autóról, hogy a korábbi állapotokkal össze lehessen hasonlítani.</p>
+          </div>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">AUTO</span>
+            <div>
+              <h3>Autó fotós ellenőrzés</h3>
+              <p>A rendszám alapján látni fogod az előző fotós ellenőrzéseket is.</p>
+            </div>
+          </div>
+          <form id="vehicle-condition-form" class="process-form two-column">
+            <input type="hidden" name="device_type" value="vehicle" />
+            <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required /></label>
+            <label>Esemény
+              <select id="vehicle-event-type" name="event_type">
+                <option value="inspection">Ellenőrzés</option>
+                <option value="handover">Átadás</option>
+                <option value="return">Visszavétel</option>
+                <option value="damage_report">Sérülés jelzés</option>
+              </select>
+            </label>
+            <label>Állapot
+              <select id="vehicle-condition-status" name="condition_status">
+                <option value="ok">Rendben</option>
+                <option value="scratched">Karcos</option>
+                <option value="dented">Horpadás</option>
+                <option value="cracked">Repedt / törött elem</option>
+                <option value="broken">Hibás</option>
+                <option value="other">Egyéb</option>
+              </select>
+            </label>
+            <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Hol látható a sérülés, mi változott?"></textarea></label>
+            <label class="full-width">Fotók<input id="vehicle-condition-photos" name="photos" type="file" accept="image/png,image/jpeg,image/webp" multiple required /></label>
+            <button class="primary full-width" type="submit">Autó állapot rögzítése</button>
+          </form>
+          <p id="vehicle-condition-message" class="updated-at" aria-live="polite"></p>
+          <section id="vehicle-condition-history" class="device-history"></section>
+        </section>
+      </div>
       <div id="tours-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -401,11 +448,12 @@
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-device"><span>□</span>Telefon</button>
+        <button id="nav-vehicle"><span>A</span>Autó</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=73" defer></script>
+    <script src="/app.js?v=74" defer></script>
   </body>
 </html>

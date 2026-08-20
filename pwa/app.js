@@ -9,6 +9,7 @@ const state = {
   currentRoute: null,
   coordinatorSetup: null,
   deviceReports: [],
+  vehicleReports: [],
   salaryAdvanceRequests: [],
   expenseRequests: [],
   statistics: null,
@@ -23,7 +24,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v73";
+const APP_VERSION = "v74";
 const $ = (selector) => document.querySelector(selector);
 
 function escapeHtml(value) {
@@ -72,6 +73,7 @@ function currentSectionRefresh() {
   if (state.section === "statistics") return loadStatistics();
   if (state.section === "workflow") return loadWorkflow();
   if (state.section === "expense") return loadExpenseRequests();
+  if (state.section === "vehicle") return loadVehicleReports();
   return Promise.resolve();
 }
 
@@ -142,7 +144,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-expense", "#nav-documents", "#nav-profile", "#nav-device", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-expense", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
     const previewWrapper = $(selector);
@@ -164,6 +166,7 @@ function showSection(section) {
   $("#documents-content").classList.toggle("hidden", section !== "documents");
   $("#profile-content").classList.toggle("hidden", section !== "profile");
   $("#device-content").classList.toggle("hidden", section !== "device");
+  $("#vehicle-content").classList.toggle("hidden", section !== "vehicle");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
 
@@ -175,6 +178,7 @@ function showSection(section) {
   $("#nav-documents").classList.toggle("active", section === "documents");
   $("#nav-profile").classList.toggle("active", section === "profile");
   $("#nav-device").classList.toggle("active", section === "device");
+  $("#nav-vehicle").classList.toggle("active", section === "vehicle");
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
 
@@ -188,6 +192,7 @@ function showSection(section) {
     refreshNotificationToggle();
   }
   if (section === "device") loadDeviceReports();
+  if (section === "vehicle") loadVehicleReports();
   if (section === "tours") {
     loadCurrentRoute();
   }
@@ -2407,23 +2412,41 @@ function deviceReportPhotos(photos = []) {
   if (!photos.length) return "";
   return `<div class="device-photo-list">${photos.map((photo, index) => `
     <a href="${escapeHtml(withPreviewCourier(photo.url || "#"))}" target="_blank" rel="noopener">
-      ${escapeHtml(photo.label || `Fotó ${index + 1}`)}
+      <img src="${escapeHtml(withPreviewCourier(photo.url || "#"))}" alt="${escapeHtml(photo.label || `Fotó ${index + 1}`)}" loading="lazy" />
+      <span>${escapeHtml(photo.label || `Fotó ${index + 1}`)}</span>
     </a>
   `).join("")}</div>`;
 }
 
-function renderDeviceReports() {
-  const target = $("#device-condition-history");
+function comparisonBlock(report) {
+  if (!report.comparisonStatus || report.comparisonStatus === "not_run") return "";
+  const labels = {
+    no_previous: "AI: nincs korábbi fotó",
+    not_configured: "AI nincs konfigurálva",
+    missing_photos: "AI: hiányzó fotó",
+    failed: "AI hiba",
+    checked: "AI ellenőrizve",
+    possible_new_damage: "AI: gyanús új sérülés",
+  };
+  return `
+    <div class="ai-comparison ${escapeHtml(report.comparisonStatus)}">
+      <strong>${escapeHtml(labels[report.comparisonStatus] || "AI összehasonlítás")}</strong>
+      ${report.comparisonNote ? `<p>${escapeHtml(report.comparisonNote)}</p>` : ""}
+    </div>
+  `;
+}
+
+function renderConditionReports({ targetSelector, reports, emptyText, title }) {
+  const target = $(targetSelector);
   if (!target) return;
-  const reports = state.deviceReports || [];
   if (!reports.length) {
-    target.innerHTML = `<div class="empty-card">Még nincs rögzített telefon állapot.</div>`;
+    target.innerHTML = `<div class="empty-card">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
   target.innerHTML = `
     <div class="device-history-head">
-      <strong>Előzmények</strong>
+      <strong>${escapeHtml(title)}</strong>
       <span>${reports.length} bejegyzés</span>
     </div>
     ${reports.map((report) => `
@@ -2434,6 +2457,7 @@ function renderDeviceReports() {
           ${report.imei ? `<small>IMEI: ${escapeHtml(report.imei)}</small>` : ""}
         </div>
         ${report.note ? `<p>${escapeHtml(report.note)}</p>` : ""}
+        ${comparisonBlock(report)}
         <div class="device-report-meta">
           <span>${Number(report.photoCount || 0)} fotó</span>
         </div>
@@ -2441,6 +2465,15 @@ function renderDeviceReports() {
       </article>
     `).join("")}
   `;
+}
+
+function renderDeviceReports() {
+  renderConditionReports({
+    targetSelector: "#device-condition-history",
+    reports: state.deviceReports || [],
+    emptyText: "Még nincs rögzített telefon állapot.",
+    title: "Előzmények",
+  });
 }
 
 async function loadDeviceReports() {
@@ -2453,6 +2486,34 @@ async function loadDeviceReports() {
     renderDeviceReports();
   } catch (error) {
     target.innerHTML = `<div class="notice error">A telefon előzmények nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderVehicleReports() {
+  const plate = String($("#vehicle-license-plate")?.value || "").trim();
+  renderConditionReports({
+    targetSelector: "#vehicle-condition-history",
+    reports: state.vehicleReports || [],
+    emptyText: plate
+      ? "Ehhez a rendszámhoz még nincs korábbi autó állapot."
+      : "Írd be a rendszámot, és megjelennek az autó korábbi fotós ellenőrzései.",
+    title: plate ? `Előzmények: ${plate.toUpperCase()}` : "Autó előzmények",
+  });
+}
+
+async function loadVehicleReports() {
+  const target = $("#vehicle-condition-history");
+  if (!target) return;
+  const plate = String($("#vehicle-license-plate")?.value || "").trim();
+  target.innerHTML = `<div class="empty-card">Autó előzmények betöltése...</div>`;
+  try {
+    const query = new URLSearchParams({ device_type: "vehicle" });
+    if (plate) query.set("serial_number", plate);
+    const payload = await api(withPreviewCourier(`/api/devices/reports?${query.toString()}`));
+    state.vehicleReports = payload.reports || [];
+    renderVehicleReports();
+  } catch (error) {
+    target.innerHTML = `<div class="notice error">Az autó előzmények nem tölthetők be: ${escapeHtml(error.message)}</div>`;
   }
 }
 
@@ -2481,6 +2542,63 @@ if (deviceConditionForm) {
       await loadDeviceReports();
     } catch (error) {
       setDeviceConditionMessage(`A telefon állapot mentése sikertelen: ${error.message}`, true);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+function setVehicleConditionMessage(message, isError = false) {
+  const target = $("#vehicle-condition-message");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+const vehiclePlateInput = $("#vehicle-license-plate");
+vehiclePlateInput?.addEventListener("change", () => {
+  state.vehicleReports = [];
+  loadVehicleReports();
+});
+vehiclePlateInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    state.vehicleReports = [];
+    loadVehicleReports();
+  }
+});
+
+const vehicleConditionForm = $("#vehicle-condition-form");
+if (vehicleConditionForm) {
+  vehicleConditionForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (isAdminPreviewMode()) {
+      setVehicleConditionMessage("Admin előnézetben nem rögzíthető autóállapot.", true);
+      return;
+    }
+    const button = vehicleConditionForm.querySelector('button[type="submit"]');
+    const photos = $("#vehicle-condition-photos")?.files || [];
+    if (!photos.length) {
+      setVehicleConditionMessage("Legalább egy fotót fel kell tölteni.", true);
+      return;
+    }
+    const form = new FormData(vehicleConditionForm);
+    const plate = String($("#vehicle-license-plate")?.value || "").trim();
+    setVehicleConditionMessage("Autó állapot mentése és AI összehasonlítás indítása...");
+    if (button) button.disabled = true;
+    try {
+      const payload = await api("/api/devices/reports", { method: "POST", body: form });
+      vehicleConditionForm.reset();
+      $("#vehicle-license-plate").value = plate;
+      const comparisonStatus = payload.report?.comparisonStatus || "";
+      setVehicleConditionMessage(
+        comparisonStatus === "no_previous"
+          ? "Autó állapot rögzítve. Még nincs korábbi fotó az AI összehasonlításhoz."
+          : "Autó állapot rögzítve, az AI összehasonlítás eredménye mentve."
+      );
+      await loadVehicleReports();
+    } catch (error) {
+      setVehicleConditionMessage(`Az autó állapot mentése sikertelen: ${error.message}`, true);
     } finally {
       if (button) button.disabled = false;
     }
@@ -2774,6 +2892,7 @@ function updatePreviewCourier(value) {
   state.currentRoute = null;
   state.billingProfile = null;
   state.deviceReports = [];
+  state.vehicleReports = [];
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.checkedInvoiceFile = null;
@@ -2788,6 +2907,7 @@ function updatePreviewCourier(value) {
   if (state.section === "expense") loadExpenseRequests();
   if (state.section === "profile") loadBillingProfile();
   if (state.section === "device") loadDeviceReports();
+  if (state.section === "vehicle") loadVehicleReports();
   if (state.section === "tours") loadCurrentRoute();
 }
 
@@ -3043,6 +3163,7 @@ $("#logout").addEventListener("click", async () => {
   state.checkedInvoiceMonth = null;
   state.coordinatorSetup = null;
   state.deviceReports = [];
+  state.vehicleReports = [];
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.statistics = null;
@@ -3057,6 +3178,7 @@ $("#nav-expense").addEventListener("click", () => showSection("expense"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));
 $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
+$("#nav-vehicle").addEventListener("click", () => showSection("vehicle"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 
