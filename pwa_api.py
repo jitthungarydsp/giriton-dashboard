@@ -1486,6 +1486,61 @@ def save_shift_queue_checkin(user: dict[str, Any], payload: ShiftQueueCheckinReq
     )
 
 
+def latest_shift_queue_status(user: dict[str, Any]) -> dict[str, Any]:
+    courier_id, _courier_name = courier_identity(user)
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    try:
+        rows = supabase_rest(
+            "GET",
+            "courier_shift_checkins",
+            params={
+                "select": "courier_id,courier_name,work_date,start_time,end_time,warehouse,shift_name,booking_code,event_type,created_at",
+                "work_date": f"eq.{today.isoformat()}",
+                "order": "created_at.desc",
+                "limit": "500",
+            },
+        )
+    except HTTPException:
+        rows = []
+    own_rows = [
+        row for row in rows
+        if str(row.get("courier_id") or "") == str(courier_id)
+        and str(row.get("event_type") or "") in {"queued", "returned"}
+    ]
+    if not own_rows:
+        return {"active": False, "queuedAt": "", "aheadCount": 0, "warehouse": "", "message": ""}
+    latest_own = own_rows[0]
+    if str(latest_own.get("event_type") or "") == "returned":
+        return {"active": False, "queuedAt": "", "aheadCount": 0, "warehouse": "", "message": "Visszaérkezés rögzítve."}
+    queued_at = str(latest_own.get("created_at") or "")
+    warehouse = normalize_warehouse(latest_own.get("warehouse")) or str(latest_own.get("warehouse") or "")
+    current_by_courier: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        other_id = str(row.get("courier_id") or "")
+        if not other_id or other_id in current_by_courier:
+            continue
+        current_by_courier[other_id] = row
+    ahead_count = 0
+    for other_id, row in current_by_courier.items():
+        if other_id == str(courier_id):
+            continue
+        if str(row.get("event_type") or "") != "queued":
+            continue
+        other_warehouse = normalize_warehouse(row.get("warehouse")) or str(row.get("warehouse") or "")
+        if warehouse and other_warehouse and other_warehouse != warehouse:
+            continue
+        if str(row.get("created_at") or "") < queued_at:
+            ahead_count += 1
+    return {
+        "active": True,
+        "queuedAt": queued_at,
+        "aheadCount": ahead_count,
+        "warehouse": warehouse,
+        "shiftName": str(latest_own.get("shift_name") or ""),
+        "message": f"{ahead_count} kolléga vár előtted." if ahead_count else "Nincs rögzített várakozó előtted.",
+    }
+
+
 def route_alert_email_recipient() -> str:
     return (
         load_setting("ROUTE_ALERT_EMAIL_TO")
@@ -6795,6 +6850,20 @@ def list_device_condition_reports(
     return {"reports": attach_device_report_photos(reports)}
 
 
+@app.get("/api/vehicles/reports")
+def list_vehicle_condition_reports(
+    serial_number: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    return list_device_condition_reports(
+        serial_number=serial_number,
+        device_type="vehicle",
+        courier=courier,
+        giriton_pwa_session=giriton_pwa_session,
+    )
+
+
 @app.post("/api/devices/reports")
 async def create_device_condition_report(
     serial_number: str = Form(...),
@@ -6929,6 +6998,27 @@ async def create_device_condition_report(
     return {"stored": True, "report": safe_report}
 
 
+@app.post("/api/vehicles/reports")
+async def create_vehicle_condition_report(
+    serial_number: str = Form(...),
+    event_type: str = Form(default="inspection"),
+    condition_status: str = Form(default="ok"),
+    note: str = Form(default=""),
+    photos: list[UploadFile] = File(default=[]),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    return await create_device_condition_report(
+        serial_number=serial_number,
+        device_type="vehicle",
+        imei="",
+        event_type=event_type,
+        condition_status=condition_status,
+        note=note,
+        photos=photos,
+        giriton_pwa_session=giriton_pwa_session,
+    )
+
+
 @app.get("/api/devices/photos/{photo_id}")
 def get_device_condition_photo(
     photo_id: str,
@@ -7014,8 +7104,16 @@ def create_shift_queue_checkin(
     payload: ShiftQueueCheckinRequest,
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    save_shift_queue_checkin(require_user(giriton_pwa_session), payload)
-    return {"ok": True}
+    user = require_user(giriton_pwa_session)
+    save_shift_queue_checkin(user, payload)
+    return {"ok": True, "queue": latest_shift_queue_status(user)}
+
+
+@app.get("/api/shifts/queue-status")
+def shift_queue_status(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    return {"queue": latest_shift_queue_status(require_user(giriton_pwa_session))}
 
 
 @app.get("/api/routes/current")

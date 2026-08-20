@@ -89,6 +89,7 @@
 
         <nav id="day-tabs" class="day-tabs" aria-label="Műszaknapok"></nav>
         <section id="warning-list" aria-live="polite"></section>
+        <section id="queue-status-panel" class="hidden" aria-live="polite"></section>
         <section id="shift-list" class="shift-list" aria-live="polite"></section>
         <p id="updated-at" class="updated-at"></p>
       </div>
@@ -377,7 +378,6 @@
             </div>
           </div>
           <form id="vehicle-condition-form" class="process-form two-column">
-            <input type="hidden" name="device_type" value="vehicle" />
             <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required /></label>
             <label>Esemény
               <select id="vehicle-event-type" name="event_type">
@@ -454,6 +454,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=74" defer></script>
+    <script src="/app.js?v=75" defer></script>
   </body>
 </html>

@@ -80,6 +80,11 @@ textarea { min-height: 96px; resize: vertical; }
 .empty-card, .warning-card { padding: 22px 18px; border-radius: 18px; text-align: center; }
 .empty-card { border: 1px dashed #c7d0c5; color: var(--muted); }
 .warning-card { margin-bottom: 10px; background: #fff3d4; color: var(--warning); font-size: 13px; }
+.queue-status-card { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-bottom: 12px; padding: 16px; border: 1px solid #b8d5b4; border-radius: 18px; background: #eff8ed; box-shadow: 0 7px 20px #3141340a; }
+.queue-status-card div { display: grid; gap: 3px; }
+.queue-status-card span { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.queue-status-card strong { font-size: 24px; letter-spacing: 0; }
+.queue-status-card small { color: var(--muted); font-size: 11px; font-weight: 750; }
 .updated-at { margin: 18px 0 0; color: var(--muted); font-size: 11px; text-align: center; }
 .workflow-header { display: grid; gap: 18px; padding: 22px; border-radius: 26px; background: linear-gradient(145deg, #fff, #edf3e9); border: 1px solid var(--line); }
 .workflow-header h2 { margin: 0; font-size: 28px; letter-spacing: -.04em; }

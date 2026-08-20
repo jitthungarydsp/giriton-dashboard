@@ -10,6 +10,8 @@ const state = {
   coordinatorSetup: null,
   deviceReports: [],
   vehicleReports: [],
+  queueStatus: null,
+  queueTimer: null,
   salaryAdvanceRequests: [],
   expenseRequests: [],
   statistics: null,
@@ -24,8 +26,9 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v74";
+const APP_VERSION = "v75";
 const $ = (selector) => document.querySelector(selector);
+const QUEUE_STORAGE_KEY = "giriton-active-queue";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -129,6 +132,75 @@ function activeOrNextShift(items = []) {
     const start = shiftDateTime(item, "start");
     return start && start >= now;
   }) || null;
+}
+
+function queueStorageRead() {
+  try {
+    return JSON.parse(localStorage.getItem(QUEUE_STORAGE_KEY) || "null") || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function queueStorageWrite(queue) {
+  if (queue?.active && queue.queuedAt) {
+    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
+  } else {
+    localStorage.removeItem(QUEUE_STORAGE_KEY);
+  }
+}
+
+function queueElapsedText(queuedAt) {
+  const start = new Date(queuedAt);
+  if (Number.isNaN(start.getTime())) return "00:00";
+  const totalSeconds = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function activeQueue() {
+  return state.queueStatus?.active ? state.queueStatus : queueStorageRead();
+}
+
+function clearActiveQueue() {
+  state.queueStatus = null;
+  queueStorageWrite(null);
+  renderQueueStatus();
+}
+
+function renderQueueStatus() {
+  const target = $("#queue-status-panel");
+  if (!target) return;
+  const queue = activeQueue();
+  if (!queue?.active || !queue.queuedAt) {
+    target.innerHTML = "";
+    target.classList.add("hidden");
+    return;
+  }
+  target.classList.remove("hidden");
+  target.innerHTML = `
+    <section class="queue-status-card">
+      <div>
+        <span>Sorban várakozás</span>
+        <strong>${escapeHtml(queueElapsedText(queue.queuedAt))}</strong>
+        <small>${escapeHtml(queue.warehouse || queue.shiftName || "Aktív sorba állás")}</small>
+      </div>
+      <div>
+        <span>Előtted vár</span>
+        <strong>${formatCount(queue.aheadCount || 0)}</strong>
+        <small>kolléga</small>
+      </div>
+    </section>
+  `;
+}
+
+function startQueueTimer() {
+  if (state.queueTimer) return;
+  state.queueTimer = window.setInterval(renderQueueStatus, 1000);
 }
 
 function showLogin() {
@@ -1026,6 +1098,9 @@ function renderCurrentRoute() {
 async function loadCurrentRoute() {
   try {
     state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
+    if (state.currentRoute?.found) {
+      clearActiveQueue();
+    }
     renderCurrentRoute();
   } catch (error) {
     const container = ensureRouteCard();
@@ -1229,6 +1304,7 @@ function renderShifts() {
   $("#shift-list").innerHTML = items.length
     ? items.map((item, index) => shiftCard(item, index)).join("")
     : `<div class="empty-card">Erre a napra nincs megjeleníthető műszak.</div>`;
+  renderQueueStatus();
 }
 
 function renderHero() {
@@ -1259,6 +1335,7 @@ async function loadShifts() {
     renderTabs();
     renderWarnings();
     renderShifts();
+    loadQueueStatus().catch(() => {});
     $("#updated-at").textContent = `Utolsó lekérés: ${new Date(state.data.updatedAt).toLocaleString("hu-HU")}`;
   } catch (error) {
     $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
@@ -1301,7 +1378,7 @@ async function sendShiftQueueCheckin(item, button) {
   button.disabled = true;
   button.textContent = "Mentés...";
   try {
-    await api("/api/shifts/queue-checkin", {
+    const payload = await api("/api/shifts/queue-checkin", {
       method: "POST",
       body: JSON.stringify({
         work_date: item.date || "",
@@ -1313,6 +1390,19 @@ async function sendShiftQueueCheckin(item, button) {
         event_type: eventType,
       }),
     });
+    if (eventType === "queued") {
+      state.queueStatus = payload.queue || {
+        active: true,
+        queuedAt: new Date().toISOString(),
+        aheadCount: 0,
+        warehouse: item.warehouse || "",
+        shiftName: item.attendanceShiftName || item.muszakproShiftText || "",
+      };
+      queueStorageWrite(state.queueStatus);
+      renderQueueStatus();
+    } else if (eventType === "returned") {
+      clearActiveQueue();
+    }
     button.textContent = "Rögzítve";
     button.classList.add("sent");
   } catch (error) {
@@ -1376,6 +1466,14 @@ function applyInvoiceValidationOverride() {
 
 function workflowStep(key) {
   return state.workflow?.steps?.find((step) => step.key === key) || {};
+}
+
+async function loadQueueStatus() {
+  if (isAdminPreviewMode()) return;
+  const payload = await api("/api/shifts/queue-status");
+  state.queueStatus = payload.queue || null;
+  queueStorageWrite(state.queueStatus);
+  renderQueueStatus();
 }
 
 function workflowStatus(key) {
@@ -2507,9 +2605,9 @@ async function loadVehicleReports() {
   const plate = String($("#vehicle-license-plate")?.value || "").trim();
   target.innerHTML = `<div class="empty-card">Autó előzmények betöltése...</div>`;
   try {
-    const query = new URLSearchParams({ device_type: "vehicle" });
+    const query = new URLSearchParams();
     if (plate) query.set("serial_number", plate);
-    const payload = await api(withPreviewCourier(`/api/devices/reports?${query.toString()}`));
+    const payload = await api(withPreviewCourier(`/api/vehicles/reports?${query.toString()}`));
     state.vehicleReports = payload.reports || [];
     renderVehicleReports();
   } catch (error) {
@@ -2587,7 +2685,7 @@ if (vehicleConditionForm) {
     setVehicleConditionMessage("Autó állapot mentése és AI összehasonlítás indítása...");
     if (button) button.disabled = true;
     try {
-      const payload = await api("/api/devices/reports", { method: "POST", body: form });
+      const payload = await api("/api/vehicles/reports", { method: "POST", body: form });
       vehicleConditionForm.reset();
       $("#vehicle-license-plate").value = plate;
       const comparisonStatus = payload.report?.comparisonStatus || "";
@@ -3080,6 +3178,8 @@ $("#login-form").addEventListener("submit", async (event) => {
       body: JSON.stringify({ username: $("#username").value, password: $("#password").value }),
     });
     state.user = payload.user;
+    state.queueStatus = queueStorageRead();
+    renderQueueStatus();
     showApp();
     showSection("home");
     await loadShifts();
@@ -3166,7 +3266,9 @@ $("#logout").addEventListener("click", async () => {
   state.vehicleReports = [];
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
+  state.queueStatus = null;
   state.statistics = null;
+  renderQueueStatus();
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
@@ -3185,6 +3287,7 @@ $("#nav-coordinator").addEventListener("click", () => showSection("coordinator")
 setInterval(() => {
   currentSectionRefresh().catch(() => {});
 }, 5 * 60 * 1000);
+startQueueTimer();
 
 let pullStartY = null;
 let pullTriggered = false;
