@@ -3812,6 +3812,7 @@ def rerun_courier_invoice_validation(
         raise RuntimeError("Nincs aktuális havi feltöltött számla ehhez a futárhoz.")
     content_row = read_peopleforce_document_content(str(invoice_document.get("id")))
     file_bytes = decode_document_content(content_row.get("file_content_base64"))
+    load_courier_profile.clear()
     profile = load_courier_profile(courier_id)
     expected_amount = expected_tig_amount_for_admin(
         courier_id,
@@ -3841,6 +3842,28 @@ def rerun_courier_invoice_validation(
             status_note="A számla automatikus ellenőrzése újrafuttatva és sikeres.",
             updated_by=updated_by,
         )
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=process_action_key("invoice_payment", clean_process),
+            document_month=clean_month,
+            status="open",
+            status_note="Számlaellenőrzés sikeres, kifizetésre vár.",
+            updated_by=updated_by,
+        )
+        update_peopleforce_complaints_status_for_process(
+            courier_id,
+            clean_month,
+            action_key,
+            "closed",
+        )
+        if not clean_process:
+            update_peopleforce_complaints_status_for_process(
+                courier_id,
+                clean_month,
+                "invoice_check",
+                "closed",
+            )
     else:
         upsert_peopleforce_card_status(
             courier_id=courier_id,
@@ -13895,6 +13918,11 @@ def show_courier_dialog() -> None:
                     "document_type",
                     pd.Series("", index=complaint_view.index),
                 ).map(lambda value: base_action_key(value) in {"invoice_check", "invoice_submit"})
+                open_complaint_mask = complaint_view.get(
+                    "status",
+                    pd.Series("", index=complaint_view.index),
+                ).astype(str).str.strip().str.casefold().isin({"new", "open", "in_progress", ""})
+                invoice_attention_mask = invoice_attention_mask & open_complaint_mask
                 if bool(invoice_attention_mask.any()):
                     invoice_attention_rows = complaint_view.loc[invoice_attention_mask]
                     for attention_index, attention_row in invoice_attention_rows.iterrows():
