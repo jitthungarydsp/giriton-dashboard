@@ -3423,7 +3423,7 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
         if row.get("key") == "tip":
             row["netHuf"] = sign * gross_abs
             row["vatHuf"] = 0
-            row["vatLabel"] = "Adómentes"
+            row["vatLabel"] = "TAM"
             row["grossHuf"] = sign * gross_abs
             continue
         if breakdown.get("taxMode") == "vat":
@@ -3436,7 +3436,7 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             row["netHuf"] = money_int(row.get("grossHuf"))
             row["vatHuf"] = 0
             if row.get("key") == "tip":
-                row["vatLabel"] = "Adómentes"
+                row["vatLabel"] = "TAM"
         row["label"] = str(override.get("item_label") or row.get("label") or "")
         if row.get("key") == "transfer_service":
             row["label"] = "Szállítási díj (494107) - átutalás"

@@ -192,7 +192,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
     ]
     if tip:
         tip_net, tip_vat, tip_gross = tip, 0, tip
-        tip_vat_label = "Adómentes"
+        tip_vat_label = "TAM"
         rows.append({
             "key": "tip",
             "label": "Borravaló",
@@ -551,7 +551,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
             _money(service),
         ])
     if tip:
-        amount_rows.append(["Borravaló - adómentes", _money(tip), "Adómentes", _money(tip)])
+        amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
     final_total = service_gross + tip
     total_row_index = len(amount_rows)
     amount_rows.append(["", "", "VÉGÖSSZEG:", _money(final_total)])
@@ -605,7 +605,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
         "<b>SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
         "- A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd!<br/>"
         f"- Adózási mód a master TIG beállítás/adószám alapján: <b>{tax_label}</b>.<br/>"
-        "- A borravaló külön, adómentes tétel.",
+        "- A borravaló külön, TAM tétel.",
         styles["body"],
     ))
     story.append(Spacer(1, 7 * mm))
