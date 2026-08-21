@@ -603,6 +603,15 @@
             "active": true,
             "token": ""
         },
+                {
+            "username": "Hegedüs 8332 Dávid",
+            "trainer": "trainer_name",
+            "password": "Gxli6dwD",
+            "role": "user",
+            "courierId": 8332,
+            "active": true,
+            "token": ""
+        },
         {
             "username": "Nagy 7725 István",
             "trainer": "trainer_name",
