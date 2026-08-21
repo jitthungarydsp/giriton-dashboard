@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, timedelta
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -469,15 +470,27 @@ def _tig_pdf_vat_cell(row: dict[str, Any]) -> str:
 
 def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakdown: dict[str, Any] | None = None) -> bytes:
     regular, bold = _font_names()
-    styles = _styles(regular, bold)
+    base_styles = _styles(regular, bold)
+    styles = {
+        **base_styles,
+        "tig_title": ParagraphStyle("tig_title", fontName=bold, fontSize=15, leading=18, textColor=colors.HexColor("#102018")),
+        "tig_body": ParagraphStyle("tig_body", fontName=regular, fontSize=8.8, leading=11, textColor=colors.HexColor("#102018")),
+        "tig_small": ParagraphStyle("tig_small", fontName=regular, fontSize=7.4, leading=9, textColor=colors.HexColor("#6b7a70")),
+        "tig_hero_label": ParagraphStyle("tig_hero_label", fontName=bold, fontSize=7.8, leading=10, textColor=colors.HexColor("#d7f96c"), alignment=1),
+        "tig_hero_amount": ParagraphStyle("tig_hero_amount", fontName=bold, fontSize=24, leading=28, textColor=colors.white, alignment=1),
+        "tig_hero_month": ParagraphStyle("tig_hero_month", fontName=bold, fontSize=7.5, leading=9, textColor=colors.white, alignment=1),
+        "tig_cell": ParagraphStyle("tig_cell", fontName=regular, fontSize=8.2, leading=10, textColor=colors.HexColor("#102018")),
+        "tig_cell_bold": ParagraphStyle("tig_cell_bold", fontName=bold, fontSize=8.2, leading=10, textColor=colors.HexColor("#102018")),
+        "tig_note": ParagraphStyle("tig_note", fontName=regular, fontSize=7.2, leading=9, textColor=colors.HexColor("#6b7a70")),
+    }
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(A4),
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=14 * mm,
-        bottomMargin=12 * mm,
+        pagesize=A4,
+        leftMargin=22 * mm,
+        rightMargin=22 * mm,
+        topMargin=18 * mm,
+        bottomMargin=14 * mm,
     )
     period = _month_label(courier.get("document_month"))
     document_meta = _tig_document_dates(courier)
@@ -488,191 +501,228 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     cash_net, cash_vat, cash_gross = _split_gross_vat_amount(cash) if vat_payer else (cash, 0, cash)
     courier_id = str(courier.get("id") or "")
     story: list[Any] = []
-    _document_header(story, f"TIG {period}-ra", courier, period, styles, regular, bold)
-    story.append(_table(
-        [[Paragraph(
-            f"<font color='red'><b>Tisztelt {str(courier.get('company_name') or courier.get('name') or '').upper()}!</b></font><br/><br/>"
-            "<font size='18'><b>KÉRJÜK FIGYELMESEN ELOLVASNI VÉGIG!</b></font><br/><br/>"
-            "<font color='#999999'><b>KLIKK IDE: SZÁMLABEFOGADÓ RENDSZER</b></font><br/><br/>"
-            "<font color='red'><b>A számlákat e-mailben nem tudjuk fogadni! Csak az itt feltöltött bizonylatokat tudjuk feldolgozni és fizetni.</b></font>",
-            styles["center"],
-        )]],
-        [250 * mm],
-        [("BOX", (0, 0), (-1, -1), 1.2, RED), ("PADDING", (0, 0), (-1, -1), 16)],
-    ))
-    story.append(Spacer(1, 6 * mm))
-    story.append(_table(
-        [
-            [
-                Paragraph("<b>PRO TIPP: Quick kérelem</b><br/>Ha a számlázódban fizetési kérelmet küldesz, előre veszed magad a kifizetési sorban.", styles["body"]),
-                Paragraph("<b>Banki adatok:</b><br/>Kérjük, ellenőrizd a bankszámlaszámod a számlán! Ha eltér, jelezd a feltöltésnél.", styles["body"]),
-            ]
-        ],
-        [120 * mm, 120 * mm],
-        [
-            ("BOX", (0, 0), (0, 0), 0.8, GREEN),
-            ("BOX", (1, 0), (1, 0), 0.8, ORANGE),
-            ("PADDING", (0, 0), (-1, -1), 10),
-        ],
-    ))
-    story.append(Spacer(1, 6 * mm))
-    story.append(Paragraph("TELJESÍTÉSI IGAZOLÁS", styles["h1"]))
-    story.append(_table(
-        [
-            [Paragraph("<b>SZOLGÁLTATÓ (ELADÓ):</b>", styles["small"]), Paragraph("<b>MEGBÍZÓ (VEVŐ):</b>", styles["small"])],
-            [
-                Paragraph(
-                    f"<b>{courier.get('company_name') or courier.get('name') or ''}</b><br/>"
-                    f"<font color='blue'>{courier.get('address') or ''}</font><br/>"
-                    f"Adószám: <b>{courier.get('tax_number') or '-'}</b>",
-                    styles["body"],
-                ),
-                Paragraph(
-                    "<font color='red'><b>Just in Time Transport Hungary Kft.</b><br/>"
-                    "1201 Budapest, Atléta utca 44<br/>"
-                    "Adószám: 32649460-2-43</font><br/><br/>"
-                    f"Teljesítési időszak: <b>{document_meta['periodLabel']}</b><br/>"
-                    f"Teljesítés: <b>{document_meta['performanceDate']}</b><br/>"
-                    f"Fizetési határidő: <b>{document_meta['paymentDueDate']}</b><br/>"
-                    f"Megjegyzés: <b>{document_meta['note']}</b>",
-                    styles["body"],
-                ),
-            ],
-        ],
-        [115 * mm, 115 * mm],
-        [("BOX", (0, 0), (-1, -1), 0.6, LIGHT_BORDER), ("PADDING", (0, 0), (-1, -1), 9), ("VALIGN", (0, 0), (-1, -1), "TOP")],
-    ))
-    story.append(Spacer(1, 6 * mm))
-    story.append(_table(
-        [
-            ["Teljesítési időszak", "Teljesítés napja", "Fizetési határidő", "Fizetés módja"],
-            [document_meta["periodLabel"], document_meta["performanceDate"], document_meta["paymentDueDate"], "Átutalás"],
-        ],
-        [58 * mm, 65 * mm, 65 * mm, 42 * mm],
-        [
-            ("FONTNAME", (0, 0), (-1, -1), regular),
-            ("FONTNAME", (0, 0), (-1, 0), bold),
-            ("FONTNAME", (0, 1), (-1, 1), bold),
-            ("TEXTCOLOR", (1, 1), (2, 1), RED),
-            ("GRID", (0, 0), (-1, -1), 0.35, LIGHT_BORDER),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("PADDING", (0, 0), (-1, -1), 8),
-        ],
-    ))
-    story.append(Spacer(1, 6 * mm))
-    amount_rows: list[list[Any]] = [["Tétel megnevezése", "Nettó (Ft)", "ÁFA (Ft)", "Bruttó (Ft)"]]
+
+    def p(value: Any, style_name: str = "tig_body") -> Paragraph:
+        return Paragraph(escape(str(value or "")), styles[style_name])
+
+    def rich(text: str, style_name: str = "tig_body") -> Paragraph:
+        return Paragraph(text, styles[style_name])
+
+    document_month = courier.get("document_month")
+    month_code = document_month.strftime("%Y-%m") if isinstance(document_month, date) else str(document_month or period)
+    seller_name = str(courier.get("company_name") or courier.get("name") or "")
+    seller_address = str(courier.get("address") or courier.get("company_address") or "-")
+    seller_tax = str(courier.get("tax_number") or courier.get("tax_id") or "-")
     breakdown_pdf_rows = _tig_pdf_rows_from_breakdown(tig_breakdown)
     cash_breakdown_rows: list[dict[str, Any]] = []
     if breakdown_pdf_rows:
         transfer_breakdown_rows, cash_breakdown_rows, final_total = breakdown_pdf_rows
-        for row in transfer_breakdown_rows:
-            amount_rows.append([
-                str(row.get("label") or "TIG tétel"),
-                _money(_int_money(row.get("netHuf"))),
-                _tig_pdf_vat_cell(row),
-                _money(_int_money(row.get("grossHuf"))),
-            ])
     elif vat_payer:
         service_net, service_vat, service_gross = _add_vat_to_net(service)
-        amount_rows.append([
-            f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
-            _money(service_net),
-            _money(service_vat),
-            _money(service_gross),
-        ])
+        transfer_breakdown_rows = [{
+            "label": f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
+            "netHuf": service_net,
+            "vatHuf": service_vat,
+            "grossHuf": service_gross,
+            "vatLabel": "27%",
+            "note": "KP és borravaló nélküli szolgáltatási díj.",
+        }]
         if tip:
-            amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
+            transfer_breakdown_rows.append({
+                "label": "Borravaló",
+                "netHuf": tip,
+                "vatHuf": 0,
+                "grossHuf": tip,
+                "vatLabel": "TAM",
+                "note": "Külön tétel.",
+            })
         final_total = service_gross + tip
     else:
         service_net, service_vat, service_gross = service, 0, service
-        amount_rows.append([
-            f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
-            _money(service),
-            "AAM",
-            _money(service),
-        ])
+        transfer_breakdown_rows = [{
+            "label": f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
+            "netHuf": service,
+            "vatHuf": 0,
+            "grossHuf": service,
+            "vatLabel": "AAM",
+            "note": "KP és borravaló nélküli szolgáltatási díj.",
+        }]
         if tip:
-            amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
+            transfer_breakdown_rows.append({
+                "label": "Borravaló",
+                "netHuf": tip,
+                "vatHuf": 0,
+                "grossHuf": tip,
+                "vatLabel": "TAM",
+                "note": "Külön tétel.",
+            })
         final_total = service_gross + tip
-    total_row_index = len(amount_rows)
-    amount_rows.append(["", "", "VÉGÖSSZEG:", _money(final_total)])
+
+    if not cash_breakdown_rows and cash_gross:
+        cash_breakdown_rows = [{
+            "label": "Szállítási díj (494107) - készpénz",
+            "netHuf": cash_net,
+            "vatHuf": cash_vat,
+            "grossHuf": cash_gross,
+            "vatLabel": "27%" if vat_payer else "AAM",
+            "note": "Külön KP sor, nem növeli az átutalásos végösszeget.",
+        }]
+
+    story.append(rich("<b>TIG és elfogadás</b>", "tig_title"))
+    story.append(p("A TIG tételes bontása itt jelenik meg, külön KP sorral.", "tig_small"))
+    story.append(Spacer(1, 5 * mm))
+
     story.append(_table(
-        amount_rows,
-        [90 * mm, 50 * mm, 42 * mm, 48 * mm],
+        [[
+            rich("TIG VÉGÖSSZEG", "tig_hero_label"),
+            rich(escape(_money(final_total)), "tig_hero_amount"),
+            rich(escape(month_code), "tig_hero_month"),
+        ]],
+        [166 * mm],
         [
-            ("FONTNAME", (0, 0), (-1, -1), regular),
-            ("FONTNAME", (0, 0), (-1, 0), bold),
-            ("FONTNAME", (2, -1), (-1, -1), bold),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#999999")),
-            ("TEXTCOLOR", (3, -1), (3, -1), RED),
-            ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#333333")),
-            ("SPAN", (0, total_row_index), (1, total_row_index)),
-            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-            ("PADDING", (0, 0), (-1, -1), 8),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#163326")),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#163326")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ],
     ))
     story.append(Spacer(1, 5 * mm))
+
+    story.append(_table(
+        [
+            [
+                rich(
+                    "<b>VEVŐ</b><br/>"
+                    "Just in Time Transport Hungary Kft.<br/>"
+                    "1201 Budapest<br/>"
+                    "Atléta utca 44.<br/>"
+                    "Adószám: 32649460-2-43",
+                    "tig_body",
+                ),
+                rich(
+                    "<b>ELADÓ</b><br/>"
+                    f"{escape(seller_name)}<br/>"
+                    f"Cím: {escape(seller_address)}<br/>"
+                    f"Adószám: {escape(seller_tax)}<br/>"
+                    f"Futár ID: {escape(courier_id or '-')}",
+                    "tig_body",
+                ),
+            ],
+            [
+                rich(
+                    f"<b>Teljesítési időszak:</b> {escape(str(document_meta['periodLabel']))}<br/>"
+                    f"<b>Teljesítés:</b> {escape(str(document_meta['performanceDate']))}",
+                    "tig_body",
+                ),
+                rich(
+                    f"<b>Fizetési határidő:</b> {escape(str(document_meta['paymentDueDate']))}<br/>"
+                    f"<b>Megjegyzés:</b> {escape(str(document_meta['note']))}",
+                    "tig_body",
+                ),
+            ],
+        ],
+        [81 * mm, 81 * mm],
+        [
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e2ebe3")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ],
+    ))
+    story.append(Spacer(1, 5 * mm))
+
+    amount_rows: list[list[Any]] = [["TÉTEL", "NETTÓ", "ÁFA", "BRUTTÓ"]]
+    for row in transfer_breakdown_rows:
+        note = str(row.get("note") or "")
+        label = escape(str(row.get("label") or "TIG tétel"))
+        label_cell = f"<b>{label}</b>"
+        if note:
+            label_cell += f"<br/><font color='#6b7a70'>{escape(note)}</font>"
+        amount_rows.append([
+            rich(label_cell, "tig_cell"),
+            rich(f"<b>{escape(_money(_int_money(row.get('netHuf'))))}</b>", "tig_cell_bold"),
+            rich(f"<b>{escape(_tig_pdf_vat_cell(row))}</b>", "tig_cell_bold"),
+            rich(f"<b>{escape(_money(_int_money(row.get('grossHuf'))))}</b>", "tig_cell_bold"),
+        ])
+    story.append(_table(
+        amount_rows,
+        [76 * mm, 30 * mm, 24 * mm, 32 * mm],
+        [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#163326")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), bold),
+            ("FONTNAME", (0, 1), (-1, -1), regular),
+            ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#dfe8df")),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ],
+    ))
+    story.append(Spacer(1, 5 * mm))
+
     if cash_breakdown_rows:
-        cash_amount_rows: list[list[Any]] = [["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"]]
+        cash_amount_rows: list[list[Any]] = [["KÜLÖN KP TÉTELEK", "NETTÓ", "ÁFA", "BRUTTÓ"]]
         for row in cash_breakdown_rows:
+            note = str(row.get("note") or "")
+            label = escape(str(row.get("label") or "Szállítási díj (494107) - készpénz"))
+            label_cell = f"<b>{label}</b>"
+            if note:
+                label_cell += f"<br/><font color='#6b7a70'>{escape(note)}</font>"
             cash_amount_rows.append([
-                str(row.get("label") or "Szállítási díj (494107) - készpénz"),
-                _money(_int_money(row.get("netHuf"))),
-                _tig_pdf_vat_cell(row),
-                _money(_int_money(row.get("grossHuf"))),
+                rich(label_cell, "tig_cell"),
+                rich(f"<b>{escape(_money(_int_money(row.get('netHuf'))))}</b>", "tig_cell_bold"),
+                rich(f"<b>{escape(_tig_pdf_vat_cell(row))}</b>", "tig_cell_bold"),
+                rich(f"<b>{escape(_money(_int_money(row.get('grossHuf'))))}</b>", "tig_cell_bold"),
             ])
         story.append(_table(
             cash_amount_rows,
-            [90 * mm, 50 * mm, 42 * mm, 48 * mm],
+            [76 * mm, 30 * mm, 24 * mm, 32 * mm],
             [
-                ("FONTNAME", (0, 0), (-1, -1), regular),
-                ("FONTNAME", (0, 0), (-1, 0), bold),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf7ea")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f7e4")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
-                ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#b7c7b7")),
-                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-                ("PADDING", (0, 0), (-1, -1), 8),
+                ("FONTNAME", (0, 0), (-1, 0), bold),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#dfe8df")),
+                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             ],
         ))
         story.append(Spacer(1, 5 * mm))
-    elif cash_gross:
-        story.append(_table(
-            [
-                ["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"],
-                [
-                    "Szállítási díj (494107) - készpénz",
-                    _money(cash_net),
-                    _money(cash_vat) if vat_payer else "AAM",
-                    _money(cash_gross),
-                ],
-            ],
-            [90 * mm, 50 * mm, 42 * mm, 48 * mm],
-            [
-                ("FONTNAME", (0, 0), (-1, -1), regular),
-                ("FONTNAME", (0, 0), (-1, 0), bold),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf7ea")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
-                ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#b7c7b7")),
-                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-                ("PADDING", (0, 0), (-1, -1), 8),
-            ],
-        ))
-        story.append(Spacer(1, 5 * mm))
+
+    accepted_text = "A TIG-et elfogadtad." if courier.get("tig_accepted") else "TIG részletező."
     story.append(_table(
-        [[Paragraph(f"<b>Megjegyzésbe kötelező az azonosító:</b> <font color='red'><b>{courier_id}</b></font>", styles["body"])]],
-        [230 * mm],
-        [("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#777777")), ("PADDING", (0, 0), (-1, -1), 9)],
+        [[rich(f"<b>{escape(accepted_text)}</b>", "tig_body")]],
+        [166 * mm],
+        [
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#e8f7e4")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e8f7e4")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ],
     ))
-    story.append(Spacer(1, 7 * mm))
+    story.append(Spacer(1, 8 * mm))
     tax_label = "27%-os ÁFA" if vat_payer else "AAM"
-    story.append(Paragraph(
-        "<b>SZÁMLÁZÁSI SZABÁLYOK:</b><br/>"
-        "- A teljesítési és fizetési határidőt is a kiállítás napja + 8 napra állítsd!<br/>"
-        f"- Adózási mód a master TIG beállítás/adószám alapján: <b>{tax_label}</b>.<br/>"
-        "- A borravaló külön, TAM tétel.",
-        styles["body"],
+    story.append(rich(
+        "Számlázási megjegyzés: a futár ID szerepeljen a számlán. "
+        f"Adózási mód: <b>{escape(tax_label)}</b>. A borravaló külön TAM tétel.",
+        "tig_note",
     ))
-    story.append(Spacer(1, 7 * mm))
-    story.append(Paragraph("Gépi úton készült igazolás, aláírás nélkül is hiteles.<br/><b>Just in Time Transport Hungary Kft.</b><br/>Észrevétel és kifogások: elszamolas@jitt.hu", styles["center"]))
     doc.build(story)
     return buffer.getvalue()

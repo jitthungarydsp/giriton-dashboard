@@ -6056,6 +6056,7 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
             "id": courier_id,
             "document_month": month,
             "document_reference": reference,
+            "tig_accepted": True,
         },
         {"payable": payable, "cash": cash_amount, "tip": tip_amount},
         tig_breakdown=tig_breakdown,
