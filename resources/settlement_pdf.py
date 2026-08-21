@@ -440,7 +440,34 @@ def build_settlement_pdf(courier: dict[str, Any], routes: list[dict[str, Any]], 
     return buffer.getvalue()
 
 
-def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
+def _tig_pdf_rows_from_breakdown(tig_breakdown: dict[str, Any] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int] | None:
+    if not isinstance(tig_breakdown, dict):
+        return None
+    rows = [row for row in (tig_breakdown.get("rows") or []) if isinstance(row, dict)]
+    if not rows:
+        return None
+    cash_rows: list[dict[str, Any]] = []
+    transfer_rows: list[dict[str, Any]] = []
+    for row in rows:
+        key = str(row.get("key") or "")
+        if key in {"cash_service", "cash_deduction", "tig_cash_deduction"}:
+            cash_rows.append(row)
+        else:
+            transfer_rows.append(row)
+    final_total = _int_money(tig_breakdown.get("finalTotalHuf"))
+    if final_total <= 0:
+        final_total = sum(_int_money(row.get("grossHuf")) for row in transfer_rows)
+    return transfer_rows, cash_rows, final_total
+
+
+def _tig_pdf_vat_cell(row: dict[str, Any]) -> str:
+    vat_huf = _int_money(row.get("vatHuf"))
+    if vat_huf:
+        return _money(vat_huf)
+    return str(row.get("vatLabel") or "")
+
+
+def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakdown: dict[str, Any] | None = None) -> bytes:
     regular, bold = _font_names()
     styles = _styles(regular, bold)
     buffer = BytesIO()
@@ -534,7 +561,18 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
     ))
     story.append(Spacer(1, 6 * mm))
     amount_rows: list[list[Any]] = [["Tétel megnevezése", "Nettó (Ft)", "ÁFA (Ft)", "Bruttó (Ft)"]]
-    if vat_payer:
+    breakdown_pdf_rows = _tig_pdf_rows_from_breakdown(tig_breakdown)
+    cash_breakdown_rows: list[dict[str, Any]] = []
+    if breakdown_pdf_rows:
+        transfer_breakdown_rows, cash_breakdown_rows, final_total = breakdown_pdf_rows
+        for row in transfer_breakdown_rows:
+            amount_rows.append([
+                str(row.get("label") or "TIG tétel"),
+                _money(_int_money(row.get("netHuf"))),
+                _tig_pdf_vat_cell(row),
+                _money(_int_money(row.get("grossHuf"))),
+            ])
+    elif vat_payer:
         service_net, service_vat, service_gross = _add_vat_to_net(service)
         amount_rows.append([
             f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
@@ -542,6 +580,9 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
             _money(service_vat),
             _money(service_gross),
         ])
+        if tip:
+            amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
+        final_total = service_gross + tip
     else:
         service_net, service_vat, service_gross = service, 0, service
         amount_rows.append([
@@ -550,9 +591,9 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
             "AAM",
             _money(service),
         ])
-    if tip:
-        amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
-    final_total = service_gross + tip
+        if tip:
+            amount_rows.append(["Borravaló - TAM", _money(tip), "TAM", _money(tip)])
+        final_total = service_gross + tip
     total_row_index = len(amount_rows)
     amount_rows.append(["", "", "VÉGÖSSZEG:", _money(final_total)])
     story.append(_table(
@@ -571,7 +612,30 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float]) -> bytes:
         ],
     ))
     story.append(Spacer(1, 5 * mm))
-    if cash_gross:
+    if cash_breakdown_rows:
+        cash_amount_rows: list[list[Any]] = [["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"]]
+        for row in cash_breakdown_rows:
+            cash_amount_rows.append([
+                str(row.get("label") or "Szállítási díj (494107) - készpénz"),
+                _money(_int_money(row.get("netHuf"))),
+                _tig_pdf_vat_cell(row),
+                _money(_int_money(row.get("grossHuf"))),
+            ])
+        story.append(_table(
+            cash_amount_rows,
+            [90 * mm, 50 * mm, 42 * mm, 48 * mm],
+            [
+                ("FONTNAME", (0, 0), (-1, -1), regular),
+                ("FONTNAME", (0, 0), (-1, 0), bold),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf7ea")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
+                ("GRID", (0, 0), (-1, -1), 0.55, colors.HexColor("#b7c7b7")),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("PADDING", (0, 0), (-1, -1), 8),
+            ],
+        ))
+        story.append(Spacer(1, 5 * mm))
+    elif cash_gross:
         story.append(_table(
             [
                 ["Tétel megnevezése", "Nettó", "ÁFA tartalom", "Bruttó"],

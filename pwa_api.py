@@ -6041,6 +6041,7 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
     cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
     reference = make_document_reference(courier_id, "tig", month)
+    tig_breakdown = build_workflow_tig_breakdown(user, month, breakdown)
     pdf_bytes = build_tig_pdf(
         {
             "name": courier_name,
@@ -6057,6 +6058,7 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
             "document_reference": reference,
         },
         {"payable": payable, "cash": cash_amount, "tip": tip_amount},
+        tig_breakdown=tig_breakdown,
     )
     note_parts = [
         "Automatikus TIG generálás elszámolás elfogadása után.",

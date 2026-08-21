@@ -11553,7 +11553,7 @@ def show_courier_dialog() -> None:
             {
                 "name": courier_name,
                 "company_name": profile.get("company_name") or courier_name,
-                "address": profile.get("address") or "",
+                "address": profile.get("address") or profile.get("company_address") or "",
                 "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
                 "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
                 "vat_status": profile.get("vat_status") or "",
@@ -11570,6 +11570,7 @@ def show_courier_dialog() -> None:
                 "cash": abs(atm_deduction_total),
                 "tip": tip_total,
             },
+            tig_breakdown=tig_breakdown,
         )
         st.markdown(
             f"""
@@ -15818,6 +15819,14 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
                 "payable": payable,
             },
         )
+        tig_breakdown = build_tig_breakdown(
+            {**courier_payload, "document_reference": plan["tig_reference"]},
+            {
+                "payable": payable,
+                "cash": abs(parse_huf_value(row.get("ATM hatás"))),
+                "tip": tip,
+            },
+        )
         tig_bytes = build_tig_pdf(
             {**courier_payload, "document_reference": plan["tig_reference"]},
             {
@@ -15825,6 +15834,7 @@ def build_monthly_period_documents(data: pd.DataFrame, period_start: date, perio
                 "cash": abs(parse_huf_value(row.get("ATM hatás"))),
                 "tip": tip,
             },
+            tig_breakdown=tig_breakdown,
         )
         documents.extend([
             {**plan, "document_type": "settlement", "file_name": plan["settlement_file"], "file_bytes": settlement_bytes},
