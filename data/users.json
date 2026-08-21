@@ -549,12 +549,21 @@
             "active": true,
             "token": ""
         },
-                {
+        {
             "username": "Révbíró Gábor",
             "trainer": "trainer_name",
             "password": "3R75ruSm",
             "role": "user",
             "courierId": 7624,
+            "active": true,
+            "token": ""
+        },
+                {
+            "username": "Rusvai 8264 Marcell",
+            "trainer": "trainer_name",
+            "password": "3R75ruSm",
+            "role": "user",
+            "courierId": 8264,
             "active": true,
             "token": ""
         },
