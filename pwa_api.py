@@ -263,20 +263,16 @@ def is_unrestricted_legacy_settlement_month(month: date) -> bool:
     return month.replace(day=1) == date(2026, 6, 1)
 
 
-def authenticate(username: str, password: str) -> dict[str, Any] | None:
-    try:
-        db_user = authenticate_pwa_db_user(username, password)
-        if db_user:
-            return db_user
-    except Exception:
-        # If the DB user table is not deployed yet, keep the legacy users.json login working.
-        pass
-
+def authenticate_legacy_json_user(username: str, password: str) -> dict[str, Any] | None:
     wanted = str(username or "").strip().casefold()
+    wanted_key = normalize_text(username)
     for user in load_users():
         if not user.get("active", True):
             continue
-        if str(user.get("username") or "").strip().casefold() != wanted:
+        user_name = str(user.get("username") or "").strip()
+        exact_match = user_name.casefold() == wanted
+        normalized_match = normalize_text(user_name) == wanted_key
+        if not exact_match and not normalized_match:
             continue
 
         password_hash = str(user.get("passwordHash") or "")
@@ -284,6 +280,21 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
             return user
         if user.get("password") == password:
             return user
+    return None
+
+
+def authenticate(username: str, password: str) -> dict[str, Any] | None:
+    legacy_user = authenticate_legacy_json_user(username, password)
+    if legacy_user:
+        return legacy_user
+
+    try:
+        db_user = authenticate_pwa_db_user(username, password)
+        if db_user:
+            return db_user
+    except Exception:
+        # If the DB user table is not deployed yet, keep the legacy users.json login working.
+        pass
     return None
 
 
@@ -6615,6 +6626,13 @@ def register(payload: RegistrationRequest):
 def password_reset(payload: PasswordResetRequest):
     courier_id = normalize_profile_courier_id(payload.courier_id)
     email = normalize_email_address(payload.email)
+    try:
+        smtp_config()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Az e-mail küldés nincs beállítva, ezért a jelszó nem lett módosítva: {exc}",
+        ) from exc
     master_row = read_master_auth_row(courier_id)
     if not master_row:
         raise HTTPException(status_code=404, detail="Ez a futár ID nincs a futár törzsben.")
