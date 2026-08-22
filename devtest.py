@@ -4252,6 +4252,43 @@ def expense_request_process_label(request_row: dict) -> str:
 
 
 @st.cache_data(show_spinner=False, ttl=30)
+def load_expense_requests_for_month(document_month: date) -> pd.DataFrame:
+    try:
+        rows = (
+            get_db().schema("settlement").table("courier_expense_request")
+            .select("*")
+            .eq("document_month", document_month.replace(day=1).isoformat())
+            .order("requested_at", desc=True)
+            .limit(2000)
+            .execute().data or []
+        )
+        return pd.DataFrame(rows)
+    except BaseException:
+        return pd.DataFrame()
+
+
+def apply_expense_request_status(data: pd.DataFrame, document_month: date) -> pd.DataFrame:
+    result = data.copy()
+    if result.empty or "Courier ID" not in result.columns:
+        return result
+    requests = load_expense_requests_for_month(document_month)
+    if requests.empty:
+        return result
+    open_statuses = {"approved", "open", "payment_waiting", "waiting_payment"}
+    request_couriers = {
+        _courier_id_key(row.get("courier_id"))
+        for row in requests.to_dict("records")
+        if str(row.get("status") or "").strip().casefold() in open_statuses
+    }
+    request_couriers.discard("")
+    if not request_couriers:
+        return result
+    courier_ids = result["Courier ID"].map(_courier_id_key)
+    result.loc[courier_ids.isin(request_couriers), "Státusz"] = "Kifizetésre vár"
+    return result
+
+
+@st.cache_data(show_spinner=False, ttl=30)
 def load_salary_advance_requests_for_month(period_start: date, period_end: date) -> pd.DataFrame:
     try:
         rows = (
@@ -16431,6 +16468,7 @@ def show_new_settlement_page() -> None:
     data = apply_peopleforce_workflow_status(data, balance_period_start)
     data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
     data = apply_salary_advance_request_status(data, balance_period_start, balance_period_end)
+    data = apply_expense_request_status(data, balance_period_start)
     data = apply_effective_payment_total_column(data, balance_period_start)
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
@@ -17067,6 +17105,7 @@ def show_new_settlement_page() -> None:
         previous_data = apply_peopleforce_workflow_status(previous_data, previous_period_start)
         previous_data = apply_monthly_closure_status(previous_data, previous_period_start, previous_period_end)
         previous_data = apply_salary_advance_request_status(previous_data, previous_period_start, previous_period_end)
+        previous_data = apply_expense_request_status(previous_data, previous_period_start)
         previous_data = apply_effective_payment_total_column(previous_data, previous_period_start)
         previous_filtered = previous_data.copy()
         if branch != "Összes":
