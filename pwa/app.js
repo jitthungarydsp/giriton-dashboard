@@ -1099,8 +1099,9 @@ async function loadCurrentRoute() {
   try {
     state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
     if (state.currentRoute?.found) {
+      const wasQueueActive = Boolean(activeQueueStatus()?.active);
       clearActiveQueue();
-      if (state.section === "tours" && !isAdminPreviewMode()) {
+      if (wasQueueActive && state.section === "tours" && !isAdminPreviewMode()) {
         showSection("home");
         await loadShifts();
         return;
