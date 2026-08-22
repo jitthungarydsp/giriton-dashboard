@@ -11101,7 +11101,27 @@ def show_courier_dialog() -> None:
         or parse_huf_value(row.get("Kifizetendő"))
         or payable_total
     )
-    overview_tig_payable_total = overview_payable_total
+    overview_tig_payable_total = effective_payment_total_from_row(
+        {
+            **row.to_dict(),
+            **profile,
+            "Courier ID": courier_id,
+            "Futár": courier_name,
+            "Kifizetendő": overview_payable_total,
+            "Borravaló": tip_total,
+            "ATM hatás": atm_deduction_total,
+        },
+        period_start,
+    )
+    mobile_overview_values = load_mobile_breakdown_overrides(courier_id, period_start)
+    if not mobile_overview_values.empty:
+        mobile_tig_rows = mobile_overview_values[
+            mobile_overview_values.get("item_key", pd.Series(dtype=str)).astype(str).eq("tig_final_total")
+        ]
+        if not mobile_tig_rows.empty:
+            mobile_tig_total = parse_huf_value(mobile_tig_rows.iloc[0].get("amount_value"))
+            if mobile_tig_total:
+                overview_tig_payable_total = mobile_tig_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
