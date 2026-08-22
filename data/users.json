@@ -279,6 +279,15 @@
             "active": true,
             "token": ""
         },
+                {
+            "username": "Boskó 8031 György",
+            "trainer": "trainer_name",
+            "password": "kdj4Fddd",
+            "role": "user",
+            "courierId": 8031,
+            "active": true,
+            "token": ""
+        },
         {
             "username": "Lulaj Brenddon",
             "trainer": "trainer_name",
