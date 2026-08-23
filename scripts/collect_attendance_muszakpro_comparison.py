@@ -520,7 +520,7 @@ def read_muszakpro_rows(work_date):
     if df.empty:
         return []
 
-    rows = []
+    rows_by_key = {}
     courier_lookup = read_courier_lookup()
     user_sheet_lookup = read_user_sheet_lookup()
 
@@ -564,7 +564,7 @@ def read_muszakpro_rows(work_date):
             courier_name,
             normalized_shift_name,
         )
-        rows.append({
+        record = {
             "match_key": match_key,
             "work_date": work_date_text,
             "courier_id": courier_id,
@@ -576,9 +576,28 @@ def read_muszakpro_rows(work_date):
             "normalized_shift_name": normalized_shift_name,
             "shift_text": shift_text,
             "booking_code": clean(row.get("booking_code")),
-        })
+        }
+        existing = rows_by_key.get(match_key)
 
-    return rows
+        if existing is None or muszakpro_row_quality(record) > muszakpro_row_quality(existing):
+            rows_by_key[match_key] = record
+
+    return list(rows_by_key.values())
+
+
+def muszakpro_row_quality(row):
+    return sum(
+        1
+        for key in [
+            "courier_id",
+            "courier_name",
+            "email",
+            "warehouse",
+            "shift_start",
+            "booking_code",
+        ]
+        if clean(row.get(key))
+    )
 
 
 def build_comparison_rows(collection_id, attendance_rows, muszakpro_rows):
