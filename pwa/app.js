@@ -26,7 +26,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v75";
+const APP_VERSION = "v76";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 
@@ -461,12 +461,14 @@ function uniqueText(values = []) {
 }
 
 function routeStoryTime(label, value) {
-  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(shortDateTime(value))}</strong></div>`;
+  const missing = !value;
+  return `<div class="stat-row ${missing ? "missing" : ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(missing ? "Hiányzik" : shortDateTime(value))}</strong></div>`;
 }
 
 function routeStoryMetric(label, value, suffix = "") {
+  const missing = value === null || value === undefined || value === "";
   const numeric = Number(value || 0);
-  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatCount(numeric)}${suffix}</strong></div>`;
+  return `<div class="stat-row ${missing ? "missing" : ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(missing ? "Hiányzik" : `${formatCount(numeric)}${suffix}`)}</strong></div>`;
 }
 
 function routeTypeLabel(value) {
@@ -1029,11 +1031,11 @@ function renderCurrentRoute() {
 
   if (!payload?.found || !route) {
     container.innerHTML = `
-      <div class="route-empty">
-        <span class="route-empty-icon">+</span>
+      <div class="route-empty error-state">
+        <span class="route-empty-icon">!</span>
         <div>
           <h3>Nincs aktív túra</h3>
-          <p>Amint túrát kapsz, itt látod a címszámot és az aktuális címet.</p>
+          <p>Nem érkezett Kiflis túraadat ehhez a futárhoz. Ha most túrán kellene lenned, kérj ellenőrzést.</p>
         </div>
       </div>
     `;
@@ -1286,14 +1288,17 @@ function shiftCard(item, index = 0) {
   const queueButton = `<button class="shift-queue-button" type="button" data-shift-index="${index}" data-shift-event="queued"${actionDisabled}>Sorba álltam</button>`;
   const returnButton = `<button class="shift-return-button" type="button" data-shift-index="${index}" data-shift-event="returned"${actionDisabled}>Visszaérkeztem</button>`;
   const vehicleText = vehicleLabel(item.vehicle);
-  return `<article class="shift-card">
+  const hasMuszakpro = Boolean(item.muszakpro);
+  const hasKiflis = Boolean(item.attendance || item.giriton);
+  const sourceChip = (label, ok) => `<span class="source ${ok ? "ok" : "missing"}">${escapeHtml(label)} ${ok ? "✓" : "!"}</span>`;
+  return `<article class="shift-card ${!hasMuszakpro || !hasKiflis ? "has-missing-source" : ""}">
     <div class="shift-top">
       <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
       <span class="shift-state ${escapeHtml(item.status)}">${escapeHtml(item.statusLabel)}</span>
     </div>
     <div class="source-row">
-      <span class="source ${item.muszakpro ? "ok" : ""}">MűszakPro ${item.muszakpro ? "✓" : "–"}</span>
-      <span class="source ${item.attendance || item.giriton ? "ok" : ""}">Attendance ${item.attendance || item.giriton ? "✓" : "–"}</span>
+      ${sourceChip("MűszakPro", hasMuszakpro)}
+      ${sourceChip("Kiflis", hasKiflis)}
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
       ${vehicleText ? `<span class="source ok">Autó ${escapeHtml(vehicleText)}</span>` : ""}
     </div>

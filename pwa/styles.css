@@ -60,6 +60,7 @@ textarea { min-height: 96px; resize: vertical; }
 .day-tab.active strong { color: white; }
 .shift-list { display: grid; gap: 12px; }
 .shift-card { padding: 18px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.shift-card.has-missing-source { border-color: var(--danger); box-shadow: 0 9px 24px #a8433e18; }
 .shift-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .shift-time { margin: 0; font-size: 24px; font-weight: 850; letter-spacing: -.03em; }
 .shift-warehouse { margin: 5px 0 0; color: var(--muted); font-size: 14px; }
@@ -70,6 +71,7 @@ textarea { min-height: 96px; resize: vertical; }
 .source-row { display: flex; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .source { padding: 5px 8px; border-radius: 8px; background: #eff2ee; color: var(--muted); font-size: 11px; font-weight: 750; }
 .source.ok { background: #e2f2df; color: #2e6735; }
+.source.missing { border: 1px solid var(--danger); background: #fff0ef; color: var(--danger); }
 .shift-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .shift-delay-button, .shift-queue-button, .shift-return-button { width: 100%; min-height: 46px; border: 0; border-radius: 14px; color: #fff; font-weight: 850; }
 .shift-delay-button { background: var(--danger); }
@@ -140,9 +142,12 @@ textarea { min-height: 96px; resize: vertical; }
 .waze-button { display: grid; place-items: center; min-height: 50px; border-radius: 16px; background: #1f74ff; color: #fff; font-weight: 900; text-decoration: none; box-shadow: 0 10px 24px #1f74ff24; }
 .route-problem-button { width: 100%; min-height: 52px; border: 0; border-radius: 16px; background: var(--danger); color: #fff; font-weight: 900; box-shadow: 0 10px 24px #a8433e24; }
 .route-empty { display: flex; gap: 13px; align-items: center; padding: 22px; border: 1px dashed #c7d0c5; border-radius: 20px; background: var(--surface); }
+.route-empty.error-state { border-color: var(--danger); background: #fff0ef; }
 .route-empty-icon { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 14px; background: #edf1eb; color: var(--green-dark); font-size: 24px; font-weight: 900; }
+.route-empty.error-state .route-empty-icon { background: #f9dfdd; color: var(--danger); }
 .route-empty h3 { margin: 0 0 4px; }
 .route-empty p { margin: 0; color: var(--muted); line-height: 1.45; }
+.route-empty.error-state h3, .route-empty.error-state p { color: var(--danger); }
 .document-list, .complaint-list { display: grid; gap: 9px; margin-top: 16px; }
 .document-row, .complaint-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 14px; background: #f5f7f3; }
 .document-row strong, .complaint-row strong { display: block; font-size: 13px; }
@@ -221,6 +226,8 @@ textarea { min-height: 96px; resize: vertical; }
 .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 13px; border-radius: 14px; background: #f5f7f3; }
 .stat-row span { color: var(--muted); font-size: 13px; font-weight: 750; }
 .stat-row strong { font-size: 16px; }
+.stat-row.missing { border: 1px solid var(--danger); background: #fff0ef; }
+.stat-row.missing span, .stat-row.missing strong { color: var(--danger); }
 .stat-detail-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .stat-detail-section summary { min-height: 42px; display: flex; align-items: center; justify-content: space-between; font-weight: 850; cursor: pointer; }
 .stat-detail-section .stat-row { align-items: flex-start; }
