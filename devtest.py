@@ -12818,15 +12818,19 @@ def show_courier_dialog() -> None:
                 """,
                 unsafe_allow_html=True,
             )
-            copy_cards_html([
+            payment_copy_items = [
                 ("Bankszámlaszám", bank_account),
                 ("Közlemény", payment_note),
                 ("Név", recipient_name),
-                ("Összeg", format_huf(amount_huf)),
-                ("TIG végösszeg", tig_final_label),
+                ("Kifizetendő összeg", format_huf(amount_huf)),
+            ]
+            if not is_expense_payment and parse_huf_value(tig_final_huf) != parse_huf_value(amount_huf):
+                payment_copy_items.append(("TIG végösszeg", tig_final_label))
+            payment_copy_items.extend([
                 ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
                 ("Eltérés", invoice_difference_label),
             ])
+            copy_cards_html(payment_copy_items)
             if payment_item.get("invoice_file"):
                 st.caption(f"Feltöltött számla: {payment_item.get('invoice_title') or payment_item.get('invoice_file')}")
             st.markdown("##### Aktuális havi dokumentumok")
