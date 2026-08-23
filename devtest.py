@@ -10204,6 +10204,10 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
 
 
 def refresh_settlement_profile_data() -> None:
+    st.session_state.pop("current_filtered_data", None)
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("finance_payment_sync_"):
+            st.session_state.pop(key, None)
     load_api_financial_overview_rows.clear()
     load_latest_api_jit_session_id.clear()
     load_latest_excel_jit_session_id.clear()
@@ -10225,6 +10229,8 @@ def refresh_settlement_profile_data() -> None:
     load_courier_profile.clear()
     load_active_efo_assignment.clear()
     load_muszakpro_booking_summary.clear()
+    load_mobile_breakdown_overrides.clear()
+    load_mobile_breakdown_overrides_for_period.clear()
     load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_advance_booking_days.clear()
@@ -11113,15 +11119,6 @@ def show_courier_dialog() -> None:
         },
         period_start,
     )
-    mobile_overview_values = load_mobile_breakdown_overrides(courier_id, period_start)
-    if not mobile_overview_values.empty:
-        mobile_tig_rows = mobile_overview_values[
-            mobile_overview_values.get("item_key", pd.Series(dtype=str)).astype(str).eq("tig_final_total")
-        ]
-        if not mobile_tig_rows.empty:
-            mobile_tig_total = parse_huf_value(mobile_tig_rows.iloc[0].get("amount_value"))
-            if mobile_tig_total:
-                overview_tig_payable_total = mobile_tig_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
@@ -12014,7 +12011,7 @@ def show_courier_dialog() -> None:
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("Fizetendő", format_huf(tig_display_total), "payable", ""),
+            ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
