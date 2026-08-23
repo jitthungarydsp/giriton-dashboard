@@ -736,6 +736,20 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
     )
     st.sidebar.divider()
     today = date.today()
+    quick_col_1, quick_col_2 = st.sidebar.columns(2)
+    if quick_col_1.button("Ma", width="stretch"):
+        st.session_state["foglalas_start_date"] = today
+        st.session_state["foglalas_end_date"] = today
+        st.rerun()
+    if quick_col_2.button("Holnap", width="stretch"):
+        tomorrow = today + timedelta(days=1)
+        st.session_state["foglalas_start_date"] = tomorrow
+        st.session_state["foglalas_end_date"] = tomorrow
+        st.rerun()
+    if st.sidebar.button("Következő 5 nap", width="stretch"):
+        st.session_state["foglalas_start_date"] = today
+        st.session_state["foglalas_end_date"] = today + timedelta(days=4)
+        st.rerun()
     start_date = st.sidebar.date_input(
         "Kezdő dátum",
         value=today,
@@ -865,6 +879,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         _render_html_table(
             table_df,
             [
+                "Dátum",
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
@@ -882,6 +897,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         _render_html_table(
             failed_df,
             [
+                "Dátum",
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
@@ -1052,6 +1068,20 @@ def show_foglalas_streamlit_page() -> None:
         f"{start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}. "
         "MűszakPro és Giriton egyeztetés. Éles foglalás még nincs bekötve."
     )
+    selected_label = (
+        start_date.strftime("%Y.%m.%d.")
+        if start_date == end_date
+        else f"{start_date.strftime('%Y.%m.%d.')} - {end_date.strftime('%Y.%m.%d.')}"
+    )
+    st.markdown(
+        f"""
+        <div class="source-chip">
+            <strong>Kiválasztott nap/időszak</strong>
+            {selected_label} · {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown(
         f"""
         <div class="source-status">
@@ -1112,6 +1142,7 @@ def show_foglalas_streamlit_page() -> None:
         _render_html_table(
             failed_only,
             [
+                "Dátum",
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
