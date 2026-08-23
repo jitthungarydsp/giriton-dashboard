@@ -238,6 +238,18 @@ def _action_badge(status: str) -> str:
     return f"<span class='action-badge {class_name}'>{escape(labels.get(status, '-'))}</span>"
 
 
+def _cell_class(row, column: str) -> str:
+    status = _clean(row.get("Állapot"))
+    diff_text = _clean(row.get("Eltérés"))
+    if column in {"MűszakPro", "Giriton ajánlat"} and diff_text == "0 perc":
+        return "match-ok"
+    if column == "MűszakPro" and status == "Lefoglalva" and diff_text != "0 perc":
+        return "booked-conflict"
+    if column == "Giriton ajánlat" and status == "Lefoglalva":
+        return "booked-ok"
+    return ""
+
+
 def _time_list(values) -> str:
     times = sorted(
         {
@@ -467,13 +479,23 @@ def _plan_giriton_day(
     if not muszakpro_times:
         return {}
 
-    booked_lookup = set(booked_times)
     best: tuple[int, list[tuple[str, str, int, str]]] | None = None
     candidates_by_shift: list[list[tuple[str, int, str, int]]] = []
 
     for muszakpro_time in muszakpro_times:
-        if muszakpro_time in booked_lookup:
-            candidates_by_shift.append([(muszakpro_time, 0, "booked", 0)])
+        booked_candidates = []
+        for booked_time in booked_times:
+            diff = _diff_minutes(muszakpro_time, booked_time)
+            if diff is None or abs(diff) > tolerance_minutes:
+                continue
+            booked_candidates.append((booked_time, diff, "booked", abs(diff)))
+        if booked_candidates:
+            candidates_by_shift.append(
+                sorted(
+                    booked_candidates,
+                    key=lambda item: (item[3], _time_minutes(item[0]) or 0),
+                )
+            )
             continue
 
         shift_candidates = []
@@ -644,12 +666,14 @@ def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) ->
         cells = []
         for column in columns:
             value = row.get(column, "")
+            class_name = _cell_class(row, column)
+            class_attr = f" class='{class_name}'" if class_name else ""
             if column == "Állapot":
-                cells.append(f"<td>{_status_badge(_clean(value))}</td>")
+                cells.append(f"<td{class_attr}>{_status_badge(_clean(value))}</td>")
             elif column == "Következő lépés":
-                cells.append(f"<td>{_action_badge(_clean(row.get('Állapot') or value))}</td>")
+                cells.append(f"<td{class_attr}>{_action_badge(_clean(row.get('Állapot') or value))}</td>")
             else:
-                cells.append(f"<td>{escape(_clean(value))}</td>")
+                cells.append(f"<td{class_attr}>{escape(_clean(value))}</td>")
         body.append(f"<tr>{''.join(cells)}</tr>")
 
     st.markdown(
@@ -929,6 +953,24 @@ def _apply_styles() -> None:
             font-weight: 760;
         }
         .styled-table tr:last-child td { border-bottom: 0; }
+        .styled-table td.match-ok {
+            background: #e9f8ef;
+            color: #13783e;
+            border: 1px solid #8fd6a7;
+            font-weight: 800;
+        }
+        .styled-table td.booked-ok {
+            background: #eaf2ff;
+            color: #155fc1;
+            border: 1px solid #9bc0ff;
+            font-weight: 800;
+        }
+        .styled-table td.booked-conflict {
+            background: #fff7f7;
+            color: #c42b2b;
+            border: 2px solid #ff7b7b;
+            font-weight: 850;
+        }
         .status-badge,
         .action-badge {
             display: inline-block;
