@@ -12802,6 +12802,15 @@ def show_courier_dialog() -> None:
             invoice_difference_label = format_huf(invoice_difference_huf) if invoice_amount_huf else "-"
             tig_final_label = "-" if is_expense_payment else format_huf(tig_final_huf)
             payment_note = f"{courier_id}-{invoice_number}".strip("-")
+            show_tig_total = (
+                not is_expense_payment
+                and parse_huf_value(tig_final_huf) != parse_huf_value(amount_huf)
+            )
+            tig_total_card_html = (
+                f'<div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{tig_final_label}</div></div>'
+                if show_tig_total
+                else ""
+            )
 
             st.markdown(
                 f"""
@@ -12810,7 +12819,7 @@ def show_courier_dialog() -> None:
                     <div class="finance-kpi"><div class="finance-kpi-label">Folyamat</div><div class="finance-kpi-value">{html.escape(str(payment_item['label']))}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(str(payment_item['status']))}</div></div>
                     <div class="finance-kpi payable"><div class="finance-kpi-label">Összeg</div><div class="finance-kpi-value">{format_huf(amount_huf)}</div></div>
-                    <div class="finance-kpi"><div class="finance-kpi-label">TIG végösszeg</div><div class="finance-kpi-value">{tig_final_label}</div></div>
+                    {tig_total_card_html}
                     <div class="finance-kpi"><div class="finance-kpi-label">Számla összege</div><div class="finance-kpi-value">{format_huf(invoice_amount_huf) if invoice_amount_huf else '-'}</div></div>
                     <div class="finance-kpi"><div class="finance-kpi-label">Eltérés</div><div class="finance-kpi-value">{invoice_difference_label}</div></div>
                 </div>
@@ -12824,7 +12833,7 @@ def show_courier_dialog() -> None:
                 ("Név", recipient_name),
                 ("Kifizetendő összeg", format_huf(amount_huf)),
             ]
-            if not is_expense_payment and parse_huf_value(tig_final_huf) != parse_huf_value(amount_huf):
+            if show_tig_total:
                 payment_copy_items.append(("TIG végösszeg", tig_final_label))
             payment_copy_items.extend([
                 ("Számla összege", format_huf(invoice_amount_huf) if invoice_amount_huf else "-"),
