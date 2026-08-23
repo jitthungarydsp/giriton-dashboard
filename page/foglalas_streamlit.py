@@ -295,23 +295,43 @@ def _load_next_5_days():
 
 
 @st.cache_data(show_spinner=False, ttl=300)
-def _load_raw_data(start_date: date, end_date: date):
-    muszakpro_df = read_foglalasok_raw(
+def _load_muszakpro_data(start_date: date, end_date: date):
+    return read_foglalasok_raw(
         start_date=start_date,
         end_date=end_date,
         limit=20000,
     )
-    giriton_df = read_giriton_shifts_raw(
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_giriton_data(start_date: date, end_date: date):
+    return read_giriton_shifts_raw(
         start_date=start_date,
         end_date=end_date,
         limit=20000,
     )
-    log_df = read_giriton_booking_log(
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_latest_giriton_data():
+    return read_giriton_shifts_raw(limit=1)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _load_log_data(start_date: date, end_date: date):
+    return read_giriton_booking_log(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         limit=1000,
     )
-    return muszakpro_df, giriton_df, log_df
+
+
+def _safe_load(label: str, loader, *args) -> tuple[pd.DataFrame, str]:
+    try:
+        data = loader(*args)
+        return pd.DataFrame(data), ""
+    except Exception as exc:
+        return pd.DataFrame(), f"{label}: {exc}"
 
 
 def _sidebar() -> tuple[str, date, date, time, time]:
@@ -486,13 +506,24 @@ def show_foglalas_streamlit_page() -> None:
         st.error("A záró dátum nem lehet korábbi, mint a kezdő dátum.")
         return
 
-    try:
-        comparison_df = _load_next_5_days()
-        muszakpro_df, giriton_df, log_df = _load_raw_data(start_date, end_date)
-    except Exception as exc:
-        st.title("Műszak egyeztetés")
-        st.error(f"DB olvasási hiba: {exc}")
-        return
+    comparison_df, comparison_error = _safe_load("Egyeztetés", _load_next_5_days)
+    muszakpro_df, muszakpro_error = _safe_load(
+        "MűszakPro",
+        _load_muszakpro_data,
+        start_date,
+        end_date,
+    )
+    giriton_df, giriton_error = _safe_load(
+        "Giriton",
+        _load_giriton_data,
+        start_date,
+        end_date,
+    )
+    latest_giriton_df, latest_giriton_error = _safe_load(
+        "Giriton legfrissebb sor",
+        _load_latest_giriton_data,
+    )
+    log_df, log_error = _safe_load("Napló", _load_log_data, start_date, end_date)
 
     if not muszakpro_df.empty:
         muszakpro_df = muszakpro_df.copy()
@@ -521,6 +552,27 @@ def show_foglalas_streamlit_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+    errors = [
+        error
+        for error in [
+            comparison_error,
+            muszakpro_error,
+            giriton_error,
+            latest_giriton_error,
+            log_error,
+        ]
+        if error
+    ]
+    if errors:
+        st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
+    if giriton_df.empty and not latest_giriton_df.empty:
+        latest_row = latest_giriton_df.iloc[0]
+        st.info(
+            "A kiválasztott időszakban nincs Giriton sor, "
+            "de a `giriton_shifts_raw` táblában van adat. "
+            f"Legfrissebb dátum: {latest_row.get('work_date', '-')}, "
+            f"frissítve: {_format_latest(latest_row.get('fetched_at', ''))}."
+        )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
