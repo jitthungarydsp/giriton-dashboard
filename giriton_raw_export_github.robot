@@ -68,7 +68,8 @@ Giriton Raw Export Github
         ...    xpath=//input[contains(@class,'v-datefield-textfield')]
         ...    ENTER
 
-        Sleep    5s
+        Wait Until Giriton Date Is Loaded
+        ...    ${datum_oldal}
 
         Execute Javascript
         ...    let els=[...document.querySelectorAll('*')]; let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight); let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0]; if(biggest){biggest.scrollTop=0;}
@@ -210,3 +211,38 @@ Giriton Raw Export Github
 
     Log To Console
     ...    RAW_EXPORT=${result}
+
+
+*** Keywords ***
+Wait Until Giriton Date Is Loaded
+    [Arguments]    ${datum_oldal}
+    Wait Until Keyword Succeeds
+    ...    30x
+    ...    1s
+    ...    Giriton Visible Date Should Be
+    ...    ${datum_oldal}
+    Wait Until Keyword Succeeds
+    ...    30x
+    ...    1s
+    ...    Giriton Loading Should Be Finished
+    Wait Until Page Contains Element
+    ...    xpath=//div[contains(@class,'panel-title')]
+    ...    timeout=30s
+    Sleep    2s
+
+
+Giriton Visible Date Should Be
+    [Arguments]    ${datum_oldal}
+    ${visible_text}=    Execute Javascript
+    ...    return document.body ? document.body.innerText : '';
+    Should Contain
+    ...    ${visible_text}
+    ...    ${datum_oldal}
+
+
+Giriton Loading Should Be Finished
+    ${is_loading}=    Execute Javascript
+    ...    return [...document.querySelectorAll('.v-loading-indicator, .v-loading-indicator-delay, .v-loading-indicator-wait')].some(el => { const style = window.getComputedStyle(el); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; });
+    Should Be Equal
+    ...    ${is_loading}
+    ...    ${False}
