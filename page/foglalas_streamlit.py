@@ -55,11 +55,29 @@ def _warehouse_match_key(value) -> str:
     return _match_text(value)
 
 
+def _optional_int(value) -> int | None:
+    text = _clean(value)
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
 def _is_available_giriton_shift(row) -> bool:
     status = _clean(row.get("status")).upper()
-    worker = _clean(row.get("courier_name")).upper()
+    worker_key = _match_text(row.get("courier_name"))
+    booked = _optional_int(row.get("booked"))
 
-    return status == "URES" or worker in {"URES", "ÜRES"}
+    if status in {"", "URES", "ÜRES", "NONE", "NULL", "-"}:
+        return True
+    if worker_key in {"", "ures", "none", "null"}:
+        return True
+    if booked == 0:
+        return True
+
+    return False
 
 
 def _is_booked_giriton_shift(row) -> bool:
@@ -236,6 +254,14 @@ def _action_badge(status: str) -> str:
         "Lefoglalva": "booked",
     }.get(status, "neutral")
     return f"<span class='action-badge {class_name}'>{escape(labels.get(status, '-'))}</span>"
+
+
+def _giriton_state_badge(status: str) -> str:
+    class_name = {
+        "Ajánlás": "warn",
+        "Lefoglalva": "booked",
+    }.get(status, "neutral")
+    return f"<span class='status-badge {class_name}'>{escape(status or '-')}</span>"
 
 
 def _cell_class(row, column: str) -> str:
@@ -612,12 +638,15 @@ def _build_summary_rows(
                 giriton_time, diff_value, plan_status = daily_plan[muszakpro_time]
                 if plan_status == "booked":
                     status = "Lefoglalva"
+                    giriton_state = "Lefoglalva"
                     reason = "Ez a műszak már le van foglalva Giritonban"
                 elif diff_value == 0:
                     status = "Egyezés"
+                    giriton_state = "Ajánlás"
                     reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
                 else:
                     status = "Alternatíva"
+                    giriton_state = "Ajánlás"
                     reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
             else:
                 if len(muszakpro_values) == 1:
@@ -628,17 +657,21 @@ def _build_summary_rows(
                     )
                     if single_status == "exact":
                         status = "Egyezés"
+                        giriton_state = "Ajánlás"
                         reason = "Pontos egyezés"
                     elif single_status == "alternative":
                         status = "Alternatíva"
+                        giriton_state = "Ajánlás"
                         reason = "Egyedi alternatíva a tűrésen belül"
                     else:
                         status = "Sikertelen"
+                        giriton_state = "-"
                         reason = f"Nincs azonos raktáras szabad Giriton találat ±{tolerance_minutes} percen belül"
                 else:
                     giriton_time = "nincs érvényes napi terv"
                     diff_value = None
                     status = "Sikertelen"
+                    giriton_state = "-"
                     reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
             rows.append(
@@ -648,6 +681,7 @@ def _build_summary_rows(
                     "Raktár": warehouse,
                     "MűszakPro": muszakpro_time,
                     "Giriton ajánlat": giriton_time,
+                    "Giriton állapot": giriton_state,
                     "Eltérés": _format_diff(diff_value),
                     "Állapot": status,
                     "Ok": reason,
@@ -672,6 +706,8 @@ def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) ->
             class_attr = f" class='{class_name}'" if class_name else ""
             if column == "Állapot":
                 cells.append(f"<td{class_attr}>{_status_badge(_clean(value))}</td>")
+            elif column == "Giriton állapot":
+                cells.append(f"<td{class_attr}>{_giriton_state_badge(_clean(value))}</td>")
             elif column == "Következő lépés":
                 cells.append(f"<td{class_attr}>{_action_badge(_clean(row.get('Állapot') or value))}</td>")
             else:
@@ -1228,6 +1264,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
+                "Giriton állapot",
                 "Eltérés",
                 "Állapot",
                 "Következő lépés",
@@ -1247,6 +1284,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
+                "Giriton állapot",
                 "Eltérés",
                 "Ok",
                 "Következő lépés",
@@ -1492,6 +1530,7 @@ def show_foglalas_streamlit_page() -> None:
                 "Dolgozó",
                 "MűszakPro",
                 "Giriton ajánlat",
+                "Giriton állapot",
                 "Eltérés",
                 "Ok",
                 "Következő lépés",
