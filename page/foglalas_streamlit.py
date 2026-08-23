@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+import re
 
 import pandas as pd
 import streamlit as st
 
-from resources.foglalasok_db import read_foglalasok_raw, shift_start
+from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
@@ -27,6 +28,36 @@ def _parse_time(value) -> time | None:
             pass
 
     return None
+
+
+def _normalize_time(value) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+
+    parts = text.split(":")
+    if len(parts) >= 2:
+        try:
+            return f"{int(parts[0])}:{int(parts[1]):02d}"
+        except ValueError:
+            return text
+
+    return text
+
+
+def _shift_start(shift_text) -> str:
+    text = _clean(shift_text)
+    if not text:
+        return ""
+
+    if "_" in text:
+        return _normalize_time(text.split("_", 1)[1])
+
+    match = re.search(r"(\d{1,2}:\d{2})", text)
+    if match:
+        return _normalize_time(match.group(1))
+
+    return ""
 
 
 def _in_time_range(value, start_time: time, end_time: time) -> bool:
@@ -207,7 +238,7 @@ def show_foglalas_streamlit_page() -> None:
         muszakpro_df["shift_start"] = muszakpro_df.get(
             "shift_text",
             pd.Series(dtype=str),
-        ).map(shift_start)
+        ).map(_shift_start)
 
     comparison_df = _filter_time(comparison_df, "shift_start", start_time, end_time)
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
