@@ -51,6 +51,10 @@ def _update_from_a1(ws, values):
         )
 
 
+def _sheet_error_text(error):
+    return str(error).replace("\n", " ")[:500]
+
+
 def _now_text():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -559,28 +563,32 @@ def copy_foglalasok(driver_lookup=None):
         driver_lookup,
     )
 
-    target_ws = _get_or_create_worksheet(
-        target_spreadsheet,
-        TARGET_FOGLALASOK_SHEET,
-        rows=max(len(values) + 100, 1000),
-        cols=max((len(row) for row in values), default=20),
-    )
-
-    _update_from_a1(target_ws, values)
-    _write_log_sheet(
-        FOGLALASOK_LOG_SHEET,
-        foglalasok_log,
-    )
-    changes = _log_sheet_changes(
-        TARGET_FOGLALASOK_SHEET,
-        values,
-    )
-
     from resources.foglalasok_db import upsert_foglalasok_rows
 
     db_result = upsert_foglalasok_rows(
         values
     )
+    changes = "sheet_skipped"
+
+    try:
+        target_ws = _get_or_create_worksheet(
+            target_spreadsheet,
+            TARGET_FOGLALASOK_SHEET,
+            rows=max(len(values) + 100, 1000),
+            cols=max((len(row) for row in values), default=20),
+        )
+
+        _update_from_a1(target_ws, values)
+        _write_log_sheet(
+            FOGLALASOK_LOG_SHEET,
+            foglalasok_log,
+        )
+        changes = _log_sheet_changes(
+            TARGET_FOGLALASOK_SHEET,
+            values,
+        )
+    except Exception as error:
+        changes = f"sheet_error={_sheet_error_text(error)}"
 
     return len(values), changes, db_result
 
@@ -677,27 +685,9 @@ def _enrich_giriton_rows(rows, driver_lookup):
 
 def write_giriton_raw(rows, driver_lookup=None):
     driver_lookup = driver_lookup or _read_driver_lookup()
-    ws = _get_or_create_worksheet(
-        target_spreadsheet,
-        GIRITON_RAW_SHEET,
-        rows=max(len(rows) + 100, 1000),
-        cols=12,
-    )
-
     output, giriton_log = _enrich_giriton_rows(
         rows,
         driver_lookup,
-    )
-
-    _update_from_a1(ws, output)
-    _write_log_sheet(
-        GIRITON_LOG_SHEET,
-        giriton_log,
-    )
-    changes = _log_sheet_changes(
-        GIRITON_RAW_SHEET,
-        output,
-        key_columns=[9],
     )
 
     from resources.giriton_shifts_db import upsert_giriton_shift_rows
@@ -705,6 +695,28 @@ def write_giriton_raw(rows, driver_lookup=None):
     db_result = upsert_giriton_shift_rows(
         output[1:]
     )
+    changes = "sheet_skipped"
+
+    try:
+        ws = _get_or_create_worksheet(
+            target_spreadsheet,
+            GIRITON_RAW_SHEET,
+            rows=max(len(rows) + 100, 1000),
+            cols=12,
+        )
+
+        _update_from_a1(ws, output)
+        _write_log_sheet(
+            GIRITON_LOG_SHEET,
+            giriton_log,
+        )
+        changes = _log_sheet_changes(
+            GIRITON_RAW_SHEET,
+            output,
+            key_columns=[9],
+        )
+    except Exception as error:
+        changes = f"sheet_error={_sheet_error_text(error)}"
 
     return len(rows), changes, db_result
 
@@ -861,7 +873,12 @@ def write_raw_export(rows):
         rows,
         driver_lookup,
     )
-    matrix_summaries = write_open_shift_matrices(rows)
+    try:
+        matrix_summaries = write_open_shift_matrices(rows)
+    except Exception as error:
+        matrix_summaries = [
+            f"Open shift matrix sheet_error={_sheet_error_text(error)}"
+        ]
 
     result = (
         "OK | "
