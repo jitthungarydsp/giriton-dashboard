@@ -12383,18 +12383,18 @@ def show_courier_dialog() -> None:
                     ("Számlaszám", bank_account),
                     ("Név", recipient_name),
                     ("Közlemény", payment_note),
-                    ("Fizetendő összeg", format_huf(tig_display_total)),
+                    ("Fizetendő összeg", format_huf(payable_total)),
                 ])
                 close_note = st.text_area(
                     "Kifizetés lezárási megjegyzés",
-                    value=str(monthly_closure.get("close_note") or f"Kifizetve: {format_huf(tig_display_total)}"),
+                    value=str(monthly_closure.get("close_note") or f"Kifizetve: {format_huf(payable_total)}"),
                     key=f"monthly_close_admin_note_{courier_id}",
                     help="Kötelező. Az összegnek is szerepelnie kell benne.",
                 )
                 close_disabled = closure_done
                 if st.button("Zárás", type="primary", use_container_width=True, disabled=close_disabled, key=f"monthly_close_{courier_id}"):
                     try:
-                        note_error = payment_close_note_error(close_note, tig_display_total)
+                        note_error = payment_close_note_error(close_note, payable_total)
                         if note_error:
                             st.error(note_error)
                             st.stop()
@@ -12411,7 +12411,7 @@ def show_courier_dialog() -> None:
                                 "recipient_name": recipient_name,
                                 "payment_note": payment_note,
                                 "invoice_number": invoice_number,
-                                "payable_huf": tig_display_total,
+                                "payable_huf": payable_total,
                                 "close_note": close_note,
                             },
                             {
@@ -12430,7 +12430,7 @@ def show_courier_dialog() -> None:
                                 "insurance_fee_huf": insurance_fee_total,
                                 "reserve_before_huf": reserve_before_total,
                                 "reserve_after_huf": reserve_after_total,
-                                "payable_huf": tig_display_total,
+                                "payable_huf": payable_total,
                             },
                         )
                         st.success("A futár havi elszámolása lezárva.")
@@ -12600,7 +12600,7 @@ def show_courier_dialog() -> None:
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
         expense_requests = load_courier_expense_requests(courier_id, payment_month)
-        monthly_payment_amount = overview_tig_payable_total
+        monthly_payment_amount = payable_total
 
         process_ids = {""}
         if not workflow_statuses.empty:
@@ -12774,22 +12774,23 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
+            payment_tig_final_huf = max(amount_huf, 0.0)
             if is_expense_payment:
                 payment_tig_breakdown = {"rows": [], "finalTotalHuf": amount_huf}
             else:
-                payment_tig_breakdown = build_tig_breakdown(
-                    tig_payment_payload_from_profile(
-                        profile,
-                        courier_id=courier_id,
-                        courier_name=courier_name,
-                        period_start=period_start,
-                    ),
-                    {
-                        "payable": amount_huf,
-                        "tip": tip_total,
-                        "cash": abs(atm_deduction_total),
-                    },
-                )
+                payment_tig_breakdown = {
+                    "rows": [
+                        {
+                            "key": "payment_total",
+                            "label": "TIG végösszeg",
+                            "netHuf": payment_tig_final_huf,
+                            "vatHuf": 0,
+                            "grossHuf": payment_tig_final_huf,
+                            "note": "Kifizetés fül aktuális fizetendő összege.",
+                        }
+                    ] if payment_tig_final_huf else [],
+                    "finalTotalHuf": payment_tig_final_huf,
+                }
             tig_final_huf = (
                 0
                 if is_expense_payment
