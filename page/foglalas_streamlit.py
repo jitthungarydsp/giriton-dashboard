@@ -269,6 +269,31 @@ def _nearest_giriton_times(
     return best[1], best[2], status
 
 
+def _nearest_single_giriton_time(
+    muszakpro_time: str,
+    giriton_times: list[str],
+    tolerance_minutes: int,
+) -> tuple[str, int | None, str]:
+    if not muszakpro_time or not giriton_times:
+        return "nincs találat", None, "none"
+
+    best_time = ""
+    best_diff = None
+    for giriton_time in giriton_times:
+        diff = _diff_minutes(muszakpro_time, giriton_time)
+        if diff is None or abs(diff) > tolerance_minutes:
+            continue
+        if best_diff is None or abs(diff) < abs(best_diff):
+            best_time = giriton_time
+            best_diff = diff
+
+    if best_diff is None:
+        return "nincs találat", None, "none"
+
+    status = "exact" if best_diff == 0 else "alternative"
+    return best_time, best_diff, status
+
+
 def _build_summary_rows(
     muszakpro_df: pd.DataFrame,
     giriton_df: pd.DataFrame,
@@ -301,35 +326,49 @@ def _build_summary_rows(
             giriton_values,
             tolerance_minutes,
         )
+        chain_lookup = {
+            muszakpro_time: (suggested_times[index], diffs[index])
+            for index, muszakpro_time in enumerate(muszakpro_values)
+            if index < len(suggested_times) and index < len(diffs)
+        }
 
-        if match_status == "none":
-            status = "Sikertelen"
-            reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
-            diff = "-"
-            giriton_times = "nincs találat"
-        elif match_status == "exact":
-            status = "Egyezés"
-            reason = "Pontos egyezés"
-            diff = "0 perc"
-            giriton_times = _time_list(suggested_times)
-        else:
-            status = "Alternatíva"
-            reason = "Láncolt alternatíva a tűrésen belül"
-            diff = _format_diff(diffs[0] if diffs else None)
-            giriton_times = _time_list(suggested_times)
+        for muszakpro_time in muszakpro_values:
+            if muszakpro_time in chain_lookup:
+                giriton_time, diff_value = chain_lookup[muszakpro_time]
+                if diff_value == 0:
+                    status = "Egyezés"
+                    reason = "Pontos egyezés"
+                else:
+                    status = "Alternatíva"
+                    reason = "Láncolt alternatíva a tűrésen belül"
+            else:
+                giriton_time, diff_value, single_status = _nearest_single_giriton_time(
+                    muszakpro_time,
+                    giriton_values,
+                    tolerance_minutes,
+                )
+                if single_status == "exact":
+                    status = "Egyezés"
+                    reason = "Pontos egyezés"
+                elif single_status == "alternative":
+                    status = "Alternatíva"
+                    reason = "Egyedi alternatíva a tűrésen belül"
+                else:
+                    status = "Sikertelen"
+                    reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
 
-        rows.append(
-            {
-                "Dátum": work_date,
-                "Dolgozó": worker,
-                "Raktár": warehouse,
-                "MűszakPro": _time_list(muszakpro_values),
-                "Giriton ajánlat": giriton_times,
-                "Eltérés": diff,
-                "Állapot": status,
-                "Ok": reason,
-            }
-        )
+            rows.append(
+                {
+                    "Dátum": work_date,
+                    "Dolgozó": worker,
+                    "Raktár": warehouse,
+                    "MűszakPro": muszakpro_time,
+                    "Giriton ajánlat": giriton_time,
+                    "Eltérés": _format_diff(diff_value),
+                    "Állapot": status,
+                    "Ok": reason,
+                }
+            )
 
     return pd.DataFrame(rows)
 
