@@ -318,6 +318,15 @@ def _load_latest_giriton_data():
 
 
 @st.cache_data(show_spinner=False, ttl=300)
+def _load_giriton_day(work_date):
+    return read_giriton_shifts_raw(
+        start_date=work_date,
+        end_date=work_date,
+        limit=20000,
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=300)
 def _load_log_data(start_date: date, end_date: date):
     return read_giriton_booking_log(
         start_date=start_date.isoformat(),
@@ -524,6 +533,24 @@ def show_foglalas_streamlit_page() -> None:
         _load_latest_giriton_data,
     )
     log_df, log_error = _safe_load("Napló", _load_log_data, start_date, end_date)
+    giriton_fallback_date = ""
+    if giriton_df.empty and not latest_giriton_df.empty:
+        latest_row = latest_giriton_df.iloc[0]
+        giriton_fallback_date = _clean(latest_row.get("work_date"))
+        if giriton_fallback_date:
+            giriton_fallback_df, giriton_fallback_error = _safe_load(
+                "Giriton legfrissebb nap",
+                _load_giriton_day,
+                giriton_fallback_date,
+            )
+            if giriton_fallback_error:
+                latest_giriton_error = (
+                    f"{latest_giriton_error} | {giriton_fallback_error}"
+                    if latest_giriton_error
+                    else giriton_fallback_error
+                )
+            elif not giriton_fallback_df.empty:
+                giriton_df = giriton_fallback_df
 
     if not muszakpro_df.empty:
         muszakpro_df = muszakpro_df.copy()
@@ -565,13 +592,11 @@ def show_foglalas_streamlit_page() -> None:
     ]
     if errors:
         st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
-    if giriton_df.empty and not latest_giriton_df.empty:
-        latest_row = latest_giriton_df.iloc[0]
+    if giriton_fallback_date:
         st.info(
             "A kiválasztott időszakban nincs Giriton sor, "
-            "de a `giriton_shifts_raw` táblában van adat. "
-            f"Legfrissebb dátum: {latest_row.get('work_date', '-')}, "
-            f"frissítve: {_format_latest(latest_row.get('fetched_at', ''))}."
+            "ezért lent a legfrissebb elérhető Giriton nap adatait mutatom. "
+            f"Dátum: {giriton_fallback_date}."
         )
 
     c1, c2, c3, c4 = st.columns(4)
