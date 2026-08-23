@@ -241,12 +241,14 @@ def _action_badge(status: str) -> str:
 def _cell_class(row, column: str) -> str:
     status = _clean(row.get("Állapot"))
     diff_text = _clean(row.get("Eltérés"))
+    giriton_time = _clean(row.get("Giriton ajánlat"))
+    has_giriton_time = bool(giriton_time and not giriton_time.lower().startswith("nincs"))
     if column in {"MűszakPro", "Giriton ajánlat"} and diff_text == "0 perc":
         return "match-ok"
-    if column == "MűszakPro" and status == "Lefoglalva" and diff_text != "0 perc":
+    if column == "MűszakPro" and status in {"Alternatíva", "Lefoglalva"} and diff_text not in {"", "-", "0 perc"} and has_giriton_time:
         return "booked-conflict"
-    if column == "Giriton ajánlat" and status == "Lefoglalva":
-        return "booked-ok"
+    if column == "Giriton ajánlat" and status in {"Alternatíva", "Lefoglalva"} and has_giriton_time:
+        return "match-ok"
     return ""
 
 
