@@ -66,22 +66,28 @@ def _optional_int(value) -> int | None:
 
 
 def _is_available_giriton_shift(row) -> bool:
-    status = _clean(row.get("status")).upper()
-    worker_key = _match_text(row.get("courier_name"))
-    booked = _optional_int(row.get("booked"))
-
-    if status in {"", "URES", "ÜRES", "NONE", "NULL", "-"}:
-        return True
-    if worker_key in {"", "ures", "none", "null"}:
-        return True
-    if booked == 0:
-        return True
-
-    return False
+    return not _is_booked_giriton_shift(row)
 
 
 def _is_booked_giriton_shift(row) -> bool:
-    return not _is_available_giriton_shift(row)
+    status = _clean(row.get("status")).upper()
+    worker_key = _match_text(row.get("courier_name"))
+    courier_id = _clean(row.get("courier_id"))
+    email = _clean(row.get("email"))
+    booked = _optional_int(row.get("booked"))
+
+    if booked == 0:
+        return False
+    if worker_key in {"", "ures", "none", "null"} or "none" in worker_key:
+        return False
+    if status in {"", "URES", "ÜRES", "NONE", "NULL", "-"}:
+        return False
+    if booked is not None and booked > 0:
+        return True
+    if courier_id or email:
+        return True
+
+    return False
 
 
 def _format_latest(value: str) -> str:
@@ -258,7 +264,7 @@ def _action_badge(status: str) -> str:
 
 def _giriton_state_badge(status: str) -> str:
     class_name = {
-        "Ajánlás": "warn",
+        "Nincs lefoglalva": "warn",
         "Lefoglalva": "booked",
     }.get(status, "neutral")
     return f"<span class='status-badge {class_name}'>{escape(status or '-')}</span>"
@@ -651,12 +657,12 @@ def _build_summary_rows(
                     reason = "Ez a műszak már le van foglalva Giritonban"
                 elif diff_value == 0:
                     status = "Egyezés"
-                    giriton_state = "Ajánlás"
+                    giriton_state = "Nincs lefoglalva"
                     giriton_offer = giriton_time
                     reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
                 else:
                     status = "Alternatíva"
-                    giriton_state = "Ajánlás"
+                    giriton_state = "Nincs lefoglalva"
                     giriton_offer = giriton_time
                     reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
             else:
@@ -668,12 +674,12 @@ def _build_summary_rows(
                     )
                     if single_status == "exact":
                         status = "Egyezés"
-                        giriton_state = "Ajánlás"
+                        giriton_state = "Nincs lefoglalva"
                         giriton_offer = giriton_time
                         reason = "Pontos egyezés"
                     elif single_status == "alternative":
                         status = "Alternatíva"
-                        giriton_state = "Ajánlás"
+                        giriton_state = "Nincs lefoglalva"
                         giriton_offer = giriton_time
                         reason = "Egyedi alternatíva a tűrésen belül"
                     else:
