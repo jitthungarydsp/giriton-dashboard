@@ -11,6 +11,9 @@ on:
         description: "Hany napot kerjen le"
         required: true
         default: "10"
+  schedule:
+    # GitHub cron UTC-ben fut. A Giriton műszak raw export óránként frissíti a DB-t.
+    - cron: "0 * * * *"
 
 concurrency:
   group: giriton-raw-export
