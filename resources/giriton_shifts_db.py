@@ -241,6 +241,48 @@ def build_db_rows(rows, courier_lookup=None):
     return db_rows
 
 
+def delete_existing_shift_dates(db_rows):
+    work_dates = sorted(
+        {
+            clean(row.get("work_date"))
+            for row in db_rows or []
+            if clean(row.get("work_date"))
+        }
+    )
+    if not work_dates:
+        return {
+            "rows": 0,
+            "status": "empty",
+        }
+
+    supabase_url, headers = get_headers()
+    headers = {
+        **headers,
+        "Prefer": "return=minimal",
+    }
+
+    deleted_dates = 0
+    for work_date in work_dates:
+        endpoint = (
+            f"{supabase_url}/rest/v1/giriton_shifts_raw"
+            f"?source_name=eq.{SOURCE_NAME}"
+            f"&work_date=eq.{work_date}"
+        )
+        response = requests.delete(
+            endpoint,
+            headers=headers,
+            timeout=60,
+        )
+        raise_for_supabase_error(response)
+        deleted_dates += 1
+
+    return {
+        "rows": deleted_dates,
+        "status": "ok",
+        "dates": work_dates,
+    }
+
+
 def upsert_giriton_shift_rows(rows):
     db_rows = build_db_rows(rows)
 
@@ -251,6 +293,7 @@ def upsert_giriton_shift_rows(rows):
         }
 
     supabase_url, headers = get_headers()
+    delete_result = delete_existing_shift_dates(db_rows)
     endpoint = (
         f"{supabase_url}/rest/v1/giriton_shifts_raw"
         "?on_conflict=source_name,work_date,warehouse,start_time,courier_name"
@@ -272,6 +315,7 @@ def upsert_giriton_shift_rows(rows):
     return {
         "rows": len(db_rows),
         "status": "ok",
+        "replaced_dates": delete_result.get("rows", 0),
     }
 
 
