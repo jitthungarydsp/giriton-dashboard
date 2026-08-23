@@ -55,29 +55,15 @@ def _warehouse_match_key(value) -> str:
     return _match_text(value)
 
 
-def _optional_int(value) -> int | None:
-    text = _clean(value)
-    if not text:
-        return None
-    try:
-        return int(float(text))
-    except ValueError:
-        return None
-
-
 def _is_available_giriton_shift(row) -> bool:
     status = _clean(row.get("status")).upper()
     worker = _clean(row.get("courier_name")).upper()
-    booked = _optional_int(row.get("booked"))
-    maximum = _optional_int(row.get("maximum"))
 
-    if status == "URES" or worker in {"URES", "ÜRES"}:
-        return True
+    return status == "URES" or worker in {"URES", "ÜRES"}
 
-    if booked is not None and maximum is not None:
-        return booked < maximum
 
-    return True
+def _is_booked_giriton_shift(row) -> bool:
+    return not _is_available_giriton_shift(row)
 
 
 def _format_latest(value: str) -> str:
@@ -315,6 +301,27 @@ def _group_giriton_availability(df: pd.DataFrame) -> dict[tuple[str, str], list[
     return groups
 
 
+def _group_giriton_bookings(df: pd.DataFrame) -> dict[tuple[str, str, str], list[str]]:
+    if df.empty or "start_time" not in df.columns:
+        return {}
+
+    groups: dict[tuple[str, str, str], list[str]] = {}
+    for _, row in df.iterrows():
+        start = _normalize_time(row.get("start_time"))
+        worker_key = _worker_match_key(row)
+        if not start or not worker_key or not _is_booked_giriton_shift(row):
+            continue
+
+        key = (
+            _clean(row.get("work_date")),
+            worker_key,
+            _warehouse_match_key(row.get("warehouse")),
+        )
+        groups.setdefault(key, []).append(start)
+
+    return groups
+
+
 def _format_diff(diff: int | None) -> str:
     if diff is None:
         return "-"
@@ -439,6 +446,88 @@ def _nearest_single_giriton_time(
     return best_time, best_diff, status
 
 
+def _plan_giriton_day(
+    muszakpro_times: list[str],
+    available_times: list[str],
+    booked_times: list[str],
+    tolerance_minutes: int,
+) -> dict[str, tuple[str, int, str]]:
+    muszakpro_times = sorted(
+        {_normalize_time(value) for value in muszakpro_times if _normalize_time(value)},
+        key=lambda value: _time_minutes(value) or 0,
+    )
+    available_times = sorted(
+        {_normalize_time(value) for value in available_times if _normalize_time(value)},
+        key=lambda value: _time_minutes(value) or 0,
+    )
+    booked_times = sorted(
+        {_normalize_time(value) for value in booked_times if _normalize_time(value)},
+        key=lambda value: _time_minutes(value) or 0,
+    )
+    if not muszakpro_times:
+        return {}
+
+    booked_lookup = set(booked_times)
+    best: tuple[int, list[tuple[str, str, int, str]]] | None = None
+    candidates_by_shift: list[list[tuple[str, int, str, int]]] = []
+
+    for muszakpro_time in muszakpro_times:
+        if muszakpro_time in booked_lookup:
+            candidates_by_shift.append([(muszakpro_time, 0, "booked", 0)])
+            continue
+
+        shift_candidates = []
+        for giriton_time in available_times:
+            diff = _diff_minutes(muszakpro_time, giriton_time)
+            if diff is None or abs(diff) > tolerance_minutes:
+                continue
+            state = "exact" if diff == 0 else "alternative"
+            shift_candidates.append((giriton_time, diff, state, abs(diff)))
+
+        if not shift_candidates:
+            return {}
+
+        candidates_by_shift.append(
+            sorted(
+                shift_candidates,
+                key=lambda item: (item[3], _time_minutes(item[0]) or 0),
+            )
+        )
+
+    def choose(index: int, selected: list[tuple[str, str, int, str]], score: int):
+        nonlocal best
+        if index == len(candidates_by_shift):
+            selected_times = [item[1] for item in selected]
+            if not _shift_gap_ok(selected_times):
+                return
+            if best is None or score < best[0]:
+                best = (score, selected[:])
+            return
+
+        muszakpro_time = muszakpro_times[index]
+        used_available = {
+            item[1]
+            for item in selected
+            if item[3] != "booked"
+        }
+        for giriton_time, diff, state, candidate_score in candidates_by_shift[index]:
+            if state != "booked" and giriton_time in used_available:
+                continue
+            next_selected = selected + [(muszakpro_time, giriton_time, diff, state)]
+            if not _shift_gap_ok([item[1] for item in next_selected]):
+                continue
+            choose(index + 1, next_selected, score + candidate_score)
+
+    choose(0, [], 0)
+    if best is None:
+        return {}
+
+    return {
+        muszakpro_time: (giriton_time, diff, state)
+        for muszakpro_time, giriton_time, diff, state in best[1]
+    }
+
+
 def _build_summary_rows(
     muszakpro_df: pd.DataFrame,
     giriton_df: pd.DataFrame,
@@ -446,9 +535,7 @@ def _build_summary_rows(
 ) -> pd.DataFrame:
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_giriton_availability(giriton_df)
-    giriton_by_day: dict[str, list[str]] = {}
-    for (work_date, _warehouse_key), times in giriton_groups.items():
-        giriton_by_day.setdefault(work_date, []).extend(times)
+    booked_giriton_groups = _group_giriton_bookings(giriton_df)
 
     keys = sorted(
         set(muszakpro_groups),
@@ -473,11 +560,6 @@ def _build_summary_rows(
             key=lambda value: _time_minutes(value) or 0,
         )
         giriton_source = giriton_groups.get((work_date, warehouse_key), [])
-        used_day_fallback = False
-        if not giriton_source:
-            giriton_source = giriton_by_day.get(work_date, [])
-            used_day_fallback = bool(giriton_source)
-
         giriton_values = sorted(
             [
                 _normalize_time(value)
@@ -486,28 +568,33 @@ def _build_summary_rows(
             ],
             key=lambda value: _time_minutes(value) or 0,
         )
-        suggested_times, diffs, match_status = _nearest_giriton_times(
+        booked_values = sorted(
+            [
+                _normalize_time(value)
+                for value in booked_giriton_groups.get((work_date, worker_key, warehouse_key), [])
+                if _normalize_time(value)
+            ],
+            key=lambda value: _time_minutes(value) or 0,
+        )
+        daily_plan = _plan_giriton_day(
             muszakpro_values,
             giriton_values,
+            booked_values,
             tolerance_minutes,
         )
-        chain_lookup = {
-            muszakpro_time: (suggested_times[index], diffs[index])
-            for index, muszakpro_time in enumerate(muszakpro_values)
-            if index < len(suggested_times) and index < len(diffs)
-        }
 
         for muszakpro_time in muszakpro_values:
-            if muszakpro_time in chain_lookup:
-                giriton_time, diff_value = chain_lookup[muszakpro_time]
-                if diff_value == 0:
+            if muszakpro_time in daily_plan:
+                giriton_time, diff_value, plan_status = daily_plan[muszakpro_time]
+                if plan_status == "booked":
+                    status = "Lefoglalva"
+                    reason = "Ez a műszak már le van foglalva Giritonban"
+                elif diff_value == 0:
                     status = "Egyezés"
                     reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
                 else:
                     status = "Alternatíva"
                     reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
-                if used_day_fallback:
-                    reason += ", raktárfüggetlen Giriton ajánlat"
             else:
                 if len(muszakpro_values) == 1:
                     giriton_time, diff_value, single_status = _nearest_single_giriton_time(
@@ -523,14 +610,12 @@ def _build_summary_rows(
                         reason = "Egyedi alternatíva a tűrésen belül"
                     else:
                         status = "Sikertelen"
-                        reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
-                    if single_status != "none" and used_day_fallback:
-                        reason += ", raktárfüggetlen Giriton ajánlat"
+                        reason = f"Nincs azonos raktáras szabad Giriton találat ±{tolerance_minutes} percen belül"
                 else:
                     giriton_time = "nincs érvényes napi terv"
                     diff_value = None
                     status = "Sikertelen"
-                    reason = f"Nincs olyan napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
+                    reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
             rows.append(
                 {
