@@ -76,9 +76,6 @@ def optional_int(value):
 def shift_start(shift_text):
     text = clean(shift_text)
 
-    if "_" in text:
-        return normalize_time(text.split("_", 1)[1])
-
     match = re.search(r"(\d{1,2}:\d{2})", text)
 
     if match:

@@ -1,4 +1,5 @@
 import os
+import re
 
 from resources.google_auth import get_client
 
@@ -110,7 +111,8 @@ def is_valid_giriton_record(record):
 def foglalas_row_to_record(row):
     shift = row_value(row, 3)
     warehouse = row_value(row, 4)
-    start = shift.split("_", 1)[1] if "_" in shift else ""
+    match = re.search(r"(\d{1,2}:\d{2})", str(shift or ""))
+    start = match.group(1) if match else ""
 
     return {
         "created_at": row_value(row, 0),

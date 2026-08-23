@@ -1,4 +1,5 @@
 import time
+import re
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -335,7 +336,8 @@ def read_foglalasok_keyed_records(spreadsheet, work_date):
             continue
 
         shift = row_column(row, shift_index)
-        start = shift.split("_", 1)[1] if "_" in shift else ""
+        match = re.search(r"(\d{1,2}:\d{2})", shift)
+        start = match.group(1) if match else ""
 
         records.append(
             {

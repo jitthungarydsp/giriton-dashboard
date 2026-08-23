@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 from zoneinfo import ZoneInfo
 
 import requests
@@ -25,6 +26,12 @@ def db_time(value):
     if not text:
         return None
 
+    match = re.search(r"\b(\d{1,2}):(\d{2})(?::\d{2})?\b", text)
+
+    if not match:
+        return None
+
+    text = f"{match.group(1)}:{match.group(2)}"
     parts = text.split(":")
 
     if len(parts) >= 2:
