@@ -84,6 +84,28 @@ jobs:
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
 
+      - name: Refresh MuszakPro Giriton shift comparison
+        run: |
+          DAYS="${{ inputs.days }}"
+          START_DATE="${{ inputs.start_date }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          DAYS="${DAYS:-5}"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          CMD=(python scripts/refresh_shift_comparison.py --days "$DAYS")
+
+          if [ -n "$START_DATE" ]; then
+            CMD+=(--start-date "$START_DATE")
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
       - name: Send new shift push notifications
         if: ${{ inputs.dry_run != 'true' }}
         continue-on-error: true
