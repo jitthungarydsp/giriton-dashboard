@@ -51,6 +51,20 @@ def _worker_match_key(row) -> str:
     return f"name:{worker}" if worker else ""
 
 
+def _booking_worker_match_key(row) -> str:
+    courier_id = _clean(row.get("courier_id"))
+    if re.fullmatch(r"\d+\.0+", courier_id):
+        courier_id = courier_id.split(".", 1)[0]
+    if courier_id:
+        return f"id:{courier_id}"
+
+    email = _clean(row.get("email")).casefold()
+    if email:
+        return f"email:{email}"
+
+    return ""
+
+
 def _warehouse_match_key(value) -> str:
     return _match_text(value)
 
@@ -80,11 +94,11 @@ def _is_booked_giriton_shift(row) -> bool:
         return False
     if worker_key in {"", "ures", "none", "null"} or "none" in worker_key:
         return False
+    if not courier_id and not email:
+        return False
     if status in {"", "URES", "ÜRES", "NONE", "NULL", "-"}:
         return False
     if booked is not None and booked > 0:
-        return True
-    if courier_id or email:
         return True
 
     return False
@@ -326,6 +340,7 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
             {
                 "times": [],
                 "worker": worker,
+                "booking_worker_key": _booking_worker_match_key(row),
                 "warehouse": warehouse,
             },
         )
@@ -360,7 +375,7 @@ def _group_giriton_bookings(df: pd.DataFrame) -> dict[tuple[str, str, str], list
     groups: dict[tuple[str, str, str], list[str]] = {}
     for _, row in df.iterrows():
         start = _normalize_time(row.get("start_time"))
-        worker_key = _worker_match_key(row)
+        worker_key = _booking_worker_match_key(row)
         if not start or not worker_key or not _is_booked_giriton_shift(row):
             continue
 
@@ -612,6 +627,7 @@ def _build_summary_rows(
     for work_date, worker_key, warehouse_key in keys:
         muszakpro_group = muszakpro_groups.get((work_date, worker_key, warehouse_key), {})
         worker = muszakpro_group.get("worker", worker_key)
+        booking_worker_key = muszakpro_group.get("booking_worker_key", "")
         warehouse = muszakpro_group.get("warehouse", "")
         muszakpro_values = sorted(
             [
@@ -633,7 +649,11 @@ def _build_summary_rows(
         booked_values = sorted(
             [
                 _normalize_time(value)
-                for value in booked_giriton_groups.get((work_date, worker_key, warehouse_key), [])
+                for value in (
+                    booked_giriton_groups.get((work_date, booking_worker_key, warehouse_key), [])
+                    if booking_worker_key
+                    else []
+                )
                 if _normalize_time(value)
             ],
             key=lambda value: _time_minutes(value) or 0,
