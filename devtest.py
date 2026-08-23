@@ -12600,11 +12600,7 @@ def show_courier_dialog() -> None:
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
         expense_requests = load_courier_expense_requests(courier_id, payment_month)
-        finance_payment_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
-        monthly_payment_amount = (
-            parse_huf_value(finance_payment_sync.get("tig_final_huf"))
-            or overview_tig_payable_total
-        )
+        monthly_payment_amount = overview_tig_payable_total
 
         process_ids = {""}
         if not workflow_statuses.empty:
@@ -12778,10 +12774,9 @@ def show_courier_dialog() -> None:
             recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
             bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
             amount_huf = parse_huf_value(payment_item.get("amount"))
-            payment_tig_breakdown = finance_payment_sync.get("tig_breakdown")
             if is_expense_payment:
                 payment_tig_breakdown = {"rows": [], "finalTotalHuf": amount_huf}
-            if not isinstance(payment_tig_breakdown, dict):
+            else:
                 payment_tig_breakdown = build_tig_breakdown(
                     tig_payment_payload_from_profile(
                         profile,
@@ -12798,8 +12793,7 @@ def show_courier_dialog() -> None:
             tig_final_huf = (
                 0
                 if is_expense_payment
-                else parse_huf_value(finance_payment_sync.get("tig_final_huf"))
-                or parse_huf_value(payment_tig_breakdown.get("finalTotalHuf"))
+                else parse_huf_value(payment_tig_breakdown.get("finalTotalHuf"))
                 or amount_huf
             )
             invoice_amount_huf = parse_huf_value(payment_item.get("invoice_amount"))
