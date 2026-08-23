@@ -20,6 +20,9 @@ from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
 
 
+MIN_SHIFT_GAP_MINUTES = 270
+
+
 def _clean(value) -> str:
     if value is None:
         return ""
@@ -179,6 +182,21 @@ def _diff_minutes(left, right) -> int | None:
     return diff
 
 
+def _shift_gap_ok(times: list[str]) -> bool:
+    minutes = sorted(
+        minute
+        for minute in (_time_minutes(value) for value in times)
+        if minute is not None
+    )
+    if len(minutes) <= 1:
+        return True
+
+    return all(
+        current - previous >= MIN_SHIFT_GAP_MINUTES
+        for previous, current in zip(minutes, minutes[1:])
+    )
+
+
 def _apply_worker(df: pd.DataFrame, worker: str) -> pd.DataFrame:
     if worker == "Összes dolgozó" or df.empty or "courier_name" not in df.columns:
         return df
@@ -313,40 +331,81 @@ def _nearest_giriton_times(
     if not muszakpro_times or not giriton_times:
         return [], [], "none"
 
-    best: tuple[int, list[str], list[int]] | None = None
+    muszakpro_times = sorted(
+        {_normalize_time(value) for value in muszakpro_times if _normalize_time(value)},
+        key=lambda value: _time_minutes(value) or 0,
+    )
+    giriton_times = sorted(
+        {_normalize_time(value) for value in giriton_times if _normalize_time(value)},
+        key=lambda value: _time_minutes(value) or 0,
+    )
+    if len(giriton_times) < len(muszakpro_times):
+        return [], [], "none"
+
+    best: tuple[int, list[str], list[int], int] | None = None
     for candidate in giriton_times:
         first_diff = _diff_minutes(muszakpro_times[0], candidate)
         if first_diff is None or abs(first_diff) > tolerance_minutes:
             continue
 
-        shifted_times = []
-        diffs = []
-        for muszakpro_time in muszakpro_times:
+        candidates_by_shift: list[list[tuple[str, int, int]]] = []
+        for index, muszakpro_time in enumerate(muszakpro_times):
             target_minutes = (_time_minutes(muszakpro_time) or 0) + first_diff
             target_minutes %= 1440
             target_text = f"{target_minutes // 60:02d}:{target_minutes % 60:02d}"
-            closest = min(
-                giriton_times,
-                key=lambda value: (
-                    abs(diff)
-                    if (diff := _diff_minutes(target_text, value)) is not None
-                    else 10_000
-                ),
-            )
-            current_diff = _diff_minutes(muszakpro_time, closest)
-            if current_diff is None or abs(current_diff - first_diff) > tolerance_minutes:
-                shifted_times = []
-                diffs = []
-                break
-            shifted_times.append(closest)
-            diffs.append(current_diff)
+            shift_candidates = []
 
-        if not shifted_times:
+            for giriton_time in giriton_times:
+                target_diff = _diff_minutes(target_text, giriton_time)
+                current_diff = _diff_minutes(muszakpro_time, giriton_time)
+                if (
+                    target_diff is None
+                    or current_diff is None
+                    or abs(target_diff) > tolerance_minutes
+                ):
+                    continue
+
+                shift_candidates.append(
+                    (
+                        giriton_time,
+                        current_diff,
+                        abs(current_diff) + abs(target_diff) + abs(current_diff - first_diff),
+                    )
+                )
+
+            if not shift_candidates:
+                candidates_by_shift = []
+                break
+
+            candidates_by_shift.append(
+                sorted(
+                    shift_candidates,
+                    key=lambda item: (item[2], _time_minutes(item[0]) or 0, index),
+                )
+            )
+
+        if not candidates_by_shift:
             continue
 
-        score = sum(abs(diff) for diff in diffs)
-        if best is None or score < best[0]:
-            best = (score, shifted_times, diffs)
+        def choose(index: int, selected: list[str], diffs: list[int], score: int):
+            nonlocal best
+            if index == len(candidates_by_shift):
+                if not _shift_gap_ok(selected):
+                    return
+                total_score = score + sum(abs(diff - first_diff) for diff in diffs) * 3
+                if best is None or total_score < best[0]:
+                    best = (total_score, selected[:], diffs[:], first_diff)
+                return
+
+            for giriton_time, current_diff, candidate_score in candidates_by_shift[index]:
+                if giriton_time in selected:
+                    continue
+                next_selected = selected + [giriton_time]
+                if not _shift_gap_ok(next_selected):
+                    continue
+                choose(index + 1, next_selected, diffs + [current_diff], score + candidate_score)
+
+        choose(0, [], [], 0)
 
     if best is None:
         return [], [], "none"
@@ -443,29 +502,35 @@ def _build_summary_rows(
                 giriton_time, diff_value = chain_lookup[muszakpro_time]
                 if diff_value == 0:
                     status = "Egyezés"
-                    reason = "Pontos egyezés"
+                    reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
                 else:
                     status = "Alternatíva"
-                    reason = "Láncolt alternatíva a tűrésen belül"
+                    reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
                 if used_day_fallback:
                     reason += ", raktárfüggetlen Giriton ajánlat"
             else:
-                giriton_time, diff_value, single_status = _nearest_single_giriton_time(
-                    muszakpro_time,
-                    giriton_values,
-                    tolerance_minutes,
-                )
-                if single_status == "exact":
-                    status = "Egyezés"
-                    reason = "Pontos egyezés"
-                elif single_status == "alternative":
-                    status = "Alternatíva"
-                    reason = "Egyedi alternatíva a tűrésen belül"
+                if len(muszakpro_values) == 1:
+                    giriton_time, diff_value, single_status = _nearest_single_giriton_time(
+                        muszakpro_time,
+                        giriton_values,
+                        tolerance_minutes,
+                    )
+                    if single_status == "exact":
+                        status = "Egyezés"
+                        reason = "Pontos egyezés"
+                    elif single_status == "alternative":
+                        status = "Alternatíva"
+                        reason = "Egyedi alternatíva a tűrésen belül"
+                    else:
+                        status = "Sikertelen"
+                        reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
+                    if single_status != "none" and used_day_fallback:
+                        reason += ", raktárfüggetlen Giriton ajánlat"
                 else:
+                    giriton_time = "nincs érvényes napi terv"
+                    diff_value = None
                     status = "Sikertelen"
-                    reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
-                if single_status != "none" and used_day_fallback:
-                    reason += ", raktárfüggetlen Giriton ajánlat"
+                    reason = f"Nincs olyan napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
             rows.append(
                 {
@@ -936,6 +1001,7 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
         label_visibility="collapsed",
         key="foglalas_tolerance",
     )
+    st.sidebar.caption("Napi terv szabály: két Giriton műszak között minimum 4:30 óra kell.")
     st.sidebar.write("Foglalási állapot")
     for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]:
         st.sidebar.checkbox(
