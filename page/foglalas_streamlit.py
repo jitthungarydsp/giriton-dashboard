@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from html import escape
 from pathlib import Path
 import re
 import sys
@@ -133,6 +134,139 @@ def _status_count(df: pd.DataFrame, value: str) -> int:
     return int(has_missing.sum()) if value == "missing" else int((~has_missing).sum())
 
 
+def _status_badge(status: str) -> str:
+    classes = {
+        "Egyezés": "ok",
+        "Alternatíva": "warn",
+        "Sikertelen": "bad",
+        "Lefoglalva": "booked",
+    }
+    class_name = classes.get(status, "neutral")
+    return f"<span class='status-badge {class_name}'>{escape(status)}</span>"
+
+
+def _action_badge(status: str) -> str:
+    labels = {
+        "Egyezés": "Foglalás",
+        "Alternatíva": "Ellenőrzés",
+        "Sikertelen": "Kézi döntés",
+        "Lefoglalva": "Kész",
+    }
+    class_name = {
+        "Egyezés": "ok",
+        "Alternatíva": "warn",
+        "Sikertelen": "bad",
+        "Lefoglalva": "booked",
+    }.get(status, "neutral")
+    return f"<span class='action-badge {class_name}'>{escape(labels.get(status, '-'))}</span>"
+
+
+def _time_list(values) -> str:
+    times = sorted(
+        {
+            _normalize_time(value)
+            for value in values
+            if _normalize_time(value)
+        }
+    )
+    return ", ".join(times) if times else "-"
+
+
+def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, str], list[str]]:
+    if df.empty or time_column not in df.columns:
+        return {}
+
+    groups: dict[tuple[str, str, str], list[str]] = {}
+    for _, row in df.iterrows():
+        worker = _clean(row.get("courier_name"))
+        if not worker or worker.upper() == "URES":
+            continue
+
+        key = (
+            _clean(row.get("work_date")),
+            worker,
+            _clean(row.get("warehouse")),
+        )
+        groups.setdefault(key, []).append(_normalize_time(row.get(time_column)))
+
+    return groups
+
+
+def _build_summary_rows(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> pd.DataFrame:
+    muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
+    giriton_groups = _group_shifts(giriton_df, "start_time")
+    keys = sorted(set(muszakpro_groups) | set(giriton_groups))
+    rows = []
+
+    for work_date, worker, warehouse in keys:
+        muszakpro_times = _time_list(muszakpro_groups.get((work_date, worker, warehouse), []))
+        giriton_times = _time_list(giriton_groups.get((work_date, worker, warehouse), []))
+
+        if muszakpro_times == "-" and giriton_times != "-":
+            status = "Alternatíva"
+            reason = "Csak Giritonban van sor"
+            diff = "-"
+        elif giriton_times == "-":
+            status = "Sikertelen"
+            reason = "Nincs Giriton találat"
+            diff = "-"
+        elif muszakpro_times == giriton_times:
+            status = "Egyezés"
+            reason = "Pontos egyezés"
+            diff = "0 perc"
+        else:
+            status = "Alternatíva"
+            reason = "Eltérő Giriton időpont"
+            diff = "eltérés"
+
+        rows.append(
+            {
+                "Dátum": work_date,
+                "Dolgozó": worker,
+                "Raktár": warehouse,
+                "MűszakPro": muszakpro_times,
+                "Giriton ajánlat": giriton_times if giriton_times != "-" else "nincs találat",
+                "Eltérés": diff,
+                "Állapot": status,
+                "Ok": reason,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) -> None:
+    if df.empty:
+        st.info(empty_text)
+        return
+
+    head = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    body = []
+    for _, row in df[columns].iterrows():
+        cells = []
+        for column in columns:
+            value = row.get(column, "")
+            if column == "Állapot":
+                cells.append(f"<td>{_status_badge(_clean(value))}</td>")
+            elif column == "Következő lépés":
+                cells.append(f"<td>{_action_badge(_clean(row.get('Állapot') or value))}</td>")
+            else:
+                cells.append(f"<td>{escape(_clean(value))}</td>")
+        body.append(f"<tr>{''.join(cells)}</tr>")
+
+    st.markdown(
+        f"""
+        <div class="table-wrap">
+            <table class="styled-table">
+                <thead><tr>{head}</tr></thead>
+                <tbody>{''.join(body)}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _format_frame(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> pd.DataFrame:
     visible_columns = [column for column in columns if column in df.columns]
     if not visible_columns:
@@ -241,17 +375,37 @@ def _apply_styles() -> None:
         }
         .source-chip strong { color: #172033; }
         .kpi {
-            min-height: 92px;
-            padding: 18px 20px;
+            min-height: 90px;
+            padding: 16px 18px;
             border: 1px solid #dce5ea;
             border-radius: 8px;
             background: white;
             box-shadow: 0 1px 2px rgba(18, 38, 63, 0.04);
+            display: grid;
+            grid-template-columns: 48px 1fr;
+            align-items: center;
+            gap: 14px;
         }
         .kpi-label { color: #536173; font-size: 0.95rem; margin-bottom: 8px; }
         .kpi-value { font-size: 2rem; font-weight: 760; color: #1d66c1; }
         .kpi-green .kpi-value { color: #18834b; }
         .kpi-red .kpi-value { color: #c42b2b; }
+        .kpi-amber .kpi-value { color: #c27605; }
+        .kpi-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 12px;
+            background: #e9f5ff;
+            color: #1d66c1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1.15rem;
+        }
+        .kpi-green .kpi-icon { background: #e9f8ef; color: #18834b; }
+        .kpi-red .kpi-icon { background: #fff0f0; color: #c42b2b; }
+        .kpi-amber .kpi-icon { background: #fff5df; color: #c27605; }
         .section-card {
             background: white;
             border: 1px solid #dce5ea;
@@ -271,18 +425,148 @@ def _apply_styles() -> None:
             font-size: 0.9rem;
             margin-bottom: 10px;
         }
+        .hero-panel {
+            background: white;
+            border: 1px solid #dce5ea;
+            border-radius: 8px;
+            padding: 18px 20px;
+            margin: 16px 0 14px;
+        }
+        .hero-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+        .hero-title {
+            font-size: 1.35rem;
+            font-weight: 780;
+            color: #172033;
+            margin-bottom: 4px;
+        }
+        .hero-note { color: #64748b; }
+        .status-live {
+            border: 1px solid #bee6c8;
+            background: #f1fbf4;
+            color: #18834b;
+            border-radius: 8px;
+            padding: 9px 14px;
+            font-weight: 760;
+            white-space: nowrap;
+        }
+        .progress-shell {
+            height: 16px;
+            border-radius: 999px;
+            background: #edf2f5;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #0796a3;
+            color: white;
+            text-align: center;
+            line-height: 16px;
+            font-size: 0.78rem;
+            font-weight: 700;
+        }
+        .layout-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 292px;
+            gap: 16px;
+            align-items: start;
+        }
+        .side-panel {
+            background: white;
+            border: 1px solid #dce5ea;
+            border-radius: 8px;
+            padding: 16px 14px;
+        }
+        .side-panel h3 { margin-top: 0; }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            border-bottom: 1px solid #edf2f5;
+            padding: 10px 0;
+        }
+        .summary-row:last-child { border-bottom: 0; }
+        .side-action {
+            display: block;
+            text-align: center;
+            margin-top: 12px;
+            border: 1px solid #0796a3;
+            border-radius: 7px;
+            padding: 12px;
+            font-weight: 760;
+            color: #057783;
+            background: #f0fbfc;
+        }
+        .side-action.primary {
+            background: #0796a3;
+            color: white;
+        }
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid #dce5ea;
+            border-radius: 8px;
+            background: white;
+        }
+        .styled-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.92rem;
+        }
+        .styled-table th,
+        .styled-table td {
+            padding: 12px 13px;
+            border-bottom: 1px solid #e7edf1;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .styled-table th {
+            background: #f6f8fa;
+            color: #243044;
+            font-weight: 760;
+        }
+        .styled-table tr:last-child td { border-bottom: 0; }
+        .status-badge,
+        .action-badge {
+            display: inline-block;
+            min-width: 86px;
+            border-radius: 7px;
+            padding: 5px 10px;
+            text-align: center;
+            font-weight: 760;
+            border: 1px solid #dce5ea;
+        }
+        .status-badge.ok,
+        .action-badge.ok { background: #e9f8ef; color: #18834b; border-color: #a9dfb8; }
+        .status-badge.warn,
+        .action-badge.warn { background: #fff5df; color: #b66a00; border-color: #efc96e; }
+        .status-badge.bad,
+        .action-badge.bad { background: #fff0f0; color: #c42b2b; border-color: #ffaaaa; }
+        .status-badge.booked,
+        .action-badge.booked { background: #eaf2ff; color: #155fc1; border-color: #9bc0ff; }
+        @media (max-width: 1120px) {
+            .layout-grid { grid-template-columns: 1fr; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def _render_kpi(label: str, value: int, tone: str = "blue") -> None:
+def _render_kpi(label: str, value: int, tone: str = "blue", icon: str = "") -> None:
     st.markdown(
         f"""
         <div class="kpi kpi-{tone}">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{value}</div>
+            <div class="kpi-icon">{escape(icon or label[:1])}</div>
+            <div>
+                <div class="kpi-label">{escape(label)}</div>
+                <div class="kpi-value">{value}</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -344,10 +628,10 @@ def _safe_load(label: str, loader, *args) -> tuple[pd.DataFrame, str]:
 
 
 def _sidebar() -> tuple[str, date, date, time, time]:
-    st.sidebar.title("foglalas_streamlit.py")
+    st.sidebar.title("foglalas.py")
     view = st.sidebar.radio(
         "Nézet",
-        ["Összes", "Dolgozónként", "Eltérések", "Napló"],
+        ["Összes", "Dolgozónként", "Sikertelenek", "Napló"],
         index=0,
         key="foglalas_view",
     )
@@ -380,6 +664,23 @@ def _sidebar() -> tuple[str, date, date, time, time]:
     st.sidebar.write("Források")
     st.sidebar.toggle("MűszakPro", value=True, disabled=True)
     st.sidebar.toggle("Giriton", value=True, disabled=True)
+    st.sidebar.write("Eltérés: ±30 perc")
+    st.sidebar.slider(
+        "Tűrés",
+        min_value=5,
+        max_value=120,
+        value=30,
+        step=5,
+        label_visibility="collapsed",
+        key="foglalas_tolerance",
+    )
+    st.sidebar.write("Foglalási állapot")
+    for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]:
+        st.sidebar.checkbox(
+            status,
+            value=True,
+            key=f"foglalas_status_{status}",
+        )
     st.sidebar.divider()
     if st.sidebar.button("Adatok újraolvasása DB-ből", width="stretch"):
         st.cache_data.clear()
@@ -426,6 +727,87 @@ def _render_source_tables(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) 
             giriton_labels,
             "Nincs Giriton adat ebben a szűrésben.",
         )
+
+
+def _render_mass_view(summary_df: pd.DataFrame) -> None:
+    if summary_df.empty:
+        st.info("Nincs megjeleníthető egyeztetési sor ebben a szűrésben.")
+        return
+
+    exact_count = int((summary_df["Állapot"] == "Egyezés").sum())
+    alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum())
+    failed_count = int((summary_df["Állapot"] == "Sikertelen").sum())
+    booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum())
+    target_count = max(exact_count + booked_count, 1)
+    progress = min(round(booked_count / target_count * 100), 100)
+
+    st.markdown(
+        f"""
+        <div class="hero-panel">
+            <div class="hero-head">
+                <div>
+                    <div class="hero-title">Tömeges foglalás</div>
+                    <div class="hero-note">Egyező műszakok automatikus foglalása, problémás esetek külön listában</div>
+                </div>
+                <div class="status-live">Előkészítve</div>
+            </div>
+            <strong>Folyamatban: {booked_count} / {max(exact_count + booked_count, 0)} lefoglalva</strong>
+            <div class="progress-shell"><div class="progress-fill" style="width:{progress}%">{progress}%</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([4, 1.25], gap="large")
+    with left:
+        st.markdown("### Összesített foglalási lista")
+        table_df = summary_df.head(25).copy()
+        table_df["Következő lépés"] = table_df["Állapot"]
+        _render_html_table(
+            table_df,
+            [
+                "Dolgozó",
+                "MűszakPro",
+                "Giriton ajánlat",
+                "Eltérés",
+                "Állapot",
+                "Következő lépés",
+            ],
+            "Nincs összesített sor.",
+        )
+
+        st.markdown("### Sikertelen foglalások")
+        failed_df = summary_df[summary_df["Állapot"] == "Sikertelen"].head(25).copy()
+        if not failed_df.empty:
+            failed_df["Következő lépés"] = failed_df["Állapot"]
+        _render_html_table(
+            failed_df,
+            [
+                "Dolgozó",
+                "MűszakPro",
+                "Giriton ajánlat",
+                "Eltérés",
+                "Ok",
+                "Következő lépés",
+            ],
+            "Nincs sikertelen sor.",
+        )
+
+    with right:
+        st.markdown(
+            f"""
+            <div class="side-panel">
+                <h3>Tömeges művelet</h3>
+                <div class="summary-row"><span>Foglalható egyezések:</span><strong style="color:#18834b">{exact_count}</strong></div>
+                <div class="summary-row"><span>Alternatívával foglalható:</span><strong style="color:#c27605">{alternative_count}</strong></div>
+                <div class="summary-row"><span>Sikertelen:</span><strong style="color:#c42b2b">{failed_count}</strong></div>
+                <div class="side-action primary">Tömeges foglalás indítása</div>
+                <div class="side-action">Sikertelenek megnyitása</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.info("A gombok jelenleg csak látványtervi állapotban vannak, éles foglalást nem indítanak.")
 
 
 def _render_worker_view(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> None:
@@ -562,12 +944,20 @@ def show_foglalas_streamlit_page() -> None:
     comparison_df = _filter_time(comparison_df, "shift_start", start_time, end_time)
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
     giriton_df = _filter_time(giriton_df, "start_time", start_time, end_time)
+    summary_df = _build_summary_rows(muszakpro_df, giriton_df)
+    selected_statuses = [
+        status
+        for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]
+        if st.session_state.get(f"foglalas_status_{status}", True)
+    ]
+    if selected_statuses and not summary_df.empty:
+        summary_df = summary_df[summary_df["Állapot"].isin(selected_statuses)]
 
-    st.title("Műszak egyeztetés")
+    st.title("foglalas.py")
     st.caption(
         f"Szűrt időszak: {start_date} - {end_date}, "
         f"{start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}. "
-        "Csak adatnézet, foglalás nincs bekötve."
+        "MűszakPro és Giriton egyeztetés. Éles foglalás még nincs bekötve."
     )
     st.markdown(
         f"""
@@ -599,23 +989,50 @@ def show_foglalas_streamlit_page() -> None:
             f"Dátum: {giriton_fallback_date}."
         )
 
-    c1, c2, c3, c4 = st.columns(4)
+    workers_count = (
+        len(set(summary_df["Dolgozó"].dropna().astype(str)))
+        if not summary_df.empty and "Dolgozó" in summary_df.columns
+        else 0
+    )
+    shifts_count = len(summary_df)
+    exact_count = int((summary_df["Állapot"] == "Egyezés").sum()) if not summary_df.empty else 0
+    failed_count = int((summary_df["Állapot"] == "Sikertelen").sum()) if not summary_df.empty else 0
+    booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum()) if not summary_df.empty else 0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        _render_kpi("MűszakPro sor", len(muszakpro_df), "blue")
+        _render_kpi("Dolgozók", workers_count, "blue", "D")
     with c2:
-        _render_kpi("Giriton sor", len(giriton_df), "blue")
+        _render_kpi("Műszakok", shifts_count, "blue", "M")
     with c3:
-        _render_kpi("Egyező sor", _status_count(comparison_df, "ok"), "green")
+        _render_kpi("Egyezés", exact_count, "green", "OK")
     with c4:
-        _render_kpi("Eltérés / hiány", _status_count(comparison_df, "missing"), "red")
+        _render_kpi("Sikertelen", failed_count, "red", "!")
+    with c5:
+        _render_kpi("Lefoglalva", booked_count, "blue", "L")
 
     st.write("")
     if view == "Összes":
-        _render_source_tables(muszakpro_df, giriton_df)
+        _render_mass_view(summary_df)
     elif view == "Dolgozónként":
         _render_worker_view(muszakpro_df, giriton_df)
-    elif view == "Eltérések":
-        _render_differences(comparison_df)
+    elif view == "Sikertelenek":
+        failed_only = summary_df[summary_df["Állapot"] == "Sikertelen"] if not summary_df.empty else summary_df
+        if not failed_only.empty:
+            failed_only = failed_only.copy()
+            failed_only["Következő lépés"] = failed_only["Állapot"]
+        _render_html_table(
+            failed_only,
+            [
+                "Dolgozó",
+                "MűszakPro",
+                "Giriton ajánlat",
+                "Eltérés",
+                "Ok",
+                "Következő lépés",
+            ],
+            "Nincs sikertelen sor.",
+        )
     else:
         _render_log(log_df)
 
