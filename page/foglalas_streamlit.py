@@ -67,9 +67,6 @@ def _shift_start(shift_text) -> str:
     if not text:
         return ""
 
-    if "_" in text:
-        return _normalize_time(text.split("_", 1)[1])
-
     match = re.search(r"(\d{1,2}:\d{2})", text)
     if match:
         return _normalize_time(match.group(1))
@@ -104,6 +101,28 @@ def _filter_time(df: pd.DataFrame, column: str, start_time: time, end_time: time
         return df
 
     return df[df[column].map(lambda value: _in_time_range(value, start_time, end_time))]
+
+
+def _time_minutes(value) -> int | None:
+    parsed = _parse_time(value)
+    if parsed is None:
+        return None
+
+    return parsed.hour * 60 + parsed.minute
+
+
+def _diff_minutes(left, right) -> int | None:
+    left_minutes = _time_minutes(left)
+    right_minutes = _time_minutes(right)
+    if left_minutes is None or right_minutes is None:
+        return None
+
+    diff = right_minutes - left_minutes
+    if diff > 720:
+        diff -= 1440
+    elif diff < -720:
+        diff += 1440
+    return diff
 
 
 def _apply_worker(df: pd.DataFrame, worker: str) -> pd.DataFrame:
@@ -192,40 +211,120 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
     return groups
 
 
-def _build_summary_rows(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> pd.DataFrame:
+def _format_diff(diff: int | None) -> str:
+    if diff is None:
+        return "-"
+    if diff == 0:
+        return "0 perc"
+    return f"{diff:+d} perc"
+
+
+def _nearest_giriton_times(
+    muszakpro_times: list[str],
+    giriton_times: list[str],
+    tolerance_minutes: int,
+) -> tuple[list[str], list[int], str]:
+    if not muszakpro_times or not giriton_times:
+        return [], [], "none"
+
+    best: tuple[int, list[str], list[int]] | None = None
+    for candidate in giriton_times:
+        first_diff = _diff_minutes(muszakpro_times[0], candidate)
+        if first_diff is None or abs(first_diff) > tolerance_minutes:
+            continue
+
+        shifted_times = []
+        diffs = []
+        for muszakpro_time in muszakpro_times:
+            target_minutes = (_time_minutes(muszakpro_time) or 0) + first_diff
+            target_minutes %= 1440
+            target_text = f"{target_minutes // 60:02d}:{target_minutes % 60:02d}"
+            closest = min(
+                giriton_times,
+                key=lambda value: (
+                    abs(diff)
+                    if (diff := _diff_minutes(target_text, value)) is not None
+                    else 10_000
+                ),
+            )
+            current_diff = _diff_minutes(muszakpro_time, closest)
+            if current_diff is None or abs(current_diff - first_diff) > tolerance_minutes:
+                shifted_times = []
+                diffs = []
+                break
+            shifted_times.append(closest)
+            diffs.append(current_diff)
+
+        if not shifted_times:
+            continue
+
+        score = sum(abs(diff) for diff in diffs)
+        if best is None or score < best[0]:
+            best = (score, shifted_times, diffs)
+
+    if best is None:
+        return [], [], "none"
+
+    status = "exact" if all(diff == 0 for diff in best[2]) else "alternative"
+    return best[1], best[2], status
+
+
+def _build_summary_rows(
+    muszakpro_df: pd.DataFrame,
+    giriton_df: pd.DataFrame,
+    tolerance_minutes: int,
+) -> pd.DataFrame:
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_shifts(giriton_df, "start_time")
-    keys = sorted(set(muszakpro_groups) | set(giriton_groups))
+    keys = sorted(set(muszakpro_groups))
     rows = []
 
     for work_date, worker, warehouse in keys:
-        muszakpro_times = _time_list(muszakpro_groups.get((work_date, worker, warehouse), []))
-        giriton_times = _time_list(giriton_groups.get((work_date, worker, warehouse), []))
+        muszakpro_values = sorted(
+            [
+                _normalize_time(value)
+                for value in muszakpro_groups.get((work_date, worker, warehouse), [])
+                if _normalize_time(value)
+            ],
+            key=lambda value: _time_minutes(value) or 0,
+        )
+        giriton_values = sorted(
+            [
+                _normalize_time(value)
+                for value in giriton_groups.get((work_date, worker, warehouse), [])
+                if _normalize_time(value)
+            ],
+            key=lambda value: _time_minutes(value) or 0,
+        )
+        suggested_times, diffs, match_status = _nearest_giriton_times(
+            muszakpro_values,
+            giriton_values,
+            tolerance_minutes,
+        )
 
-        if muszakpro_times == "-" and giriton_times != "-":
-            status = "Alternatíva"
-            reason = "Csak Giritonban van sor"
-            diff = "-"
-        elif giriton_times == "-":
+        if match_status == "none":
             status = "Sikertelen"
-            reason = "Nincs Giriton találat"
+            reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
             diff = "-"
-        elif muszakpro_times == giriton_times:
+            giriton_times = "nincs találat"
+        elif match_status == "exact":
             status = "Egyezés"
             reason = "Pontos egyezés"
             diff = "0 perc"
+            giriton_times = _time_list(suggested_times)
         else:
             status = "Alternatíva"
-            reason = "Eltérő Giriton időpont"
-            diff = "eltérés"
+            reason = "Láncolt alternatíva a tűrésen belül"
+            diff = _format_diff(diffs[0] if diffs else None)
+            giriton_times = _time_list(suggested_times)
 
         rows.append(
             {
                 "Dátum": work_date,
                 "Dolgozó": worker,
                 "Raktár": warehouse,
-                "MűszakPro": muszakpro_times,
-                "Giriton ajánlat": giriton_times if giriton_times != "-" else "nincs találat",
+                "MűszakPro": _time_list(muszakpro_values),
+                "Giriton ajánlat": giriton_times,
                 "Eltérés": diff,
                 "Állapot": status,
                 "Ok": reason,
@@ -627,7 +726,7 @@ def _safe_load(label: str, loader, *args) -> tuple[pd.DataFrame, str]:
         return pd.DataFrame(), f"{label}: {exc}"
 
 
-def _sidebar() -> tuple[str, date, date, time, time]:
+def _sidebar() -> tuple[str, date, date, time, time, int]:
     st.sidebar.title("foglalas.py")
     view = st.sidebar.radio(
         "Nézet",
@@ -665,7 +764,7 @@ def _sidebar() -> tuple[str, date, date, time, time]:
     st.sidebar.toggle("MűszakPro", value=True, disabled=True)
     st.sidebar.toggle("Giriton", value=True, disabled=True)
     st.sidebar.write("Eltérés: ±30 perc")
-    st.sidebar.slider(
+    tolerance_minutes = st.sidebar.slider(
         "Tűrés",
         min_value=5,
         max_value=120,
@@ -686,7 +785,7 @@ def _sidebar() -> tuple[str, date, date, time, time]:
         st.cache_data.clear()
         st.rerun()
 
-    return view, start_date, end_date, start_time, end_time
+    return view, start_date, end_date, start_time, end_time, int(tolerance_minutes)
 
 
 def _render_source_tables(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> None:
@@ -738,8 +837,8 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
     alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum())
     failed_count = int((summary_df["Állapot"] == "Sikertelen").sum())
     booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum())
-    target_count = max(exact_count + booked_count, 1)
-    progress = min(round(booked_count / target_count * 100), 100)
+    target_count = max(len(summary_df), 1)
+    progress = min(round((exact_count + booked_count) / target_count * 100), 100)
 
     st.markdown(
         f"""
@@ -751,7 +850,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 </div>
                 <div class="status-live">Előkészítve</div>
             </div>
-            <strong>Folyamatban: {booked_count} / {max(exact_count + booked_count, 0)} lefoglalva</strong>
+            <strong>Foglalható egyezések: {exact_count} / {len(summary_df)}</strong>
             <div class="progress-shell"><div class="progress-fill" style="width:{progress}%">{progress}%</div></div>
         </div>
         """,
@@ -801,13 +900,25 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 <div class="summary-row"><span>Foglalható egyezések:</span><strong style="color:#18834b">{exact_count}</strong></div>
                 <div class="summary-row"><span>Alternatívával foglalható:</span><strong style="color:#c27605">{alternative_count}</strong></div>
                 <div class="summary-row"><span>Sikertelen:</span><strong style="color:#c42b2b">{failed_count}</strong></div>
-                <div class="side-action primary">Tömeges foglalás indítása</div>
+                <div class="summary-row"><span>Lefoglalva:</span><strong style="color:#155fc1">{booked_count}</strong></div>
+                <div class="side-action primary">Foglalható sorok indítása</div>
                 <div class="side-action">Sikertelenek megnyitása</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         st.info("A gombok jelenleg csak látványtervi állapotban vannak, éles foglalást nem indítanak.")
+        st.markdown(
+            """
+            <div class="side-panel">
+                <h3>DB alap</h3>
+                <div class="summary-row"><span>raw_muszakpro_bookings</span><strong>MP</strong></div>
+                <div class="summary-row"><span>giriton_shifts_raw</span><strong>G</strong></div>
+                <div class="summary-row"><span>vw_courier_next_5_day_shifts</span><strong>5 nap</strong></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _render_worker_view(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> None:
@@ -891,7 +1002,7 @@ def _render_log(log_df: pd.DataFrame) -> None:
 
 def show_foglalas_streamlit_page() -> None:
     _apply_styles()
-    view, start_date, end_date, start_time, end_time = _sidebar()
+    view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
 
     if end_date < start_date:
         st.error("A záró dátum nem lehet korábbi, mint a kezdő dátum.")
@@ -915,24 +1026,6 @@ def show_foglalas_streamlit_page() -> None:
         _load_latest_giriton_data,
     )
     log_df, log_error = _safe_load("Napló", _load_log_data, start_date, end_date)
-    giriton_fallback_date = ""
-    if giriton_df.empty and not latest_giriton_df.empty:
-        latest_row = latest_giriton_df.iloc[0]
-        giriton_fallback_date = _clean(latest_row.get("work_date"))
-        if giriton_fallback_date:
-            giriton_fallback_df, giriton_fallback_error = _safe_load(
-                "Giriton legfrissebb nap",
-                _load_giriton_day,
-                giriton_fallback_date,
-            )
-            if giriton_fallback_error:
-                latest_giriton_error = (
-                    f"{latest_giriton_error} | {giriton_fallback_error}"
-                    if latest_giriton_error
-                    else giriton_fallback_error
-                )
-            elif not giriton_fallback_df.empty:
-                giriton_df = giriton_fallback_df
 
     if not muszakpro_df.empty:
         muszakpro_df = muszakpro_df.copy()
@@ -944,7 +1037,7 @@ def show_foglalas_streamlit_page() -> None:
     comparison_df = _filter_time(comparison_df, "shift_start", start_time, end_time)
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
     giriton_df = _filter_time(giriton_df, "start_time", start_time, end_time)
-    summary_df = _build_summary_rows(muszakpro_df, giriton_df)
+    summary_df = _build_summary_rows(muszakpro_df, giriton_df, tolerance_minutes)
     selected_statuses = [
         status
         for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]
@@ -963,7 +1056,7 @@ def show_foglalas_streamlit_page() -> None:
         f"""
         <div class="source-status">
             <div class="source-chip"><strong>MűszakPro</strong> utolsó frissítés: {_latest(muszakpro_df, "fetched_at")}</div>
-            <div class="source-chip"><strong>Giriton</strong> utolsó frissítés: {_latest(giriton_df, "fetched_at")}</div>
+            <div class="source-chip"><strong>Giriton</strong> utolsó frissítés: {_latest(giriton_df if not giriton_df.empty else latest_giriton_df, "fetched_at")}</div>
             <div class="source-chip"><strong>Egyeztetés</strong> frissítve: {_latest(comparison_df, "updated_at")}</div>
         </div>
         """,
@@ -982,34 +1075,29 @@ def show_foglalas_streamlit_page() -> None:
     ]
     if errors:
         st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
-    if giriton_fallback_date:
-        st.info(
-            "A kiválasztott időszakban nincs Giriton sor, "
-            "ezért lent a legfrissebb elérhető Giriton nap adatait mutatom. "
-            f"Dátum: {giriton_fallback_date}."
-        )
 
     workers_count = (
         len(set(summary_df["Dolgozó"].dropna().astype(str)))
         if not summary_df.empty and "Dolgozó" in summary_df.columns
         else 0
     )
-    shifts_count = len(summary_df)
+    muszakpro_count = len(muszakpro_df)
+    giriton_count = len(giriton_df)
     exact_count = int((summary_df["Állapot"] == "Egyezés").sum()) if not summary_df.empty else 0
     failed_count = int((summary_df["Állapot"] == "Sikertelen").sum()) if not summary_df.empty else 0
-    booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum()) if not summary_df.empty else 0
+    alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum()) if not summary_df.empty else 0
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         _render_kpi("Dolgozók", workers_count, "blue", "D")
     with c2:
-        _render_kpi("Műszakok", shifts_count, "blue", "M")
+        _render_kpi("MűszakPro sor", muszakpro_count, "blue", "MP")
     with c3:
-        _render_kpi("Egyezés", exact_count, "green", "OK")
+        _render_kpi("Giriton sor", giriton_count, "blue", "G")
     with c4:
-        _render_kpi("Sikertelen", failed_count, "red", "!")
+        _render_kpi("Egyezés", exact_count, "green", "OK")
     with c5:
-        _render_kpi("Lefoglalva", booked_count, "blue", "L")
+        _render_kpi("Figyelendő", failed_count + alternative_count, "red", "!")
 
     st.write("")
     if view == "Összes":
