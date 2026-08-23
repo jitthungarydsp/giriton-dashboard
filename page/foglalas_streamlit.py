@@ -5,6 +5,7 @@ from html import escape
 from pathlib import Path
 import re
 import sys
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -20,7 +21,35 @@ from resources.shift_comparison_db import read_next_5_day_shift_comparison
 
 
 def _clean(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
     return str(value or "").strip()
+
+
+def _match_text(value) -> str:
+    text = unicodedata.normalize("NFKD", _clean(value).casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _worker_match_key(row) -> str:
+    courier_id = _clean(row.get("courier_id"))
+    if re.fullmatch(r"\d+\.0+", courier_id):
+        courier_id = courier_id.split(".", 1)[0]
+    if courier_id:
+        return f"id:{courier_id}"
+
+    worker = _match_text(row.get("courier_name"))
+    return f"name:{worker}" if worker else ""
+
+
+def _warehouse_match_key(value) -> str:
+    return _match_text(value)
 
 
 def _format_latest(value: str) -> str:
@@ -191,22 +220,35 @@ def _time_list(values) -> str:
     return ", ".join(times) if times else "-"
 
 
-def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, str], list[str]]:
+def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, str], dict]:
     if df.empty or time_column not in df.columns:
         return {}
 
-    groups: dict[tuple[str, str, str], list[str]] = {}
+    groups: dict[tuple[str, str, str], dict] = {}
     for _, row in df.iterrows():
         worker = _clean(row.get("courier_name"))
         if not worker or worker.upper() == "URES":
             continue
 
+        worker_key = _worker_match_key(row)
+        if not worker_key:
+            continue
+
+        warehouse = _clean(row.get("warehouse"))
         key = (
             _clean(row.get("work_date")),
-            worker,
-            _clean(row.get("warehouse")),
+            worker_key,
+            _warehouse_match_key(warehouse),
         )
-        groups.setdefault(key, []).append(_normalize_time(row.get(time_column)))
+        group = groups.setdefault(
+            key,
+            {
+                "times": [],
+                "worker": worker,
+                "warehouse": warehouse,
+            },
+        )
+        group["times"].append(_normalize_time(row.get(time_column)))
 
     return groups
 
@@ -301,22 +343,44 @@ def _build_summary_rows(
 ) -> pd.DataFrame:
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_shifts(giriton_df, "start_time")
-    keys = sorted(set(muszakpro_groups))
+    giriton_by_worker_day: dict[tuple[str, str], list[str]] = {}
+    for (work_date, worker_key, _warehouse_key), group in giriton_groups.items():
+        fallback_key = (work_date, worker_key)
+        giriton_by_worker_day.setdefault(fallback_key, []).extend(group.get("times", []))
+
+    keys = sorted(
+        set(muszakpro_groups),
+        key=lambda key: (
+            key[0],
+            muszakpro_groups[key].get("worker", ""),
+            muszakpro_groups[key].get("warehouse", ""),
+        ),
+    )
     rows = []
 
-    for work_date, worker, warehouse in keys:
+    for work_date, worker_key, warehouse_key in keys:
+        muszakpro_group = muszakpro_groups.get((work_date, worker_key, warehouse_key), {})
+        worker = muszakpro_group.get("worker", worker_key)
+        warehouse = muszakpro_group.get("warehouse", "")
         muszakpro_values = sorted(
             [
                 _normalize_time(value)
-                for value in muszakpro_groups.get((work_date, worker, warehouse), [])
+                for value in muszakpro_group.get("times", [])
                 if _normalize_time(value)
             ],
             key=lambda value: _time_minutes(value) or 0,
         )
+        exact_giriton_group = giriton_groups.get((work_date, worker_key, warehouse_key), {})
+        giriton_source = exact_giriton_group.get("times", [])
+        used_worker_day_fallback = False
+        if not giriton_source:
+            giriton_source = giriton_by_worker_day.get((work_date, worker_key), [])
+            used_worker_day_fallback = bool(giriton_source)
+
         giriton_values = sorted(
             [
                 _normalize_time(value)
-                for value in giriton_groups.get((work_date, worker, warehouse), [])
+                for value in giriton_source
                 if _normalize_time(value)
             ],
             key=lambda value: _time_minutes(value) or 0,
@@ -341,6 +405,8 @@ def _build_summary_rows(
                 else:
                     status = "Alternatíva"
                     reason = "Láncolt alternatíva a tűrésen belül"
+                if used_worker_day_fallback:
+                    reason += ", futár azonosító alapján"
             else:
                 giriton_time, diff_value, single_status = _nearest_single_giriton_time(
                     muszakpro_time,
@@ -356,6 +422,8 @@ def _build_summary_rows(
                 else:
                     status = "Sikertelen"
                     reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
+                if single_status != "none" and used_worker_day_fallback:
+                    reason += ", futár azonosító alapján"
 
             rows.append(
                 {
