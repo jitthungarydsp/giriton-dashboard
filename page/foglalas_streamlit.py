@@ -52,6 +52,31 @@ def _warehouse_match_key(value) -> str:
     return _match_text(value)
 
 
+def _optional_int(value) -> int | None:
+    text = _clean(value)
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def _is_available_giriton_shift(row) -> bool:
+    status = _clean(row.get("status")).upper()
+    worker = _clean(row.get("courier_name")).upper()
+    booked = _optional_int(row.get("booked"))
+    maximum = _optional_int(row.get("maximum"))
+
+    if status == "URES" or worker in {"URES", "ÜRES"}:
+        return True
+
+    if booked is not None and maximum is not None:
+        return booked < maximum
+
+    return True
+
+
 def _format_latest(value: str) -> str:
     text = _clean(value)
     if not text:
@@ -253,6 +278,25 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
     return groups
 
 
+def _group_giriton_availability(df: pd.DataFrame) -> dict[tuple[str, str], list[str]]:
+    if df.empty or "start_time" not in df.columns:
+        return {}
+
+    groups: dict[tuple[str, str], list[str]] = {}
+    for _, row in df.iterrows():
+        start = _normalize_time(row.get("start_time"))
+        if not start or not _is_available_giriton_shift(row):
+            continue
+
+        key = (
+            _clean(row.get("work_date")),
+            _warehouse_match_key(row.get("warehouse")),
+        )
+        groups.setdefault(key, []).append(start)
+
+    return groups
+
+
 def _format_diff(diff: int | None) -> str:
     if diff is None:
         return "-"
@@ -342,11 +386,10 @@ def _build_summary_rows(
     tolerance_minutes: int,
 ) -> pd.DataFrame:
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
-    giriton_groups = _group_shifts(giriton_df, "start_time")
-    giriton_by_worker_day: dict[tuple[str, str], list[str]] = {}
-    for (work_date, worker_key, _warehouse_key), group in giriton_groups.items():
-        fallback_key = (work_date, worker_key)
-        giriton_by_worker_day.setdefault(fallback_key, []).extend(group.get("times", []))
+    giriton_groups = _group_giriton_availability(giriton_df)
+    giriton_by_day: dict[str, list[str]] = {}
+    for (work_date, _warehouse_key), times in giriton_groups.items():
+        giriton_by_day.setdefault(work_date, []).extend(times)
 
     keys = sorted(
         set(muszakpro_groups),
@@ -370,12 +413,11 @@ def _build_summary_rows(
             ],
             key=lambda value: _time_minutes(value) or 0,
         )
-        exact_giriton_group = giriton_groups.get((work_date, worker_key, warehouse_key), {})
-        giriton_source = exact_giriton_group.get("times", [])
-        used_worker_day_fallback = False
+        giriton_source = giriton_groups.get((work_date, warehouse_key), [])
+        used_day_fallback = False
         if not giriton_source:
-            giriton_source = giriton_by_worker_day.get((work_date, worker_key), [])
-            used_worker_day_fallback = bool(giriton_source)
+            giriton_source = giriton_by_day.get(work_date, [])
+            used_day_fallback = bool(giriton_source)
 
         giriton_values = sorted(
             [
@@ -405,8 +447,8 @@ def _build_summary_rows(
                 else:
                     status = "Alternatíva"
                     reason = "Láncolt alternatíva a tűrésen belül"
-                if used_worker_day_fallback:
-                    reason += ", futár azonosító alapján"
+                if used_day_fallback:
+                    reason += ", raktárfüggetlen Giriton ajánlat"
             else:
                 giriton_time, diff_value, single_status = _nearest_single_giriton_time(
                     muszakpro_time,
@@ -422,8 +464,8 @@ def _build_summary_rows(
                 else:
                     status = "Sikertelen"
                     reason = f"Nincs Giriton találat ±{tolerance_minutes} percen belül"
-                if single_status != "none" and used_worker_day_fallback:
-                    reason += ", futár azonosító alapján"
+                if single_status != "none" and used_day_fallback:
+                    reason += ", raktárfüggetlen Giriton ajánlat"
 
             rows.append(
                 {

@@ -74,6 +74,8 @@ def with_retries(callback, attempts=3, delay_seconds=2):
 
 def make_match_key(work_date, email, warehouse, start, name="", courier_id=""):
     courier_id = str(courier_id or "").strip()
+    if re.fullmatch(r"\d+\.0+", courier_id):
+        courier_id = courier_id.split(".", 1)[0]
     email = str(email or "").strip().casefold()
     name = normalize_name(name)
     person = courier_id or email or name
@@ -82,9 +84,19 @@ def make_match_key(work_date, email, warehouse, start, name="", courier_id=""):
         [
             str(work_date or "").strip(),
             person,
-            str(warehouse or "").strip().casefold(),
             normalize_time(start),
         ]
+    )
+
+
+def record_match_key(record):
+    return make_match_key(
+        record.get("work_date", ""),
+        record.get("email", ""),
+        "",
+        record.get("start", ""),
+        record.get("name", ""),
+        record.get("courier_id", ""),
     )
 
 
@@ -426,32 +438,32 @@ def build_records_for_date(work_date):
     ).strftime("%Y-%m-%d %H:%M:%S")
     spreadsheet = open_sheet()
     giriton_records = {
-        record["serial"]: record
+        record_match_key(record): record
         for record in read_giriton_keyed_records(
             spreadsheet,
             work_date,
         )
-        if record.get("serial")
+        if record_match_key(record)
     }
     foglalas_records = {
-        record["serial"]: record
+        record_match_key(record): record
         for record in read_foglalasok_keyed_records(
             spreadsheet,
             work_date,
         )
-        if record.get("serial")
+        if record_match_key(record)
     }
     records = []
 
-    for serial in sorted(
+    for match_key in sorted(
         set(giriton_records) | set(foglalas_records)
     ):
         giriton_record = giriton_records.get(
-            serial,
+            match_key,
             {},
         )
         foglalas_record = foglalas_records.get(
-            serial,
+            match_key,
             {},
         )
         source = giriton_record or foglalas_record
@@ -479,7 +491,7 @@ def build_records_for_date(work_date):
                 "giriton_check": "GIRITON_OK" if has_giriton else "",
                 "muszakpro_code": foglalas_record.get("code", ""),
                 "updated_at": updated_at,
-                "match_key": serial,
+                "match_key": match_key,
                 "courier_id": source.get("courier_id", ""),
             }
         )
