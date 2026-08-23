@@ -6,6 +6,7 @@ import re
 import sys
 
 import pandas as pd
+import requests
 import streamlit as st
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -15,7 +16,11 @@ if str(ROOT_DIR) not in sys.path:
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
+from resources.github_actions import GitHubActionsError, get_config
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
+
+
+GIRITON_RAW_EXPORT_WORKFLOW = "giriton-raw-export.yml"
 
 
 def _clean(value) -> str:
@@ -148,6 +153,48 @@ def _display_table(df: pd.DataFrame, columns: list[str], labels: dict[str, str],
         return
 
     st.dataframe(table, width="stretch", hide_index=True)
+
+
+def _trigger_giriton_refresh(start_date: date, end_date: date) -> dict[str, str]:
+    config = get_config()
+    token = config.get("token")
+    if not token:
+        raise GitHubActionsError(
+            "Hiányzik a GITHUB_ACTIONS_TOKEN secret. Streamlit Cloudban add hozzá a Secrets részhez."
+        )
+
+    days = max((end_date - start_date).days + 1, 1)
+    endpoint = (
+        f"https://api.github.com/repos/{config['owner']}/{config['repo']}"
+        f"/actions/workflows/{GIRITON_RAW_EXPORT_WORKFLOW}/dispatches"
+    )
+    response = requests.post(
+        endpoint,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={
+            "ref": config["ref"],
+            "inputs": {
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "days": str(days),
+            },
+        },
+        timeout=20,
+    )
+    if response.status_code != 204:
+        raise GitHubActionsError(
+            f"Giriton frissítés indítása sikertelen: HTTP {response.status_code} - {response.text[:500]}"
+        )
+
+    return {
+        "workflow": GIRITON_RAW_EXPORT_WORKFLOW,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "days": str(days),
+        "triggered_at": datetime.now().strftime("%Y.%m.%d. %H:%M:%S"),
+    }
 
 
 def _muszakpro_columns() -> tuple[list[str], dict[str, str]]:
@@ -351,9 +398,20 @@ def _sidebar() -> tuple[str, date, date, time, time]:
     st.sidebar.write("Források")
     st.sidebar.toggle("MűszakPro", value=True, disabled=True)
     st.sidebar.toggle("Giriton", value=True, disabled=True)
+    st.sidebar.divider()
+    st.sidebar.write("Frissítés")
     if st.sidebar.button("Adatok újraolvasása", width="stretch"):
         st.cache_data.clear()
         st.rerun()
+    if st.sidebar.button("Giriton frissítés indítása", width="stretch"):
+        try:
+            result = _trigger_giriton_refresh(start_date, end_date)
+            st.session_state["foglalas_giriton_refresh_result"] = result
+            st.success(
+                f"Giriton frissítés elindítva: {result['start_date']} / {result['days']} nap."
+            )
+        except Exception as exc:
+            st.error(f"Giriton frissítés nem indult el: {exc}")
 
     return view, start_date, end_date, start_time, end_time
 
@@ -520,6 +578,13 @@ def show_foglalas_streamlit_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+    refresh_result = st.session_state.get("foglalas_giriton_refresh_result")
+    if refresh_result:
+        st.info(
+            "Giriton frissítés elindítva: "
+            f"{refresh_result['start_date']} / {refresh_result['days']} nap, "
+            f"{refresh_result['triggered_at']}."
+        )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
