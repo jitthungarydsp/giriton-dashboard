@@ -267,13 +267,19 @@ def _giriton_state_badge(status: str) -> str:
 def _cell_class(row, column: str) -> str:
     status = _clean(row.get("Állapot"))
     diff_text = _clean(row.get("Eltérés"))
-    giriton_time = _clean(row.get("Giriton ajánlat"))
-    has_giriton_time = bool(giriton_time and not giriton_time.lower().startswith("nincs"))
-    if column in {"MűszakPro", "Giriton ajánlat"} and diff_text == "0 perc":
+    giriton_booking = _clean(row.get("Giriton foglalás"))
+    giriton_offer = _clean(row.get("Giriton ajánlat"))
+    has_giriton_time = bool(
+        (giriton_booking and giriton_booking != "-")
+        or (giriton_offer and giriton_offer != "-" and not giriton_offer.lower().startswith("nincs"))
+    )
+    if column == "MűszakPro" and diff_text == "0 perc":
         return "match-ok"
     if column == "MűszakPro" and status in {"Alternatíva", "Lefoglalva"} and diff_text not in {"", "-", "0 perc"} and has_giriton_time:
         return "booked-conflict"
-    if column == "Giriton ajánlat" and status in {"Alternatíva", "Lefoglalva"} and has_giriton_time:
+    if column == "Giriton foglalás" and status == "Lefoglalva" and giriton_booking and giriton_booking != "-":
+        return "match-ok" if diff_text == "0 perc" else "booked-ok"
+    if column == "Giriton ajánlat" and status in {"Egyezés", "Alternatíva"} and giriton_offer and giriton_offer != "-":
         return "match-ok"
     return ""
 
@@ -634,19 +640,24 @@ def _build_summary_rows(
         )
 
         for muszakpro_time in muszakpro_values:
+            giriton_booking = "-"
+            giriton_offer = "-"
             if muszakpro_time in daily_plan:
                 giriton_time, diff_value, plan_status = daily_plan[muszakpro_time]
                 if plan_status == "booked":
                     status = "Lefoglalva"
                     giriton_state = "Lefoglalva"
+                    giriton_booking = giriton_time
                     reason = "Ez a műszak már le van foglalva Giritonban"
                 elif diff_value == 0:
                     status = "Egyezés"
                     giriton_state = "Ajánlás"
+                    giriton_offer = giriton_time
                     reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
                 else:
                     status = "Alternatíva"
                     giriton_state = "Ajánlás"
+                    giriton_offer = giriton_time
                     reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
             else:
                 if len(muszakpro_values) == 1:
@@ -658,20 +669,23 @@ def _build_summary_rows(
                     if single_status == "exact":
                         status = "Egyezés"
                         giriton_state = "Ajánlás"
+                        giriton_offer = giriton_time
                         reason = "Pontos egyezés"
                     elif single_status == "alternative":
                         status = "Alternatíva"
                         giriton_state = "Ajánlás"
+                        giriton_offer = giriton_time
                         reason = "Egyedi alternatíva a tűrésen belül"
                     else:
                         status = "Sikertelen"
                         giriton_state = "-"
+                        giriton_offer = giriton_time
                         reason = f"Nincs azonos raktáras szabad Giriton találat ±{tolerance_minutes} percen belül"
                 else:
-                    giriton_time = "nincs érvényes napi terv"
                     diff_value = None
                     status = "Sikertelen"
                     giriton_state = "-"
+                    giriton_offer = "nincs érvényes napi terv"
                     reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
             rows.append(
@@ -680,7 +694,8 @@ def _build_summary_rows(
                     "Dolgozó": worker,
                     "Raktár": warehouse,
                     "MűszakPro": muszakpro_time,
-                    "Giriton ajánlat": giriton_time,
+                    "Giriton foglalás": giriton_booking,
+                    "Giriton ajánlat": giriton_offer,
                     "Giriton állapot": giriton_state,
                     "Eltérés": _format_diff(diff_value),
                     "Állapot": status,
@@ -1263,6 +1278,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dátum",
                 "Dolgozó",
                 "MűszakPro",
+                "Giriton foglalás",
                 "Giriton ajánlat",
                 "Giriton állapot",
                 "Eltérés",
@@ -1283,6 +1299,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dátum",
                 "Dolgozó",
                 "MűszakPro",
+                "Giriton foglalás",
                 "Giriton ajánlat",
                 "Giriton állapot",
                 "Eltérés",
@@ -1529,6 +1546,7 @@ def show_foglalas_streamlit_page() -> None:
                 "Dátum",
                 "Dolgozó",
                 "MűszakPro",
+                "Giriton foglalás",
                 "Giriton ajánlat",
                 "Giriton állapot",
                 "Eltérés",
