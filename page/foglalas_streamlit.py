@@ -913,7 +913,8 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
     left, right = st.columns([4, 1.25], gap="large")
     with left:
         st.markdown("### Összesített foglalási lista")
-        table_df = summary_df.head(25).copy()
+        st.caption(f"Megjelenített sorok: {len(summary_df)}")
+        table_df = summary_df.copy()
         table_df["Következő lépés"] = table_df["Állapot"]
         _render_html_table(
             table_df,
@@ -930,7 +931,8 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         )
 
         st.markdown("### Sikertelen foglalások")
-        failed_df = summary_df[summary_df["Állapot"] == "Sikertelen"].head(25).copy()
+        failed_df = summary_df[summary_df["Állapot"] == "Sikertelen"].copy()
+        st.caption(f"Sikertelen sorok: {len(failed_df)}")
         if not failed_df.empty:
             failed_df["Következő lépés"] = failed_df["Állapot"]
         _render_html_table(
