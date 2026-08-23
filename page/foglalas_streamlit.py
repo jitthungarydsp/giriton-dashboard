@@ -427,3 +427,7 @@ def show_foglalas_streamlit_page() -> None:
                     "serial": "Sorszám",
                 },
             )
+
+
+if __name__ == "__main__":
+    show_foglalas_streamlit_page()
