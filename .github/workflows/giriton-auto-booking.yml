@@ -25,6 +25,7 @@ on:
 concurrency:
   group: giriton-auto-booking
   cancel-in-progress: false
+  queue: max
 
 jobs:
   run:
