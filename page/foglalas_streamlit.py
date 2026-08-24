@@ -2132,12 +2132,32 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             f"Pontos és alternatív, még nem lefoglalt sorok a kiválasztott napon: {len(bookable_ready_for_day)}"
         )
         if not bookable_ready_for_day.empty:
+            auto_select_exact = st.checkbox(
+                "A kiválasztott nap összes Egyezés sorának kijelölése",
+                key=f"foglalas_selected_bulk_exact_all_{selected_bulk_date}",
+            )
             selectable_rows = bookable_ready_for_day.copy()
-            selectable_rows["Kijelöl"] = False
+            selectable_rows["Kijelöl"] = (
+                selectable_rows["Állapot"].astype(str).eq("Egyezés") if auto_select_exact else False
+            )
             selectable_rows["Giriton cél"] = selectable_rows.apply(
                 lambda row: _booking_target_shift_start(row.to_dict()),
                 axis=1,
             )
+            exact_for_day_count = int((bookable_ready_for_day["Állapot"] == "Egyezés").sum())
+            alternative_for_day_count = int(
+                (bookable_ready_for_day["Állapot"] == "Alternatíva").sum()
+            )
+            if auto_select_exact:
+                st.caption(
+                    f"Automatikusan kijelölve: {exact_for_day_count} pontos egyezés. "
+                    f"Alternatívák kézzel választhatók: {alternative_for_day_count}."
+                )
+            else:
+                st.caption(
+                    f"Pontos egyezések: {exact_for_day_count}. "
+                    f"Alternatívák: {alternative_for_day_count}. Mindkettő kézzel jelölhető."
+                )
             editor_df = selectable_rows[
                 [
                     "Kijelöl",
@@ -2154,7 +2174,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 editor_df,
                 hide_index=True,
                 width="stretch",
-                key="foglalas_selected_bulk_editor",
+                key=f"foglalas_selected_bulk_editor_{selected_bulk_date}_{int(auto_select_exact)}",
                 disabled=[
                     "Dolgozó",
                     "Raktár",
