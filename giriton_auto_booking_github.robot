@@ -186,7 +186,7 @@ Giriton Auto Booking From Foglalasok
             Close Giriton Popup
 
             ${booking_ok}=    Evaluate
-            ...    '${add_result}' in ['COURIER_ADDED', 'ALREADY_BOOKED']
+            ...    '${add_result}' in ['COURIER_ADDED', 'COURIER_ADDED_UNVERIFIED', 'ALREADY_BOOKED']
             IF    ${booking_ok}
                 ${robotlog_write}=    giriton_auto_booking.Log Success Robotlog Write
                 ...    ${candidate}
@@ -790,7 +790,9 @@ Add Courier To Shift Subscription
     ...    if(text.includes('were subscribed for selected shifts') || text.includes('subscribed users (1)')){return 'COURIER_ADDED';}
     ...    if(userNumber && raw.includes(userNumber)){return 'COURIER_ADDED';}
     ...    if(courierName && folded.includes(normalize(courierName))){return 'COURIER_ADDED';}
-    ...    return 'COURIER_SELECTED_NOT_VERIFIED';
+    ...    const failureText=['no record selected','not subscribed','error','failed','hiba','sikertelen','nem siker'].some(item => text.includes(item));
+    ...    if(failureText){return 'COURIER_SELECTED_NOT_VERIFIED';}
+    ...    return 'COURIER_ADDED_UNVERIFIED';
     ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
