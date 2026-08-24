@@ -1674,6 +1674,20 @@ def _booking_candidate_label(row: dict) -> str:
     )
 
 
+def _booking_candidate_key(row: dict, index: int) -> str:
+    identity = _booking_action_identity(row)
+    return "|".join(
+        [
+            str(index),
+            identity["serial"],
+            identity["work_date"],
+            identity["worker"],
+            identity["warehouse"],
+            identity["shift_start"],
+        ]
+    )
+
+
 def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
@@ -1943,19 +1957,21 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
         return
 
     rows = candidates.to_dict("records")
-    options = {_booking_candidate_label(row): row for row in rows}
-    selected_label = st.selectbox(
+    options = {_booking_candidate_key(row, index): row for index, row in enumerate(rows)}
+    selected_key = st.selectbox(
         "Egyéni foglalásra kiválasztott sor",
         list(options.keys()),
         key=f"{key_prefix}_single_booking_row",
+        format_func=lambda key: _booking_candidate_label(options[key]),
     )
-    selected_row = options[selected_label]
+    selected_row = options[selected_key]
 
     info_cols = st.columns(4)
     info_cols[0].metric("Dátum", _clean(selected_row.get("Dátum")) or "-")
     info_cols[1].metric("Raktár", _clean(selected_row.get("Raktár")) or "-")
     info_cols[2].metric("MűszakPro", _clean(selected_row.get("MűszakPro")) or "-")
     info_cols[3].metric("Giriton ajánlat", _clean(selected_row.get("Giriton ajánlat")) or "-")
+    st.caption(f"Célzott serial: {_clean(selected_row.get('Serial')) or '-'}")
 
     action_col_1, action_col_2 = st.columns([1, 1.4])
     if action_col_1.button(
@@ -1975,9 +1991,13 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
         key=f"{key_prefix}_single_live_enabled",
     )
     if live_enabled:
+        selected_serial = _clean(selected_row.get("Serial"))
+        already_started = bool(selected_serial and selected_serial in _started_booking_serials())
         st.warning(
             "Éles indítás csak a kiválasztott MűszakPro serialra megy, nem tömeges futás."
         )
+        if already_started:
+            st.info("Erre a serialra már el lett indítva éles foglalás, ezért a gomb inaktív.")
         confirmation = st.text_input(
             "Megerősítés: írd be pontosan, hogy ELES",
             key=f"{key_prefix}_single_live_confirmation",
@@ -1987,6 +2007,7 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
             type="primary",
             width="stretch",
             key=f"{key_prefix}_single_live_run",
+            disabled=already_started,
         ):
             if confirmation != "ELES":
                 st.error("Éles indításhoz a megerősítő mezőbe ezt írd: ELES")

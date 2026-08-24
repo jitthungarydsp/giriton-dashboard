@@ -89,6 +89,12 @@ Giriton Auto Booking From Foglalasok
     ...    STEP_CANDIDATES_LOADED
     ...    Feldolgozhato jeloltek szama: ${candidate_count}
 
+    ${is_targeted_live}=    Evaluate    str($AUTO_BOOK_DRY_RUN).lower() == "false" and bool(str($AUTO_BOOK_SERIAL).strip())
+    IF    ${is_targeted_live} and ${candidate_count} != 1
+        Log To Console    AUTO_BOOK_RESULT=TARGETED_SERIAL_CANDIDATE_COUNT_INVALID serial=${AUTO_BOOK_SERIAL} candidates=${candidate_count}
+        Fail    Eles serialos foglalasnal pontosan 1 jelolt kell, kapott jeloltek szama: ${candidate_count}
+    END
+
     FOR    ${candidate}    IN    @{candidates}
         ${work_date}=       Set Variable    ${candidate}[work_date]
         ${giriton_date}=    Set Variable    ${candidate}[giriton_date]
