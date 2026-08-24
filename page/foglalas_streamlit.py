@@ -8,6 +8,7 @@ import re
 import sys
 import unicodedata
 from urllib.parse import urlencode
+import uuid
 
 import pandas as pd
 import requests
@@ -470,23 +471,49 @@ def _mark_booking_started(serial: str) -> None:
     st.session_state["foglalas_started_serials"] = sorted(started)
 
 
+def _booking_action_identity(row: dict) -> dict[str, str]:
+    return {
+        "serial": _clean(row.get("Serial")),
+        "work_date": _clean(row.get("Dátum")),
+        "worker": _clean(row.get("Dolgozó")),
+        "warehouse": _clean(row.get("Raktár")).upper(),
+        "shift_start": _clean(row.get("MűszakPro")),
+    }
+
+
+def _remember_booking_action(identity: dict[str, str]) -> str:
+    token = uuid.uuid4().hex
+    actions = st.session_state.setdefault("foglalas_booking_actions", {})
+    actions[token] = identity
+    if len(actions) > 1000:
+        for stale_token in list(actions)[:-1000]:
+            actions.pop(stale_token, None)
+    return token
+
+
 def _booking_action_badge(row: dict) -> str:
     status = _clean(row.get("Állapot"))
     if status != "Egyezés":
         return _action_badge(status)
 
-    serial = _clean(row.get("Serial"))
-    work_date = _clean(row.get("Dátum"))
+    identity = _booking_action_identity(row)
+    serial = identity["serial"]
+    work_date = identity["work_date"]
     if not serial or not work_date:
         return _action_badge(status)
     if serial in _started_booking_serials():
         return "<span class='action-badge booked disabled'>Indítva</span>"
 
+    action_token = _remember_booking_action(identity)
     query = urlencode(
         {
             "foglalas_action": "book_serial",
+            "action_token": action_token,
             "serial": serial,
             "work_date": work_date,
+            "worker": identity["worker"],
+            "warehouse": identity["warehouse"],
+            "shift_start": identity["shift_start"],
         }
     )
     return (
@@ -1585,25 +1612,52 @@ def _query_param_value(name: str) -> str:
     return _clean(value)
 
 
-def _handle_table_booking_action() -> None:
+def _matching_booking_row(summary_df: pd.DataFrame, identity: dict[str, str]) -> dict | None:
+    if summary_df.empty:
+        return None
+
+    for _, row in summary_df.iterrows():
+        row_dict = row.to_dict()
+        row_identity = _booking_action_identity(row_dict)
+        if row_identity != identity:
+            continue
+        if _clean(row_dict.get("Állapot")) != "Egyezés":
+            return None
+        if _clean(row_dict.get("Giriton állapot")) != "Nincs lefoglalva":
+            return None
+        return row_dict
+    return None
+
+
+def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     if _query_param_value("foglalas_action") != "book_serial":
         return
 
-    serial = _query_param_value("serial")
-    work_date = _query_param_value("work_date")
+    token = _query_param_value("action_token")
+    actions = st.session_state.get("foglalas_booking_actions", {})
+    identity = actions.pop(token, None) if token else None
+    if not identity:
+        st.error("A foglalás indítása nem érvényes vagy már fel lett használva. Kérlek frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
+        st.query_params.clear()
+        return
+
+    serial = identity["serial"]
     if serial in _started_booking_serials():
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
         st.query_params.clear()
         return
 
-    try:
-        _dispatch_auto_booking(
-            {
-                "Serial": serial,
-                "Dátum": work_date,
-            },
-            dry_run=False,
+    selected_row = _matching_booking_row(summary_df, identity)
+    if selected_row is None:
+        st.error(
+            "Nem indítottam foglalást, mert a kattintott sor már nem egyezik a látható listával "
+            "vagy nem foglalható állapotú."
         )
+        st.query_params.clear()
+        return
+
+    try:
+        _dispatch_auto_booking(selected_row, dry_run=False)
     except GitHubActionsError as exc:
         st.error(str(exc))
     except Exception as exc:
@@ -2050,7 +2104,6 @@ def _render_log(log_df: pd.DataFrame) -> None:
 
 def show_foglalas_streamlit_page() -> None:
     _apply_styles()
-    _handle_table_booking_action()
     view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
 
     if end_date < start_date:
@@ -2138,6 +2191,8 @@ def show_foglalas_streamlit_page() -> None:
     ]
     if errors:
         st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
+
+    _handle_table_booking_action(summary_df)
 
     workers_count = (
         len(set(summary_df["Dolgozó"].dropna().astype(str)))
