@@ -2535,6 +2535,8 @@ def show_foglalas_streamlit_page() -> None:
             pd.Series(dtype=str),
         ).map(_shift_start)
 
+    muszakpro_day_count = len(muszakpro_df)
+
     comparison_df = _filter_time(comparison_df, "shift_start", start_time, end_time)
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
     giriton_df = _filter_time(giriton_df, "start_time", start_time, end_time)
@@ -2599,10 +2601,9 @@ def show_foglalas_streamlit_page() -> None:
         if not summary_df.empty and "Dolgozó" in summary_df.columns
         else 0
     )
-    muszakpro_count = len(muszakpro_df)
     giriton_open_count = _giriton_open_shift_count(giriton_df)
     muszakpro_giriton_ratio = (
-        f"{round(muszakpro_count / giriton_open_count * 100)}%"
+        f"{round(muszakpro_day_count / giriton_open_count * 100)}%"
         if giriton_open_count
         else "0%"
     )
@@ -2611,7 +2612,7 @@ def show_foglalas_streamlit_page() -> None:
     with c1:
         _render_kpi("Dolgozók", workers_count, "blue", "D")
     with c2:
-        _render_kpi("MűszakPro", muszakpro_count, "blue", "MP")
+        _render_kpi("MűszakPro", muszakpro_day_count, "blue", "MP")
     with c3:
         _render_kpi("Giriton nyitott", giriton_open_count, "blue", "G")
     with c4:
