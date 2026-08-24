@@ -2001,41 +2001,58 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             unsafe_allow_html=True,
         )
         st.markdown("#### 100% egyezések")
-        st.caption(
-            f"Csak pontos, 0 perces, még nem lefoglalt sorok: {len(exact_ready)}"
+        exact_dates = (
+            sorted(exact_ready["Dátum"].dropna().astype(str).unique().tolist())
+            if not exact_ready.empty and "Dátum" in exact_ready.columns
+            else []
         )
-        if not exact_ready.empty:
+        selected_exact_date = ""
+        exact_ready_for_day = exact_ready
+        if exact_dates:
+            selected_exact_date = st.selectbox(
+                "100%-os indítás napja",
+                exact_dates,
+                key="foglalas_exact_bulk_date",
+            )
+            exact_ready_for_day = exact_ready[
+                exact_ready["Dátum"].astype(str) == selected_exact_date
+            ]
+        st.caption(
+            f"Csak pontos, 0 perces, még nem lefoglalt sorok a kiválasztott napon: {len(exact_ready_for_day)}"
+        )
+        if not exact_ready_for_day.empty:
             preview = ", ".join(
                 f"{_clean(row.get('Dolgozó'))} {_clean(row.get('MűszakPro'))}"
-                for row in exact_ready.head(5).to_dict("records")
+                for row in exact_ready_for_day.head(5).to_dict("records")
             )
             st.caption(preview)
         exact_live_enabled = st.checkbox(
             "Éles 100%-os egyezések indítása",
             key="foglalas_exact_bulk_live_enabled",
-            disabled=exact_ready.empty,
+            disabled=exact_ready_for_day.empty,
         )
         if exact_live_enabled:
+            expected_confirmation = f"ELES {selected_exact_date}"
             st.warning(
-                f"Éles indítás: {len(exact_ready)} db pontos egyezés. "
-                f"Ez {len(exact_ready)} külön célzott GitHub robotfutás lesz, serialonként egy. "
+                f"Éles indítás: {selected_exact_date}, {len(exact_ready_for_day)} db pontos egyezés. "
+                f"Ez {len(exact_ready_for_day)} külön célzott GitHub robotfutás lesz, serialonként egy. "
                 "Alternatíva nem kerül bele."
             )
             exact_confirmation = st.text_input(
-                "Megerősítés: írd be pontosan, hogy ELES",
+                f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
                 key="foglalas_exact_bulk_live_confirmation",
             )
             if st.button(
-                f"100% egyezések foglalása ({len(exact_ready)})",
+                f"100% egyezések foglalása {selected_exact_date} ({len(exact_ready_for_day)})",
                 type="primary",
                 width="stretch",
                 key="foglalas_exact_bulk_live_run",
             ):
-                if exact_confirmation != "ELES":
-                    st.error("Éles indításhoz a megerősítő mezőbe ezt írd: ELES")
+                if exact_confirmation != expected_confirmation:
+                    st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
                 else:
                     try:
-                        _dispatch_exact_bulk_bookings(exact_ready)
+                        _dispatch_exact_bulk_bookings(exact_ready_for_day)
                     except GitHubActionsError as exc:
                         st.error(str(exc))
                     except Exception as exc:
