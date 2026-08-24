@@ -178,6 +178,16 @@ Giriton Auto Booking From Foglalasok
 
             ${booking_ok}=    Evaluate
             ...    '${add_result}' in ['COURIER_ADDED', 'ALREADY_BOOKED']
+            IF    ${booking_ok}
+                ${robotlog_write}=    giriton_auto_booking.Log Success Robotlog Write
+                ...    ${candidate}
+                ...    ${add_result}
+                Log To Console    ROBOTLOG_WRITE=${robotlog_write}
+                Log Auto Booking Step
+                ...    ${candidate}
+                ...    STEP_ROBOTLOG_WRITE_DONE
+                ...    Google Sheet ROBOTLOG iras eredmenye: ${robotlog_write}
+            END
             IF    not ${booking_ok}
                 Fail
                 ...    Eles Giriton foglalas sikertelen: ${add_result}

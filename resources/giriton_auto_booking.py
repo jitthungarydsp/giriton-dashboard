@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+import os
 import sys
 import re
 from uuid import uuid4
@@ -305,6 +306,18 @@ def _append_success_robotlog(candidate, status):
     return "OK"
 
 
+def log_success_robotlog_write(candidate, status):
+    """Write the successful booking row to the ROBOTLOG sheet and return a visible result."""
+
+    try:
+        result = _append_success_robotlog(candidate, status)
+    except Exception as exc:
+        result = f"ERROR:{str(exc).replace(chr(10), ' ')[:300]}"
+
+    print(f"GIRITON_ROBOTLOG_WRITE status={clean(status)} result={result}")
+    return result
+
+
 def _supabase_headers():
     supabase_url, service_role_key = get_supabase_config()
 
@@ -379,14 +392,7 @@ def log_giriton_booking_result(candidate, status, message=""):
 
     raise_for_supabase_error(response)
 
-    robotlog_result = "SKIPPED_STATUS"
-    try:
-        robotlog_result = _append_success_robotlog(candidate, status)
-    except Exception as exc:
-        robotlog_result = f"ERROR:{str(exc).replace(chr(10), ' ')[:300]}"
-        print(f"GIRITON_ROBOTLOG_SHEET_ERROR {robotlog_result}")
-
-    return f"OK ROBOTLOG={robotlog_result}"
+    return "OK"
 
 
 def read_giriton_booking_log(start_date="", end_date="", limit=500):
