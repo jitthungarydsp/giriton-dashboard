@@ -28,6 +28,17 @@ from resources.supabase_raw import (
 
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 LOG_TABLE = "ops_giriton_auto_booking_log"
+ROBOTLOG_SPREADSHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
+ROBOTLOG_WORKSHEET_GID = "1456041177"
+ROBOTLOG_WORKSHEET_NAME = "ROBOTLOG"
+ROBOTLOG_HEADER = [
+    "Időpont",
+    "Email",
+    "Típus",
+    "Részletek",
+    "Serial",
+]
+ROBOTLOG_SUCCESS_STATUSES = {"COURIER_ADDED", "ALREADY_BOOKED"}
 
 
 def _today_budapest():
@@ -211,6 +222,89 @@ def build_screenshot_name(candidate, step):
     return f"{safe_name or 'giriton_auto_booking'}.png"
 
 
+def _robotlog_spreadsheet_id():
+    return os.getenv("GIRITON_ROBOTLOG_SPREADSHEET_ID", ROBOTLOG_SPREADSHEET_ID)
+
+
+def _robotlog_worksheet_gid():
+    return os.getenv("GIRITON_ROBOTLOG_WORKSHEET_GID", ROBOTLOG_WORKSHEET_GID)
+
+
+def _robotlog_worksheet_name():
+    return os.getenv("GIRITON_ROBOTLOG_WORKSHEET", ROBOTLOG_WORKSHEET_NAME)
+
+
+def _get_or_create_robotlog_worksheet(spreadsheet):
+    import gspread
+
+    worksheet_gid = clean(_robotlog_worksheet_gid())
+    if worksheet_gid.isdigit():
+        try:
+            worksheet = spreadsheet.get_worksheet_by_id(int(worksheet_gid))
+            if worksheet is not None:
+                return worksheet
+        except Exception:
+            pass
+
+    worksheet_name = _robotlog_worksheet_name()
+    try:
+        return spreadsheet.worksheet(worksheet_name)
+    except gspread.WorksheetNotFound:
+        return spreadsheet.add_worksheet(
+            title=worksheet_name,
+            rows=1000,
+            cols=len(ROBOTLOG_HEADER),
+        )
+
+
+def _format_robotlog_timestamp():
+    return datetime.now(BUDAPEST_TZ).strftime("%Y.%m.%d. %H:%M:%S")
+
+
+def _format_robotlog_shift(candidate):
+    warehouse = _normalize_warehouse(candidate.get("warehouse"))
+    shift_start_value = normalize_time(candidate.get("shift_start"))
+    if warehouse and shift_start_value:
+        return f"{warehouse}_{shift_start_value}"
+    return clean(candidate.get("shift_text"))
+
+
+def _append_success_robotlog(candidate, status):
+    if clean(status) not in ROBOTLOG_SUCCESS_STATUSES:
+        return "SKIPPED_STATUS"
+
+    from resources.google_auth import get_client
+
+    candidate = candidate or {}
+    worksheet = _get_or_create_robotlog_worksheet(
+        get_client().open_by_key(_robotlog_spreadsheet_id())
+    )
+    values = worksheet.get_all_values()
+
+    if not values:
+        worksheet.update(
+            "A1",
+            [ROBOTLOG_HEADER],
+            value_input_option="USER_ENTERED",
+        )
+
+    work_date = clean(candidate.get("work_date"))
+    warehouse = _normalize_warehouse(candidate.get("warehouse"))
+    row = [
+        _format_robotlog_timestamp(),
+        clean(candidate.get("email")).casefold(),
+        "FOGLALÁS",
+        f"Dátum: {work_date}, Műszak: {_format_robotlog_shift(candidate)}, Raktár: {warehouse}",
+        clean(candidate.get("serial")),
+    ]
+    worksheet.append_row(
+        row,
+        value_input_option="USER_ENTERED",
+    )
+
+    return "OK"
+
+
 def _supabase_headers():
     supabase_url, service_role_key = get_supabase_config()
 
@@ -284,7 +378,15 @@ def log_giriton_booking_result(candidate, status, message=""):
         return "SKIPPED_MISSING_TABLE"
 
     raise_for_supabase_error(response)
-    return "OK"
+
+    robotlog_result = "SKIPPED_STATUS"
+    try:
+        robotlog_result = _append_success_robotlog(candidate, status)
+    except Exception as exc:
+        robotlog_result = f"ERROR:{str(exc).replace(chr(10), ' ')[:300]}"
+        print(f"GIRITON_ROBOTLOG_SHEET_ERROR {robotlog_result}")
+
+    return f"OK ROBOTLOG={robotlog_result}"
 
 
 def read_giriton_booking_log(start_date="", end_date="", limit=500):
