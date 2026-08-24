@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import unicodedata
+from urllib.parse import urlencode
 
 import pandas as pd
 import requests
@@ -452,6 +453,29 @@ def _action_badge(status: str) -> str:
         "Lefoglalva": "booked",
     }.get(status, "neutral")
     return f"<span class='action-badge {class_name}'>{escape(labels.get(status, '-'))}</span>"
+
+
+def _booking_action_badge(row: dict) -> str:
+    status = _clean(row.get("Állapot"))
+    if status != "Egyezés":
+        return _action_badge(status)
+
+    serial = _clean(row.get("Serial"))
+    work_date = _clean(row.get("Dátum"))
+    if not serial or not work_date:
+        return _action_badge(status)
+
+    query = urlencode(
+        {
+            "foglalas_action": "book_serial",
+            "serial": serial,
+            "work_date": work_date,
+        }
+    )
+    return (
+        f"<a class='action-badge ok action-link' href='?{query}' "
+        f"title='Éles Giriton foglalás indítása serial alapján'>Foglalás</a>"
+    )
 
 
 def _giriton_state_badge(status: str) -> str:
@@ -926,7 +950,8 @@ def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) ->
 
     head = "".join(f"<th>{escape(column)}</th>" for column in columns)
     body = []
-    for _, row in df[columns].iterrows():
+    for _, source_row in df.iterrows():
+        row = source_row.to_dict()
         cells = []
         for column in columns:
             value = row.get(column, "")
@@ -937,7 +962,7 @@ def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) ->
             elif column == "Giriton állapot":
                 cells.append(f"<td{class_attr}>{_giriton_state_badge(_clean(value))}</td>")
             elif column == "Következő lépés":
-                cells.append(f"<td{class_attr}>{_action_badge(_clean(row.get('Állapot') or value))}</td>")
+                cells.append(f"<td{class_attr}>{_booking_action_badge(row)}</td>")
             else:
                 cells.append(f"<td{class_attr}>{escape(_clean(value))}</td>")
         body.append(f"<tr>{''.join(cells)}</tr>")
@@ -1256,6 +1281,13 @@ def _apply_styles() -> None:
             font-weight: 760;
             border: 1px solid #dce5ea;
         }
+        .action-link,
+        .action-link:visited {
+            text-decoration: none;
+        }
+        .action-link:hover {
+            filter: brightness(0.96);
+        }
         .status-badge.ok,
         .action-badge.ok { background: #e9f8ef; color: #18834b; border-color: #a9dfb8; }
         .status-badge.warn,
@@ -1513,6 +1545,44 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     st.success(
         f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
     )
+
+
+def _query_param_value(name: str) -> str:
+    try:
+        value = st.query_params.get(name, "")
+    except Exception:
+        return ""
+    if isinstance(value, list):
+        return _clean(value[0] if value else "")
+    return _clean(value)
+
+
+def _handle_table_booking_action() -> None:
+    if _query_param_value("foglalas_action") != "book_serial":
+        return
+
+    serial = _query_param_value("serial")
+    work_date = _query_param_value("work_date")
+    action_key = f"{serial}:{work_date}"
+    if st.session_state.get("foglalas_last_table_action") == action_key:
+        st.query_params.clear()
+        return
+
+    st.session_state["foglalas_last_table_action"] = action_key
+    try:
+        _dispatch_auto_booking(
+            {
+                "Serial": serial,
+                "Dátum": work_date,
+            },
+            dry_run=False,
+        )
+    except GitHubActionsError as exc:
+        st.error(str(exc))
+    except Exception as exc:
+        st.error(f"Táblázatos foglalás indítás hiba: {exc}")
+    finally:
+        st.query_params.clear()
 
 
 def _dispatch_bulk_warehouse_booking(
@@ -1953,6 +2023,7 @@ def _render_log(log_df: pd.DataFrame) -> None:
 
 def show_foglalas_streamlit_page() -> None:
     _apply_styles()
+    _handle_table_booking_action()
     view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
 
     if end_date < start_date:
