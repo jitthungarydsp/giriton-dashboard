@@ -559,7 +559,7 @@ Add Courier To Shift Subscription
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    CTRL+A
 
-    ${search_text}=    Set Variable If    '${courier_name}' != ''    ${courier_name}    ${email}
+    ${search_text}=    Set Variable If    '${email}' != ''    ${email}    ${courier_name}
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -581,12 +581,15 @@ Add Courier To Shift Subscription
     ...    Futar sor keresese es kivalasztasa indul.
 
     ${select_result}=    Execute Javascript
-    ...    const courierId=String(arguments[0] || '').trim();
+    ...    const courierId=String(arguments[0] || '').trim().replace(/\\.0$/, '');
     ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
     ...    const email=String(arguments[2] || '').trim().toLowerCase();
     ...    const userNumber=courierId ? 'D' + courierId : '';
+    ...    const normalize=value => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim().split(' ').filter(Boolean).join(' ');
     ...    const nameParts=courierName.split(' ').filter(Boolean);
     ...    const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
+    ...    const foldedCourierName=normalize(courierName);
+    ...    const foldedReversedName=normalize(reversedName);
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
     ...    const clickReal=function(el){
     ...      if(!el){return;}
@@ -605,13 +608,17 @@ Add Courier To Shift Subscription
     ...    const row=rows.find(item => {
     ...      const text=(item.innerText || '').trim().split(' ').filter(Boolean).join(' ');
     ...      const lower=text.toLowerCase();
+    ...      const folded=normalize(text);
     ...      if(userNumber && text.includes(userNumber)){return true;}
     ...      if(courierName && lower.includes(courierName)){return true;}
     ...      if(reversedName && lower.includes(reversedName)){return true;}
     ...      if(email && lower.includes(email)){return true;}
+    ...      if(foldedCourierName && folded.includes(foldedCourierName)){return true;}
+    ...      if(foldedReversedName && folded.includes(foldedReversedName)){return true;}
+    ...      if(courierId && text.includes(courierId)){return true;}
     ...      return false;
     ...    });
-    ...    if(!row){return 'NOT_FOUND';}
+    ...    if(!row){const sample=rows.slice(0,3).map(item => (item.innerText || '').trim().split(' ').filter(Boolean).join(' ').slice(0,90)).join(' | '); return 'NOT_FOUND rows=' + rows.length + ' sample=' + sample;}
     ...    const checkbox=row.querySelector('input[type="checkbox"]');
     ...    const firstCell=row.querySelector('td, .v-grid-cell');
     ...    const vaadinCheck=row.querySelector('.v-checkbox, .v-grid-selection-checkbox, [class*="checkbox"], [class*="check"]');
