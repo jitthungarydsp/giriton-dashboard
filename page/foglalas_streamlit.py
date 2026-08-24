@@ -1056,6 +1056,17 @@ def _build_summary_rows(
                     giriton_offer = "nincs érvényes napi terv"
                     reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
+            if (
+                status != "Lefoglalva"
+                and _normalize_time(muszakpro_time)
+                and _normalize_time(giriton_offer)
+                and _normalize_time(muszakpro_time) == _normalize_time(giriton_offer)
+            ):
+                status = "Egyezés"
+                giriton_state = "Nincs lefoglalva"
+                diff_value = 0
+                reason = "Pontos egyezés"
+
             rows.append(
                 {
                     "Dátum": work_date,
