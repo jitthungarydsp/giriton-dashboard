@@ -2032,16 +2032,39 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 for row in exact_ready_for_day.head(5).to_dict("records")
             )
             st.caption(preview)
+        exact_options = {
+            _booking_candidate_label(row): _clean(row.get("Serial"))
+            for row in exact_ready_for_day.to_dict("records")
+        }
+        selected_exact_labels = st.multiselect(
+            "Indítandó 100%-os sorok",
+            list(exact_options.keys()),
+            default=[],
+            key="foglalas_exact_bulk_selected_rows",
+            disabled=exact_ready_for_day.empty,
+        )
+        selected_exact_serials = {
+            exact_options[label]
+            for label in selected_exact_labels
+            if exact_options.get(label)
+        }
+        exact_selected_rows = (
+            exact_ready_for_day[
+                exact_ready_for_day["Serial"].astype(str).str.strip().isin(selected_exact_serials)
+            ]
+            if selected_exact_serials
+            else exact_ready_for_day.iloc[0:0]
+        )
         exact_live_enabled = st.checkbox(
             "Éles 100%-os egyezések indítása",
             key="foglalas_exact_bulk_live_enabled",
-            disabled=exact_ready_for_day.empty,
+            disabled=exact_selected_rows.empty,
         )
         if exact_live_enabled:
             expected_confirmation = f"ELES {selected_exact_date}"
             st.warning(
-                f"Éles indítás: {selected_exact_date}, {len(exact_ready_for_day)} db pontos egyezés. "
-                f"Ez {len(exact_ready_for_day)} külön célzott GitHub robotfutás lesz, serialonként egy. "
+                f"Éles indítás: {selected_exact_date}, {len(exact_selected_rows)} db kiválasztott pontos egyezés. "
+                f"Ez {len(exact_selected_rows)} külön célzott GitHub robotfutás lesz, serialonként egy. "
                 "Alternatíva nem kerül bele."
             )
             exact_confirmation = st.text_input(
@@ -2049,16 +2072,17 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 key="foglalas_exact_bulk_live_confirmation",
             )
             if st.button(
-                f"100% egyezések foglalása {selected_exact_date} ({len(exact_ready_for_day)})",
+                f"100% egyezések foglalása {selected_exact_date} ({len(exact_selected_rows)})",
                 type="primary",
                 width="stretch",
                 key="foglalas_exact_bulk_live_run",
+                disabled=exact_selected_rows.empty,
             ):
                 if exact_confirmation != expected_confirmation:
                     st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
                 else:
                     try:
-                        _dispatch_exact_bulk_bookings(exact_ready_for_day)
+                        _dispatch_exact_bulk_bookings(exact_selected_rows)
                     except GitHubActionsError as exc:
                         st.error(str(exc))
                     except Exception as exc:
