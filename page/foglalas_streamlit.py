@@ -1747,11 +1747,11 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 <div class="summary-row"><span>Alternatívával foglalható:</span><strong style="color:#c27605">{alternative_count}</strong></div>
                 <div class="summary-row"><span>Sikertelen:</span><strong style="color:#c42b2b">{failed_count}</strong></div>
                 <div class="summary-row"><span>Lefoglalva:</span><strong style="color:#155fc1">{booked_count}</strong></div>
+                <div class="section-subtitle" style="margin-top:14px;margin-bottom:0;">Raktár szerinti tömeges indítás</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.markdown("#### Raktár szerinti tömeges indítás")
         warehouse_options = [
             value
             for value in ["BUD1", "BUD2"]
@@ -1772,9 +1772,8 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         st.caption(
             f"{selected_warehouse}: indítható sorok száma ebben a szűrésben: {len(warehouse_ready)}"
         )
-        bulk_col_1, bulk_col_2 = st.columns(2)
-        if bulk_col_1.button(
-            "Raktár ellenőrzés",
+        if st.button(
+            "Foglalható sorok ellenőrzése",
             width="stretch",
             key="foglalas_bulk_warehouse_dry_run",
             disabled=warehouse_ready.empty,
@@ -1791,8 +1790,8 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             except Exception as exc:
                 st.error(f"Raktár ellenőrzés indítás hiba: {exc}")
 
-        live_enabled = bulk_col_2.checkbox(
-            "Éles raktár foglalás",
+        live_enabled = st.checkbox(
+            "Éles raktár szerinti tömeges foglalás engedélyezése",
             key="foglalas_bulk_warehouse_live_enabled",
             disabled=warehouse_ready.empty,
         )
