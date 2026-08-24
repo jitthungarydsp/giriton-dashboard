@@ -1783,7 +1783,10 @@ def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
         st.session_state["foglalas_last_github_dispatch"] = last_result
 
     if dispatched:
-        st.success(f"{dispatched} db 100%-os egyezés éles foglalása elindítva.")
+        st.success(
+            f"{dispatched} db 100%-os egyezés éles foglalása elindítva "
+            f"({dispatched} külön célzott GitHub robotfutás)."
+        )
     if skipped:
         st.warning(f"{skipped} sor kimaradt, mert hiányzott adat vagy már el lett indítva.")
 
@@ -2014,7 +2017,9 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         )
         if exact_live_enabled:
             st.warning(
-                f"Éles indítás: {len(exact_ready)} db pontos egyezés. Alternatíva nem kerül bele."
+                f"Éles indítás: {len(exact_ready)} db pontos egyezés. "
+                f"Ez {len(exact_ready)} külön célzott GitHub robotfutás lesz, serialonként egy. "
+                "Alternatíva nem kerül bele."
             )
             exact_confirmation = st.text_input(
                 "Megerősítés: írd be pontosan, hogy ELES",
