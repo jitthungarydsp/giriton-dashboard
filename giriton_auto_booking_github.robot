@@ -564,7 +564,7 @@ Add Courier To Shift Subscription
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    CTRL+A
 
-    ${search_text}=    Set Variable If    '${email}' != ''    ${email}    ${courier_name}
+    ${search_text}=    Set Variable If    '${courier_name}' != ''    ${courier_name}    ${email}
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -576,9 +576,26 @@ Add Courier To Shift Subscription
     ...    ${search_text}
 
     Execute Javascript
-    ...    const field=document.querySelector('#SearchField-tfTextSearch'); if(field){field.dispatchEvent(new Event('input',{bubbles:true})); field.dispatchEvent(new Event('change',{bubbles:true})); field.blur();}
+    ...    const field=document.querySelector('#SearchField-tfTextSearch');
+    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...    if(field){
+    ...      field.focus();
+    ...      field.value=String(arguments[0] || '');
+    ...      ['input','change','keyup'].forEach(type => field.dispatchEvent(new Event(type,{bubbles:true})));
+    ...      field.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',keyCode:13,which:13}));
+    ...      field.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',keyCode:13,which:13}));
+    ...      const buttons=[...document.querySelectorAll('.v-window .v-button, .v-window button, .v-window [role="button"]')].filter(visible);
+    ...      const searchButton=buttons.find(button => {
+    ...        const text=String(button.innerText || button.getAttribute('aria-label') || button.title || button.className || '').toLowerCase();
+    ...        return text.includes('search') || text.includes('keres') || text.includes('magnifier') || text.includes('find');
+    ...      });
+    ...      if(searchButton){searchButton.click();}
+    ...      field.blur();
+    ...    }
+    ...    ARGUMENTS
+    ...    ${search_text}
 
-    Sleep    2s
+    Sleep    4s
 
     Log Auto Booking Step
     ...    ${candidate}
