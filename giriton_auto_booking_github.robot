@@ -201,13 +201,14 @@ Giriton Auto Booking From Foglalasok
             ...    shift_not_found
             Capture Page Screenshot    ${not_found_screenshot}
 
+            ${shift_not_empty}=    Evaluate    str("""${result}""").startswith("SHIFT_NOT_EMPTY")
             ${final_status}=    Set Variable If
-            ...    '${result}' == 'SHIFT_NOT_EMPTY'
+            ...    ${shift_not_empty}
             ...    SHIFT_NOT_EMPTY
             ...    SHIFT_NOT_FOUND
             ${final_message}=    Set Variable If
-            ...    '${result}' == 'SHIFT_NOT_EMPTY'
-            ...    Megtalaltam a muszakot, de nincs nyitott kapacitas rajta, ezert nem foglalok. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
+            ...    ${shift_not_empty}
+            ...    Megtalaltam a muszakot, de nincs nyitott kapacitas rajta, ezert nem foglalok. Robot eredmeny: ${result}. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
             ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
 
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
@@ -296,7 +297,9 @@ Find Giriton Shift Card
         ...    const exactTimes=baseMinutes === null ? [start] : (function(){const padded=toTime(baseMinutes,true); const plain=toTime(baseMinutes,false); return padded === plain ? [plain] : [padded, plain];})();
         ...    const fallbackTimes=targetTimes.filter(function(time){return !exactTimes.includes(time);});
         ...    const variantFor=function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'].map(normalize);};
-        ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); const matches=[...compact.matchAll(/(\\d+)\\/(\\d+)/g)]; return matches.some(function(match){const booked=parseInt(match[1],10); const maximum=parseInt(match[2],10); return !Number.isNaN(booked) && !Number.isNaN(maximum) && maximum > booked;});};
+        ...    const capacityPairs=function(value){const compact=String(value || '').replaceAll(' ',''); const pairs=[]; for(let i=0;i<compact.length;i++){if(compact[i] !== '/'){continue;} let left=''; for(let j=i-1;j>=0 && compact[j]>='0' && compact[j]<='9';j--){left=compact[j]+left;} let right=''; for(let j=i+1;j<compact.length && compact[j]>='0' && compact[j]<='9';j++){right+=compact[j];} if(left && right){pairs.push([parseInt(left,10), parseInt(right,10)]);}} return pairs;};
+        ...    const hasOpenCapacity=function(value){return capacityPairs(value).some(function(pair){return pair[1] > pair[0];});};
+        ...    const capacityDebug=function(value){return capacityPairs(value).map(function(pair){return pair[0] + '/' + pair[1];}).join(',') || 'NO_CAPACITY_PAIR';};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    const exactAvailable=titles.some(function(title){
         ...      const titleText=normalize(title.innerText || '');
@@ -316,7 +319,7 @@ Find Giriton Shift Card
         ...      const text=normalize(card.innerText || '');
         ...      const matchedTime=scanTimes.find(function(time){return titleText.includes(time + ':1k') || titleText.includes(time + ':') || titleText.includes(time + ' -') || titleText.includes(time + '-');}) || start;
         ...      const compactText=text.replaceAll(' ', '');
-        ...      if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY';}
+        ...      if(!hasOpenCapacity(compactText)){title.scrollIntoView({block:'center', inline:'nearest'}); return 'SHIFT_NOT_EMPTY capacity=' + capacityDebug(compactText) + ' title=' + titleText.slice(0,80);}
         ...        title.scrollIntoView({block:'center', inline:'nearest'});
         ...        if(dryRun){return 'FOUND_DRY_RUN';}
         ...        card.setAttribute('data-auto-book-clicked-shift','true');
