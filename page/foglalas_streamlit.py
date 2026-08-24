@@ -64,33 +64,64 @@ def _secret(name: str, default: str = "") -> str:
         return default
 
 
+def _github_token_candidates() -> list[tuple[str, str]]:
+    tokens = []
+    seen = set()
+    for name in ["GITHUB_ACTIONS_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"]:
+        value = _secret(name)
+        if not value or value in seen:
+            continue
+        tokens.append((name, value))
+        seen.add(value)
+    return tokens
+
+
 def _dispatch_workflow_fallback(workflow: str, inputs: dict[str, str]) -> dict[str, str]:
-    token = _secret("GITHUB_ACTIONS_TOKEN")
-    if not token:
+    token_candidates = _github_token_candidates()
+    if not token_candidates:
         raise GitHubActionsError(
-            "Hiányzik a GITHUB_ACTIONS_TOKEN secret, ezért nem tudom elindítani a GitHub Actions workflow-t."
+            "Hiányzik a GitHub token secret. Add meg valamelyiket: GITHUB_ACTIONS_TOKEN, GITHUB_TOKEN, GH_TOKEN vagy GITHUB_PAT."
         )
 
     owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
     repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
     ref = _secret("GITHUB_REF", GITHUB_REF_DEFAULT)
     workflow_name = workflow or "giriton-auto-booking.yml"
-    response = requests.post(
-        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_name}/dispatches",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        json={
-            "ref": ref,
-            "inputs": {key: str(value) for key, value in inputs.items()},
-        },
-        timeout=20,
-    )
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_name}/dispatches"
+    response = None
+    used_secret_name = ""
+    for secret_name, token in token_candidates:
+        used_secret_name = secret_name
+        response = requests.post(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={
+                "ref": ref,
+                "inputs": {key: str(value) for key, value in inputs.items()},
+            },
+            timeout=20,
+        )
+        if response.status_code == 204:
+            break
+        if response.status_code != 401:
+            break
+
+    if response is None:
+        raise GitHubActionsError("GitHub Actions indítás sikertelen: nincs HTTP válasz.")
+
     if response.status_code != 204:
+        if response.status_code == 401:
+            tried = ", ".join(name for name, _token in token_candidates)
+            raise GitHubActionsError(
+                "GitHub Actions indítás sikertelen: minden megadott GitHub token hibás vagy lejárt. "
+                f"Próbált secret(ek): {tried}."
+            )
         raise GitHubActionsError(
-            f"GitHub Actions indítás sikertelen: HTTP {response.status_code} - {response.text[:500]}"
+            f"GitHub Actions indítás sikertelen ({used_secret_name}): HTTP {response.status_code} - {response.text[:500]}"
         )
 
     return {
@@ -1372,10 +1403,7 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         "serial": serial,
         "dry_run": "true" if dry_run else "false",
     }
-    if dispatch_workflow is not None:
-        result = dispatch_workflow("giriton-auto-booking.yml", workflow_inputs)
-    else:
-        result = _dispatch_workflow_fallback("giriton-auto-booking.yml", workflow_inputs)
+    result = _dispatch_workflow_fallback("giriton-auto-booking.yml", workflow_inputs)
     mode = "ellenőrzés" if dry_run else "éles foglalás"
     st.success(
         f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
