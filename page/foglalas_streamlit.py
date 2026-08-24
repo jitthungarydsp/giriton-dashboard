@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from html import escape
+import os
 from pathlib import Path
 import re
 import sys
 import unicodedata
 
 import pandas as pd
+import requests
 import streamlit as st
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +37,9 @@ else:
 
 
 MIN_SHIFT_GAP_MINUTES = 270
+GITHUB_OWNER_DEFAULT = "jitthungarydsp"
+GITHUB_REPO_DEFAULT = "giriton-dashboard"
+GITHUB_REF_DEFAULT = "main"
 
 
 def _clean(value) -> str:
@@ -46,6 +51,53 @@ def _clean(value) -> str:
     except (TypeError, ValueError):
         pass
     return str(value or "").strip()
+
+
+def _secret(name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+
+    try:
+        return str(st.secrets.get(name, default) or "")
+    except Exception:
+        return default
+
+
+def _dispatch_workflow_fallback(workflow: str, inputs: dict[str, str]) -> dict[str, str]:
+    token = _secret("GITHUB_ACTIONS_TOKEN")
+    if not token:
+        raise GitHubActionsError(
+            "Hiányzik a GITHUB_ACTIONS_TOKEN secret, ezért nem tudom elindítani a GitHub Actions workflow-t."
+        )
+
+    owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
+    repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
+    ref = _secret("GITHUB_REF", GITHUB_REF_DEFAULT)
+    workflow_name = workflow or "giriton-auto-booking.yml"
+    response = requests.post(
+        f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_name}/dispatches",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={
+            "ref": ref,
+            "inputs": {key: str(value) for key, value in inputs.items()},
+        },
+        timeout=20,
+    )
+    if response.status_code != 204:
+        raise GitHubActionsError(
+            f"GitHub Actions indítás sikertelen: HTTP {response.status_code} - {response.text[:500]}"
+        )
+
+    return {
+        "workflow": workflow_name,
+        "ref": ref,
+        "triggered_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def _match_text(value) -> str:
@@ -1305,13 +1357,6 @@ def _booking_candidate_label(row: dict) -> str:
 
 
 def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
-    if dispatch_workflow is None:
-        detail = f" Részlet: {_GITHUB_ACTIONS_IMPORT_ERROR}" if _GITHUB_ACTIONS_IMPORT_ERROR else ""
-        raise GitHubActionsError(
-            "A GitHub Actions indító modul még nem elérhető ebben a Streamlit példányban."
-            f"{detail}"
-        )
-
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
     if not serial:
@@ -1321,15 +1366,16 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható foglalás.")
         return
 
-    result = dispatch_workflow(
-        "giriton-auto-booking.yml",
-        {
-            "start_date": work_date,
-            "end_date": work_date,
-            "serial": serial,
-            "dry_run": "true" if dry_run else "false",
-        },
-    )
+    workflow_inputs = {
+        "start_date": work_date,
+        "end_date": work_date,
+        "serial": serial,
+        "dry_run": "true" if dry_run else "false",
+    }
+    if dispatch_workflow is not None:
+        result = dispatch_workflow("giriton-auto-booking.yml", workflow_inputs)
+    else:
+        result = _dispatch_workflow_fallback("giriton-auto-booking.yml", workflow_inputs)
     mode = "ellenőrzés" if dry_run else "éles foglalás"
     st.success(
         f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
