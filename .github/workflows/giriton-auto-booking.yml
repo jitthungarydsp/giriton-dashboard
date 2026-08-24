@@ -13,6 +13,10 @@ on:
         description: "Opcionális Foglalasok serial. Eles modhoz kotelezo."
         required: false
         default: ""
+      warehouse:
+        description: "Opcionális raktár szűrő: BUD1 vagy BUD2. Tömeges éles módhoz kötelező."
+        required: false
+        default: ""
       dry_run:
         description: "true = csak ellenorzes, false = eles foglalas"
         required: true
@@ -55,8 +59,8 @@ jobs:
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
 
-          if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "${{ inputs.serial }}" ]; then
-            echo "Eles Giriton foglalashoz kotelezo konkret serialt megadni."
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "${{ inputs.serial }}" ] && [ -z "${{ inputs.warehouse }}" ]; then
+            echo "Eles Giriton foglalashoz kotelezo konkret serialt vagy raktar szurot megadni."
             exit 1
           fi
 
@@ -68,6 +72,7 @@ jobs:
             --variable AUTO_BOOK_END_DATE:${{ inputs.end_date }} \
             --variable AUTO_BOOK_DRY_RUN:${{ inputs.dry_run }} \
             --variable AUTO_BOOK_SERIAL:${{ inputs.serial }} \
+            --variable AUTO_BOOK_WAREHOUSE:${{ inputs.warehouse }} \
             giriton_auto_booking_github.robot
 
       - name: Upload Robot artifacts

@@ -74,10 +74,11 @@ def _candidate_key(row):
     )
 
 
-def _matches_filter(candidate, serial="", courier_id="", email=""):
+def _matches_filter(candidate, serial="", courier_id="", email="", warehouse=""):
     serial = clean(serial)
     courier_id = clean(courier_id)
     email = clean(email).casefold()
+    warehouse = _normalize_warehouse(warehouse)
 
     if serial and clean(candidate.get("serial")) != serial:
         return False
@@ -86,6 +87,9 @@ def _matches_filter(candidate, serial="", courier_id="", email=""):
         return False
 
     if email and clean(candidate.get("email")).casefold() != email:
+        return False
+
+    if warehouse and _normalize_warehouse(candidate.get("warehouse")) != warehouse:
         return False
 
     return True
@@ -119,6 +123,7 @@ def get_t_plus_booking_candidates(
     serial="",
     courier_id="",
     email="",
+    warehouse="",
 ):
     """Return Foglalasok rows that the Giriton auto-booking robot should process."""
 
@@ -159,7 +164,13 @@ def get_t_plus_booking_candidates(
         if not candidate["courier_id"] and not candidate["courier_name"]:
             continue
 
-        if not _matches_filter(candidate, serial=serial, courier_id=courier_id, email=email):
+        if not _matches_filter(
+            candidate,
+            serial=serial,
+            courier_id=courier_id,
+            email=email,
+            warehouse=warehouse,
+        ):
             continue
 
         key = _candidate_key(candidate)

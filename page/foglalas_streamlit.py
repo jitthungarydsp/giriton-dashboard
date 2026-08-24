@@ -1515,6 +1515,35 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     )
 
 
+def _dispatch_bulk_warehouse_booking(
+    *,
+    start_date: str,
+    end_date: str,
+    warehouse: str,
+    dry_run: bool,
+) -> None:
+    warehouse = _clean(warehouse).upper()
+    if warehouse not in {"BUD1", "BUD2"}:
+        st.error("Raktár szerinti tömeges indításhoz válassz BUD1 vagy BUD2 raktárat.")
+        return
+
+    result = _dispatch_workflow_fallback(
+        AUTO_BOOKING_WORKFLOW,
+        {
+            "start_date": start_date,
+            "end_date": end_date,
+            "serial": "",
+            "warehouse": warehouse,
+            "dry_run": "true" if dry_run else "false",
+        },
+    )
+    st.session_state["foglalas_last_github_dispatch"] = result
+    mode = "ellenőrzés" if dry_run else "éles tömeges foglalás"
+    st.success(
+        f"{warehouse} raktár {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
+    )
+
+
 def _render_github_status_panel(key_prefix: str) -> None:
     st.markdown("### GitHub állapot")
     refresh_col, hint_col = st.columns([1, 2.4])
@@ -1718,13 +1747,84 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 <div class="summary-row"><span>Alternatívával foglalható:</span><strong style="color:#c27605">{alternative_count}</strong></div>
                 <div class="summary-row"><span>Sikertelen:</span><strong style="color:#c42b2b">{failed_count}</strong></div>
                 <div class="summary-row"><span>Lefoglalva:</span><strong style="color:#155fc1">{booked_count}</strong></div>
-                <div class="side-action primary">Foglalható sorok indítása</div>
-                <div class="side-action">Sikertelenek megnyitása</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        st.info("A gombok jelenleg csak látványtervi állapotban vannak, éles foglalást nem indítanak.")
+        st.markdown("#### Raktár szerinti tömeges indítás")
+        warehouse_options = [
+            value
+            for value in ["BUD1", "BUD2"]
+            if not summary_df[summary_df["Raktár"].astype(str).str.upper() == value].empty
+        ] or ["BUD1", "BUD2"]
+        selected_warehouse = st.selectbox(
+            "Raktár",
+            warehouse_options,
+            key="foglalas_bulk_warehouse",
+        )
+        warehouse_df = summary_df[
+            summary_df["Raktár"].astype(str).str.upper() == selected_warehouse
+        ]
+        warehouse_ready = warehouse_df[
+            warehouse_df["Állapot"].isin(["Egyezés", "Alternatíva"])
+            & (warehouse_df["Giriton állapot"] == "Nincs lefoglalva")
+        ]
+        st.caption(
+            f"{selected_warehouse}: indítható sorok száma ebben a szűrésben: {len(warehouse_ready)}"
+        )
+        bulk_col_1, bulk_col_2 = st.columns(2)
+        if bulk_col_1.button(
+            "Raktár ellenőrzés",
+            width="stretch",
+            key="foglalas_bulk_warehouse_dry_run",
+            disabled=warehouse_ready.empty,
+        ):
+            try:
+                _dispatch_bulk_warehouse_booking(
+                    start_date=str(summary_df["Dátum"].min()),
+                    end_date=str(summary_df["Dátum"].max()),
+                    warehouse=selected_warehouse,
+                    dry_run=True,
+                )
+            except GitHubActionsError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"Raktár ellenőrzés indítás hiba: {exc}")
+
+        live_enabled = bulk_col_2.checkbox(
+            "Éles raktár foglalás",
+            key="foglalas_bulk_warehouse_live_enabled",
+            disabled=warehouse_ready.empty,
+        )
+        if live_enabled:
+            st.warning(
+                f"Éles tömeges indítás: {selected_warehouse} raktár, {len(warehouse_ready)} indítható sor."
+            )
+            confirmation = st.text_input(
+                "Megerősítés: írd be pontosan, hogy ELES",
+                key="foglalas_bulk_warehouse_live_confirmation",
+            )
+            if st.button(
+                "Raktár tömeges foglalása",
+                type="primary",
+                width="stretch",
+                key="foglalas_bulk_warehouse_live_run",
+            ):
+                if confirmation != "ELES":
+                    st.error("Éles raktárindításhoz a megerősítő mezőbe ezt írd: ELES")
+                else:
+                    try:
+                        _dispatch_bulk_warehouse_booking(
+                            start_date=str(summary_df["Dátum"].min()),
+                            end_date=str(summary_df["Dátum"].max()),
+                            warehouse=selected_warehouse,
+                            dry_run=False,
+                        )
+                    except GitHubActionsError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(f"Raktár tömeges foglalás indítás hiba: {exc}")
+
         st.markdown(
             """
             <div class="side-panel">
