@@ -18,6 +18,7 @@ ${AUTO_BOOK_SERIAL}
 ${AUTO_BOOK_COURIER_ID}
 ${AUTO_BOOK_EMAIL}
 ${AUTO_BOOK_WAREHOUSE}
+${AUTO_BOOK_SHIFT_START}
 
 
 *** Test Cases ***
@@ -28,6 +29,7 @@ Giriton Auto Booking From Foglalasok
     ...    DRY_RUN
     Log To Console    GIRITON_AUTO_BOOKING_VERSION=t_plus_3_foglalasok
     Log To Console    AUTO_BOOK_MODE=${auto_book_mode} AUTO_BOOK_DRY_RUN=${AUTO_BOOK_DRY_RUN}
+    Log To Console    AUTO_BOOK_FILTER start=${AUTO_BOOK_START_DATE} end=${AUTO_BOOK_END_DATE} serial=${AUTO_BOOK_SERIAL} email=${AUTO_BOOK_EMAIL} warehouse=${AUTO_BOOK_WAREHOUSE} shift_start=${AUTO_BOOK_SHIFT_START}
 
     ${empty_candidate}=    Create Dictionary
     Log Auto Booking Step
@@ -78,6 +80,7 @@ Giriton Auto Booking From Foglalasok
     ...    ${AUTO_BOOK_COURIER_ID}
     ...    ${AUTO_BOOK_EMAIL}
     ...    ${AUTO_BOOK_WAREHOUSE}
+    ...    ${AUTO_BOOK_SHIFT_START}
 
     ${candidate_count}=    Get Length    ${candidates}
     Log To Console    AUTO_BOOK_CANDIDATES=${candidate_count}

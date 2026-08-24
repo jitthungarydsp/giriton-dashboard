@@ -17,6 +17,14 @@ on:
         description: "Opcionális raktár szűrő: BUD1 vagy BUD2. Tömeges éles módhoz kötelező."
         required: false
         default: ""
+      email:
+        description: "Opcionális célzott futár email szűrő."
+        required: false
+        default: ""
+      shift_start:
+        description: "Opcionális célzott műszakkezdés HH:MM."
+        required: false
+        default: ""
       dry_run:
         description: "true = csak ellenorzes, false = eles foglalas"
         required: true
@@ -66,6 +74,12 @@ jobs:
             exit 1
           fi
 
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ]; then
+            test -n "${{ inputs.email }}" || (echo "Celjzott eles foglalashoz email is kell." && exit 1)
+            test -n "${{ inputs.warehouse }}" || (echo "Celjzott eles foglalashoz raktar is kell." && exit 1)
+            test -n "${{ inputs.shift_start }}" || (echo "Celjzott eles foglalashoz muszakkezdes is kell." && exit 1)
+          fi
+
       - name: Run Giriton auto booking robot
         run: |
           robot \
@@ -75,6 +89,8 @@ jobs:
             --variable AUTO_BOOK_DRY_RUN:${{ inputs.dry_run }} \
             --variable AUTO_BOOK_SERIAL:${{ inputs.serial }} \
             --variable AUTO_BOOK_WAREHOUSE:${{ inputs.warehouse }} \
+            --variable AUTO_BOOK_EMAIL:${{ inputs.email }} \
+            --variable AUTO_BOOK_SHIFT_START:${{ inputs.shift_start }} \
             giriton_auto_booking_github.robot
 
       - name: Upload Robot artifacts

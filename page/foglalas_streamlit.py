@@ -1613,6 +1613,9 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         "start_date": work_date,
         "end_date": work_date,
         "serial": serial,
+        "warehouse": _clean(row.get("Raktár")).upper(),
+        "email": _clean(row.get("E-mail")).casefold(),
+        "shift_start": _clean(row.get("MűszakPro")),
         "dry_run": "true" if dry_run else "false",
     }
     result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
@@ -1773,6 +1776,9 @@ def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
                 "start_date": work_date,
                 "end_date": work_date,
                 "serial": serial,
+                "warehouse": _clean(row.get("Raktár")).upper(),
+                "email": _clean(row.get("E-mail")).casefold(),
+                "shift_start": _clean(row.get("MűszakPro")),
                 "dry_run": "false",
             },
         )
