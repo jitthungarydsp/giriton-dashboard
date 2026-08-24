@@ -22,7 +22,12 @@ ${AUTO_BOOK_WAREHOUSE}
 
 *** Test Cases ***
 Giriton Auto Booking From Foglalasok
-    Log To Console    GIRITON_AUTO_BOOKING_VERSION=t_plus_3_foglalasok_dry_run
+    ${auto_book_mode}=    Set Variable If
+    ...    '${AUTO_BOOK_DRY_RUN}' == 'false'
+    ...    LIVE
+    ...    DRY_RUN
+    Log To Console    GIRITON_AUTO_BOOKING_VERSION=t_plus_3_foglalasok
+    Log To Console    AUTO_BOOK_MODE=${auto_book_mode} AUTO_BOOK_DRY_RUN=${AUTO_BOOK_DRY_RUN}
 
     ${empty_candidate}=    Create Dictionary
     Log Auto Booking Step
