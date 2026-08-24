@@ -210,24 +210,8 @@ Giriton Raw Export Github
 *** Keywords ***
 Select Giriton Date
     [Arguments]    ${datum_giriton}    ${datum_oldal}    ${datum_nap}
-    Click Element
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-
-    Press Keys
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    CTRL+A
-
-    Input Text
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    Set Giriton Date Field
     ...    ${datum_giriton}
-
-    Press Keys
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    ENTER
-
-    Press Keys
-    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-    ...    TAB
 
     ${loaded}=    Run Keyword And Return Status
     ...    Wait Until Giriton Date Is Loaded
@@ -238,12 +222,52 @@ Select Giriton Date
     IF    not ${loaded}
         Log To Console
         ...    DATE_INPUT_NOT_APPLIED_TRY_NEXT_ARROW=${datum_giriton}
-        Click Giriton Next Day
-        Wait Until Giriton Date Is Loaded
-        ...    ${datum_giriton}
-        ...    ${datum_oldal}
-        ...    ${datum_nap}
+        FOR    ${attempt}    IN RANGE    8
+            Close Giriton Default Values Popup
+            Click Giriton Next Day
+            ${loaded}=    Run Keyword And Return Status
+            ...    Wait Until Giriton Date Is Loaded
+            ...    ${datum_giriton}
+            ...    ${datum_oldal}
+            ...    ${datum_nap}
+            IF    ${loaded}
+                BREAK
+            END
+        END
+        IF    not ${loaded}
+            Wait Until Giriton Date Is Loaded
+            ...    ${datum_giriton}
+            ...    ${datum_oldal}
+            ...    ${datum_nap}
+        END
     END
+
+
+Set Giriton Date Field
+    [Arguments]    ${datum_giriton}
+    ${set_result}=    Execute Javascript
+    ...    const expected=String(arguments[0] || '').trim();
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
+    ...    const looksLikeDate=function(value){value=String(value || '').trim(); return value.indexOf('/') > -1 && value.length >= 8 && value.length <= 10;};
+    ...    const inputs=Array.from(document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"]')).filter(visible);
+    ...    const candidates=inputs.filter(function(input){const value=String(input.value || '').trim(); const placeholder=String(input.getAttribute('placeholder') || '').trim(); return looksLikeDate(value) || looksLikeDate(placeholder) || input.closest('.v-datefield');});
+    ...    const input=candidates.find(function(item){return looksLikeDate(item.value);}) || candidates[0] || inputs[0];
+    ...    if(!input){return 'DATE_INPUT_NOT_FOUND';}
+    ...    input.scrollIntoView({block:'center', inline:'nearest'});
+    ...    input.focus();
+    ...    input.value=expected;
+    ...    input.dispatchEvent(new Event('input', {bubbles:true}));
+    ...    input.dispatchEvent(new Event('change', {bubbles:true}));
+    ...    input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', bubbles:true}));
+    ...    input.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter', code:'Enter', bubbles:true}));
+    ...    input.blur();
+    ...    return input.value || '';
+    ...    ARGUMENTS
+    ...    ${datum_giriton}
+    Should Not Be Equal As Strings
+    ...    ${set_result}
+    ...    DATE_INPUT_NOT_FOUND
+    Sleep    4s
 
 
 Wait Until Giriton Date Is Loaded
@@ -287,8 +311,25 @@ Giriton Selected Date Should Be
 
 
 Click Giriton Next Day
+    ${click_result}=    Execute Javascript
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
+    ...    const textOf=function(el){return String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();};
+    ...    const clickReal=function(el){el.scrollIntoView({block:'center', inline:'center'}); const rect=el.getBoundingClientRect(); const x=rect.left + rect.width / 2; const y=rect.top + rect.height / 2; const target=document.elementFromPoint(x, y) || el; ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){target.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));});};
+    ...    const all=Array.from(document.querySelectorAll('.v-button, button, span, div')).filter(visible);
+    ...    const arrows=all.map(function(el){return el.closest('.v-button, button') || el;}).filter(function(el, index, array){return array.indexOf(el) === index;}).filter(function(el){const rect=el.getBoundingClientRect(); const text=textOf(el); const inWindow=!!el.closest('.v-window'); const small=rect.width <= 80 && rect.height <= 80; const topToolbar=rect.top >= 0 && rect.top < 170; return !inWindow && small && topToolbar && (text === '' || text === '>' || text.toLowerCase() === 'next' || text.includes(''));}).sort(function(a,b){const ar=a.getBoundingClientRect(); const br=b.getBoundingClientRect(); return ar.top - br.top || ar.left - br.left;});
+    ...    const nextButton=arrows[0];
+    ...    if(!nextButton){return 'NEXT_BUTTON_NOT_FOUND';}
+    ...    clickReal(nextButton);
+    ...    return 'OK';
+    Should Be Equal As Strings
+    ...    ${click_result}
+    ...    OK
+    Sleep    3s
+
+
+Close Giriton Default Values Popup
     Execute Javascript
-    ...    const visible = el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0; const input = document.querySelector('input.v-datefield-textfield'); const inputRect = input ? input.getBoundingClientRect() : null; const buttons = [...document.querySelectorAll('.v-button, button')].filter(visible); let nextButton = null; if (inputRect) { const sameRow = buttons.filter(button => { const rect = button.getBoundingClientRect(); return rect.left > inputRect.right && Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2)) < 35; }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left); nextButton = sameRow[sameRow.length - 1] || null; } nextButton = nextButton || buttons.find(button => (button.innerText || '').includes('') || (button.textContent || '').includes('') || (button.getAttribute('aria-label') || '').toLowerCase().includes('next')); if (!nextButton) { throw new Error('Giriton next day button not found'); } nextButton.click();
+    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;}; const windows=Array.from(document.querySelectorAll('.v-window')).filter(visible); for(const win of windows){const text=String(win.innerText || ''); if(!text.includes('Default values')){continue;} const buttons=Array.from(win.querySelectorAll('.v-button, button, span, div')).filter(visible); const close=buttons.find(function(el){const label=String(el.innerText || el.textContent || '').trim(); return label === '' || label.toLowerCase() === 'cancel' || label.includes('Cancel');}); if(close){close.click(); return 'CLOSED';}} return 'NO_POPUP';
 
 
 Giriton Loading Should Be Finished
