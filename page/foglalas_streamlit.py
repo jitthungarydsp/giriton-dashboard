@@ -1731,6 +1731,63 @@ def _dispatch_bulk_warehouse_booking(
     )
 
 
+def _exact_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    rows = summary_df[
+        (summary_df["Állapot"] == "Egyezés")
+        & (summary_df["Eltérés"] == "0 perc")
+        & (summary_df["Giriton állapot"] == "Nincs lefoglalva")
+        & (summary_df["Serial"].fillna("").astype(str).str.strip() != "")
+    ].copy()
+    if rows.empty:
+        return rows
+
+    started = _started_booking_serials()
+    rows = rows[~rows["Serial"].astype(str).str.strip().isin(started)]
+    return rows.drop_duplicates(subset=["Serial"])
+
+
+def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
+    if rows.empty:
+        st.warning("Nincs indítható 100%-os egyezés ebben a szűrésben.")
+        return
+
+    dispatched = 0
+    skipped = 0
+    last_result = None
+    for row in rows.to_dict("records"):
+        serial = _clean(row.get("Serial"))
+        work_date = _clean(row.get("Dátum"))
+        if not serial or not work_date:
+            skipped += 1
+            continue
+        if serial in _started_booking_serials():
+            skipped += 1
+            continue
+
+        last_result = _dispatch_workflow_fallback(
+            AUTO_BOOKING_WORKFLOW,
+            {
+                "start_date": work_date,
+                "end_date": work_date,
+                "serial": serial,
+                "dry_run": "false",
+            },
+        )
+        _mark_booking_started(serial)
+        dispatched += 1
+
+    if last_result:
+        st.session_state["foglalas_last_github_dispatch"] = last_result
+
+    if dispatched:
+        st.success(f"{dispatched} db 100%-os egyezés éles foglalása elindítva.")
+    if skipped:
+        st.warning(f"{skipped} sor kimaradt, mert hiányzott adat vagy már el lett indítva.")
+
+
 def _render_github_status_panel(key_prefix: str) -> None:
     st.markdown("### GitHub állapot")
     refresh_col, hint_col = st.columns([1, 2.4])
@@ -1860,6 +1917,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
     alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum())
     failed_count = int((summary_df["Állapot"] == "Sikertelen").sum())
     booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum())
+    exact_ready = _exact_booking_rows(summary_df)
     target_count = max(len(summary_df), 1)
     progress = min(round((exact_count + booked_count) / target_count * 100), 100)
 
@@ -1939,6 +1997,46 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             """,
             unsafe_allow_html=True,
         )
+        st.markdown("#### 100% egyezések")
+        st.caption(
+            f"Csak pontos, 0 perces, még nem lefoglalt sorok: {len(exact_ready)}"
+        )
+        if not exact_ready.empty:
+            preview = ", ".join(
+                f"{_clean(row.get('Dolgozó'))} {_clean(row.get('MűszakPro'))}"
+                for row in exact_ready.head(5).to_dict("records")
+            )
+            st.caption(preview)
+        exact_live_enabled = st.checkbox(
+            "Éles 100%-os egyezések indítása",
+            key="foglalas_exact_bulk_live_enabled",
+            disabled=exact_ready.empty,
+        )
+        if exact_live_enabled:
+            st.warning(
+                f"Éles indítás: {len(exact_ready)} db pontos egyezés. Alternatíva nem kerül bele."
+            )
+            exact_confirmation = st.text_input(
+                "Megerősítés: írd be pontosan, hogy ELES",
+                key="foglalas_exact_bulk_live_confirmation",
+            )
+            if st.button(
+                f"100% egyezések foglalása ({len(exact_ready)})",
+                type="primary",
+                width="stretch",
+                key="foglalas_exact_bulk_live_run",
+            ):
+                if exact_confirmation != "ELES":
+                    st.error("Éles indításhoz a megerősítő mezőbe ezt írd: ELES")
+                else:
+                    try:
+                        _dispatch_exact_bulk_bookings(exact_ready)
+                    except GitHubActionsError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(f"100%-os egyezések tömeges indítási hiba: {exc}")
+
+        st.divider()
         warehouse_options = [
             value
             for value in ["BUD1", "BUD2"]
