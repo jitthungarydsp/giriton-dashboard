@@ -105,7 +105,7 @@ def _matches_filter(candidate, serial="", courier_id="", email="", warehouse="",
     if warehouse and _normalize_warehouse(candidate.get("warehouse")) != warehouse:
         return False
 
-    if shift_start and normalize_time(candidate.get("shift_start")) != shift_start:
+    if shift_start and not serial and normalize_time(candidate.get("shift_start")) != shift_start:
         return False
 
     return True
@@ -190,6 +190,11 @@ def get_t_plus_booking_candidates(
             shift_start=shift_start_filter,
         ):
             continue
+
+        target_shift_start = normalize_time(shift_start_filter)
+        if serial and target_shift_start:
+            candidate["shift_start"] = target_shift_start
+            candidate["shift_text"] = f"{candidate['warehouse']}_{target_shift_start}"
 
         key = _candidate_key(candidate)
 
