@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+import hashlib
+import hmac
 from html import escape
 import os
 from pathlib import Path
@@ -8,7 +10,6 @@ import re
 import sys
 import unicodedata
 from urllib.parse import urlencode
-import uuid
 
 import pandas as pd
 import requests
@@ -43,6 +44,7 @@ GITHUB_OWNER_DEFAULT = "jitthungarydsp"
 GITHUB_REPO_DEFAULT = "giriton-dashboard"
 GITHUB_REF_DEFAULT = "main"
 AUTO_BOOKING_WORKFLOW = "giriton-auto-booking.yml"
+BOOKING_LINK_TTL_SECONDS = 15 * 60
 
 
 def _clean(value) -> str:
@@ -504,14 +506,59 @@ def _booking_action_identity(row: dict) -> dict[str, str]:
     }
 
 
+def _booking_link_secret() -> str:
+    return (
+        _secret("FOGLALAS_LINK_SECRET")
+        or _secret("GITHUB_ACTIONS_TOKEN")
+        or _secret("SUPABASE_SERVICE_ROLE_KEY")
+        or "giriton-dashboard-foglalas-link-v1"
+    )
+
+
+def _booking_action_payload(identity: dict[str, str], issued_at: int) -> str:
+    return "|".join(
+        [
+            str(issued_at),
+            _clean(identity.get("serial")),
+            _clean(identity.get("work_date")),
+            _clean(identity.get("worker")),
+            _clean(identity.get("warehouse")).upper(),
+            _clean(identity.get("shift_start")),
+        ]
+    )
+
+
 def _remember_booking_action(identity: dict[str, str]) -> str:
-    token = uuid.uuid4().hex
-    actions = st.session_state.setdefault("foglalas_booking_actions", {})
-    actions[token] = identity
-    if len(actions) > 1000:
-        for stale_token in list(actions)[:-1000]:
-            actions.pop(stale_token, None)
-    return token
+    issued_at = int(datetime.now().timestamp())
+    payload = _booking_action_payload(identity, issued_at)
+    signature = hmac.new(
+        _booking_link_secret().encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return f"{issued_at}.{signature}"
+
+
+def _is_valid_booking_action_token(token: str, identity: dict[str, str]) -> tuple[bool, str]:
+    try:
+        issued_raw, signature = _clean(token).split(".", 1)
+        issued_at = int(issued_raw)
+    except ValueError:
+        return False, "hibás azonosító"
+
+    age_seconds = int(datetime.now().timestamp()) - issued_at
+    if age_seconds < 0 or age_seconds > BOOKING_LINK_TTL_SECONDS:
+        return False, "lejárt azonosító"
+
+    expected = hmac.new(
+        _booking_link_secret().encode("utf-8"),
+        _booking_action_payload(identity, issued_at).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    if not hmac.compare_digest(signature, expected):
+        return False, "nem ehhez a sorhoz tartozó azonosító"
+
+    return True, ""
 
 
 def _booking_action_badge(row: dict) -> str:
@@ -1670,29 +1717,19 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         return
 
     token = _query_param_value("action_token")
-    actions = st.session_state.get("foglalas_booking_actions", {})
-    token_identity = actions.pop(token, None) if token else None
-    if not token_identity:
-        st.error(
-            "A foglalás indítása nem érvényes vagy már fel lett használva. "
-            "Kérlek frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját."
-        )
-        st.query_params.clear()
-        return
-
-    query_identity = _query_booking_identity()
-    identity = token_identity
-    if query_identity != identity:
-        st.error(
-            "Nem indítottam foglalást, mert a kattintott sor adatai nem egyeznek "
-            "az aktuális oldal biztonsági azonosítójával."
-        )
-        st.query_params.clear()
-        return
-
+    identity = _query_booking_identity()
     required_fields = ["serial", "work_date", "worker", "warehouse", "shift_start"]
     if any(not identity.get(field) for field in required_fields):
         st.error("A foglalás indításához hiányzik egy sorazonosító adat. Frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
+        st.query_params.clear()
+        return
+
+    token_valid, token_error = _is_valid_booking_action_token(token, identity)
+    if not token_valid:
+        st.error(
+            "A foglalás indítása nem érvényes vagy már fel lett használva. "
+            f"Kérlek frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját. Ok: {token_error}."
+        )
         st.query_params.clear()
         return
 
