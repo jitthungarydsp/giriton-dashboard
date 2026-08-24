@@ -50,27 +50,20 @@ Giriton Raw Export Github
         ...    ${nap} days
         ...    result_format=%d.%m.%Y
 
+        ${datum_nap}=    Add Time To Date
+        ...    ${base_date}
+        ...    ${nap} days
+        ...    result_format=%d
+
+        ${datum_nap}=    Convert To Integer    ${datum_nap}
+
         Log To Console
         ...    DATUM=${datum_giriton}
 
-        Click Element
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-
-        Press Keys
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-        ...    CTRL+A
-
-        Input Text
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-        ...    ${datum_giriton}
-
-        Press Keys
-        ...    xpath=//input[contains(@class,'v-datefield-textfield')]
-        ...    ENTER
-
-        Wait Until Giriton Date Is Loaded
+        Select Giriton Date
         ...    ${datum_giriton}
         ...    ${datum_oldal}
+        ...    ${datum_nap}
 
         Execute Javascript
         ...    let els=[...document.querySelectorAll('*')]; let scrollable=els.filter(e=>e.scrollHeight>e.clientHeight); let biggest=scrollable.sort((a,b)=>b.scrollHeight-a.scrollHeight)[0]; if(biggest){biggest.scrollTop=0;}
@@ -215,14 +208,53 @@ Giriton Raw Export Github
 
 
 *** Keywords ***
+Select Giriton Date
+    [Arguments]    ${datum_giriton}    ${datum_oldal}    ${datum_nap}
+    Click Element
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+
+    Press Keys
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    CTRL+A
+
+    Input Text
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    ${datum_giriton}
+
+    Press Keys
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    ENTER
+
+    Press Keys
+    ...    xpath=//input[contains(@class,'v-datefield-textfield')]
+    ...    TAB
+
+    ${loaded}=    Run Keyword And Return Status
+    ...    Wait Until Giriton Date Is Loaded
+    ...    ${datum_giriton}
+    ...    ${datum_oldal}
+    ...    ${datum_nap}
+
+    IF    not ${loaded}
+        Log To Console
+        ...    DATE_INPUT_NOT_APPLIED_TRY_NEXT_ARROW=${datum_giriton}
+        Click Giriton Next Day
+        Wait Until Giriton Date Is Loaded
+        ...    ${datum_giriton}
+        ...    ${datum_oldal}
+        ...    ${datum_nap}
+    END
+
+
 Wait Until Giriton Date Is Loaded
-    [Arguments]    ${datum_giriton}    ${datum_oldal}
+    [Arguments]    ${datum_giriton}    ${datum_oldal}    ${datum_nap}
     Wait Until Keyword Succeeds
     ...    30x
     ...    1s
     ...    Giriton Selected Date Should Be
     ...    ${datum_giriton}
     ...    ${datum_oldal}
+    ...    ${datum_nap}
     Wait Until Keyword Succeeds
     ...    30x
     ...    1s
@@ -234,7 +266,7 @@ Wait Until Giriton Date Is Loaded
 
 
 Giriton Selected Date Should Be
-    [Arguments]    ${datum_giriton}    ${datum_oldal}
+    [Arguments]    ${datum_giriton}    ${datum_oldal}    ${datum_nap}
     ${date_state}=    Execute Javascript
     ...    const input = document.querySelector('input.v-datefield-textfield'); const value = input ? (input.value || '').trim() : ''; const bodyText = document.body ? document.body.innerText : ''; return 'datefield=' + value + '\\n' + bodyText;
     ${datefield_ok}=    Run Keyword And Return Status
@@ -245,9 +277,18 @@ Giriton Selected Date Should Be
     ...    Should Contain
     ...    ${date_state}
     ...    ${datum_oldal}
+    ${day_number_ok}=    Run Keyword And Return Status
+    ...    Should Match Regexp
+    ...    ${date_state}
+    ...    (?m)^\\s*${datum_nap}\\s*\\n\\s*Online\\s*$
     Should Be True
-    ...    ${datefield_ok} or ${visible_date_ok}
+    ...    ${datefield_ok} or ${visible_date_ok} or ${day_number_ok}
     ...    msg=Giriton oldal nem a kert napot mutatja. Kert datum: ${datum_giriton} / ${datum_oldal}. Allapot: ${date_state}
+
+
+Click Giriton Next Day
+    Execute Javascript
+    ...    const visible = el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0; const input = document.querySelector('input.v-datefield-textfield'); const inputRect = input ? input.getBoundingClientRect() : null; const buttons = [...document.querySelectorAll('.v-button, button')].filter(visible); let nextButton = null; if (inputRect) { const sameRow = buttons.filter(button => { const rect = button.getBoundingClientRect(); return rect.left > inputRect.right && Math.abs((rect.top + rect.height / 2) - (inputRect.top + inputRect.height / 2)) < 35; }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left); nextButton = sameRow[sameRow.length - 1] || null; } nextButton = nextButton || buttons.find(button => (button.innerText || '').includes('') || (button.textContent || '').includes('') || (button.getAttribute('aria-label') || '').toLowerCase().includes('next')); if (!nextButton) { throw new Error('Giriton next day button not found'); } nextButton.click();
 
 
 Giriton Loading Should Be Finished
