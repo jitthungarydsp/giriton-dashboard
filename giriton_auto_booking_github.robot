@@ -207,7 +207,7 @@ Giriton Auto Booking From Foglalasok
             ...    SHIFT_NOT_FOUND
             ${final_message}=    Set Variable If
             ...    '${result}' == 'SHIFT_NOT_EMPTY'
-            ...    Megtalaltam a muszakot, de nem 0/X foglaltsagu, ezert nem foglalok. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
+            ...    Megtalaltam a muszakot, de nincs nyitott kapacitas rajta, ezert nem foglalok. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
             ...    Nem talaltam a Giriton muszakkartyat erre a raktar/kezdes parra. Screenshot: ${loaded_screenshot}, ${not_found_screenshot}
 
             ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
@@ -296,7 +296,7 @@ Find Giriton Shift Card
         ...    const exactTimes=baseMinutes === null ? [start] : (function(){const padded=toTime(baseMinutes,true); const plain=toTime(baseMinutes,false); return padded === plain ? [plain] : [padded, plain];})();
         ...    const fallbackTimes=targetTimes.filter(function(time){return !exactTimes.includes(time);});
         ...    const variantFor=function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'].map(normalize);};
-        ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); for(let i=1;i<=99;i++){if(compact.includes('0/' + i)){return true;}} return false;};
+        ...    const hasOpenCapacity=function(value){const compact=String(value || '').split(' ').join(''); const matches=[...compact.matchAll(/(\\d+)\\/(\\d+)/g)]; return matches.some(function(match){const booked=parseInt(match[1],10); const maximum=parseInt(match[2],10); return !Number.isNaN(booked) && !Number.isNaN(maximum) && maximum > booked;});};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
         ...    const exactAvailable=titles.some(function(title){
         ...      const titleText=normalize(title.innerText || '');
