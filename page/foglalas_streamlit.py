@@ -1032,15 +1032,24 @@ def _apply_styles() -> None:
             color: white;
         }
         .table-wrap {
-            overflow-x: auto;
+            width: 100%;
+            max-width: 100%;
+            max-height: 62vh;
+            overflow: auto;
             border: 1px solid #dce5ea;
             border-radius: 8px;
             background: white;
         }
         .styled-table {
-            width: 100%;
+            width: max-content;
+            min-width: 1280px;
             border-collapse: collapse;
             font-size: 0.92rem;
+        }
+        .styled-table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
         .styled-table th,
         .styled-table td {
