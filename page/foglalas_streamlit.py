@@ -2601,9 +2601,9 @@ def show_foglalas_streamlit_page() -> None:
     )
     muszakpro_count = len(muszakpro_df)
     giriton_open_count = _giriton_open_shift_count(giriton_df)
-    giriton_ratio = (
-        f"{round(giriton_open_count / muszakpro_count * 100)}%"
-        if muszakpro_count
+    muszakpro_giriton_ratio = (
+        f"{round(muszakpro_count / giriton_open_count * 100)}%"
+        if giriton_open_count
         else "0%"
     )
 
@@ -2615,7 +2615,7 @@ def show_foglalas_streamlit_page() -> None:
     with c3:
         _render_kpi("Giriton nyitott", giriton_open_count, "blue", "G")
     with c4:
-        _render_kpi("Giriton / MűszakPro", giriton_ratio, "green", "%")
+        _render_kpi("MűszakPro / Giriton", muszakpro_giriton_ratio, "green", "%")
 
     st.write("")
     if view == "Összes":
