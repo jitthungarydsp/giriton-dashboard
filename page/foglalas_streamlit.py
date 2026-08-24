@@ -40,6 +40,7 @@ MIN_SHIFT_GAP_MINUTES = 270
 GITHUB_OWNER_DEFAULT = "jitthungarydsp"
 GITHUB_REPO_DEFAULT = "giriton-dashboard"
 GITHUB_REF_DEFAULT = "main"
+AUTO_BOOKING_WORKFLOW = "giriton-auto-booking.yml"
 
 
 def _clean(value) -> str:
@@ -86,7 +87,7 @@ def _dispatch_workflow_fallback(workflow: str, inputs: dict[str, str]) -> dict[s
     owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
     repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
     ref = _secret("GITHUB_REF", GITHUB_REF_DEFAULT)
-    workflow_name = workflow or "giriton-auto-booking.yml"
+    workflow_name = workflow or AUTO_BOOKING_WORKFLOW
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_name}/dispatches"
     response = None
     used_secret_name = ""
@@ -129,6 +130,86 @@ def _dispatch_workflow_fallback(workflow: str, inputs: dict[str, str]) -> dict[s
         "ref": ref,
         "triggered_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def _github_request_with_tokens(method: str, url: str, **kwargs):
+    token_candidates = _github_token_candidates()
+    if not token_candidates:
+        raise GitHubActionsError(
+            "Hiányzik a GitHub token secret. Add meg valamelyiket: GITHUB_ACTIONS_TOKEN, GITHUB_TOKEN, GH_TOKEN vagy GITHUB_PAT."
+        )
+
+    response = None
+    used_secret_name = ""
+    for secret_name, token in token_candidates:
+        used_secret_name = secret_name
+        response = requests.request(
+            method,
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=20,
+            **kwargs,
+        )
+        if response.status_code != 401:
+            return response, used_secret_name
+
+    tried = ", ".join(name for name, _token in token_candidates)
+    raise GitHubActionsError(
+        "GitHub Actions állapot lekérés sikertelen: minden megadott GitHub token hibás vagy lejárt. "
+        f"Próbált secret(ek): {tried}."
+    )
+
+
+def _latest_auto_booking_runs(limit: int = 5) -> list[dict]:
+    owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
+    repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
+    url = (
+        f"https://api.github.com/repos/{owner}/{repo}"
+        f"/actions/workflows/{AUTO_BOOKING_WORKFLOW}/runs"
+    )
+    response, used_secret_name = _github_request_with_tokens(
+        "GET",
+        url,
+        params={"per_page": int(limit)},
+    )
+    if response.status_code != 200:
+        raise GitHubActionsError(
+            f"GitHub Actions állapot lekérés sikertelen ({used_secret_name}): HTTP {response.status_code} - {response.text[:500]}"
+        )
+    return response.json().get("workflow_runs", [])
+
+
+def _github_status_label(run: dict) -> str:
+    status = _clean(run.get("status")) or "-"
+    conclusion = _clean(run.get("conclusion"))
+    if status == "completed":
+        if conclusion == "success":
+            return "Sikeres"
+        if conclusion == "failure":
+            return "Hibás"
+        if conclusion == "cancelled":
+            return "Megszakítva"
+        return conclusion or "Befejezve"
+    if status == "queued":
+        return "Sorban"
+    if status == "in_progress":
+        return "Fut"
+    return status
+
+
+def _format_github_time(value) -> str:
+    text = _clean(value)
+    if not text:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.strftime("%Y.%m.%d. %H:%M:%S")
+    except ValueError:
+        return text
 
 
 def _match_text(value) -> str:
@@ -1403,11 +1484,60 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         "serial": serial,
         "dry_run": "true" if dry_run else "false",
     }
-    result = _dispatch_workflow_fallback("giriton-auto-booking.yml", workflow_inputs)
+    result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
+    st.session_state["foglalas_last_github_dispatch"] = result
     mode = "ellenőrzés" if dry_run else "éles foglalás"
     st.success(
         f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
     )
+
+
+def _render_github_status_panel(key_prefix: str) -> None:
+    st.markdown("### GitHub állapot")
+    refresh_col, hint_col = st.columns([1, 2.4])
+    if refresh_col.button(
+        "GitHub állapot frissítése",
+        width="stretch",
+        key=f"{key_prefix}_github_refresh",
+    ):
+        st.session_state[f"{key_prefix}_github_status_refresh"] = (
+            st.session_state.get(f"{key_prefix}_github_status_refresh", 0) + 1
+        )
+
+    last_dispatch = st.session_state.get("foglalas_last_github_dispatch")
+    if last_dispatch:
+        hint_col.success(
+            f"Utolsó indítás: {last_dispatch.get('workflow')} / {last_dispatch.get('triggered_at')}"
+        )
+    else:
+        hint_col.caption("Itt látszik majd a legutóbbi Giriton Auto Booking workflow állapota.")
+
+    try:
+        runs = _latest_auto_booking_runs(limit=5)
+    except GitHubActionsError as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:
+        st.error(f"GitHub állapot lekérés hiba: {exc}")
+        return
+
+    if not runs:
+        st.info("Még nincs látható Giriton Auto Booking futás.")
+        return
+
+    rows = []
+    for run in runs:
+        rows.append(
+            {
+                "Állapot": _github_status_label(run),
+                "Indítva": _format_github_time(run.get("created_at")),
+                "Frissítve": _format_github_time(run.get("updated_at")),
+                "Branch": run.get("head_branch") or "-",
+                "Link": run.get("html_url") or "",
+            }
+        )
+
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) -> None:
@@ -1478,6 +1608,8 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
                     st.error(str(exc))
                 except Exception as exc:
                     st.error(f"Váratlan hiba az éles foglalás indításánál: {exc}")
+
+    _render_github_status_panel(key_prefix)
 
 
 def _render_mass_view(summary_df: pd.DataFrame) -> None:
