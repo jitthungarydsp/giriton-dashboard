@@ -236,7 +236,7 @@ Wait Until Giriton Date Is Loaded
 Giriton Selected Date Should Be
     [Arguments]    ${datum_giriton}    ${datum_oldal}
     ${date_state}=    Execute Javascript
-    ...    const input = document.querySelector('input.v-datefield-textfield'); const value = input ? (input.value || '').trim() : ''; const bodyText = document.body ? document.body.innerText : ''; return `datefield=${value}\n${bodyText}`;
+    ...    const input = document.querySelector('input.v-datefield-textfield'); const value = input ? (input.value || '').trim() : ''; const bodyText = document.body ? document.body.innerText : ''; return 'datefield=' + value + '\\n' + bodyText;
     ${datefield_ok}=    Run Keyword And Return Status
     ...    Should Contain
     ...    ${date_state}
