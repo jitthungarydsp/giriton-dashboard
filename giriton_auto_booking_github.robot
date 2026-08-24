@@ -586,51 +586,59 @@ Add Courier To Shift Subscription
     ...    Futar sor keresese es kivalasztasa indul.
 
     ${select_result}=    Execute Javascript
-    ...    const courierId=String(arguments[0] || '').trim().replace(/\\.0$/, '');
-    ...    const courierName=String(arguments[1] || '').trim().toLowerCase();
-    ...    const email=String(arguments[2] || '').trim().toLowerCase();
-    ...    const userNumber=courierId ? 'D' + courierId : '';
-    ...    const normalize=value => String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim().split(' ').filter(Boolean).join(' ');
-    ...    const nameParts=courierName.split(' ').filter(Boolean);
-    ...    const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
-    ...    const foldedCourierName=normalize(courierName);
-    ...    const foldedReversedName=normalize(reversedName);
-    ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
-    ...    const clickReal=function(el){
-    ...      if(!el){return;}
-    ...      el.scrollIntoView({block:'center', inline:'nearest'});
-    ...      const rect=el.getBoundingClientRect();
-    ...      const x=rect.left + rect.width / 2;
-    ...      const y=rect.top + rect.height / 2;
-    ...      const real=document.elementFromPoint(x, y) || el;
-    ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
-    ...        real.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...    try {
+    ...      const courierId=String(arguments[0] || '').trim().replace(/\\.0$/, '');
+    ...      const courierName=String(arguments[1] || '').trim().toLowerCase();
+    ...      const email=String(arguments[2] || '').trim().toLowerCase();
+    ...      const userNumber=courierId ? 'D' + courierId : '';
+    ...      const fold=function(value){try{return String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');}catch(error){return String(value || '');}};
+    ...      const normalize=value => fold(value).toLowerCase().trim().split(' ').filter(Boolean).join(' ');
+    ...      const nameParts=courierName.split(' ').filter(Boolean);
+    ...      const reversedName=nameParts.length > 1 ? nameParts.slice(1).join(' ') + ' ' + nameParts[0] : courierName;
+    ...      const foldedCourierName=normalize(courierName);
+    ...      const foldedReversedName=normalize(reversedName);
+    ...      const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...      const cleanText=el => String((el && el.innerText) || '').trim().split(' ').filter(Boolean).join(' ');
+    ...      const clickReal=function(el){
+    ...        if(!el){return;}
+    ...        el.scrollIntoView({block:'center', inline:'nearest'});
+    ...        const rect=el.getBoundingClientRect();
+    ...        const x=Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    ...        const y=Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    ...        const real=document.elementFromPoint(x, y) || el;
+    ...        if(!real || !real.dispatchEvent){return;}
+    ...        ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
+    ...          real.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...        });
+    ...      };
+    ...      const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
+    ...      const dialog=dialogs[dialogs.length - 1] || document;
+    ...      let rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"], .v-grid-row')].filter(visible);
+    ...      if(rows.length === 0){rows=[...document.querySelectorAll('tr.v-grid-row, tr[role="row"], .v-grid-row')].filter(visible);}
+    ...      const row=rows.find(item => {
+    ...        const text=cleanText(item);
+    ...        const lower=text.toLowerCase();
+    ...        const folded=normalize(text);
+    ...        if(userNumber && text.includes(userNumber)){return true;}
+    ...        if(courierName && lower.includes(courierName)){return true;}
+    ...        if(reversedName && lower.includes(reversedName)){return true;}
+    ...        if(email && lower.includes(email)){return true;}
+    ...        if(foldedCourierName && folded.includes(foldedCourierName)){return true;}
+    ...        if(foldedReversedName && folded.includes(foldedReversedName)){return true;}
+    ...        if(courierId && text.includes(courierId)){return true;}
+    ...        return false;
     ...      });
-    ...    };
-    ...    const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
-    ...    const dialog=dialogs[dialogs.length - 1] || document;
-    ...    const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"]')];
-    ...    const row=rows.find(item => {
-    ...      const text=(item.innerText || '').trim().split(' ').filter(Boolean).join(' ');
-    ...      const lower=text.toLowerCase();
-    ...      const folded=normalize(text);
-    ...      if(userNumber && text.includes(userNumber)){return true;}
-    ...      if(courierName && lower.includes(courierName)){return true;}
-    ...      if(reversedName && lower.includes(reversedName)){return true;}
-    ...      if(email && lower.includes(email)){return true;}
-    ...      if(foldedCourierName && folded.includes(foldedCourierName)){return true;}
-    ...      if(foldedReversedName && folded.includes(foldedReversedName)){return true;}
-    ...      if(courierId && text.includes(courierId)){return true;}
-    ...      return false;
-    ...    });
-    ...    if(!row){const sample=rows.slice(0,3).map(item => (item.innerText || '').trim().split(' ').filter(Boolean).join(' ').slice(0,90)).join(' | '); return 'NOT_FOUND rows=' + rows.length + ' sample=' + sample;}
-    ...    const checkbox=row.querySelector('input[type="checkbox"]');
-    ...    const firstCell=row.querySelector('td, .v-grid-cell');
-    ...    const vaadinCheck=row.querySelector('.v-checkbox, .v-grid-selection-checkbox, [class*="checkbox"], [class*="check"]');
-    ...    [checkbox, vaadinCheck, firstCell, row].filter(Boolean).forEach(clickReal);
-    ...    const selectedText=(dialog.innerText || '').toLowerCase();
-    ...    const selected=row.className.includes('selected') || row.getAttribute('aria-selected') === 'true' || (checkbox && checkbox.checked) || !selectedText.includes('no record selected');
-    ...    return selected ? 'OK' : 'NOT_SELECTED';
+    ...      if(!row){const sample=rows.slice(0,5).map(item => cleanText(item).slice(0,120)).join(' | '); return 'NOT_FOUND rows=' + rows.length + ' sample=' + sample;}
+    ...      const checkbox=row.querySelector('input[type="checkbox"]');
+    ...      const firstCell=row.querySelector('td, .v-grid-cell');
+    ...      const vaadinCheck=row.querySelector('.v-checkbox, .v-grid-selection-checkbox, [class*="checkbox"], [class*="check"]');
+    ...      [checkbox, vaadinCheck, firstCell, row].filter(Boolean).forEach(clickReal);
+    ...      const selectedText=String((dialog.innerText || document.body.innerText) || '').toLowerCase();
+    ...      const selected=String(row.className || '').includes('selected') || row.getAttribute('aria-selected') === 'true' || (checkbox && checkbox.checked) || !selectedText.includes('no record selected');
+    ...      return selected ? 'OK' : 'NOT_SELECTED row=' + cleanText(row).slice(0,120);
+    ...    } catch(error) {
+    ...      return 'JS_ERROR ' + (error && error.message ? error.message : String(error));
+    ...    }
     ...    ARGUMENTS
     ...    ${courier_id}
     ...    ${courier_name}
