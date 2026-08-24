@@ -1629,15 +1629,28 @@ def _matching_booking_row(summary_df: pd.DataFrame, identity: dict[str, str]) ->
     return None
 
 
+def _query_booking_identity() -> dict[str, str]:
+    return {
+        "serial": _query_param_value("serial"),
+        "work_date": _query_param_value("work_date"),
+        "worker": _query_param_value("worker"),
+        "warehouse": _query_param_value("warehouse").upper(),
+        "shift_start": _query_param_value("shift_start"),
+    }
+
+
 def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     if _query_param_value("foglalas_action") != "book_serial":
         return
 
     token = _query_param_value("action_token")
     actions = st.session_state.get("foglalas_booking_actions", {})
-    identity = actions.pop(token, None) if token else None
-    if not identity:
-        st.error("A foglalás indítása nem érvényes vagy már fel lett használva. Kérlek frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
+    token_identity = actions.pop(token, None) if token else None
+    query_identity = _query_booking_identity()
+    identity = token_identity or query_identity
+    required_fields = ["serial", "work_date", "worker", "warehouse", "shift_start"]
+    if any(not identity.get(field) for field in required_fields):
+        st.error("A foglalás indításához hiányzik egy sorazonosító adat. Frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
         st.query_params.clear()
         return
 
