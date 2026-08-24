@@ -114,6 +114,37 @@ def dispatch_robot(
     }
 
 
+def dispatch_workflow(workflow, inputs=None, ref=None):
+    config = get_config()
+    workflow_name = str(workflow or config["workflow"])
+    url = (
+        f"https://api.github.com/repos/{config['owner']}/{config['repo']}"
+        f"/actions/workflows/{workflow_name}/dispatches"
+    )
+    payload = {
+        "ref": ref or config["ref"],
+        "inputs": {key: str(value) for key, value in (inputs or {}).items()},
+    }
+
+    response = requests.post(
+        url,
+        headers=_headers(config),
+        json=payload,
+        timeout=20,
+    )
+
+    if response.status_code != 204:
+        raise GitHubActionsError(
+            f"GitHub Actions indítás sikertelen: HTTP {response.status_code} - {response.text[:500]}"
+        )
+
+    return {
+        "workflow": workflow_name,
+        "ref": payload["ref"],
+        "triggered_at": datetime.now(BUDAPEST_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 def get_latest_runs(limit=8):
     config = get_config()
     url = (

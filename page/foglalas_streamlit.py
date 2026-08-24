@@ -17,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
+from resources.github_actions import GitHubActionsError, dispatch_workflow
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
 
 
@@ -339,12 +340,16 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
             key,
             {
                 "times": [],
+                "records_by_time": {},
                 "worker": worker,
                 "booking_worker_key": _booking_worker_match_key(row),
                 "warehouse": warehouse,
             },
         )
-        group["times"].append(_normalize_time(row.get(time_column)))
+        shift_time = _normalize_time(row.get(time_column))
+        group["times"].append(shift_time)
+        if shift_time and shift_time not in group["records_by_time"]:
+            group["records_by_time"][shift_time] = row.to_dict()
 
     return groups
 
@@ -664,8 +669,10 @@ def _build_summary_rows(
             booked_values,
             tolerance_minutes,
         )
+        records_by_time = muszakpro_group.get("records_by_time", {})
 
         for muszakpro_time in muszakpro_values:
+            source_record = records_by_time.get(muszakpro_time, {})
             giriton_booking = "-"
             giriton_offer = "-"
             if muszakpro_time in daily_plan:
@@ -726,6 +733,9 @@ def _build_summary_rows(
                     "Eltérés": _format_diff(diff_value),
                     "Állapot": status,
                     "Ok": reason,
+                    "Serial": _clean(source_record.get("serial")),
+                    "Courier ID": _clean(source_record.get("courier_id")),
+                    "E-mail": _clean(source_record.get("email")).casefold(),
                 }
             )
 
@@ -1263,6 +1273,110 @@ def _render_source_tables(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) 
         )
 
 
+def _booking_candidate_label(row: dict) -> str:
+    return (
+        f"{_clean(row.get('Dátum'))} | {_clean(row.get('Raktár'))} | "
+        f"MP {_clean(row.get('MűszakPro'))} -> Giriton "
+        f"{_clean(row.get('Giriton ajánlat')) or _clean(row.get('Giriton foglalás'))} | "
+        f"{_clean(row.get('Dolgozó'))} | serial: {_clean(row.get('Serial')) or '-'}"
+    )
+
+
+def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
+    serial = _clean(row.get("Serial"))
+    work_date = _clean(row.get("Dátum"))
+    if not serial:
+        st.error("Ehhez a sorhoz nincs MűszakPro serial, ezért nem indítható célzott foglalás.")
+        return
+    if not work_date:
+        st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható foglalás.")
+        return
+
+    result = dispatch_workflow(
+        "giriton-auto-booking.yml",
+        {
+            "start_date": work_date,
+            "end_date": work_date,
+            "serial": serial,
+            "dry_run": "true" if dry_run else "false",
+        },
+    )
+    mode = "ellenőrzés" if dry_run else "éles foglalás"
+    st.success(
+        f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
+    )
+
+
+def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) -> None:
+    if summary_df.empty:
+        st.info("Nincs kiválasztható sor az egyéni foglaláshoz.")
+        return
+
+    candidates = summary_df[
+        summary_df["Állapot"].isin(["Egyezés", "Alternatíva"])
+        & (summary_df["Giriton állapot"] == "Nincs lefoglalva")
+    ].copy()
+    if candidates.empty:
+        st.info("Ebben a szűrésben nincs egyénileg indítható, még nem lefoglalt Giriton sor.")
+        return
+
+    rows = candidates.to_dict("records")
+    options = {_booking_candidate_label(row): row for row in rows}
+    selected_label = st.selectbox(
+        "Egyéni foglalásra kiválasztott sor",
+        list(options.keys()),
+        key=f"{key_prefix}_single_booking_row",
+    )
+    selected_row = options[selected_label]
+
+    info_cols = st.columns(4)
+    info_cols[0].metric("Dátum", _clean(selected_row.get("Dátum")) or "-")
+    info_cols[1].metric("Raktár", _clean(selected_row.get("Raktár")) or "-")
+    info_cols[2].metric("MűszakPro", _clean(selected_row.get("MűszakPro")) or "-")
+    info_cols[3].metric("Giriton ajánlat", _clean(selected_row.get("Giriton ajánlat")) or "-")
+
+    action_col_1, action_col_2 = st.columns([1, 1.4])
+    if action_col_1.button(
+        "Ellenőrzés indítása",
+        width="stretch",
+        key=f"{key_prefix}_single_dry_run",
+    ):
+        try:
+            _dispatch_auto_booking(selected_row, dry_run=True)
+        except GitHubActionsError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"Váratlan hiba az ellenőrzés indításánál: {exc}")
+
+    live_enabled = action_col_2.checkbox(
+        "Éles foglalás engedélyezése erre az egy sorra",
+        key=f"{key_prefix}_single_live_enabled",
+    )
+    if live_enabled:
+        st.warning(
+            "Éles indítás csak a kiválasztott MűszakPro serialra megy, nem tömeges futás."
+        )
+        confirmation = st.text_input(
+            "Megerősítés: írd be pontosan, hogy ELES",
+            key=f"{key_prefix}_single_live_confirmation",
+        )
+        if st.button(
+            "Kiválasztott sor foglalása",
+            type="primary",
+            width="stretch",
+            key=f"{key_prefix}_single_live_run",
+        ):
+            if confirmation != "ELES":
+                st.error("Éles indításhoz a megerősítő mezőbe ezt írd: ELES")
+            else:
+                try:
+                    _dispatch_auto_booking(selected_row, dry_run=False)
+                except GitHubActionsError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(f"Váratlan hiba az éles foglalás indításánál: {exc}")
+
+
 def _render_mass_view(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         st.info("Nincs megjeleníthető egyeztetési sor ebben a szűrésben.")
@@ -1303,6 +1417,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             [
                 "Dátum",
                 "Dolgozó",
+                "Raktár",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",
@@ -1324,6 +1439,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             [
                 "Dátum",
                 "Dolgozó",
+                "Raktár",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",
@@ -1364,13 +1480,48 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         )
 
 
-def _render_worker_view(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) -> None:
+def _render_worker_view(
+    summary_df: pd.DataFrame,
+    muszakpro_df: pd.DataFrame,
+    giriton_df: pd.DataFrame,
+) -> None:
     workers = _worker_options(muszakpro_df, giriton_df)
     worker = st.selectbox("Dolgozó részletes nézete", workers)
-    _render_source_tables(
-        _apply_worker(muszakpro_df, worker),
-        _apply_worker(giriton_df, worker),
+    worker_summary = summary_df
+    if worker != "Összes dolgozó" and not summary_df.empty:
+        worker_summary = summary_df[summary_df["Dolgozó"] == worker]
+
+    st.markdown("### Dolgozó foglalási listája")
+    if not worker_summary.empty:
+        worker_table = worker_summary.copy()
+        worker_table["Következő lépés"] = worker_table["Állapot"]
+    else:
+        worker_table = worker_summary
+    _render_html_table(
+        worker_table,
+        [
+            "Dátum",
+            "Dolgozó",
+            "Raktár",
+            "MűszakPro",
+            "Giriton foglalás",
+            "Giriton ajánlat",
+            "Giriton állapot",
+            "Eltérés",
+            "Állapot",
+            "Következő lépés",
+        ],
+        "Nincs foglalási sor ehhez a dolgozóhoz.",
     )
+
+    st.markdown("### Egyéni foglalás")
+    _render_individual_booking_panel(worker_summary, "worker")
+
+    with st.expander("Nyers forrásadatok", expanded=False):
+        _render_source_tables(
+            _apply_worker(muszakpro_df, worker),
+            _apply_worker(giriton_df, worker),
+        )
 
 
 def _render_differences(comparison_df: pd.DataFrame) -> None:
@@ -1560,7 +1711,7 @@ def show_foglalas_streamlit_page() -> None:
     if view == "Összes":
         _render_mass_view(summary_df)
     elif view == "Dolgozónként":
-        _render_worker_view(muszakpro_df, giriton_df)
+        _render_worker_view(summary_df, muszakpro_df, giriton_df)
     elif view == "Sikertelenek":
         failed_only = summary_df[summary_df["Állapot"] == "Sikertelen"] if not summary_df.empty else summary_df
         if not failed_only.empty:
@@ -1571,6 +1722,7 @@ def show_foglalas_streamlit_page() -> None:
             [
                 "Dátum",
                 "Dolgozó",
+                "Raktár",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",
