@@ -259,8 +259,31 @@ def _optional_int(value) -> int | None:
         return None
 
 
+def _giriton_capacity(row) -> tuple[int | None, int | None]:
+    booked = _optional_int(row.get("booked"))
+    maximum = _optional_int(row.get("maximum"))
+
+    if booked is not None and maximum is not None:
+        return booked, maximum
+
+    occupancy = _clean(row.get("occupancy"))
+    match = re.search(r"(\d+)\s*/\s*(\d+)", occupancy)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+
+    return booked, maximum
+
+
+def _has_open_giriton_capacity(row) -> bool:
+    booked, maximum = _giriton_capacity(row)
+    if maximum is None:
+        return False
+    booked = booked or 0
+    return maximum > booked
+
+
 def _is_available_giriton_shift(row) -> bool:
-    return not _is_booked_giriton_shift(row)
+    return not _is_booked_giriton_shift(row) and _has_open_giriton_capacity(row)
 
 
 def _is_booked_giriton_shift(row) -> bool:
@@ -268,7 +291,7 @@ def _is_booked_giriton_shift(row) -> bool:
     worker_key = _match_text(row.get("courier_name"))
     courier_id = _clean(row.get("courier_id"))
     email = _clean(row.get("email"))
-    booked = _optional_int(row.get("booked"))
+    booked, _maximum = _giriton_capacity(row)
 
     if booked == 0:
         return False
@@ -2115,6 +2138,54 @@ def _render_log(log_df: pd.DataFrame) -> None:
     )
 
 
+def _render_recent_booking_issues(log_df: pd.DataFrame) -> None:
+    if log_df.empty or "status" not in log_df.columns:
+        return
+
+    issue_statuses = {
+        "SHIFT_NOT_EMPTY",
+        "SHIFT_NOT_FOUND",
+        "COURIER_NOT_SELECTED",
+        "CHOOSE_BUTTON_NOT_FOUND",
+        "COURIER_SELECTED_NOT_VERIFIED",
+        "SELECTION_DIALOG_STILL_OPEN",
+    }
+    rows = log_df.copy()
+    rows["status"] = rows["status"].fillna("").astype(str)
+    issues = rows[rows["status"].isin(issue_statuses)].copy()
+    if issues.empty:
+        return
+
+    if "created_at" in issues.columns:
+        issues = issues.sort_values("created_at", ascending=False)
+
+    latest = issues.head(5)
+    with st.expander("Legutóbbi robot hibák / figyelmeztetések", expanded=True):
+        st.caption("Itt látszik, ha a robot nem foglalt, és miért állt meg.")
+        _display_table(
+            latest,
+            [
+                "created_at",
+                "work_date",
+                "courier_name",
+                "warehouse",
+                "shift_start",
+                "status",
+                "message",
+            ],
+            {
+                "created_at": "Időpont",
+                "work_date": "Dátum",
+                "courier_name": "Dolgozó",
+                "warehouse": "Raktár",
+                "shift_start": "Kezdés",
+                "status": "Ok",
+                "message": "Részlet",
+            },
+            "Nincs robot hiba.",
+        )
+
+
 def show_foglalas_streamlit_page() -> None:
     _apply_styles()
     view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
@@ -2206,6 +2277,7 @@ def show_foglalas_streamlit_page() -> None:
         st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
 
     _handle_table_booking_action(summary_df)
+    _render_recent_booking_issues(log_df)
 
     workers_count = (
         len(set(summary_df["Dolgozó"].dropna().astype(str)))
