@@ -310,11 +310,16 @@ Find Giriton Shift Card
         ...      const titleText=normalize(title.innerText || '');
         ...      if(!scanTimes.some(function(time){return variantFor(time).some(item => item && titleText.includes(item));})){continue;}
         ...      let card=null;
-        ...      for(let node=title, depth=0; node && depth<8; depth++, node=node.parentElement){
+        ...      let fallbackCard=null;
+        ...      for(let node=title.parentElement, depth=0; node && depth<10; depth++, node=node.parentElement){
         ...        const text=normalize(node.innerText || '');
         ...        const panelCount=node.querySelectorAll ? node.querySelectorAll('div.panel-title').length : 0;
-        ...        if(text.includes(warehouse) && panelCount <= 1){card=node; break;}
+        ...        if(text.includes(warehouse) && panelCount <= 1){
+        ...          fallbackCard = fallbackCard || node;
+        ...          if(capacityPairs(text).length > 0 || text.includes('Subscribed users')){card=node; break;}
+        ...        }
         ...      }
+        ...      card = card || fallbackCard;
         ...      if(!card){continue;}
         ...      const text=normalize(card.innerText || '');
         ...      const matchedTime=scanTimes.find(function(time){return titleText.includes(time + ':1k') || titleText.includes(time + ':') || titleText.includes(time + ' -') || titleText.includes(time + '-');}) || start;
