@@ -292,20 +292,13 @@ Find Giriton Shift Card
         ...    const toMinutes=function(value){const parts=String(value || '').split(':'); if(parts.length<2){return null;} const h=parseInt(parts[0],10); const m=parseInt(parts[1],10); if(Number.isNaN(h) || Number.isNaN(m)){return null;} return h*60+m;};
         ...    const toTime=function(total, padHour){total=(total+1440)%1440; const h=Math.floor(total/60); const m=total%60; const hh=padHour && h<10 ? '0'+h : String(h); const mm=m<10 ? '0'+m : String(m); return hh + ':' + mm;};
         ...    const baseMinutes=toMinutes(start);
-        ...    const offsets=[0,-15,15,-30,30];
-        ...    const targetTimes=baseMinutes === null ? [start] : offsets.flatMap(function(offset){const minute=baseMinutes+offset; const padded=toTime(minute,true); const plain=toTime(minute,false); return padded === plain ? [plain] : [padded, plain];});
         ...    const exactTimes=baseMinutes === null ? [start] : (function(){const padded=toTime(baseMinutes,true); const plain=toTime(baseMinutes,false); return padded === plain ? [plain] : [padded, plain];})();
-        ...    const fallbackTimes=targetTimes.filter(function(time){return !exactTimes.includes(time);});
-        ...    const variantFor=function(time){return [warehouse + '_' + time, time + ':1k', time + ':', time + ' -', time + '-'].map(normalize);};
+        ...    const variantFor=function(time){return [warehouse + '_' + time + ':', warehouse + '_' + time + '-', warehouse + '_' + time + ':1k', time + ':1k', time + ':', time + ' -', time + '-'].map(normalize);};
         ...    const capacityPairs=function(value){const compact=String(value || '').replaceAll(' ',''); const pairs=[]; for(let i=0;i<compact.length;i++){if(compact[i] !== '/'){continue;} let left=''; for(let j=i-1;j>=0 && compact[j]>='0' && compact[j]<='9';j--){left=compact[j]+left;} let right=''; for(let j=i+1;j<compact.length && compact[j]>='0' && compact[j]<='9';j++){right+=compact[j];} if(left && right){pairs.push([parseInt(left,10), parseInt(right,10)]);}} return pairs;};
         ...    const hasOpenCapacity=function(value){return capacityPairs(value).some(function(pair){return pair[1] > pair[0];});};
         ...    const capacityDebug=function(value){return capacityPairs(value).map(function(pair){return pair[0] + '/' + pair[1];}).join(',') || 'NO_CAPACITY_PAIR';};
         ...    const titles=[...document.querySelectorAll('div.panel-title')];
-        ...    const exactAvailable=titles.some(function(title){
-        ...      const titleText=normalize(title.innerText || '');
-        ...      return exactTimes.some(function(time){return variantFor(time).some(item => item && titleText.includes(item));});
-        ...    });
-        ...    const scanTimes=exactAvailable ? exactTimes : targetTimes;
+        ...    const scanTimes=exactTimes;
         ...    for(const title of titles){
         ...      const titleText=normalize(title.innerText || '');
         ...      if(!scanTimes.some(function(time){return variantFor(time).some(item => item && titleText.includes(item));})){continue;}
