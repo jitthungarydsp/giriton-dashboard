@@ -17,8 +17,21 @@ if str(ROOT_DIR) not in sys.path:
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
-from resources.github_actions import GitHubActionsError, dispatch_workflow
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
+
+try:
+    from resources import github_actions as _github_actions
+
+    GitHubActionsError = getattr(_github_actions, "GitHubActionsError", RuntimeError)
+    dispatch_workflow = getattr(_github_actions, "dispatch_workflow", None)
+except Exception as exc:  # pragma: no cover - keeps the page readable during deploy drift
+    class GitHubActionsError(Exception):
+        pass
+
+    dispatch_workflow = None
+    _GITHUB_ACTIONS_IMPORT_ERROR = exc
+else:
+    _GITHUB_ACTIONS_IMPORT_ERROR = None
 
 
 MIN_SHIFT_GAP_MINUTES = 270
@@ -1283,6 +1296,13 @@ def _booking_candidate_label(row: dict) -> str:
 
 
 def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
+    if dispatch_workflow is None:
+        detail = f" Részlet: {_GITHUB_ACTIONS_IMPORT_ERROR}" if _GITHUB_ACTIONS_IMPORT_ERROR else ""
+        raise GitHubActionsError(
+            "A GitHub Actions indító modul még nem elérhető ebben a Streamlit példányban."
+            f"{detail}"
+        )
+
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
     if not serial:
