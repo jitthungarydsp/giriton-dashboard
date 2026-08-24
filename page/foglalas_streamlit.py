@@ -445,14 +445,29 @@ def _action_badge(status: str) -> str:
         "Alternatíva": "Ellenőrzés",
         "Sikertelen": "Kézi döntés",
         "Lefoglalva": "Kész",
+        "Indítva": "Indítva",
     }
     class_name = {
         "Egyezés": "ok",
         "Alternatíva": "warn",
         "Sikertelen": "bad",
         "Lefoglalva": "booked",
+        "Indítva": "booked disabled",
     }.get(status, "neutral")
     return f"<span class='action-badge {class_name}'>{escape(labels.get(status, '-'))}</span>"
+
+
+def _started_booking_serials() -> set[str]:
+    return set(st.session_state.get("foglalas_started_serials", []))
+
+
+def _mark_booking_started(serial: str) -> None:
+    serial = _clean(serial)
+    if not serial:
+        return
+    started = _started_booking_serials()
+    started.add(serial)
+    st.session_state["foglalas_started_serials"] = sorted(started)
 
 
 def _booking_action_badge(row: dict) -> str:
@@ -464,6 +479,8 @@ def _booking_action_badge(row: dict) -> str:
     work_date = _clean(row.get("Dátum"))
     if not serial or not work_date:
         return _action_badge(status)
+    if serial in _started_booking_serials():
+        return "<span class='action-badge booked disabled'>Indítva</span>"
 
     query = urlencode(
         {
@@ -1288,6 +1305,12 @@ def _apply_styles() -> None:
         .action-link:hover {
             filter: brightness(0.96);
         }
+        .action-badge.disabled {
+            background: #eef2f6;
+            color: #64748b;
+            border-color: #cbd5e1;
+            cursor: not-allowed;
+        }
         .status-badge.ok,
         .action-badge.ok { background: #e9f8ef; color: #18834b; border-color: #a9dfb8; }
         .status-badge.warn,
@@ -1532,6 +1555,9 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     if not work_date:
         st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható foglalás.")
         return
+    if not dry_run and serial in _started_booking_serials():
+        st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
+        return
 
     workflow_inputs = {
         "start_date": work_date,
@@ -1540,6 +1566,8 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         "dry_run": "true" if dry_run else "false",
     }
     result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
+    if not dry_run:
+        _mark_booking_started(serial)
     st.session_state["foglalas_last_github_dispatch"] = result
     mode = "ellenőrzés" if dry_run else "éles foglalás"
     st.success(
@@ -1563,12 +1591,11 @@ def _handle_table_booking_action() -> None:
 
     serial = _query_param_value("serial")
     work_date = _query_param_value("work_date")
-    action_key = f"{serial}:{work_date}"
-    if st.session_state.get("foglalas_last_table_action") == action_key:
+    if serial in _started_booking_serials():
+        st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
         st.query_params.clear()
         return
 
-    st.session_state["foglalas_last_table_action"] = action_key
     try:
         _dispatch_auto_booking(
             {
