@@ -690,11 +690,21 @@ def write_giriton_raw(rows, driver_lookup=None):
         driver_lookup,
     )
 
+    from resources.giriton_open_shift_snapshots_db import (
+        insert_giriton_open_shift_snapshot,
+    )
     from resources.giriton_shifts_db import upsert_giriton_shift_rows
 
     db_result = upsert_giriton_shift_rows(
         output[1:]
     )
+    snapshot_result = insert_giriton_open_shift_snapshot(
+        output[1:]
+    )
+    db_result = {
+        **db_result,
+        "open_shift_snapshot": snapshot_result,
+    }
     changes = "sheet_skipped"
 
     try:
