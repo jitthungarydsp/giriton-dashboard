@@ -95,6 +95,8 @@ Giriton Auto Booking From Foglalasok
         Fail    Eles serialos foglalasnal pontosan 1 jelolt kell, kapott jeloltek szama: ${candidate_count}
     END
 
+    ${current_giriton_date}=    Set Variable    ${EMPTY}
+
     FOR    ${candidate}    IN    @{candidates}
         ${work_date}=       Set Variable    ${candidate}[work_date]
         ${giriton_date}=    Set Variable    ${candidate}[giriton_date]
@@ -111,18 +113,27 @@ Giriton Auto Booking From Foglalasok
         ...    STEP_CANDIDATE_START
         ...    Jelolt feldolgozasa indul: ${work_date} ${warehouse} ${shift_start} ${courier_name} ${email}
 
-        Log Auto Booking Step
-        ...    ${candidate}
-        ...    STEP_DATE_SET_START
-        ...    Giriton datum beallitasa indul: ${giriton_date}
+        IF    '${current_giriton_date}' != '${giriton_date}'
+            Log Auto Booking Step
+            ...    ${candidate}
+            ...    STEP_DATE_SET_START
+            ...    Giriton datum beallitasa indul: ${giriton_date}
 
-        Beallit Giriton Datum
-        ...    ${giriton_date}
+            Beallit Giriton Datum
+            ...    ${giriton_date}
 
-        Log Auto Booking Step
-        ...    ${candidate}
-        ...    STEP_DATE_SET_DONE
-        ...    Giriton datum beallitva: ${giriton_date}
+            ${current_giriton_date}=    Set Variable    ${giriton_date}
+
+            Log Auto Booking Step
+            ...    ${candidate}
+            ...    STEP_DATE_SET_DONE
+            ...    Giriton datum beallitva: ${giriton_date}
+        ELSE
+            Log Auto Booking Step
+            ...    ${candidate}
+            ...    STEP_DATE_SET_SKIPPED
+            ...    Giriton datum mar be van allitva, ujraallitas kihagyva: ${giriton_date}
+        END
 
         ${loaded_screenshot}=    giriton_auto_booking.Build Screenshot Name
         ...    ${candidate}
