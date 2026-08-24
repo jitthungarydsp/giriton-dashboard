@@ -583,10 +583,8 @@ Add Courier To Shift Subscription
     ...      const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
     ...      const dialog=dialogs[dialogs.length - 1] || document;
     ...      const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"], .v-grid-row')].filter(visible);
-    ...      const targets=warehouse === 'BUD2'
-    ...        ? ['Just in Time Kft. - BUD2', 'BUDAPEST_courrier BUD2']
-    ...        : ['Just in Time Kft. - DSP', 'BUDAPEST_courrier BUD1'];
-    ...      const row=rows.find(item => targets.some(target => cleanText(item).includes(target)));
+    ...      const target=warehouse === 'BUD2' ? 'Just in Time Kft. - BUD2' : 'Just in Time Kft. - DSP';
+    ...      const row=rows.find(item => cleanText(item).includes(target));
     ...      if(!row){const sample=rows.slice(0,8).map(item => cleanText(item).slice(0,120)).join(' | '); return 'NOT_FOUND warehouse=' + warehouse + ' rows=' + rows.length + ' sample=' + sample;}
     ...      clickReal(row);
     ...      return 'OK ' + cleanText(row).slice(0,160);
