@@ -69,6 +69,7 @@ Giriton Raw Export Github
         ...    ENTER
 
         Wait Until Giriton Date Is Loaded
+        ...    ${datum_giriton}
         ...    ${datum_oldal}
 
         Execute Javascript
@@ -215,11 +216,12 @@ Giriton Raw Export Github
 
 *** Keywords ***
 Wait Until Giriton Date Is Loaded
-    [Arguments]    ${datum_oldal}
+    [Arguments]    ${datum_giriton}    ${datum_oldal}
     Wait Until Keyword Succeeds
     ...    30x
     ...    1s
-    ...    Giriton Visible Date Should Be
+    ...    Giriton Selected Date Should Be
+    ...    ${datum_giriton}
     ...    ${datum_oldal}
     Wait Until Keyword Succeeds
     ...    30x
@@ -231,13 +233,21 @@ Wait Until Giriton Date Is Loaded
     Sleep    2s
 
 
-Giriton Visible Date Should Be
-    [Arguments]    ${datum_oldal}
-    ${visible_text}=    Execute Javascript
-    ...    return document.body ? document.body.innerText : '';
-    Should Contain
-    ...    ${visible_text}
+Giriton Selected Date Should Be
+    [Arguments]    ${datum_giriton}    ${datum_oldal}
+    ${date_state}=    Execute Javascript
+    ...    const input = document.querySelector('input.v-datefield-textfield'); const value = input ? (input.value || '').trim() : ''; const bodyText = document.body ? document.body.innerText : ''; return `datefield=${value}\n${bodyText}`;
+    ${datefield_ok}=    Run Keyword And Return Status
+    ...    Should Contain
+    ...    ${date_state}
+    ...    datefield=${datum_giriton}
+    ${visible_date_ok}=    Run Keyword And Return Status
+    ...    Should Contain
+    ...    ${date_state}
     ...    ${datum_oldal}
+    Should Be True
+    ...    ${datefield_ok} or ${visible_date_ok}
+    ...    msg=Giriton oldal nem a kert napot mutatja. Kert datum: ${datum_giriton} / ${datum_oldal}. Allapot: ${date_state}
 
 
 Giriton Loading Should Be Finished
