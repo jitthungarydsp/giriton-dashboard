@@ -368,6 +368,7 @@ Add Courier To Shift Subscription
     ${courier_id}=      Set Variable    ${candidate}[courier_id]
     ${email}=           Set Variable    ${candidate}[email]
     ${shift_start}=     Set Variable    ${candidate}[shift_start]
+    ${warehouse}=       Set Variable    ${candidate}[warehouse]
 
     Log Auto Booking Step
     ...    ${candidate}
@@ -556,6 +557,53 @@ Add Courier To Shift Subscription
     ...    ${candidate}
     ...    STEP_SEARCH_FIELD_WAIT_DONE
     ...    Futar kereso mezo betoltott.
+
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_COURIER_ORG_SELECT_START
+    ...    Futar szervezeti/raktar ag kivalasztasa indul: ${warehouse}
+
+    ${org_select_result}=    Execute Javascript
+    ...    try {
+    ...      const warehouse=String(arguments[0] || '').trim().toUpperCase();
+    ...      const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+    ...      const cleanText=el => String((el && el.innerText) || '').trim().split(' ').filter(Boolean).join(' ');
+    ...      const clickReal=function(el){
+    ...        if(!el){return;}
+    ...        el.scrollIntoView({block:'center', inline:'nearest'});
+    ...        const rect=el.getBoundingClientRect();
+    ...        const x=Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    ...        const y=Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    ...        const real=document.elementFromPoint(x, y) || el;
+    ...        if(!real || !real.dispatchEvent){return;}
+    ...        ['mouseover','mousemove','mousedown','mouseup','click','dblclick'].forEach(function(type){
+    ...          real.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...        });
+    ...      };
+    ...      const dialogs=[...document.querySelectorAll('.v-window')].filter(visible);
+    ...      const dialog=dialogs[dialogs.length - 1] || document;
+    ...      const rows=[...dialog.querySelectorAll('tr.v-grid-row, tr[role="row"], .v-grid-row')].filter(visible);
+    ...      const targets=warehouse === 'BUD2'
+    ...        ? ['Just in Time Kft. - BUD2', 'BUDAPEST_courrier BUD2']
+    ...        : ['Just in Time Kft. - DSP', 'BUDAPEST_courrier BUD1'];
+    ...      const row=rows.find(item => targets.some(target => cleanText(item).includes(target)));
+    ...      if(!row){const sample=rows.slice(0,8).map(item => cleanText(item).slice(0,120)).join(' | '); return 'NOT_FOUND warehouse=' + warehouse + ' rows=' + rows.length + ' sample=' + sample;}
+    ...      clickReal(row);
+    ...      return 'OK ' + cleanText(row).slice(0,160);
+    ...    } catch(error) {
+    ...      return 'JS_ERROR ' + (error && error.message ? error.message : String(error));
+    ...    }
+    ...    ARGUMENTS
+    ...    ${warehouse}
+
+    ${org_select_console}=    Evaluate    str($org_select_result).replace(chr(10), " ")[:900]
+    Log To Console    AUTO_BOOK_COURIER_ORG_SELECT_RESULT=${org_select_console}
+    Log Auto Booking Step
+    ...    ${candidate}
+    ...    STEP_COURIER_ORG_SELECT_DONE
+    ...    Futar szervezeti/raktar ag kivalasztas eredmenye: ${org_select_result}
+
+    Sleep    2s
 
     Click Element
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
