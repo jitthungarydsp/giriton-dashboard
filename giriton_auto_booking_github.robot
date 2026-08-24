@@ -563,6 +563,9 @@ Add Courier To Shift Subscription
     Press Keys
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    CTRL+A
+    Press Keys
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+    ...    DELETE
 
     ${search_text}=    Set Variable If    '${courier_name}' != ''    ${courier_name}    ${email}
 
@@ -575,6 +578,10 @@ Add Courier To Shift Subscription
     ...    xpath=//*[@id="SearchField-tfTextSearch"]
     ...    ${search_text}
 
+    Press Keys
+    ...    xpath=//*[@id="SearchField-tfTextSearch"]
+    ...    ENTER
+
     Execute Javascript
     ...    const field=document.querySelector('#SearchField-tfTextSearch');
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
@@ -585,10 +592,14 @@ Add Courier To Shift Subscription
     ...      field.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',keyCode:13,which:13}));
     ...      field.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,cancelable:true,key:'Enter',code:'Enter',keyCode:13,which:13}));
     ...      const buttons=[...document.querySelectorAll('.v-window .v-button, .v-window button, .v-window [role="button"]')].filter(visible);
-    ...      const searchButton=buttons.find(button => {
+    ...      let searchButton=buttons.find(button => {
     ...        const text=String(button.innerText || button.getAttribute('aria-label') || button.title || button.className || '').toLowerCase();
     ...        return text.includes('search') || text.includes('keres') || text.includes('magnifier') || text.includes('find');
     ...      });
+    ...      if(!searchButton){
+    ...        const container=field.closest('.v-filterselect, .v-customcomponent, .v-widget, .v-slot') || field.parentElement;
+    ...        searchButton=[...(container ? container.querySelectorAll('.v-button, button, [role="button"]') : [])].filter(visible).find(button => button !== field && button.offsetWidth <= 70 && button.offsetHeight <= 70);
+    ...      }
     ...      if(searchButton){searchButton.click();}
     ...      field.blur();
     ...    }
@@ -661,11 +672,18 @@ Add Courier To Shift Subscription
     ...    ${courier_name}
     ...    ${email}
 
+    ${select_result_console}=    Evaluate    str($select_result).replace(chr(10), " ")[:900]
+    Log To Console    AUTO_BOOK_COURIER_SELECT_RESULT=${select_result_console}
+
     IF    $select_result != 'OK'
+        ${select_failed_screenshot}=    giriton_auto_booking.Build Screenshot Name
+        ...    ${candidate}
+        ...    courier_select_failed
+        Capture Page Screenshot    ${select_failed_screenshot}
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_COURIER_SELECT_FAILED
-        ...    Futar sor nem talalhato vagy nincs tenylegesen kijelolve: ${select_result}
+        ...    Futar sor nem talalhato vagy nincs tenylegesen kijelolve: ${select_result}. Screenshot: ${select_failed_screenshot}
         RETURN    COURIER_NOT_SELECTED
     END
 
