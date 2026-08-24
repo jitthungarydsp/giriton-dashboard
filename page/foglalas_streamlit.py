@@ -1456,7 +1456,7 @@ def _apply_styles() -> None:
     )
 
 
-def _render_kpi(label: str, value: int, tone: str = "blue", icon: str = "") -> None:
+def _render_kpi(label: str, value: int | str, tone: str = "blue", icon: str = "") -> None:
     st.markdown(
         f"""
         <div class="kpi kpi-{tone}">
@@ -1514,6 +1514,18 @@ def _load_log_data(start_date: date, end_date: date):
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         limit=1000,
+    )
+
+
+def _giriton_open_shift_count(giriton_df: pd.DataFrame) -> int:
+    if giriton_df.empty:
+        return 0
+
+    return int(
+        giriton_df.apply(
+            lambda row: _is_available_giriton_shift(row.to_dict()),
+            axis=1,
+        ).sum()
     )
 
 
@@ -2588,22 +2600,22 @@ def show_foglalas_streamlit_page() -> None:
         else 0
     )
     muszakpro_count = len(muszakpro_df)
-    giriton_count = len(giriton_df)
-    exact_count = int((summary_df["Állapot"] == "Egyezés").sum()) if not summary_df.empty else 0
-    failed_count = int((summary_df["Állapot"] == "Sikertelen").sum()) if not summary_df.empty else 0
-    alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum()) if not summary_df.empty else 0
+    giriton_open_count = _giriton_open_shift_count(giriton_df)
+    giriton_ratio = (
+        f"{round(giriton_open_count / muszakpro_count * 100)}%"
+        if muszakpro_count
+        else "0%"
+    )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         _render_kpi("Dolgozók", workers_count, "blue", "D")
     with c2:
-        _render_kpi("MűszakPro sor", muszakpro_count, "blue", "MP")
+        _render_kpi("MűszakPro", muszakpro_count, "blue", "MP")
     with c3:
-        _render_kpi("Giriton sor", giriton_count, "blue", "G")
+        _render_kpi("Giriton nyitott", giriton_open_count, "blue", "G")
     with c4:
-        _render_kpi("Egyezés", exact_count, "green", "OK")
-    with c5:
-        _render_kpi("Figyelendő", failed_count + alternative_count, "red", "!")
+        _render_kpi("Giriton / MűszakPro", giriton_ratio, "green", "%")
 
     st.write("")
     if view == "Összes":
