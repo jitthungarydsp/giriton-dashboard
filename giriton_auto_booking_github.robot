@@ -143,7 +143,7 @@ Giriton Auto Booking From Foglalasok
         ...    STEP_SHIFT_SEARCH_DONE
         ...    Muszakkartya kereses eredmenye: ${result}
 
-        IF    '${result}' == 'FOUND_DRY_RUN'
+        IF    $result == 'FOUND_DRY_RUN'
             ${found_screenshot}=    giriton_auto_booking.Build Screenshot Name
             ...    ${candidate}
             ...    dry_run_shift_found
@@ -153,7 +153,7 @@ Giriton Auto Booking From Foglalasok
             ...    ${candidate}
             ...    DRY_RUN_FOUND
             ...    A Giriton muszakkartya megvan, eles kattintas kihagyva. Screenshot: ${loaded_screenshot}, ${found_screenshot}
-        ELSE IF    '${result}' == 'FOUND_CLICKED'
+        ELSE IF    $result == 'FOUND_CLICKED'
             Log Auto Booking Step
             ...    ${candidate}
             ...    STEP_BOOKING_FLOW_START
@@ -351,7 +351,7 @@ Find Giriton Shift Card
         ...    ${shift_start}
         ...    ${dry_run}
 
-        IF    '${result}' != 'CONTINUE'
+        IF    $result != 'CONTINUE'
             RETURN    ${result}
         END
 
@@ -392,7 +392,7 @@ Add Courier To Shift Subscription
     ${popup_shift_result}=    Verify Giriton Popup Shift
     ...    ${shift_start}
 
-    IF    '${popup_shift_result}' != 'OK'
+    IF    $popup_shift_result != 'OK'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_POPUP_SHIFT_VERIFY_FAILED
@@ -416,7 +416,7 @@ Add Courier To Shift Subscription
     ...    xpath=(//div[contains(@class,'v-window')]//*[normalize-space(.)='Subscribed users (0)' or starts-with(normalize-space(.), 'Subscribed users')])[last()]
     ${tab_result}=    Set Variable If    ${selenium_tab_clicked}    OK    NOT_FOUND
 
-    IF    '${tab_result}' != 'OK'
+    IF    $tab_result != 'OK'
         ${tab_result}=    Execute Javascript
         ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
         ...    const normalize=value => String(value || '').trim().split(' ').filter(Boolean).join(' ');
@@ -441,7 +441,7 @@ Add Courier To Shift Subscription
         ...    return 'OK';
     END
 
-    IF    '${tab_result}' != 'OK'
+    IF    $tab_result != 'OK'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_SUBSCRIBED_TAB_FAILED
@@ -459,7 +459,7 @@ Add Courier To Shift Subscription
     ...    const buttons=[...document.querySelectorAll('.v-window .v-button, .v-window [role="button"], .v-window button')].filter(visible);
     ...    return buttons.length > 0 ? 'YES' : 'NO';
 
-    IF    '${tab_open}' != 'YES'
+    IF    $tab_open != 'YES'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_SUBSCRIBED_TAB_FAILED
@@ -493,7 +493,7 @@ Add Courier To Shift Subscription
     ...    ${courier_id}
     ...    ${courier_name}
 
-    IF    '${already_added}' == 'YES'
+    IF    $already_added == 'YES'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_ALREADY_BOOKED_FOUND
@@ -530,7 +530,7 @@ Add Courier To Shift Subscription
     ...    plus.click();
     ...    return 'OK';
 
-    IF    '${plus_result}' != 'OK'
+    IF    $plus_result != 'OK'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_ADD_BUTTON_FAILED
@@ -644,7 +644,7 @@ Add Courier To Shift Subscription
     ...    ${courier_name}
     ...    ${email}
 
-    IF    '${select_result}' != 'OK'
+    IF    $select_result != 'OK'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_COURIER_SELECT_FAILED
@@ -674,7 +674,7 @@ Add Courier To Shift Subscription
     ...    button.click();
     ...    return 'OK';
 
-    IF    '${choose_result}' != 'OK'
+    IF    $choose_result != 'OK'
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_CHOOSE_BUTTON_FAILED
