@@ -496,13 +496,32 @@ def _mark_booking_started(serial: str) -> None:
     st.session_state["foglalas_started_serials"] = sorted(started)
 
 
+def _booking_target_shift_start(row: dict) -> str:
+    status = _clean(row.get("Állapot"))
+    giriton_offer = _clean(row.get("Giriton ajánlat"))
+    if status in {"Egyezés", "Alternatíva"} and giriton_offer and giriton_offer != "-":
+        return giriton_offer
+    return _clean(row.get("MűszakPro"))
+
+
+def _is_bookable_row(row: dict) -> bool:
+    status = _clean(row.get("Állapot"))
+    if status not in {"Egyezés", "Alternatíva"}:
+        return False
+    if _clean(row.get("Giriton állapot")) != "Nincs lefoglalva":
+        return False
+    if not _clean(row.get("Serial")):
+        return False
+    return bool(_booking_target_shift_start(row))
+
+
 def _booking_action_identity(row: dict) -> dict[str, str]:
     return {
         "serial": _clean(row.get("Serial")),
         "work_date": _clean(row.get("Dátum")),
         "worker": _clean(row.get("Dolgozó")),
         "warehouse": _clean(row.get("Raktár")).upper(),
-        "shift_start": _clean(row.get("MűszakPro")),
+        "shift_start": _booking_target_shift_start(row),
     }
 
 
@@ -563,7 +582,7 @@ def _is_valid_booking_action_token(token: str, identity: dict[str, str]) -> tupl
 
 def _booking_action_badge(row: dict) -> str:
     status = _clean(row.get("Állapot"))
-    if status != "Egyezés":
+    if not _is_bookable_row(row):
         return _action_badge(status)
 
     identity = _booking_action_identity(row)
@@ -586,8 +605,9 @@ def _booking_action_badge(row: dict) -> str:
             "shift_start": identity["shift_start"],
         }
     )
+    badge_class = "ok" if status == "Egyezés" else "warn"
     return (
-        f"<a class='action-badge ok action-link' href='?{query}' "
+        f"<a class='action-badge {badge_class} action-link' href='?{query}' "
         f"title='Éles Giriton foglalás indítása serial alapján'>Foglalás</a>"
     )
 
@@ -1646,11 +1666,15 @@ def _booking_candidate_label(row: dict) -> str:
 def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
+    target_shift_start = _booking_target_shift_start(row)
     if not serial:
         st.error("Ehhez a sorhoz nincs MűszakPro serial, ezért nem indítható célzott foglalás.")
         return
     if not work_date:
         st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható foglalás.")
+        return
+    if not target_shift_start:
+        st.error("Ehhez a sorhoz nincs Giriton célidőpont, ezért nem indítható foglalás.")
         return
     if not dry_run and serial in _started_booking_serials():
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
@@ -1662,7 +1686,7 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
         "serial": serial,
         "warehouse": _clean(row.get("Raktár")).upper(),
         "email": _clean(row.get("E-mail")).casefold(),
-        "shift_start": _clean(row.get("MűszakPro")),
+        "shift_start": target_shift_start,
         "dry_run": "true" if dry_run else "false",
     }
     result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
@@ -1694,9 +1718,7 @@ def _matching_booking_row(summary_df: pd.DataFrame, identity: dict[str, str]) ->
         row_identity = _booking_action_identity(row_dict)
         if row_identity != identity:
             continue
-        if _clean(row_dict.get("Állapot")) != "Egyezés":
-            return None
-        if _clean(row_dict.get("Giriton állapot")) != "Nincs lefoglalva":
+        if not _is_bookable_row(row_dict):
             return None
         return row_dict
     return None
@@ -1787,15 +1809,12 @@ def _dispatch_bulk_warehouse_booking(
     )
 
 
-def _exact_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
+def _bookable_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty:
         return summary_df
 
     rows = summary_df[
-        (summary_df["Állapot"] == "Egyezés")
-        & (summary_df["Eltérés"] == "0 perc")
-        & (summary_df["Giriton állapot"] == "Nincs lefoglalva")
-        & (summary_df["Serial"].fillna("").astype(str).str.strip() != "")
+        summary_df.apply(lambda row: _is_bookable_row(row.to_dict()), axis=1)
     ].copy()
     if rows.empty:
         return rows
@@ -1805,9 +1824,9 @@ def _exact_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
     return rows.drop_duplicates(subset=["Serial"])
 
 
-def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
+def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
     if rows.empty:
-        st.warning("Nincs indítható 100%-os egyezés ebben a szűrésben.")
+        st.warning("Nincs kijelölt indítható sor ebben a szűrésben.")
         return
 
     dispatched = 0
@@ -1816,7 +1835,8 @@ def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
     for row in rows.to_dict("records"):
         serial = _clean(row.get("Serial"))
         work_date = _clean(row.get("Dátum"))
-        if not serial or not work_date:
+        target_shift_start = _booking_target_shift_start(row)
+        if not serial or not work_date or not target_shift_start:
             skipped += 1
             continue
         if serial in _started_booking_serials():
@@ -1831,7 +1851,7 @@ def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
                 "serial": serial,
                 "warehouse": _clean(row.get("Raktár")).upper(),
                 "email": _clean(row.get("E-mail")).casefold(),
-                "shift_start": _clean(row.get("MűszakPro")),
+                "shift_start": target_shift_start,
                 "dry_run": "false",
             },
         )
@@ -1843,7 +1863,7 @@ def _dispatch_exact_bulk_bookings(rows: pd.DataFrame) -> None:
 
     if dispatched:
         st.success(
-            f"{dispatched} db 100%-os egyezés éles foglalása elindítva "
+            f"{dispatched} db kijelölt sor éles foglalása elindítva "
             f"({dispatched} külön célzott GitHub robotfutás)."
         )
     if skipped:
@@ -1979,7 +1999,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
     alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum())
     failed_count = int((summary_df["Állapot"] == "Sikertelen").sum())
     booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum())
-    exact_ready = _exact_booking_rows(summary_df)
+    bookable_ready = _bookable_booking_rows(summary_df)
     target_count = max(len(summary_df), 1)
     progress = min(round((exact_count + booked_count) / target_count * 100), 100)
 
@@ -2059,87 +2079,115 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.markdown("#### 100% egyezések")
-        exact_dates = (
-            sorted(exact_ready["Dátum"].dropna().astype(str).unique().tolist())
-            if not exact_ready.empty and "Dátum" in exact_ready.columns
+        st.markdown("#### Kijelölt foglalások")
+        bookable_dates = (
+            sorted(bookable_ready["Dátum"].dropna().astype(str).unique().tolist())
+            if not bookable_ready.empty and "Dátum" in bookable_ready.columns
             else []
         )
-        selected_exact_date = ""
-        exact_ready_for_day = exact_ready
-        if exact_dates:
-            selected_exact_date = st.selectbox(
-                "100%-os indítás napja",
-                exact_dates,
-                key="foglalas_exact_bulk_date",
+        selected_bulk_date = ""
+        bookable_ready_for_day = bookable_ready
+        if bookable_dates:
+            selected_bulk_date = st.selectbox(
+                "Indítás napja",
+                bookable_dates,
+                key="foglalas_selected_bulk_date",
             )
-            exact_ready_for_day = exact_ready[
-                exact_ready["Dátum"].astype(str) == selected_exact_date
+            bookable_ready_for_day = bookable_ready[
+                bookable_ready["Dátum"].astype(str) == selected_bulk_date
             ]
         st.caption(
-            f"Csak pontos, 0 perces, még nem lefoglalt sorok a kiválasztott napon: {len(exact_ready_for_day)}"
+            f"Pontos és alternatív, még nem lefoglalt sorok a kiválasztott napon: {len(bookable_ready_for_day)}"
         )
-        if not exact_ready_for_day.empty:
-            preview = ", ".join(
-                f"{_clean(row.get('Dolgozó'))} {_clean(row.get('MűszakPro'))}"
-                for row in exact_ready_for_day.head(5).to_dict("records")
+        if not bookable_ready_for_day.empty:
+            selectable_rows = bookable_ready_for_day.copy()
+            selectable_rows["Kijelöl"] = False
+            selectable_rows["Giriton cél"] = selectable_rows.apply(
+                lambda row: _booking_target_shift_start(row.to_dict()),
+                axis=1,
             )
-            st.caption(preview)
-        exact_options = {
-            _booking_candidate_label(row): _clean(row.get("Serial"))
-            for row in exact_ready_for_day.to_dict("records")
-        }
-        selected_exact_labels = st.multiselect(
-            "Indítandó 100%-os sorok",
-            list(exact_options.keys()),
-            default=[],
-            key="foglalas_exact_bulk_selected_rows",
-            disabled=exact_ready_for_day.empty,
-        )
-        selected_exact_serials = {
-            exact_options[label]
-            for label in selected_exact_labels
-            if exact_options.get(label)
-        }
-        exact_selected_rows = (
-            exact_ready_for_day[
-                exact_ready_for_day["Serial"].astype(str).str.strip().isin(selected_exact_serials)
+            editor_df = selectable_rows[
+                [
+                    "Kijelöl",
+                    "Dolgozó",
+                    "Raktár",
+                    "Állapot",
+                    "MűszakPro",
+                    "Giriton cél",
+                    "Eltérés",
+                    "Serial",
+                ]
+            ].copy()
+            edited_selection = st.data_editor(
+                editor_df,
+                hide_index=True,
+                width="stretch",
+                key="foglalas_selected_bulk_editor",
+                disabled=[
+                    "Dolgozó",
+                    "Raktár",
+                    "Állapot",
+                    "MűszakPro",
+                    "Giriton cél",
+                    "Eltérés",
+                    "Serial",
+                ],
+                column_config={
+                    "Kijelöl": st.column_config.CheckboxColumn(""),
+                    "Serial": None,
+                },
+            )
+            selected_serials = set(
+                edited_selection.loc[
+                    edited_selection["Kijelöl"],
+                    "Serial",
+                ].astype(str)
+            )
+            selected_bulk_rows = selectable_rows[
+                selectable_rows["Serial"].astype(str).isin(selected_serials)
             ]
-            if selected_exact_serials
-            else exact_ready_for_day.iloc[0:0]
+        else:
+            selected_bulk_rows = bookable_ready_for_day.iloc[0:0]
+
+        selected_exact_count = int((selected_bulk_rows["Állapot"] == "Egyezés").sum()) if not selected_bulk_rows.empty else 0
+        selected_alternative_count = int((selected_bulk_rows["Állapot"] == "Alternatíva").sum()) if not selected_bulk_rows.empty else 0
+        st.caption(
+            f"Kijelölve: {len(selected_bulk_rows)} sor "
+            f"({selected_exact_count} pontos, {selected_alternative_count} alternatíva)"
         )
-        exact_live_enabled = st.checkbox(
-            "Éles 100%-os egyezések indítása",
-            key="foglalas_exact_bulk_live_enabled",
-            disabled=exact_selected_rows.empty,
+
+        selected_live_enabled = st.checkbox(
+            "Éles kijelölt sorok indítása",
+            key="foglalas_selected_bulk_live_enabled",
+            disabled=selected_bulk_rows.empty,
         )
-        if exact_live_enabled:
-            expected_confirmation = f"ELES {selected_exact_date}"
+        if selected_live_enabled:
+            expected_confirmation = f"ELES {selected_bulk_date}"
             st.warning(
-                f"Éles indítás: {selected_exact_date}, {len(exact_selected_rows)} db kiválasztott pontos egyezés. "
-                f"Ez {len(exact_selected_rows)} külön célzott GitHub robotfutás lesz, serialonként egy. "
-                "Alternatíva nem kerül bele."
+                f"Éles indítás: {selected_bulk_date}, {len(selected_bulk_rows)} db kijelölt sor. "
+                f"Ez {len(selected_bulk_rows)} külön célzott GitHub robotfutás lesz, serialonként egy. "
+                "Alternatíváknál a Giriton ajánlott időpont kerül foglalásra."
             )
-            exact_confirmation = st.text_input(
+            selected_confirmation = st.text_input(
                 f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
-                key="foglalas_exact_bulk_live_confirmation",
+                key="foglalas_selected_bulk_live_confirmation",
             )
             if st.button(
-                f"100% egyezések foglalása {selected_exact_date} ({len(exact_selected_rows)})",
+                f"Kijelölt sorok foglalása {selected_bulk_date} ({len(selected_bulk_rows)})",
                 type="primary",
                 width="stretch",
-                key="foglalas_exact_bulk_live_run",
-                disabled=exact_selected_rows.empty,
+                key="foglalas_selected_bulk_live_run",
+                disabled=selected_bulk_rows.empty,
             ):
-                if exact_confirmation != expected_confirmation:
+                if selected_confirmation != expected_confirmation:
                     st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
                 else:
                     try:
-                        _dispatch_exact_bulk_bookings(exact_selected_rows)
+                        _dispatch_selected_bulk_bookings(selected_bulk_rows)
                     except GitHubActionsError as exc:
                         st.error(str(exc))
                     except Exception as exc:
-                        st.error(f"100%-os egyezések tömeges indítási hiba: {exc}")
+                        st.error(f"Kijelölt sorok tömeges indítási hiba: {exc}")
 
         st.divider()
         warehouse_options = [
