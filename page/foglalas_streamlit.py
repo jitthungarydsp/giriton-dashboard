@@ -1412,6 +1412,29 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
             key=f"foglalas_status_{status}",
         )
     st.sidebar.divider()
+    st.sidebar.write("Kézi robotindítás")
+    if st.sidebar.button("Giriton futtatása kézzel", width="stretch"):
+        if end_date < start_date:
+            st.sidebar.error("A Giriton futtatáshoz a záró dátum nem lehet korábbi.")
+        else:
+            days_to_sync = max((end_date - start_date).days + 1, 1)
+            try:
+                result = _dispatch_workflow_fallback(
+                    "giriton-raw-export.yml",
+                    {
+                        "start_date": start_date.isoformat(),
+                        "days": str(days_to_sync),
+                    },
+                )
+                st.session_state["foglalas_last_giriton_raw_dispatch"] = result
+                st.sidebar.success(
+                    f"Giriton kézi futás indítva: {start_date} + {days_to_sync} nap"
+                )
+            except GitHubActionsError as exc:
+                st.sidebar.error(str(exc))
+            except Exception as exc:
+                st.sidebar.error(f"Giriton kézi indítás hiba: {exc}")
+
     if st.sidebar.button("Adatok újraolvasása DB-ből", width="stretch"):
         st.cache_data.clear()
         st.rerun()
