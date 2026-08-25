@@ -103,6 +103,13 @@ def load_exact_matches(
         end_date=end_date.isoformat(),
         limit=max(int(source_limit), 1),
     )
+    if not muszakpro_df.empty:
+        muszakpro_df = muszakpro_df.copy()
+        muszakpro_df["shift_start"] = muszakpro_df.get(
+            "shift_text",
+            pd.Series(dtype=str),
+        ).map(foglalas._shift_start)
+
     summary_df = foglalas._build_summary_rows(
         muszakpro_df,
         giriton_df,
