@@ -58,7 +58,7 @@ def parse_shift_datetime(work_date, shift_start) -> datetime | None:
 def load_exact_matches(
     start_date: date,
     end_date: date,
-    horizon_hours: int,
+    min_lead_hours: int,
     tolerance_minutes: int,
     limit: int,
 ) -> pd.DataFrame:
@@ -81,7 +81,7 @@ def load_exact_matches(
         return summary_df
 
     now = datetime.now(BUDAPEST_TZ)
-    horizon_end = now + timedelta(hours=max(int(horizon_hours), 1))
+    lead_start = now + timedelta(hours=max(int(min_lead_hours), 1))
     rows = foglalas._bookable_booking_rows(summary_df)
     if rows.empty:
         return rows
@@ -100,8 +100,7 @@ def load_exact_matches(
     )
     rows = rows[
         rows["_shift_datetime"].notna()
-        & (rows["_shift_datetime"] >= now)
-        & (rows["_shift_datetime"] <= horizon_end)
+        & (rows["_shift_datetime"] >= lead_start)
     ].copy()
     if rows.empty:
         return rows
@@ -175,11 +174,12 @@ def dispatch_auto_booking(row: dict, workflow: str, ref: str) -> str:
 def main() -> None:
     today = datetime.now(BUDAPEST_TZ).date()
     parser = argparse.ArgumentParser(
-        description="Következő 72 órás, pontos műszakfoglalási egyezések automatikus indítása."
+        description="Legalább 72 órával későbbi, pontos műszakfoglalási egyezések automatikus indítása."
     )
     parser.add_argument("--start-date", default="", help="Kezdő dátum YYYY-MM-DD. Alap: ma.")
-    parser.add_argument("--end-date", default="", help="Záró dátum YYYY-MM-DD. Alap: ma + horizon.")
-    parser.add_argument("--horizon-hours", type=int, default=72)
+    parser.add_argument("--end-date", default="", help="Záró dátum YYYY-MM-DD. Alap: ma + lookahead-days.")
+    parser.add_argument("--lookahead-days", type=int, default=5)
+    parser.add_argument("--min-lead-hours", type=int, default=72)
     parser.add_argument("--tolerance-minutes", type=int, default=30)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--workflow", default=DEFAULT_WORKFLOW)
@@ -188,19 +188,20 @@ def main() -> None:
     args = parser.parse_args()
 
     start_date = parse_date(args.start_date, today)
-    default_end = today + timedelta(days=max((int(args.horizon_hours) + 23) // 24, 1))
+    default_end = today + timedelta(days=max(int(args.lookahead_days), 1))
     end_date = parse_date(args.end_date, default_end)
 
     rows = load_exact_matches(
         start_date=start_date,
         end_date=end_date,
-        horizon_hours=args.horizon_hours,
+        min_lead_hours=args.min_lead_hours,
         tolerance_minutes=args.tolerance_minutes,
         limit=args.limit,
     )
     print(
         "AUTO_EXACT_MATCHES "
-        f"start={start_date} end={end_date} horizon_hours={args.horizon_hours} "
+        f"start={start_date} end={end_date} min_lead_hours={args.min_lead_hours} "
+        f"lookahead_days={args.lookahead_days} "
         f"matches={len(rows)} dry_run={args.dry_run}"
     )
     if rows.empty:

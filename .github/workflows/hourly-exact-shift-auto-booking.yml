@@ -3,10 +3,14 @@ name: Hourly Exact Shift Auto Booking
 on:
   workflow_dispatch:
     inputs:
-      horizon_hours:
-        description: "Hany oran beluli pontos egyezeseket inditson."
+      min_lead_hours:
+        description: "Minimum hany oraval kesobbi pontos egyezeseket inditson."
         required: false
         default: "72"
+      lookahead_days:
+        description: "Hany napra elore nezzen adatot."
+        required: false
+        default: "5"
       limit:
         description: "Maximum hany celzott foglalast inditson egy futasban."
         required: false
@@ -16,7 +20,7 @@ on:
         required: false
         default: "false"
   schedule:
-    # GitHub cron UTC-ben fut. A forrasfrissitesek utan indul, csak T+72h pontos egyezesekre.
+    # GitHub cron UTC-ben fut. A forrasfrissitesek utan indul, csak T+72h utani pontos egyezesekre.
     - cron: "25 * * * *"
 
 permissions:
@@ -60,17 +64,19 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GITHUB_TOKEN" || (echo "Missing GITHUB_TOKEN" && exit 1)
 
-      - name: Dispatch exact matches in next 72 hours
+      - name: Dispatch exact matches after T+72 hours
         run: |
-          HORIZON_HOURS="${{ inputs.horizon_hours }}"
+          MIN_LEAD_HOURS="${{ inputs.min_lead_hours }}"
+          LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
           LIMIT="${{ inputs.limit }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
-          HORIZON_HOURS="${HORIZON_HOURS:-72}"
+          MIN_LEAD_HOURS="${MIN_LEAD_HOURS:-72}"
+          LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-5}"
           LIMIT="${LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
 
-          CMD=(python scripts/auto_book_exact_shift_matches.py --horizon-hours "$HORIZON_HOURS" --limit "$LIMIT")
+          CMD=(python scripts/auto_book_exact_shift_matches.py --min-lead-hours "$MIN_LEAD_HOURS" --lookahead-days "$LOOKAHEAD_DAYS" --limit "$LIMIT")
 
           if [ "$DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)
