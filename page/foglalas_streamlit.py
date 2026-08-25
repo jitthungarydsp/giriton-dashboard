@@ -234,17 +234,27 @@ def _worker_match_key(row) -> str:
 
 
 def _booking_worker_match_key(row) -> str:
+    keys = _booking_worker_match_keys(row)
+    return keys[0] if keys else ""
+
+
+def _booking_worker_match_keys(row) -> list[str]:
+    keys = []
     courier_id = _clean(row.get("courier_id"))
     if re.fullmatch(r"\d+\.0+", courier_id):
         courier_id = courier_id.split(".", 1)[0]
     if courier_id:
-        return f"id:{courier_id}"
+        keys.append(f"id:{courier_id}")
 
     email = _clean(row.get("email")).casefold()
     if email:
-        return f"email:{email}"
+        keys.append(f"email:{email}")
 
-    return ""
+    worker = _match_text(row.get("courier_name"))
+    if worker:
+        keys.append(f"name:{worker}")
+
+    return list(dict.fromkeys(keys))
 
 
 def _warehouse_match_key(value) -> str:
@@ -291,15 +301,11 @@ def _is_available_giriton_shift(row) -> bool:
 def _is_booked_giriton_shift(row) -> bool:
     status = _clean(row.get("status")).upper()
     worker_key = _match_text(row.get("courier_name"))
-    courier_id = _clean(row.get("courier_id"))
-    email = _clean(row.get("email"))
     booked, _maximum = _giriton_capacity(row)
 
     if booked == 0:
         return False
     if worker_key in {"", "ures", "none", "null"} or "none" in worker_key:
-        return False
-    if not courier_id and not email:
         return False
     if status in {"", "URES", "ÜRES", "NONE", "NULL", "-"}:
         return False
@@ -678,8 +684,12 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
                 "records_by_time": {},
                 "worker": worker,
                 "booking_worker_key": _booking_worker_match_key(row),
+                "booking_worker_keys": _booking_worker_match_keys(row),
                 "warehouse": warehouse,
             },
+        )
+        group["booking_worker_keys"] = list(
+            dict.fromkeys(group.get("booking_worker_keys", []) + _booking_worker_match_keys(row))
         )
         shift_time = _normalize_time(row.get(time_column))
         group["times"].append(shift_time)
@@ -708,23 +718,38 @@ def _group_giriton_availability(df: pd.DataFrame) -> dict[tuple[str, str], list[
     return groups
 
 
-def _group_giriton_bookings(df: pd.DataFrame) -> dict[tuple[str, str, str], list[str]]:
+def _group_giriton_bookings(df: pd.DataFrame) -> dict[tuple[str, str, str], dict]:
     if df.empty or "start_time" not in df.columns:
         return {}
 
-    groups: dict[tuple[str, str, str], list[str]] = {}
+    groups: dict[tuple[str, str, str], dict] = {}
     for _, row in df.iterrows():
         start = _normalize_time(row.get("start_time"))
-        worker_key = _booking_worker_match_key(row)
-        if not start or not worker_key or not _is_booked_giriton_shift(row):
+        worker_keys = _booking_worker_match_keys(row)
+        if not start or not worker_keys or not _is_booked_giriton_shift(row):
             continue
 
-        key = (
-            _clean(row.get("work_date")),
-            worker_key,
-            _warehouse_match_key(row.get("warehouse")),
-        )
-        groups.setdefault(key, []).append(start)
+        worker = _clean(row.get("courier_name"))
+        warehouse = _clean(row.get("warehouse"))
+        for worker_key in worker_keys:
+            key = (
+                _clean(row.get("work_date")),
+                worker_key,
+                _warehouse_match_key(warehouse),
+            )
+            group = groups.setdefault(
+                key,
+                {
+                    "times": [],
+                    "records_by_time": {},
+                    "worker": worker,
+                    "booking_worker_key": worker_key,
+                    "warehouse": warehouse,
+                },
+            )
+            group["times"].append(start)
+            if start not in group["records_by_time"]:
+                group["records_by_time"][start] = row.to_dict()
 
     return groups
 
@@ -954,21 +979,26 @@ def _build_summary_rows(
     giriton_groups = _group_giriton_availability(giriton_df)
     booked_giriton_groups = _group_giriton_bookings(giriton_df)
 
-    keys = sorted(
-        set(muszakpro_groups),
-        key=lambda key: (
+    def group_sort_key(key):
+        group = muszakpro_groups.get(key) or booked_giriton_groups.get(key) or {}
+        return (
             key[0],
-            muszakpro_groups[key].get("worker", ""),
-            muszakpro_groups[key].get("warehouse", ""),
-        ),
-    )
+            0 if key in muszakpro_groups else 1,
+            group.get("worker", ""),
+            group.get("warehouse", ""),
+        )
+
+    keys = sorted(set(muszakpro_groups) | set(booked_giriton_groups), key=group_sort_key)
     rows = []
+    consumed_booked_rows = set()
+    added_giriton_only_rows = set()
 
     for work_date, worker_key, warehouse_key in keys:
         muszakpro_group = muszakpro_groups.get((work_date, worker_key, warehouse_key), {})
-        worker = muszakpro_group.get("worker", worker_key)
-        booking_worker_key = muszakpro_group.get("booking_worker_key", "")
-        warehouse = muszakpro_group.get("warehouse", "")
+        booked_group = booked_giriton_groups.get((work_date, worker_key, warehouse_key), {})
+        worker = muszakpro_group.get("worker") or booked_group.get("worker") or worker_key
+        booking_worker_keys = muszakpro_group.get("booking_worker_keys") or [worker_key]
+        warehouse = muszakpro_group.get("warehouse") or booked_group.get("warehouse") or ""
         muszakpro_values = sorted(
             [
                 _normalize_time(value)
@@ -986,14 +1016,20 @@ def _build_summary_rows(
             ],
             key=lambda value: _time_minutes(value) or 0,
         )
+        booked_records_by_time = {}
+        for lookup_worker_key in booking_worker_keys:
+            lookup_group = booked_giriton_groups.get((work_date, lookup_worker_key, warehouse_key), {})
+            for time_value in lookup_group.get("times", []):
+                normalized_time = _normalize_time(time_value)
+                if normalized_time:
+                    booked_records_by_time.setdefault(
+                        normalized_time,
+                        lookup_group.get("records_by_time", {}).get(normalized_time, {}),
+                    )
         booked_values = sorted(
             [
                 _normalize_time(value)
-                for value in (
-                    booked_giriton_groups.get((work_date, booking_worker_key, warehouse_key), [])
-                    if booking_worker_key
-                    else []
-                )
+                for value in booked_records_by_time
                 if _normalize_time(value)
             ],
             key=lambda value: _time_minutes(value) or 0,
@@ -1017,6 +1053,15 @@ def _build_summary_rows(
                     giriton_state = "Lefoglalva"
                     giriton_booking = giriton_time
                     reason = "Ez a műszak már le van foglalva Giritonban"
+                    booked_record = booked_records_by_time.get(giriton_time, {})
+                    consumed_booked_rows.add(
+                        (
+                            work_date,
+                            warehouse_key,
+                            giriton_time,
+                            _booking_worker_match_key(booked_record),
+                        )
+                    )
                 elif diff_value == 0:
                     status = "Egyezés"
                     giriton_state = "Nincs lefoglalva"
@@ -1082,6 +1127,38 @@ def _build_summary_rows(
                     "Serial": _clean(source_record.get("serial")),
                     "Courier ID": _clean(source_record.get("courier_id")),
                     "E-mail": _clean(source_record.get("email")).casefold(),
+                }
+            )
+
+        if muszakpro_values:
+            continue
+
+        for giriton_time in booked_values:
+            booked_record = booked_records_by_time.get(giriton_time, {})
+            row_key = (
+                work_date,
+                warehouse_key,
+                giriton_time,
+                _booking_worker_match_key(booked_record) or worker_key,
+            )
+            if row_key in consumed_booked_rows or row_key in added_giriton_only_rows:
+                continue
+            added_giriton_only_rows.add(row_key)
+            rows.append(
+                {
+                    "Dátum": work_date,
+                    "Dolgozó": worker,
+                    "Raktár": warehouse,
+                    "MűszakPro": "-",
+                    "Giriton foglalás": giriton_time,
+                    "Giriton ajánlat": "-",
+                    "Giriton állapot": "Lefoglalva",
+                    "Eltérés": "-",
+                    "Állapot": "Lefoglalva",
+                    "Ok": "Giritonban foglalt műszak, de ehhez nincs MűszakPro sor ebben a szűrésben",
+                    "Serial": "",
+                    "Courier ID": _clean(booked_record.get("courier_id")),
+                    "E-mail": _clean(booked_record.get("email")).casefold(),
                 }
             )
 
