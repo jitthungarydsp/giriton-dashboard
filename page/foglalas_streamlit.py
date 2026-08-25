@@ -58,6 +58,16 @@ def _clean(value) -> str:
     return str(value or "").strip()
 
 
+def _date_from_value(value) -> date | None:
+    text = _clean(value)
+    if not text:
+        return None
+    try:
+        return pd.to_datetime(text).date()
+    except Exception:
+        return None
+
+
 def _secret(name: str, default: str = "") -> str:
     value = os.getenv(name)
     if value:
@@ -1825,6 +1835,22 @@ def _booking_candidate_key(row: dict, index: int) -> str:
     )
 
 
+def _bulk_booking_key(row: dict, source_index) -> str:
+    identity = _booking_action_identity(row)
+    return "|".join(
+        [
+            str(source_index),
+            identity["serial"],
+            identity["work_date"],
+            identity["worker"],
+            identity["warehouse"],
+            identity["shift_start"],
+            _clean(row.get("Állapot")),
+            _clean(row.get("E-mail")).casefold(),
+        ]
+    )
+
+
 def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
@@ -2159,6 +2185,129 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
     _render_github_status_panel(key_prefix)
 
 
+def _render_bulk_status_booking_section(
+    *,
+    rows: pd.DataFrame,
+    status_label: str,
+    start_date: date,
+    end_date: date,
+    key_prefix: str,
+) -> None:
+    status_rows = rows[rows["Állapot"].astype(str).eq(status_label)].copy()
+    title = (
+        "Teljes egyezések tömeges feltöltése"
+        if status_label == "Egyezés"
+        else "Alternatívák tömeges feltöltése"
+    )
+    hint = (
+        "Csak a pontosan egyező, még nem lefoglalt sorokat indítja."
+        if status_label == "Egyezés"
+        else "Csak az alternatív időpontra foglalható sorokat indítja."
+    )
+    st.markdown(f"##### {title}")
+    st.caption(f"{hint} Találat az időszakban: {len(status_rows)}")
+    if status_rows.empty:
+        st.info("Nincs indítható sor ebben a csoportban.")
+        return
+
+    select_all = st.checkbox(
+        "Összes kijelölése",
+        key=f"{key_prefix}_select_all",
+    )
+    status_rows["_bulk_key"] = [
+        _bulk_booking_key(row.to_dict(), source_index)
+        for source_index, row in status_rows.iterrows()
+    ]
+    status_rows["Kijelöl"] = bool(select_all)
+    status_rows["Giriton cél"] = status_rows.apply(
+        lambda row: _booking_target_shift_start(row.to_dict()),
+        axis=1,
+    )
+    editor_df = status_rows[
+        [
+            "Kijelöl",
+            "Dátum",
+            "Dolgozó",
+            "Raktár",
+            "MűszakPro",
+            "Giriton cél",
+            "Eltérés",
+            "Serial",
+            "_bulk_key",
+        ]
+    ].copy()
+    edited_selection = st.data_editor(
+        editor_df,
+        hide_index=True,
+        width="stretch",
+        key=f"{key_prefix}_editor_{start_date.isoformat()}_{end_date.isoformat()}_{int(select_all)}",
+        disabled=[
+            "Dátum",
+            "Dolgozó",
+            "Raktár",
+            "MűszakPro",
+            "Giriton cél",
+            "Eltérés",
+            "Serial",
+            "_bulk_key",
+        ],
+        column_config={
+            "Kijelöl": st.column_config.CheckboxColumn(""),
+            "Serial": None,
+            "_bulk_key": None,
+        },
+    )
+    selected_keys = set(
+        edited_selection.loc[
+            edited_selection["Kijelöl"].fillna(False),
+            "_bulk_key",
+        ].astype(str)
+    )
+    selected_rows = status_rows[status_rows["_bulk_key"].astype(str).isin(selected_keys)].copy()
+    selected_rows = selected_rows.drop(
+        columns=["_bulk_key", "Kijelöl", "Giriton cél"],
+        errors="ignore",
+    )
+    st.caption(f"Kijelölve: {len(selected_rows)} sor")
+
+    live_enabled = st.checkbox(
+        "Éles indítás engedélyezése",
+        key=f"{key_prefix}_live_enabled",
+        disabled=selected_rows.empty,
+    )
+    if not live_enabled:
+        return
+
+    confirmation_code = "EGYEZES" if status_label == "Egyezés" else "ALTERNATIVA"
+    expected_confirmation = (
+        f"ELES {start_date.isoformat()} {end_date.isoformat()} {confirmation_code}"
+    )
+    st.warning(
+        f"Éles indítás: {len(selected_rows)} db {status_label.lower()} sor. "
+        "Minden sor külön célzott robotfutásként indul."
+    )
+    confirmation = st.text_input(
+        f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
+        key=f"{key_prefix}_live_confirmation",
+    )
+    if st.button(
+        f"{title} ({len(selected_rows)})",
+        type="primary",
+        width="stretch",
+        key=f"{key_prefix}_live_run",
+        disabled=selected_rows.empty,
+    ):
+        if confirmation != expected_confirmation:
+            st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
+            return
+        try:
+            _dispatch_selected_bulk_bookings(selected_rows)
+        except GitHubActionsError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"Kijelölt sorok tömeges indítási hiba: {exc}")
+
+
 def _render_mass_view(summary_df: pd.DataFrame) -> None:
     if summary_df.empty:
         st.info("Nincs megjeleníthető egyeztetési sor ebben a szűrésben.")
@@ -2248,135 +2397,58 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.markdown("#### Kijelölt foglalások")
-        bookable_dates = (
-            sorted(bookable_ready["Dátum"].dropna().astype(str).unique().tolist())
-            if not bookable_ready.empty and "Dátum" in bookable_ready.columns
-            else []
-        )
-        selected_bulk_date = ""
-        bookable_ready_for_day = bookable_ready
-        if bookable_dates:
-            selected_bulk_date = st.selectbox(
-                "Indítás napja",
-                bookable_dates,
-                key="foglalas_selected_bulk_date",
-            )
-            bookable_ready_for_day = bookable_ready[
-                bookable_ready["Dátum"].astype(str) == selected_bulk_date
-            ]
-        st.caption(
-            f"Pontos és alternatív, még nem lefoglalt sorok a kiválasztott napon: {len(bookable_ready_for_day)}"
-        )
-        if not bookable_ready_for_day.empty:
-            auto_select_exact = st.checkbox(
-                "A kiválasztott nap összes Egyezés sorának kijelölése",
-                key=f"foglalas_selected_bulk_exact_all_{selected_bulk_date}",
-            )
-            selectable_rows = bookable_ready_for_day.copy()
-            selectable_rows["Kijelöl"] = (
-                selectable_rows["Állapot"].astype(str).eq("Egyezés") if auto_select_exact else False
-            )
-            selectable_rows["Giriton cél"] = selectable_rows.apply(
-                lambda row: _booking_target_shift_start(row.to_dict()),
-                axis=1,
-            )
-            exact_for_day_count = int((bookable_ready_for_day["Állapot"] == "Egyezés").sum())
-            alternative_for_day_count = int(
-                (bookable_ready_for_day["Állapot"] == "Alternatíva").sum()
-            )
-            if auto_select_exact:
-                st.caption(
-                    f"Automatikusan kijelölve: {exact_for_day_count} pontos egyezés. "
-                    f"Alternatívák kézzel választhatók: {alternative_for_day_count}."
-                )
-            else:
-                st.caption(
-                    f"Pontos egyezések: {exact_for_day_count}. "
-                    f"Alternatívák: {alternative_for_day_count}. Mindkettő kézzel jelölhető."
-                )
-            editor_df = selectable_rows[
-                [
-                    "Kijelöl",
-                    "Dolgozó",
-                    "Raktár",
-                    "Állapot",
-                    "MűszakPro",
-                    "Giriton cél",
-                    "Eltérés",
-                    "Serial",
-                ]
-            ].copy()
-            edited_selection = st.data_editor(
-                editor_df,
-                hide_index=True,
-                width="stretch",
-                key=f"foglalas_selected_bulk_editor_{selected_bulk_date}_{int(auto_select_exact)}",
-                disabled=[
-                    "Dolgozó",
-                    "Raktár",
-                    "Állapot",
-                    "MűszakPro",
-                    "Giriton cél",
-                    "Eltérés",
-                    "Serial",
-                ],
-                column_config={
-                    "Kijelöl": st.column_config.CheckboxColumn(""),
-                    "Serial": None,
-                },
-            )
-            selected_serials = set(
-                edited_selection.loc[
-                    edited_selection["Kijelöl"],
-                    "Serial",
-                ].astype(str)
-            )
-            selected_bulk_rows = selectable_rows[
-                selectable_rows["Serial"].astype(str).isin(selected_serials)
-            ]
+        st.markdown("#### Időszakos kijelölt foglalások")
+        bookable_ready_for_period = bookable_ready.iloc[0:0]
+        if bookable_ready.empty or "Dátum" not in bookable_ready.columns:
+            st.info("Nincs indítható, még nem lefoglalt sor ebben a szűrésben.")
         else:
-            selected_bulk_rows = bookable_ready_for_day.iloc[0:0]
-
-        selected_exact_count = int((selected_bulk_rows["Állapot"] == "Egyezés").sum()) if not selected_bulk_rows.empty else 0
-        selected_alternative_count = int((selected_bulk_rows["Állapot"] == "Alternatíva").sum()) if not selected_bulk_rows.empty else 0
-        st.caption(
-            f"Kijelölve: {len(selected_bulk_rows)} sor "
-            f"({selected_exact_count} pontos, {selected_alternative_count} alternatíva)"
-        )
-
-        selected_live_enabled = st.checkbox(
-            "Éles kijelölt sorok indítása",
-            key="foglalas_selected_bulk_live_enabled",
-            disabled=selected_bulk_rows.empty,
-        )
-        if selected_live_enabled:
-            expected_confirmation = f"ELES {selected_bulk_date}"
-            st.warning(
-                f"Éles indítás: {selected_bulk_date}, {len(selected_bulk_rows)} db kijelölt sor. "
-                f"Ez {len(selected_bulk_rows)} külön célzott GitHub robotfutás lesz, serialonként egy. "
-                "Alternatíváknál a Giriton ajánlott időpont kerül foglalásra."
-            )
-            selected_confirmation = st.text_input(
-                f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
-                key="foglalas_selected_bulk_live_confirmation",
-            )
-            if st.button(
-                f"Kijelölt sorok foglalása {selected_bulk_date} ({len(selected_bulk_rows)})",
-                type="primary",
-                width="stretch",
-                key="foglalas_selected_bulk_live_run",
-                disabled=selected_bulk_rows.empty,
-            ):
-                if selected_confirmation != expected_confirmation:
-                    st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
+            period_rows = bookable_ready.copy()
+            period_rows["_work_date"] = period_rows["Dátum"].apply(_date_from_value)
+            valid_dates = sorted(value for value in period_rows["_work_date"].dropna().unique())
+            if not valid_dates:
+                st.info("Nincs értelmezhető dátum az indítható soroknál.")
+            else:
+                default_start = valid_dates[0]
+                default_end = valid_dates[-1]
+                period_col_1, period_col_2 = st.columns(2)
+                bulk_start_date = period_col_1.date_input(
+                    "Indítás kezdete",
+                    value=default_start,
+                    min_value=default_start,
+                    max_value=default_end,
+                    key="foglalas_bulk_period_start",
+                )
+                bulk_end_date = period_col_2.date_input(
+                    "Indítás vége",
+                    value=default_end,
+                    min_value=default_start,
+                    max_value=default_end,
+                    key="foglalas_bulk_period_end",
+                )
+                if bulk_end_date < bulk_start_date:
+                    st.error("Az indítás vége nem lehet korábbi, mint a kezdete.")
                 else:
-                    try:
-                        _dispatch_selected_bulk_bookings(selected_bulk_rows)
-                    except GitHubActionsError as exc:
-                        st.error(str(exc))
-                    except Exception as exc:
-                        st.error(f"Kijelölt sorok tömeges indítási hiba: {exc}")
+                    bookable_ready_for_period = period_rows[
+                        period_rows["_work_date"].between(bulk_start_date, bulk_end_date)
+                    ].drop(columns=["_work_date"], errors="ignore")
+                    st.caption(
+                        f"Indítható sorok a kiválasztott időszakban: {len(bookable_ready_for_period)}"
+                    )
+                    _render_bulk_status_booking_section(
+                        rows=bookable_ready_for_period,
+                        status_label="Egyezés",
+                        start_date=bulk_start_date,
+                        end_date=bulk_end_date,
+                        key_prefix="foglalas_bulk_exact",
+                    )
+                    st.divider()
+                    _render_bulk_status_booking_section(
+                        rows=bookable_ready_for_period,
+                        status_label="Alternatíva",
+                        start_date=bulk_start_date,
+                        end_date=bulk_end_date,
+                        key_prefix="foglalas_bulk_alternative",
+                    )
 
         st.divider()
         warehouse_options = [
