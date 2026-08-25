@@ -55,22 +55,28 @@ def parse_shift_datetime(work_date, shift_start) -> datetime | None:
     return datetime.combine(work_day, time(hour, minute), tzinfo=BUDAPEST_TZ)
 
 
+def lead_start_date(today: date, min_lead_hours: int) -> date:
+    days = max((max(int(min_lead_hours), 1) + 23) // 24, 1)
+    return today + timedelta(days=days)
+
+
 def load_exact_matches(
     start_date: date,
     end_date: date,
     min_lead_hours: int,
     tolerance_minutes: int,
     limit: int,
+    source_limit: int,
 ) -> pd.DataFrame:
     muszakpro_df = read_foglalasok_raw(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
-        limit=max(int(limit), 1),
+        limit=max(int(source_limit), 1),
     )
     giriton_df = read_giriton_shifts_raw(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
-        limit=max(int(limit), 1),
+        limit=max(int(source_limit), 1),
     )
     summary_df = foglalas._build_summary_rows(
         muszakpro_df,
@@ -80,8 +86,7 @@ def load_exact_matches(
     if summary_df.empty:
         return summary_df
 
-    now = datetime.now(BUDAPEST_TZ)
-    lead_start = now + timedelta(hours=max(int(min_lead_hours), 1))
+    first_bookable_date = lead_start_date(datetime.now(BUDAPEST_TZ).date(), min_lead_hours)
     rows = foglalas._bookable_booking_rows(summary_df)
     if rows.empty:
         return rows
@@ -98,9 +103,11 @@ def load_exact_matches(
         lambda row: parse_shift_datetime(row.get("Dátum"), row.get("_target_shift_start")),
         axis=1,
     )
+    rows["_work_date"] = rows["Dátum"].apply(foglalas._date_from_value)
     rows = rows[
         rows["_shift_datetime"].notna()
-        & (rows["_shift_datetime"] >= lead_start)
+        & rows["_work_date"].notna()
+        & (rows["_work_date"] >= first_bookable_date)
     ].copy()
     if rows.empty:
         return rows
@@ -182,6 +189,7 @@ def main() -> None:
     parser.add_argument("--min-lead-hours", type=int, default=72)
     parser.add_argument("--tolerance-minutes", type=int, default=30)
     parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--source-limit", type=int, default=20000)
     parser.add_argument("--workflow", default=DEFAULT_WORKFLOW)
     parser.add_argument("--ref", default=clean(os.getenv("GITHUB_REF")) or DEFAULT_REF)
     parser.add_argument("--dry-run", action="store_true")
@@ -197,11 +205,13 @@ def main() -> None:
         min_lead_hours=args.min_lead_hours,
         tolerance_minutes=args.tolerance_minutes,
         limit=args.limit,
+        source_limit=args.source_limit,
     )
     print(
         "AUTO_EXACT_MATCHES "
         f"start={start_date} end={end_date} min_lead_hours={args.min_lead_hours} "
-        f"lookahead_days={args.lookahead_days} "
+        f"first_bookable_date={lead_start_date(today, args.min_lead_hours)} "
+        f"lookahead_days={args.lookahead_days} source_limit={args.source_limit} "
         f"matches={len(rows)} dry_run={args.dry_run}"
     )
     if rows.empty:
