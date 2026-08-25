@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta
 import hashlib
 import hmac
 from html import escape
+import json
 import os
 from pathlib import Path
 import re
@@ -2058,6 +2059,71 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
         st.warning(f"{skipped} sor kimaradt, mert hiányzott adat vagy már el lett indítva.")
 
 
+def _booking_plan_row(row: dict) -> dict[str, str]:
+    return {
+        "work_date": _clean(row.get("Dátum")),
+        "warehouse": _clean(row.get("Raktár")).upper(),
+        "shift_start": _booking_target_shift_start(row),
+        "shift_text": _clean(row.get("Giriton ajánlat"))
+        or _clean(row.get("Giriton foglalás"))
+        or _clean(row.get("MűszakPro")),
+        "booking_code": _clean(row.get("Foglalási kód") or row.get("booking_code")),
+        "courier_id": _clean(row.get("Futár ID") or row.get("courier_id")),
+        "courier_name": _clean(row.get("Dolgozó")),
+        "email": _clean(row.get("E-mail")).casefold(),
+        "serial": _clean(row.get("Serial")),
+    }
+
+
+def _dispatch_daily_booking_plan(rows: pd.DataFrame) -> None:
+    if rows.empty:
+        st.warning("Nincs kijelölt indítható sor.")
+        return
+
+    plan_rows = []
+    skipped = 0
+    for row in rows.to_dict("records"):
+        item = _booking_plan_row(row)
+        if not item["work_date"] or not item["serial"] or not item["warehouse"] or not item["shift_start"]:
+            skipped += 1
+            continue
+        if item["serial"] in _started_booking_serials():
+            skipped += 1
+            continue
+        plan_rows.append(item)
+
+    if not plan_rows:
+        st.warning("Nincs indítható sor: hiányzó adat vagy már elindított serial miatt minden kimaradt.")
+        return
+
+    work_dates = sorted({item["work_date"] for item in plan_rows})
+    if len(work_dates) != 1:
+        st.error("Első körben csak egy nap listáját indítjuk egy robotfutásban. Válassz ki egyetlen napot.")
+        return
+
+    plan_json = json.dumps(plan_rows, ensure_ascii=True, separators=(",", ":"))
+    result = _dispatch_workflow_fallback(
+        AUTO_BOOKING_WORKFLOW,
+        {
+            "start_date": work_dates[0],
+            "end_date": work_dates[0],
+            "serial": "",
+            "warehouse": "",
+            "email": "",
+            "shift_start": "",
+            "plan_json": plan_json,
+            "dry_run": "false",
+        },
+    )
+    for item in plan_rows:
+        _mark_booking_started(item["serial"])
+    st.session_state["foglalas_last_github_dispatch"] = result
+    st.success(
+        f"{len(plan_rows)} db napi sor elindítva egy Giriton robotfutásban. "
+        f"Kimaradt: {skipped}. Indítás: {result['workflow']} / {result['triggered_at']}"
+    )
+
+
 def _render_github_status_panel(key_prefix: str) -> None:
     st.markdown("### GitHub állapot")
     refresh_col, hint_col = st.columns([1, 2.4])
@@ -2284,7 +2350,7 @@ def _render_bulk_status_booking_section(
     )
     st.warning(
         f"Éles indítás: {len(selected_rows)} db {status_label.lower()} sor. "
-        "Minden sor külön célzott robotfutásként indul."
+        "Első körben egyetlen napi robotfutásban, for ciklussal megy végig a kijelölt sorokon."
     )
     confirmation = st.text_input(
         f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
@@ -2301,7 +2367,7 @@ def _render_bulk_status_booking_section(
             st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
             return
         try:
-            _dispatch_selected_bulk_bookings(selected_rows)
+            _dispatch_daily_booking_plan(selected_rows)
         except GitHubActionsError as exc:
             st.error(str(exc))
         except Exception as exc:

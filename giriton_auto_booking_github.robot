@@ -19,6 +19,7 @@ ${AUTO_BOOK_COURIER_ID}
 ${AUTO_BOOK_EMAIL}
 ${AUTO_BOOK_WAREHOUSE}
 ${AUTO_BOOK_SHIFT_START}
+${AUTO_BOOK_PLAN_JSON}
 
 
 *** Test Cases ***
@@ -81,6 +82,7 @@ Giriton Auto Booking From Foglalasok
     ...    ${AUTO_BOOK_EMAIL}
     ...    ${AUTO_BOOK_WAREHOUSE}
     ...    ${AUTO_BOOK_SHIFT_START}
+    ...    ${AUTO_BOOK_PLAN_JSON}
 
     ${candidate_count}=    Get Length    ${candidates}
     Log To Console    AUTO_BOOK_CANDIDATES=${candidate_count}

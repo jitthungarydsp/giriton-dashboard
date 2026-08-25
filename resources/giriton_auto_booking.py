@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
 import os
 import sys
@@ -134,6 +135,41 @@ def _build_candidate(row):
     }
 
 
+def _build_plan_candidate(row):
+    work_date = clean(row.get("work_date"))
+    warehouse = _normalize_warehouse(row.get("warehouse"))
+    shift_start_value = normalize_time(row.get("shift_start"))
+    shift_text = clean(row.get("shift_text")) or (
+        f"{warehouse}_{shift_start_value}" if warehouse and shift_start_value else ""
+    )
+
+    return {
+        "work_date": work_date,
+        "giriton_date": _format_giriton_date(work_date),
+        "warehouse": warehouse,
+        "shift_text": shift_text,
+        "shift_start": shift_start_value,
+        "booking_code": clean(row.get("booking_code")),
+        "courier_id": clean(row.get("courier_id")),
+        "courier_name": clean(row.get("courier_name")),
+        "email": clean(row.get("email")).casefold(),
+        "serial": clean(row.get("serial")),
+    }
+
+
+def _plan_candidates(plan_json):
+    text = clean(plan_json)
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Hibas AUTO_BOOK_PLAN_JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("Hibas AUTO_BOOK_PLAN_JSON: listat varok.")
+    return [_build_plan_candidate(item) for item in parsed if isinstance(item, dict)]
+
+
 def get_t_plus_booking_candidates(
     days_ahead=3,
     horizon_days=1,
@@ -145,8 +181,47 @@ def get_t_plus_booking_candidates(
     email="",
     warehouse="",
     shift_start_filter="",
+    plan_json="",
 ):
     """Return Foglalasok rows that the Giriton auto-booking robot should process."""
+
+    plan_candidates = _plan_candidates(plan_json)
+    if plan_candidates:
+        candidates = []
+        seen = set()
+        for candidate in plan_candidates:
+            if not candidate["work_date"]:
+                continue
+            if not candidate["shift_start"]:
+                continue
+            if not candidate["warehouse"]:
+                continue
+            if not candidate["courier_id"] and not candidate["courier_name"]:
+                continue
+            if not _matches_filter(
+                candidate,
+                serial=serial,
+                courier_id=courier_id,
+                email=email,
+                warehouse=warehouse,
+                shift_start=shift_start_filter,
+            ):
+                continue
+            key = _candidate_key(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(candidate)
+        candidates.sort(
+            key=lambda item: (
+                item["work_date"],
+                item["warehouse"],
+                item["shift_start"],
+                item["courier_name"].casefold(),
+                item["email"],
+            )
+        )
+        return candidates
 
     if start_date:
         from_date = _parse_date(start_date)
