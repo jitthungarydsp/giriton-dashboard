@@ -25,6 +25,10 @@ on:
         description: "Opcionális célzott műszakkezdés HH:MM."
         required: false
         default: ""
+      exact_only:
+        description: "true = csak a műszakfoglaló oldalon számolt pontos egyezéseket foglalja."
+        required: false
+        default: "false"
       dry_run:
         description: "true = csak ellenorzes, false = eles foglalas"
         required: true
@@ -69,8 +73,8 @@ jobs:
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
 
-          if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "${{ inputs.serial }}" ] && [ -z "${{ inputs.warehouse }}" ]; then
-            echo "Eles Giriton foglalashoz kotelezo konkret serialt vagy raktar szurot megadni."
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ "${{ inputs.exact_only }}" != "true" ] && [ -z "${{ inputs.serial }}" ] && [ -z "${{ inputs.warehouse }}" ]; then
+            echo "Eles Giriton foglalashoz kotelezo konkret serialt, raktar szurot vagy exact_only modot megadni."
             exit 1
           fi
 
@@ -91,6 +95,7 @@ jobs:
             --variable AUTO_BOOK_WAREHOUSE:${{ inputs.warehouse }} \
             --variable AUTO_BOOK_EMAIL:${{ inputs.email }} \
             --variable AUTO_BOOK_SHIFT_START:${{ inputs.shift_start }} \
+            --variable AUTO_BOOK_EXACT_ONLY:${{ inputs.exact_only }} \
             giriton_auto_booking_github.robot
 
       - name: Upload Robot artifacts

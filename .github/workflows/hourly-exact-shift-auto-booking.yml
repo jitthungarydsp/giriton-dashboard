@@ -37,50 +37,45 @@ jobs:
     timeout-minutes: 20
 
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GITHUB_TOKEN: ${{ github.token }}
       GITHUB_OWNER: ${{ github.repository_owner }}
       GITHUB_REPO: ${{ github.event.repository.name }}
       GITHUB_REF: ${{ github.ref_name }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       - name: Validate environment
         run: |
-          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
-          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GITHUB_TOKEN" || (echo "Missing GITHUB_TOKEN" && exit 1)
 
-      - name: Dispatch exact matches after T+72 hours
+      - name: Dispatch one exact-only robot run after T+72 hours
         run: |
           MIN_LEAD_HOURS="${{ inputs.min_lead_hours }}"
           LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
-          LIMIT="${{ inputs.limit }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
           MIN_LEAD_HOURS="${MIN_LEAD_HOURS:-72}"
           LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-5}"
-          LIMIT="${LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
 
-          CMD=(python scripts/auto_book_exact_shift_matches.py --min-lead-hours "$MIN_LEAD_HOURS" --lookahead-days "$LOOKAHEAD_DAYS" --limit "$LIMIT")
-
-          if [ "$DRY_RUN" = "true" ]; then
-            CMD+=(--dry-run)
+          LEAD_DAYS=$(( (MIN_LEAD_HOURS + 23) / 24 ))
+          if [ "$LEAD_DAYS" -lt 1 ]; then
+            LEAD_DAYS=1
           fi
 
-          echo "Running: ${CMD[*]}"
-          "${CMD[@]}"
+          START_DATE=$(TZ=Europe/Budapest date -d "+${LEAD_DAYS} days" +%F)
+          END_DATE=$(TZ=Europe/Budapest date -d "+${LOOKAHEAD_DAYS} days" +%F)
+
+          echo "Dispatching one exact-only robot run: start=${START_DATE} end=${END_DATE} dry_run=${DRY_RUN}"
+
+          HTTP_STATUS=$(curl -sS -o /tmp/dispatch-response.txt -w "%{http_code}" -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/giriton-auto-booking.yml/dispatches" \
+            -d "{\"ref\":\"${GITHUB_REF}\",\"inputs\":{\"start_date\":\"${START_DATE}\",\"end_date\":\"${END_DATE}\",\"serial\":\"\",\"warehouse\":\"\",\"email\":\"\",\"shift_start\":\"\",\"exact_only\":\"true\",\"dry_run\":\"${DRY_RUN}\"}}")
+
+          if [ "$HTTP_STATUS" != "204" ]; then
+            echo "Dispatch failed with HTTP ${HTTP_STATUS}"
+            cat /tmp/dispatch-response.txt
+            exit 1
+          fi
