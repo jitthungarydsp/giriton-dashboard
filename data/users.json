@@ -442,6 +442,15 @@
             "token": ""
         },
         {
+            "username": "Sabján 7938 Iván",
+            "trainer": "trainer_name",
+            "password": "d43vJpAR",
+            "role": "user",
+            "courierId": 7938,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Rábl Norbert",
             "trainer": "trainer_name",
             "password": "QROV79yb",
