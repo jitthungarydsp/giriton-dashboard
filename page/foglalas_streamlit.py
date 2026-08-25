@@ -978,6 +978,31 @@ def _build_summary_rows(
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_giriton_availability(giriton_df)
     booked_giriton_groups = _group_giriton_bookings(giriton_df)
+    aliased_booked_keys = set()
+
+    for booked_key, booked_group in booked_giriton_groups.items():
+        if booked_key in muszakpro_groups:
+            continue
+
+        booked_date, booked_worker_key, booked_warehouse_key = booked_key
+        booked_worker_name = _match_text(booked_group.get("worker"))
+        if not booked_worker_name:
+            continue
+
+        for muszakpro_key, muszakpro_group in muszakpro_groups.items():
+            muszakpro_date, _muszakpro_worker_key, muszakpro_warehouse_key = muszakpro_key
+            if muszakpro_date != booked_date or muszakpro_warehouse_key != booked_warehouse_key:
+                continue
+            if _match_text(muszakpro_group.get("worker")) != booked_worker_name:
+                continue
+
+            muszakpro_group["booking_worker_keys"] = list(
+                dict.fromkeys(
+                    muszakpro_group.get("booking_worker_keys", []) + [booked_worker_key]
+                )
+            )
+            aliased_booked_keys.add(booked_key)
+            break
 
     def group_sort_key(key):
         group = muszakpro_groups.get(key) or booked_giriton_groups.get(key) or {}
@@ -988,7 +1013,10 @@ def _build_summary_rows(
             group.get("warehouse", ""),
         )
 
-    keys = sorted(set(muszakpro_groups) | set(booked_giriton_groups), key=group_sort_key)
+    keys = sorted(
+        set(muszakpro_groups) | (set(booked_giriton_groups) - aliased_booked_keys),
+        key=group_sort_key,
+    )
     rows = []
     consumed_booked_rows = set()
     added_giriton_only_rows = set()
