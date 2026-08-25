@@ -30,6 +30,7 @@ DEFAULT_OWNER = "jitthungarydsp"
 DEFAULT_REPO = "giriton-dashboard"
 DEFAULT_REF = "main"
 DEFAULT_WORKFLOW = "giriton-auto-booking.yml"
+RUNNING_LOG_BLOCK_MINUTES = 120
 
 
 def clean(value) -> str:
@@ -60,6 +61,30 @@ def lead_start_date(today: date, min_lead_hours: int) -> date:
     return today + timedelta(days=days)
 
 
+def parse_log_datetime(value) -> datetime | None:
+    text = clean(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+    return parsed
+
+
+def is_recent_running_log(item: dict, now: datetime) -> bool:
+    status = clean(item.get("status"))
+    if not status.startswith("STEP_"):
+        return False
+    created_at = parse_log_datetime(item.get("created_at"))
+    if created_at is None:
+        return False
+    age_minutes = (now.astimezone(created_at.tzinfo) - created_at).total_seconds() / 60
+    return 0 <= age_minutes <= RUNNING_LOG_BLOCK_MINUTES
+
+
 def load_exact_matches(
     start_date: date,
     end_date: date,
@@ -83,11 +108,33 @@ def load_exact_matches(
         giriton_df,
         int(tolerance_minutes),
     )
+    print(
+        "AUTO_EXACT_DIAG "
+        f"muszakpro_rows={len(muszakpro_df)} giriton_rows={len(giriton_df)} "
+        f"summary_rows={len(summary_df)}"
+    )
     if summary_df.empty:
         return summary_df
 
     first_bookable_date = lead_start_date(datetime.now(BUDAPEST_TZ).date(), min_lead_hours)
+    summary_df = summary_df.copy()
+    summary_df["_work_date"] = summary_df["Dátum"].apply(foglalas._date_from_value)
+    exact_all = summary_df[summary_df["Állapot"].astype(str).eq("Egyezés")].copy()
+    exact_from_lead = exact_all[
+        exact_all["_work_date"].notna()
+        & (exact_all["_work_date"] >= first_bookable_date)
+    ].copy()
+    print(
+        "AUTO_EXACT_DIAG "
+        f"exact_all={len(exact_all)} exact_from_{first_bookable_date}={len(exact_from_lead)} "
+        f"exact_giriton_states={exact_from_lead['Giriton állapot'].value_counts(dropna=False).to_dict() if 'Giriton állapot' in exact_from_lead.columns else {}}"
+    )
     rows = foglalas._bookable_booking_rows(summary_df)
+    print(
+        "AUTO_EXACT_DIAG "
+        f"bookable_all={len(rows)} "
+        f"bookable_statuses={rows['Állapot'].value_counts(dropna=False).to_dict() if not rows.empty and 'Állapot' in rows.columns else {}}"
+    )
     if rows.empty:
         return rows
 
@@ -109,6 +156,10 @@ def load_exact_matches(
         & rows["_work_date"].notna()
         & (rows["_work_date"] >= first_bookable_date)
     ].copy()
+    print(
+        "AUTO_EXACT_DIAG "
+        f"bookable_exact_from_{first_bookable_date}={len(rows)}"
+    )
     if rows.empty:
         return rows
 
@@ -119,15 +170,22 @@ def load_exact_matches(
     )
     latest_by_serial = latest_log_by_serial(log_df)
     if latest_by_serial:
+        now_utc = datetime.now(ZoneInfo("UTC"))
         blocked_serials = {
             serial
             for serial, item in latest_by_serial.items()
             if clean(item.get("status")) in ROBOTLOG_SUCCESS_STATUSES
-            or clean(item.get("status")).startswith("STEP_")
+            or is_recent_running_log(item, now_utc)
         }
+        before_log_filter = len(rows)
         rows = rows[
             ~rows["Serial"].fillna("").astype(str).str.strip().isin(blocked_serials)
         ].copy()
+        print(
+            "AUTO_EXACT_DIAG "
+            f"log_rows={len(log_df)} blocked_serials={len(blocked_serials)} "
+            f"after_log_filter={len(rows)} removed_by_log={before_log_filter - len(rows)}"
+        )
 
     rows = rows.sort_values(["_shift_datetime", "Raktár", "Dolgozó", "Serial"])
     return rows.head(max(int(limit), 1))
