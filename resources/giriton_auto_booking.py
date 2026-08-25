@@ -21,7 +21,6 @@ from resources.foglalasok_db import (
     read_foglalasok_raw,
     shift_start,
 )
-from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
@@ -135,117 +134,6 @@ def _build_candidate(row):
     }
 
 
-def _bool_text(value) -> bool:
-    return clean(value).casefold() in {"1", "true", "yes", "y", "igen", "i"}
-
-
-def _build_exact_candidate(row):
-    work_date = clean(row.get("Dátum"))
-    shift_start_value = normalize_time(row.get("_target_shift_start") or row.get("Giriton ajánlat"))
-    warehouse = _normalize_warehouse(row.get("Raktár"))
-
-    return {
-        "work_date": work_date,
-        "giriton_date": _format_giriton_date(work_date),
-        "warehouse": warehouse,
-        "shift_text": f"{warehouse}_{shift_start_value}",
-        "shift_start": shift_start_value,
-        "booking_code": "",
-        "courier_id": clean(row.get("Courier ID")),
-        "courier_name": clean(row.get("Dolgozó")),
-        "email": clean(row.get("E-mail")).casefold(),
-        "serial": clean(row.get("Serial")),
-    }
-
-
-def _exact_booking_candidates(
-    from_date,
-    to_date,
-    limit,
-    serial="",
-    courier_id="",
-    email="",
-    warehouse="",
-    shift_start_filter="",
-):
-    from page import foglalas_streamlit as foglalas
-
-    muszakpro_df = read_foglalasok_raw(
-        start_date=from_date.isoformat(),
-        end_date=to_date.isoformat(),
-        limit=20000,
-    )
-    giriton_df = read_giriton_shifts_raw(
-        start_date=from_date.isoformat(),
-        end_date=to_date.isoformat(),
-        limit=20000,
-    )
-    if not muszakpro_df.empty:
-        muszakpro_df = muszakpro_df.copy()
-        muszakpro_df["shift_start"] = muszakpro_df.get(
-            "shift_text",
-            pd.Series(dtype=str),
-        ).map(foglalas._shift_start)
-
-    summary_df = foglalas._build_summary_rows(muszakpro_df, giriton_df, 30)
-    if summary_df.empty:
-        print("AUTO_BOOK_EXACT_CANDIDATES=0 summary_empty=true")
-        return []
-
-    rows = foglalas._bookable_booking_rows(summary_df)
-    if rows.empty:
-        print(
-            "AUTO_BOOK_EXACT_CANDIDATES=0 "
-            f"summary_statuses={summary_df['Állapot'].value_counts(dropna=False).to_dict() if 'Állapot' in summary_df.columns else {}}"
-        )
-        return []
-
-    rows = rows[rows["Állapot"].astype(str).eq("Egyezés")].copy()
-    rows["_target_shift_start"] = rows.apply(
-        lambda item: foglalas._booking_target_shift_start(item.to_dict()),
-        axis=1,
-    )
-
-    candidates = []
-    seen = set()
-    for row in rows.to_dict("records"):
-        candidate = _build_exact_candidate(row)
-        if not candidate["work_date"] or not candidate["shift_start"] or not candidate["warehouse"]:
-            continue
-        if not candidate["serial"]:
-            continue
-        if not _matches_filter(
-            candidate,
-            serial=serial,
-            courier_id=courier_id,
-            email=email,
-            warehouse=warehouse,
-            shift_start=shift_start_filter,
-        ):
-            continue
-
-        key = _candidate_key(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append(candidate)
-
-    candidates.sort(
-        key=lambda item: (
-            item["work_date"],
-            item["warehouse"],
-            item["shift_start"],
-            item["courier_name"].casefold(),
-            item["email"],
-        )
-    )
-    print(
-        "AUTO_BOOK_EXACT_CANDIDATES="
-        f"{len(candidates)} summary_statuses={summary_df['Állapot'].value_counts(dropna=False).to_dict() if 'Állapot' in summary_df.columns else {}}"
-    )
-    return candidates[: max(int(limit), 1)]
-
-
 def get_t_plus_booking_candidates(
     days_ahead=3,
     horizon_days=1,
@@ -257,7 +145,6 @@ def get_t_plus_booking_candidates(
     email="",
     warehouse="",
     shift_start_filter="",
-    exact_only="false",
 ):
     """Return Foglalasok rows that the Giriton auto-booking robot should process."""
 
@@ -270,18 +157,6 @@ def get_t_plus_booking_candidates(
         to_date = _parse_date(end_date)
     else:
         to_date = from_date + timedelta(days=max(int(horizon_days), 1) - 1)
-
-    if _bool_text(exact_only):
-        return _exact_booking_candidates(
-            from_date,
-            to_date,
-            limit,
-            serial=serial,
-            courier_id=courier_id,
-            email=email,
-            warehouse=warehouse,
-            shift_start_filter=shift_start_filter,
-        )
 
     df = read_foglalasok_raw(
         start_date=from_date.isoformat(),
