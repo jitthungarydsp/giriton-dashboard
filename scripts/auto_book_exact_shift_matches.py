@@ -119,11 +119,23 @@ def load_exact_matches(
     first_bookable_date = lead_start_date(datetime.now(BUDAPEST_TZ).date(), min_lead_hours)
     summary_df = summary_df.copy()
     summary_df["_work_date"] = summary_df["Dátum"].apply(foglalas._date_from_value)
+    print(
+        "AUTO_EXACT_DIAG "
+        f"summary_statuses={summary_df['Állapot'].value_counts(dropna=False).to_dict() if 'Állapot' in summary_df.columns else {}}"
+    )
     exact_all = summary_df[summary_df["Állapot"].astype(str).eq("Egyezés")].copy()
     exact_from_lead = exact_all[
         exact_all["_work_date"].notna()
         & (exact_all["_work_date"] >= first_bookable_date)
     ].copy()
+    if not summary_df.empty:
+        sample_columns = [
+            column
+            for column in ["Dátum", "Dolgozó", "Raktár", "MűszakPro", "Giriton ajánlat", "Giriton foglalás", "Giriton állapot", "Eltérés", "Állapot", "Ok", "Serial"]
+            if column in summary_df.columns
+        ]
+        sample = summary_df.head(5)[sample_columns].to_dict("records")
+        print(f"AUTO_EXACT_DIAG sample_rows={sample}")
     print(
         "AUTO_EXACT_DIAG "
         f"exact_all={len(exact_all)} exact_from_{first_bookable_date}={len(exact_from_lead)} "
