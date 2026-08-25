@@ -97,7 +97,7 @@ jobs:
             --variable AUTO_BOOK_WAREHOUSE:${{ inputs.warehouse }} \
             --variable AUTO_BOOK_EMAIL:${{ inputs.email }} \
             --variable AUTO_BOOK_SHIFT_START:${{ inputs.shift_start }} \
-            --variable AUTO_BOOK_PLAN_JSON:%{AUTO_BOOK_PLAN_JSON} \
+            --variable "AUTO_BOOK_PLAN_JSON:${AUTO_BOOK_PLAN_JSON}" \
             giriton_auto_booking_github.robot
 
       - name: Upload Robot artifacts
