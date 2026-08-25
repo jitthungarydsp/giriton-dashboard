@@ -98,7 +98,6 @@ Giriton Auto Booking From Foglalasok
     END
 
     ${current_giriton_date}=    Set Variable    ${EMPTY}
-    @{failed_giriton_dates}=    Create List
 
     FOR    ${candidate}    IN    @{candidates}
         ${work_date}=       Set Variable    ${candidate}[work_date]
@@ -117,19 +116,6 @@ Giriton Auto Booking From Foglalasok
         ...    Jelolt feldolgozasa indul: ${work_date} ${warehouse} ${shift_start} ${courier_name} ${email}
 
         IF    '${current_giriton_date}' != '${giriton_date}'
-            ${date_previously_failed}=    Run Keyword And Return Status
-            ...    List Should Contain Value
-            ...    ${failed_giriton_dates}
-            ...    ${giriton_date}
-            IF    ${date_previously_failed}
-                ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
-                ...    ${candidate}
-                ...    DATE_SETUP_SKIPPED
-                ...    Ezt a Giriton napot korabban nem sikerult beallitani, ezert nem probalom ujra minden futarnal: ${giriton_date}
-                Log To Console    AUTO_BOOK_RESULT=DATE_SETUP_SKIPPED LOG=${log_result}
-                CONTINUE
-            END
-
             Log Auto Booking Step
             ...    ${candidate}
             ...    STEP_DATE_SET_START
@@ -163,7 +149,6 @@ Giriton Auto Booking From Foglalasok
                 ...    DATE_INPUT_NOT_FOUND
                 ...    Nem talalhato a Giriton datummezo, a robot a kovetkezo listatagra lep.
                 Log To Console    AUTO_BOOK_RESULT=DATE_INPUT_NOT_FOUND LOG=${log_result}
-                Append To List    ${failed_giriton_dates}    ${giriton_date}
                 CONTINUE
             END
 
@@ -314,13 +299,6 @@ Log Auto Booking Step
 Beallit Giriton Datum
     [Arguments]    ${datum_giriton}
 
-    ${already_loaded}=    Run Keyword And Return Status
-    ...    Giriton Date Page Should Show
-    ...    ${datum_giriton}
-    IF    ${already_loaded}
-        RETURN    ALREADY_SELECTED
-    END
-
     ${set_result}=    Execute Javascript
     ...    const expected=String('${datum_giriton}').trim();
     ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
@@ -344,100 +322,19 @@ Beallit Giriton Datum
     ...    input.setAttribute('data-auto-book-date-target','true');
     ...    return input.value || '';
 
-    IF    '${set_result}' == 'DATE_INPUT_NOT_FOUND'
-        ${arrow_loaded}=    Run Keyword And Return Status
-        ...    Set Giriton Date With Next Arrows
-        ...    ${datum_giriton}
-        IF    ${arrow_loaded}
-            RETURN    ARROW_SELECTED
-        END
-        ${diagnostic}=    Get Giriton Date Diagnostic
-        Fail    DATE_INPUT_NOT_FOUND diagnostic=${diagnostic}
-    END
+    Should Not Be Equal As Strings
+    ...    ${set_result}
+    ...    DATE_INPUT_NOT_FOUND
 
     Sleep    4s
-
-    ${loaded}=    Run Keyword And Return Status
-    ...    Giriton Date Page Should Show
-    ...    ${datum_giriton}
-    IF    ${loaded}
-        RETURN    INPUT_SELECTED
-    END
 
     ${actual}=    Execute Javascript
     ...    const input=document.querySelector('input[data-auto-book-date-target="true"]');
     ...    return input ? String(input.value || '').trim() : '';
-    Should Be Equal As Strings    ${actual}    ${datum_giriton}
 
-
-Giriton Date Page Should Show
-    [Arguments]    ${datum_giriton}
-    ${state}=    Execute Javascript
-    ...    const expected=String(arguments[0] || '').trim();
-    ...    const parts=expected.split('/');
-    ...    const d=parts.length===3 ? String(parseInt(parts[0],10)) : '';
-    ...    const dd=parts.length===3 ? parts[0].padStart(2,'0') : '';
-    ...    const mm=parts.length===3 ? parts[1].padStart(2,'0') : '';
-    ...    const yyyy=parts.length===3 ? parts[2] : '';
-    ...    const iso=parts.length===3 ? yyyy + '-' + mm + '-' + dd : expected;
-    ...    const hu=parts.length===3 ? yyyy + '. ' + mm + '. ' + dd : expected;
-    ...    const text=String(document.body ? document.body.innerText : '');
-    ...    const input=[...document.querySelectorAll('input')].find(el => String(el.value || '').trim() === expected);
-    ...    const exactText=text.includes(expected) || text.includes(iso) || text.includes(hu);
-    ...    const dayOnline=d && new RegExp('(^|\\n)\\s*' + d + '\\s*\\n\\s*Online\\s*(\\n|$)', 'm').test(text);
-    ...    return input || exactText || dayOnline ? 'OK' : 'NOT_SELECTED';
-    ...    ARGUMENTS
+    Should Be Equal As Strings
+    ...    ${actual}
     ...    ${datum_giriton}
-    Should Be Equal As Strings    ${state}    OK
-
-
-Set Giriton Date With Next Arrows
-    [Arguments]    ${datum_giriton}
-    FOR    ${attempt}    IN RANGE    8
-        Close Giriton Default Values Popup
-        ${click_result}=    Click Giriton Next Day If Available
-        IF    '${click_result}' != 'OK'
-            Fail    ${click_result}
-        END
-        ${loaded}=    Run Keyword And Return Status
-        ...    Giriton Date Page Should Show
-        ...    ${datum_giriton}
-        IF    ${loaded}
-            RETURN    OK
-        END
-    END
-    Fail    DATE_NOT_REACHED_WITH_ARROWS
-
-
-Click Giriton Next Day If Available
-    ${click_result}=    Execute Javascript
-    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
-    ...    const textOf=function(el){return String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();};
-    ...    const clickReal=function(el){el.scrollIntoView({block:'center', inline:'center'}); const rect=el.getBoundingClientRect(); const x=rect.left + rect.width / 2; const y=rect.top + rect.height / 2; const target=document.elementFromPoint(x, y) || el; ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){target.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));});};
-    ...    const all=Array.from(document.querySelectorAll('.v-button, button, span, div')).filter(visible);
-    ...    const arrows=all.map(function(el){return el.closest('.v-button, button') || el;}).filter(function(el, index, array){return array.indexOf(el) === index;}).filter(function(el){const rect=el.getBoundingClientRect(); const text=textOf(el); const inWindow=!!el.closest('.v-window'); const small=rect.width <= 90 && rect.height <= 90; const topToolbar=rect.top >= 0 && rect.top < 190; return !inWindow && small && topToolbar && (text === '' || text === '>' || text.toLowerCase() === 'next' || text.includes('') || text.includes('›') || text.includes('»'));}).sort(function(a,b){const ar=a.getBoundingClientRect(); const br=b.getBoundingClientRect(); return ar.top - br.top || ar.left - br.left;});
-    ...    const nextButton=arrows[0];
-    ...    if(!nextButton){return 'NEXT_BUTTON_NOT_FOUND';}
-    ...    clickReal(nextButton);
-    ...    return 'OK';
-    Should Be Equal As Strings    ${click_result}    OK
-    Sleep    3s
-    RETURN    ${click_result}
-
-
-Close Giriton Default Values Popup
-    Execute Javascript
-    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;}; const windows=Array.from(document.querySelectorAll('.v-window')).filter(visible); for(const win of windows){const text=String(win.innerText || ''); if(!text.includes('Default values')){continue;} const buttons=Array.from(win.querySelectorAll('.v-button, button, span, div')).filter(visible); const close=buttons.find(function(el){const label=String(el.innerText || el.textContent || '').trim(); return label === '' || label.toLowerCase() === 'cancel' || label.includes('Cancel');}); if(close){close.click(); return 'CLOSED';}} return 'NO_POPUP';
-
-
-Get Giriton Date Diagnostic
-    ${diagnostic}=    Execute Javascript
-    ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
-    ...    const inputs=[...document.querySelectorAll('input')].filter(visible).map(el => ({value:el.value || '', placeholder:el.getAttribute('placeholder') || '', cls:String(el.className || ''), title:el.getAttribute('title') || '', aria:el.getAttribute('aria-label') || ''})).slice(0,12);
-    ...    const buttons=[...document.querySelectorAll('.v-button, button')].filter(visible).map(el => ({text:String(el.innerText || el.textContent || '').trim(), cls:String(el.className || ''), rect:(()=>{const r=el.getBoundingClientRect(); return Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+'x'+Math.round(r.height);})()})).slice(0,20);
-    ...    const body=String(document.body ? document.body.innerText : '').slice(0,1200);
-    ...    return JSON.stringify({url:location.href, inputs, buttons, body});
-    RETURN    ${diagnostic}
 
 
 Find Giriton Shift Card
