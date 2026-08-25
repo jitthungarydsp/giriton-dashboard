@@ -1074,7 +1074,27 @@ def _build_summary_rows(
             source_record = records_by_time.get(muszakpro_time, {})
             giriton_booking = "-"
             giriton_offer = "-"
-            if muszakpro_time in daily_plan:
+            booked_time, booked_diff, booked_status = _nearest_single_giriton_time(
+                muszakpro_time,
+                booked_values,
+                tolerance_minutes,
+            )
+            if booked_status in {"exact", "alternative"}:
+                status = "Lefoglalva"
+                giriton_state = "Lefoglalva"
+                giriton_booking = booked_time
+                diff_value = booked_diff
+                reason = "Ez a műszak már le van foglalva Giritonban"
+                booked_record = booked_records_by_time.get(booked_time, {})
+                consumed_booked_rows.add(
+                    (
+                        work_date,
+                        warehouse_key,
+                        booked_time,
+                        _booking_worker_match_key(booked_record),
+                    )
+                )
+            elif muszakpro_time in daily_plan:
                 giriton_time, diff_value, plan_status = daily_plan[muszakpro_time]
                 if plan_status == "booked":
                     status = "Lefoglalva"
