@@ -121,8 +121,36 @@ Giriton Auto Booking From Foglalasok
             ...    STEP_DATE_SET_START
             ...    Giriton datum beallitasa indul: ${giriton_date}
 
-            Beallit Giriton Datum
+            ${date_set_ok}=    Run Keyword And Return Status
+            ...    Wait Until Keyword Succeeds
+            ...    3x
+            ...    5s
+            ...    Beallit Giriton Datum
             ...    ${giriton_date}
+
+            IF    not ${date_set_ok}
+                Log Auto Booking Step
+                ...    ${candidate}
+                ...    STEP_DATE_SET_REOPEN_SHIFT_SUBS
+                ...    Datummezo nem talalhato, Shift Subscription oldal ujranyitasa indul: ${giriton_date}
+                keywords_github.Click Shift Subs
+                Sleep    3s
+                ${date_set_ok}=    Run Keyword And Return Status
+                ...    Wait Until Keyword Succeeds
+                ...    2x
+                ...    5s
+                ...    Beallit Giriton Datum
+                ...    ${giriton_date}
+            END
+
+            IF    not ${date_set_ok}
+                ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
+                ...    ${candidate}
+                ...    DATE_INPUT_NOT_FOUND
+                ...    Nem talalhato a Giriton datummezo, a robot a kovetkezo listatagra lep.
+                Log To Console    AUTO_BOOK_RESULT=DATE_INPUT_NOT_FOUND LOG=${log_result}
+                CONTINUE
+            END
 
             ${current_giriton_date}=    Set Variable    ${giriton_date}
 
@@ -178,8 +206,23 @@ Giriton Auto Booking From Foglalasok
             ...    STEP_BOOKING_FLOW_START
             ...    Eles foglalasi folyamat indul.
 
-            ${add_result}=    Add Courier To Shift Subscription
+            ${add_status}    ${add_result}=    Run Keyword And Ignore Error
+            ...    Add Courier To Shift Subscription
             ...    ${candidate}
+
+            IF    '${add_status}' != 'PASS'
+                ${booking_screenshot}=    giriton_auto_booking.Build Screenshot Name
+                ...    ${candidate}
+                ...    booking_error
+                Capture Page Screenshot    ${booking_screenshot}
+                ${log_result}=    giriton_auto_booking.Log Giriton Booking Result
+                ...    ${candidate}
+                ...    BOOKING_FLOW_ERROR
+                ...    Giriton foglalasi folyamat hiba, kovetkezo listatagra lepek. Hiba: ${add_result}. Screenshot: ${loaded_screenshot}, ${booking_screenshot}
+                Close Giriton Popup
+                Log To Console    AUTO_BOOK_RESULT=BOOKING_FLOW_ERROR LOG=${log_result}
+                CONTINUE
+            END
 
             Log Auto Booking Step
             ...    ${candidate}
@@ -211,8 +254,8 @@ Giriton Auto Booking From Foglalasok
                 ...    Google Sheet ROBOTLOG iras eredmenye: ${robotlog_write}
             END
             IF    not ${booking_ok}
-                Fail
-                ...    Eles Giriton foglalas sikertelen: ${add_result}
+                Log To Console    AUTO_BOOK_RESULT=${add_result} LOG=${log_result}
+                CONTINUE
             END
         ELSE
             ${not_found_screenshot}=    giriton_auto_booking.Build Screenshot Name
@@ -260,7 +303,7 @@ Beallit Giriton Datum
     ...    const expected=String('${datum_giriton}').trim();
     ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
     ...    const looksLikeDate=function(value){value=String(value || '').trim(); return value.indexOf('/') > -1 && value.length >= 8 && value.length <= 10;};
-    ...    const inputs=Array.from(document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"]')).filter(visible);
+    ...    const inputs=Array.from(document.querySelectorAll('input.v-datefield-textfield, input[class*="v-datefield-textfield"], input[class*="date"], input[placeholder*="/"], input[aria-label*="date" i], input[title*="date" i], input[type="text"]')).filter(visible);
     ...    const candidates=inputs.filter(function(input){
     ...      const value=String(input.value || '').trim();
     ...      const placeholder=String(input.getAttribute('placeholder') || '').trim();
