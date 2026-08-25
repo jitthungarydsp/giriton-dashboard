@@ -1183,7 +1183,6 @@ def _build_summary_rows(
                     "Eltérés": _format_diff(diff_value),
                     "Állapot": status,
                     "Ok": reason,
-                    "Foglalási kód": _clean(source_record.get("booking_code")),
                     "Serial": _clean(source_record.get("serial")),
                     "Courier ID": _clean(source_record.get("courier_id")),
                     "E-mail": _clean(source_record.get("email")).casefold(),
@@ -2069,7 +2068,7 @@ def _booking_plan_row(row: dict) -> dict[str, str]:
         or _clean(row.get("Giriton foglalás"))
         or _clean(row.get("MűszakPro")),
         "booking_code": _clean(row.get("Foglalási kód") or row.get("booking_code")),
-        "courier_id": _clean(row.get("Courier ID") or row.get("Futár ID") or row.get("courier_id")),
+        "courier_id": _clean(row.get("Futár ID") or row.get("courier_id")),
         "courier_name": _clean(row.get("Dolgozó")),
         "email": _clean(row.get("E-mail")).casefold(),
         "serial": _clean(row.get("Serial")),
@@ -2299,7 +2298,6 @@ def _render_bulk_status_booking_section(
             "MűszakPro",
             "Giriton cél",
             "Eltérés",
-            "Foglalási kód",
             "Serial",
             "_bulk_key",
         ]
@@ -2316,7 +2314,6 @@ def _render_bulk_status_booking_section(
             "MűszakPro",
             "Giriton cél",
             "Eltérés",
-            "Foglalási kód",
             "Serial",
             "_bulk_key",
         ],
