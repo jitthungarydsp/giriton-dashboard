@@ -243,6 +243,10 @@ def _worker_match_key(row) -> str:
     if courier_id:
         return f"id:{courier_id}"
 
+    email = _clean(row.get("email")).casefold()
+    if email:
+        return f"email:{email}"
+
     worker = _match_text(row.get("courier_name"))
     return f"name:{worker}" if worker else ""
 
@@ -681,12 +685,16 @@ def _group_shifts(df: pd.DataFrame, time_column: str) -> dict[tuple[str, str, st
 
     groups: dict[tuple[str, str, str], dict] = {}
     for _, row in df.iterrows():
-        worker = _clean(row.get("courier_name"))
-        if not worker or worker.upper() == "URES":
-            continue
-
         worker_key = _worker_match_key(row)
         if not worker_key:
+            continue
+
+        worker = (
+            _clean(row.get("courier_name"))
+            or _clean(row.get("email"))
+            or _clean(row.get("courier_id"))
+        )
+        if worker.upper() == "URES":
             continue
 
         warehouse = _clean(row.get("warehouse"))
