@@ -358,6 +358,10 @@ def _normalize_time(value) -> str:
     if not text:
         return ""
 
+    match = re.search(r"(\d{1,2}):(\d{2})", text)
+    if match:
+        return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+
     parts = text.split(":")
     if len(parts) >= 2:
         try:
