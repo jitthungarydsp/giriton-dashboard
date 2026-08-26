@@ -38,6 +38,21 @@ def normalize_email(value):
     return re.sub(r"\s+", "", clean(value).casefold())
 
 
+def normalize_name(value):
+    text = unicodedata.normalize("NFKD", clean(value).casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def courier_id_from_text(value):
+    match = re.search(r"\b(\d{4,5})\b", clean(value))
+    return match.group(1) if match else ""
+
+
+def name_without_courier_id(value):
+    return normalize_name(re.sub(r"\b\d{4,5}\b", " ", clean(value)))
+
+
 def normalize_time(value):
     text = clean(value)
 
@@ -79,6 +94,12 @@ def optional_int(value):
     try:
         return int(text)
     except ValueError:
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+        if number.is_integer():
+            return int(number)
         return None
 
 
@@ -195,6 +216,8 @@ def read_courier_lookup():
     raise_for_supabase_error(response)
     lookup = {
         "by_email": {},
+        "by_id": {},
+        "by_name": {},
     }
 
     for row in response.json():
@@ -208,6 +231,14 @@ def read_courier_lookup():
 
         if email:
             lookup["by_email"][email] = courier
+        if courier_id:
+            lookup["by_id"][courier_id] = courier
+        for name_key in {
+            normalize_name(courier_name),
+            name_without_courier_id(courier_name),
+        }:
+            if name_key:
+                lookup["by_name"][name_key] = courier
 
     return lookup
 
@@ -229,10 +260,10 @@ def read_courier_lookup_from_id_sheet():
         worksheet = get_or_create_id_worksheet()
         values = worksheet.get_all_values()
     except Exception:
-        return {"by_email": {}}
+        return {"by_email": {}, "by_id": {}, "by_name": {}}
 
     if not values:
-        return {"by_email": {}}
+        return {"by_email": {}, "by_id": {}, "by_name": {}}
 
     header = [normalize_header(value) for value in values[0]]
 
@@ -247,26 +278,35 @@ def read_courier_lookup_from_id_sheet():
     name_index = header_index("courier_name", "nev", "név", "name")
     email_index = header_index("email", "e-mail", "email cim", "e-mail cím")
 
-    if email_index is None:
-        return {"by_email": {}}
-
-    lookup = {"by_email": {}}
+    lookup = {"by_email": {}, "by_id": {}, "by_name": {}}
     for row in values[1:]:
-        email = normalize_email(row[email_index] if email_index < len(row) else "")
-        if not email:
-            continue
+        email = (
+            normalize_email(row[email_index])
+            if email_index is not None and email_index < len(row)
+            else ""
+        )
         courier_id = clean(row[id_index] if id_index is not None and id_index < len(row) else "")
         courier_name = clean(row[name_index] if name_index is not None and name_index < len(row) else "")
-        lookup["by_email"][email] = {
+        courier = {
             "courier_id": courier_id,
             "courier_name": courier_name,
         }
+        if email:
+            lookup["by_email"][email] = courier
+        if courier_id:
+            lookup["by_id"][courier_id] = courier
+        for name_key in {
+            normalize_name(courier_name),
+            name_without_courier_id(courier_name),
+        }:
+            if name_key:
+                lookup["by_name"][name_key] = courier
 
     return lookup
 
 
 def merge_courier_lookups(*lookups):
-    merged = {"by_email": {}}
+    merged = {"by_email": {}, "by_id": {}, "by_name": {}}
     for lookup in lookups:
         if not lookup:
             continue
@@ -275,6 +315,14 @@ def merge_courier_lookups(*lookups):
             normalized_email = normalize_email(email)
             if normalized_email:
                 merged["by_email"][normalized_email] = courier
+        for courier_id, courier in lookup.get("by_id", {}).items():
+            courier_id = clean(courier_id)
+            if courier_id:
+                merged["by_id"][courier_id] = courier
+        for name_key, courier in lookup.get("by_name", {}).items():
+            name_key = normalize_name(name_key)
+            if name_key:
+                merged["by_name"][name_key] = courier
     return merged
 
 
@@ -328,6 +376,17 @@ def find_courier_for_booking(row, courier_lookup):
     email = normalize_email(row.get("email"))
     if email and email in courier_lookup["by_email"]:
         return courier_lookup["by_email"][email]
+
+    courier_id = clean(row.get("courier_id")) or courier_id_from_text(row.get("courier_name"))
+    if courier_id and courier_id in courier_lookup.get("by_id", {}):
+        return courier_lookup["by_id"][courier_id]
+
+    for name_key in {
+        normalize_name(row.get("courier_name")),
+        name_without_courier_id(row.get("courier_name")),
+    }:
+        if name_key and name_key in courier_lookup.get("by_name", {}):
+            return courier_lookup["by_name"][name_key]
 
     return {}
 
