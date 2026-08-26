@@ -1,5 +1,6 @@
 from datetime import datetime
 import re
+import unicodedata
 
 import pandas as pd
 import requests
@@ -23,6 +24,12 @@ FOGLALASOK_TABLE_CANDIDATES = [
 
 def clean(value):
     return str(value or "").strip()
+
+
+def normalize_header(value):
+    text = clean(value).casefold()
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def normalize_email(value):
@@ -193,13 +200,13 @@ def build_db_rows(values, courier_lookup=None):
     fetched_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     rows = []
     header = [
-        clean(value).casefold()
+        normalize_header(value)
         for value in (values[0] if values else [])
     ]
 
     def header_index(*names):
         normalized_names = {
-            clean(name).casefold()
+            normalize_header(name)
             for name in names
         }
 
@@ -209,18 +216,34 @@ def build_db_rows(values, courier_lookup=None):
 
         return None
 
+    def cell_by_header(default_index, *names):
+        index = header_index(*names)
+        if index is None:
+            index = default_index
+        return lambda cells: clean(cells[index]) if index is not None and index < len(cells) else ""
+
+    timestamp_cell = cell_by_header(0, "timestamp", "idopont", "időpont", "created_at", "rogzitve", "rögzítve")
+    work_date_cell = cell_by_header(1, "work_date", "datum", "dátum", "date", "nap")
+    email_cell = cell_by_header(2, "email", "e-mail", "email cim", "e-mail cím", "mail")
+    shift_text_cell = cell_by_header(3, "shift_text", "muszak", "műszak", "shift", "muszakpro", "műszakpro")
+    warehouse_cell = cell_by_header(4, "warehouse", "raktar", "raktár", "depo", "depó")
+    booking_code_cell = cell_by_header(5, "booking_code", "booking code", "kod", "kód", "code", "foglalasi kod", "foglalási kód")
+    admin_recorder_cell = cell_by_header(6, "admin_recorder", "admin", "rogzito", "rögzítő")
+    giriton_uploaded_cell = cell_by_header(7, "giriton_uploaded", "giriton feltoltve", "giriton feltöltve")
+    system_check_cell = cell_by_header(8, "system_check", "rendszer ellenorzes", "rendszer ellenőrzés")
+    legacy_key_cell = cell_by_header(10, "legacy_key", "kulcs", "key")
     courier_id_index = header_index("courier_id")
-    courier_name_index = header_index("nev", "name", "courier_name")
+    courier_name_index = header_index("nev", "név", "name", "courier_name", "futar", "futár")
     serial_index = header_index("sorszam", "serial")
 
     for source_row, row in enumerate(values[1:], start=2):
         cells = list(row) + [""] * 12
-        timestamp_text = clean(cells[0])
-        work_date = clean(cells[1])
-        email = normalize_email(cells[2])
-        shift_text = clean(cells[3])
-        warehouse = clean(cells[4])
-        booking_code = clean(cells[5])
+        timestamp_text = timestamp_cell(cells)
+        work_date = work_date_cell(cells)
+        email = normalize_email(email_cell(cells))
+        shift_text = shift_text_cell(cells)
+        warehouse = warehouse_cell(cells)
+        booking_code = booking_code_cell(cells)
 
         if not work_date or not email or not shift_text:
             continue
@@ -265,10 +288,10 @@ def build_db_rows(values, courier_lookup=None):
             "shift_text": shift_text,
             "warehouse": warehouse,
             "booking_code": booking_code,
-            "admin_recorder": clean(cells[6]),
-            "giriton_uploaded": clean(cells[7]),
-            "system_check": clean(cells[8]),
-            "legacy_key": clean(cells[10]),
+            "admin_recorder": admin_recorder_cell(cells),
+            "giriton_uploaded": giriton_uploaded_cell(cells),
+            "system_check": system_check_cell(cells),
+            "legacy_key": legacy_key_cell(cells),
             "courier_id": optional_int(courier_id),
             "courier_name": courier_name,
             "serial": serial,
@@ -280,10 +303,10 @@ def build_db_rows(values, courier_lookup=None):
                 "shift_text": shift_text,
                 "warehouse": warehouse,
                 "booking_code": booking_code,
-                "admin_recorder": clean(cells[6]),
-                "giriton_uploaded": clean(cells[7]),
-                "system_check": clean(cells[8]),
-                "legacy_key": clean(cells[10]),
+                "admin_recorder": admin_recorder_cell(cells),
+                "giriton_uploaded": giriton_uploaded_cell(cells),
+                "system_check": system_check_cell(cells),
+                "legacy_key": legacy_key_cell(cells),
                 "courier_id": courier_id,
                 "courier_name": courier_name,
                 "serial": serial,
