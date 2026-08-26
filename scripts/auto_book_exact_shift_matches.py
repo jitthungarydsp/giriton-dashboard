@@ -61,6 +61,21 @@ def lead_start_date(today: date, min_lead_hours: int) -> date:
     return today + timedelta(days=days)
 
 
+def is_strict_exact_booking_row(row: pd.Series | dict) -> bool:
+    data = row.to_dict() if hasattr(row, "to_dict") else dict(row or {})
+    if clean(data.get("Állapot")) != "Egyezés":
+        return False
+    if clean(data.get("Giriton állapot")) != "Nincs lefoglalva":
+        return False
+    if clean(data.get("Eltérés")) not in {"0 perc", "0", ""}:
+        return False
+    muszakpro_start = foglalas._normalize_time(data.get("MűszakPro"))
+    giriton_offer = foglalas._normalize_time(data.get("Giriton ajánlat"))
+    if not muszakpro_start or not giriton_offer:
+        return False
+    return muszakpro_start == giriton_offer
+
+
 def parse_log_datetime(value) -> datetime | None:
     text = clean(value)
     if not text:
@@ -157,7 +172,12 @@ def load_exact_matches(
     if rows.empty:
         return rows
 
-    rows = rows[rows["Állapot"].astype(str).eq("Egyezés")].copy()
+    before_strict_filter = len(rows)
+    rows = rows[rows.apply(is_strict_exact_booking_row, axis=1)].copy()
+    print(
+        "AUTO_EXACT_DIAG "
+        f"strict_exact={len(rows)} removed_non_exact={before_strict_filter - len(rows)}"
+    )
     if rows.empty:
         return rows
 
@@ -264,7 +284,7 @@ def main() -> None:
     parser.add_argument("--end-date", default="", help="Záró dátum YYYY-MM-DD. Alap: ma + lookahead-days.")
     parser.add_argument("--lookahead-days", type=int, default=5)
     parser.add_argument("--min-lead-hours", type=int, default=72)
-    parser.add_argument("--tolerance-minutes", type=int, default=30)
+    parser.add_argument("--tolerance-minutes", type=int, default=0)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--source-limit", type=int, default=20000)
     parser.add_argument("--workflow", default=DEFAULT_WORKFLOW)
