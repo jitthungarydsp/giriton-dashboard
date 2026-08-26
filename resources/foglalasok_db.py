@@ -241,6 +241,57 @@ def enrich_bookings_from_courier_master(df):
     return enriched
 
 
+def backfill_booking_couriers_from_master(limit=5000):
+    supabase_url, headers = get_headers()
+    courier_lookup = read_courier_lookup_by_email()
+    if not courier_lookup:
+        return {"checked": 0, "updated": 0}
+
+    checked = 0
+    updated = 0
+
+    for table_name in FOGLALASOK_TABLE_CANDIDATES:
+        endpoint = (
+            f"{supabase_url}/rest/v1/{table_name}"
+            "?select=id,email,courier_id,courier_name,work_date,shift_text,warehouse"
+            "&or=(courier_id.is.null,courier_name.is.null)"
+            f"&limit={int(limit)}"
+        )
+        response = requests.get(endpoint, headers=headers, timeout=60)
+        if is_missing_table_response(response):
+            continue
+
+        raise_for_supabase_error(response)
+        rows = response.json()
+        checked += len(rows)
+
+        for row in rows:
+            email = normalize_email(row.get("email"))
+            courier = courier_lookup.get(email)
+            row_id = clean(row.get("id"))
+            if not row_id or not courier:
+                continue
+
+            update_payload = {}
+            if not clean(row.get("courier_id")):
+                update_payload["courier_id"] = clean(courier.get("courier_id"))
+            if not clean(row.get("courier_name")):
+                update_payload["courier_name"] = clean(courier.get("courier_name"))
+            if not update_payload:
+                continue
+
+            update_response = requests.patch(
+                f"{supabase_url}/rest/v1/{table_name}?id=eq.{row_id}",
+                headers={**headers, "Prefer": "return=minimal"},
+                json=update_payload,
+                timeout=60,
+            )
+            raise_for_supabase_error(update_response)
+            updated += 1
+
+    return {"checked": checked, "updated": updated}
+
+
 def build_db_rows(values, courier_lookup=None):
     if courier_lookup is None:
         try:
