@@ -13,7 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
         str(PROJECT_ROOT),
     )
 
-from resources.foglalasok_db import build_db_rows, upsert_foglalasok_rows
+from resources.foglalasok_db import (
+    backfill_booking_couriers_from_master,
+    build_db_rows,
+    upsert_foglalasok_rows,
+)
 from scripts.cleanup_attendance_muszakpro_comparison import (
     TABLES as COMPARISON_TABLES,
     delete_collection,
@@ -105,6 +109,13 @@ def sync_foglalasok_raw(dry_run=False):
     )
     print(
         f"Foglalasok raw DB feltoltes: {result}"
+    )
+
+    backfill_result = backfill_booking_couriers_from_master()
+    print(
+        "Foglalasok futartorzzs backfill: "
+        f"checked={backfill_result.get('checked', 0)} "
+        f"updated={backfill_result.get('updated', 0)}"
     )
 
 
