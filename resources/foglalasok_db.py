@@ -80,6 +80,21 @@ def optional_int(value):
         return None
 
 
+def looks_like_date(value):
+    text = clean(value)
+    if not text:
+        return False
+    try:
+        datetime.strptime(text[:10], "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def looks_like_email(value):
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", clean(value)))
+
+
 def shift_start(shift_text):
     text = clean(shift_text)
 
@@ -199,12 +214,31 @@ def build_db_rows(values, courier_lookup=None):
 
     fetched_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     rows = []
+    raw_header = list(values[0] if values else [])
     header = [
         normalize_header(value)
-        for value in (values[0] if values else [])
+        for value in raw_header
     ]
+    known_headers = {
+        "timestamp", "idopont", "createdat", "rogzitve", "workdate", "datum",
+        "date", "nap", "email", "emailcim", "mail", "shifttext", "muszak",
+        "shift", "muszakpro", "warehouse", "raktar", "depo", "bookingcode",
+        "kod", "code", "foglalasikod", "adminrecorder", "admin", "rogzito",
+        "giritonuploaded", "rendszerellenorzes", "systemcheck", "legacykey",
+        "kulcs", "key", "courierid", "nev", "name", "couriername", "futar",
+        "sorszam", "serial",
+    }
+    has_header = bool(set(header) & known_headers)
+    compact_headerless = (
+        not has_header
+        and len(raw_header) >= 4
+        and looks_like_date(raw_header[0])
+        and looks_like_email(raw_header[1])
+    )
 
     def header_index(*names):
+        if not has_header:
+            return None
         normalized_names = {
             normalize_header(name)
             for name in names
@@ -222,21 +256,52 @@ def build_db_rows(values, courier_lookup=None):
             index = default_index
         return lambda cells: clean(cells[index]) if index is not None and index < len(cells) else ""
 
-    timestamp_cell = cell_by_header(0, "timestamp", "idopont", "időpont", "created_at", "rogzitve", "rögzítve")
-    work_date_cell = cell_by_header(1, "work_date", "datum", "dátum", "date", "nap")
-    email_cell = cell_by_header(2, "email", "e-mail", "email cim", "e-mail cím", "mail")
-    shift_text_cell = cell_by_header(3, "shift_text", "muszak", "műszak", "shift", "muszakpro", "műszakpro")
-    warehouse_cell = cell_by_header(4, "warehouse", "raktar", "raktár", "depo", "depó")
-    booking_code_cell = cell_by_header(5, "booking_code", "booking code", "kod", "kód", "code", "foglalasi kod", "foglalási kód")
-    admin_recorder_cell = cell_by_header(6, "admin_recorder", "admin", "rogzito", "rögzítő")
-    giriton_uploaded_cell = cell_by_header(7, "giriton_uploaded", "giriton feltoltve", "giriton feltöltve")
-    system_check_cell = cell_by_header(8, "system_check", "rendszer ellenorzes", "rendszer ellenőrzés")
-    legacy_key_cell = cell_by_header(10, "legacy_key", "kulcs", "key")
+    if compact_headerless:
+        default_indexes = {
+            "timestamp": None,
+            "work_date": 0,
+            "email": 1,
+            "shift_text": 2,
+            "warehouse": 3,
+            "booking_code": 4,
+            "admin_recorder": 5,
+            "giriton_uploaded": 6,
+            "system_check": 7,
+            "legacy_key": 8,
+        }
+        data_rows = values
+        first_source_row = 1
+    else:
+        default_indexes = {
+            "timestamp": 0,
+            "work_date": 1,
+            "email": 2,
+            "shift_text": 3,
+            "warehouse": 4,
+            "booking_code": 5,
+            "admin_recorder": 6,
+            "giriton_uploaded": 7,
+            "system_check": 8,
+            "legacy_key": 10,
+        }
+        data_rows = values[1:] if has_header else values
+        first_source_row = 2 if has_header else 1
+
+    timestamp_cell = cell_by_header(default_indexes["timestamp"], "timestamp", "idopont", "időpont", "created_at", "rogzitve", "rögzítve")
+    work_date_cell = cell_by_header(default_indexes["work_date"], "work_date", "datum", "dátum", "date", "nap")
+    email_cell = cell_by_header(default_indexes["email"], "email", "e-mail", "email cim", "e-mail cím", "mail")
+    shift_text_cell = cell_by_header(default_indexes["shift_text"], "shift_text", "muszak", "műszak", "shift", "muszakpro", "műszakpro")
+    warehouse_cell = cell_by_header(default_indexes["warehouse"], "warehouse", "raktar", "raktár", "depo", "depó")
+    booking_code_cell = cell_by_header(default_indexes["booking_code"], "booking_code", "booking code", "kod", "kód", "code", "foglalasi kod", "foglalási kód")
+    admin_recorder_cell = cell_by_header(default_indexes["admin_recorder"], "admin_recorder", "admin", "rogzito", "rögzítő")
+    giriton_uploaded_cell = cell_by_header(default_indexes["giriton_uploaded"], "giriton_uploaded", "giriton feltoltve", "giriton feltöltve")
+    system_check_cell = cell_by_header(default_indexes["system_check"], "system_check", "rendszer ellenorzes", "rendszer ellenőrzés")
+    legacy_key_cell = cell_by_header(default_indexes["legacy_key"], "legacy_key", "kulcs", "key")
     courier_id_index = header_index("courier_id")
     courier_name_index = header_index("nev", "név", "name", "courier_name", "futar", "futár")
     serial_index = header_index("sorszam", "serial")
 
-    for source_row, row in enumerate(values[1:], start=2):
+    for source_row, row in enumerate(data_rows, start=first_source_row):
         cells = list(row) + [""] * 12
         timestamp_text = timestamp_cell(cells)
         work_date = work_date_cell(cells)
