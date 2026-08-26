@@ -25,6 +25,30 @@ def normalize_name(value):
     return text
 
 
+def courier_id_from_text(value):
+    match = re.search(r"\b(\d{4,5})\b", clean(value))
+    return match.group(1) if match else ""
+
+
+def name_without_courier_id(value):
+    return normalize_name(
+        re.sub(r"\b\d{4,5}\b", " ", clean(value))
+    )
+
+
+def split_courier_names(value):
+    text = clean(value)
+    if not text:
+        return []
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+    parts = [
+        part.strip()
+        for part in re.split(r"\s*[,;|]\s*", text)
+        if part.strip()
+    ]
+    return parts or [text]
+
+
 def is_empty_name(value):
     return normalize_name(value) in {"", "ures", "üres", "Ăśres", "(none)"}
 
@@ -128,14 +152,38 @@ def read_courier_lookup():
 
     for row in response.json():
         name = normalize_name(row.get("courier_name"))
+        courier_id = clean(row.get("courier_id"))
+        courier = {
+            "courier_id": row.get("courier_id"),
+            "email": clean(row.get("email")).casefold(),
+        }
 
         if name:
-            lookup[name] = {
-                "courier_id": row.get("courier_id"),
-                "email": clean(row.get("email")).casefold(),
-            }
+            lookup[name] = courier
+        clean_name_without_id = name_without_courier_id(row.get("courier_name"))
+        if clean_name_without_id:
+            lookup[clean_name_without_id] = courier
+        if courier_id:
+            lookup[f"id:{courier_id}"] = courier
 
     return lookup
+
+
+def find_courier(courier_name, courier_lookup):
+    courier_id = courier_id_from_text(courier_name)
+    if courier_id:
+        driver = courier_lookup.get(f"id:{courier_id}")
+        if driver:
+            return driver
+
+    for key in {
+        normalize_name(courier_name),
+        name_without_courier_id(courier_name),
+    }:
+        if key and key in courier_lookup:
+            return courier_lookup[key]
+
+    return {}
 
 
 def build_db_rows(rows, courier_lookup=None):
@@ -185,58 +233,69 @@ def build_db_rows(rows, courier_lookup=None):
             continue
 
         if is_empty_name(courier_name):
-            courier_name = "URES"
-            driver = {}
-            status = "URES"
+            courier_names = ["URES"]
         else:
-            driver = courier_lookup.get(
-                normalize_name(courier_name),
-                {},
+            courier_names = split_courier_names(courier_name)
+
+        for current_courier_name in courier_names:
+            if is_empty_name(current_courier_name):
+                current_courier_name = "URES"
+                driver = {}
+                status = "URES"
+            else:
+                driver = find_courier(
+                    current_courier_name,
+                    courier_lookup,
+                )
+                status = "GIRITON_OK"
+
+            courier_id = (
+                enriched_courier_id
+                or courier_id_from_text(current_courier_name)
+                or driver.get("courier_id")
             )
-            status = "GIRITON_OK"
+            email = enriched_email or driver.get("email", "")
+            serial = enriched_serial or shift_serial(
+                work_date,
+                courier_id,
+                warehouse,
+                start,
+            )
+            status = enriched_status or status
+            response_json = {
+                "work_date": work_date,
+                "start": start,
+                "end": end,
+                "warehouse": warehouse,
+                "occupancy": occupancy,
+                "booked": booked,
+                "maximum": maximum,
+                "courier_name": current_courier_name,
+                "source_courier_name": courier_name,
+                "email": email,
+                "courier_id": courier_id,
+                "serial": serial,
+                "status": status,
+            }
 
-        courier_id = enriched_courier_id or driver.get("courier_id")
-        email = enriched_email or driver.get("email", "")
-        serial = enriched_serial or shift_serial(
-            work_date,
-            courier_id,
-            warehouse,
-            start,
-        )
-        status = enriched_status or status
-        response_json = {
-            "work_date": work_date,
-            "start": start,
-            "end": end,
-            "warehouse": warehouse,
-            "occupancy": occupancy,
-            "booked": booked,
-            "maximum": maximum,
-            "courier_name": courier_name,
-            "email": email,
-            "courier_id": courier_id,
-            "serial": serial,
-            "status": status,
-        }
-
-        db_rows.append({
-            "source_name": SOURCE_NAME,
-            "work_date": work_date,
-            "start_time": db_time(start),
-            "end_time": db_time(end),
-            "warehouse": warehouse,
-            "occupancy": occupancy,
-            "booked": optional_int(booked),
-            "maximum": optional_int(maximum),
-            "courier_name": courier_name,
-            "email": email,
-            "courier_id": optional_int(courier_id),
-            "serial": serial,
-            "status": status,
-            "response_json": response_json,
-            "fetched_at": fetched_at,
-            "updated_at": fetched_at,
-        })
+            db_rows.append({
+                "source_name": SOURCE_NAME,
+                "work_date": work_date,
+                "start_time": db_time(start),
+                "end_time": db_time(end),
+                "warehouse": warehouse,
+                "occupancy": occupancy,
+                "booked": optional_int(booked),
+                "maximum": optional_int(maximum),
+                "courier_name": current_courier_name,
+                "email": email,
+                "courier_id": optional_int(courier_id),
+                "serial": serial,
+                "status": status,
+                "response_json": response_json,
+                "fetched_at": fetched_at,
+                "updated_at": fetched_at,
+            })
 
     return db_rows
 
