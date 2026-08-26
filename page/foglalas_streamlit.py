@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -44,7 +45,10 @@ GITHUB_OWNER_DEFAULT = "jitthungarydsp"
 GITHUB_REPO_DEFAULT = "giriton-dashboard"
 GITHUB_REF_DEFAULT = "main"
 AUTO_BOOKING_WORKFLOW = "giriton-auto-booking.yml"
+MUSZAKPRO_REFRESH_WORKFLOW = "daily-attendance-muszakpro.yml"
 BOOKING_LINK_TTL_SECONDS = 15 * 60
+FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
+FOGLALAS_AUTO_REFRESH_SECONDS = 60
 
 
 def _clean(value) -> str:
@@ -1606,12 +1610,12 @@ def _render_kpi(label: str, value: int | str, tone: str = "blue", icon: str = ""
     )
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_next_5_days():
     return pd.DataFrame(read_next_5_day_shift_comparison(limit=20000))
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_muszakpro_data(start_date: date, end_date: date):
     return read_foglalasok_raw(
         start_date=start_date,
@@ -1620,7 +1624,7 @@ def _load_muszakpro_data(start_date: date, end_date: date):
     )
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_giriton_data(start_date: date, end_date: date):
     return read_giriton_shifts_raw(
         start_date=start_date,
@@ -1629,12 +1633,12 @@ def _load_giriton_data(start_date: date, end_date: date):
     )
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_latest_giriton_data():
     return read_giriton_shifts_raw(limit=1)
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_giriton_day(work_date):
     return read_giriton_shifts_raw(
         start_date=work_date,
@@ -1643,7 +1647,7 @@ def _load_giriton_day(work_date):
     )
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_log_data(start_date: date, end_date: date):
     return read_giriton_booking_log(
         start_date=start_date.isoformat(),
@@ -1743,6 +1747,30 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
         )
     st.sidebar.divider()
     st.sidebar.write("Kézi robotindítás")
+    if st.sidebar.button("MűszakPro/Foglalások frissítése", width="stretch"):
+        if end_date < start_date:
+            st.sidebar.error("A MűszakPro frissítéshez a záró dátum nem lehet korábbi.")
+        else:
+            days_to_sync = max((end_date - start_date).days + 1, 1)
+            try:
+                result = _dispatch_workflow_fallback(
+                    MUSZAKPRO_REFRESH_WORKFLOW,
+                    {
+                        "start_date": start_date.isoformat(),
+                        "days": str(days_to_sync),
+                        "dry_run": "false",
+                    },
+                )
+                st.session_state["foglalas_last_muszakpro_refresh_dispatch"] = result
+                st.cache_data.clear()
+                st.sidebar.success(
+                    f"MűszakPro/Foglalások frissítés indítva: {start_date} + {days_to_sync} nap"
+                )
+            except GitHubActionsError as exc:
+                st.sidebar.error(str(exc))
+            except Exception as exc:
+                st.sidebar.error(f"MűszakPro frissítés indítás hiba: {exc}")
+
     if st.sidebar.button("Giriton futtatása kézzel", width="stretch"):
         if end_date < start_date:
             st.sidebar.error("A Giriton futtatáshoz a záró dátum nem lehet korábbi.")
@@ -2699,6 +2727,10 @@ def _render_recent_booking_issues(log_df: pd.DataFrame) -> None:
 
 
 def show_foglalas_streamlit_page() -> None:
+    st_autorefresh(
+        interval=FOGLALAS_AUTO_REFRESH_SECONDS * 1000,
+        key="foglalas_streamlit_auto_refresh",
+    )
     _apply_styles()
     view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
 
@@ -2776,6 +2808,13 @@ def show_foglalas_streamlit_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+    last_muszakpro_dispatch = st.session_state.get("foglalas_last_muszakpro_refresh_dispatch")
+    if last_muszakpro_dispatch:
+        st.info(
+            "MűszakPro/Foglalások frissítés elindítva: "
+            f"{last_muszakpro_dispatch.get('workflow')} / "
+            f"{last_muszakpro_dispatch.get('triggered_at')}"
+        )
     errors = [
         error
         for error in [
