@@ -27,6 +27,21 @@ where lower(trim(booking.email)) = lower(trim(master.email))
       or nullif(booking.serial, '') is null
   );
 
+update public.raw_muszakpro_bookings booking
+set
+    serial = concat(
+        to_char(booking.work_date, 'MM/DD'),
+        '_',
+        booking.courier_id,
+        '_',
+        coalesce(nullif(booking.warehouse, ''), '-'),
+        '_',
+        regexp_replace(coalesce(booking.shift_text, ''), '^.*?([0-9]{1,2}:[0-9]{2}).*$', '\1')
+    ),
+    updated_at = now()
+where booking.courier_id is not null
+  and nullif(booking.serial, '') is null;
+
 update public.foglalasok_raw booking
 set
     courier_id = coalesce(booking.courier_id, master.courier_id),
@@ -52,6 +67,21 @@ where lower(trim(booking.email)) = lower(trim(master.email))
       or nullif(booking.courier_name, '') is null
       or nullif(booking.serial, '') is null
   );
+
+update public.foglalasok_raw booking
+set
+    serial = concat(
+        to_char(booking.work_date, 'MM/DD'),
+        '_',
+        booking.courier_id,
+        '_',
+        coalesce(nullif(booking.warehouse, ''), '-'),
+        '_',
+        regexp_replace(coalesce(booking.shift_text, ''), '^.*?([0-9]{1,2}:[0-9]{2}).*$', '\1')
+    ),
+    updated_at = now()
+where booking.courier_id is not null
+  and nullif(booking.serial, '') is null;
 
 select
     'raw_muszakpro_bookings' as table_name,

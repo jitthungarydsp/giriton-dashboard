@@ -223,6 +223,8 @@ def enrich_bookings_from_courier_master(df):
         enriched["courier_id"] = ""
     if "courier_name" not in enriched.columns:
         enriched["courier_name"] = ""
+    if "serial" not in enriched.columns:
+        enriched["serial"] = ""
 
     for index, row in enriched.iterrows():
         email = normalize_email(row.get("email"))
@@ -237,6 +239,14 @@ def enrich_bookings_from_courier_master(df):
             enriched.at[index, "courier_id"] = clean(courier.get("courier_id"))
         if not current_name:
             enriched.at[index, "courier_name"] = courier.get("courier_name")
+        if not clean(row.get("serial")):
+            courier_id = clean(row.get("courier_id")) or clean(courier.get("courier_id"))
+            enriched.at[index, "serial"] = shift_serial(
+                row.get("work_date"),
+                courier_id,
+                row.get("warehouse"),
+                shift_start(row.get("shift_text")),
+            )
 
     return enriched
 
@@ -253,8 +263,8 @@ def backfill_booking_couriers_from_master(limit=5000):
     for table_name in FOGLALASOK_TABLE_CANDIDATES:
         endpoint = (
             f"{supabase_url}/rest/v1/{table_name}"
-            "?select=id,email,courier_id,courier_name,work_date,shift_text,warehouse"
-            "&or=(courier_id.is.null,courier_name.is.null)"
+            "?select=id,email,courier_id,courier_name,serial,work_date,shift_text,warehouse"
+            "&or=(courier_id.is.null,courier_name.is.null,serial.is.null)"
             f"&limit={int(limit)}"
         )
         response = requests.get(endpoint, headers=headers, timeout=60)
@@ -277,6 +287,14 @@ def backfill_booking_couriers_from_master(limit=5000):
                 update_payload["courier_id"] = clean(courier.get("courier_id"))
             if not clean(row.get("courier_name")):
                 update_payload["courier_name"] = clean(courier.get("courier_name"))
+            if not clean(row.get("serial")):
+                courier_id = clean(row.get("courier_id")) or clean(courier.get("courier_id"))
+                update_payload["serial"] = shift_serial(
+                    row.get("work_date"),
+                    courier_id,
+                    row.get("warehouse"),
+                    shift_start(row.get("shift_text")),
+                )
             if not update_payload:
                 continue
 
