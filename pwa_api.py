@@ -284,10 +284,6 @@ def authenticate_legacy_json_user(username: str, password: str) -> dict[str, Any
 
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:
-    legacy_user = authenticate_legacy_json_user(username, password)
-    if legacy_user:
-        return legacy_user
-
     try:
         db_user = authenticate_pwa_db_user(username, password)
         if db_user:
@@ -295,6 +291,10 @@ def authenticate(username: str, password: str) -> dict[str, Any] | None:
     except Exception:
         # If the DB user table is not deployed yet, keep the legacy users.json login working.
         pass
+
+    legacy_user = authenticate_legacy_json_user(username, password)
+    if legacy_user:
+        return legacy_user
     return None
 
 
@@ -379,7 +379,7 @@ def create_session(user: dict[str, Any]) -> str:
     payload = "|".join(
         [
             str(user.get("username") or ""),
-            str(user.get("courierId") or ""),
+            str(user.get("courierId") or user.get("courier_id") or ""),
             str(int(time.time())),
             secrets.token_urlsafe(10),
         ]
@@ -403,15 +403,6 @@ def read_session(token: str) -> dict[str, Any] | None:
     except (ValueError, TypeError):
         return None
 
-    for user in load_users():
-        if not user.get("active", True):
-            continue
-        if str(user.get("username") or "") != username:
-            continue
-        if str(user.get("courierId") or "") != courier_id:
-            continue
-        return user
-
     try:
         db_user = find_pwa_user_by_login(username)
     except Exception:
@@ -420,6 +411,15 @@ def read_session(token: str) -> dict[str, Any] | None:
         db_courier_id = str(db_user.get("courier_id") or db_user.get("courierId") or "")
         if db_courier_id == courier_id:
             return public_pwa_user(db_user)
+
+    for user in load_users():
+        if not user.get("active", True):
+            continue
+        if str(user.get("username") or "") != username:
+            continue
+        if str(user.get("courierId") or "") != courier_id:
+            continue
+        return user
     return None
 
 
