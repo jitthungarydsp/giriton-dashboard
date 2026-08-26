@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from google_client import open_spreadsheet
 from resources.source_sheet_sync import SOURCE_SPREADSHEET_ID
 from resources.supabase_raw import (
     format_date_filter,
@@ -16,6 +17,7 @@ from resources.supabase_raw import (
 
 SOURCE_NAME = "google-sheet-foglalasok"
 FOGLALASOK_SHEET_NAME = "Foglalasok"
+ID_SHEET_NAME = "ID"
 FOGLALASOK_TABLE_CANDIDATES = [
     "raw_muszakpro_bookings",
     "foglalasok_raw",
@@ -210,6 +212,107 @@ def read_courier_lookup():
     return lookup
 
 
+def get_or_create_id_worksheet():
+    spreadsheet = open_spreadsheet(SOURCE_SPREADSHEET_ID)
+    try:
+        return spreadsheet.worksheet(ID_SHEET_NAME)
+    except Exception:
+        return spreadsheet.add_worksheet(
+            title=ID_SHEET_NAME,
+            rows=5000,
+            cols=5,
+        )
+
+
+def read_courier_lookup_from_id_sheet():
+    try:
+        worksheet = get_or_create_id_worksheet()
+        values = worksheet.get_all_values()
+    except Exception:
+        return {"by_email": {}}
+
+    if not values:
+        return {"by_email": {}}
+
+    header = [normalize_header(value) for value in values[0]]
+
+    def header_index(*names):
+        normalized_names = {normalize_header(name) for name in names}
+        for index, column in enumerate(header):
+            if column in normalized_names:
+                return index
+        return None
+
+    id_index = header_index("courier_id", "futar id", "futár id", "id")
+    name_index = header_index("courier_name", "nev", "név", "name")
+    email_index = header_index("email", "e-mail", "email cim", "e-mail cím")
+
+    if email_index is None:
+        return {"by_email": {}}
+
+    lookup = {"by_email": {}}
+    for row in values[1:]:
+        email = normalize_email(row[email_index] if email_index < len(row) else "")
+        if not email:
+            continue
+        courier_id = clean(row[id_index] if id_index is not None and id_index < len(row) else "")
+        courier_name = clean(row[name_index] if name_index is not None and name_index < len(row) else "")
+        lookup["by_email"][email] = {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+        }
+
+    return lookup
+
+
+def merge_courier_lookups(*lookups):
+    merged = {"by_email": {}}
+    for lookup in lookups:
+        if not lookup:
+            continue
+        by_email = lookup.get("by_email", lookup)
+        for email, courier in by_email.items():
+            normalized_email = normalize_email(email)
+            if normalized_email:
+                merged["by_email"][normalized_email] = courier
+    return merged
+
+
+def read_combined_courier_lookup():
+    sheet_lookup = read_courier_lookup_from_id_sheet()
+    db_lookup = read_courier_lookup()
+    return merge_courier_lookups(sheet_lookup, db_lookup)
+
+
+def export_courier_master_to_id_sheet():
+    supabase_url, headers = get_headers()
+    endpoint = (
+        f"{supabase_url}/rest/v1/courier_master"
+        "?select=courier_id,courier_name,email"
+        "&order=courier_name.asc,courier_id.asc"
+        "&limit=5000"
+    )
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+
+    values = [["courier_id", "courier_name", "email"]]
+    for row in response.json():
+        values.append([
+            clean(row.get("courier_id")),
+            clean(row.get("courier_name")),
+            clean(row.get("email")),
+        ])
+
+    worksheet = get_or_create_id_worksheet()
+    worksheet.clear()
+    worksheet.update("A1", values)
+    return {"rows": max(len(values) - 1, 0), "sheet": ID_SHEET_NAME}
+
+
 def read_courier_lookup_by_email():
     return read_courier_lookup().get("by_email", {})
 
@@ -234,7 +337,7 @@ def enrich_bookings_from_courier_master(df):
         return df
 
     try:
-        courier_lookup = read_courier_lookup()
+        courier_lookup = read_combined_courier_lookup()
     except Exception:
         return df
 
@@ -276,7 +379,7 @@ def enrich_bookings_from_courier_master(df):
 
 def backfill_booking_couriers_from_master(limit=5000):
     supabase_url, headers = get_headers()
-    courier_lookup = read_courier_lookup()
+    courier_lookup = read_combined_courier_lookup()
     if not courier_lookup:
         return {"checked": 0, "updated": 0}
 
@@ -335,7 +438,7 @@ def backfill_booking_couriers_from_master(limit=5000):
 def build_db_rows(values, courier_lookup=None):
     if courier_lookup is None:
         try:
-            courier_lookup = read_courier_lookup()
+            courier_lookup = read_combined_courier_lookup()
         except Exception:
             courier_lookup = {}
 

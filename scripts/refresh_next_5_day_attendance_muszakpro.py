@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from resources.foglalasok_db import (
     backfill_booking_couriers_from_master,
     build_db_rows,
+    export_courier_master_to_id_sheet,
     upsert_foglalasok_rows,
 )
 from scripts.cleanup_attendance_muszakpro_comparison import (
@@ -88,6 +89,16 @@ def resolve_work_dates(start_date_text, days):
 
 
 def sync_foglalasok_raw(dry_run=False):
+    if dry_run:
+        print("DRY RUN, ID ful frissites kihagyva.")
+    else:
+        id_sheet_result = export_courier_master_to_id_sheet()
+        print(
+            "ID ful frissites: "
+            f"sheet={id_sheet_result.get('sheet')} "
+            f"rows={id_sheet_result.get('rows', 0)}"
+        )
+
     values = load_values_from_sheet()
     rows = build_db_rows(
         values
