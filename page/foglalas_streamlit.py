@@ -236,10 +236,50 @@ def _match_text(value) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+def _courier_id_from_text(value) -> str:
+    match = re.search(r"\b(\d{4,5})\b", _clean(value))
+    return match.group(1) if match else ""
+
+
+def _worker_name_parts(value) -> list[str]:
+    text = _clean(value)
+    if not text:
+        return []
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+    parts = [
+        part.strip()
+        for part in re.split(r"\s*[,;|]\s*", text)
+        if part.strip()
+    ]
+    return parts or [text]
+
+
+def _worker_name_match_keys(value) -> list[str]:
+    keys = []
+    for part in _worker_name_parts(value):
+        courier_id = _courier_id_from_text(part)
+        if courier_id:
+            keys.append(f"id:{courier_id}")
+
+        worker = _match_text(part)
+        if worker:
+            keys.append(f"name:{worker}")
+
+        worker_without_id = _match_text(re.sub(r"\b\d{4,5}\b", " ", part))
+        if worker_without_id:
+            keys.append(f"name:{worker_without_id}")
+
+    return list(dict.fromkeys(keys))
+
+
 def _worker_match_key(row) -> str:
     courier_id = _clean(row.get("courier_id"))
     if re.fullmatch(r"\d+\.0+", courier_id):
         courier_id = courier_id.split(".", 1)[0]
+    if courier_id:
+        return f"id:{courier_id}"
+
+    courier_id = _courier_id_from_text(row.get("courier_name"))
     if courier_id:
         return f"id:{courier_id}"
 
@@ -264,9 +304,7 @@ def _booking_worker_match_keys(row) -> list[str]:
     if email:
         keys.append(f"email:{email}")
 
-    worker = _match_text(row.get("courier_name"))
-    if worker:
-        keys.append(f"name:{worker}")
+    keys.extend(_worker_name_match_keys(row.get("courier_name")))
 
     return list(dict.fromkeys(keys))
 
