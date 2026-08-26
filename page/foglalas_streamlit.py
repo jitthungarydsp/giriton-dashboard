@@ -309,7 +309,7 @@ def _has_open_giriton_capacity(row) -> bool:
 
 
 def _is_available_giriton_shift(row) -> bool:
-    return not _is_booked_giriton_shift(row) and _has_open_giriton_capacity(row)
+    return _has_open_giriton_capacity(row)
 
 
 def _is_booked_giriton_shift(row) -> bool:
