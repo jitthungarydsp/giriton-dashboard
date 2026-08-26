@@ -4,6 +4,7 @@ import re
 import traceback
 import unicodedata
 import uuid
+import zipfile
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from streamlit_autorefresh import st_autorefresh
@@ -31,7 +32,7 @@ from resources.email_templates_db import (
     read_email_templates,
     send_courier_template_email,
 )
-from resources.pwa_invoice_validation import extract_expected_amount, validate_invoice
+from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -101,12 +102,25 @@ if "user" not in st.session_state:
 
 user = st.session_state["user"]
 
+
+def can_view_accounting_invoice_archive(current_user: dict[str, object]) -> bool:
+    role = str(current_user.get("role") or "").strip().casefold()
+    return role in {
+        "admin", "superadmin", "accountant", "bookkeeper", "finance",
+        "konyvelo", "könyvelő", "konyveles", "könyvelés", "penzugy", "pénzügy",
+    }
+
+
 st.sidebar.success(f"Felhasználó: {user['username']}")
 st.sidebar.info(f"Jogosultság: {user['role']}")
 logout_button()
+devtest_page_options = ["Elszamolas"]
+if can_view_accounting_invoice_archive(user):
+    devtest_page_options.append("Számla archívum")
+devtest_page_options.append("PDF minta")
 devtest_page = st.sidebar.radio(
     "Devtest oldal",
-    ["Elszamolas", "PDF minta"],
+    devtest_page_options,
     key="devtest_page",
 )
 
@@ -7730,6 +7744,329 @@ def parse_huf_value(value: object) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+ACCOUNTING_INVOICE_COMPANY_SUFFIX_RE = re.compile(
+    r"\b(kft\.?|bt\.?|zrt\.?|nyrt\.?|ev\.?|e\.v\.?|egy[eé]ni v[aá]llalkoz[oó])\b",
+    flags=re.IGNORECASE,
+)
+
+
+def accounting_invoice_clean_text(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def accounting_invoice_is_noise_line(line: str) -> bool:
+    text = accounting_invoice_clean_text(line).casefold()
+    if not text:
+        return True
+    blocked = {
+        "szamla", "számla", "invoice", "elado", "eladó", "szallito", "szállító",
+        "vevo", "vevő", "megrendelo", "megrendelő", "fizetesi mod", "fizetési mód",
+        "adoszam", "adószám", "bankszamlaszam", "bankszámlaszám",
+    }
+    if text in blocked:
+        return True
+    if any(token in text for token in ("adószám", "adoszam", "bankszámla", "bankszamla")):
+        return True
+    if re.search(r"\d{4}\s+[a-záéíóöőúüű]", text):
+        return True
+    if re.fullmatch(r"[\d\s./:-]+", text):
+        return True
+    return False
+
+
+def accounting_invoice_candidate_score(line: str) -> int:
+    text = accounting_invoice_clean_text(line)
+    score = 0
+    if ACCOUNTING_INVOICE_COMPANY_SUFFIX_RE.search(text):
+        score += 100
+    if re.search(r"[A-ZÁÉÍÓÖŐÚÜŰ][a-záéíóöőúüű]+", text):
+        score += 15
+    if not re.search(r"\d", text):
+        score += 10
+    if len(text) <= 80:
+        score += 5
+    return score
+
+
+def extract_accounting_invoice_seller_name(text: str, seller_tax_number: str = "") -> str:
+    lines = [accounting_invoice_clean_text(line) for line in str(text or "").splitlines()]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    label_patterns = ("elado", "eladó", "szallito", "szállító", "kiallito", "kiállító")
+    for index, line in enumerate(lines):
+        normalized = line.casefold()
+        if any(label in normalized for label in label_patterns):
+            candidates = [item for item in lines[index + 1:index + 6] if not accounting_invoice_is_noise_line(item)]
+            if candidates:
+                return max(candidates, key=accounting_invoice_candidate_score)
+    if seller_tax_number:
+        for index, line in enumerate(lines):
+            if seller_tax_number in line:
+                candidates = [item for item in lines[max(0, index - 6):index] if not accounting_invoice_is_noise_line(item)]
+                if candidates:
+                    return max(candidates, key=accounting_invoice_candidate_score)
+    suffix_candidates = [
+        line for line in lines[:30]
+        if not accounting_invoice_is_noise_line(line) and ACCOUNTING_INVOICE_COMPANY_SUFFIX_RE.search(line)
+    ]
+    if suffix_candidates:
+        return max(suffix_candidates, key=accounting_invoice_candidate_score)
+    candidates = [line for line in lines[:20] if not accounting_invoice_is_noise_line(line)]
+    return max(candidates, key=accounting_invoice_candidate_score) if candidates else ""
+
+
+def accounting_invoice_amount_from_note(document: dict[str, object]) -> int:
+    note = str(document.get("note") or "")
+    for pattern in [
+        r"brutt[óo]\s+[öo]sszesen\s*:?\s*([0-9\s.,-]+)\s*Ft",
+        r"sz[áa]mla\s+[öo]sszege\s*:?\s*([0-9\s.,-]+)\s*Ft",
+        r"[öo]sszeg\s*:?\s*([0-9\s.,-]+)\s*Ft",
+    ]:
+        match = re.search(pattern, note, flags=re.IGNORECASE)
+        if match:
+            return int(parse_huf_value(match.group(1)))
+    return 0
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def read_accounting_invoice_details(document_id: str, uploaded_at: str = "", file_size: object = 0) -> dict[str, object]:
+    del uploaded_at, file_size
+    content_row = read_peopleforce_document_content(document_id)
+    file_name = str(content_row.get("file_name") or "")
+    mime_type = str(content_row.get("mime_type") or "")
+    file_bytes = decode_document_content(content_row.get("file_content_base64"))
+    parsed: dict[str, object] = {}
+    parse_error = ""
+    if file_bytes and ("pdf" in mime_type.casefold() or file_name.casefold().endswith(".pdf")):
+        try:
+            parsed = parse_invoice_pdf(file_bytes)
+        except Exception as exc:
+            parse_error = str(exc)
+    seller_name = extract_accounting_invoice_seller_name(
+        str(parsed.get("text") or ""),
+        str(parsed.get("seller_tax_number") or ""),
+    )
+    return {
+        "seller_name": seller_name,
+        "seller_tax_number": str(parsed.get("seller_tax_number") or ""),
+        "invoice_number": str(parsed.get("invoice_number") or ""),
+        "gross_total_huf": int(parsed.get("gross_total") or 0),
+        "parse_error": parse_error,
+    }
+
+
+def build_accounting_invoice_rows(documents: pd.DataFrame) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    if documents.empty:
+        return rows
+    for document in documents.to_dict("records"):
+        document_id = str(document.get("id") or "").strip()
+        details = {}
+        if document_id:
+            try:
+                details = read_accounting_invoice_details(
+                    document_id,
+                    str(document.get("uploaded_at") or ""),
+                    document.get("file_size") or 0,
+                )
+            except Exception as exc:
+                details = {"parse_error": str(exc)}
+        document_month_value = pd.to_datetime(document.get("document_month"), errors="coerce")
+        uploaded_at_value = pd.to_datetime(document.get("uploaded_at"), errors="coerce")
+        invoice_amount = int(details.get("gross_total_huf") or 0) or accounting_invoice_amount_from_note(document)
+        rows.append({
+            "_document_id": document_id,
+            "_mime_type": str(document.get("mime_type") or ""),
+            "Kijelöl": False,
+            "Hónap": document_month_value.strftime("%Y-%m") if not pd.isna(document_month_value) else str(document.get("document_month") or ""),
+            "Futár ID": str(document.get("courier_id") or ""),
+            "Futár neve": str(document.get("courier_name") or ""),
+            "Számla neve": str(document.get("title") or document.get("file_name") or ""),
+            "Fájl": str(document.get("file_name") or ""),
+            "Számla sorszáma": str(details.get("invoice_number") or ""),
+            "Vállalkozó neve": str(details.get("seller_name") or ""),
+            "Adószám": str(details.get("seller_tax_number") or ""),
+            "Számla összege": invoice_amount,
+            "Feltöltve": uploaded_at_value.strftime("%Y-%m-%d %H:%M") if not pd.isna(uploaded_at_value) else str(document.get("uploaded_at") or ""),
+            "Feltöltötte": str(document.get("uploaded_by") or ""),
+            "Megjegyzés": str(document.get("note") or ""),
+            "Feldolgozási hiba": str(details.get("parse_error") or ""),
+        })
+    return rows
+
+
+def accounting_invoice_export_bytes(rows: list[dict[str, object]]) -> bytes:
+    export_columns = [
+        "Hónap", "Futár ID", "Futár neve", "Számla neve", "Fájl", "Számla sorszáma",
+        "Vállalkozó neve", "Adószám", "Számla összege", "Feltöltve", "Feltöltötte",
+        "Megjegyzés", "Feldolgozási hiba",
+    ]
+    export_df = pd.DataFrame(rows)
+    if export_df.empty:
+        export_df = pd.DataFrame(columns=export_columns)
+    else:
+        export_df = export_df[[column for column in export_columns if column in export_df.columns]]
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False, sheet_name="Szamlak")
+        worksheet = writer.sheets["Szamlak"]
+        for column_index, column_name in enumerate(export_df.columns, start=1):
+            width = max(14, min(45, max(len(str(column_name)), *(len(str(value)) for value in export_df[column_name].head(200))) + 2))
+            worksheet.column_dimensions[chr(64 + column_index) if column_index <= 26 else "Z"].width = width
+    return output.getvalue()
+
+
+def accounting_invoice_zip_bytes(rows: list[dict[str, object]]) -> bytes:
+    output = BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for row in rows:
+            document_id = str(row.get("_document_id") or "").strip()
+            if not document_id:
+                continue
+            content_row = read_peopleforce_document_content(document_id)
+            file_bytes = decode_document_content(content_row.get("file_content_base64"))
+            if not file_bytes:
+                continue
+            original_name = str(content_row.get("file_name") or row.get("Fájl") or "szamla.pdf")
+            original_stem, original_suffix = (
+                original_name.rsplit(".", 1) if "." in original_name else (original_name, "pdf")
+            )
+            stem = slugify_filename(f"{row.get('Futár ID')}_{row.get('Futár neve')}_{original_stem}")
+            suffix = f".{original_suffix.strip('.').lower()}" if original_suffix else ""
+            archive_name = f"{stem}{suffix}" if suffix else stem
+            counter = 2
+            base_name = archive_name
+            while archive_name in used_names:
+                archive_name = f"{base_name}_{counter}"
+                counter += 1
+            used_names.add(archive_name)
+            archive.writestr(archive_name, file_bytes)
+    return output.getvalue()
+
+
+def show_accounting_invoice_archive_page() -> None:
+    if not can_view_accounting_invoice_archive(user):
+        st.error("Ez a menüpont csak admin és könyvelő jogosultsággal érhető el.")
+        st.stop()
+
+    st.markdown("### Számla archívum")
+    st.caption("Havi bontásban listázza a futárok által feltöltött számlákat a dokumentumtárból.")
+    selected_month_label = st.selectbox("Hónap", month_options(), key="accounting_invoice_archive_month")
+    selected_month = parse_month_option(selected_month_label).replace(day=1)
+
+    try:
+        documents = read_peopleforce_documents_for_month(selected_month, "invoice", limit=10000)
+    except Exception as exc:
+        st.error(f"A számlák betöltése sikertelen: {exc}")
+        return
+
+    if documents.empty:
+        st.info("Nincs feltöltött számla erre a hónapra.")
+        return
+
+    with st.spinner("Számlaadatok beolvasása..."):
+        invoice_rows = build_accounting_invoice_rows(documents)
+
+    search_text = st.text_input("Keresés futárra, vállalkozó névre, fájlra vagy számlaszámra", key="accounting_invoice_archive_search")
+    filtered_rows = invoice_rows
+    if search_text.strip():
+        needle = search_text.strip().casefold()
+        filtered_rows = [
+            row for row in invoice_rows
+            if needle in " ".join(str(row.get(column) or "") for column in [
+                "Futár ID", "Futár neve", "Számla neve", "Fájl", "Számla sorszáma", "Vállalkozó neve",
+            ]).casefold()
+        ]
+
+    total_amount = sum(int(row.get("Számla összege") or 0) for row in filtered_rows)
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Számlák", f"{len(filtered_rows)} db")
+    metric_cols[1].metric("Futárok", f"{len({row.get('Futár ID') for row in filtered_rows if row.get('Futár ID')})} db")
+    metric_cols[2].metric("Számla összeg", format_huf(total_amount))
+
+    select_all = st.checkbox("Összes látható számla kijelölése", key="accounting_invoice_archive_select_all")
+    table_rows = [{**row, "Kijelöl": bool(select_all)} for row in filtered_rows]
+    table_df = pd.DataFrame(table_rows)
+    display_columns = [
+        "Kijelöl", "Hónap", "Futár ID", "Futár neve", "Számla neve", "Fájl",
+        "Számla sorszáma", "Vállalkozó neve", "Számla összege", "Feltöltve", "Feldolgozási hiba",
+    ]
+    edited_df = st.data_editor(
+        table_df,
+        use_container_width=True,
+        hide_index=True,
+        disabled=[column for column in table_df.columns if column != "Kijelöl"],
+        column_order=[column for column in display_columns if column in table_df.columns],
+        column_config={
+            "Kijelöl": st.column_config.CheckboxColumn("Kijelöl"),
+            "Számla összege": st.column_config.NumberColumn("Számla összege", format="%d Ft"),
+        },
+        key="accounting_invoice_archive_table",
+    )
+
+    if not edited_df.empty and "Kijelöl" in edited_df.columns:
+        selected_mask = edited_df["Kijelöl"].fillna(False).astype(bool)
+        selected_rows = edited_df[selected_mask].to_dict("records")
+    else:
+        selected_rows = []
+    action_cols = st.columns(2)
+    action_cols[0].download_button(
+        "Excel generálása",
+        data=accounting_invoice_export_bytes(filtered_rows),
+        file_name=f"feltoltott_szamlak_{selected_month:%Y_%m}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    action_cols[1].download_button(
+        "Kijelölt számlák letöltése ZIP",
+        data=accounting_invoice_zip_bytes(selected_rows) if selected_rows else b"",
+        file_name=f"feltoltott_szamlak_{selected_month:%Y_%m}.zip",
+        mime="application/zip",
+        use_container_width=True,
+        disabled=not selected_rows,
+    )
+
+    rows_by_id = {str(row.get("_document_id")): row for row in filtered_rows if row.get("_document_id")}
+    if not rows_by_id:
+        return
+    selected_document_id = st.selectbox(
+        "Számlakép megnyitása",
+        list(rows_by_id),
+        format_func=lambda value: (
+            f"{rows_by_id[value].get('Futár neve')} · "
+            f"{rows_by_id[value].get('Számla sorszáma') or rows_by_id[value].get('Fájl')}"
+        ),
+        key="accounting_invoice_archive_preview_select",
+    )
+    if selected_document_id:
+        selected_row = rows_by_id[selected_document_id]
+        st.markdown("#### Számlakép")
+        try:
+            content_row = read_peopleforce_document_content(selected_document_id)
+            file_bytes = decode_document_content(content_row.get("file_content_base64"))
+            mime_type = str(content_row.get("mime_type") or selected_row.get("_mime_type") or "application/octet-stream")
+            file_name = str(content_row.get("file_name") or selected_row.get("Fájl") or "szamla")
+            st.download_button(
+                "Számla letöltése",
+                data=file_bytes,
+                file_name=file_name,
+                mime=mime_type,
+                use_container_width=True,
+                key=f"accounting_invoice_archive_download_{selected_document_id}",
+            )
+            if "pdf" in mime_type.casefold() or file_name.casefold().endswith(".pdf"):
+                for index, image_bytes in enumerate(render_pdf_preview_pages(file_bytes, max_pages=4), start=1):
+                    st.image(image_bytes, caption=f"{file_name} - {index}. oldal", use_container_width=True)
+            elif mime_type.casefold().startswith("image/"):
+                st.image(file_bytes, caption=file_name, use_container_width=True)
+            else:
+                st.info("Ehhez a fájltípushoz nincs előnézet, de letölthető.")
+        except Exception as exc:
+            st.warning(f"A számlakép betöltése sikertelen: {exc}")
 
 
 def tig_payment_total_from_payload(
@@ -17298,5 +17635,7 @@ def show_new_settlement_page() -> None:
 if __name__ == "__main__":
     if devtest_page == "PDF minta":
         show_settlement_pdf_sample_page()
+    elif devtest_page == "Számla archívum":
+        show_accounting_invoice_archive_page()
     else:
         show_new_settlement_page()
