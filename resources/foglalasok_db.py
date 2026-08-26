@@ -477,11 +477,6 @@ def upsert_foglalasok_rows(values):
 @st.cache_data(show_spinner=False, ttl=300)
 def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
     supabase_url, headers = get_headers()
-    table_name = resolve_foglalasok_table(
-        supabase_url,
-        headers,
-    )
-
     base_select = (
         "work_date,email,shift_text,warehouse,booking_code,"
         "courier_id,courier_name,serial,fetched_at"
@@ -509,23 +504,11 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
 
         return filters
 
-    filters = build_filters(
-        select_fields
-    )
+    rows = []
 
-    endpoint = (
-        f"{supabase_url}/rest/v1/{table_name}"
-        f"?{'&'.join(filters)}"
-    )
-    response = requests.get(
-        endpoint,
-        headers=headers,
-        timeout=60,
-    )
-
-    if response.status_code == 400 and "status" in response.text.lower():
+    for table_name in FOGLALASOK_TABLE_CANDIDATES:
         filters = build_filters(
-            base_select
+            select_fields
         )
         endpoint = (
             f"{supabase_url}/rest/v1/{table_name}"
@@ -537,13 +520,47 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
             timeout=60,
         )
 
-    raise_for_supabase_error(response)
-    rows = response.json()
+        if is_missing_table_response(response):
+            continue
+
+        if response.status_code == 400 and "status" in response.text.lower():
+            filters = build_filters(
+                base_select
+            )
+            endpoint = (
+                f"{supabase_url}/rest/v1/{table_name}"
+                f"?{'&'.join(filters)}"
+            )
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                timeout=60,
+            )
+
+        raise_for_supabase_error(response)
+        rows.extend(response.json())
 
     if not rows:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
+    dedupe_columns = [
+        column
+        for column in [
+            "work_date",
+            "email",
+            "shift_text",
+            "warehouse",
+            "booking_code",
+            "courier_id",
+        ]
+        if column in df.columns
+    ]
+    if dedupe_columns:
+        df = df.drop_duplicates(subset=dedupe_columns, keep="first")
+
+    if len(df) > int(limit):
+        df = df.head(int(limit))
 
     if "status" in df.columns:
         df = df[
@@ -551,7 +568,6 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
         ]
 
     return enrich_bookings_from_courier_master(df)
-
 
 @st.cache_data(show_spinner=False, ttl=300)
 def read_muszakpro_events(start_date=None, end_date=None, limit=1000):
