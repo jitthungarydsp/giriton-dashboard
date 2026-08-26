@@ -178,7 +178,7 @@ def resolve_foglalasok_table(supabase_url, headers):
     return "foglalasok_raw"
 
 
-def read_courier_lookup_by_email():
+def read_courier_lookup():
     supabase_url, headers = get_headers()
     endpoint = (
         f"{supabase_url}/rest/v1/courier_master"
@@ -191,26 +191,50 @@ def read_courier_lookup_by_email():
         timeout=60,
     )
     raise_for_supabase_error(response)
-    lookup = {}
+    lookup = {
+        "by_email": {},
+    }
 
     for row in response.json():
         email = normalize_email(row.get("email"))
+        courier_id = clean(row.get("courier_id"))
+        courier_name = clean(row.get("courier_name"))
+        courier = {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+        }
 
         if email:
-            lookup[email] = {
-                "courier_id": row.get("courier_id"),
-                "courier_name": clean(row.get("courier_name")),
-            }
+            lookup["by_email"][email] = courier
 
     return lookup
 
 
+def read_courier_lookup_by_email():
+    return read_courier_lookup().get("by_email", {})
+
+
+def find_courier_for_booking(row, courier_lookup):
+    if not courier_lookup:
+        return {}
+
+    if "by_email" not in courier_lookup:
+        email = normalize_email(row.get("email"))
+        return courier_lookup.get(email, {})
+
+    email = normalize_email(row.get("email"))
+    if email and email in courier_lookup["by_email"]:
+        return courier_lookup["by_email"][email]
+
+    return {}
+
+
 def enrich_bookings_from_courier_master(df):
-    if df.empty or "email" not in df.columns:
+    if df.empty:
         return df
 
     try:
-        courier_lookup = read_courier_lookup_by_email()
+        courier_lookup = read_courier_lookup()
     except Exception:
         return df
 
@@ -227,8 +251,7 @@ def enrich_bookings_from_courier_master(df):
         enriched["serial"] = ""
 
     for index, row in enriched.iterrows():
-        email = normalize_email(row.get("email"))
-        courier = courier_lookup.get(email)
+        courier = find_courier_for_booking(row, courier_lookup)
         if not courier:
             continue
 
@@ -253,7 +276,7 @@ def enrich_bookings_from_courier_master(df):
 
 def backfill_booking_couriers_from_master(limit=5000):
     supabase_url, headers = get_headers()
-    courier_lookup = read_courier_lookup_by_email()
+    courier_lookup = read_courier_lookup()
     if not courier_lookup:
         return {"checked": 0, "updated": 0}
 
@@ -263,8 +286,8 @@ def backfill_booking_couriers_from_master(limit=5000):
     for table_name in FOGLALASOK_TABLE_CANDIDATES:
         endpoint = (
             f"{supabase_url}/rest/v1/{table_name}"
-            "?select=id,email,courier_id,courier_name,serial,work_date,shift_text,warehouse"
-            "&or=(courier_id.is.null,courier_name.is.null,serial.is.null)"
+            "?select=id,email,courier_id,courier_name,serial,work_date,shift_text,warehouse,booking_code,response_json"
+            "&order=work_date.desc,shift_text.asc,email.asc"
             f"&limit={int(limit)}"
         )
         response = requests.get(endpoint, headers=headers, timeout=60)
@@ -276,8 +299,7 @@ def backfill_booking_couriers_from_master(limit=5000):
         checked += len(rows)
 
         for row in rows:
-            email = normalize_email(row.get("email"))
-            courier = courier_lookup.get(email)
+            courier = find_courier_for_booking(row, courier_lookup)
             row_id = clean(row.get("id"))
             if not row_id or not courier:
                 continue
@@ -313,7 +335,7 @@ def backfill_booking_couriers_from_master(limit=5000):
 def build_db_rows(values, courier_lookup=None):
     if courier_lookup is None:
         try:
-            courier_lookup = read_courier_lookup_by_email()
+            courier_lookup = read_courier_lookup()
         except Exception:
             courier_lookup = {}
 
@@ -334,7 +356,7 @@ def build_db_rows(values, courier_lookup=None):
         "sorszam", "serial",
     }
     has_header = bool(set(header) & known_headers)
-    compact_headerless = (
+    compact_email_headerless = (
         not has_header
         and len(raw_header) >= 4
         and looks_like_date(raw_header[0])
@@ -361,7 +383,7 @@ def build_db_rows(values, courier_lookup=None):
             index = default_index
         return lambda cells: clean(cells[index]) if index is not None and index < len(cells) else ""
 
-    if compact_headerless:
+    if compact_email_headerless:
         default_indexes = {
             "timestamp": None,
             "work_date": 0,
@@ -373,6 +395,9 @@ def build_db_rows(values, courier_lookup=None):
             "giriton_uploaded": 6,
             "system_check": 7,
             "legacy_key": 8,
+            "courier_id": None,
+            "courier_name": None,
+            "serial": None,
         }
         data_rows = values
         first_source_row = 1
@@ -388,6 +413,9 @@ def build_db_rows(values, courier_lookup=None):
             "giriton_uploaded": 7,
             "system_check": 8,
             "legacy_key": 10,
+            "courier_id": None,
+            "courier_name": None,
+            "serial": None,
         }
         data_rows = values[1:] if has_header else values
         first_source_row = 2 if has_header else 1
@@ -403,8 +431,14 @@ def build_db_rows(values, courier_lookup=None):
     system_check_cell = cell_by_header(default_indexes["system_check"], "system_check", "rendszer ellenorzes", "rendszer ellenőrzés")
     legacy_key_cell = cell_by_header(default_indexes["legacy_key"], "legacy_key", "kulcs", "key")
     courier_id_index = header_index("courier_id")
+    if courier_id_index is None:
+        courier_id_index = default_indexes["courier_id"]
     courier_name_index = header_index("nev", "név", "name", "courier_name", "futar", "futár")
+    if courier_name_index is None:
+        courier_name_index = default_indexes["courier_name"]
     serial_index = header_index("sorszam", "serial")
+    if serial_index is None:
+        serial_index = default_indexes["serial"]
 
     for source_row, row in enumerate(data_rows, start=first_source_row):
         cells = list(row) + [""] * 12
@@ -415,13 +449,9 @@ def build_db_rows(values, courier_lookup=None):
         warehouse = warehouse_cell(cells)
         booking_code = booking_code_cell(cells)
 
-        if not work_date or not email or not shift_text:
+        if not work_date or not shift_text:
             continue
 
-        driver = courier_lookup.get(
-            email,
-            {},
-        )
         enriched_courier_id = (
             clean(cells[courier_id_index])
             if courier_id_index is not None and courier_id_index < len(cells)
@@ -437,8 +467,22 @@ def build_db_rows(values, courier_lookup=None):
             if serial_index is not None and serial_index < len(cells)
             else ""
         )
+        lookup_row = {
+            "email": email,
+            "courier_id": enriched_courier_id,
+            "courier_name": enriched_courier_name,
+            "shift_text": shift_text,
+            "warehouse": warehouse,
+            "booking_code": booking_code,
+            "serial": enriched_serial,
+            "response_json": cells,
+        }
+        driver = find_courier_for_booking(lookup_row, courier_lookup)
         courier_id = enriched_courier_id or driver.get("courier_id")
         courier_name = enriched_courier_name or driver.get("courier_name", "")
+        if not email and not courier_id:
+            continue
+        row_email = email or f"courier-id:{clean(courier_id)}"
         start = shift_start(
             shift_text
         )
@@ -454,7 +498,7 @@ def build_db_rows(values, courier_lookup=None):
             "source_row": source_row,
             "timestamp_text": timestamp_text,
             "work_date": work_date,
-            "email": email,
+            "email": row_email,
             "shift_text": shift_text,
             "warehouse": warehouse,
             "booking_code": booking_code,
@@ -469,7 +513,7 @@ def build_db_rows(values, courier_lookup=None):
                 "source_row": source_row,
                 "timestamp_text": timestamp_text,
                 "work_date": work_date,
-                "email": email,
+                "email": row_email,
                 "shift_text": shift_text,
                 "warehouse": warehouse,
                 "booking_code": booking_code,
