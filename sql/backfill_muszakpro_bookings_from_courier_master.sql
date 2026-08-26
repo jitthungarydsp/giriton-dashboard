@@ -1,5 +1,14 @@
 -- Backfill MuszakPro raw booking rows from courier_master.
 -- Run in Supabase SQL Editor.
+-- Matching rule: normalized raw booking email = normalized courier_master.email.
+
+create or replace function public._tmp_muszakpro_normalized_email(value text)
+returns text
+language sql
+immutable
+as $$
+    select regexp_replace(lower(trim(coalesce(value, ''))), '\s+', '', 'g')
+$$;
 
 update public.raw_muszakpro_bookings booking
 set
@@ -19,12 +28,12 @@ set
     ),
     updated_at = now()
 from public.courier_master master
-where lower(trim(booking.email)) = lower(trim(master.email))
-  and nullif(trim(booking.email), '') is not null
+where public._tmp_muszakpro_normalized_email(booking.email) = public._tmp_muszakpro_normalized_email(master.email)
+  and nullif(public._tmp_muszakpro_normalized_email(booking.email), '') is not null
   and (
       booking.courier_id is null
-      or nullif(booking.courier_name, '') is null
-      or nullif(booking.serial, '') is null
+      or nullif(trim(booking.courier_name), '') is null
+      or nullif(trim(booking.serial), '') is null
   );
 
 update public.raw_muszakpro_bookings booking
@@ -40,7 +49,7 @@ set
     ),
     updated_at = now()
 where booking.courier_id is not null
-  and nullif(booking.serial, '') is null;
+  and nullif(trim(booking.serial), '') is null;
 
 update public.foglalasok_raw booking
 set
@@ -60,12 +69,12 @@ set
     ),
     updated_at = now()
 from public.courier_master master
-where lower(trim(booking.email)) = lower(trim(master.email))
-  and nullif(trim(booking.email), '') is not null
+where public._tmp_muszakpro_normalized_email(booking.email) = public._tmp_muszakpro_normalized_email(master.email)
+  and nullif(public._tmp_muszakpro_normalized_email(booking.email), '') is not null
   and (
       booking.courier_id is null
-      or nullif(booking.courier_name, '') is null
-      or nullif(booking.serial, '') is null
+      or nullif(trim(booking.courier_name), '') is null
+      or nullif(trim(booking.serial), '') is null
   );
 
 update public.foglalasok_raw booking
@@ -81,18 +90,20 @@ set
     ),
     updated_at = now()
 where booking.courier_id is not null
-  and nullif(booking.serial, '') is null;
+  and nullif(trim(booking.serial), '') is null;
 
 select
     'raw_muszakpro_bookings' as table_name,
     count(*) filter (where courier_id is null) as missing_courier_id,
-    count(*) filter (where nullif(courier_name, '') is null) as missing_courier_name,
-    count(*) filter (where nullif(serial, '') is null) as missing_serial
+    count(*) filter (where nullif(trim(courier_name), '') is null) as missing_courier_name,
+    count(*) filter (where nullif(trim(serial), '') is null) as missing_serial
 from public.raw_muszakpro_bookings
 union all
 select
     'foglalasok_raw' as table_name,
     count(*) filter (where courier_id is null) as missing_courier_id,
-    count(*) filter (where nullif(courier_name, '') is null) as missing_courier_name,
-    count(*) filter (where nullif(serial, '') is null) as missing_serial
+    count(*) filter (where nullif(trim(courier_name), '') is null) as missing_courier_name,
+    count(*) filter (where nullif(trim(serial), '') is null) as missing_serial
 from public.foglalasok_raw;
+
+drop function if exists public._tmp_muszakpro_normalized_email(text);

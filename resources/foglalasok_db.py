@@ -33,7 +33,7 @@ def normalize_header(value):
 
 
 def normalize_email(value):
-    return clean(value).casefold()
+    return re.sub(r"\s+", "", clean(value).casefold())
 
 
 def normalize_time(value):
