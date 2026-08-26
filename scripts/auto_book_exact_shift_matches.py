@@ -57,7 +57,7 @@ def parse_shift_datetime(work_date, shift_start) -> datetime | None:
 
 
 def lead_start_date(today: date, min_lead_hours: int) -> date:
-    days = max((max(int(min_lead_hours), 1) + 23) // 24, 1)
+    days = max((max(int(min_lead_hours), 0) + 23) // 24, 0)
     return today + timedelta(days=days)
 
 
@@ -278,12 +278,12 @@ def dispatch_auto_booking(row: dict, workflow: str, ref: str) -> str:
 def main() -> None:
     today = datetime.now(BUDAPEST_TZ).date()
     parser = argparse.ArgumentParser(
-        description="Legalább 72 órával későbbi, pontos műszakfoglalási egyezések automatikus indítása."
+        description="Pontos műszakfoglalási egyezések automatikus indítása."
     )
     parser.add_argument("--start-date", default="", help="Kezdő dátum YYYY-MM-DD. Alap: ma.")
     parser.add_argument("--end-date", default="", help="Záró dátum YYYY-MM-DD. Alap: ma + lookahead-days.")
     parser.add_argument("--lookahead-days", type=int, default=5)
-    parser.add_argument("--min-lead-hours", type=int, default=72)
+    parser.add_argument("--min-lead-hours", type=int, default=0)
     parser.add_argument("--tolerance-minutes", type=int, default=0)
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--source-limit", type=int, default=20000)

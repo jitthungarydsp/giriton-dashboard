@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       min_lead_hours:
-        description: "Minimum hany oraval kesobbi pontos egyezeseket inditson."
+        description: "Minimum hany oraval kesobbi pontos egyezeseket inditson. 0 = aznapi is mehet."
         required: false
-        default: "72"
+        default: "0"
       lookahead_days:
         description: "Hany napra elore nezzen adatot."
         required: false
@@ -20,7 +20,7 @@ on:
         required: false
         default: "false"
   schedule:
-    # GitHub cron UTC-ben fut. A forrasfrissitesek utan indul, csak T+72h utani pontos egyezesekre.
+    # GitHub cron UTC-ben fut. A forrasfrissitesek utan indul, aznapi pontos egyezesekre is.
     - cron: "25 * * * *"
 
 permissions:
@@ -64,14 +64,14 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GITHUB_TOKEN" || (echo "Missing GITHUB_TOKEN" && exit 1)
 
-      - name: Dispatch exact matches after T+72 hours
+      - name: Dispatch exact matches
         run: |
           MIN_LEAD_HOURS="${{ inputs.min_lead_hours }}"
           LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
           LIMIT="${{ inputs.limit }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
-          MIN_LEAD_HOURS="${MIN_LEAD_HOURS:-72}"
+          MIN_LEAD_HOURS="${MIN_LEAD_HOURS:-0}"
           LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-5}"
           LIMIT="${LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"

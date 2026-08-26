@@ -135,7 +135,7 @@ def _build_candidate(row):
 
 
 def get_t_plus_booking_candidates(
-    days_ahead=3,
+    days_ahead=0,
     horizon_days=1,
     start_date="",
     end_date="",
