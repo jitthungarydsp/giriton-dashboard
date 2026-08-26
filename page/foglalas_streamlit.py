@@ -243,10 +243,6 @@ def _worker_match_key(row) -> str:
     if courier_id:
         return f"id:{courier_id}"
 
-    email = _clean(row.get("email")).casefold()
-    if email:
-        return f"email:{email}"
-
     worker = _match_text(row.get("courier_name"))
     return f"name:{worker}" if worker else ""
 

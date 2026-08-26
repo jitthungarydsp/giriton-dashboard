@@ -205,6 +205,42 @@ def read_courier_lookup_by_email():
     return lookup
 
 
+def enrich_bookings_from_courier_master(df):
+    if df.empty or "email" not in df.columns:
+        return df
+
+    try:
+        courier_lookup = read_courier_lookup_by_email()
+    except Exception:
+        return df
+
+    if not courier_lookup:
+        return df
+
+    enriched = df.copy()
+
+    if "courier_id" not in enriched.columns:
+        enriched["courier_id"] = ""
+    if "courier_name" not in enriched.columns:
+        enriched["courier_name"] = ""
+
+    for index, row in enriched.iterrows():
+        email = normalize_email(row.get("email"))
+        courier = courier_lookup.get(email)
+        if not courier:
+            continue
+
+        current_id = clean(row.get("courier_id"))
+        current_name = clean(row.get("courier_name"))
+
+        if not current_id:
+            enriched.at[index, "courier_id"] = clean(courier.get("courier_id"))
+        if not current_name:
+            enriched.at[index, "courier_name"] = courier.get("courier_name")
+
+    return enriched
+
+
 def build_db_rows(values, courier_lookup=None):
     if courier_lookup is None:
         try:
@@ -514,7 +550,7 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
             df["status"].fillna("ACTIVE").astype(str).str.upper() != "CANCELLED"
         ]
 
-    return df
+    return enrich_bookings_from_courier_master(df)
 
 
 @st.cache_data(show_spinner=False, ttl=300)
