@@ -1,5 +1,6 @@
 import os
 import re
+import time
 
 from resources.google_auth import get_client
 
@@ -127,9 +128,23 @@ def foglalas_row_to_record(row):
 
 def open_sheet():
     client = get_client()
-    return client.open_by_key(
-        get_spreadsheet_id()
-    )
+    spreadsheet_id = get_spreadsheet_id()
+    last_error = None
+
+    for attempt in range(1, 5):
+        try:
+            return client.open_by_key(
+                spreadsheet_id
+            )
+        except Exception as exc:
+            last_error = exc
+            if "503" not in str(exc) or attempt == 4:
+                raise
+            time.sleep(
+                attempt * 5
+            )
+
+    raise last_error
 
 
 def read_giriton_records(work_date):
