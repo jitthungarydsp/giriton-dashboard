@@ -4298,7 +4298,7 @@ def load_route_story_rows_for_courier(
     period_start: date,
     period_end: date,
 ) -> list[dict[str, Any]]:
-    return optional_supabase_rows(
+    full_rows = optional_supabase_rows(
         "mart_dsp_route_stories",
         params={
             "select": (
@@ -4309,6 +4309,22 @@ def load_route_story_rows_for_courier(
                 "planned_loading_minutes,real_loading_minutes,planned_route_minutes,real_route_minutes,"
                 "assigned_to_return_minutes,total_route_minutes,gps_distance_km,checkpoint_straight_km,"
                 "address_count,time_window_late_count,next_shift_delay_minutes,assignment_mode,story_text"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.desc,route_id.desc",
+            "limit": "700",
+        },
+        timeout=60,
+    )
+    if full_rows:
+        return full_rows
+    return optional_supabase_rows(
+        "mart_dsp_route_stories",
+        params={
+            "select": (
+                "work_date,route_id,warehouse_name,shift_name,shift_start,shift_end,"
+                "address_count,time_window_late_count,assignment_mode,story_text"
             ),
             "courier_id": f"eq.{courier_id}",
             "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
@@ -4690,7 +4706,12 @@ def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> lis
     return result
 
 
-def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) -> dict[str, Any]:
+def build_monthly_courier_statistics(
+    user: dict[str, Any],
+    month_value: date,
+    *,
+    allow_unpublished: bool = False,
+) -> dict[str, Any]:
     courier_id, courier_name = courier_identity(user)
     period_start = month_value.replace(day=1)
     period_end = month_end(period_start)
@@ -4702,7 +4723,12 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
-        settlement_future = executor.submit(read_courier_settlement_summary_row, courier_id, period_start)
+        settlement_future = executor.submit(
+            read_courier_settlement_summary_row,
+            courier_id,
+            period_start,
+            allow_unpublished=allow_unpublished,
+        )
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
@@ -6794,7 +6820,12 @@ def monthly_statistics(
 ):
     user = require_user(giriton_pwa_session)
     view_user, preview_read_only = workflow_view_user(user, courier)
-    payload = build_monthly_courier_statistics(view_user, parse_month(month))
+    privileged_viewer = can_view_financial_amounts(user)
+    payload = build_monthly_courier_statistics(
+        view_user,
+        parse_month(month),
+        allow_unpublished=preview_read_only or privileged_viewer,
+    )
     if preview_read_only:
         payload["viewingAs"] = public_user(view_user)
         payload["viewerReadOnly"] = True
