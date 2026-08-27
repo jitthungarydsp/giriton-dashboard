@@ -42,6 +42,7 @@ else:
 
 
 MIN_SHIFT_GAP_MINUTES = 270
+BOOKED_SHIFT_MATCH_TOLERANCE_MINUTES = 60
 GITHUB_OWNER_DEFAULT = "jitthungarydsp"
 GITHUB_REPO_DEFAULT = "giriton-dashboard"
 GITHUB_REF_DEFAULT = "main"
@@ -1170,15 +1171,21 @@ def _build_summary_rows(
             tolerance_minutes,
         )
         records_by_time = muszakpro_group.get("records_by_time", {})
+        used_booked_values = set()
 
         for muszakpro_time in muszakpro_values:
             source_record = records_by_time.get(muszakpro_time, {})
             giriton_booking = "-"
             giriton_offer = "-"
+            available_booked_values = [
+                value
+                for value in booked_values
+                if value not in used_booked_values
+            ]
             booked_time, booked_diff, booked_status = _nearest_single_giriton_time(
                 muszakpro_time,
-                booked_values,
-                tolerance_minutes,
+                available_booked_values,
+                max(tolerance_minutes, BOOKED_SHIFT_MATCH_TOLERANCE_MINUTES),
             )
             if booked_status in {"exact", "alternative"}:
                 status = "Lefoglalva"
@@ -1186,6 +1193,7 @@ def _build_summary_rows(
                 giriton_booking = booked_time
                 diff_value = booked_diff
                 reason = "Ez a műszak már le van foglalva Giritonban"
+                used_booked_values.add(booked_time)
                 booked_record = booked_records_by_time.get(booked_time, {})
                 consumed_booked_rows.add(
                     (
