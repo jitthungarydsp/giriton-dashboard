@@ -1727,6 +1727,13 @@ def load_mobile_breakdown_overrides_for_period(period_start: date) -> pd.DataFra
     return result
 
 
+def clear_mobile_breakdown_override_cache() -> None:
+    for loader in (load_mobile_breakdown_overrides, load_mobile_breakdown_overrides_for_period):
+        clear = getattr(loader, "clear", None)
+        if callable(clear):
+            clear()
+
+
 def save_mobile_breakdown_overrides(
     courier_id: str,
     period_start: date,
@@ -1765,6 +1772,7 @@ def save_mobile_breakdown_overrides(
             payloads,
             on_conflict="period_start,courier_id,item_key",
         ).execute()
+        clear_mobile_breakdown_override_cache()
         return True
     except BaseException:
         return False
@@ -9021,8 +9029,7 @@ def render_bulk_mobile_sync_panel(
                     session_id,
                     updated_by,
                 )
-                load_mobile_breakdown_overrides_for_period.clear()
-                load_mobile_breakdown_overrides.clear()
+                clear_mobile_breakdown_override_cache()
                 st.success(f"Mobil adatok frissítve: {courier_count} futár, {row_count} sor.")
                 st.rerun()
             except Exception as exc:
@@ -10566,8 +10573,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_profile.clear()
     load_active_efo_assignment.clear()
     load_muszakpro_booking_summary.clear()
-    load_mobile_breakdown_overrides.clear()
-    load_mobile_breakdown_overrides_for_period.clear()
+    clear_mobile_breakdown_override_cache()
     load_courier_booking_emails.clear()
     load_advance_booking_cancellation_summary.clear()
     load_loyalty_advance_booking_days.clear()
@@ -12593,6 +12599,42 @@ def show_courier_dialog() -> None:
                     override_row.get("note"),
                 ]
             mobile_default_rows = mobile_default_rows.reset_index()
+
+        def current_mobile_snapshot_row() -> dict[str, object]:
+            snapshot_row = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+            snapshot_row.update({
+                "Courier ID": courier_id,
+                "Futár": courier_name,
+                "Nettó bevétel": base_total,
+                "Borravaló": tip_total,
+                "Késedelmi díj": delay_total,
+                "Túramegfelelés": compliance_total,
+                "Importált bónusz": imported_bonus_total,
+                "Importált málusz": imported_malus_total,
+                "Importált ATM levonás": imported_atm_total,
+                "JITT bónusz": manual_bonus_total,
+                "JITT malus": manual_malus_total,
+                "Lojalitás": loyalty_total,
+                "Ügyfélértékelés": customer_rating_total,
+                "Korrekció": correction_total,
+                "Fizetés előleg": salary_advance_total,
+                "Céltartalék 10%": reserve_addition_total,
+                "Biztosítási díj": insurance_fee_total,
+                "Céltartalék nyitó": reserve_before_total,
+                "Céltartalék záró": reserve_after_total,
+                "Kifizetendő": payable_total,
+                "Rendelések": order_total,
+                "Cím / rendelés": order_total,
+                "Útvonalak": route_total,
+                "Számolt túrák": route_total,
+                "Kiemelt túrák": highlighted_route_total,
+                "Normál túrák": normal_route_total,
+                "Lojalitás előző havi normál kör": loyalty_previous_routes,
+                "Lojalitás aktuális normál kör": loyalty_current_routes,
+                "Lojalitás előre foglalt nap": loyalty_advance_booking_days,
+            })
+            return snapshot_row
+
         mobile_editor = mobile_default_rows.rename(columns={
             "item_key": "Kulcs",
             "item_label": "Megnevezés",
@@ -12615,7 +12657,33 @@ def show_courier_dialog() -> None:
                 "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
             },
         )
-        if st.button("Mobil értékek mentése", type="primary", use_container_width=True, key=f"save_mobile_breakdown_{courier_id}_{period_start:%Y%m}"):
+        mobile_action_cols = st.columns(2)
+        if mobile_action_cols[0].button(
+            "Mobil értékek újraszámítása Pénzügy alapján",
+            type="primary",
+            use_container_width=True,
+            key=f"refresh_mobile_breakdown_{courier_id}_{period_start:%Y%m}",
+        ):
+            try:
+                updated_by = str(st.session_state.get("user", {}).get("username") or "unknown")
+                courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
+                    pd.DataFrame([current_mobile_snapshot_row()]),
+                    period_start,
+                    active_calculation_mode,
+                    st.session_state.get("new_warehouse", "Összes"),
+                    session_id,
+                    updated_by,
+                )
+                clear_mobile_breakdown_override_cache()
+                if courier_count:
+                    st.success(f"Mobil értékek újraszámolva: {row_count} sor mentve.")
+                    st.rerun()
+                else:
+                    st.error("A mobil értékek újraszámítása nem mentett sort ennél a futárnál.")
+            except Exception as exc:
+                st.error(f"A mobil értékek újraszámítása sikertelen: {exc}")
+
+        if mobile_action_cols[1].button("Mobil értékek mentése", use_container_width=True, key=f"save_mobile_breakdown_{courier_id}_{period_start:%Y%m}"):
             saved = save_mobile_breakdown_overrides(
                 courier_id,
                 period_start,
@@ -12623,6 +12691,7 @@ def show_courier_dialog() -> None:
                 str(st.session_state.get("user", {}).get("username") or "unknown"),
             )
             if saved:
+                clear_mobile_breakdown_override_cache()
                 st.success("Mobilon látható értékek mentve.")
                 st.rerun()
             else:
@@ -12652,6 +12721,7 @@ def show_courier_dialog() -> None:
                 str(st.session_state.get("user", {}).get("username") or "unknown"),
             )
             if saved:
+                clear_mobile_breakdown_override_cache()
                 st.success("Mobilon lĂˇthatĂł TIG mentve.")
                 st.rerun()
             else:
