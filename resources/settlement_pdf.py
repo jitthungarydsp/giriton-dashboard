@@ -188,7 +188,7 @@ def build_tig_breakdown(courier: dict[str, Any], amounts: dict[str, float]) -> d
         service_net, service_vat, service_gross = service, 0, service
         cash_net, cash_vat, cash_gross = cash, 0, cash
         tax_label = "AAM"
-    payable_tip = _tig_tip_after_service(payable, service_gross, tip)
+    payable_tip = tip if vat_payer else _tig_tip_after_service(payable, service_gross, tip)
     final_total = max(service_gross + payable_tip, 0)
     rows = [
         {
@@ -531,7 +531,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
         transfer_breakdown_rows, cash_breakdown_rows, final_total = breakdown_pdf_rows
     elif vat_payer:
         service_net, service_vat, service_gross = _add_vat_to_net(service)
-        payable_tip = _tig_tip_after_service(payable, service_gross, tip)
+        payable_tip = tip if vat_payer else _tig_tip_after_service(payable, service_gross, tip)
         transfer_breakdown_rows = [{
             "label": f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
             "netHuf": service_net,
@@ -552,7 +552,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
         final_total = service_gross + payable_tip
     else:
         service_net, service_vat, service_gross = service, 0, service
-        payable_tip = _tig_tip_after_service(payable, service_gross, tip)
+        payable_tip = tip if vat_payer else _tig_tip_after_service(payable, service_gross, tip)
         transfer_breakdown_rows = [{
             "label": f"Szállítási díj (494107) - átutalás ({courier.get('document_reference') or courier_id})",
             "netHuf": service,
