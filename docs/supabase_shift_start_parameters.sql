@@ -26,8 +26,8 @@ normal_starts as (
         start_at::time as start_time
     from warehouses
     cross join generate_series(
-        time '04:30',
-        time '21:30',
+        timestamp '2000-01-01 04:30:00',
+        timestamp '2000-01-01 21:30:00',
         interval '15 minutes'
     ) as start_at
 ),
