@@ -9244,15 +9244,6 @@ def load_courier_route_detail(
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
         _, api_period_end = month_bounds(period_start)
-        api_rows = load_api_financial_overview_rows_for_courier(period_start.year, period_start.month, courier_id)
-        warehouse_id = settlement_warehouse_id(warehouse_label)
-        if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
-            api_rows = api_rows.loc[
-                pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
-            ]
-        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
-        if not api_detail.empty:
-            return api_detail.drop(columns=["_courier_id"], errors="ignore")
         if not session_id:
             session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
     try:
@@ -9363,6 +9354,17 @@ def load_courier_route_detail(
             "DB státusz": str(source.get("base_rate_status") or "ismeretlen"),
         })
     if not parsed:
+        if str(calculation_mode).casefold() == "api" and period_start is not None:
+            _, api_period_end = month_bounds(period_start)
+            api_rows = load_api_financial_overview_rows_for_courier(period_start.year, period_start.month, courier_id)
+            warehouse_id = settlement_warehouse_id(warehouse_label)
+            if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
+                api_rows = api_rows.loc[
+                    pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+                ]
+            api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
+            if not api_detail.empty:
+                return api_detail.drop(columns=["_courier_id"], errors="ignore")
         return pd.DataFrame(columns=columns)
     return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
 
@@ -11401,6 +11403,13 @@ def show_courier_dialog() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = 0.0
+    if str(active_calculation_mode or "").strip().casefold() == "api" and not route_detail.empty:
+        parameterized_detail = route_detail.loc[
+            ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
+        ]
+        parameterized_base_total = float(_numeric_series(parameterized_detail, "Alapdíj").sum()) if not parameterized_detail.empty else 0.0
+        if parameterized_base_total:
+            base_total = parameterized_base_total
     display_base_total = base_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
