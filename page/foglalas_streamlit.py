@@ -24,6 +24,7 @@ from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
+from resources.shift_start_parameters_db import read_shift_start_parameters
 
 try:
     from resources import github_actions as _github_actions
@@ -486,6 +487,40 @@ def _shift_gap_ok(times: list[str]) -> bool:
         current - previous >= MIN_SHIFT_GAP_MINUTES
         for previous, current in zip(minutes, minutes[1:])
     )
+
+
+def _load_shift_start_parameters() -> dict[str, set[str]]:
+    try:
+        df = read_shift_start_parameters()
+    except Exception:
+        return {}
+    if df.empty or "warehouse" not in df.columns or "start_time" not in df.columns:
+        return {}
+
+    parameters: dict[str, set[str]] = {}
+    for _, row in df.iterrows():
+        warehouse_key = _warehouse_match_key(row.get("warehouse"))
+        start = _normalize_time(row.get("start_time"))
+        if warehouse_key and start:
+            parameters.setdefault(warehouse_key, set()).add(start)
+
+    return parameters
+
+
+def _filter_configured_shift_starts(
+    times: list[str],
+    warehouse_key: str,
+    shift_start_parameters: dict[str, set[str]],
+) -> list[str]:
+    allowed_starts = shift_start_parameters.get(warehouse_key)
+    if not allowed_starts:
+        return times
+
+    return [
+        time_value
+        for time_value in times
+        if _normalize_time(time_value) in allowed_starts
+    ]
 
 
 def _apply_worker(df: pd.DataFrame, worker: str) -> pd.DataFrame:
@@ -1038,6 +1073,7 @@ def _build_summary_rows(
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_giriton_availability(giriton_df)
     booked_giriton_groups = _group_giriton_bookings(giriton_df)
+    shift_start_parameters = _load_shift_start_parameters()
     aliased_booked_keys = set()
 
     for booked_key, booked_group in booked_giriton_groups.items():
@@ -1103,6 +1139,11 @@ def _build_summary_rows(
                 if _normalize_time(value)
             ],
             key=lambda value: _time_minutes(value) or 0,
+        )
+        giriton_values = _filter_configured_shift_starts(
+            giriton_values,
+            warehouse_key,
+            shift_start_parameters,
         )
         booked_records_by_time = {}
         for lookup_worker_key in booking_worker_keys:
