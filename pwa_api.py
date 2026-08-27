@@ -4702,6 +4702,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
+        settlement_future = executor.submit(read_courier_settlement_summary_row, courier_id, period_start)
         daily_rows = daily_future.result()
         route_rows, route_source = route_future.result()
         day_rules, day_rule_source = day_rules_future.result()
@@ -4709,6 +4710,7 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
         story_rows = story_future.result()
         attendance_shift_rows = attendance_future.result()
         route_notes = notes_future.result()
+        settlement_summary_row = settlement_future.result()
     stories_by_route = route_story_lookup(story_rows)
     attendance_by_shift = attendance_shift_lookup(attendance_shift_rows)
     delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
@@ -4753,6 +4755,20 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
     story_route_count = len(story_route_rows)
     total_routes = story_route_count or route_count or daily_routes
     total_orders = story_orders or route_orders or daily_orders
+    settlement_fallback_used = False
+    if settlement_summary_row and not settlement_summary_row.get("_mobile_unavailable_message"):
+        settlement_routes = safe_int(settlement_summary_row.get("route_count"))
+        settlement_orders = safe_int(settlement_summary_row.get("order_count"))
+        settlement_tips = money_from(settlement_summary_row, "tip_huf")
+        if not total_routes and settlement_routes:
+            total_routes = settlement_routes
+            settlement_fallback_used = True
+        if not total_orders and settlement_orders:
+            total_orders = settlement_orders
+            settlement_fallback_used = True
+        if not route_tips and settlement_tips:
+            route_tips = settlement_tips
+            settlement_fallback_used = True
     average_orders = round(total_orders / total_routes, 1) if total_routes else 0
 
     highlighted_routes = 0
@@ -5072,7 +5088,13 @@ def build_monthly_courier_statistics(user: dict[str, Any], month_value: date) ->
             "dailyRows": len(daily_rows),
             "routeRows": len(route_rows),
             "routeStoryRows": len(story_rows),
-            "routeSource": "mart_dsp_route_stories" if story_route_rows else route_source or "nincs route raw adat",
+            "routeSource": (
+                "mart_dsp_route_stories"
+                if story_route_rows
+                else route_source
+                or ("settlement.courier_settlement_summary" if settlement_fallback_used else "nincs route raw adat")
+            ),
+            "settlementSummaryFallback": settlement_fallback_used,
             "dayRuleSource": day_rule_source,
             "dayRules": serialize_day_rules(day_rules),
         },
