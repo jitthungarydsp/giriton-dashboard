@@ -227,6 +227,7 @@ def read_courier_lookup():
         courier = {
             "courier_id": courier_id,
             "courier_name": courier_name,
+            "email": email,
         }
 
         if email:
@@ -290,6 +291,7 @@ def read_courier_lookup_from_id_sheet():
         courier = {
             "courier_id": courier_id,
             "courier_name": courier_name,
+            "email": email,
         }
         if email:
             lookup["by_email"][email] = courier
@@ -327,9 +329,25 @@ def merge_courier_lookups(*lookups):
 
 
 def read_combined_courier_lookup():
-    sheet_lookup = read_courier_lookup_from_id_sheet()
     db_lookup = read_courier_lookup()
-    return merge_courier_lookups(sheet_lookup, db_lookup)
+    sheet_lookup = read_courier_lookup_from_id_sheet()
+    return merge_courier_lookups(db_lookup, sheet_lookup)
+
+
+def _add_courier_export_row(rows_by_key, courier):
+    courier_id = clean(courier.get("courier_id"))
+    courier_name = clean(courier.get("courier_name"))
+    email = normalize_email(courier.get("email"))
+    key = courier_id or email or normalize_name(courier_name)
+    if not key:
+        return
+
+    current = rows_by_key.get(key, {})
+    rows_by_key[key] = {
+        "courier_id": courier_id or clean(current.get("courier_id")),
+        "courier_name": courier_name or clean(current.get("courier_name")),
+        "email": email or normalize_email(current.get("email")),
+    }
 
 
 def export_courier_master_to_id_sheet():
@@ -347,15 +365,42 @@ def export_courier_master_to_id_sheet():
     )
     raise_for_supabase_error(response)
 
-    values = [["courier_id", "courier_name", "email"]]
+    worksheet = get_or_create_id_worksheet()
+    existing_lookup = read_courier_lookup_from_id_sheet()
+    rows_by_key = {}
+
     for row in response.json():
+        _add_courier_export_row(
+            rows_by_key,
+            {
+                "courier_id": clean(row.get("courier_id")),
+                "courier_name": clean(row.get("courier_name")),
+                "email": normalize_email(row.get("email")),
+            },
+        )
+
+    for lookup in [
+        existing_lookup.get("by_id", {}),
+        existing_lookup.get("by_email", {}),
+        existing_lookup.get("by_name", {}),
+    ]:
+        for courier in lookup.values():
+            _add_courier_export_row(rows_by_key, courier)
+
+    values = [["courier_id", "courier_name", "email"]]
+    for row in sorted(
+        rows_by_key.values(),
+        key=lambda item: (
+            clean(item.get("courier_name")).casefold(),
+            clean(item.get("courier_id")),
+        ),
+    ):
         values.append([
             clean(row.get("courier_id")),
             clean(row.get("courier_name")),
-            clean(row.get("email")),
+            normalize_email(row.get("email")),
         ])
 
-    worksheet = get_or_create_id_worksheet()
     worksheet.clear()
     worksheet.update("A1", values)
     return {"rows": max(len(values) - 1, 0), "sheet": ID_SHEET_NAME}
