@@ -11381,6 +11381,10 @@ def show_courier_dialog() -> None:
 
     base_total = settlement_amount("courier_base_rate_huf", "Nettó bevétel")
     tip_total = settlement_amount("tip_huf", "Borravaló")
+    if not base_total:
+        base_total = parse_huf_value(row.get("Nettó bevétel"))
+    if not tip_total:
+        tip_total = parse_huf_value(row.get("Borravaló"))
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
     contractor_received_total = parse_huf_value(row.get("Alvállalkozói összeg")) or settlement_amount("contractor_total_huf")
     if not contractor_received_total:
@@ -11410,6 +11414,9 @@ def show_courier_dialog() -> None:
         parameterized_base_total = float(_numeric_series(parameterized_detail, "Alapdíj").sum()) if not parameterized_detail.empty else 0.0
         if parameterized_base_total:
             base_total = parameterized_base_total
+        route_tip_total = float(_numeric_series(route_detail, "Borravaló").sum()) if "Borravaló" in route_detail.columns else 0.0
+        if not tip_total and route_tip_total:
+            tip_total = route_tip_total
     display_base_total = base_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
