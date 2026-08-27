@@ -2635,7 +2635,7 @@ def build_financial_breakdown_from_mobile_rows(
         if deduction_amount < 0:
             deduction_total += deduction_amount
     calculated_payable = income_total + deduction_total + correction_total
-    payable = calculated_payable if has_financial_detail_rows else (payable_override if payable_override is not None else calculated_payable)
+    payable = payable_override if payable_override is not None else calculated_payable
 
     cards = [
         {
