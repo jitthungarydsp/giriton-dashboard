@@ -3520,16 +3520,19 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             if status in {"resolved", "closed"} or has_admin_answer:
                 continue
             if courier_key:
-                complaint_couriers.add(courier_key)
                 document_type = item.get("document_type")
-                if base_action_key(document_type) in {"invoice_check", "invoice_submit"}:
+                if base_action_key(document_type) == "invoice_check":
                     invoice_attention_couriers.add(courier_key)
+                    continue
+                complaint_couriers.add(courier_key)
 
     def workflow_status(courier_key: str) -> str:
-        if courier_key in complaint_couriers:
-            return "Bejelentések"
         document_types = document_types_by_courier.get(courier_key, set())
         action_statuses = status_by_courier.get(courier_key, {})
+        if courier_key in invoice_attention_couriers:
+            return "Számlaellenőrzésre vár"
+        if courier_key in complaint_couriers:
+            return "Bejelentések"
 
         has_settlement = "settlement" in document_types or action_statuses.get("settlement") in {"open", "done"}
         has_tig = "tig" in document_types or action_statuses.get("tig") in {"open", "done"}
@@ -4362,6 +4365,15 @@ def create_salary_advance_request(
     start_month, _ = month_bounds(start_date)
     amounts = salary_advance_installment_amounts(requested_amount_huf, installment_months)
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    existing_rows = (
+        get_db().schema("settlement").table("courier_salary_advance_request")
+        .select("id,status")
+        .eq("courier_id", str(courier_id or "").strip())
+        .limit(1)
+        .execute().data or []
+    )
+    if existing_rows:
+        raise ValueError("Ennél a futárnál már van fizetés előleg igény. Új igény nem indítható, a meglévőt lehet módosítani.")
     get_db().schema("settlement").table("courier_salary_advance_request").insert({
         "courier_id": str(courier_id or "").strip(),
         "courier_name": str(courier_name or "").strip(),
@@ -4381,6 +4393,7 @@ def create_salary_advance_request(
 def update_salary_advance_schedule(
     request_row: dict,
     courier_name: str,
+    new_requested_amount_huf: float,
     new_start_date: date,
     new_installment_months: int,
     change_note: str = "",
@@ -4388,7 +4401,7 @@ def update_salary_advance_schedule(
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     request_id = str(request_row.get("id") or "").strip()
     courier_id = str(request_row.get("courier_id") or "").strip()
-    requested_amount = int(round(parse_huf_value(request_row.get("requested_amount_huf"))))
+    requested_amount = int(round(parse_huf_value(new_requested_amount_huf)))
     start_month, _ = month_bounds(new_start_date)
     requested_months = max(1, int(new_installment_months or 1))
     request_amounts = salary_advance_installment_amounts(requested_amount, requested_months)
@@ -4397,11 +4410,12 @@ def update_salary_advance_schedule(
     updated_note = "\n\n".join(
         part for part in [
             existing_note,
-            f"Ütemezés módosítva ({actor}): kezdés {start_month:%Y-%m}, {requested_months} hónap. {response}".strip(),
+            f"Előleg módosítva ({actor}): összeg {format_huf(requested_amount)}, kezdés {start_month:%Y-%m}, {requested_months} hónap. {response}".strip(),
         ]
         if part
     )
     get_db().schema("settlement").table("courier_salary_advance_request").update({
+        "requested_amount_huf": requested_amount,
         "installment_months": requested_months,
         "monthly_amount_huf": request_amounts[0] if request_amounts else 0,
         "start_date": start_month.isoformat(),
@@ -13520,16 +13534,22 @@ def show_courier_dialog() -> None:
 
     if selected_menu == "Fizetés előleg":
         st.markdown("#### Fizetés előleg")
+        requests = load_courier_salary_advance_requests(courier_id)
         current_installments = load_courier_salary_advance_current(courier_id, period_start, period_end)
         current_amount = (
             pd.to_numeric(current_installments.get("amount_huf"), errors="coerce").fillna(0.0).sum()
             if not current_installments.empty else 0.0
+        )
+        total_requested_amount = (
+            pd.to_numeric(requests.get("requested_amount_huf"), errors="coerce").fillna(0.0).sum()
+            if not requests.empty else 0.0
         )
         status_text = "Van aktuális nyitott részlet" if current_amount else "Nincs aktuális nyitott részlet"
         st.markdown(
             f"""
             <div class="settlement-profile-shell">
             <div class="finance-kpi-grid">
+                <div class="finance-kpi payable"><div class="finance-kpi-label">Teljes előleg összeg</div><div class="finance-kpi-value">{format_huf(total_requested_amount)}</div></div>
                 <div class="finance-kpi"><div class="finance-kpi-label">Aktuális havi levonás</div><div class="finance-kpi-value">{format_huf(current_amount)}</div></div>
                 <div class="finance-kpi"><div class="finance-kpi-label">Státusz</div><div class="finance-kpi-value">{html.escape(status_text)}</div></div>
             </div>
@@ -13539,29 +13559,32 @@ def show_courier_dialog() -> None:
         )
 
         form_left, form_right = st.columns([0.42, 0.58], gap="medium")
+        has_salary_advance_request = not requests.empty
         with form_left:
-            with st.form(f"salary_advance_form_{courier_id}", clear_on_submit=False):
-                requested_amount = st.number_input("Igényelt összeg (Ft)", min_value=0, max_value=10_000_000, step=1000, value=0, key=f"salary_advance_amount_{courier_id}")
-                installment_months = st.number_input("Havi bontás (hónap)", min_value=1, max_value=60, step=1, value=1, key=f"salary_advance_months_{courier_id}")
-                start_date = st.date_input("Kezdő dátum", value=period_start, key=f"salary_advance_start_{courier_id}")
-                note = st.text_area("Megjegyzés", key=f"salary_advance_note_{courier_id}")
-                preview_amounts = salary_advance_installment_amounts(requested_amount, int(installment_months))
-                preview_monthly = preview_amounts[0] if preview_amounts else 0
-                st.info(f"Havi levonás: {format_huf(preview_monthly)}")
-                save_advance = st.form_submit_button("Admin előleg igény indítása", type="primary", use_container_width=True)
-            if save_advance:
-                if requested_amount <= 0:
-                    st.error("Az igényelt összegnek pozitívnak kell lennie.")
-                else:
-                    try:
-                        create_salary_advance_request(courier_id, courier_name, requested_amount, int(installment_months), start_date, note)
-                        st.success("A fizetés előleg igény rögzítve. Jóváhagyás után indul a folyamat.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"A fizetés előleg nem menthető. Futtasd le az előleg DB migrációt. Részlet: {exc}")
+            if has_salary_advance_request:
+                st.info("Ennél a futárnál már van fizetés előleg igény. Újat nem lehet indítani, a meglévő igény adatai módosíthatók.")
+            else:
+                with st.form(f"salary_advance_form_{courier_id}", clear_on_submit=False):
+                    requested_amount = st.number_input("Igényelt összeg (Ft)", min_value=0, max_value=10_000_000, step=1000, value=0, key=f"salary_advance_amount_{courier_id}")
+                    installment_months = st.number_input("Havi bontás (hónap)", min_value=1, max_value=60, step=1, value=1, key=f"salary_advance_months_{courier_id}")
+                    start_date = st.date_input("Kezdő dátum", value=period_start, key=f"salary_advance_start_{courier_id}")
+                    note = st.text_area("Megjegyzés", key=f"salary_advance_note_{courier_id}")
+                    preview_amounts = salary_advance_installment_amounts(requested_amount, int(installment_months))
+                    preview_monthly = preview_amounts[0] if preview_amounts else 0
+                    st.info(f"Havi levonás: {format_huf(preview_monthly)}")
+                    save_advance = st.form_submit_button("Admin előleg igény indítása", type="primary", use_container_width=True)
+                if save_advance:
+                    if requested_amount <= 0:
+                        st.error("Az igényelt összegnek pozitívnak kell lennie.")
+                    else:
+                        try:
+                            create_salary_advance_request(courier_id, courier_name, requested_amount, int(installment_months), start_date, note)
+                            st.success("A fizetés előleg igény rögzítve. Jóváhagyás után indul a folyamat.")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"A fizetés előleg nem menthető. Futtasd le az előleg DB migrációt. Részlet: {exc}")
 
         with form_right:
-            requests = load_courier_salary_advance_requests(courier_id)
             st.markdown('<div class="settlement-profile-shell"><div class="finance-panel-title">Előleg igények</div></div>', unsafe_allow_html=True)
             if requests.empty:
                 st.info("Nincs nyitott vagy korábbi előleg igény ennél a futárnál.")
@@ -13573,6 +13596,11 @@ def show_courier_dialog() -> None:
                     "closed": "Lezárva",
                     "rejected": "Elutasítva",
                 }
+                try:
+                    advance_documents = read_peopleforce_documents_for_courier(courier_id)
+                except Exception as exc:
+                    st.warning(f"Az előleghez tartozó dokumentumok nem tölthetők be: {exc}")
+                    advance_documents = pd.DataFrame()
                 for request_item in requests.to_dict("records"):
                     request_status = str(request_item.get("status") or "requested").strip().lower()
                     request_id = str(request_item.get("id") or "")
@@ -13589,17 +13617,76 @@ def show_courier_dialog() -> None:
                         c2.metric("Összeg", format_huf(amount))
                         c3.metric("Havi levonás", format_huf(monthly), f"{months} hó")
                         c4.caption(f"Folyamat: {process_id or '-'}")
+                        related_invoice_documents = []
+                        if process_id and not advance_documents.empty:
+                            for document_item in advance_documents.to_dict("records"):
+                                document_month_value = pd.to_datetime(document_item.get("document_month"), errors="coerce")
+                                if pd.isna(document_month_value):
+                                    continue
+                                if (
+                                    base_action_key(document_item.get("document_type")) == "invoice"
+                                    and document_month_value.date().replace(day=1) == (request_start.date().replace(day=1) if not pd.isna(request_start) else period_start)
+                                    and process_id_from_note(document_item.get("note")) == process_id
+                                ):
+                                    related_invoice_documents.append(document_item)
+                        if related_invoice_documents:
+                            invoice_document_by_id = {
+                                str(item.get("id")): item
+                                for item in related_invoice_documents
+                                if item.get("id")
+                            }
+                            if invoice_document_by_id:
+                                selected_advance_document_id = st.selectbox(
+                                    "Előleghez tartozó számlakép",
+                                    list(invoice_document_by_id),
+                                    format_func=lambda value: str(
+                                        invoice_document_by_id[value].get("title")
+                                        or invoice_document_by_id[value].get("file_name")
+                                        or "Számla"
+                                    ),
+                                    key=f"salary_advance_document_preview_select_{request_id}",
+                                )
+                                if selected_advance_document_id:
+                                    try:
+                                        document_content = read_peopleforce_document_content(selected_advance_document_id)
+                                        document_base64 = str(document_content.get("file_content_base64") or "")
+                                        document_mime = str(
+                                            document_content.get("mime_type")
+                                            or invoice_document_by_id[selected_advance_document_id].get("mime_type")
+                                            or "application/pdf"
+                                        )
+                                        if "pdf" in document_mime.casefold() and document_base64:
+                                            document_bytes = decode_document_content(document_base64)
+                                            preview_images = render_pdf_preview_pages(document_bytes)
+                                            if preview_images:
+                                                for page_number, page_image in enumerate(preview_images, start=1):
+                                                    st.caption(f"{page_number}. oldal")
+                                                    st.image(page_image, use_container_width=True)
+                                            else:
+                                                st.info("A PDF előnézete üres.")
+                                        else:
+                                            st.info("Ez a dokumentumtípus nem előnézetezhető itt.")
+                                    except Exception as exc:
+                                        st.warning(f"Az előleg számlaképe nem tölthető be: {exc}")
                         if request_status != "rejected":
                             default_start = request_start.date() if not pd.isna(request_start) else period_start
                             with st.form(f"salary_advance_schedule_form_{request_id}", clear_on_submit=False):
-                                st.caption("Ütemezés módosítása")
-                                schedule_cols = st.columns([0.34, 0.22, 0.44])
-                                new_start_date = schedule_cols[0].date_input(
+                                st.caption("Előleg adatainak módosítása")
+                                schedule_cols = st.columns([0.28, 0.24, 0.16, 0.32])
+                                new_amount = schedule_cols[0].number_input(
+                                    "Igényelt összeg (Ft)",
+                                    min_value=0,
+                                    max_value=10_000_000,
+                                    step=1000,
+                                    value=int(round(amount)),
+                                    key=f"salary_advance_schedule_amount_{request_id}",
+                                )
+                                new_start_date = schedule_cols[1].date_input(
                                     "Új kezdés",
                                     value=default_start,
                                     key=f"salary_advance_schedule_start_{request_id}",
                                 )
-                                new_months = schedule_cols[1].number_input(
+                                new_months = schedule_cols[2].number_input(
                                     "Hónap",
                                     min_value=1,
                                     max_value=60,
@@ -13607,19 +13694,23 @@ def show_courier_dialog() -> None:
                                     value=max(1, months),
                                     key=f"salary_advance_schedule_months_{request_id}",
                                 )
-                                schedule_note = schedule_cols[2].text_input(
+                                schedule_note = schedule_cols[3].text_input(
                                     "Módosítás oka",
                                     key=f"salary_advance_schedule_note_{request_id}",
-                                    placeholder="Pl. +1 hónapot kér",
+                                    placeholder="Pl. összeg / hónap módosult",
                                 )
-                                preview_schedule = salary_advance_installment_amounts(amount, int(new_months))
+                                preview_schedule = salary_advance_installment_amounts(new_amount, int(new_months))
                                 st.caption(f"Új tervezett havi levonás: {format_huf(preview_schedule[0] if preview_schedule else 0)}")
                                 save_schedule = st.form_submit_button("Ütemezés mentése", use_container_width=True)
                             if save_schedule:
                                 try:
+                                    if new_amount <= 0:
+                                        st.error("Az igényelt összegnek pozitívnak kell lennie.")
+                                        st.stop()
                                     result_message = update_salary_advance_schedule(
                                         request_item,
                                         courier_name,
+                                        new_amount,
                                         new_start_date,
                                         int(new_months),
                                         schedule_note,

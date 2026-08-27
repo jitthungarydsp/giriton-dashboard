@@ -7883,6 +7883,21 @@ def create_salary_advance_request(
         raise HTTPException(status_code=422, detail="Az igényelt összegnek pozitívnak kell lennie.")
     if months < 1 or months > 60:
         raise HTTPException(status_code=422, detail="A hónapok száma 1 és 60 között lehet.")
+    existing_rows = supabase_rest(
+        "GET",
+        "courier_salary_advance_request",
+        params={
+            "select": "id,status",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+        schema="settlement",
+    )
+    if existing_rows:
+        raise HTTPException(
+            status_code=409,
+            detail="Már van fizetés előleg igényed. Új igény nem indítható.",
+        )
     amounts = salary_advance_installment_amounts(requested_amount, months)
     rows = supabase_rest(
         "POST",
