@@ -122,12 +122,20 @@ textarea { min-height: 96px; resize: vertical; }
 .game-block { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
 .game-block h3, .leaderboard h3 { margin: 0; font-size: 18px; letter-spacing: 0; }
 .game-block p, .game-block small { margin: 0; color: var(--muted); line-height: 1.45; }
-.letter-row { display: flex; flex-wrap: wrap; gap: 7px; }
-.letter-row span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--ink); color: #fff; font-weight: 900; }
+.word-search-grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.word-search-grid span { display: grid; place-items: center; aspect-ratio: 1; min-width: 0; border-radius: 8px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 900; }
+.word-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.word-list label { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; min-height: 54px; padding: 10px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--ink); }
+.word-list input { grid-row: 1 / 3; width: auto; margin-top: 2px; }
+.word-list strong { font-size: 13px; overflow-wrap: anywhere; }
+.word-list small { grid-column: 2; font-size: 11px; }
+.quiz-list { display: grid; gap: 10px; }
+.quiz-card { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.quiz-card legend { padding: 0 6px; color: var(--green-dark); font-size: 11px; font-weight: 900; }
+.quiz-card p { margin: 0; color: var(--ink); font-size: 14px; font-weight: 850; line-height: 1.4; }
 .choice-grid { display: grid; gap: 8px; }
 .choice-grid label { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--ink); font-size: 13px; }
 .choice-grid input { width: auto; }
-.memory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .leaderboard { display: grid; gap: 8px; margin-top: 18px; }
 .leader-row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: #fbfcfa; }
 .leader-row.me { border-color: #9ccc96; background: #eff8ed; }
@@ -358,6 +366,12 @@ textarea { min-height: 96px; resize: vertical; }
 }
 
 @media (max-width: 430px) {
+  .game-summary { grid-template-columns: 1fr; }
+  .word-list { grid-template-columns: 1fr; }
+  .word-search-grid { gap: 3px; }
+  .word-search-grid span { border-radius: 6px; font-size: 11px; }
+  .leader-row { grid-template-columns: 30px minmax(0, 1fr); }
+  .leader-row small { grid-column: 2; text-align: left; }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-row.head { display: none; }
   .tig-row span:first-child { grid-column: 1 / -1; }

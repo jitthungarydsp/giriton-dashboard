@@ -31,7 +31,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v89";
+const APP_VERSION = "v90";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -342,6 +342,10 @@ function gameElapsedSeconds() {
   return state.gameStartedAt ? Math.max(0, Math.round((Date.now() - state.gameStartedAt) / 1000)) : 0;
 }
 
+function safeDomName(value) {
+  return String(value || "").replace(/[^a-z0-9_-]/gi, "");
+}
+
 function renderGame() {
   const target = $("#game-panel");
   if (!target) return;
@@ -362,26 +366,29 @@ function renderGame() {
     </div>
     <form id="daily-game-form" class="game-form">
       <section class="game-block">
-        <h3>Szóvadász</h3>
-        <div class="letter-row">${(puzzle.word?.letters || []).map((letter) => `<span>${escapeHtml(letter)}</span>`).join("")}</div>
-        <small>${escapeHtml(puzzle.word?.hint || "")}</small>
-        <input id="game-word-answer" autocomplete="off" placeholder="Írd be a szót" />
-      </section>
-      <section class="game-block">
-        <h3>Gyors döntés</h3>
-        <p>${escapeHtml(puzzle.quiz?.question || "")}</p>
-        <div class="choice-grid">
-          ${(puzzle.quiz?.options || []).map((option, index) => `
-            <label><input type="radio" name="game-quiz" value="${escapeHtml(option)}" ${index === 0 ? "required" : ""} />${escapeHtml(option)}</label>
+        <h3>Szókereső</h3>
+        <div class="word-search-grid">
+          ${(puzzle.wordSearch?.grid || []).flatMap((row) => row.map((letter) => `<span>${escapeHtml(letter)}</span>`)).join("")}
+        </div>
+        <div class="word-list">
+          ${(puzzle.wordSearch?.words || []).map((item) => `
+            <label><input type="checkbox" name="game-word" value="${escapeHtml(item.word)}" /> <strong>${escapeHtml(item.word)}</strong><small>${escapeHtml(item.hint || "")}</small></label>
           `).join("")}
         </div>
       </section>
       <section class="game-block">
-        <h3>Memória kör</h3>
-        <p>Válaszd ki a mai öt elemet.</p>
-        <div class="choice-grid memory-grid">
-          ${["BUD1", "BUD2", "Route", "Cím", "Stop", "Időkapu", "Sor", "Autó", "Műszak", "Raktár"].map((item) => `
-            <label><input type="checkbox" name="game-memory" value="${escapeHtml(item)}" />${escapeHtml(item)}</label>
+        <h3>Kérdések</h3>
+        <div class="quiz-list">
+          ${(puzzle.quiz || []).map((question) => `
+            <fieldset class="quiz-card">
+              <legend>${escapeHtml(question.category || "Kérdés")}</legend>
+              <p>${escapeHtml(question.question || "")}</p>
+              <div class="choice-grid">
+                ${(question.options || []).map((option, index) => `
+                  <label><input type="radio" name="game-quiz-${escapeHtml(safeDomName(question.id))}" value="${escapeHtml(option)}" ${index === 0 ? "required" : ""} />${escapeHtml(option)}</label>
+                `).join("")}
+              </div>
+            </fieldset>
           `).join("")}
         </div>
       </section>
@@ -421,14 +428,16 @@ async function submitGame(event) {
   if (button) button.disabled = true;
   if (message) message.textContent = "Pontszám mentése...";
   try {
-    const memory = [...document.querySelectorAll('input[name="game-memory"]:checked')].map((item) => item.value);
-    const quiz = document.querySelector('input[name="game-quiz"]:checked')?.value || "";
+    const foundWords = [...document.querySelectorAll('input[name="game-word"]:checked')].map((item) => item.value);
+    const quizAnswers = {};
+    for (const question of state.game?.puzzle?.quiz || []) {
+      quizAnswers[question.id] = document.querySelector(`input[name="game-quiz-${safeDomName(question.id)}"]:checked`)?.value || "";
+    }
     state.game = await api("/api/games/daily-challenge", {
       method: "POST",
       body: JSON.stringify({
-        word_answer: $("#game-word-answer").value || "",
-        quiz_answer: quiz,
-        memory_answers: memory,
+        found_words: foundWords,
+        quiz_answers: quizAnswers,
         elapsed_seconds: gameElapsedSeconds(),
       }),
     });
@@ -2625,7 +2634,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=89");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=90");
   }
   return navigator.serviceWorker.ready;
 }

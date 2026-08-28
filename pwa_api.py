@@ -144,9 +144,8 @@ class ShiftQueueCheckinRequest(BaseModel):
 
 
 class DailyGameSubmitRequest(BaseModel):
-    word_answer: str = ""
-    quiz_answer: str = ""
-    memory_answers: list[str] = []
+    found_words: list[str] = []
+    quiz_answers: dict[str, str] = {}
     elapsed_seconds: int = 0
 
 
@@ -2085,42 +2084,96 @@ def read_courier_display_name(courier_id: str) -> str:
 
 
 GAME_WORDS = [
-    ("RAKTAR", "Innen indul a legtobb muszak."),
-    ("FUTAR", "O viszi ki a csomagot."),
-    ("MUSZAK", "Ezt foglalod elore."),
-    ("CSOMAG", "A cimzett ezt varja."),
-    ("TERKEP", "Utvonalnal sokat segit."),
-    ("PONTOS", "Jo muszakkezdesnel ilyen vagy."),
-    ("KIFLI", "A napi munka kozos neve."),
-    ("KAPU", "Idohoz kotott cimeknel fontos."),
-    ("TURA", "Egy kiosztott kor."),
-    ("SORBAN", "Varakozas indulas elott."),
+    ("RAKTAR", "Műszak indulási helye."),
+    ("FUTAR", "Ő viszi ki a rendelést."),
+    ("MUSZAK", "Előre foglalt munkaidő."),
+    ("CSOMAG", "A címzett ezt kapja meg."),
+    ("TERKEP", "Útvonalnál segít."),
+    ("PONTOS", "Jó kezdésnél ilyen vagy."),
+    ("KIFLI", "A közös munkahelyi márka."),
+    ("KAPU", "Időablakos címnél fontos."),
+    ("TURA", "Egy kiosztott kör."),
+    ("SORBAN", "Indulás előtti várakozás."),
+    ("AUTOPALYA", "Gyorsforgalmi út."),
+    ("RENDELES", "Ezt szállítja ki a futár."),
+    ("ELSZAMOLAS", "Havi pénzügyi zárás."),
+    ("DISZPECSER", "Segít, ha elakadsz."),
 ]
 
-GAME_QUIZ = [
-    {
-        "question": "Mit nyomsz meg, ha bealltal a sorba?",
-        "options": ["Sorba alltam", "Visszaerkeztem", "Frissites"],
-        "answer": "Sorba alltam",
-    },
-    {
-        "question": "Mit kell jelezni, ha nem ersz be idoben?",
-        "options": ["Kesek a muszakbol", "ATM befizetes", "Profil"],
-        "answer": "Kesek a muszakbol",
-    },
-    {
-        "question": "Melyik nezetben vannak a napi muszakok?",
-        "options": ["Muszakjaim", "Telefon", "Korabbi elszamolasaim"],
-        "answer": "Muszakjaim",
-    },
-    {
-        "question": "Mi alapjan indul uj napi jatek?",
-        "options": ["A napi datum alapjan", "A telefon tipusa alapjan", "A route szama alapjan"],
-        "answer": "A napi datum alapjan",
-    },
-]
+GAME_QUIZ: dict[str, list[dict[str, Any]]] = {
+    "KRESZ": [
+        {
+            "question": "Mit jelent a nyolcszögletű piros STOP tábla?",
+            "options": ["Meg kell állni", "Csak lassítani kell", "Elsőbbséged van", "Parkoló kezdete"],
+            "answer": "Meg kell állni",
+        },
+        {
+            "question": "Lakott területen belül mennyi az általános sebességhatár személyautóval?",
+            "options": ["50 km/h", "70 km/h", "90 km/h", "30 km/h"],
+            "answer": "50 km/h",
+        },
+        {
+            "question": "Mit kell tenni kijelölt gyalogos-átkelőhely előtt, ha gyalogos készül áthaladni?",
+            "options": ["Elsőbbséget kell adni", "Rá kell dudálni", "Gyorsítani kell", "Megállni tilos"],
+            "answer": "Elsőbbséget kell adni",
+        },
+    ],
+    "Történelem": [
+        {
+            "question": "Melyik évben volt a mohácsi csata?",
+            "options": ["1526", "1456", "1848", "1686"],
+            "answer": "1526",
+        },
+        {
+            "question": "Ki volt az első magyar király?",
+            "options": ["Szent István", "Mátyás király", "IV. Béla", "Koppány"],
+            "answer": "Szent István",
+        },
+        {
+            "question": "Melyik évben kezdődött az 1848-as forradalom Magyarországon?",
+            "options": ["1848", "1867", "1956", "1918"],
+            "answer": "1848",
+        },
+    ],
+    "Sport": [
+        {
+            "question": "Hány játékos van egyszerre pályán egy focicsapatban?",
+            "options": ["11", "7", "9", "12"],
+            "answer": "11",
+        },
+        {
+            "question": "Melyik sportágban használják a palánkot és a gyűrűt?",
+            "options": ["Kosárlabda", "Kézilabda", "Tenisz", "Vízilabda"],
+            "answer": "Kosárlabda",
+        },
+        {
+            "question": "Milyen színű zászló jelzi az autóversenyeken a futam végét?",
+            "options": ["Kockás", "Piros", "Sárga", "Kék"],
+            "answer": "Kockás",
+        },
+    ],
+    "Irodalom": [
+        {
+            "question": "Ki írta a János vitézt?",
+            "options": ["Petőfi Sándor", "Arany János", "Jókai Mór", "Ady Endre"],
+            "answer": "Petőfi Sándor",
+        },
+        {
+            "question": "Ki írta az Egri csillagokat?",
+            "options": ["Gárdonyi Géza", "Móricz Zsigmond", "Mikszáth Kálmán", "Kosztolányi Dezső"],
+            "answer": "Gárdonyi Géza",
+        },
+        {
+            "question": "Melyik mű főhőse Toldi Miklós?",
+            "options": ["Toldi", "Bánk bán", "A Pál utcai fiúk", "Lúdas Matyi"],
+            "answer": "Toldi",
+        },
+    ],
+}
 
-GAME_MEMORY_ITEMS = ["BUD1", "BUD2", "Route", "Cim", "Stop", "Idokapu", "Sor", "Auto", "Muszak", "Raktar"]
+WORD_SEARCH_SIZE = 10
+WORD_SEARCH_DIRECTIONS = [(1, 0), (0, 1), (1, 1), (-1, 1)]
+GAME_FILL_LETTERS = list("ABCDEFIJKLMNOPRSTUVZ")
 
 
 def seeded_game_index(game_day: date, salt: str, modulo: int) -> int:
@@ -2138,54 +2191,105 @@ def shuffled_values(values: list[str], game_day: date, salt: str) -> list[str]:
     return output
 
 
+def game_seed(game_day: date, salt: str) -> int:
+    return int(hashlib.sha256(f"{game_day.isoformat()}:{salt}".encode("utf-8")).hexdigest()[:8], 16)
+
+
 def daily_game_month(game_day: date) -> date:
     return game_day.replace(day=1)
 
 
+def place_word_in_grid(grid: list[list[str]], word: str, seed: int) -> bool:
+    size = len(grid)
+    directions = shuffled_values(WORD_SEARCH_DIRECTIONS, date(2026, 1, 1), str(seed))
+    positions = [(x, y) for y in range(size) for x in range(size)]
+    positions = shuffled_values(positions, date(2026, 1, 1), f"pos-{seed}")
+    for dx, dy in directions:
+        for x, y in positions:
+            end_x = x + dx * (len(word) - 1)
+            end_y = y + dy * (len(word) - 1)
+            if end_x < 0 or end_y < 0 or end_x >= size or end_y >= size:
+                continue
+            cells = [(x + dx * index, y + dy * index) for index in range(len(word))]
+            if any(grid[cell_y][cell_x] not in {"", letter} for (cell_x, cell_y), letter in zip(cells, word)):
+                continue
+            for (cell_x, cell_y), letter in zip(cells, word):
+                grid[cell_y][cell_x] = letter
+            return True
+    return False
+
+
+def build_word_search(game_day: date) -> tuple[list[list[str]], list[dict[str, Any]]]:
+    selected_words = shuffled_values(GAME_WORDS, game_day, "word-search")[:6]
+    grid = [["" for _x in range(WORD_SEARCH_SIZE)] for _y in range(WORD_SEARCH_SIZE)]
+    placed_words: list[dict[str, Any]] = []
+    for index, (word, hint) in enumerate(selected_words):
+        if place_word_in_grid(grid, word, game_seed(game_day, f"place-{index}-{word}")):
+            placed_words.append({"word": word, "hint": hint, "points": 80})
+    filler = shuffled_values(GAME_FILL_LETTERS * 8, game_day, "fill")
+    fill_index = 0
+    for y in range(WORD_SEARCH_SIZE):
+        for x in range(WORD_SEARCH_SIZE):
+            if not grid[y][x]:
+                grid[y][x] = filler[fill_index % len(filler)]
+                fill_index += 1
+    return grid, placed_words
+
+
+def daily_quiz_questions(game_day: date) -> list[dict[str, Any]]:
+    questions: list[dict[str, Any]] = []
+    for category, items in GAME_QUIZ.items():
+        item = items[seeded_game_index(game_day, f"quiz-{category}", len(items))]
+        questions.append({
+            "id": normalize_text(category).replace(" ", "_"),
+            "category": category,
+            "question": item["question"],
+            "options": shuffled_values(item["options"], game_day, f"quiz-options-{category}"),
+            "points": 100,
+        })
+    return questions
+
+
 def build_daily_game_puzzle(game_day: date) -> dict[str, Any]:
-    word, hint = GAME_WORDS[seeded_game_index(game_day, "word", len(GAME_WORDS))]
-    letters = shuffled_values(list(word), game_day, "letters")
-    if "".join(letters) == word and len(letters) > 1:
-        letters[0], letters[1] = letters[1], letters[0]
-    quiz = GAME_QUIZ[seeded_game_index(game_day, "quiz", len(GAME_QUIZ))]
-    memory = shuffled_values(GAME_MEMORY_ITEMS, game_day, "memory")[:5]
+    grid, words = build_word_search(game_day)
+    quizzes = daily_quiz_questions(game_day)
+    max_score = sum(safe_int(word.get("points")) for word in words) + sum(safe_int(item.get("points")) for item in quizzes) + 120
     return {
         "date": game_day.isoformat(),
         "month": daily_game_month(game_day).isoformat(),
         "gameKey": "daily_courier_challenge",
-        "word": {"letters": letters, "hint": hint, "maxScore": 400},
-        "quiz": {"question": quiz["question"], "options": quiz["options"], "maxScore": 300},
-        "memory": {"items": memory, "maxScore": 300},
-        "maxScore": 1150,
+        "wordSearch": {"grid": grid, "words": words},
+        "quiz": quizzes,
+        "maxScore": max_score,
     }
 
 
 def calculate_daily_game_score(game_day: date, payload: DailyGameSubmitRequest) -> tuple[int, dict[str, Any]]:
-    word, _hint = GAME_WORDS[seeded_game_index(game_day, "word", len(GAME_WORDS))]
-    quiz = GAME_QUIZ[seeded_game_index(game_day, "quiz", len(GAME_QUIZ))]
-    memory = build_daily_game_puzzle(game_day)["memory"]["items"]
-    word_ok = normalize_text(payload.word_answer).replace(" ", "") == normalize_text(word).replace(" ", "")
-    quiz_ok = normalize_text(payload.quiz_answer) == normalize_text(quiz["answer"])
-    memory_answers = {normalize_text(item) for item in payload.memory_answers if str(item or "").strip()}
-    memory_hits = sum(1 for item in memory if normalize_text(item) in memory_answers)
-    score = 0
-    if word_ok:
-        score += 400
-    if quiz_ok:
-        score += 300
-    score += memory_hits * 60
-    all_done = word_ok and quiz_ok and memory_hits == len(memory)
+    _grid, words = build_word_search(game_day)
+    found_answers = {normalize_text(word).replace(" ", "") for word in payload.found_words}
+    found_words = [
+        word
+        for word in words
+        if normalize_text(word.get("word")).replace(" ", "") in found_answers
+    ]
+    score = sum(safe_int(word.get("points")) for word in found_words)
+    quiz_results: dict[str, bool] = {}
+    for category, items in GAME_QUIZ.items():
+        item = items[seeded_game_index(game_day, f"quiz-{category}", len(items))]
+        question_id = normalize_text(category).replace(" ", "_")
+        correct = normalize_text(payload.quiz_answers.get(question_id)) == normalize_text(item["answer"])
+        quiz_results[question_id] = correct
+        if correct:
+            score += 100
+    all_done = len(found_words) == len(words) and all(quiz_results.values())
     elapsed = max(0, min(safe_int(payload.elapsed_seconds), 3600))
-    speed_bonus = 100 if all_done and elapsed <= 30 else 50 if all_done and elapsed <= 60 else 0
-    complete_bonus = 150 if all_done else 0
-    score += speed_bonus + complete_bonus
+    speed_bonus = 120 if all_done and elapsed <= 240 else 60 if all_done and elapsed <= 480 else 0
+    score += speed_bonus
     return score, {
-        "word": word_ok,
-        "quiz": quiz_ok,
-        "memoryHits": memory_hits,
-        "memoryTotal": len(memory),
+        "foundWords": [word["word"] for word in found_words],
+        "wordTotal": len(words),
+        "quiz": quiz_results,
         "speedBonus": speed_bonus,
-        "completeBonus": complete_bonus,
     }
 
 
@@ -2288,7 +2392,7 @@ def submit_daily_game(user: dict[str, Any], payload: DailyGameSubmitRequest) -> 
                 "courier_id": courier_id,
                 "courier_name": courier_name,
                 "score": score,
-                "max_score": 1150,
+                "max_score": safe_int(build_daily_game_puzzle(today).get("maxScore")),
                 "completed_parts": completed_parts,
                 "elapsed_seconds": max(0, min(safe_int(payload.elapsed_seconds), 3600)),
                 "created_at": datetime.now(timezone.utc).isoformat(),
