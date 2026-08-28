@@ -1244,11 +1244,21 @@ def compact_route_story_row(story: dict[str, Any] | None) -> dict[str, Any] | No
     if not story:
         return None
 
-    def safe_float_value(value: Any) -> float:
+    def nullable_int_value(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
         try:
-            return float(value or 0)
+            return int(float(str(value).replace(",", ".")))
         except (TypeError, ValueError):
-            return 0.0
+            return None
+
+    def nullable_float_value(value: Any) -> float | None:
+        if value is None or value == "":
+            return None
+        try:
+            return float(str(value).replace(",", "."))
+        except (TypeError, ValueError):
+            return None
 
     return {
         "shiftName": str(story.get("shift_name") or ""),
@@ -1265,19 +1275,19 @@ def compact_route_story_row(story: dict[str, Any] | None) -> dict[str, Any] | No
         "realDeparture": str(story.get("real_departure") or ""),
         "plannedReturn": str(story.get("planned_return") or ""),
         "realReturn": str(story.get("real_return") or ""),
-        "queueEntryDeltaMinutes": safe_int(story.get("queue_entry_delta_minutes")),
-        "queueWaitMinutes": safe_int(story.get("queue_wait_minutes")),
-        "plannedLoadingMinutes": safe_int(story.get("planned_loading_minutes")),
-        "realLoadingMinutes": safe_int(story.get("real_loading_minutes")),
-        "plannedRouteMinutes": safe_int(story.get("planned_route_minutes")),
-        "realRouteMinutes": safe_int(story.get("real_route_minutes")),
-        "assignedToReturnMinutes": safe_int(story.get("assigned_to_return_minutes")),
-        "totalRouteMinutes": safe_int(story.get("total_route_minutes")),
-        "gpsDistanceKm": safe_float_value(story.get("gps_distance_km")),
-        "checkpointStraightKm": safe_float_value(story.get("checkpoint_straight_km")),
-        "addressCount": safe_int(story.get("address_count")),
-        "timeWindowLateCount": safe_int(story.get("time_window_late_count")),
-        "nextShiftDelayMinutes": safe_int(story.get("next_shift_delay_minutes")),
+        "queueEntryDeltaMinutes": nullable_int_value(story.get("queue_entry_delta_minutes")),
+        "queueWaitMinutes": nullable_int_value(story.get("queue_wait_minutes")),
+        "plannedLoadingMinutes": nullable_int_value(story.get("planned_loading_minutes")),
+        "realLoadingMinutes": nullable_int_value(story.get("real_loading_minutes")),
+        "plannedRouteMinutes": nullable_int_value(story.get("planned_route_minutes")),
+        "realRouteMinutes": nullable_int_value(story.get("real_route_minutes")),
+        "assignedToReturnMinutes": nullable_int_value(story.get("assigned_to_return_minutes")),
+        "totalRouteMinutes": nullable_int_value(story.get("total_route_minutes")),
+        "gpsDistanceKm": nullable_float_value(story.get("gps_distance_km")),
+        "checkpointStraightKm": nullable_float_value(story.get("checkpoint_straight_km")),
+        "addressCount": nullable_int_value(story.get("address_count")),
+        "timeWindowLateCount": nullable_int_value(story.get("time_window_late_count")),
+        "nextShiftDelayMinutes": nullable_int_value(story.get("next_shift_delay_minutes")),
         "assignmentMode": str(story.get("assignment_mode") or ""),
         "storyText": str(story.get("story_text") or ""),
     }

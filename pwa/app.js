@@ -29,7 +29,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v87";
+const APP_VERSION = "v88";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -657,6 +657,13 @@ function minutesBetween(start, end) {
   return Math.round((endTime - startTime) / 60000);
 }
 
+function nullableMinutesBetween(start, end) {
+  const startTime = start ? new Date(start).getTime() : NaN;
+  const endTime = end ? new Date(end).getTime() : NaN;
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) return null;
+  return Math.round((endTime - startTime) / 60000);
+}
+
 function shiftKeyForRoute(row = {}) {
   return String(
     row.routeStory?.shiftStart
@@ -805,12 +812,16 @@ function renderNarrativeRouteStory(row) {
   const computedQueueDelta = shiftStart && availableAt ? minutesBetween(availableAt, shiftStart) : null;
   const queueDelta = nullableNumber(story.queueEntryDeltaMinutes, computedQueueDelta);
   const queueWait = nullableNumber(story.queueWaitMinutes, minutesBetween(availableAt, assignedAt));
-  const plannedLoading = nullableNumber(story.plannedLoadingMinutes);
-  const realLoading = nullableNumber(story.realLoadingMinutes);
-  const plannedRoute = nullableNumber(story.plannedRouteMinutes);
-  const realRoute = nullableNumber(story.realRouteMinutes, row.routeDurationMinutes);
-  const totalRoute = nullableNumber(story.totalRouteMinutes, story.assignedToReturnMinutes);
-  const gpsDistance = nullableNumber(story.gpsDistanceKm, row.mileageKm);
+  const plannedDeparture = story.plannedDeparture || row.plannedDepartureAt;
+  const realDeparture = story.realDeparture || row.departedAt;
+  const plannedReturn = story.plannedReturn || row.plannedReturnAt;
+  const realReturn = story.realReturn || row.warehouseArrivedAt || row.lastOrderFinishedAt;
+  const plannedLoading = nullableNumber(story.plannedLoadingMinutes, nullableMinutesBetween(assignedAt, plannedDeparture));
+  const realLoading = nullableNumber(story.realLoadingMinutes, nullableMinutesBetween(assignedAt, realDeparture));
+  const plannedRoute = nullableNumber(story.plannedRouteMinutes, nullableMinutesBetween(plannedDeparture, plannedReturn));
+  const realRoute = nullableNumber(story.realRouteMinutes, row.routeDurationMinutes, nullableMinutesBetween(realDeparture, realReturn));
+  const totalRoute = nullableNumber(story.totalRouteMinutes, story.assignedToReturnMinutes, nullableMinutesBetween(assignedAt, realReturn));
+  const gpsDistance = nullableNumber(story.gpsDistanceKm, Number(row.mileageKm || 0) > 0 ? row.mileageKm : null);
   const straightDistance = nullableNumber(story.checkpointStraightKm);
   const addressCount = nullableNumber(story.addressCount, row.orders, row.stops);
   const timeWindowLate = nullableNumber(story.timeWindowLateCount, row.timeWindowLateCount);
@@ -2503,7 +2514,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=87");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=88");
   }
   return navigator.serviceWorker.ready;
 }
