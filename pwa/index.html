@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=78" />
+    <link rel="stylesheet" href="/styles.css?v=79" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -151,6 +151,7 @@
           </div>
           <div class="workflow-controls">
             <label class="month-picker">Hónap<input id="statistics-month" type="month" /></label>
+            <label class="month-picker">Nap<select id="statistics-day" disabled><option value="">Összes nap</option></select></label>
             <label id="statistics-preview-wrapper" class="month-picker hidden">Futár<input id="statistics-preview-courier" placeholder="Név vagy ID" /></label>
             <button id="statistics-refresh" class="secondary" type="button">Frissítés</button>
           </div>
@@ -454,6 +455,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=78" defer></script>
+    <script src="/app.js?v=79" defer></script>
   </body>
 </html>

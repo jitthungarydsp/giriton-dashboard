@@ -21,12 +21,13 @@ const state = {
   workflowProcesses: [{ id: "", label: "Havi folyamat" }],
   workflowPreviewCourierId: "",
   statisticsMonth: new Date().toISOString().slice(0, 7),
+  statisticsDay: "",
   statisticsHistoryDate: "",
   statisticsRequestSeq: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v78";
+const APP_VERSION = "v79";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 
@@ -456,6 +457,23 @@ function dailyHistoryByDate(rows = []) {
   }, {});
 }
 
+function updateStatisticsDayPicker(dates = []) {
+  const picker = $("#statistics-day");
+  if (!picker) return;
+  const previous = state.statisticsDay;
+  const options = [`<option value="">Legutóbbi nap</option>`].concat(
+    dates.map((date) => `<option value="${escapeHtml(date)}">${escapeHtml(dateLabel(date))}</option>`)
+  );
+  picker.innerHTML = options.join("");
+  picker.disabled = dates.length === 0;
+  if (previous && dates.includes(previous)) {
+    picker.value = previous;
+  } else {
+    state.statisticsDay = "";
+    picker.value = "";
+  }
+}
+
 function uniqueText(values = []) {
   return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
@@ -705,6 +723,7 @@ function renderDailyHistory(payload) {
   const rows = payload.dailyHistory || [];
   const byDate = dailyHistoryByDate(rows);
   const dates = Object.keys(byDate).sort().reverse();
+  updateStatisticsDayPicker(dates);
   if (!dates.length) {
     state.statisticsHistoryDate = "";
     return `
@@ -715,7 +734,9 @@ function renderDailyHistory(payload) {
       </section>
     `;
   }
-  if (!dates.includes(state.statisticsHistoryDate)) {
+  if (state.statisticsDay && dates.includes(state.statisticsDay)) {
+    state.statisticsHistoryDate = state.statisticsDay;
+  } else if (!dates.includes(state.statisticsHistoryDate)) {
     state.statisticsHistoryDate = dates[0];
   }
   const index = Math.max(0, dates.indexOf(state.statisticsHistoryDate));
@@ -779,6 +800,7 @@ function changeDailyHistoryDate(offset) {
   const nextIndex = Math.min(dates.length - 1, Math.max(0, currentIndex + offset));
   if (nextIndex === currentIndex) return;
   state.statisticsHistoryDate = dates[nextIndex];
+  state.statisticsDay = dates[nextIndex];
   renderStatistics();
 }
 
@@ -2177,7 +2199,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=78");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=79");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3076,8 +3098,17 @@ $("#workflow-refresh").addEventListener("click", () => {
 
 $("#statistics-month").addEventListener("change", (event) => {
   state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  state.statisticsDay = "";
   state.statistics = null;
   loadStatistics({ resetHistory: true });
+});
+
+$("#statistics-day").addEventListener("change", (event) => {
+  state.statisticsDay = event.target.value || "";
+  if (state.statisticsDay) {
+    state.statisticsHistoryDate = state.statisticsDay;
+  }
+  renderStatistics();
 });
 
 $("#statistics-refresh").addEventListener("click", () => {

@@ -2116,6 +2116,12 @@ def optional_supabase_rows(
         ) or []
     except HTTPException:
         return []
+    except requests.RequestException as exc:
+        print(f"Optional Supabase read skipped: table={table}; error={exc}")
+        return []
+    except Exception as exc:
+        print(f"Optional Supabase read skipped: table={table}; unexpected={exc}")
+        return []
 
 
 def money_int(value: Any) -> int:
