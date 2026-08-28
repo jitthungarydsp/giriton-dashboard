@@ -415,11 +415,20 @@
             "token": ""
         },
         {
-            "username": "Molnár Ákos",
+            "username": "Molnár  Ákos",
             "trainer": "trainer_name",
             "password": "Qed2zlB4",
             "role": "user",
             "courierId": 7724,
+            "active": true,
+            "token": ""
+        },
+        {
+            "username": "Fekete 8292 Bálint",
+            "trainer": "trainer_name",
+            "password": "Qed2zlB4",
+            "role": "user",
+            "courierId": 8292,
             "active": true,
             "token": ""
         },
