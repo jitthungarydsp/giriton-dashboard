@@ -14,7 +14,9 @@ const state = {
   queueTimer: null,
   salaryAdvanceRequests: [],
   expenseRequests: [],
+  atmPayments: [],
   statistics: null,
+  statisticsTrend: [],
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   workflowProcess: "",
@@ -27,9 +29,16 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v79";
+const APP_VERSION = "v82";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
+const PHONEBOOK_CONTACTS = [
+  { label: "Diszpécser", phone: "+3612000391", note: "Kifli támogatás" },
+  { label: "FC2 Diszpécser", phone: "+3612002763", note: "FC2 támogatás" },
+  { label: "FC2 Logisztikai műszakvezető", phone: "+3612069507", note: "Logisztikai vezető" },
+  { label: "FC1 Logisztikai műszakvezető", phone: "+3612001147", note: "Logisztikai vezető" },
+  { label: "Ügyfélszolgálat", phone: "0612000881", note: "Központi ügyfélszolgálat" },
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -76,6 +85,7 @@ function currentSectionRefresh() {
   if (state.section === "tours") return loadCurrentRoute();
   if (state.section === "statistics") return loadStatistics();
   if (state.section === "workflow") return loadWorkflow();
+  if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
   if (state.section === "vehicle") return loadVehicleReports();
   return Promise.resolve();
@@ -217,8 +227,9 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-salary-advance", "#nav-expense", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
+  $("#nav-expense")?.classList.add("hidden");
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
     const previewWrapper = $(selector);
     if (previewWrapper) previewWrapper.classList.toggle("hidden", !state.user.canPreviewCouriers);
@@ -234,6 +245,8 @@ function showSection(section) {
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
+  $("#phonebook-content").classList.toggle("hidden", section !== "phonebook");
+  $("#atm-content").classList.toggle("hidden", section !== "atm");
   $("#salary-advance-content").classList.toggle("hidden", section !== "salary-advance");
   $("#expense-content").classList.toggle("hidden", section !== "expense");
   $("#documents-content").classList.toggle("hidden", section !== "documents");
@@ -246,6 +259,8 @@ function showSection(section) {
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-statistics").classList.toggle("active", section === "statistics");
+  $("#nav-phonebook").classList.toggle("active", section === "phonebook");
+  $("#nav-atm").classList.toggle("active", section === "atm");
   $("#nav-salary-advance").classList.toggle("active", section === "salary-advance");
   $("#nav-expense").classList.toggle("active", section === "expense");
   $("#nav-documents").classList.toggle("active", section === "documents");
@@ -257,6 +272,8 @@ function showSection(section) {
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "statistics" && !state.statistics) loadStatistics();
+  if (section === "phonebook") renderPhonebook();
+  if (section === "atm") loadAtmPayments();
   if (section === "salary-advance") loadSalaryAdvanceRequests();
   if (section === "expense") loadExpenseRequests();
   if (section === "documents") loadDocuments();
@@ -286,9 +303,110 @@ function formatHuf(value) {
   return `${formatCount(value)} Ft`;
 }
 
+function monthOffset(monthValue, offset) {
+  const [year, month] = String(monthValue || "").split("-").map(Number);
+  const base = Number.isFinite(year) && Number.isFinite(month)
+    ? new Date(year, month - 1, 1, 12, 0, 0)
+    : new Date();
+  base.setMonth(base.getMonth() + offset);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthShortLabel(monthValue) {
+  const [year, month] = String(monthValue || "").split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return String(monthValue || "-");
+  return new Intl.DateTimeFormat("hu-HU", { month: "short" }).format(new Date(year, month - 1, 1, 12, 0, 0));
+}
+
 function parseHufInput(value) {
   const digits = String(value || "").replace(/[^\d]/g, "");
   return Number(digits || 0);
+}
+
+function telHref(phone) {
+  return `tel:${String(phone || "").replace(/[^\d+]/g, "")}`;
+}
+
+function renderPhonebook() {
+  const target = $("#phonebook-list");
+  if (!target) return;
+  target.innerHTML = PHONEBOOK_CONTACTS.map((contact) => `
+    <article class="phonebook-card">
+      <div>
+        <strong>${escapeHtml(contact.label)}</strong>
+        <span>${escapeHtml(contact.note || "")}</span>
+        <a href="${escapeHtml(telHref(contact.phone))}">${escapeHtml(contact.phone)}</a>
+      </div>
+      <a class="phonebook-call" href="${escapeHtml(telHref(contact.phone))}" aria-label="${escapeHtml(contact.label)} hívása">Hívás</a>
+    </article>
+  `).join("");
+}
+
+function atmPaymentStatusLabel(value) {
+  const status = String(value || "submitted").trim().toLowerCase();
+  return {
+    submitted: "Beküldve",
+    reviewed: "Ellenőrizve",
+    rejected: "Elutasítva",
+  }[status] || status || "-";
+}
+
+function renderAtmPayments(balance = null) {
+  const total = Number(balance?.paidTotalHuf ?? state.atmPayments.reduce((sum, item) => sum + Number(item.amountHuf || 0), 0));
+  const count = Number(balance?.count ?? state.atmPayments.length);
+  const totalTarget = $("#atm-balance-paid");
+  const countTarget = $("#atm-balance-count");
+  if (totalTarget) totalTarget.textContent = formatHuf(total);
+  if (countTarget) countTarget.textContent = `${formatCount(count)} befizetés`;
+
+  const target = $("#atm-list");
+  if (!target) return;
+  const rows = state.atmPayments || [];
+  if (!rows.length) {
+    target.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">ATM</span>
+        <div><h3>Beküldött ATM befizetések</h3><p>Még nincs rögzített ATM befizetés.</p></div>
+      </div>
+    `;
+    return;
+  }
+  target.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">ATM</span>
+      <div><h3>Beküldött ATM befizetések</h3><p>A bizonylatok külön ATM naplóban maradnak, nem módosítják a havi elszámolást.</p></div>
+    </div>
+    <div class="financial-card-grid salary-advance-grid">
+      ${rows.map((item) => `
+        <article class="financial-card">
+          <summary>
+            <span>${escapeHtml(atmPaymentStatusLabel(item.status))}</span>
+            <strong>${formatHuf(item.amountHuf)}</strong>
+          </summary>
+          <div class="stat-breakdown-list">
+            <div class="stat-row"><span>Dátum</span><strong>${escapeHtml(shortDateTime(item.paidAt || item.createdAt))}</strong></div>
+            <div class="stat-row"><span>Bizonylat</span><strong>${escapeHtml(item.invoiceNumber || "-")}</strong></div>
+            <div class="stat-row"><span>Fájl</span><strong>${escapeHtml(item.fileName || "-")}</strong></div>
+            ${item.note ? `<div class="stat-row"><span>Megjegyzés</span><strong>${escapeHtml(item.note)}</strong></div>` : ""}
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function loadAtmPayments() {
+  const message = $("#atm-message");
+  if (message) message.textContent = "ATM befizetések betöltése...";
+  try {
+    const payload = await api(withPreviewCourier("/api/atm-payments"));
+    state.atmPayments = payload.payments || [];
+    renderAtmPayments(payload.balance || null);
+    if (message) message.textContent = "";
+  } catch (error) {
+    renderAtmPayments();
+    if (message) message.textContent = error.message;
+  }
 }
 
 function updateSalaryAdvancePreview() {
@@ -562,6 +680,44 @@ function renderDailyShiftReport(rows = []) {
         </div>
       `).join("")}
     </div>
+  `;
+}
+
+function renderStatisticsTrend() {
+  const rows = state.statisticsTrend || [];
+  if (!rows.length) return "";
+  const maxRoutes = Math.max(1, ...rows.map((item) => Number(item.routes || 0)));
+  const maxOrders = Math.max(1, ...rows.map((item) => Number(item.orders || 0)));
+  return `
+    <section class="process-card statistics-trend-card">
+      <div class="process-title">
+        <span class="step-code">↗</span>
+        <div>
+          <h3>Elmúlt 3 hónap</h3>
+          <p>Túrák és címek alakulása a kiválasztott hónappal együtt.</p>
+        </div>
+      </div>
+      <div class="trend-chart">
+        ${rows.map((item) => {
+          const routeHeight = Math.max(8, Math.round((Number(item.routes || 0) / maxRoutes) * 100));
+          const orderHeight = Math.max(8, Math.round((Number(item.orders || 0) / maxOrders) * 100));
+          return `
+            <div class="trend-month">
+              <div class="trend-bars" aria-label="${escapeHtml(item.month)} havi teljesítmény">
+                <span class="trend-bar routes" style="height:${routeHeight}%"></span>
+                <span class="trend-bar orders" style="height:${orderHeight}%"></span>
+              </div>
+              <strong>${escapeHtml(monthShortLabel(item.month))}</strong>
+              <small>${formatCount(item.routes)} túra · ${formatCount(item.orders)} cím</small>
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <div class="trend-legend">
+        <span><i class="routes"></i>Túra</span>
+        <span><i class="orders"></i>Cím</span>
+      </div>
+    </section>
   `;
 }
 
@@ -909,6 +1065,7 @@ function renderStatistics() {
     </div>
   `).join("");
   breakdown.innerHTML = `
+    ${renderStatisticsTrend()}
     ${renderDailyHistory(payload)}
     <div class="process-title">
       <span class="step-code">∑</span>
@@ -949,8 +1106,32 @@ async function loadStatistics(options = {}) {
       params.set("courier", state.workflowPreviewCourierId);
     }
     const payload = await api(`/api/statistics/monthly?${params.toString()}`);
+    const trendMonths = [monthOffset(state.statisticsMonth, -2), monthOffset(state.statisticsMonth, -1), state.statisticsMonth];
+    const extraTrendPayloads = await Promise.all(trendMonths
+      .filter((month) => month !== state.statisticsMonth)
+      .map(async (month) => {
+        const trendParams = new URLSearchParams({ month, _: String(Date.now()) });
+        if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+          trendParams.set("courier", state.workflowPreviewCourierId);
+        }
+        try {
+          return await api(`/api/statistics/monthly?${trendParams.toString()}`);
+        } catch (_error) {
+          return { month, summary: {} };
+        }
+      }));
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = payload;
+    const trendByMonth = Object.fromEntries([payload, ...extraTrendPayloads].map((item) => [item.month || "", item]));
+    state.statisticsTrend = trendMonths.map((month) => {
+      const item = trendByMonth[month] || {};
+      const summary = item.summary || {};
+      return {
+        month,
+        routes: Number(summary.routes || 0),
+        orders: Number(summary.orders || 0),
+      };
+    });
     const dates = Object.keys(dailyHistoryByDate(payload.dailyHistory || [])).sort().reverse();
     if (!options.resetHistory && requestedHistoryDate && dates.includes(requestedHistoryDate)) {
       state.statisticsHistoryDate = requestedHistoryDate;
@@ -959,6 +1140,7 @@ async function loadStatistics(options = {}) {
   } catch (error) {
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
+    state.statisticsTrend = [];
     $("#statistics-grid").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
     $("#statistics-message").innerHTML = `<div class="notice error">A statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
@@ -1148,7 +1330,7 @@ async function loadCurrentRoute() {
   try {
     state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
     if (state.currentRoute?.found) {
-      const wasQueueActive = Boolean(activeQueueStatus()?.active);
+      const wasQueueActive = Boolean(activeQueue()?.active);
       clearActiveQueue();
       if (wasQueueActive && state.section === "tours" && !isAdminPreviewMode()) {
         showSection("home");
@@ -2199,7 +2381,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=79");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=82");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3049,6 +3231,7 @@ function updatePreviewCourier(value) {
   state.vehicleReports = [];
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
+  state.atmPayments = [];
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
   setAdminPreviewStatus(state.workflowPreviewCourierId ? `Előnézet aktív: ${state.workflowPreviewCourierId}` : "Saját profil aktív.");
@@ -3204,6 +3387,41 @@ $("#expense-form")?.addEventListener("submit", async (event) => {
   }
 });
 
+$("#atm-refresh")?.addEventListener("click", loadAtmPayments);
+$("#atm-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (isAdminPreviewMode()) {
+    const message = $("#atm-message");
+    if (message) message.textContent = "Admin előnézetben nem küldhető be ATM befizetés.";
+    return;
+  }
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const message = $("#atm-message");
+  if (button) button.disabled = true;
+  if (message) message.textContent = "ATM befizetés mentése...";
+  try {
+    const formData = new FormData();
+    formData.append("amount_huf", String(parseHufInput($("#atm-amount").value)));
+    formData.append("invoice_number", $("#atm-invoice-number").value || "");
+    formData.append("note", $("#atm-note").value || "");
+    const file = $("#atm-file").files?.[0];
+    if (file) formData.append("receipt_file", file);
+    const payload = await api("/api/atm-payments", {
+      method: "POST",
+      body: formData,
+    });
+    state.atmPayments = payload.payments || [];
+    renderAtmPayments(payload.balance || null);
+    form.reset();
+    if (message) message.textContent = "Az ATM befizetés rögzítve.";
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 function showAuthPanel(panel) {
   const loginForm = $("#login-form");
   const registerForm = $("#register-form");
@@ -3333,6 +3551,7 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.queueStatus = null;
   state.statistics = null;
+  state.statisticsTrend = [];
   renderQueueStatus();
   showLogin();
 });
@@ -3340,6 +3559,8 @@ $("#refresh").addEventListener("click", loadShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));
+$("#nav-phonebook").addEventListener("click", () => showSection("phonebook"));
+$("#nav-atm").addEventListener("click", () => showSection("atm"));
 $("#nav-salary-advance").addEventListener("click", () => showSection("salary-advance"));
 $("#nav-expense").addEventListener("click", () => showSection("expense"));
 $("#nav-documents").addEventListener("click", () => showSection("documents"));

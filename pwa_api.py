@@ -1800,6 +1800,29 @@ def normalize_expense_request(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_atm_payment(row: dict[str, Any]) -> dict[str, Any]:
+    status = str(row.get("status") or "submitted").strip().casefold()
+    status_labels = {
+        "submitted": "Beküldve",
+        "reviewed": "Ellenőrizve",
+        "rejected": "Elutasítva",
+    }
+    return {
+        "id": str(row.get("id") or ""),
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or ""),
+        "amountHuf": int(row.get("amount_huf") or 0),
+        "invoiceNumber": str(row.get("invoice_number") or ""),
+        "note": str(row.get("note") or ""),
+        "fileName": str(row.get("file_name") or ""),
+        "mimeType": str(row.get("mime_type") or ""),
+        "status": status,
+        "statusLabel": status_labels.get(status, status or "-"),
+        "paidAt": str(row.get("paid_at") or ""),
+        "createdAt": str(row.get("created_at") or ""),
+    }
+
+
 def clean_text(value: Any, *, limit: int = 500) -> str:
     text = str(value or "").strip()
     text = re.sub(r"\s+", " ", text)
@@ -8176,6 +8199,84 @@ async def create_expense_request(
         "request": normalize_expense_request(rows[0] if rows else {}),
         "requests": requests["requests"],
     }
+
+
+@app.get("/api/atm-payments")
+def atm_payments(
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
+    rows = supabase_rest(
+        "GET",
+        "pwa_atm_payment",
+        params={
+            "select": "id,courier_id,courier_name,amount_huf,invoice_number,note,file_name,mime_type,status,paid_at,created_at",
+            "courier_id": f"eq.{courier_id}",
+            "order": "paid_at.desc",
+            "limit": "200",
+        },
+    )
+    normalized = [normalize_atm_payment(row) for row in rows]
+    active_rows = [row for row in normalized if row.get("status") != "rejected"]
+    return {
+        "payments": normalized,
+        "balance": {
+            "paidTotalHuf": sum(int(row.get("amountHuf") or 0) for row in active_rows),
+            "count": len(active_rows),
+        },
+    }
+
+
+@app.post("/api/atm-payments")
+async def create_atm_payment(
+    amount_huf: int = Form(...),
+    invoice_number: str = Form(default=""),
+    note: str = Form(default=""),
+    receipt_file: UploadFile = File(...),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, courier_name = courier_identity(user)
+    amount_value = int(amount_huf or 0)
+    clean_invoice_number = clean_text(invoice_number, limit=80)
+    clean_note = clean_text(note, limit=1000)
+    if amount_value <= 0:
+        raise HTTPException(status_code=422, detail="Az összegnek pozitívnak kell lennie.")
+    if not receipt_file.filename:
+        raise HTTPException(status_code=422, detail="Bizonylat feltöltése kötelező.")
+
+    content = await receipt_file.read(MAX_INVOICE_BYTES + 1)
+    if len(content) > MAX_INVOICE_BYTES:
+        raise HTTPException(status_code=413, detail="A feltöltött bizonylat túl nagy.")
+    if not content:
+        raise HTTPException(status_code=422, detail="A feltöltött bizonylat üres.")
+
+    now = datetime.now(timezone.utc)
+    supabase_rest(
+        "POST",
+        "pwa_atm_payment",
+        payload={
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "amount_huf": amount_value,
+            "invoice_number": clean_invoice_number,
+            "note": clean_note,
+            "file_name": receipt_file.filename,
+            "mime_type": receipt_file.content_type or "application/octet-stream",
+            "file_size": len(content),
+            "file_content_base64": base64.b64encode(content).decode("ascii"),
+            "status": "submitted",
+            "paid_at": now.isoformat(),
+            "created_by": courier_name,
+            "updated_at": now.isoformat(),
+        },
+        prefer="return=minimal",
+        timeout=60,
+    )
+    return atm_payments(giriton_pwa_session=giriton_pwa_session)
 
 
 @app.get("/api/health")

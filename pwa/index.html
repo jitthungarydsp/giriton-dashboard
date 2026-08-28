@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=79" />
+    <link rel="stylesheet" href="/styles.css?v=82" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -160,6 +160,61 @@
         <section id="statistics-message" aria-live="polite"></section>
         <section id="statistics-grid" class="statistics-grid"></section>
         <section id="statistics-breakdown" class="process-card"></section>
+      </div>
+
+      <div id="phonebook-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">SEGÍTSÉG</p>
+            <h2>Telefonszámok</h2>
+            <p class="muted">Fontos kapcsolatok egy érintéses hívással.</p>
+          </div>
+        </section>
+
+        <section id="phonebook-list" class="phonebook-list" aria-label="Hívható telefonszámok"></section>
+      </div>
+
+      <div id="atm-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">ATM</p>
+            <h2>ATM befizetés</h2>
+            <p class="muted">Rögzítsd az ATM befizetés összegét és a bizonylat képét.</p>
+          </div>
+          <button id="atm-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+
+        <section class="process-card atm-balance-card">
+          <div class="process-title">
+            <span class="step-code">Ft</span>
+            <div>
+              <h3>Vezetett egyenleg</h3>
+              <p>Az eddig beküldött ATM befizetések összege.</p>
+            </div>
+          </div>
+          <strong id="atm-balance-paid">0 Ft</strong>
+          <small id="atm-balance-count">0 befizetés</small>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
+            <span class="step-code">ATM</span>
+            <div>
+              <h3>Befizetés rögzítése</h3>
+              <p>Add meg az összeget, és készíts vagy tölts fel egy bizonylatképet.</p>
+            </div>
+          </div>
+          <form id="atm-form" class="process-form two-column">
+            <label>Összeg (Ft)<input id="atm-amount" name="amount_huf" inputmode="numeric" autocomplete="off" required /></label>
+            <label>Bizonylat azonosító<input id="atm-invoice-number" name="invoice_number" autocomplete="off" /></label>
+            <label class="full-width">Megjegyzés<textarea id="atm-note" name="note" rows="3"></textarea></label>
+            <label class="full-width">Bizonylat fotó<input id="atm-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" capture="environment" required /></label>
+            <button class="primary full-width" type="submit">ATM befizetés beküldése</button>
+          </form>
+          <p id="atm-message" class="updated-at" aria-live="polite"></p>
+        </section>
+
+        <section id="atm-list" class="process-card"></section>
       </div>
 
       <div id="salary-advance-content" class="hidden">
@@ -444,8 +499,10 @@
         <button id="nav-home" class="active"><span>⌂</span>Kezdőlap</button>
         <button id="nav-settlement"><span>▣</span>Elszámolásom</button>
         <button id="nav-statistics"><span>∑</span>Statisztika</button>
+        <button id="nav-phonebook"><span>☎</span>Telefonszámok</button>
+        <button id="nav-atm"><span>ATM</span>ATM</button>
         <button id="nav-salary-advance"><span>Ft</span>Előleg</button>
-        <button id="nav-expense"><span>T</span>Tankolás</button>
+        <button id="nav-expense" class="hidden"><span>T</span>Tankolás</button>
         <button id="nav-documents"><span>◇</span>Korábbi elszámolásaim</button>
         <button id="nav-profile"><span>☻</span>Profil</button>
         <button id="nav-device"><span>□</span>Telefon</button>
@@ -455,6 +512,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=79" defer></script>
+    <script src="/app.js?v=82" defer></script>
   </body>
 </html>
