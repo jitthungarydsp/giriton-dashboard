@@ -4637,7 +4637,7 @@ def build_route_quality_records(
             "queued_on_time": queued_on_time,
             "no_late_stops": late_stop_count <= 0,
             "quality_ok": queued_on_time and late_stop_count <= 0,
-            "late_start_minutes": api_late_count if has_api_daily_quality else late_start_minutes,
+            "late_start_minutes": late_start_minutes,
             "late_stop_count": late_stop_count,
             "late_stop_minutes": late_stop_minutes,
             "same_checkin_group": bool(same_checkin_by_shift.get(shift_key)),
