@@ -20,8 +20,8 @@ on:
         required: false
         default: "false"
   schedule:
-    # GitHub cron UTC-ben fut. A forrasfrissitesek utan indul, aznapi pontos egyezesekre is.
-    - cron: "25 * * * *"
+    # GitHub cron UTC-ben fut. A MűszakPro és Giriton forrásfrissítések után indul.
+    - cron: "40 * * * *"
 
 permissions:
   contents: read

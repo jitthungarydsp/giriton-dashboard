@@ -12,8 +12,8 @@ on:
         required: true
         default: "10"
   schedule:
-    # GitHub cron UTC-ben fut. A Giriton műszak raw export óránként frissíti a DB-t.
-    - cron: "0 * * * *"
+    # GitHub cron UTC-ben fut. A Giriton műszak raw export óránként, a MűszakPro frissítés után fut.
+    - cron: "20 * * * *"
 
 concurrency:
   group: giriton-raw-export
