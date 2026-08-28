@@ -28,7 +28,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v84";
+const APP_VERSION = "v85";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -550,12 +550,24 @@ function timeOnly(value) {
 }
 
 function durationText(minutes) {
-  const value = Math.max(0, Number(minutes || 0));
+  if (minutes === null || minutes === undefined || minutes === "") return "Nincs adat";
+  const numeric = Number(minutes);
+  if (!Number.isFinite(numeric)) return "Nincs adat";
+  const value = Math.max(0, numeric);
   const hours = Math.floor(value / 60);
   const mins = value % 60;
   if (hours && mins) return `${formatCount(hours)} óra ${formatCount(mins)} perc`;
   if (hours) return `${formatCount(hours)} óra`;
   return `${formatCount(mins)} perc`;
+}
+
+function nullableNumber(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
 }
 
 function routeStoryTextMatch(text, pattern) {
@@ -784,25 +796,28 @@ function renderNarrativeRouteStory(row) {
   const availableAt = story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt;
   const registeredAt = story.courierRegisteredAt || story.queueStartedAt || row.actualStartAt;
   const assignedAt = story.assignedAt || row.routeAssignedAt;
-  const queueDelta = Number(story.queueEntryDeltaMinutes || 0);
-  const queueWait = Number(story.queueWaitMinutes || minutesBetween(availableAt, assignedAt) || 0);
-  const plannedLoading = Number(story.plannedLoadingMinutes || 0);
-  const realLoading = Number(story.realLoadingMinutes || 0);
-  const plannedRoute = Number(story.plannedRouteMinutes || 0);
-  const realRoute = Number(story.realRouteMinutes || row.routeDurationMinutes || 0);
-  const totalRoute = Number(story.totalRouteMinutes || story.assignedToReturnMinutes || 0);
-  const gpsDistance = Number(story.gpsDistanceKm || row.mileageKm || 0);
-  const straightDistance = Number(story.checkpointStraightKm || 0);
-  const addressCount = Number(story.addressCount || row.orders || row.stops || 0);
-  const timeWindowLate = Number(story.timeWindowLateCount || row.timeWindowLateCount || 0);
-  const nextShiftDelay = Number(story.nextShiftDelayMinutes || 0);
+  const computedQueueDelta = shiftStart && availableAt ? minutesBetween(availableAt, shiftStart) : null;
+  const queueDelta = nullableNumber(story.queueEntryDeltaMinutes, computedQueueDelta);
+  const queueWait = nullableNumber(story.queueWaitMinutes, minutesBetween(availableAt, assignedAt));
+  const plannedLoading = nullableNumber(story.plannedLoadingMinutes);
+  const realLoading = nullableNumber(story.realLoadingMinutes);
+  const plannedRoute = nullableNumber(story.plannedRouteMinutes);
+  const realRoute = nullableNumber(story.realRouteMinutes, row.routeDurationMinutes);
+  const totalRoute = nullableNumber(story.totalRouteMinutes, story.assignedToReturnMinutes);
+  const gpsDistance = nullableNumber(story.gpsDistanceKm, row.mileageKm);
+  const straightDistance = nullableNumber(story.checkpointStraightKm);
+  const addressCount = nullableNumber(story.addressCount, row.orders, row.stops);
+  const timeWindowLate = nullableNumber(story.timeWindowLateCount, row.timeWindowLateCount);
+  const nextShiftDelay = nullableNumber(story.nextShiftDelayMinutes);
   const nextShiftText = routeStoryTextMatch(storyText, /A kovetkezo foglalt muszak:\s*([^.]+)/i);
   const bookedShiftCount = routeStoryTextMatch(storyText, /napi foglalt muszakok szama:\s*(\d+)/i);
   const plannedEarly = routeStoryTextMatch(storyText, /tervezetthez kepest korai:\s*(\d+)/i);
   const plannedLate = routeStoryTextMatch(storyText, /tervezetthez kepest keso:\s*(\d+)/i);
   const windowEarly = routeStoryTextMatch(storyText, /idokapuhoz kepest korai:\s*(\d+)/i);
-  const windowLate = routeStoryTextMatch(storyText, /idokapuhoz kepest keso:\s*(\d+)/i) || String(timeWindowLate || 0);
-  const earlyText = queueDelta < 0
+  const windowLate = routeStoryTextMatch(storyText, /idokapuhoz kepest keso:\s*(\d+)/i) || String(timeWindowLate ?? 0);
+  const earlyText = queueDelta === null
+    ? "a műszakkezdéshez képest nincs pontos adat"
+    : queueDelta < 0
     ? `${formatCount(Math.abs(queueDelta))} perccel a műszakkezdés előtt`
     : queueDelta > 0
       ? `${formatCount(queueDelta)} perccel a műszakkezdés után`
@@ -830,7 +845,7 @@ function renderNarrativeRouteStory(row) {
 
       <section>
         <h4>Távolság</h4>
-        <p>A GPS alapján mért távolság <strong>${escapeHtml(formatAverage(gpsDistance))} km</strong> volt.${straightDistance ? ` A címek közötti egyenes távolság <strong>${escapeHtml(formatAverage(straightDistance))} km</strong>.` : ""}</p>
+        <p>A GPS alapján mért távolság <strong>${gpsDistance === null ? "Nincs adat" : `${escapeHtml(formatAverage(gpsDistance))} km`}</strong> volt.${straightDistance ? ` A címek közötti egyenes távolság <strong>${escapeHtml(formatAverage(straightDistance))} km</strong>.` : ""}</p>
       </section>
 
       <section>
@@ -841,7 +856,7 @@ function renderNarrativeRouteStory(row) {
 
       <section>
         <h4>Címek</h4>
-        <p>Összesen <strong>${formatCount(addressCount)} cím</strong> volt a túrán. A tervezett időponthoz képest <strong>${escapeHtml(plannedEarly || "0")}</strong> cím korábban, <strong>${escapeHtml(plannedLate || "0")}</strong> cím később teljesült.</p>
+        <p>Összesen <strong>${addressCount === null ? "Nincs adat" : `${formatCount(addressCount)} cím`}</strong> volt a túrán. A tervezett időponthoz képest <strong>${escapeHtml(plannedEarly || "0")}</strong> cím korábban, <strong>${escapeHtml(plannedLate || "0")}</strong> cím később teljesült.</p>
         <p>Az időkapuhoz képest <strong>${escapeHtml(windowEarly || "0")}</strong> cím korábban teljesült, késéses cím pedig <strong>${escapeHtml(windowLate || "0")}</strong> volt.</p>
       </section>
     </article>
@@ -2409,7 +2424,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=84");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=85");
   }
   return navigator.serviceWorker.ready;
 }
