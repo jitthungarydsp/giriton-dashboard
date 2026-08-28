@@ -26,7 +26,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v76";
+const APP_VERSION = "v78";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 
@@ -431,7 +431,7 @@ function renderDelayDetailRows(rows = []) {
   return rows.map((row) => `
     <div class="stat-row">
       <span>${escapeHtml(row.date || "-")} · Route ${escapeHtml(row.routeId || "-")} · WH${escapeHtml(row.warehouseId || "-")}</span>
-      <strong>${formatCount(row.delayMinutes)} perc · ${formatCount(row.delayedStops)} cím</strong>
+      <strong>${formatCount(row.delayMinutes)} perc · ${formatCount(row.delayedStops)} cím · mentesítés: ${row.hasDelayCleaning ? "Igen" : "Nem"}</strong>
     </div>
   `).join("");
 }
@@ -503,13 +503,14 @@ function buildDailyShiftReport(rows = []) {
     return acc;
   }, {});
   return Object.entries(grouped).map(([key, items], index) => {
-    const hasApiQuality = items.some((row) => Number(row.apiShiftCount || 0) > 0 || Number(row.apiLateCount || 0) > 0 || Number(row.apiDelayedOrderCount || 0) > 0 || Number(row.apiDidNotComeCount || 0) > 0);
-    const lateStartRows = hasApiQuality
-      ? items.filter((row) => Number(row.apiLateCount || 0) > 0)
-      : items.filter((row) => Number(row.plannedStartDelayMinutes || 0) > 0);
-    const lateStopRows = hasApiQuality
-      ? items.filter((row) => Number(row.apiDelayedOrderCount || 0) > 0)
-      : items.filter((row) => Number(row.timeWindowLateCount || 0) > 0);
+    const lateStartRows = items.filter((row) => Number(row.plannedStartDelayMinutes || 0) > 0);
+    const lateStopRows = items.filter((row) => {
+      const cleanedCount = Number(row.cleanedDelayCount || 0);
+      const uncleanedCount = Number(row.uncleanedDelayCount || 0);
+      const hasCleaningData = Boolean(row.hasDelayCleaning || cleanedCount > 0 || uncleanedCount > 0);
+      if (hasCleaningData) return uncleanedCount > 0;
+      return Number(row.timeWindowLateCount || row.apiDelayedOrderCount || 0) > 0;
+    });
     const sameCheckin = uniqueText(items.map((row) => row.actualStartAt || row.shiftAvailableAt)).length === 1 && items.length > 1;
     return {
       key,
@@ -569,6 +570,25 @@ function routeShiftLateMinutes(row = {}, story = {}) {
   return computedDelay > 0 ? computedDelay : 0;
 }
 
+function routeDelayCleaningLabel(row = {}) {
+  const cleanedCount = Number(row.cleanedDelayCount || 0);
+  const uncleanedCount = Number(row.uncleanedDelayCount || 0);
+  const cleanedMinutes = Number(row.cleanedDelayMinutes || 0);
+  const uncleanedMinutes = Number(row.uncleanedDelayMinutes || 0);
+  const reasons = Array.isArray(row.cleanedReasons) ? row.cleanedReasons.filter(Boolean) : [];
+  if (cleanedCount <= 0 && uncleanedCount <= 0) {
+    return row.hasDelayCleaning ? "Igen" : "Nem";
+  }
+  const parts = [];
+  if (cleanedCount > 0) {
+    parts.push(`Igen: ${formatCount(cleanedCount)} cím / ${formatCount(cleanedMinutes)} perc${reasons.length ? ` (${reasons.join(", ")})` : ""}`);
+  }
+  if (uncleanedCount > 0) {
+    parts.push(`Nem: ${formatCount(uncleanedCount)} cím / ${formatCount(uncleanedMinutes)} perc`);
+  }
+  return parts.join(" · ") || "Nem";
+}
+
 function routeStoryShiftLabel(story = {}) {
   const name = String(story.shiftName || "").trim();
   const start = shortDateTime(story.shiftStart);
@@ -617,11 +637,15 @@ function renderRouteStoryDetails(row) {
   const hasApiQuality = Number(row.apiShiftCount || 0) > 0 || apiDelayedOrders > 0 || apiLateCount > 0 || Number(row.apiDidNotComeCount || 0) > 0;
   const lateMinutes = Number(row.timeWindowLateMinutes || 0);
   const maxDelay = Number(row.maxDelayMinutes || 0);
+  const cleanedCount = Number(row.cleanedDelayCount || 0);
+  const uncleanedCount = Number(row.uncleanedDelayCount || 0);
+  const hasCleaningData = Boolean(row.hasDelayCleaning || cleanedCount > 0 || uncleanedCount > 0);
   const visibleLateCount = hasApiQuality ? apiDelayedOrders : lateCount;
+  const qualityLateCount = hasCleaningData ? uncleanedCount : visibleLateCount;
   const lateText = visibleLateCount || lateMinutes || maxDelay
     ? `${formatCount(visibleLateCount)} cím · ${formatCount(lateMinutes)} perc${maxDelay ? ` · max ${formatCount(maxDelay)} perc` : ""}`
     : "Nincs";
-  const routeOk = visibleLateCount <= 0 || (maxDelay > 0 && lateMinutes <= maxDelay);
+  const routeOk = qualityLateCount <= 0;
   const shiftLateMinutes = routeShiftLateMinutes(row, story);
   const shiftOk = shiftLateMinutes <= 0;
   return `
@@ -646,6 +670,7 @@ function renderRouteStoryDetails(row) {
       ${routeStoryMetric("Várakozás túrára", story.queueWaitMinutes, " perc")}
       ${routeStoryMetric("Túra hossza", routeMinutes, " perc")}
       <div class="stat-row"><span>Időkapun túli késés</span><strong>${escapeHtml(lateText)}</strong></div>
+      <div class="stat-row"><span>Késés mentesítés</span><strong>${escapeHtml(routeDelayCleaningLabel(row))}</strong></div>
       ${routeStoryDistance("Megtett táv", distance)}
       ${story.storyText ? `<p class="route-story-text">${escapeHtml(story.storyText)}</p>` : ""}
       ${Object.keys(story).length ? "" : `<p class="updated-at">Forrás: napi route history + compliance/delay táblák</p>`}
@@ -2152,7 +2177,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=77");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=78");
   }
   return navigator.serviceWorker.ready;
 }

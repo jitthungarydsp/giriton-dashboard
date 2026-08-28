@@ -4224,20 +4224,36 @@ def load_route_delay_rows_for_courier(
     period_start: date,
     period_end: date,
 ) -> list[dict[str, Any]]:
+    params = {
+        "select": (
+            "delivery_date,route_id,warehouse_id,route_order_count,stops_count,"
+            "delayed_stops_count,total_delay_minutes,max_delay_minutes,"
+            "cleaned_delay_count,uncleaned_delay_count,cleaned_delay_minutes,"
+            "uncleaned_delay_minutes,has_delay_cleaning,cleaned_reasons,"
+            "slot_miss_projected_count,rejected_stops_count"
+        ),
+        "courier_id": f"eq.{courier_id}",
+        "and": f"(delivery_date.gte.{period_start.isoformat()},delivery_date.lte.{period_end.isoformat()})",
+        "or": "(total_delay_minutes.gt.0,delayed_stops_count.gt.0)",
+        "order": "delivery_date.asc,route_id.asc",
+        "limit": "200",
+    }
+    rows = optional_supabase_rows(
+        "courier_financial_overview_delay",
+        params=params,
+        timeout=60,
+    )
+    if rows:
+        return rows
+    fallback_params = dict(params)
+    fallback_params["select"] = (
+        "delivery_date,route_id,warehouse_id,route_order_count,stops_count,"
+        "delayed_stops_count,total_delay_minutes,max_delay_minutes,"
+        "slot_miss_projected_count,rejected_stops_count"
+    )
     return optional_supabase_rows(
         "courier_financial_overview_delay",
-        params={
-            "select": (
-                "delivery_date,route_id,warehouse_id,route_order_count,stops_count,"
-                "delayed_stops_count,total_delay_minutes,max_delay_minutes,"
-                "slot_miss_projected_count,rejected_stops_count"
-            ),
-            "courier_id": f"eq.{courier_id}",
-            "and": f"(delivery_date.gte.{period_start.isoformat()},delivery_date.lte.{period_end.isoformat()})",
-            "or": "(total_delay_minutes.gt.0,delayed_stops_count.gt.0)",
-            "order": "delivery_date.asc,route_id.asc",
-            "limit": "200",
-        },
+        params=fallback_params,
         timeout=60,
     )
 
@@ -4586,12 +4602,16 @@ def build_route_quality_records(
         late_start_minutes = safe_int(row.get("plannedStartDelayMinutes"))
         route_late_stop_count = safe_int(row.get("timeWindowLateCount"))
         route_late_stop_minutes = safe_int(row.get("timeWindowLateMinutes"))
-        api_late_count = safe_int(row.get("apiLateCount"))
-        api_delayed_orders = safe_int(row.get("apiDelayedOrderCount"))
-        has_api_daily_quality = any(key in row and row.get(key) not in (None, "") for key in ("apiLateCount", "apiDelayedOrderCount", "apiShiftCount"))
-        late_stop_count = api_delayed_orders if has_api_daily_quality else route_late_stop_count
-        late_stop_minutes = route_late_stop_minutes
-        queued_on_time = api_late_count <= 0 if has_api_daily_quality else late_start_minutes <= 0
+        cleaned_delay_count = safe_int(row.get("cleanedDelayCount"))
+        uncleaned_delay_count = safe_int(row.get("uncleanedDelayCount"))
+        uncleaned_delay_minutes = safe_int(row.get("uncleanedDelayMinutes"))
+        has_cleaning_data = any(
+            key in row and row.get(key) not in (None, "")
+            for key in ("cleanedDelayCount", "uncleanedDelayCount", "hasDelayCleaning")
+        )
+        late_stop_count = uncleaned_delay_count if has_cleaning_data else route_late_stop_count
+        late_stop_minutes = uncleaned_delay_minutes if has_cleaning_data else route_late_stop_minutes
+        queued_on_time = late_start_minutes <= 0
         records.append({
             "courier_id": courier_id,
             "courier_name": courier_name,
@@ -4773,14 +4793,20 @@ def build_monthly_courier_statistics(
 
     daily_orders = sum(safe_int(row.get("order_count")) for row in daily_rows)
     daily_routes = sum(safe_int(row.get("route_count")) for row in daily_rows)
+    history_orders = sum(safe_int(row.get("order_count")) for row in history_rows)
+    history_route_count = len({
+        (str(row.get("work_date") or "")[:10], str(row.get("route_id") or "").strip())
+        for row in history_rows
+        if str(row.get("work_date") or "").strip() and str(row.get("route_id") or "").strip()
+    })
     route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
     story_orders = sum(safe_int(row.get("address_count")) for row in story_route_rows)
     route_tips = sum(safe_int(route.get("tips_huf")) for route in route_rows)
     can_show_amounts = can_view_financial_amounts(user)
     route_count = len(route_rows)
     story_route_count = len(story_route_rows)
-    total_routes = story_route_count or route_count or daily_routes
-    total_orders = story_orders or route_orders or daily_orders
+    total_routes = history_route_count or route_count or story_route_count or daily_routes
+    total_orders = history_orders or route_orders or story_orders or daily_orders
     settlement_fallback_used = False
     if settlement_summary_row and not settlement_summary_row.get("_mobile_unavailable_message"):
         settlement_routes = safe_int(settlement_summary_row.get("route_count"))
@@ -4876,15 +4902,28 @@ def build_monthly_courier_statistics(
         shift_count = len(route_work_dates)
 
     def compact_delay_row(row: dict[str, Any]) -> dict[str, Any]:
+        cleaned_count = safe_int(row.get("cleaned_delay_count"))
+        uncleaned_count = safe_int(row.get("uncleaned_delay_count"))
+        delayed_count = safe_int(row.get("delayed_stops_count"))
+        cleaned_minutes = safe_int(row.get("cleaned_delay_minutes"))
+        uncleaned_minutes = safe_int(row.get("uncleaned_delay_minutes"))
+        total_minutes = safe_int(row.get("total_delay_minutes"))
         return {
             "date": str(row.get("delivery_date") or "")[:10],
             "routeId": str(row.get("route_id") or ""),
             "warehouseId": safe_int(row.get("warehouse_id")),
             "orders": safe_int(row.get("route_order_count")),
             "stops": safe_int(row.get("stops_count")),
-            "delayedStops": safe_int(row.get("delayed_stops_count")),
-            "delayMinutes": safe_int(row.get("total_delay_minutes")),
+            "delayedStops": delayed_count,
+            "delayMinutes": total_minutes,
             "maxDelayMinutes": safe_int(row.get("max_delay_minutes")),
+            "cleanedDelayCount": cleaned_count,
+            "uncleanedDelayCount": uncleaned_count,
+            "cleanedDelayMinutes": cleaned_minutes,
+            "uncleanedDelayMinutes": uncleaned_minutes,
+            "hasDelayCleaning": bool(row.get("has_delay_cleaning")) or cleaned_count > 0,
+            "cleanedReasons": row.get("cleaned_reasons") if isinstance(row.get("cleaned_reasons"), list) else [],
+            "allDelaysCleaned": delayed_count > 0 and cleaned_count >= delayed_count and uncleaned_count <= 0,
             "slotMissProjected": safe_int(row.get("slot_miss_projected_count")),
             "rejectedStops": safe_int(row.get("rejected_stops_count")),
         }
@@ -4946,6 +4985,12 @@ def build_monthly_courier_statistics(
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "cleanedDelayCount": safe_int(delay_row.get("cleaned_delay_count")),
+            "uncleanedDelayCount": safe_int(delay_row.get("uncleaned_delay_count")),
+            "cleanedDelayMinutes": safe_int(delay_row.get("cleaned_delay_minutes")),
+            "uncleanedDelayMinutes": safe_int(delay_row.get("uncleaned_delay_minutes")),
+            "hasDelayCleaning": bool(delay_row.get("has_delay_cleaning")) or safe_int(delay_row.get("cleaned_delay_count")) > 0,
+            "cleanedReasons": delay_row.get("cleaned_reasons") if isinstance(delay_row.get("cleaned_reasons"), list) else [],
             "routeType": str(overview_row.get("route_type") or ""),
             "routeNote": str(note_row.get("note") or ""),
             "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
@@ -4991,6 +5036,12 @@ def build_monthly_courier_statistics(
             "timeWindowLateCount": safe_int(row.get("time_window_late_count") or delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "cleanedDelayCount": safe_int(delay_row.get("cleaned_delay_count")),
+            "uncleanedDelayCount": safe_int(delay_row.get("uncleaned_delay_count")),
+            "cleanedDelayMinutes": safe_int(delay_row.get("cleaned_delay_minutes")),
+            "uncleanedDelayMinutes": safe_int(delay_row.get("uncleaned_delay_minutes")),
+            "hasDelayCleaning": bool(delay_row.get("has_delay_cleaning")) or safe_int(delay_row.get("cleaned_delay_count")) > 0,
+            "cleanedReasons": delay_row.get("cleaned_reasons") if isinstance(delay_row.get("cleaned_reasons"), list) else [],
             "routeType": story_route_type(row),
             "routeNote": str(note_row.get("note") or ""),
             "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
@@ -5038,6 +5089,12 @@ def build_monthly_courier_statistics(
             "timeWindowLateCount": safe_int(delay_row.get("delayed_stops_count")),
             "timeWindowLateMinutes": safe_int(delay_row.get("total_delay_minutes")),
             "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "cleanedDelayCount": safe_int(delay_row.get("cleaned_delay_count")),
+            "uncleanedDelayCount": safe_int(delay_row.get("uncleaned_delay_count")),
+            "cleanedDelayMinutes": safe_int(delay_row.get("cleaned_delay_minutes")),
+            "uncleanedDelayMinutes": safe_int(delay_row.get("uncleaned_delay_minutes")),
+            "hasDelayCleaning": bool(delay_row.get("has_delay_cleaning")) or safe_int(delay_row.get("cleaned_delay_count")) > 0,
+            "cleanedReasons": delay_row.get("cleaned_reasons") if isinstance(delay_row.get("cleaned_reasons"), list) else [],
             "routeType": str(overview_row.get("route_type") or ""),
             "routeNote": str(note_row.get("note") or ""),
             "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
@@ -5053,9 +5110,9 @@ def build_monthly_courier_statistics(
     delay_detail_rows: list[dict[str, Any]] = [compact_delay_row(item) for item in delay_rows]
     compliance_detail_rows: list[dict[str, Any]] = [compact_compliance_row(item) for item in compliance_rows]
     daily_history_rows = (
-        [compact_route_story_history_row(row) for row in story_route_rows]
-        or [compact_history_row(row) for row in history_rows]
+        [compact_history_row(row) for row in history_rows]
         or [compact_route_fallback_row(route) for route in route_rows]
+        or [compact_route_story_history_row(row) for row in story_route_rows]
     )
     route_quality_records = build_route_quality_records(
         courier_id=courier_id,

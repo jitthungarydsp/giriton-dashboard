@@ -669,6 +669,14 @@ def safe_int(value: Any) -> int:
         return 0
 
 
+def stop_delay_minutes(stop: dict[str, Any]) -> int:
+    return max(
+        safe_int(stop.get("delayMinutes")),
+        safe_int(stop.get("deltaMinutes")),
+        0,
+    )
+
+
 def safe_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -721,14 +729,24 @@ def build_delay_row(
     stops = response_json.get("stops") if isinstance(response_json, dict) else []
     stops = stops if isinstance(stops, list) else []
     delay_minutes: list[int] = []
+    cleaned_delay_minutes: list[int] = []
+    uncleaned_delay_minutes: list[int] = []
+    cleaned_reasons: list[str] = []
     slot_miss_projected_count = 0
     rejected_stops_count = 0
     for stop in stops:
         if not isinstance(stop, dict):
             continue
-        delay = max(safe_int(stop.get("deltaMinutes")), 0)
+        delay = stop_delay_minutes(stop)
         if delay > 0:
             delay_minutes.append(delay)
+            if bool(stop.get("cleaned")):
+                cleaned_delay_minutes.append(delay)
+                reason = clean_text(stop.get("cleanedReason") or stop.get("cleaned_reason"))
+                if reason and reason not in cleaned_reasons:
+                    cleaned_reasons.append(reason)
+            else:
+                uncleaned_delay_minutes.append(delay)
         if bool(stop.get("slotMissProjected")):
             slot_miss_projected_count += 1
         if clean_text(stop.get("rejectedByCourierReason")):
@@ -752,6 +770,12 @@ def build_delay_row(
         "delayed_stops_count": len(delay_minutes),
         "total_delay_minutes": sum(delay_minutes),
         "max_delay_minutes": max(delay_minutes) if delay_minutes else 0,
+        "cleaned_delay_count": len(cleaned_delay_minutes),
+        "uncleaned_delay_count": len(uncleaned_delay_minutes),
+        "cleaned_delay_minutes": sum(cleaned_delay_minutes),
+        "uncleaned_delay_minutes": sum(uncleaned_delay_minutes),
+        "has_delay_cleaning": bool(cleaned_delay_minutes),
+        "cleaned_reasons": cleaned_reasons,
         "slot_miss_projected_count": slot_miss_projected_count,
         "rejected_stops_count": rejected_stops_count,
         "response_status_code": status_code,
