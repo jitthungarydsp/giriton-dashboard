@@ -1552,8 +1552,10 @@ function renderTabs() {
     button.innerHTML = `<span>${label}</span><strong>${date.getDate()}</strong>`;
     button.addEventListener("click", () => {
       state.selectedDate = value;
+      state.openMuszakproShifts = null;
       renderTabs();
       renderShifts();
+      renderOpenMuszakproShifts();
     });
     tabs.appendChild(button);
   }
@@ -1611,7 +1613,7 @@ function renderOpenMuszakproShifts() {
   }
   if (!target) return;
   const payload = state.openMuszakproShifts;
-  if (!payload) {
+  if (!payload || payload.date !== state.selectedDate) {
     target.classList.add("hidden");
     target.innerHTML = "";
     return;
@@ -1620,7 +1622,7 @@ function renderOpenMuszakproShifts() {
   target.classList.remove("hidden");
   const items = payload.items || [];
   if (!items.length) {
-    const message = payload.message || "Ma nincs szabad MűszakPro műszak a raktáradhoz.";
+    const message = payload.message || "A kiválasztott napra nincs szabad MűszakPro műszak a raktáradhoz.";
     target.innerHTML = `<div class="empty-card">${escapeHtml(message)}</div>`;
     return;
   }
@@ -1643,15 +1645,17 @@ function renderOpenMuszakproShifts() {
 
 async function loadOpenMuszakproShifts() {
   const button = $("#open-muszakpro-refresh");
+  const selectedDate = state.selectedDate || localDate();
   if (button) {
     button.disabled = true;
     button.textContent = "Nézem...";
   }
   try {
-    state.openMuszakproShifts = await api(withPreviewCourier(`/api/muszakpro/open-shifts?day=${encodeURIComponent(localDate())}`));
+    state.openMuszakproShifts = await api(withPreviewCourier(`/api/muszakpro/open-shifts?day=${encodeURIComponent(selectedDate)}`));
     renderOpenMuszakproShifts();
   } catch (error) {
     state.openMuszakproShifts = {
+      date: selectedDate,
       items: [],
       message: error.message || "A szabad MűszakPro műszakok most nem tölthetők be.",
     };
