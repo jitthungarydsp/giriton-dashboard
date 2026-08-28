@@ -143,6 +143,13 @@ class ShiftQueueCheckinRequest(BaseModel):
     event_type: str = "queued"
 
 
+class DailyGameSubmitRequest(BaseModel):
+    word_answer: str = ""
+    quiz_answer: str = ""
+    memory_answers: list[str] = []
+    elapsed_seconds: int = 0
+
+
 class BillingProfileUpdate(BaseModel):
     courier_id: str = ""
     courier_name: str = ""
@@ -2075,6 +2082,225 @@ def read_courier_display_name(courier_id: str) -> str:
         },
     )
     return str((rows[0] if rows else {}).get("courier_name") or "").strip()
+
+
+GAME_WORDS = [
+    ("RAKTAR", "Innen indul a legtobb muszak."),
+    ("FUTAR", "O viszi ki a csomagot."),
+    ("MUSZAK", "Ezt foglalod elore."),
+    ("CSOMAG", "A cimzett ezt varja."),
+    ("TERKEP", "Utvonalnal sokat segit."),
+    ("PONTOS", "Jo muszakkezdesnel ilyen vagy."),
+    ("KIFLI", "A napi munka kozos neve."),
+    ("KAPU", "Idohoz kotott cimeknel fontos."),
+    ("TURA", "Egy kiosztott kor."),
+    ("SORBAN", "Varakozas indulas elott."),
+]
+
+GAME_QUIZ = [
+    {
+        "question": "Mit nyomsz meg, ha bealltal a sorba?",
+        "options": ["Sorba alltam", "Visszaerkeztem", "Frissites"],
+        "answer": "Sorba alltam",
+    },
+    {
+        "question": "Mit kell jelezni, ha nem ersz be idoben?",
+        "options": ["Kesek a muszakbol", "ATM befizetes", "Profil"],
+        "answer": "Kesek a muszakbol",
+    },
+    {
+        "question": "Melyik nezetben vannak a napi muszakok?",
+        "options": ["Muszakjaim", "Telefon", "Korabbi elszamolasaim"],
+        "answer": "Muszakjaim",
+    },
+    {
+        "question": "Mi alapjan indul uj napi jatek?",
+        "options": ["A napi datum alapjan", "A telefon tipusa alapjan", "A route szama alapjan"],
+        "answer": "A napi datum alapjan",
+    },
+]
+
+GAME_MEMORY_ITEMS = ["BUD1", "BUD2", "Route", "Cim", "Stop", "Idokapu", "Sor", "Auto", "Muszak", "Raktar"]
+
+
+def seeded_game_index(game_day: date, salt: str, modulo: int) -> int:
+    seed = int(hashlib.sha256(f"{game_day.isoformat()}:{salt}".encode("utf-8")).hexdigest()[:8], 16)
+    return seed % modulo
+
+
+def shuffled_values(values: list[str], game_day: date, salt: str) -> list[str]:
+    output = list(values)
+    seed = int(hashlib.sha256(f"{game_day.isoformat()}:{salt}".encode("utf-8")).hexdigest()[:8], 16)
+    for index in range(len(output) - 1, 0, -1):
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        swap_index = seed % (index + 1)
+        output[index], output[swap_index] = output[swap_index], output[index]
+    return output
+
+
+def daily_game_month(game_day: date) -> date:
+    return game_day.replace(day=1)
+
+
+def build_daily_game_puzzle(game_day: date) -> dict[str, Any]:
+    word, hint = GAME_WORDS[seeded_game_index(game_day, "word", len(GAME_WORDS))]
+    letters = shuffled_values(list(word), game_day, "letters")
+    if "".join(letters) == word and len(letters) > 1:
+        letters[0], letters[1] = letters[1], letters[0]
+    quiz = GAME_QUIZ[seeded_game_index(game_day, "quiz", len(GAME_QUIZ))]
+    memory = shuffled_values(GAME_MEMORY_ITEMS, game_day, "memory")[:5]
+    return {
+        "date": game_day.isoformat(),
+        "month": daily_game_month(game_day).isoformat(),
+        "gameKey": "daily_courier_challenge",
+        "word": {"letters": letters, "hint": hint, "maxScore": 400},
+        "quiz": {"question": quiz["question"], "options": quiz["options"], "maxScore": 300},
+        "memory": {"items": memory, "maxScore": 300},
+        "maxScore": 1150,
+    }
+
+
+def calculate_daily_game_score(game_day: date, payload: DailyGameSubmitRequest) -> tuple[int, dict[str, Any]]:
+    word, _hint = GAME_WORDS[seeded_game_index(game_day, "word", len(GAME_WORDS))]
+    quiz = GAME_QUIZ[seeded_game_index(game_day, "quiz", len(GAME_QUIZ))]
+    memory = build_daily_game_puzzle(game_day)["memory"]["items"]
+    word_ok = normalize_text(payload.word_answer).replace(" ", "") == normalize_text(word).replace(" ", "")
+    quiz_ok = normalize_text(payload.quiz_answer) == normalize_text(quiz["answer"])
+    memory_answers = {normalize_text(item) for item in payload.memory_answers if str(item or "").strip()}
+    memory_hits = sum(1 for item in memory if normalize_text(item) in memory_answers)
+    score = 0
+    if word_ok:
+        score += 400
+    if quiz_ok:
+        score += 300
+    score += memory_hits * 60
+    all_done = word_ok and quiz_ok and memory_hits == len(memory)
+    elapsed = max(0, min(safe_int(payload.elapsed_seconds), 3600))
+    speed_bonus = 100 if all_done and elapsed <= 30 else 50 if all_done and elapsed <= 60 else 0
+    complete_bonus = 150 if all_done else 0
+    score += speed_bonus + complete_bonus
+    return score, {
+        "word": word_ok,
+        "quiz": quiz_ok,
+        "memoryHits": memory_hits,
+        "memoryTotal": len(memory),
+        "speedBonus": speed_bonus,
+        "completeBonus": complete_bonus,
+    }
+
+
+def read_daily_game_rows(month: date) -> list[dict[str, Any]]:
+    return optional_supabase_rows(
+        "pwa_game_scores",
+        params={
+            "select": "game_date,courier_id,courier_name,score,elapsed_seconds,created_at",
+            "game_key": "eq.daily_courier_challenge",
+            "score_month": f"eq.{month.isoformat()}",
+            "order": "score.desc,elapsed_seconds.asc,created_at.asc",
+            "limit": "2000",
+        },
+        timeout=15,
+    )
+
+
+def monthly_game_leaderboard(month: date) -> list[dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    best_day_by_courier_date: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in read_daily_game_rows(month):
+        courier_id = str(row.get("courier_id") or "").strip()
+        game_date = str(row.get("game_date") or "")[:10]
+        if not courier_id or not game_date:
+            continue
+        key = (courier_id, game_date)
+        current = best_day_by_courier_date.get(key)
+        row_score = safe_int(row.get("score"))
+        row_elapsed = safe_int(row.get("elapsed_seconds"))
+        if current and (safe_int(current.get("score")) > row_score or (safe_int(current.get("score")) == row_score and safe_int(current.get("elapsed_seconds")) <= row_elapsed)):
+            continue
+        best_day_by_courier_date[key] = row
+    for row in best_day_by_courier_date.values():
+        courier_id = str(row.get("courier_id") or "")
+        entry = summary.setdefault(courier_id, {
+            "courierId": courier_id,
+            "courierName": str(row.get("courier_name") or "Futar"),
+            "score": 0,
+            "daysPlayed": 0,
+            "bestDayScore": 0,
+            "lastPlayedAt": "",
+        })
+        score = safe_int(row.get("score"))
+        entry["score"] += score
+        entry["daysPlayed"] += 1
+        entry["bestDayScore"] = max(safe_int(entry.get("bestDayScore")), score)
+        if str(row.get("created_at") or "") > str(entry.get("lastPlayedAt") or ""):
+            entry["lastPlayedAt"] = str(row.get("created_at") or "")
+    leaders = sorted(summary.values(), key=lambda item: (-safe_int(item.get("score")), -safe_int(item.get("daysPlayed")), str(item.get("courierName") or "")))
+    return [dict(item, rank=index + 1) for index, item in enumerate(leaders[:20])]
+
+
+def build_daily_game_response(user: dict[str, Any]) -> dict[str, Any]:
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    month = daily_game_month(today)
+    courier_id, _courier_name = courier_identity(user)
+    rows = optional_supabase_rows(
+        "pwa_game_scores",
+        params={
+            "select": "score,completed_parts,elapsed_seconds,created_at",
+            "game_key": "eq.daily_courier_challenge",
+            "game_date": f"eq.{today.isoformat()}",
+            "courier_id": f"eq.{courier_id}",
+            "order": "score.desc,elapsed_seconds.asc,created_at.asc",
+            "limit": "1",
+        },
+        timeout=15,
+    )
+    my_best = None
+    if rows:
+        my_best = {
+            "score": safe_int(rows[0].get("score")),
+            "elapsedSeconds": safe_int(rows[0].get("elapsed_seconds")),
+            "completedParts": rows[0].get("completed_parts") or {},
+            "createdAt": str(rows[0].get("created_at") or ""),
+        }
+    return {
+        "puzzle": build_daily_game_puzzle(today),
+        "myBest": my_best,
+        "leaderboard": monthly_game_leaderboard(month),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def submit_daily_game(user: dict[str, Any], payload: DailyGameSubmitRequest) -> dict[str, Any]:
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    month = daily_game_month(today)
+    score, completed_parts = calculate_daily_game_score(today, payload)
+    if score <= 0:
+        raise HTTPException(status_code=422, detail="Most nem sikerult pontot szerezni. Probald ujra.")
+    courier_id, courier_name = courier_identity(user)
+    try:
+        supabase_rest(
+            "POST",
+            "pwa_game_scores",
+            payload={
+                "game_key": "daily_courier_challenge",
+                "game_date": today.isoformat(),
+                "score_month": month.isoformat(),
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "score": score,
+                "max_score": 1150,
+                "completed_parts": completed_parts,
+                "elapsed_seconds": max(0, min(safe_int(payload.elapsed_seconds), 3600)),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            prefer="return=minimal",
+            timeout=15,
+        )
+    except HTTPException as exc:
+        raise HTTPException(status_code=502, detail="A havi jatek ranglista tablaja meg nincs aktivalva.") from exc
+    result = build_daily_game_response(user)
+    result["submitted"] = {"score": score, "completedParts": completed_parts}
+    return result
 
 
 def embedded_courier_id(value: Any) -> str:
@@ -7046,6 +7272,19 @@ def get_billing_profile(
         "viewingAs": public_user(view_user) if preview else None,
         "viewerReadOnly": preview,
     }
+
+
+@app.get("/api/games/daily-challenge")
+def daily_game(giriton_pwa_session: str | None = Cookie(default=None)):
+    return build_daily_game_response(require_user(giriton_pwa_session))
+
+
+@app.post("/api/games/daily-challenge")
+def daily_game_submit(
+    payload: DailyGameSubmitRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    return submit_daily_game(require_user(giriton_pwa_session), payload)
 
 
 @app.put("/api/profile/password")

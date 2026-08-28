@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=88" />
+    <link rel="stylesheet" href="/styles.css?v=89" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -493,6 +493,20 @@
         </section>
       </div>
 
+      <div id="game-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">JÁTÉK</p>
+            <h2>Napi Futár Kihívás</h2>
+            <p class="muted">Minden nap új feladvány, a pontok pedig a havi ranglistába kerülnek.</p>
+          </div>
+          <button id="game-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section class="game-card">
+          <div id="game-panel" aria-live="polite"></div>
+        </section>
+      </div>
+
       <div id="coordinator-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -530,10 +544,11 @@
         <button id="nav-device"><span>□</span>Telefon</button>
         <button id="nav-vehicle"><span>A</span>Autó</button>
         <button id="nav-tours"><span>🚚</span>Túráim</button>
+        <button id="nav-game"><span>★</span>Játék</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=88" defer></script>
+    <script src="/app.js?v=89" defer></script>
   </body>
 </html>

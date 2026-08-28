@@ -15,6 +15,8 @@ const state = {
   salaryAdvanceRequests: [],
   expenseRequests: [],
   atmPayments: [],
+  game: null,
+  gameStartedAt: null,
   statistics: null,
   openMuszakproShifts: null,
   serviceWorkerRegistration: null,
@@ -29,7 +31,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v88";
+const APP_VERSION = "v89";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -88,6 +90,7 @@ function currentSectionRefresh() {
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
   if (state.section === "vehicle") return loadVehicleReports();
+  if (state.section === "game") return loadGame();
   return Promise.resolve();
 }
 
@@ -232,7 +235,7 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   $("#nav-expense")?.classList.add("hidden");
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
@@ -259,6 +262,7 @@ function showSection(section) {
   $("#device-content").classList.toggle("hidden", section !== "device");
   $("#vehicle-content").classList.toggle("hidden", section !== "vehicle");
   $("#tours-content").classList.toggle("hidden", section !== "tours");
+  $("#game-content").classList.toggle("hidden", section !== "game");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
 
   $("#nav-home").classList.toggle("active", section === "home");
@@ -273,6 +277,7 @@ function showSection(section) {
   $("#nav-device").classList.toggle("active", section === "device");
   $("#nav-vehicle").classList.toggle("active", section === "vehicle");
   $("#nav-tours").classList.toggle("active", section === "tours");
+  $("#nav-game").classList.toggle("active", section === "game");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
@@ -291,6 +296,7 @@ function showSection(section) {
   if (section === "tours") {
     loadCurrentRoute();
   }
+  if (section === "game") loadGame();
   if (section === "coordinator") loadCoordinatorAdjustments();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -330,6 +336,111 @@ function renderPhonebook() {
       <a class="phonebook-call" href="${escapeHtml(telHref(contact.phone))}" aria-label="${escapeHtml(contact.label)} hívása">Hívás</a>
     </article>
   `).join("");
+}
+
+function gameElapsedSeconds() {
+  return state.gameStartedAt ? Math.max(0, Math.round((Date.now() - state.gameStartedAt) / 1000)) : 0;
+}
+
+function renderGame() {
+  const target = $("#game-panel");
+  if (!target) return;
+  const game = state.game;
+  if (!game?.puzzle) {
+    target.innerHTML = `<div class="empty-card">Játék betöltése...</div>`;
+    return;
+  }
+  const puzzle = game.puzzle;
+  const leaders = game.leaderboard || [];
+  const myBest = game.myBest;
+  const myRank = leaders.find((item) => item.courierId === state.user?.courierId)?.rank || "-";
+  target.innerHTML = `
+    <div class="game-summary">
+      <div><span>Mai maximum</span><strong>${formatCount(puzzle.maxScore || 0)}</strong></div>
+      <div><span>Saját mai pont</span><strong>${myBest ? formatCount(myBest.score) : "-"}</strong></div>
+      <div><span>Havi helyezés</span><strong>${escapeHtml(myRank)}</strong></div>
+    </div>
+    <form id="daily-game-form" class="game-form">
+      <section class="game-block">
+        <h3>Szóvadász</h3>
+        <div class="letter-row">${(puzzle.word?.letters || []).map((letter) => `<span>${escapeHtml(letter)}</span>`).join("")}</div>
+        <small>${escapeHtml(puzzle.word?.hint || "")}</small>
+        <input id="game-word-answer" autocomplete="off" placeholder="Írd be a szót" />
+      </section>
+      <section class="game-block">
+        <h3>Gyors döntés</h3>
+        <p>${escapeHtml(puzzle.quiz?.question || "")}</p>
+        <div class="choice-grid">
+          ${(puzzle.quiz?.options || []).map((option, index) => `
+            <label><input type="radio" name="game-quiz" value="${escapeHtml(option)}" ${index === 0 ? "required" : ""} />${escapeHtml(option)}</label>
+          `).join("")}
+        </div>
+      </section>
+      <section class="game-block">
+        <h3>Memória kör</h3>
+        <p>Válaszd ki a mai öt elemet.</p>
+        <div class="choice-grid memory-grid">
+          ${["BUD1", "BUD2", "Route", "Cím", "Stop", "Időkapu", "Sor", "Autó", "Műszak", "Raktár"].map((item) => `
+            <label><input type="checkbox" name="game-memory" value="${escapeHtml(item)}" />${escapeHtml(item)}</label>
+          `).join("")}
+        </div>
+      </section>
+      <button class="primary" type="submit">Pont beküldése</button>
+      <p id="game-message" class="updated-at"></p>
+    </form>
+    <section class="leaderboard">
+      <h3>Havi ranglista</h3>
+      ${leaders.length ? leaders.map((item) => `
+        <div class="leader-row ${item.courierId === state.user?.courierId ? "me" : ""}">
+          <span>${formatCount(item.rank)}.</span>
+          <strong>${escapeHtml(item.courierName || "Futár")}</strong>
+          <small>${formatCount(item.score)} pont · ${formatCount(item.daysPlayed)} nap</small>
+        </div>
+      `).join("") : `<div class="empty-card">Még nincs havi pontszám.</div>`}
+    </section>
+  `;
+  $("#daily-game-form")?.addEventListener("submit", submitGame);
+}
+
+async function loadGame() {
+  const target = $("#game-panel");
+  if (target && !state.game) target.innerHTML = `<div class="empty-card">Játék betöltése...</div>`;
+  try {
+    state.game = await api("/api/games/daily-challenge");
+    state.gameStartedAt = Date.now();
+    renderGame();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function submitGame(event) {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const message = $("#game-message");
+  if (button) button.disabled = true;
+  if (message) message.textContent = "Pontszám mentése...";
+  try {
+    const memory = [...document.querySelectorAll('input[name="game-memory"]:checked')].map((item) => item.value);
+    const quiz = document.querySelector('input[name="game-quiz"]:checked')?.value || "";
+    state.game = await api("/api/games/daily-challenge", {
+      method: "POST",
+      body: JSON.stringify({
+        word_answer: $("#game-word-answer").value || "",
+        quiz_answer: quiz,
+        memory_answers: memory,
+        elapsed_seconds: gameElapsedSeconds(),
+      }),
+    });
+    renderGame();
+    const saved = state.game?.submitted?.score;
+    const savedMessage = $("#game-message");
+    if (savedMessage) savedMessage.textContent = `Mentve: ${formatCount(saved)} pont.`;
+  } catch (error) {
+    if (message) message.textContent = error.message;
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function atmPaymentStatusLabel(value) {
@@ -2514,7 +2625,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=88");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=89");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3690,6 +3801,8 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.queueStatus = null;
   state.statistics = null;
+  state.game = null;
+  state.gameStartedAt = null;
   state.openMuszakproShifts = null;
   renderQueueStatus();
   showLogin();
@@ -3708,6 +3821,8 @@ $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-vehicle").addEventListener("click", () => showSection("vehicle"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
+$("#nav-game").addEventListener("click", () => showSection("game"));
+$("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 
 setInterval(() => {
