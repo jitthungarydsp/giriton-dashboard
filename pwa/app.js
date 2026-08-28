@@ -16,7 +16,6 @@ const state = {
   expenseRequests: [],
   atmPayments: [],
   statistics: null,
-  statisticsTrend: [],
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   workflowProcess: "",
@@ -29,7 +28,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v82";
+const APP_VERSION = "v84";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -303,21 +302,6 @@ function formatHuf(value) {
   return `${formatCount(value)} Ft`;
 }
 
-function monthOffset(monthValue, offset) {
-  const [year, month] = String(monthValue || "").split("-").map(Number);
-  const base = Number.isFinite(year) && Number.isFinite(month)
-    ? new Date(year, month - 1, 1, 12, 0, 0)
-    : new Date();
-  base.setMonth(base.getMonth() + offset);
-  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthShortLabel(monthValue) {
-  const [year, month] = String(monthValue || "").split("-").map(Number);
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return String(monthValue || "-");
-  return new Intl.DateTimeFormat("hu-HU", { month: "short" }).format(new Date(year, month - 1, 1, 12, 0, 0));
-}
-
 function parseHufInput(value) {
   const digits = String(value || "").replace(/[^\d]/g, "");
   return Number(digits || 0);
@@ -545,6 +529,40 @@ function shortDateTime(value) {
   }).format(date);
 }
 
+function fullDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16);
+  return new Intl.DateTimeFormat("hu-HU", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function timeOnly(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(11, 16) || String(value);
+  return new Intl.DateTimeFormat("hu-HU", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function durationText(minutes) {
+  const value = Math.max(0, Number(minutes || 0));
+  const hours = Math.floor(value / 60);
+  const mins = value % 60;
+  if (hours && mins) return `${formatCount(hours)} óra ${formatCount(mins)} perc`;
+  if (hours) return `${formatCount(hours)} óra`;
+  return `${formatCount(mins)} perc`;
+}
+
+function routeStoryTextMatch(text, pattern) {
+  const match = String(text || "").match(pattern);
+  return match ? match[1].trim() : "";
+}
+
 function renderDelayDetailRows(rows = []) {
   if (!rows.length) return `<div class="stat-row"><span>Nincs route szintű késés adat</span><strong>-</strong></div>`;
   return rows.map((row) => `
@@ -683,44 +701,6 @@ function renderDailyShiftReport(rows = []) {
   `;
 }
 
-function renderStatisticsTrend() {
-  const rows = state.statisticsTrend || [];
-  if (!rows.length) return "";
-  const maxRoutes = Math.max(1, ...rows.map((item) => Number(item.routes || 0)));
-  const maxOrders = Math.max(1, ...rows.map((item) => Number(item.orders || 0)));
-  return `
-    <section class="process-card statistics-trend-card">
-      <div class="process-title">
-        <span class="step-code">↗</span>
-        <div>
-          <h3>Elmúlt 3 hónap</h3>
-          <p>Túrák és címek alakulása a kiválasztott hónappal együtt.</p>
-        </div>
-      </div>
-      <div class="trend-chart">
-        ${rows.map((item) => {
-          const routeHeight = Math.max(8, Math.round((Number(item.routes || 0) / maxRoutes) * 100));
-          const orderHeight = Math.max(8, Math.round((Number(item.orders || 0) / maxOrders) * 100));
-          return `
-            <div class="trend-month">
-              <div class="trend-bars" aria-label="${escapeHtml(item.month)} havi teljesítmény">
-                <span class="trend-bar routes" style="height:${routeHeight}%"></span>
-                <span class="trend-bar orders" style="height:${orderHeight}%"></span>
-              </div>
-              <strong>${escapeHtml(monthShortLabel(item.month))}</strong>
-              <small>${formatCount(item.routes)} túra · ${formatCount(item.orders)} cím</small>
-            </div>
-          `;
-        }).join("")}
-      </div>
-      <div class="trend-legend">
-        <span><i class="routes"></i>Túra</span>
-        <span><i class="orders"></i>Cím</span>
-      </div>
-    </section>
-  `;
-}
-
 function routeStoryDistance(label, value) {
   const numeric = Number(value || 0);
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatAverage(numeric)} km</strong></div>`;
@@ -794,6 +774,80 @@ function renderCurrentRouteStory(route) {
   `;
 }
 
+function renderNarrativeRouteStory(row) {
+  const story = row.routeStory || {};
+  if (!Object.keys(story).length && !story.storyText) return "";
+
+  const storyText = String(story.storyText || "");
+  const shiftStart = story.shiftStart || row.plannedStartAt;
+  const shiftEnd = story.shiftEnd || "";
+  const availableAt = story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt;
+  const registeredAt = story.courierRegisteredAt || story.queueStartedAt || row.actualStartAt;
+  const assignedAt = story.assignedAt || row.routeAssignedAt;
+  const queueDelta = Number(story.queueEntryDeltaMinutes || 0);
+  const queueWait = Number(story.queueWaitMinutes || minutesBetween(availableAt, assignedAt) || 0);
+  const plannedLoading = Number(story.plannedLoadingMinutes || 0);
+  const realLoading = Number(story.realLoadingMinutes || 0);
+  const plannedRoute = Number(story.plannedRouteMinutes || 0);
+  const realRoute = Number(story.realRouteMinutes || row.routeDurationMinutes || 0);
+  const totalRoute = Number(story.totalRouteMinutes || story.assignedToReturnMinutes || 0);
+  const gpsDistance = Number(story.gpsDistanceKm || row.mileageKm || 0);
+  const straightDistance = Number(story.checkpointStraightKm || 0);
+  const addressCount = Number(story.addressCount || row.orders || row.stops || 0);
+  const timeWindowLate = Number(story.timeWindowLateCount || row.timeWindowLateCount || 0);
+  const nextShiftDelay = Number(story.nextShiftDelayMinutes || 0);
+  const nextShiftText = routeStoryTextMatch(storyText, /A kovetkezo foglalt muszak:\s*([^.]+)/i);
+  const bookedShiftCount = routeStoryTextMatch(storyText, /napi foglalt muszakok szama:\s*(\d+)/i);
+  const plannedEarly = routeStoryTextMatch(storyText, /tervezetthez kepest korai:\s*(\d+)/i);
+  const plannedLate = routeStoryTextMatch(storyText, /tervezetthez kepest keso:\s*(\d+)/i);
+  const windowEarly = routeStoryTextMatch(storyText, /idokapuhoz kepest korai:\s*(\d+)/i);
+  const windowLate = routeStoryTextMatch(storyText, /idokapuhoz kepest keso:\s*(\d+)/i) || String(timeWindowLate || 0);
+  const earlyText = queueDelta < 0
+    ? `${formatCount(Math.abs(queueDelta))} perccel a műszakkezdés előtt`
+    : queueDelta > 0
+      ? `${formatCount(queueDelta)} perccel a műszakkezdés után`
+      : "pontosan a műszakkezdéskor";
+
+  return `
+    <article class="route-story-card">
+      <div class="route-story-card-head">
+        <span>Route történet</span>
+        <strong>Route ${escapeHtml(row.routeId || "-")}</strong>
+      </div>
+
+      <section>
+        <h4>Műszak és sorban állás</h4>
+        <p>A futár műszakja <strong>${escapeHtml(fullDateTime(shiftStart))}</strong> és <strong>${escapeHtml(timeOnly(shiftEnd))}</strong> között volt.</p>
+        <p><strong>${escapeHtml(timeOnly(availableAt))}</strong>-kor már elérhető volt, vagyis ${escapeHtml(earlyText)} beállt a sorba. A route regisztráció <strong>${escapeHtml(timeOnly(registeredAt))}</strong>-kor történt.</p>
+        <p>A túrát <strong>${escapeHtml(timeOnly(assignedAt))}</strong>-kor kapta meg, így összesen <strong>${escapeHtml(durationText(queueWait))}</strong> állt sorban.</p>
+      </section>
+
+      <section>
+        <h4>Idők</h4>
+        <p>A bepakolás tervezett ideje <strong>${escapeHtml(durationText(plannedLoading))}</strong> volt, a valós bepakolási idő <strong>${escapeHtml(durationText(realLoading))}</strong> lett.</p>
+        <p>A túra tervezett hossza <strong>${escapeHtml(durationText(plannedRoute))}</strong> volt, a tényleges túraidő <strong>${escapeHtml(durationText(realRoute))}</strong> lett. A teljes időtartam összesen <strong>${escapeHtml(durationText(totalRoute))}</strong> volt.</p>
+      </section>
+
+      <section>
+        <h4>Távolság</h4>
+        <p>A GPS alapján mért távolság <strong>${escapeHtml(formatAverage(gpsDistance))} km</strong> volt.${straightDistance ? ` A címek közötti egyenes távolság <strong>${escapeHtml(formatAverage(straightDistance))} km</strong>.` : ""}</p>
+      </section>
+
+      <section>
+        <h4>Foglalás és következő műszak</h4>
+        <p>Az adott napon a futárnak <strong>${escapeHtml(bookedShiftCount || "-")}</strong> foglalt műszakja volt.</p>
+        ${nextShiftText ? `<p>A következő foglalt műszak <strong>${escapeHtml(nextShiftText)}</strong> volt.${nextShiftDelay ? ` A route visszaérkezési ideje alapján ebből <strong>${escapeHtml(durationText(nextShiftDelay))}</strong> késés keletkezett.` : ""}</p>` : ""}
+      </section>
+
+      <section>
+        <h4>Címek</h4>
+        <p>Összesen <strong>${formatCount(addressCount)} cím</strong> volt a túrán. A tervezett időponthoz képest <strong>${escapeHtml(plannedEarly || "0")}</strong> cím korábban, <strong>${escapeHtml(plannedLate || "0")}</strong> cím később teljesült.</p>
+        <p>Az időkapuhoz képest <strong>${escapeHtml(windowEarly || "0")}</strong> cím korábban teljesült, késéses cím pedig <strong>${escapeHtml(windowLate || "0")}</strong> volt.</p>
+      </section>
+    </article>
+  `;
+}
+
 function renderRouteStoryDetails(row) {
   const story = row.routeStory || {};
   const distance = Number(story.gpsDistanceKm || row.mileageKm || 0);
@@ -846,7 +900,7 @@ function renderRouteStoryDetails(row) {
       <div class="stat-row"><span>Időkapun túli késés</span><strong>${escapeHtml(lateText)}</strong></div>
       <div class="stat-row"><span>Késés mentesítés</span><strong>${escapeHtml(routeDelayCleaningLabel(row))}</strong></div>
       ${routeStoryDistance("Megtett táv", distance)}
-      ${story.storyText ? `<p class="route-story-text">${escapeHtml(story.storyText)}</p>` : ""}
+      ${renderNarrativeRouteStory(row)}
       ${Object.keys(story).length ? "" : `<p class="updated-at">Forrás: napi route history + compliance/delay táblák</p>`}
       ${renderRouteNoteForm(row)}
     </div>
@@ -1065,7 +1119,6 @@ function renderStatistics() {
     </div>
   `).join("");
   breakdown.innerHTML = `
-    ${renderStatisticsTrend()}
     ${renderDailyHistory(payload)}
     <div class="process-title">
       <span class="step-code">∑</span>
@@ -1106,32 +1159,8 @@ async function loadStatistics(options = {}) {
       params.set("courier", state.workflowPreviewCourierId);
     }
     const payload = await api(`/api/statistics/monthly?${params.toString()}`);
-    const trendMonths = [monthOffset(state.statisticsMonth, -2), monthOffset(state.statisticsMonth, -1), state.statisticsMonth];
-    const extraTrendPayloads = await Promise.all(trendMonths
-      .filter((month) => month !== state.statisticsMonth)
-      .map(async (month) => {
-        const trendParams = new URLSearchParams({ month, _: String(Date.now()) });
-        if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
-          trendParams.set("courier", state.workflowPreviewCourierId);
-        }
-        try {
-          return await api(`/api/statistics/monthly?${trendParams.toString()}`);
-        } catch (_error) {
-          return { month, summary: {} };
-        }
-      }));
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = payload;
-    const trendByMonth = Object.fromEntries([payload, ...extraTrendPayloads].map((item) => [item.month || "", item]));
-    state.statisticsTrend = trendMonths.map((month) => {
-      const item = trendByMonth[month] || {};
-      const summary = item.summary || {};
-      return {
-        month,
-        routes: Number(summary.routes || 0),
-        orders: Number(summary.orders || 0),
-      };
-    });
     const dates = Object.keys(dailyHistoryByDate(payload.dailyHistory || [])).sort().reverse();
     if (!options.resetHistory && requestedHistoryDate && dates.includes(requestedHistoryDate)) {
       state.statisticsHistoryDate = requestedHistoryDate;
@@ -1140,7 +1169,6 @@ async function loadStatistics(options = {}) {
   } catch (error) {
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
-    state.statisticsTrend = [];
     $("#statistics-grid").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
     $("#statistics-message").innerHTML = `<div class="notice error">A statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
@@ -2381,7 +2409,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=82");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=84");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3551,7 +3579,6 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.queueStatus = null;
   state.statistics = null;
-  state.statisticsTrend = [];
   renderQueueStatus();
   showLogin();
 });
