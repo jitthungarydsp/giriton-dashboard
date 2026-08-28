@@ -49,6 +49,15 @@ textarea { min-height: 96px; resize: vertical; }
 .hero-card h2 { max-width: 430px; margin: 22px 0 4px; font-size: clamp(25px, 7vw, 38px); line-height: 1.05; letter-spacing: -.045em; }
 .hero-detail { margin: 8px 0 0; color: #34503a; font-weight: 650; }
 .status-pill { align-self: flex-start; padding: 7px 10px; border-radius: 999px; background: #ffffffa8; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.work-offer-card { display: grid; gap: 14px; margin-top: 14px; padding: 18px; border: 1px solid #b8d5b4; border-radius: 22px; background: #f8fbf5; box-shadow: 0 7px 20px #3141340a; }
+.work-offer-top { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+.work-offer-card h2 { margin: 0; font-size: 24px; letter-spacing: 0; }
+.work-offer-card p:not(.eyebrow) { margin: 6px 0 0; color: var(--muted); line-height: 1.45; }
+.open-shift-list { display: grid; gap: 8px; }
+.open-shift-card { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.open-shift-card strong { display: block; font-size: 18px; }
+.open-shift-card small { display: block; margin-top: 4px; color: var(--muted); line-height: 1.35; }
+.open-shift-count { padding: 7px 9px; border-radius: 999px; background: #e2f2df; color: var(--green-dark); font-size: 12px; font-weight: 900; white-space: nowrap; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; padding: 30px 2px 14px; }
 .section-heading h2 { margin: 0; font-size: 24px; }
 .text-button { border: 0; background: transparent; color: var(--green-dark); font-weight: 800; }

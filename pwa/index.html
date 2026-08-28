@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=85" />
+    <link rel="stylesheet" href="/styles.css?v=86" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -80,6 +80,18 @@
             <p id="next-shift-detail" class="hero-detail"></p>
           </div>
           <span id="next-status" class="status-pill">Frissítés</span>
+        </section>
+
+        <section id="work-offer-card" class="work-offer-card hidden">
+          <div class="work-offer-top">
+            <div>
+              <p class="eyebrow">DOLGOZNÁL?</p>
+              <h2>Szabad műszakok</h2>
+              <p>A mai, raktáradhoz tartozó MűszakPro műszakokat mutatjuk.</p>
+            </div>
+            <button id="open-muszakpro-refresh" class="secondary" type="button">Mutasd</button>
+          </div>
+          <section id="open-muszakpro-list" class="open-shift-list hidden" aria-live="polite"></section>
         </section>
 
         <section class="section-heading">
@@ -512,6 +524,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=85" defer></script>
+    <script src="/app.js?v=86" defer></script>
   </body>
 </html>

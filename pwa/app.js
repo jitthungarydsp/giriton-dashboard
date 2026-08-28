@@ -16,6 +16,7 @@ const state = {
   expenseRequests: [],
   atmPayments: [],
   statistics: null,
+  openMuszakproShifts: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
   workflowProcess: "",
@@ -28,7 +29,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v85";
+const APP_VERSION = "v86";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -120,6 +121,19 @@ function shiftDateTime(item, field) {
   return Number.isNaN(value.getTime()) ? null : value;
 }
 
+function activeShift(items = []) {
+  const now = new Date();
+  return [...items]
+    .filter((item) => item.date && item.start)
+    .find((item) => {
+      const start = shiftDateTime(item, "start");
+      const end = shiftDateTime(item, "end");
+      if (!start) return false;
+      const effectiveEnd = end || new Date(start.getTime() + 8 * 60 * 60 * 1000);
+      return start <= now && now <= effectiveEnd;
+    }) || null;
+}
+
 function activeOrNextShift(items = []) {
   const now = new Date();
   const sorted = [...items]
@@ -130,15 +144,7 @@ function activeOrNextShift(items = []) {
       return leftStart - rightStart;
     });
 
-  const active = sorted.find((item) => {
-    const start = shiftDateTime(item, "start");
-    const end = shiftDateTime(item, "end");
-    if (!start) return false;
-    const effectiveEnd = end || new Date(start.getTime() + 8 * 60 * 60 * 1000);
-    return start <= now && now <= effectiveEnd;
-  });
-
-  return active || sorted.find((item) => {
+  return activeShift(sorted) || sorted.find((item) => {
     const start = shiftDateTime(item, "start");
     return start && start >= now;
   }) || null;
@@ -1590,6 +1596,74 @@ function renderShifts() {
   renderQueueStatus();
 }
 
+function renderOpenMuszakproShifts() {
+  const card = $("#work-offer-card");
+  const target = $("#open-muszakpro-list");
+  const hasActiveShift = Boolean(activeShift(state.data?.items || []));
+  if (card) card.classList.toggle("hidden", hasActiveShift);
+  if (hasActiveShift) {
+    state.openMuszakproShifts = null;
+    if (target) {
+      target.classList.add("hidden");
+      target.innerHTML = "";
+    }
+    return;
+  }
+  if (!target) return;
+  const payload = state.openMuszakproShifts;
+  if (!payload) {
+    target.classList.add("hidden");
+    target.innerHTML = "";
+    return;
+  }
+
+  target.classList.remove("hidden");
+  const items = payload.items || [];
+  if (!items.length) {
+    const message = payload.message || "Ma nincs szabad MűszakPro műszak a raktáradhoz.";
+    target.innerHTML = `<div class="empty-card">${escapeHtml(message)}</div>`;
+    return;
+  }
+
+  target.innerHTML = items.map((item) => {
+    const end = item.end ? `–${escapeHtml(item.end)}` : "";
+    const freeText = Number(item.freeCount || 0) > 1 ? `${formatCount(item.freeCount)} hely` : "1 hely";
+    const capacityText = item.capacity ? `Kapacitás: ${formatCount(item.bookedCount || 0)}/${formatCount(item.capacity)}` : "";
+    return `<article class="open-shift-card">
+      <div>
+        <strong>${escapeHtml(item.start || "Időpont nélkül")}${end}</strong>
+        <small>${escapeHtml(item.warehouse || "Raktár nincs megadva")} · ${escapeHtml(item.shiftCode || "MűszakPro műszak")}</small>
+        <small>Ezt a műszakot a MűszakPro felületén tudod lefoglalni.</small>
+        ${capacityText ? `<small>${escapeHtml(capacityText)}</small>` : ""}
+      </div>
+      <span class="open-shift-count">${escapeHtml(freeText)}</span>
+    </article>`;
+  }).join("");
+}
+
+async function loadOpenMuszakproShifts() {
+  const button = $("#open-muszakpro-refresh");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Nézem...";
+  }
+  try {
+    state.openMuszakproShifts = await api(withPreviewCourier(`/api/muszakpro/open-shifts?day=${encodeURIComponent(localDate())}`));
+    renderOpenMuszakproShifts();
+  } catch (error) {
+    state.openMuszakproShifts = {
+      items: [],
+      message: error.message || "A szabad MűszakPro műszakok most nem tölthetők be.",
+    };
+    renderOpenMuszakproShifts();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Mutasd";
+    }
+  }
+}
+
 function renderHero() {
   const upcoming = activeOrNextShift(state.data?.items || []);
   if (!upcoming) {
@@ -1618,6 +1692,7 @@ async function loadShifts() {
     renderTabs();
     renderWarnings();
     renderShifts();
+    renderOpenMuszakproShifts();
     loadQueueStatus().catch(() => {});
     $("#updated-at").textContent = `Utolsó lekérés: ${new Date(state.data.updatedAt).toLocaleString("hu-HU")}`;
   } catch (error) {
@@ -2424,7 +2499,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=85");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=86");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3594,10 +3669,12 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.queueStatus = null;
   state.statistics = null;
+  state.openMuszakproShifts = null;
   renderQueueStatus();
   showLogin();
 });
 $("#refresh").addEventListener("click", loadShifts);
+$("#open-muszakpro-refresh").addEventListener("click", loadOpenMuszakproShifts);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));

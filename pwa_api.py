@@ -486,6 +486,14 @@ def shift_start(value: Any) -> str:
     return normalize_time(text)
 
 
+def extract_shift_time(value: Any) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"(?<!\d)([0-2]?\d)[:.](\d{2})(?!\d)", text)
+    if match:
+        return normalize_time(f"{match.group(1)}:{match.group(2)}")
+    return shift_start(text)
+
+
 def normalize_warehouse(value: Any) -> str:
     text = normalize_text(value).replace("_", "").replace(" ", "")
     aliases = {
@@ -1038,6 +1046,155 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
         "days": days,
         "items": attach_vehicle_assignments(items, vehicle_rows, live_vehicle),
         "warnings": source_errors,
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+
+
+def read_courier_warehouse(user: dict[str, Any]) -> str:
+    courier_id, _courier_name = courier_identity(user)
+    direct = normalize_warehouse(
+        user.get("warehouseName")
+        or user.get("warehouse_name")
+        or user.get("warehouse")
+        or user.get("raktar")
+    )
+    if direct:
+        return direct
+
+    rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "warehouse_name",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+        timeout=10,
+    )
+    return normalize_warehouse((rows[0] if rows else {}).get("warehouse_name"))
+
+
+def read_open_muszakpro_shifts(user: dict[str, Any], target_date: date) -> dict[str, Any]:
+    warehouse = read_courier_warehouse(user)
+    if not warehouse:
+        return {
+            "date": target_date.isoformat(),
+            "warehouse": "",
+            "items": [],
+            "message": "A profilban nincs raktár megadva, ezért nem tudjuk listázni a szabad MűszakPro műszakokat.",
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+
+    target_warehouses = {"BUD1", "BUD2"} if warehouse == "BUD" else {warehouse}
+    warehouse_filter = ",".join(sorted(target_warehouses))
+    parameter_rows = optional_supabase_rows(
+        "ops_shift_start_parameters",
+        params={
+            "select": "warehouse,shift_code,shift_kind,route_count,start_time,end_time,is_active",
+            "is_active": "eq.true",
+            "order": "start_time.asc,shift_code.asc",
+            "limit": "500",
+            **({"warehouse": f"in.({warehouse_filter})"} if warehouse_filter else {}),
+        },
+        timeout=15,
+    )
+    if not parameter_rows:
+        parameter_rows = optional_supabase_rows(
+            "ops_shift_start_parameters",
+            params={
+                "select": "warehouse,shift_code,shift_kind,route_count,start_time,end_time",
+                "order": "start_time.asc,shift_code.asc",
+                "limit": "500",
+                **({"warehouse": f"in.({warehouse_filter})"} if warehouse_filter else {}),
+            },
+            timeout=15,
+        )
+
+    booking_rows = optional_supabase_rows(
+        "raw_muszakpro_bookings",
+        params={
+            "select": "work_date,warehouse,shift_text,courier_id,email,booking_code,status,fetched_at",
+            "work_date": f"eq.{target_date.isoformat()}",
+            "order": "fetched_at.desc",
+            "limit": "2000",
+            **({"warehouse": f"in.({warehouse_filter})"} if warehouse_filter else {}),
+        },
+        timeout=15,
+    )
+    if not booking_rows:
+        booking_rows = optional_supabase_rows(
+        "foglalasok_raw",
+        params={
+                "select": "work_date,warehouse,shift_text,courier_id,email,booking_code,status,fetched_at",
+                "work_date": f"eq.{target_date.isoformat()}",
+                "order": "fetched_at.desc",
+                "limit": "2000",
+                **({"warehouse": f"in.({warehouse_filter})"} if warehouse_filter else {}),
+            },
+            timeout=15,
+        )
+
+    booked_by_start: dict[tuple[str, str], set[str]] = {}
+    for row in booking_rows:
+        row_warehouse = normalize_warehouse(row.get("warehouse"))
+        if row_warehouse not in target_warehouses:
+            continue
+        if str(row.get("status") or "ACTIVE").strip().upper() == "CANCELLED":
+            continue
+        start_key = extract_shift_time(row.get("shift_text"))
+        if not start_key:
+            continue
+        courier_key = str(
+            row.get("booking_code")
+            or row.get("courier_id")
+            or row.get("email")
+            or row.get("fetched_at")
+            or id(row)
+        )
+        booked_by_start.setdefault((row_warehouse, start_key), set()).add(courier_key)
+
+    now = datetime.now(LOCAL_TIMEZONE)
+    today_key = now.date().isoformat()
+    items: list[dict[str, Any]] = []
+    for row in parameter_rows:
+        row_warehouse = normalize_warehouse(row.get("warehouse"))
+        if row_warehouse not in target_warehouses:
+            continue
+        start_key = extract_shift_time(row.get("start_time") or row.get("shift_code"))
+        if not start_key:
+            continue
+        if target_date.isoformat() == today_key:
+            try:
+                start_dt = datetime.fromisoformat(f"{target_date.isoformat()}T{start_key}:00").replace(tzinfo=LOCAL_TIMEZONE)
+                if start_dt <= now:
+                    continue
+            except ValueError:
+                pass
+        capacity = money_int(row.get("route_count"))
+        if capacity <= 0:
+            continue
+        booked_count = len(booked_by_start.get((row_warehouse, start_key), set()))
+        free_count = max(capacity - booked_count, 0)
+        if free_count <= 0:
+            continue
+        items.append(
+            {
+                "date": target_date.isoformat(),
+                "warehouse": row_warehouse,
+                "start": start_key,
+                "end": extract_shift_time(row.get("end_time")),
+                "shiftCode": str(row.get("shift_code") or f"{warehouse}_{start_key}").strip(),
+                "freeCount": free_count,
+                "capacity": capacity,
+                "bookedCount": booked_count,
+                "source": "MűszakPro",
+            }
+        )
+
+    return {
+        "date": target_date.isoformat(),
+        "warehouse": warehouse,
+        "items": sorted(items, key=lambda item: (item["warehouse"], item["start"])),
+        "message": "",
         "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
 
@@ -7232,6 +7389,21 @@ def shifts(
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     return read_shifts(view_user, days)
+
+
+@app.get("/api/muszakpro/open-shifts")
+def muszakpro_open_shifts(
+    day: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    try:
+        target_date = datetime.strptime(day, "%Y-%m-%d").date() if day else datetime.now(LOCAL_TIMEZONE).date()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Hibás dátum.") from exc
+    return read_open_muszakpro_shifts(view_user, target_date)
 
 
 @app.post("/api/shifts/delay-alert")
