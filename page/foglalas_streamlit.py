@@ -1172,6 +1172,7 @@ def _build_summary_rows(
         )
         records_by_time = muszakpro_group.get("records_by_time", {})
         used_booked_values = set()
+        used_available_values = set()
 
         for muszakpro_time in muszakpro_values:
             source_record = records_by_time.get(muszakpro_time, {})
@@ -1224,11 +1225,13 @@ def _build_summary_rows(
                     giriton_state = "Nincs lefoglalva"
                     giriton_offer = giriton_time
                     reason = f"Pontos egyezés, napi 4:30 szabály ellenőrizve"
+                    used_available_values.add(giriton_time)
                 else:
                     status = "Alternatíva"
                     giriton_state = "Nincs lefoglalva"
                     giriton_offer = giriton_time
                     reason = f"Napi újratervezés a tűrésen belül, 4:30 szabállyal"
+                    used_available_values.add(giriton_time)
             else:
                 if len(muszakpro_values) == 1:
                     giriton_time, diff_value, single_status = _nearest_single_giriton_time(
@@ -1252,11 +1255,34 @@ def _build_summary_rows(
                         giriton_offer = giriton_time
                         reason = f"Nincs azonos raktáras szabad Giriton találat ±{tolerance_minutes} percen belül"
                 else:
-                    diff_value = None
-                    status = "Sikertelen"
-                    giriton_state = "-"
-                    giriton_offer = "nincs érvényes napi terv"
-                    reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
+                    available_values = [
+                        value
+                        for value in giriton_values
+                        if value not in used_available_values
+                    ]
+                    giriton_time, diff_value, single_status = _nearest_single_giriton_time(
+                        muszakpro_time,
+                        available_values,
+                        tolerance_minutes,
+                    )
+                    if single_status == "exact":
+                        status = "Egyezés"
+                        giriton_state = "Nincs lefoglalva"
+                        giriton_offer = giriton_time
+                        reason = "Pontos egyezés, a teljes napi lánc nem állt össze"
+                        used_available_values.add(giriton_time)
+                    elif single_status == "alternative":
+                        status = "Alternatíva"
+                        giriton_state = "Nincs lefoglalva"
+                        giriton_offer = giriton_time
+                        reason = "Egyedi alternatíva, a teljes napi lánc nem állt össze"
+                        used_available_values.add(giriton_time)
+                    else:
+                        diff_value = None
+                        status = "Sikertelen"
+                        giriton_state = "-"
+                        giriton_offer = "nincs érvényes napi terv"
+                        reason = f"Nincs azonos raktáras napi Giriton lánc, ahol minden műszak között legalább 4:30 óra van"
 
             if (
                 status != "Lefoglalva"
