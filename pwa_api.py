@@ -147,6 +147,7 @@ class BillingProfileUpdate(BaseModel):
     courier_id: str = ""
     courier_name: str = ""
     phone_number: str = ""
+    warehouse_name: str = ""
     company_name: str = ""
     company_address: str = ""
     tax_number: str = ""
@@ -2154,6 +2155,7 @@ def normalize_profile_courier_id(value: Any) -> str:
 
 BILLING_PROFILE_FIELDS = (
     "courier_id,courier_name,phone_number,"
+    "warehouse_name,"
     "company_name,company_address,tax_number,"
     "bank_account_number,billing_email,billing_data_updated_at"
 )
@@ -2176,6 +2178,7 @@ def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
             "courier_id": courier_id,
             "courier_name": _courier_name,
             "phone_number": str(user.get("phone") or ""),
+            "warehouse_name": "",
             "company_name": "",
             "company_address": "",
             "tax_number": "",
@@ -2188,6 +2191,7 @@ def read_billing_profile(user: dict[str, Any]) -> dict[str, Any]:
         "courier_id": str(row.get("courier_id") or courier_id),
         "courier_name": str(row.get("courier_name") or _courier_name),
         "phone_number": str(row.get("phone_number") or ""),
+        "warehouse_name": str(row.get("warehouse_name") or ""),
         "company_name": str(row.get("company_name") or ""),
         "company_address": str(row.get("company_address") or ""),
         "tax_number": str(row.get("tax_number") or ""),
@@ -2201,6 +2205,7 @@ def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
     courier_id = normalize_profile_courier_id(payload.courier_id)
     courier_name = payload.courier_name.strip()
     phone_number = payload.phone_number.strip()
+    warehouse_name = normalize_warehouse(payload.warehouse_name)
     company_name = payload.company_name.strip()
     company_address = payload.company_address.strip()
     tax_number = payload.tax_number.strip()
@@ -2215,11 +2220,14 @@ def validate_billing_profile(payload: BillingProfileUpdate) -> dict[str, str]:
         raise HTTPException(status_code=422, detail="Az adószám kötelező.")
     if billing_email and ("@" not in billing_email or "." not in billing_email.rsplit("@", 1)[-1]):
         raise HTTPException(status_code=422, detail="A számlázási e-mail formátuma hibás.")
+    if warehouse_name and warehouse_name not in {"BUD", "BUD1", "BUD2"}:
+        raise HTTPException(status_code=422, detail="A preferált raktár csak Budapest, BUD1 vagy BUD2 lehet.")
 
     return {
         "courier_id": courier_id,
         "courier_name": courier_name,
         "phone_number": phone_number,
+        "warehouse_name": warehouse_name,
         "company_name": company_name,
         "company_address": company_address,
         "tax_number": tax_number,

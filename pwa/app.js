@@ -29,7 +29,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v86";
+const APP_VERSION = "v87";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -2499,7 +2499,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=86");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=87");
   }
   return navigator.serviceWorker.ready;
 }
@@ -2740,10 +2740,14 @@ function updateBillingProfileEditState() {
       : "A futár ID csak addig írható, amíg üres.";
   }
 
-  form.querySelectorAll("input").forEach((input) => {
+  form.querySelectorAll("input, select").forEach((input) => {
     if (input.id === "profile-courier-id") return;
-    input.readOnly = previewReadOnly;
-    input.toggleAttribute("aria-readonly", previewReadOnly);
+    if (input.tagName === "SELECT") {
+      input.disabled = previewReadOnly;
+    } else {
+      input.readOnly = previewReadOnly;
+      input.toggleAttribute("aria-readonly", previewReadOnly);
+    }
     input.classList.toggle("locked", previewReadOnly);
   });
 
@@ -2756,6 +2760,7 @@ function fillBillingProfile(data = {}) {
     "#profile-courier-id": data.courier_id || state.user?.courier_id || state.user?.id || "",
     "#profile-courier-name": data.courier_name || state.user?.username || "",
     "#profile-phone-number": data.phone_number || state.user?.phone || "",
+    "#profile-warehouse": data.warehouse_name || "",
     "#billing-company-name": data.company_name || "",
     "#billing-company-address": data.company_address || "",
     "#billing-tax-number": data.tax_number || "",
@@ -2823,6 +2828,7 @@ if (billingProfileForm) {
       courier_id: $("#profile-courier-id")?.value || "",
       courier_name: $("#profile-courier-name")?.value || "",
       phone_number: $("#profile-phone-number")?.value || "",
+      warehouse_name: $("#profile-warehouse")?.value || "",
       company_name: $("#billing-company-name")?.value || "",
       company_address: $("#billing-company-address")?.value || "",
       tax_number: $("#billing-tax-number")?.value || "",
