@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -51,6 +52,7 @@ MUSZAKPRO_REFRESH_WORKFLOW = "daily-attendance-muszakpro.yml"
 BOOKING_LINK_TTL_SECONDS = 15 * 60
 FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
 FOGLALAS_AUTO_REFRESH_SECONDS = 60
+NO_VALID_DAILY_PLAN_TEXT = "nincs érvényes napi terv"
 
 
 def _clean(value) -> str:
@@ -1385,6 +1387,106 @@ def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) ->
     )
 
 
+def _slack_daily_plan_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    rows = summary_df.copy()
+    no_daily_plan = rows.get("Giriton ajánlat", pd.Series("", index=rows.index)).fillna("").astype(str).str.strip().str.casefold()
+    rows = rows[
+        rows.get("Állapot", pd.Series("", index=rows.index)).fillna("").astype(str).eq("Sikertelen")
+        & no_daily_plan.eq(NO_VALID_DAILY_PLAN_TEXT)
+    ].copy()
+    if rows.empty:
+        return rows
+
+    rows["_sort_date"] = rows["Dátum"].apply(_date_from_value)
+    rows = rows.sort_values(["_sort_date", "Dolgozó", "MűszakPro", "Serial"], na_position="last")
+    return rows.drop_duplicates(subset=["Dátum", "Dolgozó", "MűszakPro", "Serial"])
+
+
+def _format_slack_request_date(value) -> str:
+    parsed = _date_from_value(value)
+    if parsed:
+        return parsed.isoformat()
+    return _clean(value) or "a kiválasztott nap"
+
+
+def _build_slack_daily_plan_request(summary_df: pd.DataFrame) -> str:
+    request_rows = _slack_daily_plan_rows(summary_df)
+    if request_rows.empty:
+        return ""
+
+    blocks: list[str] = []
+    for work_date, day_rows in request_rows.groupby("Dátum", sort=False):
+        lines = [
+            "Sziasztok,",
+            f"{_format_slack_request_date(work_date)}-ra szeretnék megkérni az alábbi műszakokat:",
+        ]
+        for row in day_rows.to_dict("records"):
+            courier_name = _clean(row.get("Dolgozó")) or "Név nélkül"
+            muszakpro_shift = _clean(row.get("MűszakPro")) or "-"
+            lines.append(f"{courier_name} - {muszakpro_shift}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _render_copyable_slack_message(message: str, key_prefix: str) -> None:
+    component_key = re.sub(r"[^a-zA-Z0-9_-]+", "_", key_prefix)
+    components.html(
+        f"""
+        <div style="display:grid;gap:10px;font-family:Inter,Arial,sans-serif;">
+          <textarea id="slack-message-{component_key}" readonly
+            style="width:100%;min-height:170px;padding:12px;border:1px solid #d7dde5;border-radius:10px;background:#f8fafc;color:#111827;font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-sizing:border-box;">{escape(message)}</textarea>
+          <button id="copy-slack-{component_key}" type="button"
+            style="min-height:42px;border:0;border-radius:10px;background:#111827;color:white;font-weight:800;cursor:pointer;">
+            Slack üzenet másolása
+          </button>
+          <div id="copy-status-{component_key}" style="min-height:18px;color:#166534;font-size:12px;font-weight:700;"></div>
+        </div>
+        <script>
+          const button = document.getElementById("copy-slack-{component_key}");
+          const textarea = document.getElementById("slack-message-{component_key}");
+          const status = document.getElementById("copy-status-{component_key}");
+          button.addEventListener("click", async () => {{
+            try {{
+              await navigator.clipboard.writeText(textarea.value);
+              status.textContent = "Kimásolva.";
+            }} catch (error) {{
+              textarea.focus();
+              textarea.select();
+              document.execCommand("copy");
+              status.textContent = "Kimásolva.";
+            }}
+          }});
+        </script>
+        """,
+        height=250,
+    )
+
+
+def _render_slack_daily_plan_request(summary_df: pd.DataFrame, key_prefix: str) -> None:
+    request_rows = _slack_daily_plan_rows(summary_df)
+    st.markdown("#### Slack megkérés")
+    st.caption(
+        f"Nincs érvényes napi terv miatt kérendő MűszakPro sorok: {len(request_rows)}"
+    )
+    if request_rows.empty:
+        st.info("Nincs olyan sikertelen sor, ahol a Giriton ajánlat: nincs érvényes napi terv.")
+        return
+
+    message_key = f"{key_prefix}_slack_daily_plan_message"
+    if st.button(
+        "Slack megkérés összeállítása",
+        width="stretch",
+        key=f"{key_prefix}_slack_daily_plan_button",
+    ):
+        st.session_state[message_key] = _build_slack_daily_plan_request(summary_df)
+
+    message = st.session_state.get(message_key) or _build_slack_daily_plan_request(summary_df)
+    _render_copyable_slack_message(message, key_prefix)
+
+
 def _format_frame(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> pd.DataFrame:
     visible_columns = [column for column in columns if column in df.columns]
     if not visible_columns:
@@ -2513,6 +2615,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
         st.markdown("### Sikertelen foglalások")
         failed_df = summary_df[summary_df["Állapot"] == "Sikertelen"].copy()
         st.caption(f"Sikertelen sorok: {len(failed_df)}")
+        _render_slack_daily_plan_request(failed_df, "mass_failed")
         if not failed_df.empty:
             failed_df["Következő lépés"] = failed_df["Állapot"]
         _render_html_table(
@@ -2982,6 +3085,7 @@ def show_foglalas_streamlit_page() -> None:
         _render_worker_view(summary_df, muszakpro_df, giriton_df)
     elif view == "Sikertelenek":
         failed_only = summary_df[summary_df["Állapot"] == "Sikertelen"] if not summary_df.empty else summary_df
+        _render_slack_daily_plan_request(failed_only, "failed_view")
         if not failed_only.empty:
             failed_only = failed_only.copy()
             failed_only["Következő lépés"] = failed_only["Állapot"]
