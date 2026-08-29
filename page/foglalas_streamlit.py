@@ -1423,10 +1423,29 @@ def _build_slack_daily_plan_request(summary_df: pd.DataFrame) -> str:
             "Sziasztok,",
             f"{_format_slack_request_date(work_date)}-ra szeretnék megkérni az alábbi műszakokat:",
         ]
-        for row in day_rows.to_dict("records"):
-            courier_name = _clean(row.get("Dolgozó")) or "Név nélkül"
-            muszakpro_shift = _clean(row.get("MűszakPro")) or "-"
-            lines.append(f"{courier_name} - {muszakpro_shift}")
+        for warehouse in ["BUD1", "BUD2"]:
+            warehouse_rows = day_rows[
+                day_rows.get("Raktár", pd.Series("", index=day_rows.index)).fillna("").astype(str).str.upper().str.contains(warehouse)
+            ]
+            if warehouse_rows.empty:
+                continue
+            lines.append("")
+            lines.append(f"{warehouse}:")
+            for row in warehouse_rows.to_dict("records"):
+                courier_name = _clean(row.get("Dolgozó")) or "Név nélkül"
+                muszakpro_shift = _clean(row.get("MűszakPro")) or "-"
+                lines.append(f"{courier_name} - {muszakpro_shift}")
+        other_rows = day_rows[
+            ~day_rows.get("Raktár", pd.Series("", index=day_rows.index)).fillna("").astype(str).str.upper().str.contains("BUD1|BUD2", regex=True)
+        ]
+        if not other_rows.empty:
+            lines.append("")
+            lines.append("Egyéb:")
+            for row in other_rows.to_dict("records"):
+                courier_name = _clean(row.get("Dolgozó")) or "Név nélkül"
+                muszakpro_shift = _clean(row.get("MűszakPro")) or "-"
+                warehouse = _clean(row.get("Raktár")) or "-"
+                lines.append(f"{warehouse} - {courier_name} - {muszakpro_shift}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
