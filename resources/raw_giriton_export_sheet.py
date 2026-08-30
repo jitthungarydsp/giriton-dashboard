@@ -311,6 +311,21 @@ def _driver_by_email(driver_lookup, email):
     )
 
 
+def _split_subscribed_names(value):
+    text = str(value or "").strip()
+
+    if not text:
+        return []
+
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+
+    return [
+        name.strip()
+        for name in re.split(r"\s*(?:,|;|\||\r?\n)+\s*", text)
+        if name.strip()
+    ]
+
+
 def _normalize_row(row):
     return [
         _normalize_cell(value)
@@ -719,60 +734,66 @@ def _enrich_giriton_rows(rows, driver_lookup):
             booked = ""
             maximum = ""
             name = _cell(row, 5)
-        driver = (
-            {}
-            if _normalize_name(name) == _normalize_name("ÜRES")
-            else _driver_by_name(driver_lookup, name)
-        )
-        courier_id = driver.get("courier_id", "")
-        email = driver.get("email", "")
-        serial = _shift_serial(
-            work_date,
-            courier_id,
-            warehouse,
-            start,
-        )
-        status = (
-            "URES"
-            if _normalize_name(name) == _normalize_name("ÜRES")
-            else "GIRITON_OK"
-        )
 
-        if status == "GIRITON_OK" and not courier_id:
-            print(
-                "GIRITON_RAW_EXPORT_MISSING_COURIER_ID "
-                f"name={name or '-'} "
-                f"work_date={work_date or '-'} "
-                f"warehouse={warehouse or '-'} "
-                f"start={start or '-'}"
+        names = _split_subscribed_names(name)
+        if not names:
+            names = ["URES"]
+
+        for current_name in names:
+            driver = (
+                {}
+                if _normalize_name(current_name) == _normalize_name("ÜRES")
+                else _driver_by_name(driver_lookup, current_name)
             )
-
-        output.append([
-            work_date,
-            start,
-            end,
-            warehouse,
-            occupancy,
-            booked,
-            maximum,
-            name,
-            email,
-            serial,
-            status,
-            courier_id,
-        ])
-
-        if status == "GIRITON_OK":
-            log_rows.append([
-                serial,
+            courier_id = driver.get("courier_id", "")
+            email = driver.get("email", "")
+            serial = _shift_serial(
                 work_date,
                 courier_id,
-                name,
-                email,
                 warehouse,
                 start,
+            )
+            status = (
+                "URES"
+                if _normalize_name(current_name) == _normalize_name("ÜRES")
+                else "GIRITON_OK"
+            )
+
+            if status == "GIRITON_OK" and not courier_id:
+                print(
+                    "GIRITON_RAW_EXPORT_MISSING_COURIER_ID "
+                    f"name={current_name or '-'} "
+                    f"work_date={work_date or '-'} "
+                    f"warehouse={warehouse or '-'} "
+                    f"start={start or '-'}"
+                )
+
+            output.append([
+                work_date,
+                start,
                 end,
+                warehouse,
+                occupancy,
+                booked,
+                maximum,
+                current_name,
+                email,
+                serial,
+                status,
+                courier_id,
             ])
+
+            if status == "GIRITON_OK":
+                log_rows.append([
+                    serial,
+                    work_date,
+                    courier_id,
+                    current_name,
+                    email,
+                    warehouse,
+                    start,
+                    end,
+                ])
 
     return output, log_rows
 

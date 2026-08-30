@@ -647,11 +647,24 @@ def print_table(rows: list[dict[str, Any]], only_open: bool) -> None:
         )
 
 
+def split_subscribed_users(value: Any) -> list[str]:
+    text = clean(value)
+    if not text:
+        return []
+
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+
+    return [
+        name.strip()
+        for name in re.split(r"\s*(?:,|;|\||\r?\n)+\s*", text)
+        if name.strip()
+    ]
+
+
 def raw_export_rows_from_live_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
     export_rows: list[list[Any]] = []
     for row in rows:
-        users = clean(row.get("subscribed_users"))
-        names = [name.strip() for name in users.split(",") if name.strip()]
+        names = split_subscribed_users(row.get("subscribed_users"))
         if not names:
             names = ["URES"]
         for name in names:
