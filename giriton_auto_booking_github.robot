@@ -2,6 +2,7 @@
 Resource    resources/keywords_github.robot
 Resource    resources/variables.robot
 Library    resources/giriton_auto_booking.py
+Library    resources/giriton_uidl_trace.py
 Library    SeleniumLibrary
 Library    Collections
 Library    DateTime
@@ -16,9 +17,13 @@ ${AUTO_BOOK_END_DATE}
 ${AUTO_BOOK_DRY_RUN}         true
 ${AUTO_BOOK_SERIAL}
 ${AUTO_BOOK_COURIER_ID}
+${AUTO_BOOK_COURIER_NAME}
 ${AUTO_BOOK_EMAIL}
 ${AUTO_BOOK_WAREHOUSE}
 ${AUTO_BOOK_SHIFT_START}
+${AUTO_BOOK_MANUAL_CANDIDATE}    false
+${AUTO_BOOK_UIDL_TRACE}    false
+${AUTO_BOOK_UIDL_TRACE_DIR}    results/giriton-uidl-booking
 
 
 *** Test Cases ***
@@ -81,6 +86,8 @@ Giriton Auto Booking From Foglalasok
     ...    ${AUTO_BOOK_EMAIL}
     ...    ${AUTO_BOOK_WAREHOUSE}
     ...    ${AUTO_BOOK_SHIFT_START}
+    ...    ${AUTO_BOOK_COURIER_NAME}
+    ...    ${AUTO_BOOK_MANUAL_CANDIDATE}
 
     ${candidate_count}=    Get Length    ${candidates}
     Log To Console    AUTO_BOOK_CANDIDATES=${candidate_count}
@@ -150,6 +157,11 @@ Giriton Auto Booking From Foglalasok
         ...    STEP_SHIFT_SEARCH_START
         ...    Muszakkartya keresese indul: ${warehouse} ${shift_start}
 
+        IF    '${AUTO_BOOK_UIDL_TRACE}' == 'true'
+            ${trace_start}=    giriton_uidl_trace.Start Giriton Uidl Trace
+            Log To Console    AUTO_BOOK_UIDL_TRACE_START=${trace_start}
+        END
+
         ${result}=    Find Giriton Shift Card
         ...    ${warehouse}
         ...    ${shift_start}
@@ -170,6 +182,13 @@ Giriton Auto Booking From Foglalasok
             ...    ${candidate}
             ...    DRY_RUN_FOUND
             ...    A Giriton muszakkartya megvan, eles kattintas kihagyva. Screenshot: ${loaded_screenshot}, ${found_screenshot}
+
+            IF    '${AUTO_BOOK_UIDL_TRACE}' == 'true'
+                ${trace_result}=    giriton_uidl_trace.Save Giriton Uidl Trace
+                ...    ${work_date}_${warehouse}_${shift_start}_${courier_name}_dry_run
+                ...    ${AUTO_BOOK_UIDL_TRACE_DIR}
+                Log To Console    AUTO_BOOK_UIDL_TRACE=${trace_result}
+            END
         ELSE IF    $result == 'FOUND_CLICKED'
             Log Auto Booking Step
             ...    ${candidate}
@@ -193,6 +212,13 @@ Giriton Auto Booking From Foglalasok
             ...    ${candidate}
             ...    ${add_result}
             ...    A Giriton muszakkartya megvan, a futar hozzaadasi folyamat lefutott. Screenshot: ${loaded_screenshot}, ${booking_screenshot}
+
+            IF    '${AUTO_BOOK_UIDL_TRACE}' == 'true'
+                ${trace_result}=    giriton_uidl_trace.Save Giriton Uidl Trace
+                ...    ${work_date}_${warehouse}_${shift_start}_${courier_name}_${add_result}
+                ...    ${AUTO_BOOK_UIDL_TRACE_DIR}
+                Log To Console    AUTO_BOOK_UIDL_TRACE=${trace_result}
+            END
 
             Close Giriton Popup
 
@@ -232,6 +258,13 @@ Giriton Auto Booking From Foglalasok
             ...    ${candidate}
             ...    ${final_status}
             ...    ${final_message}
+
+            IF    '${AUTO_BOOK_UIDL_TRACE}' == 'true'
+                ${trace_result}=    giriton_uidl_trace.Save Giriton Uidl Trace
+                ...    ${work_date}_${warehouse}_${shift_start}_${courier_name}_${final_status}
+                ...    ${AUTO_BOOK_UIDL_TRACE_DIR}
+                Log To Console    AUTO_BOOK_UIDL_TRACE=${trace_result}
+            END
         END
 
         Log To Console    AUTO_BOOK_RESULT=${result} LOG=${log_result}
@@ -464,10 +497,13 @@ Add Courier To Shift Subscription
 
     ${tab_open}=    Execute Javascript
     ...    const visible=el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
-    ...    const text=String((document.querySelector('.v-window') || document).innerText || '');
-    ...    if(document.querySelector('#SearchField-tfTextSearch')){return 'YES';}
+    ...    const windows=[...document.querySelectorAll('.v-window, [data-auto-book-popup-root="true"]')].filter(visible);
+    ...    const win=windows[windows.length - 1] || document;
+    ...    const text=String(win.innerText || '');
+    ...    if(win.querySelector('#SearchField-tfTextSearch') || document.querySelector('#SearchField-tfTextSearch')){return 'YES';}
+    ...    if(text.includes('Available users') || text.includes('Subscribed users (') || text.includes('Search')){return 'YES';}
     ...    if(text.includes('Number of persons:') || text.includes('Automatically approve:') || text.includes('Subscribe since:')){return 'NO';}
-    ...    const buttons=[...document.querySelectorAll('.v-window .v-button, .v-window [role="button"], .v-window button')].filter(visible);
+    ...    const buttons=[...win.querySelectorAll('.v-button, [role="button"], button')].filter(visible);
     ...    return buttons.length > 0 ? 'YES' : 'NO';
 
     IF    $tab_open != 'YES'
@@ -525,23 +561,52 @@ Add Courier To Shift Subscription
     ${plus_result}=    Execute Javascript
     ...    const visible=function(el){return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;};
     ...    const textOf=function(el){return String(el.innerText || el.textContent || el.getAttribute('title') || el.getAttribute('aria-label') || el.id || el.className || '').trim();};
+    ...    const normalize=function(value){return String(value || '').trim().split(' ').filter(Boolean).join(' ');};
+    ...    const clickReal=function(el){
+    ...      if(!el){return false;}
+    ...      el.scrollIntoView({block:'center', inline:'center'});
+    ...      const rect=el.getBoundingClientRect();
+    ...      const x=Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    ...      const y=Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    ...      const real=document.elementFromPoint(x, y) || el;
+    ...      const target=(real.closest && real.closest('.v-button, button, [role="button"]')) || real;
+    ...      ['mouseover','mousemove','mousedown','mouseup','click'].forEach(function(type){
+    ...        target.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y}));
+    ...      });
+    ...      return true;
+    ...    };
     ...    const overlays=Array.from(document.querySelectorAll('.v-window, [id$="-overlays"], [id*="-overlays"], .v-popupview-popup, .v-overlay-container')).filter(visible);
-    ...    const win=overlays.find(function(el){return textOf(el).includes('Subscribed users') || textOf(el).includes('Available users') || textOf(el).includes('Search');}) || overlays[overlays.length - 1] || document;
+    ...    const win=overlays.filter(function(el){return textOf(el).includes('Subscribed users') || textOf(el).includes('Available users') || textOf(el).includes('Search');}).pop() || overlays[overlays.length - 1] || document;
+    ...    const header=[...win.querySelectorAll('th, td, div, span')].filter(visible).find(function(el){return normalize(el.innerText || el.textContent) === '+/-';});
+    ...    if(header){
+    ...      const h=header.getBoundingClientRect();
+    ...      const rowTarget=[...win.querySelectorAll('.v-button, button, [role="button"], td, div, span')].filter(visible).find(function(el){
+    ...        const r=el.getBoundingClientRect();
+    ...        const text=normalize(el.innerText || el.textContent);
+    ...        const centerX=r.left + r.width / 2;
+    ...        const small=r.width <= 70 && r.height <= 45;
+    ...        return small && r.top > h.bottom && Math.abs(centerX - (h.left + h.width / 2)) <= Math.max(28, h.width / 2) && (text === '+' || String(el.className || '').toLowerCase().includes('button') || getComputedStyle(el).backgroundColor.includes('76, 175') || getComputedStyle(el).backgroundColor.includes('67, 160'));
+    ...      });
+    ...      if(rowTarget && clickReal(rowTarget)){return 'OK_GRID_PLUS';}
+    ...      const x=h.left + h.width / 2;
+    ...      const y=h.bottom + 15;
+    ...      const point=document.elementFromPoint(x, y);
+    ...      if(point && clickReal(point)){return 'OK_GRID_POINT';}
+    ...    }
     ...    const xpathFirst=document.evaluate('//*[@id="gwt-uid-69"]/div', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    ...    const candidates=[xpathFirst].filter(Boolean).concat(Array.from(win.querySelectorAll('.v-button, [role="button"], button, span, div')).filter(visible));
+    ...    const candidates=[xpathFirst].filter(Boolean).concat(Array.from(win.querySelectorAll('.v-button, [role="button"], button, span, div, td')).filter(visible));
     ...    const plus=candidates.find(function(button){
     ...      const style=getComputedStyle(button);
     ...      const cls=String(button.className || '').toLowerCase();
     ...      const label=textOf(button).toLowerCase();
     ...      const small=button.offsetWidth <= 80 && button.offsetHeight <= 80;
-    ...      return small && (label === '+' || label.includes('add') || label.includes('new') || label.includes('plus') || cls.includes('plus') || cls.includes('add') || cls.includes('friendly') || style.backgroundColor.includes('76, 175, 80'));
+    ...      return small && (label === '+' || label.includes('add') || label.includes('new') || label.includes('plus') || cls.includes('plus') || cls.includes('add') || cls.includes('friendly') || style.backgroundColor.includes('76, 175') || style.backgroundColor.includes('67, 160'));
     ...    });
     ...    if(!plus){return 'NOT_FOUND';}
-    ...    plus.scrollIntoView({block:'center', inline:'nearest'});
-    ...    plus.click();
-    ...    return 'OK';
+    ...    return clickReal(plus) ? 'OK_FALLBACK' : 'NOT_CLICKED';
 
-    IF    $plus_result != 'OK'
+    ${plus_ok}=    Evaluate    str($plus_result).startswith("OK")
+    IF    not ${plus_ok}
         Log Auto Booking Step
         ...    ${candidate}
         ...    STEP_ADD_BUTTON_FAILED

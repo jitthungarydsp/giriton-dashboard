@@ -23,6 +23,10 @@ on:
         description: "true = csak kiválasztás/ellenőrzés, false = éles foglalás"
         required: false
         default: "false"
+      booking_engine:
+        description: "uidl = új út, robot = régi képernyős tartalék"
+        required: false
+        default: "uidl"
   schedule:
     # GitHub cron UTC-ben fut. Ez a lánc saját maga frissít és csak holnaptól néz 3 napot.
     - cron: "5 * * * *"
@@ -78,12 +82,14 @@ jobs:
           EXACT_LIMIT="${{ inputs.exact_limit }}"
           ALTERNATIVE_LIMIT="${{ inputs.alternative_limit }}"
           DRY_RUN="${{ inputs.dry_run }}"
+          BOOKING_ENGINE="${{ inputs.booking_engine }}"
 
           START_DATE="${START_DATE:-}"
           DAYS="${DAYS:-3}"
           EXACT_LIMIT="${EXACT_LIMIT:-50}"
           ALTERNATIVE_LIMIT="${ALTERNATIVE_LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
+          BOOKING_ENGINE="${BOOKING_ENGINE:-uidl}"
 
           if [ -z "$START_DATE" ]; then
             START_DATE="$(python -c 'from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=1)).isoformat())')"
@@ -94,7 +100,8 @@ jobs:
           echo "SHIFT_AUTO_EXACT_LIMIT=$EXACT_LIMIT" >> "$GITHUB_ENV"
           echo "SHIFT_AUTO_ALTERNATIVE_LIMIT=$ALTERNATIVE_LIMIT" >> "$GITHUB_ENV"
           echo "SHIFT_AUTO_DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
-          echo "SHIFT_AUTO_WINDOW start=$START_DATE days=$DAYS dry_run=$DRY_RUN"
+          echo "SHIFT_AUTO_BOOK_ENGINE=$BOOKING_ENGINE" >> "$GITHUB_ENV"
+          echo "SHIFT_AUTO_WINDOW start=$START_DATE days=$DAYS dry_run=$DRY_RUN engine=$BOOKING_ENGINE"
 
       - name: Refresh MuszakPro bookings
         shell: bash
@@ -137,6 +144,7 @@ jobs:
             --candidate-file results/three-day-shift-auto-booking/exact-candidates.json \
             --output-root results/three-day-shift-auto-booking/exact \
             --phase exact \
+            --engine "$SHIFT_AUTO_BOOK_ENGINE" \
             --continue-on-error)
           if [ "$SHIFT_AUTO_DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)
@@ -181,6 +189,7 @@ jobs:
             --candidate-file results/three-day-shift-auto-booking/alternative-candidates.json \
             --output-root results/three-day-shift-auto-booking/alternative \
             --phase alternative \
+            --engine "$SHIFT_AUTO_BOOK_ENGINE" \
             --continue-on-error)
           if [ "$SHIFT_AUTO_DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)

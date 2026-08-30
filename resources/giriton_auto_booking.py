@@ -134,6 +134,40 @@ def _build_candidate(row):
     }
 
 
+def _truthy(value):
+    return clean(value).casefold() in {"1", "true", "yes", "y", "igen", "i"}
+
+
+def _build_manual_candidate(work_date, serial="", courier_id="", courier_name="", email="", warehouse="", shift_start_value=""):
+    work_date = clean(work_date)
+    warehouse = _normalize_warehouse(warehouse)
+    shift_start_value = normalize_time(shift_start_value)
+    courier_id = clean(courier_id)
+    serial = clean(serial)
+
+    if not work_date or not warehouse or not shift_start_value:
+        return None
+
+    if not courier_id and not clean(courier_name) and not clean(email):
+        return None
+
+    if not serial and courier_id:
+        serial = f"{_parse_date(work_date).strftime('%m/%d')}_{courier_id}_{warehouse}_{shift_start_value}"
+
+    return {
+        "work_date": work_date,
+        "giriton_date": _format_giriton_date(work_date),
+        "warehouse": warehouse,
+        "shift_text": f"{warehouse}_{shift_start_value}",
+        "shift_start": shift_start_value,
+        "booking_code": "",
+        "courier_id": courier_id,
+        "courier_name": clean(courier_name),
+        "email": clean(email).casefold(),
+        "serial": serial,
+    }
+
+
 def get_t_plus_booking_candidates(
     days_ahead=0,
     horizon_days=1,
@@ -145,6 +179,8 @@ def get_t_plus_booking_candidates(
     email="",
     warehouse="",
     shift_start_filter="",
+    courier_name_filter="",
+    manual_candidate="",
 ):
     """Return Foglalasok rows that the Giriton auto-booking robot should process."""
 
@@ -158,6 +194,29 @@ def get_t_plus_booking_candidates(
     else:
         to_date = from_date + timedelta(days=max(int(horizon_days), 1) - 1)
 
+    manual = _build_manual_candidate(
+        from_date.isoformat(),
+        serial=serial,
+        courier_id=courier_id,
+        courier_name=courier_name_filter,
+        email=email,
+        warehouse=warehouse,
+        shift_start_value=shift_start_filter,
+    )
+
+    if _truthy(manual_candidate):
+        if manual:
+            print(
+                "AUTO_BOOK_MANUAL_CANDIDATE=USED "
+                f"date={manual['work_date']} warehouse={manual['warehouse']} "
+                f"shift_start={manual['shift_start']} courier_id={manual['courier_id']} "
+                f"courier_name={manual['courier_name']} serial={manual['serial']}"
+            )
+            return [manual]
+
+        print("AUTO_BOOK_MANUAL_CANDIDATE=INVALID missing date/warehouse/shift/courier")
+        return []
+
     df = read_foglalasok_raw(
         start_date=from_date.isoformat(),
         end_date=to_date.isoformat(),
@@ -165,7 +224,7 @@ def get_t_plus_booking_candidates(
     )
 
     if df.empty:
-        return []
+        return [manual] if _truthy(manual_candidate) and manual else []
 
     candidates = []
     seen = set()

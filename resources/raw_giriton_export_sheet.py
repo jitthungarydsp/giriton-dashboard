@@ -69,6 +69,17 @@ def _normalize_name(value):
     )
 
 
+def _name_without_courier_id(value):
+    return _normalize_name(
+        re.sub(r"\b\d{4,5}\b", " ", str(value or "").strip())
+    )
+
+
+def _courier_id_from_text(value):
+    match = re.search(r"\b(\d{4,5})\b", str(value or "").strip())
+    return match.group(1) if match else ""
+
+
 def _normalize_email(value):
     return str(value or "").strip().casefold()
 
@@ -181,6 +192,7 @@ def _read_driver_lookup():
     )
     by_name = {}
     by_email = {}
+    by_id = {}
 
     for row in rows[1:]:
         courier_id = _cell(row, id_index)
@@ -202,21 +214,37 @@ def _read_driver_lookup():
 
         if name:
             by_name[_normalize_name(name)] = record
+            clean_name_without_id = _name_without_courier_id(name)
+            if clean_name_without_id:
+                by_name[clean_name_without_id] = record
 
         if email:
             by_email[email] = record
 
+        if courier_id:
+            by_id[courier_id] = record
+
     return {
         "by_name": by_name,
         "by_email": by_email,
+        "by_id": by_id,
     }
 
 
 def _driver_by_name(driver_lookup, name):
-    return driver_lookup["by_name"].get(
-        _normalize_name(name),
-        {},
-    )
+    courier_id = _courier_id_from_text(name)
+    if courier_id:
+        driver = driver_lookup.get("by_id", {}).get(courier_id)
+        if driver:
+            return driver
+
+    for key in (_normalize_name(name), _name_without_courier_id(name)):
+        if key:
+            driver = driver_lookup.get("by_name", {}).get(key)
+            if driver:
+                return driver
+
+    return {}
 
 
 def _driver_by_email(driver_lookup, email):

@@ -251,8 +251,10 @@ def dispatch_auto_booking(row: dict, workflow: str, ref: str) -> str:
         "serial": clean(row.get("Serial")),
         "warehouse": clean(row.get("Raktár")).upper(),
         "email": clean(row.get("E-mail")).casefold(),
+        "courier_name": clean(row.get("Dolgozó")),
         "shift_start": clean(row.get("_target_shift_start")),
         "dry_run": "false",
+        "booking_engine": "uidl",
     }
     response = requests.post(
         url,

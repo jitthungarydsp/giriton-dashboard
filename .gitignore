@@ -19,3 +19,18 @@ show_vapid_public_key.py
 show_vapid_public_key.py.bak
 vapid_private.pem
 vapid_public.pem
+giriton_cookie.txt
+page/giriton_cookie.txt
+response.json
+request.json
+
+# Local robot / UIDL debug artifacts
+log.html
+output.xml
+report.html
+selenium-screenshot-*.png
+*_page_loaded_*.png
+*_booking_result_*.png
+giriton_*.csv
+uidl_booking_trace/
+uidl_trace*/

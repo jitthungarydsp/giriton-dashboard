@@ -29,6 +29,14 @@ on:
         description: "true = csak ellenorzes, false = eles foglalas"
         required: true
         default: "true"
+      booking_engine:
+        description: "uidl = új út, robot = régi képernyős tartalék"
+        required: false
+        default: "uidl"
+      courier_name:
+        description: "Opcionális futárnév az új UIDL úthoz."
+        required: false
+        default: ""
 
 concurrency:
   group: giriton-auto-booking
@@ -74,13 +82,23 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ]; then
-            test -n "${{ inputs.email }}" || (echo "Celjzott eles foglalashoz email is kell." && exit 1)
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ] && [ "${{ inputs.booking_engine }}" = "uidl" ]; then
+            if [ -z "${{ inputs.email }}" ] && [ -z "${{ inputs.courier_name }}" ]; then
+              echo "Celjzott UIDL eles foglalashoz email vagy futarnev is kell."
+              exit 1
+            fi
+            test -n "${{ inputs.warehouse }}" || (echo "Celjzott eles foglalashoz raktar is kell." && exit 1)
+            test -n "${{ inputs.shift_start }}" || (echo "Celjzott eles foglalashoz muszakkezdes is kell." && exit 1)
+          fi
+
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ] && [ "${{ inputs.booking_engine }}" != "uidl" ]; then
+            test -n "${{ inputs.email }}" || (echo "Celjzott robot eles foglalashoz email is kell." && exit 1)
             test -n "${{ inputs.warehouse }}" || (echo "Celjzott eles foglalashoz raktar is kell." && exit 1)
             test -n "${{ inputs.shift_start }}" || (echo "Celjzott eles foglalashoz muszakkezdes is kell." && exit 1)
           fi
 
       - name: Run Giriton auto booking robot
+        if: ${{ inputs.booking_engine != 'uidl' }}
         run: |
           robot \
             --outputdir results/giriton-auto-booking \
@@ -92,6 +110,29 @@ jobs:
             --variable AUTO_BOOK_EMAIL:${{ inputs.email }} \
             --variable AUTO_BOOK_SHIFT_START:${{ inputs.shift_start }} \
             giriton_auto_booking_github.robot
+
+      - name: Run Giriton UIDL booking path
+        if: ${{ inputs.booking_engine == 'uidl' }}
+        shell: bash
+        run: |
+          CMD=(python scripts/giriton_uidl_fast_book.py \
+            --date "${{ inputs.start_date }}" \
+            --warehouse "${{ inputs.warehouse }}" \
+            --shift-start "${{ inputs.shift_start }}" \
+            --serial "${{ inputs.serial }}" \
+            --courier-name "${{ inputs.courier_name }}" \
+            --email "${{ inputs.email }}" \
+            --trace-dir results/giriton-auto-booking/uidl-trace \
+            --output-dir results/giriton-auto-booking/robot)
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--live)
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
 
       - name: Upload Robot artifacts
         if: always()

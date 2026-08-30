@@ -32,6 +32,11 @@ def clean(value) -> str:
     return str(value or "").strip()
 
 
+def courier_id_from_serial(serial: str) -> str:
+    parts = clean(serial).split("_")
+    return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
+
+
 def parse_date(value: str | None, default: date) -> date:
     text = clean(value)
     if not text:
@@ -120,12 +125,14 @@ def filter_already_running_or_done(rows: pd.DataFrame, start_date: date, end_dat
 
 
 def candidate_payload(row: dict) -> dict:
+    serial = clean(row.get("Serial"))
     return {
         "work_date": clean(row.get("Dátum")),
         "warehouse": clean(row.get("Raktár")).upper(),
         "email": clean(row.get("E-mail")).casefold(),
         "shift_start": clean(row.get("_target_shift_start")),
-        "serial": clean(row.get("Serial")),
+        "serial": serial,
+        "courier_id": clean(row.get("Courier ID")) or courier_id_from_serial(serial),
         "courier_name": clean(row.get("Dolgozó")),
         "status": clean(row.get("Állapot")),
         "muszakpro_shift_start": clean(row.get("MűszakPro")),

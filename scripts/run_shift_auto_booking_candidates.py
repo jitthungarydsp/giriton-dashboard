@@ -9,10 +9,16 @@ import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ROBOT_FILE = PROJECT_ROOT / "giriton_auto_booking_github.robot"
+UIDL_FAST_BOOK_FILE = PROJECT_ROOT / "scripts" / "giriton_uidl_fast_book.py"
 
 
 def clean(value) -> str:
     return str(value or "").strip()
+
+
+def courier_id_from_serial(serial: str) -> str:
+    parts = clean(serial).split("_")
+    return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
 
 
 def load_candidates(path: Path) -> list[dict]:
@@ -47,11 +53,43 @@ def robot_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]
     ]
 
 
+def uidl_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]:
+    courier_id = clean(candidate.get("courier_id")) or courier_id_from_serial(candidate.get("serial"))
+    command = [
+        sys.executable,
+        str(UIDL_FAST_BOOK_FILE),
+        "--date",
+        clean(candidate.get("work_date")),
+        "--warehouse",
+        clean(candidate.get("warehouse")).upper(),
+        "--shift-start",
+        clean(candidate.get("shift_start")),
+        "--courier-id",
+        courier_id,
+        "--courier-name",
+        clean(candidate.get("courier_name")),
+        "--email",
+        clean(candidate.get("email")).casefold(),
+        "--serial",
+        clean(candidate.get("serial")),
+        "--trace-dir",
+        str(output_dir / "uidl-trace"),
+        "--output-dir",
+        str(output_dir / "robot"),
+    ]
+    command.append("--dry-run" if dry_run else "--live")
+    return command
+
+
 def validate_candidate(candidate: dict) -> list[str]:
     missing = []
-    for key in ["work_date", "serial", "warehouse", "email", "shift_start"]:
+    for key in ["work_date", "serial", "warehouse", "shift_start"]:
         if not clean(candidate.get(key)):
             missing.append(key)
+    if not clean(candidate.get("courier_name")) and not clean(candidate.get("email")):
+        missing.append("courier_name/email")
+    if not clean(candidate.get("courier_id")) and not courier_id_from_serial(candidate.get("serial")):
+        missing.append("courier_id")
     return missing
 
 
@@ -62,6 +100,12 @@ def main() -> None:
     parser.add_argument("--candidate-file", required=True)
     parser.add_argument("--output-root", default="results/shift-auto-booking")
     parser.add_argument("--phase", default="booking")
+    parser.add_argument(
+        "--engine",
+        choices=["uidl", "robot"],
+        default="uidl",
+        help="uidl = uj kezi-jeloltes UIDL trace-es ut, robot = regi DB-s robot ut.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--continue-on-error", action="store_true")
     args = parser.parse_args()
@@ -69,7 +113,7 @@ def main() -> None:
     candidates = load_candidates(Path(args.candidate_file))
     print(
         "SHIFT_AUTO_BOOK_RUN "
-        f"phase={args.phase} candidates={len(candidates)} dry_run={args.dry_run}"
+        f"phase={args.phase} engine={args.engine} candidates={len(candidates)} dry_run={args.dry_run}"
     )
     if not candidates:
         return
@@ -96,7 +140,11 @@ def main() -> None:
             continue
 
         output_dir = output_root / f"{args.phase}-{index:03d}"
-        command = robot_command(candidate, output_dir, args.dry_run)
+        command = (
+            uidl_command(candidate, output_dir, args.dry_run)
+            if args.engine == "uidl"
+            else robot_command(candidate, output_dir, args.dry_run)
+        )
         print(f"SHIFT_AUTO_BOOK_ITEM_START {index}/{len(candidates)} {label}")
         completed = subprocess.run(command, cwd=PROJECT_ROOT)
         if completed.returncode != 0:

@@ -2515,8 +2515,10 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
         "serial": serial,
         "warehouse": _clean(row.get("Raktár")).upper(),
         "email": _clean(row.get("E-mail")).casefold(),
+        "courier_name": _clean(row.get("Dolgozó")),
         "shift_start": target_shift_start,
         "dry_run": "true" if dry_run else "false",
+        "booking_engine": "uidl",
     }
     result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
     if not dry_run:
@@ -2634,6 +2636,7 @@ def _dispatch_bulk_warehouse_booking(
             "serial": "",
             "warehouse": warehouse,
             "dry_run": "true" if dry_run else "false",
+            "booking_engine": "robot",
         },
     )
     st.session_state["foglalas_last_github_dispatch"] = result
@@ -2685,8 +2688,10 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
                 "serial": serial,
                 "warehouse": _clean(row.get("Raktár")).upper(),
                 "email": _clean(row.get("E-mail")).casefold(),
+                "courier_name": _clean(row.get("Dolgozó")),
                 "shift_start": target_shift_start,
                 "dry_run": "false",
+                "booking_engine": "uidl",
             },
         )
         _mark_booking_started(serial)
