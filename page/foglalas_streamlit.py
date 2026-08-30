@@ -22,7 +22,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from resources.foglalasok_db import read_foglalasok_raw
-from resources.giriton_auto_booking import read_giriton_booking_log
+from resources.giriton_auto_booking import latest_log_by_serial, read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
 from resources.shift_start_parameters_db import read_shift_start_parameters
@@ -560,6 +560,7 @@ def _status_badge(status: str) -> str:
         "Alternatíva": "warn",
         "Sikertelen": "bad",
         "Lefoglalva": "booked",
+        "Indítva": "booked disabled",
     }
     class_name = classes.get(status, "neutral")
     return f"<span class='status-badge {class_name}'>{escape(status)}</span>"
@@ -594,6 +595,57 @@ def _mark_booking_started(serial: str) -> None:
     started = _started_booking_serials()
     started.add(serial)
     st.session_state["foglalas_started_serials"] = sorted(started)
+
+
+AUTO_BOOKING_SUCCESS_STATUSES = {
+    "COURIER_ADDED",
+    "COURIER_ADDED_UNVERIFIED",
+    "ALREADY_BOOKED",
+}
+
+AUTO_BOOKING_FAILURE_STATUSES = {
+    "SHIFT_NOT_EMPTY",
+    "SHIFT_NOT_FOUND",
+    "COURIER_NOT_SELECTED",
+    "COURIER_SELECTED_NOT_VERIFIED",
+    "NO_RECORD_SELECTED",
+}
+
+
+def _apply_booking_progress_state(summary_df: pd.DataFrame, log_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty or "Serial" not in summary_df.columns:
+        return summary_df
+
+    latest_logs = latest_log_by_serial(log_df)
+    started_serials = _started_booking_serials()
+    if not latest_logs and not started_serials:
+        return summary_df
+
+    rows = summary_df.copy()
+    for index, row in rows.iterrows():
+        serial = _clean(row.get("Serial"))
+        if not serial or _clean(row.get("Állapot")) == "Lefoglalva":
+            continue
+
+        log_row = latest_logs.get(serial, {})
+        log_status = _clean(log_row.get("status")).upper()
+        log_message = _clean(log_row.get("message"))
+
+        if log_status in AUTO_BOOKING_SUCCESS_STATUSES or serial in started_serials:
+            rows.at[index, "Állapot"] = "Indítva"
+            rows.at[index, "Giriton állapot"] = "Foglalás indítva"
+            rows.at[index, "Ok"] = (
+                "A robot indítva vagy sikeresen lefutott erre a serialra; "
+                "a végleges lefoglalva állapotot a következő Giriton export igazolja vissza."
+            )
+            continue
+
+        if log_status in AUTO_BOOKING_FAILURE_STATUSES:
+            rows.at[index, "Állapot"] = "Sikertelen"
+            rows.at[index, "Giriton állapot"] = "Robot hiba"
+            rows.at[index, "Ok"] = log_message or f"Robot eredmény: {log_status}"
+
+    return rows
 
 
 def _booking_target_shift_start(row: dict) -> str:
@@ -1981,7 +2033,7 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
     )
     st.sidebar.caption("Napi terv szabály: két Giriton műszak között minimum 4:30 óra kell.")
     st.sidebar.write("Foglalási állapot")
-    for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]:
+    for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva", "Indítva"]:
         st.sidebar.checkbox(
             status,
             value=True,
@@ -2121,22 +2173,22 @@ def _bulk_booking_key(row: dict, source_index) -> str:
     )
 
 
-def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
+def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
     target_shift_start = _booking_target_shift_start(row)
     if not serial:
         st.error("Ehhez a sorhoz nincs MűszakPro serial, ezért nem indítható célzott foglalás.")
-        return
+        return False
     if not work_date:
         st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható foglalás.")
-        return
+        return False
     if not target_shift_start:
         st.error("Ehhez a sorhoz nincs Giriton célidőpont, ezért nem indítható foglalás.")
-        return
+        return False
     if not dry_run and serial in _started_booking_serials():
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
-        return
+        return False
 
     workflow_inputs = {
         "start_date": work_date,
@@ -2155,6 +2207,7 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> None:
     st.success(
         f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
     )
+    return True
 
 
 def _query_param_value(name: str) -> str:
@@ -2228,14 +2281,18 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         st.query_params.clear()
         return
 
+    dispatched = False
     try:
-        _dispatch_auto_booking(selected_row, dry_run=False)
+        dispatched = _dispatch_auto_booking(selected_row, dry_run=False)
     except GitHubActionsError as exc:
         st.error(str(exc))
     except Exception as exc:
         st.error(f"Táblázatos foglalás indítás hiba: {exc}")
     finally:
         st.query_params.clear()
+    if dispatched:
+        st.cache_data.clear()
+        st.rerun()
 
 
 def _dispatch_bulk_warehouse_booking(
@@ -2446,7 +2503,9 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
                 st.error("Éles indításhoz a megerősítő mezőbe ezt írd: ELES")
             else:
                 try:
-                    _dispatch_auto_booking(selected_row, dry_run=False)
+                    if _dispatch_auto_booking(selected_row, dry_run=False):
+                        st.cache_data.clear()
+                        st.rerun()
                 except GitHubActionsError as exc:
                     st.error(str(exc))
                 except Exception as exc:
@@ -2572,6 +2631,8 @@ def _render_bulk_status_booking_section(
             return
         try:
             _dispatch_selected_bulk_bookings(selected_rows)
+            st.cache_data.clear()
+            st.rerun()
         except GitHubActionsError as exc:
             st.error(str(exc))
         except Exception as exc:
@@ -2587,6 +2648,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
     alternative_count = int((summary_df["Állapot"] == "Alternatíva").sum())
     failed_count = int((summary_df["Állapot"] == "Sikertelen").sum())
     booked_count = int((summary_df["Állapot"] == "Lefoglalva").sum())
+    started_count = int((summary_df["Állapot"] == "Indítva").sum())
     bookable_ready = _bookable_booking_rows(summary_df)
     target_count = max(len(summary_df), 1)
     progress = min(round((exact_count + booked_count) / target_count * 100), 100)
@@ -2663,6 +2725,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 <div class="summary-row"><span>Alternatívával foglalható:</span><strong style="color:#c27605">{alternative_count}</strong></div>
                 <div class="summary-row"><span>Sikertelen:</span><strong style="color:#c42b2b">{failed_count}</strong></div>
                 <div class="summary-row"><span>Lefoglalva:</span><strong style="color:#155fc1">{booked_count}</strong></div>
+                <div class="summary-row"><span>Indítva:</span><strong style="color:#155fc1">{started_count}</strong></div>
                 <div class="section-subtitle" style="margin-top:14px;margin-bottom:0;">Raktár szerinti tömeges indítás</div>
             </div>
             """,
@@ -3013,9 +3076,10 @@ def show_foglalas_streamlit_page() -> None:
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
     giriton_df = _filter_time(giriton_df, "start_time", start_time, end_time)
     summary_df = _build_summary_rows(muszakpro_df, giriton_df, tolerance_minutes)
+    summary_df = _apply_booking_progress_state(summary_df, log_df)
     selected_statuses = [
         status
-        for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva"]
+        for status in ["Egyezés", "Alternatíva", "Sikertelen", "Lefoglalva", "Indítva"]
         if st.session_state.get(f"foglalas_status_{status}", True)
     ]
     if selected_statuses and not summary_df.empty:
