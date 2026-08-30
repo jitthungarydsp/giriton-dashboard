@@ -22,7 +22,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from resources.foglalasok_db import read_foglalasok_raw
-from resources.giriton_auto_booking import latest_log_by_serial, read_giriton_booking_log
+from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
 from resources.shift_start_parameters_db import read_shift_start_parameters
@@ -48,6 +48,7 @@ GITHUB_OWNER_DEFAULT = "jitthungarydsp"
 GITHUB_REPO_DEFAULT = "giriton-dashboard"
 GITHUB_REF_DEFAULT = "main"
 AUTO_BOOKING_WORKFLOW = "giriton-auto-booking.yml"
+THREE_DAY_AUTO_BOOKING_WORKFLOW = "three-day-shift-auto-booking.yml"
 MUSZAKPRO_REFRESH_WORKFLOW = "daily-attendance-muszakpro.yml"
 BOOKING_LINK_TTL_SECONDS = 15 * 60
 FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
@@ -186,12 +187,12 @@ def _github_request_with_tokens(method: str, url: str, **kwargs):
     )
 
 
-def _latest_auto_booking_runs(limit: int = 5) -> list[dict]:
+def _latest_workflow_runs(workflow: str, limit: int = 5) -> list[dict]:
     owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
     repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
     url = (
         f"https://api.github.com/repos/{owner}/{repo}"
-        f"/actions/workflows/{AUTO_BOOKING_WORKFLOW}/runs"
+        f"/actions/workflows/{workflow}/runs"
     )
     response, used_secret_name = _github_request_with_tokens(
         "GET",
@@ -203,6 +204,14 @@ def _latest_auto_booking_runs(limit: int = 5) -> list[dict]:
             f"GitHub Actions állapot lekérés sikertelen ({used_secret_name}): HTTP {response.status_code} - {response.text[:500]}"
         )
     return response.json().get("workflow_runs", [])
+
+
+def _latest_auto_booking_runs(limit: int = 5) -> list[dict]:
+    return _latest_workflow_runs(AUTO_BOOKING_WORKFLOW, limit)
+
+
+def _latest_three_day_auto_booking_runs(limit: int = 3) -> list[dict]:
+    return _latest_workflow_runs(THREE_DAY_AUTO_BOOKING_WORKFLOW, limit)
 
 
 def _github_status_label(run: dict) -> str:
@@ -612,11 +621,38 @@ AUTO_BOOKING_FAILURE_STATUSES = {
 }
 
 
+def _latest_terminal_booking_logs_by_serial(log_df: pd.DataFrame) -> dict[str, dict]:
+    if log_df is None or log_df.empty or "serial" not in log_df.columns:
+        return {}
+
+    rows = log_df.copy()
+    rows["serial"] = rows["serial"].fillna("").astype(str).str.strip()
+    rows["status"] = (
+        rows.get("status", pd.Series("", index=rows.index))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+    rows = rows[rows["serial"].ne("")]
+    if rows.empty:
+        return {}
+
+    if "created_at" in rows.columns:
+        rows = rows.sort_values("created_at", ascending=False)
+
+    latest: dict[str, dict] = {}
+    for serial, group in rows.groupby("serial", sort=False):
+        terminal_group = group[~group["status"].str.upper().str.startswith("STEP_")]
+        selected = terminal_group.iloc[0] if not terminal_group.empty else group.iloc[0]
+        latest[serial] = selected.to_dict()
+    return latest
+
+
 def _apply_booking_progress_state(summary_df: pd.DataFrame, log_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty or "Serial" not in summary_df.columns:
         return summary_df
 
-    latest_logs = latest_log_by_serial(log_df)
+    latest_logs = _latest_terminal_booking_logs_by_serial(log_df)
     started_serials = _started_booking_serials()
     if not latest_logs and not started_serials:
         return summary_df
@@ -1573,6 +1609,122 @@ def _display_table(df: pd.DataFrame, columns: list[str], labels: dict[str, str],
         return
 
     st.dataframe(table, width="stretch", hide_index=True)
+
+
+def _booking_log_screenshot_names(message: str) -> str:
+    names = re.findall(r"[\w.-]+\.png", _clean(message))
+    return ", ".join(dict.fromkeys(names)) or "-"
+
+
+def _booking_log_hungarian_reason(status: str, message: str) -> str:
+    status = _clean(status).upper()
+    message = _clean(message)
+    reasons = {
+        "COURIER_ADDED": "Sikeres foglalás: a futár hozzá lett adva a Giriton műszakhoz.",
+        "COURIER_ADDED_UNVERIFIED": "A robot lefuttatta a foglalást, de a képernyő alapján nem tudta teljes biztonsággal visszaellenőrizni.",
+        "ALREADY_BOOKED": "Már le volt foglalva a futár erre a műszakra.",
+        "SHIFT_NOT_EMPTY": "A műszak megvolt, de már nem volt rajta szabad kapacitás.",
+        "SHIFT_NOT_FOUND": "A robot nem találta meg a Giritonban a megadott raktár/kezdés műszakot.",
+        "COURIER_NOT_SELECTED": "A robot nem tudta kiválasztani a futárt a Giriton felületen.",
+        "COURIER_SELECTED_NOT_VERIFIED": "A futár kiválasztása nem volt egyértelműen visszaellenőrizhető.",
+        "NO_RECORD_SELECTED": "A Giriton választó ablak szerint nem lett kijelölve rekord.",
+        "CHOOSE_BUTTON_NOT_FOUND": "A kiválasztás gombot nem találta a robot.",
+        "SELECTION_DIALOG_STILL_OPEN": "A kiválasztó ablak nyitva maradt, ezért a robot nem tekintette lezártnak a foglalást.",
+    }
+    if status.startswith("STEP_"):
+        return "A robot még folyamatban van vagy köztes lépést naplózott."
+    return reasons.get(status) or message or f"Robot státusz: {status or '-'}"
+
+
+def _booking_log_summary_rows(log_df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
+    if log_df.empty or "serial" not in log_df.columns or "status" not in log_df.columns:
+        return pd.DataFrame()
+
+    latest_logs = _latest_terminal_booking_logs_by_serial(log_df)
+    if not latest_logs:
+        return pd.DataFrame()
+
+    rows = pd.DataFrame(latest_logs.values())
+    if "created_at" in rows.columns:
+        rows = rows.sort_values("created_at", ascending=False)
+    rows = rows.head(max(int(limit), 1)).copy()
+    rows["eredmeny"] = rows["status"].apply(
+        lambda value: (
+            "Sikerült"
+            if _clean(value).upper() in AUTO_BOOKING_SUCCESS_STATUSES
+            else "Folyamatban"
+            if _clean(value).upper().startswith("STEP_")
+            else "Nem sikerült"
+        )
+    )
+    rows["magyar_ok"] = rows.apply(
+        lambda row: _booking_log_hungarian_reason(row.get("status"), row.get("message")),
+        axis=1,
+    )
+    rows["screenshot"] = rows.get("message", pd.Series("", index=rows.index)).apply(
+        _booking_log_screenshot_names
+    )
+    return rows
+
+
+def _render_auto_booking_summary(log_df: pd.DataFrame) -> None:
+    summary_rows = _booking_log_summary_rows(log_df)
+    if summary_rows.empty:
+        return
+
+    success_count = int(summary_rows["eredmeny"].eq("Sikerült").sum())
+    failed_count = int(summary_rows["eredmeny"].eq("Nem sikerült").sum())
+    running_count = int(summary_rows["eredmeny"].eq("Folyamatban").sum())
+
+    with st.expander("Automata foglalás összesítő", expanded=True):
+        st.markdown(
+            f"**Sikerült:** {success_count} | "
+            f"**Nem sikerült:** {failed_count} | "
+            f"**Folyamatban:** {running_count}"
+        )
+        st.caption(
+            "A screenshot fájlnevek a GitHub Actions artifactban találhatók a legutóbbi robotfutás alatt."
+        )
+
+        try:
+            runs = _latest_three_day_auto_booking_runs(limit=3)
+        except Exception:
+            runs = []
+        if runs:
+            links = [
+                f"[{_github_status_label(run)} - {_format_github_time(run.get('created_at'))}]({run.get('html_url')})"
+                for run in runs
+                if run.get("html_url")
+            ]
+            if links:
+                st.markdown("Legutóbbi 3 napos automata futások: " + " · ".join(links))
+
+        _display_table(
+            summary_rows,
+            [
+                "eredmeny",
+                "created_at",
+                "work_date",
+                "courier_name",
+                "warehouse",
+                "shift_start",
+                "serial",
+                "magyar_ok",
+                "screenshot",
+            ],
+            {
+                "eredmeny": "Eredmény",
+                "created_at": "Időpont",
+                "work_date": "Dátum",
+                "courier_name": "Név",
+                "warehouse": "Raktár",
+                "shift_start": "Kezdés",
+                "serial": "Serial",
+                "magyar_ok": "Magyarázat",
+                "screenshot": "Screenshot",
+            },
+            "Nincs automata foglalási összesítő.",
+        )
 
 
 def _muszakpro_columns() -> tuple[list[str], dict[str, str]]:
@@ -3137,6 +3289,7 @@ def show_foglalas_streamlit_page() -> None:
         st.warning("Nem minden DB olvasás sikerült: " + " | ".join(errors))
 
     _handle_table_booking_action(summary_df)
+    _render_auto_booking_summary(log_df)
     _render_recent_booking_issues(log_df)
 
     workers_count = (
