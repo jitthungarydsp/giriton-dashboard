@@ -350,6 +350,31 @@ def _worker_name_match_keys(value) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
+def _worker_name_without_id_key(value) -> str:
+    return _match_text(re.sub(r"\b\d{4,5}\b", " ", _clean(value)))
+
+
+def _worker_names_match(left, right) -> bool:
+    left_key = _match_text(left)
+    right_key = _match_text(right)
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+
+    left_without_id = _worker_name_without_id_key(left)
+    right_without_id = _worker_name_without_id_key(right)
+    if left_without_id and right_without_id and left_without_id == right_without_id:
+        return True
+
+    left_tokens = set(left_without_id.split())
+    right_tokens = set(right_without_id.split())
+    if len(left_tokens) < 2 or len(right_tokens) < 2:
+        return False
+
+    return left_tokens.issubset(right_tokens) or right_tokens.issubset(left_tokens)
+
+
 def _worker_match_key(row) -> str:
     courier_id = _clean(row.get("courier_id"))
     if re.fullmatch(r"\d+\.0+", courier_id):
@@ -1263,7 +1288,7 @@ def _build_summary_rows(
             muszakpro_date, _muszakpro_worker_key, muszakpro_warehouse_key = muszakpro_key
             if muszakpro_date != booked_date or muszakpro_warehouse_key != booked_warehouse_key:
                 continue
-            if _match_text(muszakpro_group.get("worker")) != booked_worker_name:
+            if not _worker_names_match(muszakpro_group.get("worker"), booked_worker_name):
                 continue
 
             muszakpro_group["booking_worker_keys"] = list(
