@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import sys
 import time
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import requests
@@ -31,6 +32,7 @@ from scripts.parse_giriton_uidl_shift_list import shift_cards_from_uidl, walk_js
 
 
 GIRITON_URL = "https://kiflihu.giriton.com/"
+BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 DEFAULT_UIDL_URL = "https://kiflihu.giriton.com/?v-r=uidl&v-uiId=0"
 
 
@@ -645,6 +647,37 @@ def print_table(rows: list[dict[str, Any]], only_open: bool) -> None:
         )
 
 
+def raw_export_rows_from_live_rows(rows: list[dict[str, Any]]) -> list[list[Any]]:
+    export_rows: list[list[Any]] = []
+    for row in rows:
+        users = clean(row.get("subscribed_users"))
+        names = [name.strip() for name in users.split(",") if name.strip()]
+        if not names:
+            names = ["URES"]
+        for name in names:
+            export_rows.append(
+                [
+                    clean(row.get("work_date")),
+                    clean(row.get("start_time")),
+                    clean(row.get("end_time")),
+                    clean(row.get("warehouse")),
+                    clean(row.get("occupancy")),
+                    "" if row.get("booked") is None else row.get("booked"),
+                    "" if row.get("maximum") is None else row.get("maximum"),
+                    name,
+                ]
+            )
+    return export_rows
+
+
+def write_raw_export_from_live_rows(rows: list[dict[str, Any]]) -> str:
+    from resources.raw_giriton_export_sheet import write_raw_export
+
+    export_rows = raw_export_rows_from_live_rows(rows)
+    print(f"GIRITON_UIDL_RAW_EXPORT_ROWS={len(export_rows)}", file=sys.stderr)
+    return write_raw_export(export_rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Élő Giriton bejelentkezés után visszaadja a műszaklistát."
@@ -658,6 +691,7 @@ def main() -> None:
     parser.add_argument("--json", dest="json_output", action="store_true")
     parser.add_argument("--csv", default="")
     parser.add_argument("--uidl-dir", default="", help="UIDL request/response események mentése könyvtárba.")
+    parser.add_argument("--write-raw-export", action="store_true", help="A lekért UIDL/DOM műszakokat írja a megszokott Giriton raw export célba.")
     parser.add_argument("--headed", action="store_true", help="Látható Chrome ablakban fusson.")
     parser.add_argument("--chromedriver", default="", help="Opcionális konkrét chromedriver útvonal.")
     parser.add_argument("--timeout", type=int, default=30)
@@ -673,7 +707,7 @@ def main() -> None:
     if clean(args.month):
         start_date, days_to_collect = parse_month(args.month)
     else:
-        start_date = parse_date(args.start_date, date.today())
+        start_date = parse_date(args.start_date, datetime.now(BUDAPEST_TZ).date())
         days_to_collect = max(int(args.days), 1)
 
     all_rows: list[dict[str, Any]] = []
@@ -785,6 +819,10 @@ def main() -> None:
     if args.csv:
         write_csv(all_rows, Path(args.csv))
         print(f"GIRITON_LIVE_CSV={args.csv}")
+
+    if args.write_raw_export:
+        result = write_raw_export_from_live_rows(all_rows)
+        print(f"GIRITON_UIDL_RAW_EXPORT={result}")
 
     visible_rows = [row for row in all_rows if row.get("is_open")] if args.only_open else all_rows
     if args.json_output:

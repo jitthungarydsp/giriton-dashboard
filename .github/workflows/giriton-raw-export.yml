@@ -11,6 +11,10 @@ on:
         description: "Hany napot kerjen le"
         required: true
         default: "10"
+      export_engine:
+        description: "uidl = új gyors lekérés, robot = régi UI végignyomkodás"
+        required: false
+        default: "uidl"
   schedule:
     # GitHub cron UTC-ben fut. A Giriton műszak raw export óránként, a MűszakPro frissítés után fut.
     - cron: "20 * * * *"
@@ -54,13 +58,35 @@ jobs:
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
 
-      - name: Run raw export robot
+      - name: Run raw export
+        shell: bash
         run: |
-          robot \
-            --outputdir results/giriton-raw-export \
-            --variable "RUN_START_DATE:${{ inputs.start_date }}" \
-            --variable "DAYS_TO_SYNC:${{ inputs.days }}" \
-            giriton_raw_export_github.robot
+          START_DATE="${{ inputs.start_date }}"
+          DAYS="${{ inputs.days }}"
+          EXPORT_ENGINE="${{ inputs.export_engine }}"
+          START_DATE="${START_DATE:-}"
+          DAYS="${DAYS:-10}"
+          EXPORT_ENGINE="${EXPORT_ENGINE:-uidl}"
+          if [ -z "$START_DATE" ]; then
+            START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"
+          fi
+
+          if [ "$EXPORT_ENGINE" = "uidl" ]; then
+            python scripts/live_giriton_shift_list.py \
+              --start-date "$START_DATE" \
+              --days "$DAYS" \
+              --source uidl \
+              --fast-uidl \
+              --uidl-dir results/giriton-raw-export/uidl-trace \
+              --csv results/giriton-raw-export/giriton-live-shifts.csv \
+              --write-raw-export
+          else
+            robot \
+              --outputdir results/giriton-raw-export \
+              --variable "RUN_START_DATE:$START_DATE" \
+              --variable "DAYS_TO_SYNC:$DAYS" \
+              giriton_raw_export_github.robot
+          fi
 
       - name: Upload Robot artifacts
         if: always()

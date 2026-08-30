@@ -27,6 +27,10 @@ on:
         description: "uidl = új út, robot = régi képernyős tartalék"
         required: false
         default: "uidl"
+      raw_export_engine:
+        description: "uidl = új gyors Giriton frissítés, robot = régi UI végignyomkodás"
+        required: false
+        default: "uidl"
   schedule:
     # GitHub cron UTC-ben fut. Ez a lánc saját maga frissít és csak holnaptól néz 3 napot.
     - cron: "5 * * * *"
@@ -83,6 +87,7 @@ jobs:
           ALTERNATIVE_LIMIT="${{ inputs.alternative_limit }}"
           DRY_RUN="${{ inputs.dry_run }}"
           BOOKING_ENGINE="${{ inputs.booking_engine }}"
+          RAW_EXPORT_ENGINE="${{ inputs.raw_export_engine }}"
 
           START_DATE="${START_DATE:-}"
           DAYS="${DAYS:-3}"
@@ -90,6 +95,7 @@ jobs:
           ALTERNATIVE_LIMIT="${ALTERNATIVE_LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
           BOOKING_ENGINE="${BOOKING_ENGINE:-uidl}"
+          RAW_EXPORT_ENGINE="${RAW_EXPORT_ENGINE:-uidl}"
 
           if [ -z "$START_DATE" ]; then
             START_DATE="$(python -c 'from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=1)).isoformat())')"
@@ -101,7 +107,8 @@ jobs:
           echo "SHIFT_AUTO_ALTERNATIVE_LIMIT=$ALTERNATIVE_LIMIT" >> "$GITHUB_ENV"
           echo "SHIFT_AUTO_DRY_RUN=$DRY_RUN" >> "$GITHUB_ENV"
           echo "SHIFT_AUTO_BOOK_ENGINE=$BOOKING_ENGINE" >> "$GITHUB_ENV"
-          echo "SHIFT_AUTO_WINDOW start=$START_DATE days=$DAYS dry_run=$DRY_RUN engine=$BOOKING_ENGINE"
+          echo "SHIFT_AUTO_RAW_EXPORT_ENGINE=$RAW_EXPORT_ENGINE" >> "$GITHUB_ENV"
+          echo "SHIFT_AUTO_WINDOW start=$START_DATE days=$DAYS dry_run=$DRY_RUN booking_engine=$BOOKING_ENGINE raw_export_engine=$RAW_EXPORT_ENGINE"
 
       - name: Refresh MuszakPro bookings
         shell: bash
@@ -120,11 +127,22 @@ jobs:
             echo "Dry-run: Giriton DB frissites kihagyva."
             exit 0
           fi
-          robot \
-            --outputdir results/three-day-shift-auto-booking/giriton-before \
-            --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
-            --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
-            giriton_raw_export_github.robot
+          if [ "$SHIFT_AUTO_RAW_EXPORT_ENGINE" = "uidl" ]; then
+            python scripts/live_giriton_shift_list.py \
+              --start-date "$SHIFT_AUTO_START_DATE" \
+              --days "$SHIFT_AUTO_DAYS" \
+              --source uidl \
+              --fast-uidl \
+              --uidl-dir results/three-day-shift-auto-booking/giriton-before/uidl-trace \
+              --csv results/three-day-shift-auto-booking/giriton-before/giriton-live-shifts.csv \
+              --write-raw-export
+          else
+            robot \
+              --outputdir results/three-day-shift-auto-booking/giriton-before \
+              --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
+              --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
+              giriton_raw_export_github.robot
+          fi
           python scripts/refresh_shift_comparison.py --start-date "$SHIFT_AUTO_START_DATE" --days "$SHIFT_AUTO_DAYS"
 
       - name: Select exact matches
@@ -160,11 +178,22 @@ jobs:
             echo "Dry-run: exact DB visszafrissites es ellenorzes kihagyva."
             exit 0
           fi
-          robot \
-            --outputdir results/three-day-shift-auto-booking/giriton-after-exact \
-            --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
-            --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
-            giriton_raw_export_github.robot
+          if [ "$SHIFT_AUTO_RAW_EXPORT_ENGINE" = "uidl" ]; then
+            python scripts/live_giriton_shift_list.py \
+              --start-date "$SHIFT_AUTO_START_DATE" \
+              --days "$SHIFT_AUTO_DAYS" \
+              --source uidl \
+              --fast-uidl \
+              --uidl-dir results/three-day-shift-auto-booking/giriton-after-exact/uidl-trace \
+              --csv results/three-day-shift-auto-booking/giriton-after-exact/giriton-live-shifts.csv \
+              --write-raw-export
+          else
+            robot \
+              --outputdir results/three-day-shift-auto-booking/giriton-after-exact \
+              --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
+              --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
+              giriton_raw_export_github.robot
+          fi
           python scripts/refresh_shift_comparison.py --start-date "$SHIFT_AUTO_START_DATE" --days "$SHIFT_AUTO_DAYS"
           python scripts/verify_shift_auto_booking_candidates.py \
             --candidate-file results/three-day-shift-auto-booking/exact-candidates.json \
@@ -205,11 +234,22 @@ jobs:
             echo "Dry-run: alternative DB visszafrissites es ellenorzes kihagyva."
             exit 0
           fi
-          robot \
-            --outputdir results/three-day-shift-auto-booking/giriton-after-alternative \
-            --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
-            --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
-            giriton_raw_export_github.robot
+          if [ "$SHIFT_AUTO_RAW_EXPORT_ENGINE" = "uidl" ]; then
+            python scripts/live_giriton_shift_list.py \
+              --start-date "$SHIFT_AUTO_START_DATE" \
+              --days "$SHIFT_AUTO_DAYS" \
+              --source uidl \
+              --fast-uidl \
+              --uidl-dir results/three-day-shift-auto-booking/giriton-after-alternative/uidl-trace \
+              --csv results/three-day-shift-auto-booking/giriton-after-alternative/giriton-live-shifts.csv \
+              --write-raw-export
+          else
+            robot \
+              --outputdir results/three-day-shift-auto-booking/giriton-after-alternative \
+              --variable "RUN_START_DATE:$SHIFT_AUTO_START_DATE" \
+              --variable "DAYS_TO_SYNC:$SHIFT_AUTO_DAYS" \
+              giriton_raw_export_github.robot
+          fi
           python scripts/refresh_shift_comparison.py --start-date "$SHIFT_AUTO_START_DATE" --days "$SHIFT_AUTO_DAYS"
           python scripts/verify_shift_auto_booking_candidates.py \
             --candidate-file results/three-day-shift-auto-booking/alternative-candidates.json \
