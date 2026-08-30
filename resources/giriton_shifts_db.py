@@ -436,17 +436,25 @@ def read_giriton_shift_records(work_date):
         if clean(row.get("status")).upper() == "URES":
             continue
 
-        serial = clean(row.get("serial"))
+        courier_id = clean(row.get("courier_id"))
+        courier_name = clean(row.get("courier_name"))
+        email = clean(row.get("email")).casefold()
+        serial = clean(row.get("serial")) or shift_serial(
+            row.get("work_date"),
+            courier_id,
+            row.get("warehouse"),
+            row.get("start_time"),
+        )
 
-        if not serial:
+        if not serial and not (courier_id or email or courier_name):
             continue
 
         records.append({
             "serial": serial,
             "work_date": clean(row.get("work_date")),
-            "courier_id": clean(row.get("courier_id")),
-            "name": clean(row.get("courier_name")),
-            "email": clean(row.get("email")).casefold(),
+            "courier_id": courier_id,
+            "name": courier_name,
+            "email": email,
             "warehouse": clean(row.get("warehouse")),
             "start": normalize_time(row.get("start_time")),
             "end": normalize_time(row.get("end_time")),

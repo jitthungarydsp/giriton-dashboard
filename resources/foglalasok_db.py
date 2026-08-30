@@ -988,21 +988,29 @@ def read_foglalasok_records(work_date):
     records = []
 
     for _, row in df.iterrows():
-        serial = clean(row.get("serial"))
-
-        if not serial:
-            continue
-
         shift = clean(row.get("shift_text"))
+        start = shift_start(shift)
+        courier_id = clean(row.get("courier_id"))
+        courier_name = clean(row.get("courier_name"))
+        email = normalize_email(row.get("email"))
+        serial = clean(row.get("serial")) or shift_serial(
+            row.get("work_date"),
+            courier_id,
+            row.get("warehouse"),
+            start,
+        )
+
+        if not serial and not (courier_id or email or courier_name):
+            continue
 
         records.append({
             "serial": serial,
             "work_date": clean(row.get("work_date")),
-            "courier_id": clean(row.get("courier_id")),
-            "name": clean(row.get("courier_name")),
-            "email": normalize_email(row.get("email")),
+            "courier_id": courier_id,
+            "name": courier_name,
+            "email": email,
             "warehouse": clean(row.get("warehouse")),
-            "start": shift_start(shift),
+            "start": start,
             "code": clean(row.get("booking_code")),
         })
 
