@@ -55,7 +55,7 @@ THREE_DAY_AUTO_BOOKING_WORKFLOW = "three-day-shift-auto-booking.yml"
 MUSZAKPRO_REFRESH_WORKFLOW = "daily-attendance-muszakpro.yml"
 BOOKING_LINK_TTL_SECONDS = 15 * 60
 FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
-FOGLALAS_AUTO_REFRESH_SECONDS = 60
+FOGLALAS_AUTO_REFRESH_SECONDS = 180
 NO_VALID_DAILY_PLAN_TEXT = "nincs érvényes napi terv"
 
 
@@ -1766,6 +1766,18 @@ def _render_booking_log_screenshots(summary_rows: pd.DataFrame) -> None:
         return
 
     st.markdown("##### Screenshotok")
+    load_images = st.checkbox(
+        "Screenshot képek betöltése GitHub artifactból",
+        value=False,
+        key="foglalas_load_booking_screenshots",
+    )
+    if not load_images:
+        st.caption(
+            "A képek betöltése külön kapcsolható, hogy az oldal gyorsan nyíljon meg. "
+            "A screenshot fájlnevek a fenti táblában látszanak."
+        )
+        return
+
     st.caption("A legutóbbi hibás/bizonytalan foglalások képei. Ha nincs kép, az artifact még nem érhető el vagy már lejárt.")
     for row in screenshot_rows.to_dict("records"):
         names = _booking_log_screenshot_list(row.get("message"))
@@ -1813,18 +1825,20 @@ def _render_auto_booking_summary(log_df: pd.DataFrame) -> None:
             "A screenshot fájlnevek a GitHub Actions artifactban találhatók a legutóbbi robotfutás alatt."
         )
 
-        try:
-            runs = _latest_three_day_auto_booking_runs(limit=3)
-        except Exception:
-            runs = []
-        if runs:
-            links = [
-                f"[{_github_status_label(run)} - {_format_github_time(run.get('created_at'))}]({run.get('html_url')})"
-                for run in runs
-                if run.get("html_url")
-            ]
-            if links:
-                st.markdown("Legutóbbi 3 napos automata futások: " + " · ".join(links))
+        if st.button("Legutóbbi GitHub futások betöltése", key="foglalas_load_auto_booking_runs"):
+            try:
+                runs = _latest_three_day_auto_booking_runs(limit=3)
+            except Exception as exc:
+                st.warning(f"GitHub futások betöltése nem sikerült: {exc}")
+                runs = []
+            if runs:
+                links = [
+                    f"[{_github_status_label(run)} - {_format_github_time(run.get('created_at'))}]({run.get('html_url')})"
+                    for run in runs
+                    if run.get("html_url")
+                ]
+                if links:
+                    st.markdown("Legutóbbi 3 napos automata futások: " + " · ".join(links))
 
         _display_table(
             summary_rows,
@@ -2186,7 +2200,7 @@ def _render_kpi(label: str, value: int | str, tone: str = "blue", icon: str = ""
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_next_5_days():
-    return pd.DataFrame(read_next_5_day_shift_comparison(limit=20000))
+    return pd.DataFrame(read_next_5_day_shift_comparison(limit=1))
 
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
