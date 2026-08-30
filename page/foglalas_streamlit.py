@@ -683,6 +683,8 @@ AUTO_BOOKING_FAILURE_STATUSES = {
     "COURIER_NOT_SELECTED",
     "COURIER_SELECTED_NOT_VERIFIED",
     "NO_RECORD_SELECTED",
+    "CHOOSE_BUTTON_NOT_FOUND",
+    "SELECTION_DIALOG_STILL_OPEN",
 }
 
 
@@ -752,13 +754,27 @@ def _apply_booking_progress_state(summary_df: pd.DataFrame, log_df: pd.DataFrame
 def _booking_target_shift_start(row: dict) -> str:
     status = _clean(row.get("Állapot"))
     giriton_offer = _clean(row.get("Giriton ajánlat"))
-    if status in {"Egyezés", "Alternatíva"} and giriton_offer and giriton_offer != "-":
+    if (
+        status in {"Egyezés", "Alternatíva"}
+        or _is_retryable_robot_error(row)
+    ) and _normalize_time(giriton_offer):
         return giriton_offer
     return _clean(row.get("MűszakPro"))
 
 
+def _is_retryable_robot_error(row: dict) -> bool:
+    return (
+        _clean(row.get("Állapot")) == "Sikertelen"
+        and _clean(row.get("Giriton állapot")) == "Robot hiba"
+        and bool(_normalize_time(row.get("Giriton ajánlat")))
+        and bool(_clean(row.get("Serial")))
+    )
+
+
 def _is_bookable_row(row: dict) -> bool:
     status = _clean(row.get("Állapot"))
+    if _is_retryable_robot_error(row):
+        return True
     if status not in {"Egyezés", "Alternatíva"}:
         return False
     if _clean(row.get("Giriton állapot")) != "Nincs lefoglalva":
@@ -843,7 +859,7 @@ def _booking_action_badge(row: dict) -> str:
     work_date = identity["work_date"]
     if not serial or not work_date:
         return _action_badge(status)
-    if serial in _started_booking_serials():
+    if serial in _started_booking_serials() and not _is_retryable_robot_error(row):
         return "<span class='action-badge booked disabled'>Indítva</span>"
 
     action_token = _remember_booking_action(identity)
@@ -858,10 +874,12 @@ def _booking_action_badge(row: dict) -> str:
             "shift_start": identity["shift_start"],
         }
     )
-    badge_class = "ok" if status == "Egyezés" else "warn"
+    is_retry = _is_retryable_robot_error(row)
+    badge_class = "bad" if is_retry else "ok" if status == "Egyezés" else "warn"
+    label = "Újrafuttatás" if is_retry else "Foglalás"
     return (
         f"<a class='action-badge {badge_class} action-link' href='?{query}' "
-        f"title='Éles Giriton foglalás indítása serial alapján'>Foglalás</a>"
+        f"title='Éles Giriton foglalás indítása serial alapján'>{label}</a>"
     )
 
 
@@ -2448,7 +2466,7 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
     if not target_shift_start:
         st.error("Ehhez a sorhoz nincs Giriton célidőpont, ezért nem indítható foglalás.")
         return False
-    if not dry_run and serial in _started_booking_serials():
+    if not dry_run and serial in _started_booking_serials() and not _is_retryable_robot_error(row):
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
         return False
 
@@ -2701,8 +2719,7 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
         return
 
     candidates = summary_df[
-        summary_df["Állapot"].isin(["Egyezés", "Alternatíva"])
-        & (summary_df["Giriton állapot"] == "Nincs lefoglalva")
+        summary_df.apply(lambda row: _is_bookable_row(row.to_dict()), axis=1)
     ].copy()
     if candidates.empty:
         st.info("Ebben a szűrésben nincs egyénileg indítható, még nem lefoglalt Giriton sor.")
@@ -2744,7 +2761,11 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
     )
     if live_enabled:
         selected_serial = _clean(selected_row.get("Serial"))
-        already_started = bool(selected_serial and selected_serial in _started_booking_serials())
+        already_started = bool(
+            selected_serial
+            and selected_serial in _started_booking_serials()
+            and not _is_retryable_robot_error(selected_row)
+        )
         st.warning(
             "Éles indítás csak a kiválasztott MűszakPro serialra megy, nem tömeges futás."
         )
