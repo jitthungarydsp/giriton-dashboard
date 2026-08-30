@@ -319,6 +319,21 @@ def _courier_id_from_text(value) -> str:
     return match.group(1) if match else ""
 
 
+def _normalized_courier_id(value) -> str:
+    courier_id = _clean(value)
+    if re.fullmatch(r"\d+\.0+", courier_id):
+        courier_id = courier_id.split(".", 1)[0]
+    return courier_id
+
+
+def _booking_courier_id(row: dict) -> str:
+    for key in ["Courier ID", "courier_id"]:
+        courier_id = _normalized_courier_id(row.get(key))
+        if courier_id:
+            return courier_id
+    return _courier_id_from_text(row.get("Dolgozó") or row.get("courier_name"))
+
+
 def _worker_name_parts(value) -> list[str]:
     text = _clean(value)
     if not text:
@@ -2513,6 +2528,7 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
         "start_date": work_date,
         "end_date": work_date,
         "serial": serial,
+        "courier_id": _booking_courier_id(row),
         "warehouse": _clean(row.get("Raktár")).upper(),
         "email": _clean(row.get("E-mail")).casefold(),
         "courier_name": _clean(row.get("Dolgozó")),
@@ -2686,6 +2702,7 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
                 "start_date": work_date,
                 "end_date": work_date,
                 "serial": serial,
+                "courier_id": _booking_courier_id(row),
                 "warehouse": _clean(row.get("Raktár")).upper(),
                 "email": _clean(row.get("E-mail")).casefold(),
                 "courier_name": _clean(row.get("Dolgozó")),

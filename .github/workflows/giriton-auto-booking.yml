@@ -21,6 +21,10 @@ on:
         description: "Opcionális célzott futár email szűrő."
         required: false
         default: ""
+      courier_id:
+        description: "Opcionális célzott futár ID az új UIDL úthoz."
+        required: false
+        default: ""
       shift_start:
         description: "Opcionális célzott műszakkezdés HH:MM."
         required: false
@@ -83,8 +87,8 @@ jobs:
           fi
 
           if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ] && [ "${{ inputs.booking_engine }}" = "uidl" ]; then
-            if [ -z "${{ inputs.email }}" ] && [ -z "${{ inputs.courier_name }}" ]; then
-              echo "Celjzott UIDL eles foglalashoz email vagy futarnev is kell."
+            if [ -z "${{ inputs.courier_id }}" ] && [ -z "${{ inputs.email }}" ] && [ -z "${{ inputs.courier_name }}" ]; then
+              echo "Celjzott UIDL eles foglalashoz courier_id, email vagy futarnev is kell."
               exit 1
             fi
             test -n "${{ inputs.warehouse }}" || (echo "Celjzott eles foglalashoz raktar is kell." && exit 1)
@@ -119,6 +123,7 @@ jobs:
             --date "${{ inputs.start_date }}" \
             --warehouse "${{ inputs.warehouse }}" \
             --shift-start "${{ inputs.shift_start }}" \
+            --courier-id "${{ inputs.courier_id }}" \
             --serial "${{ inputs.serial }}" \
             --courier-name "${{ inputs.courier_name }}" \
             --email "${{ inputs.email }}" \

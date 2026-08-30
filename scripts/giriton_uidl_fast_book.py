@@ -54,6 +54,14 @@ def courier_id_from_serial(serial: str) -> str:
     return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
 
 
+def normalize_courier_id(value: object) -> str:
+    text = clean(value)
+    if re.fullmatch(r"\d+\.0+", text):
+        text = text.split(".", 1)[0]
+    match = re.search(r"\bD?(\d{4,5})\b", text, flags=re.IGNORECASE)
+    return match.group(1) if match else text
+
+
 def mouse_event(event_type: int = 1) -> dict[str, Any]:
     return {
         "altKey": False,
@@ -342,7 +350,8 @@ def row_key_matches(row: dict[str, Any], courier_id: str, courier_name: str, ema
     values = [clean(value) for value in data.values()]
     text = " ".join(values)
     folded = fold_text(text)
-    if courier_id and re.search(rf"\bD?{re.escape(courier_id)}\b", text, flags=re.IGNORECASE):
+    normalized_id = normalize_courier_id(courier_id)
+    if normalized_id and re.search(rf"\bD?{re.escape(normalized_id)}\b", text, flags=re.IGNORECASE):
         return True
     if email and fold_text(email) in folded:
         return True
@@ -391,8 +400,9 @@ def response_contains_selected(payload: Any) -> bool:
 def response_mentions_courier(payload: Any, courier_id: str, courier_name: str, email: str) -> bool:
     text = json.dumps(payload, ensure_ascii=False)
     folded = fold_text(text)
+    normalized_id = normalize_courier_id(courier_id)
     return (
-        bool(courier_id and re.search(rf"\bD?{re.escape(courier_id)}\b", text, flags=re.IGNORECASE))
+        bool(normalized_id and re.search(rf"\bD?{re.escape(normalized_id)}\b", text, flags=re.IGNORECASE))
         or bool(email and fold_text(email) in folded)
         or bool(courier_name and fold_text(courier_name) in folded)
     )
@@ -421,7 +431,7 @@ def main() -> int:
 
     user = clean(args.user)
     password = clean(args.password)
-    courier_id = clean(args.courier_id) or courier_id_from_serial(args.serial)
+    courier_id = normalize_courier_id(args.courier_id) or normalize_courier_id(courier_id_from_serial(args.serial))
     courier_name = clean(args.courier_name)
     email = clean(args.email).casefold()
     work_date = datetime.strptime(clean(args.date), "%Y-%m-%d").date()
