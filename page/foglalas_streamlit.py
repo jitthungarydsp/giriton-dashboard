@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import base64
 from datetime import date, datetime, time, timedelta
 import hashlib
 import hmac
 from html import escape
+from io import BytesIO
 import os
 from pathlib import Path
 import re
 import sys
 import unicodedata
 from urllib.parse import urlencode
+import zipfile
 
 import pandas as pd
 import requests
@@ -212,6 +215,68 @@ def _latest_auto_booking_runs(limit: int = 5) -> list[dict]:
 
 def _latest_three_day_auto_booking_runs(limit: int = 3) -> list[dict]:
     return _latest_workflow_runs(THREE_DAY_AUTO_BOOKING_WORKFLOW, limit)
+
+
+def _workflow_run_artifacts(run_id: int | str) -> list[dict]:
+    owner = _secret("GITHUB_OWNER", GITHUB_OWNER_DEFAULT)
+    repo = _secret("GITHUB_REPO", GITHUB_REPO_DEFAULT)
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{run_id}/artifacts"
+    response, used_secret_name = _github_request_with_tokens("GET", url)
+    if response.status_code != 200:
+        raise GitHubActionsError(
+            f"GitHub artifact lista lekérés sikertelen ({used_secret_name}): HTTP {response.status_code} - {response.text[:500]}"
+        )
+    return response.json().get("artifacts", [])
+
+
+def _download_artifact_zip(archive_url: str) -> bytes:
+    response, used_secret_name = _github_request_with_tokens("GET", archive_url)
+    if response.status_code != 200:
+        raise GitHubActionsError(
+            f"GitHub artifact letöltés sikertelen ({used_secret_name}): HTTP {response.status_code} - {response.text[:500]}"
+        )
+    return response.content
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _github_screenshot_image_b64(filename: str, workflow_names: tuple[str, ...]) -> str:
+    filename = Path(_clean(filename)).name
+    if not filename:
+        return ""
+
+    runs: list[dict] = []
+    for workflow_name in workflow_names:
+        try:
+            runs.extend(_latest_workflow_runs(workflow_name, limit=5))
+        except Exception:
+            continue
+
+    for run in sorted(runs, key=lambda item: _clean(item.get("created_at")), reverse=True):
+        run_id = run.get("id")
+        if not run_id:
+            continue
+        try:
+            artifacts = _workflow_run_artifacts(run_id)
+        except Exception:
+            continue
+
+        for artifact in artifacts:
+            if artifact.get("expired"):
+                continue
+            archive_url = _clean(artifact.get("archive_download_url"))
+            if not archive_url:
+                continue
+            try:
+                archive = _download_artifact_zip(archive_url)
+                with zipfile.ZipFile(BytesIO(archive)) as artifact_zip:
+                    for member in artifact_zip.namelist():
+                        if Path(member).name != filename:
+                            continue
+                        return base64.b64encode(artifact_zip.read(member)).decode("ascii")
+            except Exception:
+                continue
+
+    return ""
 
 
 def _github_status_label(run: dict) -> str:
@@ -1616,6 +1681,11 @@ def _booking_log_screenshot_names(message: str) -> str:
     return ", ".join(dict.fromkeys(names)) or "-"
 
 
+def _booking_log_screenshot_list(message: str) -> list[str]:
+    names = re.findall(r"[\w.-]+\.png", _clean(message))
+    return list(dict.fromkeys(names))
+
+
 def _booking_log_hungarian_reason(status: str, message: str) -> str:
     status = _clean(status).upper()
     message = _clean(message)
@@ -1665,6 +1735,45 @@ def _booking_log_summary_rows(log_df: pd.DataFrame, limit: int = 20) -> pd.DataF
         _booking_log_screenshot_names
     )
     return rows
+
+
+def _render_booking_log_screenshots(summary_rows: pd.DataFrame) -> None:
+    if summary_rows.empty or "screenshot" not in summary_rows.columns:
+        return
+
+    screenshot_rows = summary_rows[
+        summary_rows["screenshot"].fillna("").astype(str).str.strip().ne("-")
+    ].head(5)
+    if screenshot_rows.empty:
+        return
+
+    st.markdown("##### Screenshotok")
+    st.caption("A legutóbbi hibás/bizonytalan foglalások képei. Ha nincs kép, az artifact még nem érhető el vagy már lejárt.")
+    for row in screenshot_rows.to_dict("records"):
+        names = _booking_log_screenshot_list(row.get("message"))
+        if not names:
+            continue
+        label = (
+            f"{_clean(row.get('courier_name')) or 'Név nélkül'} - "
+            f"{_clean(row.get('work_date'))} "
+            f"{_clean(row.get('warehouse')).upper()} "
+            f"{_clean(row.get('shift_start'))}"
+        )
+        with st.expander(label, expanded=False):
+            st.caption(_booking_log_hungarian_reason(row.get("status"), row.get("message")))
+            for filename in names:
+                image_b64 = _github_screenshot_image_b64(
+                    filename,
+                    (THREE_DAY_AUTO_BOOKING_WORKFLOW, AUTO_BOOKING_WORKFLOW),
+                )
+                if image_b64:
+                    st.image(
+                        base64.b64decode(image_b64),
+                        caption=filename,
+                        use_container_width=True,
+                    )
+                else:
+                    st.warning(f"A screenshot nem található az elérhető artifactokban: {filename}")
 
 
 def _render_auto_booking_summary(log_df: pd.DataFrame) -> None:
@@ -1725,6 +1834,7 @@ def _render_auto_booking_summary(log_df: pd.DataFrame) -> None:
             },
             "Nincs automata foglalási összesítő.",
         )
+        _render_booking_log_screenshots(summary_rows)
 
 
 def _muszakpro_columns() -> tuple[list[str], dict[str, str]]:
