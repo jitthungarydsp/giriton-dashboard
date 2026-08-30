@@ -183,7 +183,7 @@ def read_shift_comparison_records(start_date=None, end_date=None, courier_id=Non
     supabase_url, headers = get_headers()
     filters = [
         (
-            "select=work_date,courier_id,courier_name,email,warehouse,"
+            "select=comparison_key,work_date,courier_id,courier_name,email,warehouse,"
             "shift_start,shift_end,giriton_status,muszakpro_status,"
             "missing_source,giriton_check,muszakpro_booking_code,updated_at"
         ),
@@ -226,7 +226,7 @@ def read_next_5_day_shift_comparison(courier_id=None, limit=500):
     supabase_url, headers = get_headers()
     filters = [
         (
-            "select=work_date,courier_id,courier_name,email,warehouse,"
+            "select=comparison_key,work_date,courier_id,courier_name,email,warehouse,"
             "shift_start,shift_end,giriton_status,muszakpro_status,"
             "missing_source,giriton_check,muszakpro_booking_code,updated_at"
         ),

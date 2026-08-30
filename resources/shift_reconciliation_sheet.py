@@ -432,6 +432,25 @@ def row_to_record(row):
     }
 
 
+def comparison_db_row_to_record(row):
+    return {
+        "work_date": row.get("work_date", ""),
+        "name": row.get("courier_name", ""),
+        "email": row.get("email", ""),
+        "warehouse": row.get("warehouse", ""),
+        "start": normalize_time(row.get("shift_start", "")),
+        "end": normalize_time(row.get("shift_end", "")),
+        "giriton": row.get("giriton_status", "") or "-",
+        "muszakpro": row.get("muszakpro_status", "") or "-",
+        "missing": row.get("missing_source", ""),
+        "giriton_check": row.get("giriton_check", ""),
+        "muszakpro_code": row.get("muszakpro_booking_code", ""),
+        "updated_at": row.get("updated_at", ""),
+        "match_key": row.get("comparison_key", ""),
+        "courier_id": row.get("courier_id", ""),
+    }
+
+
 def build_records_for_date(work_date):
     updated_at = datetime.now(
         LOCAL_TIMEZONE
@@ -683,6 +702,23 @@ def rebuild_shift_reconciliation(start_date=None, days=10):
 
 
 def read_shift_reconciliation_records(work_date):
+    try:
+        from resources.shift_comparison_db import read_shift_comparison_records
+
+        db_rows = read_shift_comparison_records(
+            start_date=work_date,
+            end_date=work_date,
+            limit=10000,
+        )
+
+        if db_rows:
+            return [
+                comparison_db_row_to_record(row)
+                for row in db_rows
+            ]
+    except Exception:
+        pass
+
     spreadsheet = open_sheet()
     worksheet = get_or_create_worksheet(spreadsheet)
     rows = worksheet.get_all_values()
@@ -717,6 +753,25 @@ def read_shift_reconciliation_records_for_dates(work_dates):
 
     if not wanted_dates:
         return []
+
+    try:
+        from resources.shift_comparison_db import read_shift_comparison_records
+
+        db_records = []
+        for work_date in sorted(wanted_dates):
+            db_records.extend(
+                comparison_db_row_to_record(row)
+                for row in read_shift_comparison_records(
+                    start_date=work_date,
+                    end_date=work_date,
+                    limit=10000,
+                )
+            )
+
+        if db_records:
+            return db_records
+    except Exception:
+        pass
 
     spreadsheet = open_sheet()
     worksheet = get_or_create_worksheet(spreadsheet)

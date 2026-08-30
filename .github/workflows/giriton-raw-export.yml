@@ -88,6 +88,10 @@ jobs:
               giriton_raw_export_github.robot
           fi
 
+          python scripts/refresh_shift_comparison.py \
+            --start-date "$START_DATE" \
+            --days "$DAYS"
+
       - name: Upload Robot artifacts
         if: always()
         uses: actions/upload-artifact@v4
