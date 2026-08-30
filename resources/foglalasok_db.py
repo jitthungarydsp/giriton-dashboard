@@ -508,22 +508,62 @@ def backfill_booking_couriers_from_master(limit=5000):
         for row in rows:
             courier = find_courier_for_booking(row, courier_lookup)
             row_id = clean(row.get("id"))
-            if not row_id or not courier:
+            if not row_id:
+                continue
+            if not courier:
+                if not clean(row.get("courier_id")):
+                    print(
+                        "FOGLALASOK_COURIER_BACKFILL_NO_MASTER_MATCH "
+                        f"table={table_name} "
+                        f"row_id={row_id} "
+                        f"email={clean(row.get('email')) or '-'} "
+                        f"raw_name={clean(row.get('courier_name')) or '-'} "
+                        f"work_date={clean(row.get('work_date')) or '-'} "
+                        f"shift={clean(row.get('shift_text')) or '-'} "
+                        f"booking_code={clean(row.get('booking_code')) or '-'}"
+                    )
                 continue
 
             update_payload = {}
             if not clean(row.get("courier_id")):
-                update_payload["courier_id"] = clean(courier.get("courier_id"))
+                resolved_courier_id = optional_int(courier.get("courier_id"))
+                if resolved_courier_id is None:
+                    print(
+                        "FOGLALASOK_COURIER_BACKFILL_MISSING_ID "
+                        f"table={table_name} "
+                        f"row_id={row_id} "
+                        f"email={clean(row.get('email')) or '-'} "
+                        f"raw_name={clean(row.get('courier_name')) or '-'} "
+                        f"matched_name={clean(courier.get('courier_name')) or '-'} "
+                        f"work_date={clean(row.get('work_date')) or '-'} "
+                        f"shift={clean(row.get('shift_text')) or '-'} "
+                        f"booking_code={clean(row.get('booking_code')) or '-'}"
+                    )
+                else:
+                    update_payload["courier_id"] = resolved_courier_id
             if not clean(row.get("courier_name")):
                 update_payload["courier_name"] = clean(courier.get("courier_name"))
             if not clean(row.get("serial")):
                 courier_id = clean(row.get("courier_id")) or clean(courier.get("courier_id"))
-                update_payload["serial"] = shift_serial(
-                    row.get("work_date"),
-                    courier_id,
-                    row.get("warehouse"),
-                    shift_start(row.get("shift_text")),
-                )
+                if courier_id:
+                    update_payload["serial"] = shift_serial(
+                        row.get("work_date"),
+                        courier_id,
+                        row.get("warehouse"),
+                        shift_start(row.get("shift_text")),
+                    )
+                else:
+                    print(
+                        "FOGLALASOK_SERIAL_BACKFILL_MISSING_ID "
+                        f"table={table_name} "
+                        f"row_id={row_id} "
+                        f"email={clean(row.get('email')) or '-'} "
+                        f"raw_name={clean(row.get('courier_name')) or '-'} "
+                        f"matched_name={clean(courier.get('courier_name')) or '-'} "
+                        f"work_date={clean(row.get('work_date')) or '-'} "
+                        f"shift={clean(row.get('shift_text')) or '-'} "
+                        f"booking_code={clean(row.get('booking_code')) or '-'}"
+                    )
             if not update_payload:
                 continue
 
