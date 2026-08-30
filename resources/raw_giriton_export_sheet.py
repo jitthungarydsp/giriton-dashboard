@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -16,6 +17,7 @@ SOURCE_SPREADSHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
 TARGET_SPREADSHEET_ID = "1s6M4qSBp7KjGsEtrD8oNCs5Opq7-xRDJ1fupCQLMABE"
 
 SOURCE_FOGLALASOK_SHEET = "Foglalasok"
+SOURCE_ID_SHEET = "ID"
 TARGET_FOGLALASOK_SHEET = "Foglalasok"
 GIRITON_RAW_SHEET = "Giriton"
 GIRITON_LOG_SHEET = "Giriton_Log"
@@ -64,9 +66,12 @@ def _normalize_cell(value):
 
 
 def _normalize_name(value):
-    return " ".join(
-        str(value or "").strip().casefold().split()
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or "").strip().casefold(),
     )
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def _name_without_courier_id(value):
@@ -82,6 +87,15 @@ def _courier_id_from_text(value):
 
 def _normalize_email(value):
     return str(value or "").strip().casefold()
+
+
+def _normalize_header(value):
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or "").strip().casefold(),
+    )
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def _normalize_time(value):
@@ -153,21 +167,92 @@ def _cell(row, index):
     return str(row[index] or "").strip()
 
 
+def _empty_driver_lookup():
+    return {
+        "by_name": {},
+        "by_email": {},
+        "by_id": {},
+    }
+
+
+def _header_index_normalized(header, names):
+    normalized = {
+        _normalize_header(name): index
+        for index, name in enumerate(header)
+    }
+
+    for name in names:
+        index = normalized.get(_normalize_header(name))
+        if index is not None:
+            return index
+
+    return None
+
+
+def _add_driver_to_lookup(lookup, courier_id, name, email="", phone="", warehouse=""):
+    courier_id = str(courier_id or "").strip()
+    name = str(name or "").strip()
+    email = _normalize_email(email)
+
+    if not courier_id:
+        return
+
+    current = lookup["by_id"].get(courier_id, {})
+    record = {
+        "courier_id": courier_id,
+        "name": name or current.get("name", ""),
+        "email": email or current.get("email", ""),
+        "phone": phone or current.get("phone", ""),
+        "warehouse": warehouse or current.get("warehouse", ""),
+    }
+
+    lookup["by_id"][courier_id] = record
+
+    for name_key in {_normalize_name(record["name"]), _name_without_courier_id(record["name"])}:
+        if name_key:
+            lookup["by_name"][name_key] = record
+
+    if record["email"]:
+        lookup["by_email"][record["email"]] = record
+
+
+def _merge_id_sheet_lookup(lookup):
+    try:
+        ws = source_spreadsheet.worksheet(SOURCE_ID_SHEET)
+        rows = ws.get_all_values()
+    except Exception:
+        return lookup
+
+    if not rows:
+        return lookup
+
+    header = rows[0]
+    id_index = _header_index_normalized(header, ["courier_id", "futar id", "futár id", "id"])
+    name_index = _header_index_normalized(header, ["courier_name", "nev", "név", "name"])
+    email_index = _header_index_normalized(header, ["email", "e-mail", "email cim", "e-mail cím"])
+
+    for row in rows[1:]:
+        _add_driver_to_lookup(
+            lookup,
+            _cell(row, id_index),
+            _cell(row, name_index),
+            _cell(row, email_index),
+        )
+
+    return lookup
+
+
 def _read_driver_lookup():
+    lookup = _empty_driver_lookup()
+
     try:
         ws = target_spreadsheet.worksheet("DSP_Drivers")
         rows = ws.get_all_values()
     except Exception:
-        return {
-            "by_name": {},
-            "by_email": {},
-        }
+        return _merge_id_sheet_lookup(lookup)
 
     if not rows:
-        return {
-            "by_name": {},
-            "by_email": {},
-        }
+        return _merge_id_sheet_lookup(lookup)
 
     header = rows[0]
     id_index = _header_index(
@@ -190,45 +275,17 @@ def _read_driver_lookup():
         header,
         ["warehouse_name", "warehouse", "raktar", "raktár"],
     )
-    by_name = {}
-    by_email = {}
-    by_id = {}
-
     for row in rows[1:]:
-        courier_id = _cell(row, id_index)
-        name = _cell(row, name_index)
-        email = _normalize_email(
-            _cell(row, email_index)
+        _add_driver_to_lookup(
+            lookup,
+            _cell(row, id_index),
+            _cell(row, name_index),
+            _cell(row, email_index),
+            _cell(row, phone_index),
+            _cell(row, warehouse_index),
         )
 
-        if not courier_id:
-            continue
-
-        record = {
-            "courier_id": courier_id,
-            "name": name,
-            "email": email,
-            "phone": _cell(row, phone_index),
-            "warehouse": _cell(row, warehouse_index),
-        }
-
-        if name:
-            by_name[_normalize_name(name)] = record
-            clean_name_without_id = _name_without_courier_id(name)
-            if clean_name_without_id:
-                by_name[clean_name_without_id] = record
-
-        if email:
-            by_email[email] = record
-
-        if courier_id:
-            by_id[courier_id] = record
-
-    return {
-        "by_name": by_name,
-        "by_email": by_email,
-        "by_id": by_id,
-    }
+    return _merge_id_sheet_lookup(lookup)
 
 
 def _driver_by_name(driver_lookup, name):
@@ -680,6 +737,15 @@ def _enrich_giriton_rows(rows, driver_lookup):
             if _normalize_name(name) == _normalize_name("ÜRES")
             else "GIRITON_OK"
         )
+
+        if status == "GIRITON_OK" and not courier_id:
+            print(
+                "GIRITON_RAW_EXPORT_MISSING_COURIER_ID "
+                f"name={name or '-'} "
+                f"work_date={work_date or '-'} "
+                f"warehouse={warehouse or '-'} "
+                f"start={start or '-'}"
+            )
 
         output.append([
             work_date,
