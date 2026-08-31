@@ -32,9 +32,12 @@ Opcionális:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -49,6 +52,9 @@ MONTH_TARGET_TABLES = {
     1: "courier_financial_overview_month_raw_bud1",
     2: "courier_financial_overview_month_raw_bud2",
 }
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+AUTH_REFRESH_STATUS_CODES = {401, 403}
+_AUTH_REFRESHED_HEADERS: dict[str, str] = {}
 
 
 def clean_text(value: Any) -> str:
@@ -245,6 +251,7 @@ def courier_hub_headers() -> dict[str, str]:
         headers["Cookie"] = cookie
     if api_key:
         headers["x-api-key"] = api_key
+    headers.update(_AUTH_REFRESHED_HEADERS)
     return headers
 
 
@@ -253,7 +260,109 @@ def courier_hub_auth_configured() -> bool:
         clean_text(os.getenv("COURIER_HUB_AUTHORIZATION"))
         or clean_text(os.getenv("COURIER_HUB_COOKIE"))
         or clean_text(os.getenv("COURIER_HUB_API_KEY"))
+        or clean_text(os.getenv("COURIER_HUB_AUTH_REFRESH_COMMAND"))
+        or (
+            clean_text(os.getenv("COURIER_HUB_USERNAME"))
+            and clean_text(os.getenv("COURIER_HUB_PASSWORD"))
+        )
     )
+
+
+def normalize_authorization(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    if text.lower().startswith(("bearer ", "basic ", "token ")):
+        return text
+    return f"Bearer {text}"
+
+
+def parse_auth_command_output(output: str) -> dict[str, Any]:
+    text = clean_text(output)
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else {}
+    except json.JSONDecodeError:
+        pass
+    for line in reversed(text.splitlines()):
+        try:
+            payload = json.loads(line.strip())
+        except json.JSONDecodeError:
+            continue
+        return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def headers_from_auth_payload(payload: dict[str, Any]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    nested_headers = payload.get("headers")
+    if isinstance(nested_headers, dict):
+        headers.update(
+            {
+                str(key): str(value)
+                for key, value in nested_headers.items()
+                if value is not None
+            }
+        )
+
+    authorization = (
+        payload.get("Authorization")
+        or payload.get("authorization")
+        or payload.get("bearer_token")
+        or payload.get("token")
+        or payload.get("access_token")
+    )
+    cookie = payload.get("Cookie") or payload.get("cookie")
+    api_key = payload.get("x-api-key") or payload.get("api_key")
+    if authorization:
+        headers["Authorization"] = normalize_authorization(authorization)
+    if cookie:
+        headers["Cookie"] = str(cookie)
+    if api_key:
+        headers["x-api-key"] = str(api_key)
+    return headers
+
+
+def auth_refresh_command() -> str:
+    command = clean_text(os.getenv("COURIER_HUB_AUTH_REFRESH_COMMAND"))
+    if command:
+        return command
+    if clean_text(os.getenv("COURIER_HUB_USERNAME")) and clean_text(os.getenv("COURIER_HUB_PASSWORD")):
+        return f"{sys.executable} scripts/refresh_courier_hub_auth.py"
+    return ""
+
+
+def refresh_courier_hub_headers() -> dict[str, str]:
+    command = auth_refresh_command()
+    if not command:
+        return {}
+
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        shell=True,
+        capture_output=True,
+        text=True,
+        timeout=int(os.getenv("COURIER_HUB_AUTH_REFRESH_TIMEOUT", "240")),
+        check=False,
+    )
+    if completed.stderr:
+        print(completed.stderr.strip())
+    if completed.returncode != 0:
+        print(f"COURIER_HUB_AUTH_REFRESH_FAILED exit={completed.returncode}")
+        return {}
+
+    headers = headers_from_auth_payload(parse_auth_command_output(completed.stdout))
+    if headers:
+        _AUTH_REFRESHED_HEADERS.update(headers)
+        print(
+            "COURIER_HUB_AUTH_REFRESH_APPLIED "
+            f"authorization={'yes' if headers.get('Authorization') else 'no'} "
+            f"cookie={'yes' if headers.get('Cookie') else 'no'}"
+        )
+    return headers
 
 
 def base_request_url(warehouse_id: int) -> str:
@@ -315,11 +424,9 @@ def fetch_financial_overview(
     )
     timeout = int(os.getenv("COURIER_HUB_TIMEOUT", "60"))
 
-    response = requests.get(
-        request_url,
-        headers=courier_hub_headers(),
-        timeout=timeout,
-    )
+    response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
+    if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers():
+        response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
 
     try:
         payload = response.json()
@@ -335,6 +442,8 @@ def fetch_month_overview(*, warehouse_id: int, year: int, month: int) -> tuple[s
     request_url = build_month_request_url(warehouse_id=warehouse_id, year=year, month=month)
     timeout = int(os.getenv("COURIER_HUB_TIMEOUT", "60"))
     response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
+    if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers():
+        response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
     try:
         payload = response.json()
     except ValueError:
@@ -355,6 +464,8 @@ def fetch_route_performance_detail(
     )
     timeout = int(os.getenv("COURIER_HUB_TIMEOUT", "60"))
     response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
+    if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers():
+        response = requests.get(request_url, headers=courier_hub_headers(), timeout=timeout)
     try:
         payload = response.json()
     except ValueError:

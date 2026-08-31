@@ -1,0 +1,107 @@
+name: Half Hourly Courier Hub Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Ev, pelda: 2026. Uresen: aktualis ev Budapest szerint."
+        required: false
+        default: ""
+      month:
+        description: "Honap 1-12. Uresen: aktualis honap Budapest szerint."
+        required: false
+        default: ""
+      dry_run:
+        description: "true eseten nem ir DB-be."
+        required: false
+        default: "false"
+  schedule:
+    # GitHub cron UTC-ben fut. Felorankent friss Courier Hub auth + route adatok.
+    - cron: "*/30 * * * *"
+
+concurrency:
+  group: half-hourly-courier-hub-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
+      COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          if [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; then
+            if [ -z "$COURIER_HUB_COOKIE" ] && [ -z "$COURIER_HUB_AUTHORIZATION" ]; then
+              echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets."
+              exit 1
+            fi
+          fi
+
+      - name: Resolve period
+        id: period
+        shell: bash
+        run: |
+          YEAR="${{ inputs.year }}"
+          MONTH="${{ inputs.month }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          YEAR="${YEAR:-$(TZ=Europe/Budapest date +%Y)}"
+          MONTH="${MONTH:-$(TZ=Europe/Budapest date +%-m)}"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          echo "year=$YEAR" >> "$GITHUB_OUTPUT"
+          echo "month=$MONTH" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+          echo "YEAR=$YEAR"
+          echo "MONTH=$MONTH"
+          echo "DRY_RUN=$DRY_RUN"
+
+      - name: Sync Courier Hub financial overview
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}")
+
+          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Sync Courier Hub route details from latest DB day
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --since-last-work-date)
+
+          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+
+          "${CMD[@]}"

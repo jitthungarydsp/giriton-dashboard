@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import requests
@@ -45,6 +46,58 @@ def month_day(value: str | None) -> str:
         return text[-2:] if len(text) >= 10 else text
 
 
+def parse_date(value: str | None) -> date | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def month_starts_between(start_date: date, end_date: date) -> list[date]:
+    months: list[date] = []
+    current = start_date.replace(day=1)
+    final = end_date.replace(day=1)
+    while current <= final:
+        months.append(current)
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+    return months
+
+
+def read_latest_synced_work_date(
+    *,
+    courier_id: int | None,
+    warehouse_id: int | None,
+) -> date | None:
+    url = os.environ["SUPABASE_URL"].rstrip("/")
+    params = {
+        "select": "work_date",
+        "order": "work_date.desc",
+        "limit": "1",
+    }
+    if courier_id:
+        params["courier_id"] = f"eq.{courier_id}"
+    if warehouse_id:
+        params["warehouse_id"] = f"eq.{warehouse_id}"
+
+    response = requests.get(
+        f"{url}/rest/v1/courier_daily_route_history",
+        headers=supabase_headers(),
+        params=params,
+        timeout=60,
+    )
+    raise_for_response(response, "courier_daily_route_history latest work_date")
+    rows = response.json() or []
+    if not rows:
+        return None
+    return parse_date(rows[0].get("work_date"))
+
+
 def read_route_refs(
     *,
     courier_id: int | None,
@@ -52,6 +105,8 @@ def read_route_refs(
     month: int,
     warehouse_id: int | None,
     day: str = "",
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> list[dict[str, Any]]:
     url = os.environ["SUPABASE_URL"].rstrip("/")
     target_tables = (
@@ -102,6 +157,11 @@ def read_route_refs(
                 delivery_date = clean_text(route.get("deliveryDate"))
                 if wanted_day and delivery_date[8:10] != wanted_day:
                     continue
+                route_date = parse_date(delivery_date)
+                if start_date and (not route_date or route_date < start_date):
+                    continue
+                if end_date and (not route_date or route_date > end_date):
+                    continue
 
                 key = (int(wh_id), row_courier_id, route_id)
                 if key in seen:
@@ -114,6 +174,8 @@ def read_route_refs(
                         "delivery_date": delivery_date,
                         "order_count": safe_int(route.get("orderCount")),
                         "warehouse_id": int(wh_id),
+                        "year": year,
+                        "month": month,
                     }
                 )
 
@@ -132,24 +194,98 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--courier-id", type=int)
-    parser.add_argument("--year", type=int, required=True)
-    parser.add_argument("--month", type=int, required=True)
+    parser.add_argument("--year", type=int)
+    parser.add_argument("--month", type=int)
     parser.add_argument("--day", help="Optional day filter, e.g. 05 or 2026-07-05.")
+    parser.add_argument("--start-date", help="Optional inclusive date filter, e.g. 2026-08-05.")
+    parser.add_argument("--end-date", help="Optional inclusive date filter, e.g. 2026-08-31.")
+    parser.add_argument(
+        "--since-last-work-date",
+        action="store_true",
+        help="Only sync routes after the latest courier_daily_route_history.work_date until today.",
+    )
     parser.add_argument("--warehouse-id", type=int, choices=[1, 2])
     parser.add_argument("--sleep", type=float, default=0.15)
     args = parser.parse_args()
 
-    if args.month < 1 or args.month > 12:
+    start_date = parse_date(args.start_date)
+    parsed_end_date = parse_date(args.end_date)
+    end_date = parsed_end_date or date.today()
+    if args.start_date and not start_date:
+        raise RuntimeError("Invalid --start-date. Use YYYY-MM-DD.")
+    if args.end_date and not parsed_end_date:
+        raise RuntimeError("Invalid --end-date. Use YYYY-MM-DD.")
+
+    if args.since_last_work_date:
+        latest_work_date = read_latest_synced_work_date(
+            courier_id=args.courier_id,
+            warehouse_id=args.warehouse_id,
+        )
+        if latest_work_date:
+            start_date = latest_work_date
+        elif not start_date and args.year and args.month:
+            start_date = date(args.year, args.month, 1)
+        elif not start_date:
+            start_date = date.today().replace(day=1)
+        print(
+            "Latest synced work_date:",
+            latest_work_date.isoformat() if latest_work_date else "-",
+        )
+
+    if args.day and (args.start_date or args.end_date or args.since_last_work_date):
+        raise RuntimeError("--day nem keverhető --start-date/--end-date/--since-last-work-date szűréssel.")
+
+    if not args.since_last_work_date and not start_date and (not args.year or not args.month):
+        raise RuntimeError("--year és --month kötelező, kivéve --since-last-work-date vagy --start-date használatakor.")
+
+    if args.month and (args.month < 1 or args.month > 12):
         raise RuntimeError("Month must be between 1 and 12.")
 
-    refs = read_route_refs(
-        courier_id=args.courier_id,
-        year=args.year,
-        month=args.month,
-        warehouse_id=args.warehouse_id,
-        day=args.day or "",
+    month_jobs: list[tuple[int, int, date | None, date | None]]
+    if start_date:
+        if start_date > end_date:
+            print(f"No missing days. start_date={start_date.isoformat()} end_date={end_date.isoformat()}")
+            return 0
+        month_jobs = []
+        for month_start in month_starts_between(start_date, end_date):
+            next_month = (
+                date(month_start.year + 1, 1, 1)
+                if month_start.month == 12
+                else date(month_start.year, month_start.month + 1, 1)
+            )
+            month_end = next_month - timedelta(days=1)
+            month_jobs.append(
+                (
+                    month_start.year,
+                    month_start.month,
+                    max(start_date, month_start),
+                    min(end_date, month_end),
+                )
+            )
+    else:
+        month_jobs = [(int(args.year), int(args.month), None, None)]
+
+    refs: list[dict[str, Any]] = []
+    for year, month, job_start, job_end in month_jobs:
+        next_month = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        month_end = next_month - timedelta(days=1)
+        refs.extend(
+            read_route_refs(
+                courier_id=args.courier_id,
+                year=year,
+                month=month,
+                warehouse_id=args.warehouse_id,
+                day=args.day or "",
+                start_date=job_start,
+                end_date=min(job_end or month_end, month_end),
+            )
+        )
+
+    period_label = (
+        f"{start_date.isoformat()}..{end_date.isoformat()}"
+        if start_date
+        else f"{args.year}-{args.month:02d}" + (f"-{month_day(args.day)}" if args.day else "")
     )
-    period_label = f"{args.year}-{args.month:02d}" + (f"-{month_day(args.day)}" if args.day else "")
     courier_label = str(args.courier_id) if args.courier_id else "all"
     print(f"Route detail target: courier={courier_label} | period={period_label} | routes={len(refs)}")
     print("Mode:", "APPLY" if args.apply else "DRY-RUN")
@@ -170,6 +306,9 @@ def main() -> int:
         courier_id = int(route_ref["courier_id"])
         route_id = int(route_ref["route_id"])
         warehouse_id = int(route_ref["warehouse_id"])
+        route_date = parse_date(route_ref.get("delivery_date"))
+        route_year = route_date.year if route_date else int(route_ref["year"])
+        route_month = route_date.month if route_date else int(route_ref["month"])
         try:
             detail_url, status_code, detail_json = fetch_route_performance_detail(
                 courier_id=courier_id,
@@ -183,8 +322,8 @@ def main() -> int:
                 request_url=detail_url,
                 status_code=status_code,
                 response_json=detail_json,
-                year=args.year,
-                month=args.month,
+                year=route_year,
+                month=route_month,
             )
             if args.apply:
                 upsert_route_performance_detail(detail_payload)
@@ -197,8 +336,8 @@ def main() -> int:
                             warehouse_id=warehouse_id,
                             response_json=detail_json,
                             status_code=status_code,
-                            year=args.year,
-                            month=args.month,
+                            year=route_year,
+                            month=route_month,
                         ),
                     )
                     upsert_flat_table(
@@ -209,8 +348,8 @@ def main() -> int:
                             warehouse_id=warehouse_id,
                             response_json=detail_json,
                             status_code=status_code,
-                            year=args.year,
-                            month=args.month,
+                            year=route_year,
+                            month=route_month,
                         ),
                     )
                     upsert_daily_route_history(
@@ -220,8 +359,8 @@ def main() -> int:
                             warehouse_id=warehouse_id,
                             response_json=detail_json,
                             status_code=status_code,
-                            year=args.year,
-                            month=args.month,
+                            year=route_year,
+                            month=route_month,
                         )
                     )
 
