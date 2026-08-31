@@ -16685,8 +16685,18 @@ def close_individual_monthly_billing(
     return deleted
 
 
-def is_summary_duplicate_error(exc: Exception) -> bool:
-    text = str(exc)
+def settlement_exception_text(exc: BaseException) -> str:
+    parts = [str(exc)]
+    parts.extend(str(arg) for arg in getattr(exc, "args", ()) if arg is not None)
+    for attr in ("message", "details", "hint", "code"):
+        value = getattr(exc, attr, None)
+        if value:
+            parts.append(str(value))
+    return " ".join(parts).casefold()
+
+
+def is_summary_duplicate_error(exc: BaseException) -> bool:
+    text = settlement_exception_text(exc)
     return (
         "courier_settlement_summary_session_driver_unique" in text
         or (
@@ -16696,10 +16706,12 @@ def is_summary_duplicate_error(exc: Exception) -> bool:
     )
 
 
-def is_jit_row_courier_id_missing_error(exc: Exception) -> bool:
-    text = str(exc)
+def is_jit_row_courier_id_missing_error(exc: BaseException) -> bool:
+    text = settlement_exception_text(exc)
     return (
         "jit_row.courier_id does not exist" in text
+        or '"jit_row.courier_id" does not exist' in text
+        or "column jit_row.courier_id" in text
         or 'column "courier_id" does not exist' in text
     )
 
@@ -16819,7 +16831,7 @@ def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
     try:
         recalculate_excel_base_rates(get_db(), session_id)
         return {"fallback_used": False, "summary_rows": None}
-    except Exception as exc:
+    except BaseException as exc:
         if is_jit_row_courier_id_missing_error(exc):
             summary_rows = rebuild_courier_settlement_summary_from_jit(session_id)
             return {
@@ -16829,16 +16841,31 @@ def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
             }
         if not is_summary_duplicate_error(exc):
             raise
-        get_db().schema("settlement").rpc(
-            "recalculate_jitt_base_rates",
-            {"p_session_id": session_id},
-        ).execute()
         summary_rows = rebuild_courier_settlement_summary_from_jit(session_id)
         return {
             "fallback_used": True,
             "summary_rows": summary_rows,
             "reason": "duplicate_summary_driver",
         }
+
+
+def publish_excel_session_to_mobile_if_possible(
+    selected_month: str,
+    session_id: str,
+    updated_by: str,
+) -> bool:
+    period_start = parse_month_option(selected_month)
+    warehouse_label = st.session_state.get("new_warehouse", "Összes")
+    saved = save_mobile_settlement_period_config(
+        period_start,
+        "Excel",
+        warehouse_label,
+        session_id,
+        updated_by,
+    )
+    if saved:
+        clear_mobile_breakdown_override_cache()
+    return saved
 
 
 def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, object]:
@@ -16993,6 +17020,11 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                     "Futártörzs frissítve Excel alapján: "
                     f"{master_sync.get('upserted', 0)} sor."
                 )
+            publish_excel_session_to_mobile_if_possible(
+                selected_month,
+                result["session_id"],
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
             st.rerun()
 
         except Exception as exc:
@@ -17043,6 +17075,11 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     ):
         try:
             reprocess_existing_excel_session(excel_import_session_id)
+            publish_excel_session_to_mobile_if_possible(
+                selected_month,
+                excel_import_session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
             st.success("Meglévő Excel import újrafeldolgozva.")
             st.rerun()
         except Exception as exc:
@@ -17062,7 +17099,15 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.session_state["new_calculation_mode"] = "Excel"
             st.session_state["new_month"] = selected_month
             st.session_state["new_status"] = "Összes"
-            st.success("A régi Excel import betöltve az új elszámolási nézetbe.")
+            mobile_saved = publish_excel_session_to_mobile_if_possible(
+                selected_month,
+                excel_import_session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+            )
+            if mobile_saved:
+                st.success("A régi Excel import betöltve az új elszámolási nézetbe, és publikálva a futár oldalra.")
+            else:
+                st.success("A régi Excel import betöltve az új elszámolási nézetbe.")
             st.rerun()
         except Exception as exc:
             st.session_state["excel_calculation_loaded"] = False
