@@ -32,8 +32,8 @@ on:
         required: false
         default: "uidl"
   schedule:
-    # GitHub cron UTC-ben fut. Ez a lánc óránként frissít és holnaptól néz 5 napot.
-    - cron: "5 * * * *"
+    # GitHub cron UTC-ben fut. Kevésbé terhelt percen indul, de továbbra is óránként.
+    - cron: "17 * * * *"
 
 permissions:
   contents: read
