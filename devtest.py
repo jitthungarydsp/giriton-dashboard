@@ -16696,6 +16696,14 @@ def is_summary_duplicate_error(exc: Exception) -> bool:
     )
 
 
+def is_jit_row_courier_id_missing_error(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        "jit_row.courier_id does not exist" in text
+        or 'column "courier_id" does not exist' in text
+    )
+
+
 def read_jit_rows_for_summary_rebuild(session_id: str, page_size: int = 1000) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     offset = 0
@@ -16812,6 +16820,13 @@ def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
         recalculate_excel_base_rates(get_db(), session_id)
         return {"fallback_used": False, "summary_rows": None}
     except Exception as exc:
+        if is_jit_row_courier_id_missing_error(exc):
+            summary_rows = rebuild_courier_settlement_summary_from_jit(session_id)
+            return {
+                "fallback_used": True,
+                "summary_rows": summary_rows,
+                "reason": "missing_jit_row_courier_id",
+            }
         if not is_summary_duplicate_error(exc):
             raise
         get_db().schema("settlement").rpc(
@@ -16819,7 +16834,11 @@ def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
             {"p_session_id": session_id},
         ).execute()
         summary_rows = rebuild_courier_settlement_summary_from_jit(session_id)
-        return {"fallback_used": True, "summary_rows": summary_rows}
+        return {
+            "fallback_used": True,
+            "summary_rows": summary_rows,
+            "reason": "duplicate_summary_driver",
+        }
 
 
 def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, object]:
@@ -17561,8 +17580,14 @@ def show_new_settlement_page() -> None:
         base_rate_summary = st.session_state.get("settlement_base_rate_summary")
         recalc_result = st.session_state.get("settlement_recalculate_result")
         if isinstance(recalc_result, dict) and recalc_result.get("fallback_used"):
+            reason = str(recalc_result.get("reason") or "")
+            reason_text = (
+                "A DB alapdíj-frissítő régi `jit_row.courier_id` oszlopra hivatkozott."
+                if reason == "missing_jit_row_courier_id"
+                else "A DB summary frissítés duplikált futártörzs egyezés miatt kerülőúton futott le."
+            )
             st.info(
-                "A DB summary frissítés duplikált futártörzs egyezés miatt kerülőúton futott le. "
+                f"{reason_text} "
                 f"Újraépített summary sorok: {recalc_result.get('summary_rows', 0)}."
             )
 
