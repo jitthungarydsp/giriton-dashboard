@@ -320,6 +320,20 @@ textarea { min-height: 96px; resize: vertical; }
 .route-status-badge { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; color: #fff; font-weight: 950; line-height: 1; }
 .route-status-badge.ok { background: var(--green); }
 .route-status-badge.bad { background: var(--danger); font-size: 12px; }
+.quality-summary-card { display: grid; gap: 13px; margin-bottom: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.quality-summary-card.ok { border-color: #b8d5b4; background: #eff8ed; }
+.quality-summary-card.warn { border-color: #f0c7c5; background: #fff8f7; }
+.quality-summary-head { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; align-items: center; }
+.quality-summary-head h3 { margin: 0; font-size: 17px; letter-spacing: 0; }
+.quality-summary-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; font-weight: 750; }
+.quality-bars { display: grid; gap: 10px; }
+.quality-bar-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(96px, 1fr) auto; gap: 10px; align-items: center; }
+.quality-bar-row strong { display: block; font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
+.quality-bar-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 750; line-height: 1.3; }
+.quality-bar-row b { min-width: 28px; text-align: right; font-size: 16px; }
+.quality-bar-track { height: 10px; overflow: hidden; border-radius: 999px; background: #e9ede7; }
+.quality-bar-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #d99a28, var(--danger)); }
+.quality-summary-card.ok .quality-bar-track span { background: var(--green); }
 .route-note-form { display: grid; gap: 8px; padding-top: 6px; }
 .route-note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
 .route-note-form textarea { min-height: 76px; border-radius: 12px; }

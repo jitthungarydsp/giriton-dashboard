@@ -846,6 +846,97 @@ function renderDailyShiftReport(rows = []) {
   `;
 }
 
+function uncleanedLateStopCount(row = {}) {
+  const cleanedCount = Number(row.cleanedDelayCount || 0);
+  const uncleanedCount = Number(row.uncleanedDelayCount || 0);
+  const hasCleaningData = Boolean(row.hasDelayCleaning || cleanedCount > 0 || uncleanedCount > 0);
+  if (hasCleaningData) return Math.max(0, uncleanedCount);
+  return Math.max(0, Number(row.timeWindowLateCount || row.apiDelayedOrderCount || 0));
+}
+
+function qualitySummaryFromDailyHistory(rows = []) {
+  const noShowByDate = {};
+  const lateShiftKeys = new Set();
+  let uncleanedLateCount = 0;
+  let uncleanedLateMinutes = 0;
+
+  rows.forEach((row) => {
+    const workDate = String(row.date || "").slice(0, 10);
+    const noShow = Number(row.apiDidNotComeCount || 0);
+    if (workDate) noShowByDate[workDate] = Math.max(noShowByDate[workDate] || 0, noShow);
+
+    const shiftLateMinutes = routeShiftLateMinutes(row, row.routeStory || {});
+    if (shiftLateMinutes > 0) lateShiftKeys.add(shiftKeyForRoute(row));
+
+    const lateCount = uncleanedLateStopCount(row);
+    uncleanedLateCount += lateCount;
+    if (lateCount > 0) uncleanedLateMinutes += Number(row.uncleanedDelayMinutes || row.timeWindowLateMinutes || 0);
+  });
+
+  const noShowCount = Object.values(noShowByDate).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalProblems = noShowCount + lateShiftKeys.size + uncleanedLateCount;
+  return {
+    noShowCount,
+    lateShiftCount: lateShiftKeys.size,
+    uncleanedTimeWindowLateCount: uncleanedLateCount,
+    uncleanedTimeWindowLateMinutes: uncleanedLateMinutes,
+    totalProblems,
+    ok: totalProblems <= 0,
+  };
+}
+
+function renderQualitySummaryChart(payload = {}) {
+  const summary = payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || []);
+  const items = [
+    {
+      key: "late-shift",
+      label: "Műszak késés",
+      value: Number(summary.lateShiftCount || 0),
+      note: "Késő sorba állás / műszakkezdéshez képest",
+    },
+    {
+      key: "late-window",
+      label: "Nem mentesített címkésés",
+      value: Number(summary.uncleanedTimeWindowLateCount || 0),
+      note: `${formatCount(summary.uncleanedTimeWindowLateMinutes || 0)} perc összesen`,
+    },
+    {
+      key: "no-show",
+      label: "No-show",
+      value: Number(summary.noShowCount || 0),
+      note: "Nem jelent meg műszakban",
+    },
+  ];
+  const maxValue = Math.max(1, ...items.map((item) => item.value));
+  const statusOk = Boolean(summary.ok || Number(summary.totalProblems || 0) <= 0);
+  return `
+    <section class="quality-summary-card ${statusOk ? "ok" : "warn"}">
+      <div class="quality-summary-head">
+        ${renderStatusBadge(statusOk)}
+        <div>
+          <h3>${statusOk ? "Szép munka, tiszta hónap" : "Erre érdemes ránézni"}</h3>
+          <p>${statusOk ? "Nincs no-show, műszak késés vagy nem mentesített időablak-késés." : "A három fő minőségi jelzés havi összesítése."}</p>
+        </div>
+      </div>
+      <div class="quality-bars">
+        ${items.map((item) => {
+          const width = Math.max(4, Math.round((item.value / maxValue) * 100));
+          return `
+            <div class="quality-bar-row">
+              <div>
+                <strong>${escapeHtml(item.label)}</strong>
+                <small>${escapeHtml(item.note)}</small>
+              </div>
+              <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
+              <b>${formatCount(item.value)}</b>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function routeStoryDistance(label, value) {
   const numeric = Number(value || 0);
   return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${formatAverage(numeric)} km</strong></div>`;
@@ -1271,6 +1362,7 @@ function renderStatistics() {
     </div>
   `).join("");
   breakdown.innerHTML = `
+    ${renderQualitySummaryChart(payload)}
     ${renderDailyHistory(payload)}
     <div class="process-title">
       <span class="step-code">∑</span>

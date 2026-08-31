@@ -5190,6 +5190,31 @@ def persist_route_quality_records(records: list[dict[str, Any]]) -> None:
         print("Route quality report save skipped:", exc.detail)
 
 
+def build_route_quality_summary(
+    *,
+    daily_rows: list[dict[str, Any]],
+    route_quality_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
+    late_shift_keys = {
+        str(row.get("shift_key") or f"{row.get('work_date') or ''}_{row.get('route_id') or ''}").strip()
+        for row in route_quality_records
+        if safe_int(row.get("late_start_minutes")) > 0
+    }
+    late_shift_keys.discard("")
+    uncleaned_late_count = sum(safe_int(row.get("late_stop_count")) for row in route_quality_records)
+    uncleaned_late_minutes = sum(safe_int(row.get("late_stop_minutes")) for row in route_quality_records)
+    total_problems = no_show_count + len(late_shift_keys) + uncleaned_late_count
+    return {
+        "noShowCount": no_show_count,
+        "lateShiftCount": len(late_shift_keys),
+        "uncleanedTimeWindowLateCount": uncleaned_late_count,
+        "uncleanedTimeWindowLateMinutes": uncleaned_late_minutes,
+        "totalProblems": total_problems,
+        "ok": total_problems <= 0,
+    }
+
+
 def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "bill_jitt_invoice_customer_rating_bonus",
@@ -5655,6 +5680,10 @@ def build_monthly_courier_statistics(
         rows=daily_history_rows,
     )
     persist_route_quality_records(route_quality_records)
+    route_quality_summary = build_route_quality_summary(
+        daily_rows=daily_rows,
+        route_quality_records=route_quality_records,
+    )
 
     return {
         "month": period_start.strftime("%Y-%m"),
@@ -5684,6 +5713,7 @@ def build_monthly_courier_statistics(
             "okRows": sum(1 for row in route_quality_records if row.get("quality_ok")),
             "problemRows": sum(1 for row in route_quality_records if not row.get("quality_ok")),
         },
+        "qualitySummary": route_quality_summary,
         "rawRouteOverview": {
             "source": route_source or "",
             "routes": route_rows,
