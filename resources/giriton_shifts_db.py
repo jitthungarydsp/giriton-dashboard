@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 import re
 import unicodedata
@@ -14,6 +15,7 @@ from resources.supabase_raw import (
 
 
 SOURCE_NAME = "giriton-shifts-robot"
+MIN_ROWS_PER_WORK_DATE = 80
 
 
 def clean(value):
@@ -402,6 +404,47 @@ def delete_existing_shift_dates(db_rows):
     }
 
 
+def min_rows_per_work_date():
+    value = clean(os.getenv("GIRITON_RAW_MIN_ROWS_PER_DAY"))
+    if not value:
+        return MIN_ROWS_PER_WORK_DATE
+    try:
+        return max(int(value), 0)
+    except ValueError:
+        return MIN_ROWS_PER_WORK_DATE
+
+
+def validate_complete_shift_export(db_rows):
+    minimum_rows = min_rows_per_work_date()
+    if minimum_rows <= 0:
+        return
+
+    counts = {}
+    for row in db_rows:
+        work_date = clean(row.get("work_date"))
+        if work_date:
+            counts[work_date] = counts.get(work_date, 0) + 1
+
+    incomplete = {
+        work_date: count
+        for work_date, count in counts.items()
+        if count < minimum_rows
+    }
+    if not incomplete:
+        return
+
+    details = ", ".join(
+        f"{work_date}: {count} sor"
+        for work_date, count in sorted(incomplete.items())
+    )
+    raise RuntimeError(
+        "GIRITON_RAW_EXPORT_INCOMPLETE_DAY "
+        f"minimum={minimum_rows} "
+        f"found={details}. "
+        "A DB frissítés leállt, hogy a részleges Giriton lista ne írja felül a jó adatokat."
+    )
+
+
 def upsert_giriton_shift_rows(rows):
     db_rows = build_db_rows(rows)
 
@@ -410,6 +453,8 @@ def upsert_giriton_shift_rows(rows):
             "rows": 0,
             "status": "empty",
         }
+
+    validate_complete_shift_export(db_rows)
 
     supabase_url, headers = get_headers()
     delete_result = delete_existing_shift_dates(db_rows)

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       start_date:
-        description: "Kezdo datum YYYY-MM-DD, uresen mai nap"
+        description: "Kezdo datum YYYY-MM-DD, uresen holnap"
         required: false
         default: ""
       days:
@@ -68,7 +68,7 @@ jobs:
           DAYS="${DAYS:-10}"
           EXPORT_ENGINE="${EXPORT_ENGINE:-uidl}"
           if [ -z "$START_DATE" ]; then
-            START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"
+            START_DATE="$(python -c 'from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=1)).isoformat())')"
           fi
 
           if [ "$EXPORT_ENGINE" = "uidl" ]; then
