@@ -28,6 +28,7 @@ from scripts.live_giriton_shift_list import (  # noqa: E402
     open_shift_subscriptions,
     select_all_departments,
     set_giriton_date,
+    scroll_all_shifts,
     uidl_headers,
     wait_until_loaded,
 )
@@ -462,6 +463,7 @@ def main() -> int:
         collect_uidl_events(driver)
         set_giriton_date(driver, work_date)
         wait_until_loaded(driver, args.timeout)
+        scroll_all_shifts(driver)
         time.sleep(1)
         initial_events = collect_uidl_events(driver)
         initial_payloads = [

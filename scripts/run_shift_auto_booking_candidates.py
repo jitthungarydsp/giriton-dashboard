@@ -161,6 +161,12 @@ def main() -> None:
         print(f"SHIFT_AUTO_BOOK_FAILURES count={len(failures)}")
         for label, message in failures:
             print(f"SHIFT_AUTO_BOOK_FAILURE {label} {message}")
+        if args.continue_on_error:
+            print(
+                f"SHIFT_AUTO_BOOK_RUN_PARTIAL phase={args.phase} "
+                f"candidates={len(candidates)} failures={len(failures)}"
+            )
+            return
         raise SystemExit(1)
 
     print(f"SHIFT_AUTO_BOOK_RUN_DONE phase={args.phase} candidates={len(candidates)}")

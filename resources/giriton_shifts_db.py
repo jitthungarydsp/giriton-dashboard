@@ -22,14 +22,23 @@ def clean(value):
     return str(value or "").strip()
 
 
+def clean_courier_name(value):
+    text = clean(value)
+    if not text:
+        return ""
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*Applicants\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 def normalize_name(value):
-    text = unicodedata.normalize("NFKD", clean(value).casefold())
+    text = unicodedata.normalize("NFKD", clean_courier_name(value).casefold())
     text = "".join(char for char in text if not unicodedata.combining(char))
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def courier_id_from_text(value):
-    match = re.search(r"\b(\d{4,5})\b", clean(value))
+    match = re.search(r"\b(\d{4,5})\b", clean_courier_name(value))
     return match.group(1) if match else ""
 
 
@@ -57,7 +66,7 @@ def lookup_courier_names(courier_lookup):
 
 
 def split_courier_names_by_lookup(value, courier_lookup):
-    text = clean(value)
+    text = clean_courier_name(value)
     normalized_text = normalize_name(text)
     if not normalized_text or not courier_lookup:
         return []
@@ -94,7 +103,7 @@ def split_courier_names_by_lookup(value, courier_lookup):
 
 
 def split_courier_names(value, courier_lookup=None):
-    text = clean(value)
+    text = clean_courier_name(value)
     if not text:
         return []
     text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)

@@ -309,13 +309,22 @@ def _format_github_time(value) -> str:
 
 
 def _match_text(value) -> str:
-    text = unicodedata.normalize("NFKD", _clean(value).casefold())
+    text = unicodedata.normalize("NFKD", _clean(_strip_worker_noise(value)).casefold())
     text = "".join(char for char in text if not unicodedata.combining(char))
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+def _strip_worker_noise(value) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*Applicants\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
 def _courier_id_from_text(value) -> str:
-    match = re.search(r"\b(\d{4,5})\b", _clean(value))
+    match = re.search(r"\b(\d{4,5})\b", _strip_worker_noise(value))
     return match.group(1) if match else ""
 
 
@@ -347,10 +356,9 @@ def _booking_courier_id(row: dict) -> str:
 
 
 def _worker_name_parts(value) -> list[str]:
-    text = _clean(value)
+    text = _strip_worker_noise(value)
     if not text:
         return []
-    text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
     parts = [
         part.strip()
         for part in re.split(r"\s*[,;|]\s*", text)
