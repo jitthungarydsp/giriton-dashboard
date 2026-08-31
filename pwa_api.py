@@ -5192,9 +5192,10 @@ def build_route_quality_records(
         cleaned_delay_count = safe_int(row.get("cleanedDelayCount"))
         uncleaned_delay_count = safe_int(row.get("uncleanedDelayCount"))
         uncleaned_delay_minutes = safe_int(row.get("uncleanedDelayMinutes"))
-        has_cleaning_data = any(
-            key in row and row.get(key) not in (None, "")
-            for key in ("cleanedDelayCount", "uncleanedDelayCount", "hasDelayCleaning")
+        has_cleaning_data = (
+            bool(row.get("hasDelayCleaning"))
+            or cleaned_delay_count > 0
+            or uncleaned_delay_count > 0
         )
         late_stop_count = uncleaned_delay_count if has_cleaning_data else route_late_stop_count
         late_stop_minutes = uncleaned_delay_minutes if has_cleaning_data else route_late_stop_minutes
