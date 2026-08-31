@@ -138,7 +138,8 @@ def authorization_from_performance_logs(driver: webdriver.Chrome) -> str:
             continue
         method = message.get("method")
         params = message.get("params") or {}
-        headers = params.get("headers") or {}
+        request = params.get("request") or {}
+        headers = params.get("headers") or request.get("headers") or {}
         if method not in {"Network.requestWillBeSent", "Network.requestWillBeSentExtraInfo"}:
             continue
         authorization = headers.get("Authorization") or headers.get("authorization")
@@ -200,12 +201,12 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     time.sleep(3)
 
 
-def probe_api(driver: webdriver.Chrome, base_url: str, probe_path: str) -> None:
+def probe_api(driver: webdriver.Chrome, base_url: str, probe_path: str) -> dict[str, Any]:
     today = date.today().isoformat()
     path = probe_path.format(today=today)
     url = path if path.startswith("http") else base_url.rstrip("/") + "/" + path.lstrip("/")
     try:
-        driver.execute_async_script(
+        result = driver.execute_async_script(
             """
 const url = arguments[0];
 const done = arguments[arguments.length - 1];
@@ -215,8 +216,10 @@ fetch(url, {credentials: 'include'})
 """,
             url,
         )
+        return result if isinstance(result, dict) else {}
     except JavascriptException as exc:
         debug(f"COURIER_HUB_AUTH_PROBE_ERROR={type(exc).__name__}")
+        return {}
 
 
 def main() -> int:
@@ -237,7 +240,7 @@ def main() -> int:
         driver.get(args.url)
         time.sleep(3)
         login_if_needed(driver, username, password, args.wait)
-        probe_api(driver, args.url, args.probe_path)
+        probe_result = probe_api(driver, args.url, args.probe_path)
         time.sleep(2)
 
         authorization = authorization_from_performance_logs(driver)
@@ -246,13 +249,18 @@ def main() -> int:
             authorization = normalize_authorization(tokens[0]) if tokens else ""
         cookie = cookie_header(driver)
 
-        if not authorization and not cookie:
-            raise RuntimeError("Courier Hub auth refresh did not find Authorization or cookies.")
+        probe_status = probe_result.get("status")
+        if not authorization:
+            raise RuntimeError(
+                "Courier Hub auth refresh did not find Bearer authorization. "
+                f"Browser probe status={probe_status or '-'}, cookies={'yes' if cookie else 'no'}."
+            )
 
         debug(
             "COURIER_HUB_AUTH_REFRESH=OK "
             f"authorization={'yes' if authorization else 'no'} "
-            f"cookies={'yes' if cookie else 'no'}"
+            f"cookies={'yes' if cookie else 'no'} "
+            f"probe_status={probe_status or '-'}"
         )
         print(
             json.dumps(
