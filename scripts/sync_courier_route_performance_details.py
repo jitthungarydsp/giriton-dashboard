@@ -467,7 +467,14 @@ def main() -> int:
     parser.add_argument("--sleep", type=float, default=0.15)
     parser.add_argument("--skip-shifts", action="store_true", help="Skip Courier Hub monthly shifts endpoint sync.")
     parser.add_argument("--skip-route-details", action="store_true", help="Skip route performance detail endpoint sync.")
+    parser.add_argument(
+        "--only-shifts",
+        action="store_true",
+        help="Only sync Courier Hub monthly shifts; skip route performance details.",
+    )
     args = parser.parse_args()
+    if args.only_shifts:
+        args.skip_route_details = True
 
     start_date = parse_date(args.start_date)
     parsed_end_date = parse_date(args.end_date)
