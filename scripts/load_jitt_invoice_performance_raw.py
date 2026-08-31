@@ -322,9 +322,15 @@ def refresh_courier_hub_headers():
     )
 
     if completed.returncode != 0:
+        stderr_tail = "\n".join(
+            line
+            for line in completed.stderr.strip().splitlines()[-12:]
+            if line.strip()
+        )
         raise RuntimeError(
             "KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND failed "
             f"with exit code {completed.returncode}."
+            + (f" Refresh stderr: {stderr_tail}" if stderr_tail else "")
         )
 
     payload = _parse_auth_command_output(completed.stdout)
