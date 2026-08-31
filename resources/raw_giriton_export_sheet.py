@@ -311,7 +311,63 @@ def _driver_by_email(driver_lookup, email):
     )
 
 
-def _split_subscribed_names(value):
+def _driver_name_pattern(value):
+    tokens = _name_without_courier_id(value).split()
+    if len(tokens) < 2:
+        return ""
+    separator = r"(?:\s+\d{4,5})?\s+"
+    return r"\b" + separator.join(re.escape(token) for token in tokens) + r"\b"
+
+
+def _driver_lookup_names(driver_lookup):
+    records = {}
+    for record in (driver_lookup or {}).get("by_id", {}).values():
+        name = str(record.get("name") or "").strip()
+        key = _name_without_courier_id(name)
+        if name and key:
+            records[key] = name
+
+    return sorted(records.values(), key=lambda name: len(_name_without_courier_id(name)), reverse=True)
+
+
+def _split_subscribed_names_by_lookup(value, driver_lookup):
+    text = str(value or "").strip()
+    normalized_text = _normalize_name(text)
+    if not normalized_text or not driver_lookup:
+        return []
+
+    matches = []
+    seen = set()
+    for driver_name in _driver_lookup_names(driver_lookup):
+        pattern = _driver_name_pattern(driver_name)
+        if not pattern:
+            continue
+        for match in re.finditer(pattern, normalized_text):
+            match_key = (match.start(), match.end(), driver_name)
+            if match_key in seen:
+                continue
+            seen.add(match_key)
+            matches.append((match.start(), match.end(), driver_name))
+
+    if len(matches) < 2:
+        return []
+
+    selected = []
+    occupied = []
+    for start, end, driver_name in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if any(start < occupied_end and end > occupied_start for occupied_start, occupied_end in occupied):
+            continue
+        selected.append((start, end, driver_name))
+        occupied.append((start, end))
+
+    selected = sorted(selected)
+    if len(selected) < 2:
+        return []
+
+    return [driver_name for _start, _end, driver_name in selected]
+
+
+def _split_subscribed_names(value, driver_lookup=None):
     text = str(value or "").strip()
 
     if not text:
@@ -324,6 +380,17 @@ def _split_subscribed_names(value):
         for name in re.split(r"\s*(?:,|;|\||\r?\n)+\s*", text)
         if name.strip()
     ]
+    if len(parts) == 1:
+        lookup_parts = _split_subscribed_names_by_lookup(parts[0], driver_lookup)
+        if lookup_parts:
+            print(
+                "GIRITON_RAW_EXPORT_SPLIT_SUBSCRIBED_USERS "
+                f"source={parts[0]} "
+                f"split_count={len(lookup_parts)} "
+                f"names={'; '.join(lookup_parts)}"
+            )
+            return lookup_parts
+    return parts
 
 
 def _normalize_row(row):
@@ -735,7 +802,7 @@ def _enrich_giriton_rows(rows, driver_lookup):
             maximum = ""
             name = _cell(row, 5)
 
-        names = _split_subscribed_names(name)
+        names = _split_subscribed_names(name, driver_lookup)
         if not names:
             names = ["URES"]
 

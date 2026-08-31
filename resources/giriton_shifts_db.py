@@ -1,5 +1,6 @@
 from datetime import datetime
 import re
+import unicodedata
 
 import pandas as pd
 import requests
@@ -20,9 +21,9 @@ def clean(value):
 
 
 def normalize_name(value):
-    text = clean(value).casefold()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    text = unicodedata.normalize("NFKD", clean(value).casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
 def courier_id_from_text(value):
@@ -36,7 +37,61 @@ def name_without_courier_id(value):
     )
 
 
-def split_courier_names(value):
+def courier_name_pattern(value):
+    tokens = name_without_courier_id(value).split()
+    if len(tokens) < 2:
+        return ""
+    separator = r"(?:\s+\d{4,5})?\s+"
+    return r"\b" + separator.join(re.escape(token) for token in tokens) + r"\b"
+
+
+def lookup_courier_names(courier_lookup):
+    names = set()
+    for courier in (courier_lookup or {}).values():
+        name = clean(courier.get("name"))
+        if name and len(name_without_courier_id(name).split()) >= 2:
+            names.add(name)
+    return sorted(names, key=lambda name: len(name_without_courier_id(name)), reverse=True)
+
+
+def split_courier_names_by_lookup(value, courier_lookup):
+    text = clean(value)
+    normalized_text = normalize_name(text)
+    if not normalized_text or not courier_lookup:
+        return []
+
+    matches = []
+    seen = set()
+    for courier_name in lookup_courier_names(courier_lookup):
+        pattern = courier_name_pattern(courier_name)
+        if not pattern:
+            continue
+        for match in re.finditer(pattern, normalized_text):
+            match_key = (match.start(), match.end(), courier_name)
+            if match_key in seen:
+                continue
+            seen.add(match_key)
+            matches.append((match.start(), match.end(), courier_name))
+
+    if len(matches) < 2:
+        return []
+
+    selected = []
+    occupied = []
+    for start, end, courier_name in sorted(matches, key=lambda item: (item[0], -(item[1] - item[0]))):
+        if any(start < occupied_end and end > occupied_start for occupied_start, occupied_end in occupied):
+            continue
+        selected.append((start, end, courier_name))
+        occupied.append((start, end))
+
+    selected = sorted(selected)
+    if len(selected) < 2:
+        return []
+
+    return [courier_name for _start, _end, courier_name in selected]
+
+
+def split_courier_names(value, courier_lookup=None):
     text = clean(value)
     if not text:
         return []
@@ -46,6 +101,10 @@ def split_courier_names(value):
         for part in re.split(r"\s*[,;|]\s*", text)
         if part.strip()
     ]
+    if len(parts) == 1:
+        lookup_parts = split_courier_names_by_lookup(parts[0], courier_lookup)
+        if lookup_parts:
+            return lookup_parts
     return parts or [text]
 
 
@@ -156,6 +215,7 @@ def read_courier_lookup():
         courier = {
             "courier_id": row.get("courier_id"),
             "email": clean(row.get("email")).casefold(),
+            "name": clean(row.get("courier_name")),
         }
 
         if name:
@@ -235,7 +295,7 @@ def build_db_rows(rows, courier_lookup=None):
         if is_empty_name(courier_name):
             courier_names = ["URES"]
         else:
-            courier_names = split_courier_names(courier_name)
+            courier_names = split_courier_names(courier_name, courier_lookup)
 
         for current_courier_name in courier_names:
             if is_empty_name(current_courier_name):
