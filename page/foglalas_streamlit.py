@@ -931,6 +931,7 @@ def _booking_action_badge(row: dict) -> str:
     label = "Újrafuttatás" if is_retry else "Foglalás"
     return (
         f"<a class='action-badge {badge_class} action-link' href='?{query}' "
+        f"target='_self' "
         f"title='Éles Giriton foglalás indítása serial alapján'>{label}</a>"
     )
 
@@ -1957,7 +1958,7 @@ def _render_auto_booking_summary(log_df: pd.DataFrame) -> None:
     failed_count = int(summary_rows["eredmeny"].eq("Nem sikerült").sum())
     running_count = int(summary_rows["eredmeny"].eq("Folyamatban").sum())
 
-    with st.expander("Automata foglalás összesítő", expanded=True):
+    with st.expander("Automata foglalás összesítő", expanded=False):
         st.markdown(
             f"**Sikerült:** {success_count} | "
             f"**Nem sikerült:** {failed_count} | "
@@ -3452,7 +3453,7 @@ def _render_recent_booking_issues(log_df: pd.DataFrame) -> None:
         issues = issues.sort_values("created_at", ascending=False)
 
     latest = issues.head(5)
-    with st.expander("Legutóbbi robot hibák / figyelmeztetések", expanded=True):
+    with st.expander("Legutóbbi robot hibák / figyelmeztetések", expanded=False):
         st.caption("Itt látszik, ha a robot nem foglalt, és miért állt meg.")
         _display_table(
             latest,
