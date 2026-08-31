@@ -38,6 +38,10 @@ jobs:
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
       COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
+      COURIER_HUB_AUTH_DEBUG_DIR: results/courier-hub-auth
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -97,3 +101,11 @@ jobs:
 
           echo "Running financial overview sync."
           "${CMD[@]}"
+
+      - name: Upload Courier Hub auth debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-hub-auth-debug
+          path: results/courier-hub-auth
+          if-no-files-found: ignore

@@ -35,6 +35,10 @@ jobs:
       KIFLI_COURIER_HUB_AUTHORIZATION: ${{ secrets.KIFLI_COURIER_HUB_AUTHORIZATION || secrets.COURIER_HUB_AUTHORIZATION }}
       KIFLI_COURIER_HUB_API_KEY: ${{ secrets.KIFLI_COURIER_HUB_API_KEY || secrets.COURIER_HUB_API_KEY }}
       KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON: ${{ secrets.KIFLI_COURIER_HUB_EXTRA_HEADERS_JSON }}
+      KIFLI_COURIER_HUB_AUTH_DEBUG_DIR: results/courier-hub-auth
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -54,8 +58,10 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$KIFLI_COURIER_HUB_COOKIE" || (echo "Missing Courier Hub cookie secret" && exit 1)
-          test -n "$KIFLI_COURIER_HUB_AUTHORIZATION" || (echo "Missing Courier Hub authorization secret" && exit 1)
+          if [ -z "$KIFLI_COURIER_HUB_AUTHORIZATION" ] && { [ -z "$KIFLI_COURIER_HUB_USERNAME" ] || [ -z "$KIFLI_COURIER_HUB_PASSWORD" ]; }; then
+            echo "Missing Courier Hub authorization secret or login secrets"
+            exit 1
+          fi
 
       - name: Resolve dates
         id: dates
@@ -96,3 +102,11 @@ jobs:
           fi
 
           "${CMD[@]}"
+
+      - name: Upload Courier Hub auth debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-hub-auth-debug
+          path: results/courier-hub-auth
+          if-no-files-found: ignore
