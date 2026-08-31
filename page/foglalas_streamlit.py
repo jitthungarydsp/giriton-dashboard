@@ -326,6 +326,18 @@ def _normalized_courier_id(value) -> str:
     return courier_id
 
 
+def _booking_serial_key(value) -> str:
+    serial = _clean(value)
+    if not serial:
+        return ""
+
+    match = re.search(r"_(\d{1,2}:\d{2})(?::00)?$", serial)
+    if not match:
+        return serial
+
+    return f"{serial[:match.start(1)]}{_normalize_time(match.group(1))}"
+
+
 def _booking_courier_id(row: dict) -> str:
     for key in ["Courier ID", "courier_id"]:
         courier_id = _normalized_courier_id(row.get(key))
@@ -1063,6 +1075,61 @@ def _group_giriton_bookings(df: pd.DataFrame) -> dict[tuple[str, str, str], dict
     return groups
 
 
+def _booked_giriton_record_indexes(giriton_df: pd.DataFrame) -> tuple[dict[str, dict], dict[tuple[str, str, str, str], dict]]:
+    by_serial: dict[str, dict] = {}
+    by_identity_time: dict[tuple[str, str, str, str], dict] = {}
+
+    if giriton_df.empty or "start_time" not in giriton_df.columns:
+        return by_serial, by_identity_time
+
+    for _, row in giriton_df.iterrows():
+        record = row.to_dict()
+        if not _is_booked_giriton_shift(record):
+            continue
+
+        work_date = _clean(record.get("work_date"))
+        warehouse_key = _warehouse_match_key(record.get("warehouse"))
+        start = _normalize_time(record.get("start_time"))
+        if not work_date or not warehouse_key or not start:
+            continue
+
+        serial = _booking_serial_key(record.get("serial"))
+        if serial:
+            by_serial.setdefault(serial, record)
+
+        for worker_key in _booking_worker_match_keys(record):
+            by_identity_time.setdefault(
+                (work_date, worker_key, warehouse_key, start),
+                record,
+            )
+
+    return by_serial, by_identity_time
+
+
+def _exact_booked_giriton_record(
+    source_record: dict,
+    work_date: str,
+    warehouse_key: str,
+    muszakpro_time: str,
+    booked_by_serial: dict[str, dict],
+    booked_by_identity_time: dict[tuple[str, str, str, str], dict],
+) -> dict:
+    serial = _booking_serial_key(source_record.get("serial"))
+    if serial and serial in booked_by_serial:
+        return booked_by_serial[serial]
+
+    start = _normalize_time(muszakpro_time)
+    if not start:
+        return {}
+
+    for worker_key in _booking_worker_match_keys(source_record):
+        record = booked_by_identity_time.get((work_date, worker_key, warehouse_key, start))
+        if record:
+            return record
+
+    return {}
+
+
 def _format_diff(diff: int | None) -> str:
     if diff is None:
         return "-"
@@ -1287,6 +1354,7 @@ def _build_summary_rows(
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_giriton_availability(giriton_df)
     booked_giriton_groups = _group_giriton_bookings(giriton_df)
+    booked_by_serial, booked_by_identity_time = _booked_giriton_record_indexes(giriton_df)
     shift_start_parameters = _load_shift_start_parameters()
     aliased_booked_keys = set()
 
@@ -1391,32 +1459,66 @@ def _build_summary_rows(
             source_record = records_by_time.get(muszakpro_time, {})
             giriton_booking = "-"
             giriton_offer = "-"
-            available_booked_values = [
-                value
-                for value in booked_values
-                if value not in used_booked_values
-            ]
-            booked_time, booked_diff, booked_status = _nearest_single_giriton_time(
+            booked_match_found = False
+            exact_booked_record = _exact_booked_giriton_record(
+                source_record,
+                work_date,
+                warehouse_key,
                 muszakpro_time,
-                available_booked_values,
-                max(tolerance_minutes, BOOKED_SHIFT_MATCH_TOLERANCE_MINUTES),
+                booked_by_serial,
+                booked_by_identity_time,
             )
-            if booked_status in {"exact", "alternative"}:
+
+            if exact_booked_record:
                 status = "Lefoglalva"
                 giriton_state = "Lefoglalva"
+                booked_time = _normalize_time(exact_booked_record.get("start_time"))
+                booked_diff = _diff_minutes(muszakpro_time, booked_time)
                 giriton_booking = booked_time
                 diff_value = booked_diff
                 reason = "Ez a műszak már le van foglalva Giritonban"
-                used_booked_values.add(booked_time)
-                booked_record = booked_records_by_time.get(booked_time, {})
+                if booked_time:
+                    used_booked_values.add(booked_time)
                 consumed_booked_rows.add(
                     (
                         work_date,
                         warehouse_key,
                         booked_time,
-                        _booking_worker_match_key(booked_record),
+                        _booking_worker_match_key(exact_booked_record),
                     )
                 )
+                booked_match_found = True
+            else:
+                available_booked_values = [
+                    value
+                    for value in booked_values
+                    if value not in used_booked_values
+                ]
+                booked_time, booked_diff, booked_status = _nearest_single_giriton_time(
+                    muszakpro_time,
+                    available_booked_values,
+                    max(tolerance_minutes, BOOKED_SHIFT_MATCH_TOLERANCE_MINUTES),
+                )
+                if booked_status in {"exact", "alternative"}:
+                    status = "Lefoglalva"
+                    giriton_state = "Lefoglalva"
+                    giriton_booking = booked_time
+                    diff_value = booked_diff
+                    reason = "Ez a műszak már le van foglalva Giritonban"
+                    used_booked_values.add(booked_time)
+                    booked_record = booked_records_by_time.get(booked_time, {})
+                    consumed_booked_rows.add(
+                        (
+                            work_date,
+                            warehouse_key,
+                            booked_time,
+                            _booking_worker_match_key(booked_record),
+                        )
+                    )
+                    booked_match_found = True
+
+            if booked_match_found:
+                pass
             elif muszakpro_time in daily_plan:
                 giriton_time, diff_value, plan_status = daily_plan[muszakpro_time]
                 if plan_status == "booked":
