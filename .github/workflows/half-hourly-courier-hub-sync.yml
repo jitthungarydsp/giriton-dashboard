@@ -92,16 +92,66 @@ jobs:
         id: days
         shell: bash
         run: |
-          START_DATE="$(TZ=Europe/Budapest date -d '${{ steps.period.outputs.year }}-${{ steps.period.outputs.month }}-01' +%F)"
-          END_DATE="$(TZ=Europe/Budapest date +%F)"
+          OUTPUT_FILE="$(mktemp)"
+          python - <<'PY' > "$OUTPUT_FILE"
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
 
-          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
-          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+          import requests
 
-          echo "START_DATE=$START_DATE"
-          echo "END_DATE=$END_DATE"
+          supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+          supabase_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          headers = {
+              "apikey": supabase_key,
+              "Authorization": f"Bearer {supabase_key}",
+          }
+          tables = ("raw_jitt_invoice_perf_bud1", "raw_jitt_invoice_perf_bud2")
+          latest_dates = []
+
+          for table in tables:
+              response = requests.get(
+                  f"{supabase_url}/rest/v1/{table}",
+                  headers=headers,
+                  params={
+                      "select": "date_to",
+                      "source_name": "eq.courier_hub_performance_couriers",
+                      "status_code": "eq.200",
+                      "order": "date_to.desc",
+                      "limit": "1",
+                  },
+                  timeout=30,
+              )
+              response.raise_for_status()
+              rows = response.json()
+              if rows and rows[0].get("date_to"):
+                  latest_dates.append(datetime.strptime(rows[0]["date_to"][:10], "%Y-%m-%d").date())
+
+          today = datetime.now(ZoneInfo("Europe/Budapest")).date()
+          month_start = datetime.strptime(
+              "${{ steps.period.outputs.year }}-${{ steps.period.outputs.month }}-01",
+              "%Y-%m-%d",
+          ).date()
+
+          if latest_dates:
+              start_date = min(latest_dates) + timedelta(days=1)
+          else:
+              start_date = month_start
+
+          if start_date < month_start:
+              start_date = month_start
+
+          skip = start_date > today
+          print(f"start_date={start_date.isoformat()}")
+          print(f"end_date={today.isoformat()}")
+          print(f"skip={'true' if skip else 'false'}")
+          PY
+
+          cat "$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+          cat "$OUTPUT_FILE"
 
       - name: Sync missing daily Courier Hub performance raw
+        if: steps.days.outputs.skip != 'true'
         shell: bash
         run: |
           CMD=(python scripts/load_jitt_invoice_performance_raw.py --start-date "${{ steps.days.outputs.start_date }}" --end-date "${{ steps.days.outputs.end_date }}" --chunk-days 1 --only-missing)
@@ -113,6 +163,7 @@ jobs:
           "${CMD[@]}"
 
       - name: Build daily courier performance rows
+        if: steps.days.outputs.skip != 'true'
         shell: bash
         run: |
           CMD=(python scripts/build_jitt_invoice_performance_daily_raw.py --start-date "${{ steps.days.outputs.start_date }}" --end-date "${{ steps.days.outputs.end_date }}")
