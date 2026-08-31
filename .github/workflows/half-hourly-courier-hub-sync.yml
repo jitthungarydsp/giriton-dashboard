@@ -36,7 +36,11 @@ jobs:
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
       COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
-      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py
+      COURIER_HUB_AUTH_DEBUG_DIR: results/courier-hub-auth
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
 
     steps:
       - name: Checkout
@@ -84,13 +88,37 @@ jobs:
           echo "MONTH=$MONTH"
           echo "DRY_RUN=$DRY_RUN"
 
-      - name: Sync Courier Hub financial overview
+      - name: Resolve missing-day range
+        id: days
         shell: bash
         run: |
-          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}")
+          START_DATE="$(TZ=Europe/Budapest date -d '${{ steps.period.outputs.year }}-${{ steps.period.outputs.month }}-01' +%F)"
+          END_DATE="$(TZ=Europe/Budapest date +%F)"
 
-          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
-            CMD+=(--apply)
+          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+
+          echo "START_DATE=$START_DATE"
+          echo "END_DATE=$END_DATE"
+
+      - name: Sync missing daily Courier Hub performance raw
+        shell: bash
+        run: |
+          CMD=(python scripts/load_jitt_invoice_performance_raw.py --start-date "${{ steps.days.outputs.start_date }}" --end-date "${{ steps.days.outputs.end_date }}" --chunk-days 1 --only-missing)
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Build daily courier performance rows
+        shell: bash
+        run: |
+          CMD=(python scripts/build_jitt_invoice_performance_daily_raw.py --start-date "${{ steps.days.outputs.start_date }}" --end-date "${{ steps.days.outputs.end_date }}")
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
           fi
 
           "${CMD[@]}"
@@ -105,3 +133,11 @@ jobs:
           fi
 
           "${CMD[@]}"
+
+      - name: Upload Courier Hub auth debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-hub-auth-debug
+          path: results/courier-hub-auth
+          if-no-files-found: ignore

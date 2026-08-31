@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from selenium import webdriver
@@ -56,6 +57,23 @@ def chrome_options(headed: bool) -> Options:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
     return options
+
+
+def save_debug_artifacts(driver: webdriver.Chrome, debug_dir: str, label: str) -> None:
+    if not debug_dir:
+        return
+    output_dir = Path(debug_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_label = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in label)
+    try:
+        driver.save_screenshot(str(output_dir / f"{safe_label}.png"))
+    except Exception as exc:
+        debug(f"COURIER_HUB_AUTH_DEBUG_SCREENSHOT_ERROR={type(exc).__name__}")
+    try:
+        (output_dir / f"{safe_label}.html").write_text(driver.page_source, encoding="utf-8")
+    except Exception as exc:
+        debug(f"COURIER_HUB_AUTH_DEBUG_HTML_ERROR={type(exc).__name__}")
+    debug(f"COURIER_HUB_AUTH_DEBUG_ARTIFACTS={output_dir / safe_label}")
 
 
 def text_is_token(value: Any) -> bool:
@@ -227,6 +245,7 @@ def main() -> int:
     parser.add_argument("--url", default=setting("COURIER_HUB_LOGIN_URL", "KIFLI_COURIER_HUB_LOGIN_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--probe-path", default=setting("COURIER_HUB_AUTH_PROBE_PATH", "KIFLI_COURIER_HUB_AUTH_PROBE_PATH") or DEFAULT_PROBE_PATH)
     parser.add_argument("--wait", type=int, default=int(setting("COURIER_HUB_AUTH_WAIT_SECONDS", "KIFLI_COURIER_HUB_AUTH_WAIT_SECONDS") or "45"))
+    parser.add_argument("--debug-dir", default=setting("COURIER_HUB_AUTH_DEBUG_DIR", "KIFLI_COURIER_HUB_AUTH_DEBUG_DIR"))
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
 
@@ -237,6 +256,10 @@ def main() -> int:
 
     driver = webdriver.Chrome(options=chrome_options(args.headed))
     try:
+        try:
+            driver.execute_cdp_cmd("Network.enable", {})
+        except Exception:
+            pass
         driver.get(args.url)
         time.sleep(3)
         login_if_needed(driver, username, password, args.wait)
@@ -251,6 +274,7 @@ def main() -> int:
 
         probe_status = probe_result.get("status")
         if not authorization:
+            save_debug_artifacts(driver, args.debug_dir, "missing_bearer")
             raise RuntimeError(
                 "Courier Hub auth refresh did not find Bearer authorization. "
                 f"Browser probe status={probe_status or '-'}, cookies={'yes' if cookie else 'no'}."
