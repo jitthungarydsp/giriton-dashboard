@@ -784,6 +784,13 @@ function nullableMinutesBetween(start, end) {
   return Math.round((endTime - startTime) / 60000);
 }
 
+function signedMinutesBetween(start, end) {
+  const startTime = start ? new Date(start).getTime() : NaN;
+  const endTime = end ? new Date(end).getTime() : NaN;
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return null;
+  return Math.round((endTime - startTime) / 60000);
+}
+
 function shiftKeyForRoute(row = {}) {
   return String(
     row.routeStory?.shiftStart
@@ -1017,12 +1024,13 @@ function renderNarrativeRouteStory(row) {
   const storyText = String(story.storyText || "");
   const shiftStart = story.shiftStart || row.plannedStartAt;
   const shiftEnd = story.shiftEnd || "";
-  const availableAt = story.availableForShiftSince || story.availableAt || story.courierRegisteredAt || row.shiftAvailableAt;
-  const registeredAt = story.courierRegisteredAt || story.queueStartedAt || row.actualStartAt;
+  const shiftCheckinAt = story.queueStartedAt || row.actualStartAt || story.availableForShiftSince || story.availableAt || row.shiftAvailableAt;
+  const availableAt = story.availableForShiftSince || story.availableAt || shiftCheckinAt || story.courierRegisteredAt || row.shiftAvailableAt;
+  const registeredAt = story.courierRegisteredAt || shiftCheckinAt;
   const assignedAt = story.assignedAt || row.routeAssignedAt;
-  const computedQueueDelta = shiftStart && availableAt ? minutesBetween(availableAt, shiftStart) : null;
+  const computedQueueDelta = shiftStart && shiftCheckinAt ? signedMinutesBetween(shiftStart, shiftCheckinAt) : null;
   const queueDelta = nullableNumber(story.queueEntryDeltaMinutes, computedQueueDelta);
-  const queueWait = nullableNumber(story.queueWaitMinutes, minutesBetween(availableAt, assignedAt));
+  const queueWait = nullableNumber(story.queueWaitMinutes, nullableMinutesBetween(shiftCheckinAt, assignedAt));
   const plannedDeparture = story.plannedDeparture || row.plannedDepartureAt;
   const realDeparture = story.realDeparture || row.departedAt;
   const plannedReturn = story.plannedReturn || row.plannedReturnAt;
@@ -1061,7 +1069,7 @@ function renderNarrativeRouteStory(row) {
       <section>
         <h4>Műszak és sorban állás</h4>
         <p>A futár műszakja <strong>${escapeHtml(fullDateTime(shiftStart))}</strong> és <strong>${escapeHtml(timeOnly(shiftEnd))}</strong> között volt.</p>
-        <p><strong>${escapeHtml(timeOnly(availableAt))}</strong>-kor már elérhető volt, vagyis ${escapeHtml(earlyText)} beállt a sorba. A route regisztráció <strong>${escapeHtml(timeOnly(registeredAt))}</strong>-kor történt.</p>
+        <p><strong>${escapeHtml(timeOnly(shiftCheckinAt || availableAt))}</strong>-kor állt be a műszak sorába, vagyis ${escapeHtml(earlyText)}. A route regisztráció <strong>${escapeHtml(timeOnly(registeredAt))}</strong>-kor történt.</p>
         <p>A túrát <strong>${escapeHtml(timeOnly(assignedAt))}</strong>-kor kapta meg, így összesen <strong>${escapeHtml(durationText(queueWait))}</strong> állt sorban.</p>
       </section>
 

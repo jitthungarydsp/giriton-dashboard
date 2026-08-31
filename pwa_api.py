@@ -4893,6 +4893,46 @@ def load_attendance_shift_rows_for_courier(
     courier_key = str(courier_id or "").strip()
     if not courier_key:
         return []
+    shifts: list[dict[str, Any]] = []
+    shift_overview_rows = optional_supabase_rows(
+        "courier_shift_overview",
+        params={
+            "select": "work_date,warehouse_id,shift_id,shift_name,shift_start,shift_end,planned_start_at,planned_end_at,raw_shift",
+            "courier_id": f"eq.{courier_key}",
+            "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
+            "order": "work_date.asc,shift_start.asc",
+            "limit": "500",
+        },
+        timeout=60,
+    )
+    for shift_row in shift_overview_rows:
+        work_date = str(shift_row.get("work_date") or "")[:10]
+        if not work_date:
+            continue
+        shift_start = str(shift_row.get("planned_start_at") or "").strip()
+        shift_end = str(shift_row.get("planned_end_at") or "").strip()
+        if not shift_start and shift_row.get("shift_start"):
+            shift_start = f"{work_date}T{str(shift_row.get('shift_start'))[:5]}:00"
+        if not shift_end and shift_row.get("shift_end"):
+            shift_end = f"{work_date}T{str(shift_row.get('shift_end'))[:5]}:00"
+        raw_shift = shift_row.get("raw_shift") if isinstance(shift_row.get("raw_shift"), dict) else {}
+        available = str(
+            raw_shift.get("availableForShiftSince")
+            or raw_shift.get("available_for_shift_since")
+            or raw_shift.get("queueStartedAt")
+            or raw_shift.get("actualStartAt")
+            or ""
+        )
+        shifts.append({
+            "date": work_date,
+            "shiftId": str(shift_row.get("shift_id") or raw_shift.get("shiftId") or raw_shift.get("id") or ""),
+            "shiftName": str(shift_row.get("shift_name") or raw_shift.get("shiftName") or raw_shift.get("name") or ""),
+            "warehouseName": str(shift_row.get("warehouse_id") or ""),
+            "shiftStart": shift_start,
+            "shiftEnd": shift_end,
+            "availableForShiftSince": available,
+            "source": "courier_shift_overview",
+        })
     raw_rows = optional_supabase_rows(
         "raw_dsp_attendance",
         params={
@@ -4912,7 +4952,6 @@ def load_attendance_shift_rows_for_courier(
         },
         timeout=60,
     )
-    shifts: list[dict[str, Any]] = []
     for raw in raw_rows:
         payload = raw.get("response_json") or {}
         if isinstance(payload, str):
@@ -4949,6 +4988,7 @@ def load_attendance_shift_rows_for_courier(
                     "shiftStart": shift_start,
                     "shiftEnd": shift_end,
                     "availableForShiftSince": available,
+                    "source": "raw_dsp_attendance",
                 })
     return shifts
 
@@ -4960,7 +5000,11 @@ def attendance_shift_lookup(rows: list[dict[str, Any]]) -> dict[tuple[str, str],
         shift_start = local_datetime(row.get("shiftStart"))
         if not work_date or not shift_start:
             continue
-        lookup[(work_date, shift_start.strftime("%H:%M"))] = row
+        key = (work_date, shift_start.strftime("%H:%M"))
+        existing = lookup.get(key)
+        if existing and str(existing.get("source") or "") == "courier_shift_overview":
+            continue
+        lookup[key] = row
     return lookup
 
 
@@ -5016,6 +5060,15 @@ def apply_attendance_shift_to_route_result(
     result["routeStory"]["availableForShiftSince"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableForShiftSince") or "")
     result["routeStory"]["availableAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("availableAt") or "")
     result["routeStory"]["queueStartedAt"] = str(attendance_shift.get("availableForShiftSince") or result["routeStory"].get("queueStartedAt") or "")
+    shift_start_at = local_datetime(result["routeStory"].get("shiftStart"))
+    checkin_at = local_datetime(result["routeStory"].get("queueStartedAt"))
+    assigned_at = local_datetime(result["routeStory"].get("assignedAt") or result.get("routeAssignedAt"))
+    if shift_start_at and checkin_at:
+        delta_minutes = int(round((checkin_at - shift_start_at).total_seconds() / 60))
+        result["plannedStartDelayMinutes"] = max(delta_minutes, 0)
+        result["routeStory"]["queueEntryDeltaMinutes"] = delta_minutes
+    if checkin_at and assigned_at and assigned_at >= checkin_at:
+        result["routeStory"]["queueWaitMinutes"] = int(round((assigned_at - checkin_at).total_seconds() / 60))
     return result
 
 
