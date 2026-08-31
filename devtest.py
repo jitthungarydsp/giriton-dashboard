@@ -16685,6 +16685,59 @@ def close_individual_monthly_billing(
     return deleted
 
 
+def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, object]:
+    st.session_state["excel_calculation_loaded"] = True
+    st.session_state["settlement_excel_session_id"] = excel_import_session_id
+    st.session_state["settlement_import_session_id"] = excel_import_session_id
+    st.session_state.pop("settlement_import_preview", None)
+    st.session_state.pop("settlement_processing_report", None)
+    st.session_state.pop("settlement_number_audit_report", None)
+
+    processing_report = process_settlement_session(
+        get_db(),
+        excel_import_session_id,
+    )
+    processing_result = report_as_dict(processing_report)
+    st.session_state["settlement_processing_report"] = processing_result
+
+    if processing_result.get("status") in {"completed", "completed_with_warnings"}:
+        load_driver_dashboard.clear()
+        load_courier_master.clear()
+        load_latest_jit_session_id.clear()
+        load_latest_excel_jit_session_id.clear()
+        load_excel_courier_base_rates.clear()
+        load_excel_base_rate_diagnostics.clear()
+        load_courier_route_detail.clear()
+        load_imported_balance_components.clear()
+        load_courier_settlement_summary.clear()
+        build_excel_settlement_number_audit.clear()
+        parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
+        recalculate_excel_base_rates(get_db(), excel_import_session_id)
+        master_sync = sync_excel_session_to_courier_master(
+            get_db(),
+            excel_import_session_id,
+        )
+        st.session_state["settlement_courier_master_sync"] = master_sync
+        st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
+            excel_import_session_id,
+            parameter_revision,
+        )
+        load_courier_master.clear()
+
+    if processing_result.get("status") == "failed":
+        error_messages = [
+            f"{error.get('error_code', 'HIBA')}: "
+            f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
+            for error in processing_result.get("errors", [])
+        ]
+        raise RuntimeError(
+            "A normalizált feldolgozás sikertelen. "
+            + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
+        )
+
+    return processing_result
+
+
 def render_excel_import_sidebar_tools(selected_month: str) -> None:
     st.divider()
     st.markdown("### Excel számítás")
@@ -16831,60 +16884,31 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
         help="A DB-ben már meglévő Excel importot dolgozza fel újra. Nem kell hozzá új fájlt feltölteni.",
     ):
         try:
-            st.session_state["excel_calculation_loaded"] = True
-            st.session_state["settlement_excel_session_id"] = excel_import_session_id
-            st.session_state["settlement_import_session_id"] = excel_import_session_id
-            st.session_state.pop("settlement_import_preview", None)
-            st.session_state.pop("settlement_processing_report", None)
-            st.session_state.pop("settlement_number_audit_report", None)
-
-            processing_report = process_settlement_session(
-                get_db(),
-                excel_import_session_id,
-            )
-            processing_result = report_as_dict(processing_report)
-            st.session_state["settlement_processing_report"] = processing_result
-
-            if processing_result.get("status") in {"completed", "completed_with_warnings"}:
-                load_driver_dashboard.clear()
-                load_courier_master.clear()
-                load_latest_jit_session_id.clear()
-                load_latest_excel_jit_session_id.clear()
-                load_excel_courier_base_rates.clear()
-                load_excel_base_rate_diagnostics.clear()
-                load_courier_route_detail.clear()
-                load_imported_balance_components.clear()
-                load_courier_settlement_summary.clear()
-                build_excel_settlement_number_audit.clear()
-                parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-                recalculate_excel_base_rates(get_db(), excel_import_session_id)
-                master_sync = sync_excel_session_to_courier_master(
-                    get_db(),
-                    excel_import_session_id,
-                )
-                st.session_state["settlement_courier_master_sync"] = master_sync
-                st.session_state["settlement_base_rate_summary"] = load_excel_courier_base_rates(
-                    excel_import_session_id,
-                    parameter_revision,
-                )
-                load_courier_master.clear()
-
-            if processing_result.get("status") == "failed":
-                error_messages = [
-                    f"{error.get('error_code', 'HIBA')}: "
-                    f"{error.get('message', 'Ismeretlen feldolgozási hiba')}"
-                    for error in processing_result.get("errors", [])
-                ]
-                raise RuntimeError(
-                    "A normalizált feldolgozás sikertelen. "
-                    + (" | ".join(error_messages) if error_messages else "Nincs részletes hibaüzenet.")
-                )
-
+            reprocess_existing_excel_session(excel_import_session_id)
             st.success("Meglévő Excel import újrafeldolgozva.")
             st.rerun()
         except Exception as exc:
             st.session_state["excel_calculation_loaded"] = False
             st.error(f"Meglévő Excel újrafeldolgozása sikertelen: {exc}")
+
+    if st.button(
+        "Régi Excel betöltése az új elszámolásiba",
+        type="primary",
+        use_container_width=True,
+        disabled=not excel_import_session_id,
+        key="load_existing_excel_into_new_settlement",
+        help="A kiválasztott hónap régi Excel importját újrafeldolgozza, majd az új elszámolási nézetet Excel módra állítja.",
+    ):
+        try:
+            reprocess_existing_excel_session(excel_import_session_id)
+            st.session_state["new_calculation_mode"] = "Excel"
+            st.session_state["new_month"] = selected_month
+            st.session_state["new_status"] = "Összes"
+            st.success("A régi Excel import betöltve az új elszámolási nézetbe.")
+            st.rerun()
+        except Exception as exc:
+            st.session_state["excel_calculation_loaded"] = False
+            st.error(f"A régi Excel betöltése sikertelen: {exc}")
 
     if st.button(
         "Számok ellenőrzése",
