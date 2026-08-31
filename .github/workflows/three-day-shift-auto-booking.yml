@@ -8,9 +8,9 @@ on:
         required: false
         default: ""
       days:
-        description: "Hány napot nézzen a kezdőnaptól. Alap: 3."
+        description: "Hány napot nézzen a kezdőnaptól. Alap: 5."
         required: false
-        default: "3"
+        default: "5"
       exact_limit:
         description: "Maximum hány pontos egyezést foglaljon egy futásban."
         required: false
@@ -32,7 +32,7 @@ on:
         required: false
         default: "uidl"
   schedule:
-    # GitHub cron UTC-ben fut. Ez a lánc saját maga frissít és csak holnaptól néz 3 napot.
+    # GitHub cron UTC-ben fut. Ez a lánc óránként frissít és holnaptól néz 5 napot.
     - cron: "5 * * * *"
 
 permissions:
@@ -90,7 +90,7 @@ jobs:
           RAW_EXPORT_ENGINE="${{ inputs.raw_export_engine }}"
 
           START_DATE="${START_DATE:-}"
-          DAYS="${DAYS:-3}"
+          DAYS="${DAYS:-5}"
           EXACT_LIMIT="${EXACT_LIMIT:-50}"
           ALTERNATIVE_LIMIT="${ALTERNATIVE_LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
