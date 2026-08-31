@@ -12,6 +12,45 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
+ARROW_SAFE_TEXT_COLUMNS = {
+    "courierId",
+    "courier_id",
+    "Courier ID",
+    "Futár ID",
+    "driver_id",
+    "driverId",
+    "routeId",
+    "route_id",
+    "orderId",
+    "order_id",
+}
+_ORIGINAL_ST_DATAFRAME = st.dataframe
+_ORIGINAL_ST_DATA_EDITOR = st.data_editor
+
+
+def _arrow_safe_dataframe(data):
+    if not isinstance(data, pd.DataFrame):
+        return data
+    columns = [column for column in data.columns if str(column) in ARROW_SAFE_TEXT_COLUMNS]
+    if not columns:
+        return data
+    safe = data.copy()
+    for column in columns:
+        safe[column] = safe[column].map(lambda value: "" if pd.isna(value) else str(value))
+    return safe
+
+
+def _safe_streamlit_dataframe(data=None, *args, **kwargs):
+    return _ORIGINAL_ST_DATAFRAME(_arrow_safe_dataframe(data), *args, **kwargs)
+
+
+def _safe_streamlit_data_editor(data=None, *args, **kwargs):
+    return _ORIGINAL_ST_DATA_EDITOR(_arrow_safe_dataframe(data), *args, **kwargs)
+
+
+st.dataframe = _safe_streamlit_dataframe
+st.data_editor = _safe_streamlit_data_editor
 from resources.settlement_excel_import import (
     delete_all_settlement_data,
     get_import_preview,
