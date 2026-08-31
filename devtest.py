@@ -16685,6 +16685,143 @@ def close_individual_monthly_billing(
     return deleted
 
 
+def is_summary_duplicate_error(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        "courier_settlement_summary_session_driver_unique" in text
+        or (
+            "duplicate key value" in text
+            and "courier_settlement_summary" in text
+        )
+    )
+
+
+def read_jit_rows_for_summary_rebuild(session_id: str, page_size: int = 1000) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    offset = 0
+    columns = (
+        "session_id,normalized_data,route_date,is_route_primary,"
+        "company_base_rate_huf,courier_base_rate_huf,courier_tip_huf,"
+        "courier_delay_bonus_huf,courier_compliance_bonus_huf,"
+        "courier_other_bonus_huf,courier_bonus_total_huf"
+    )
+    while True:
+        response = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select(columns)
+            .eq("session_id", session_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
+    return rows
+
+
+def rebuild_courier_settlement_summary_from_jit(session_id: str) -> int:
+    rows = read_jit_rows_for_summary_rebuild(session_id)
+    summaries: dict[str, dict[str, object]] = {}
+
+    for row in rows:
+        normalized_data = row.get("normalized_data") or {}
+        if not isinstance(normalized_data, dict):
+            normalized_data = {}
+
+        driver_name = str(
+            normalized_data.get("Driver")
+            or normalized_data.get("driver_name")
+            or "Ismeretlen futár"
+        ).strip() or "Ismeretlen futár"
+        courier_id = str(
+            normalized_data.get("Courier ID")
+            or normalized_data.get("courier_id")
+            or ""
+        ).strip()
+        summary = summaries.setdefault(
+            driver_name,
+            {
+                "session_id": session_id,
+                "courier_id": courier_id,
+                "driver_name": driver_name,
+                "period_start": None,
+                "period_end": None,
+                "route_count": 0,
+                "order_count": 0,
+                "company_base_rate_huf": 0,
+                "courier_base_rate_huf": 0,
+                "tip_huf": 0,
+                "delay_bonus_huf": 0,
+                "compliance_bonus_huf": 0,
+                "other_route_bonus_huf": 0,
+                "route_bonus_total_huf": 0,
+                "payable_huf": 0,
+            },
+        )
+        if courier_id and not summary.get("courier_id"):
+            summary["courier_id"] = courier_id
+
+        route_date = str(row.get("route_date") or "").strip()[:10]
+        if route_date:
+            if not summary["period_start"] or route_date < str(summary["period_start"]):
+                summary["period_start"] = route_date
+            if not summary["period_end"] or route_date > str(summary["period_end"]):
+                summary["period_end"] = route_date
+
+        is_route_primary = bool(row.get("is_route_primary"))
+        if is_route_primary:
+            summary["route_count"] = int(summary["route_count"] or 0) + 1
+            summary["order_count"] = float(summary["order_count"] or 0) + parse_huf_value(
+                normalized_data.get("Orders") or normalized_data.get("orders") or 0
+            )
+
+        company_base = parse_huf_value(row.get("company_base_rate_huf"))
+        courier_base = parse_huf_value(row.get("courier_base_rate_huf"))
+        tip = parse_huf_value(row.get("courier_tip_huf"))
+        delay_bonus = parse_huf_value(row.get("courier_delay_bonus_huf"))
+        compliance_bonus = parse_huf_value(row.get("courier_compliance_bonus_huf"))
+        other_bonus = parse_huf_value(row.get("courier_other_bonus_huf"))
+        bonus_total = parse_huf_value(row.get("courier_bonus_total_huf"))
+
+        summary["company_base_rate_huf"] = float(summary["company_base_rate_huf"] or 0) + company_base
+        summary["courier_base_rate_huf"] = float(summary["courier_base_rate_huf"] or 0) + courier_base
+        summary["tip_huf"] = float(summary["tip_huf"] or 0) + tip
+        summary["delay_bonus_huf"] = float(summary["delay_bonus_huf"] or 0) + delay_bonus
+        summary["compliance_bonus_huf"] = float(summary["compliance_bonus_huf"] or 0) + compliance_bonus
+        summary["other_route_bonus_huf"] = float(summary["other_route_bonus_huf"] or 0) + other_bonus
+        summary["route_bonus_total_huf"] = float(summary["route_bonus_total_huf"] or 0) + bonus_total
+        summary["payable_huf"] = float(summary["payable_huf"] or 0) + courier_base + tip + bonus_total
+
+    payload = list(summaries.values())
+    client = get_db().schema("settlement")
+    client.table("courier_settlement_summary").delete().eq("session_id", session_id).execute()
+    for start_index in range(0, len(payload), 500):
+        client.table("courier_settlement_summary").insert(
+            payload[start_index:start_index + 500],
+            returning="minimal",
+        ).execute()
+    return len(payload)
+
+
+def recalculate_excel_base_rates_safely(session_id: str) -> dict[str, object]:
+    try:
+        recalculate_excel_base_rates(get_db(), session_id)
+        return {"fallback_used": False, "summary_rows": None}
+    except Exception as exc:
+        if not is_summary_duplicate_error(exc):
+            raise
+        get_db().schema("settlement").rpc(
+            "recalculate_jitt_base_rates",
+            {"p_session_id": session_id},
+        ).execute()
+        summary_rows = rebuild_courier_settlement_summary_from_jit(session_id)
+        return {"fallback_used": True, "summary_rows": summary_rows}
+
+
 def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, object]:
     st.session_state["excel_calculation_loaded"] = True
     st.session_state["settlement_excel_session_id"] = excel_import_session_id
@@ -16712,7 +16849,8 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_courier_settlement_summary.clear()
         build_excel_settlement_number_audit.clear()
         parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-        recalculate_excel_base_rates(get_db(), excel_import_session_id)
+        recalc_result = recalculate_excel_base_rates_safely(excel_import_session_id)
+        st.session_state["settlement_recalculate_result"] = recalc_result
         master_sync = sync_excel_session_to_courier_master(
             get_db(),
             excel_import_session_id,
@@ -16802,7 +16940,8 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_settlement_summary.clear()
                 build_excel_settlement_number_audit.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
-                recalculate_excel_base_rates(get_db(), result["session_id"])
+                recalc_result = recalculate_excel_base_rates_safely(result["session_id"])
+                st.session_state["settlement_recalculate_result"] = recalc_result
                 master_sync = sync_excel_session_to_courier_master(
                     get_db(),
                     result["session_id"],
@@ -17420,6 +17559,13 @@ def show_new_settlement_page() -> None:
                     st.dataframe(raw_only, use_container_width=True, hide_index=True)
 
         base_rate_summary = st.session_state.get("settlement_base_rate_summary")
+        recalc_result = st.session_state.get("settlement_recalculate_result")
+        if isinstance(recalc_result, dict) and recalc_result.get("fallback_used"):
+            st.info(
+                "A DB summary frissítés duplikált futártörzs egyezés miatt kerülőúton futott le. "
+                f"Újraépített summary sorok: {recalc_result.get('summary_rows', 0)}."
+            )
+
         if isinstance(base_rate_summary, pd.DataFrame) and not base_rate_summary.empty:
             st.markdown("#### Paraméterezett alapdíj-számítás")
             st.caption("Az Excel Fixed Rate helyett a Kiemelt/Normál nap és Alap díj szabályok szerinti eredmény.")
