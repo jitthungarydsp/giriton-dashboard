@@ -466,6 +466,7 @@ def main() -> int:
     parser.add_argument("--warehouse-id", type=int, choices=[1, 2])
     parser.add_argument("--sleep", type=float, default=0.15)
     parser.add_argument("--skip-shifts", action="store_true", help="Skip Courier Hub monthly shifts endpoint sync.")
+    parser.add_argument("--skip-route-details", action="store_true", help="Skip route performance detail endpoint sync.")
     args = parser.parse_args()
 
     start_date = parse_date(args.start_date)
@@ -539,17 +540,18 @@ def main() -> int:
                     warehouse_id=args.warehouse_id,
                 )
             )
-        refs.extend(
-            read_route_refs(
-                courier_id=args.courier_id,
-                year=year,
-                month=month,
-                warehouse_id=args.warehouse_id,
-                day=args.day or "",
-                start_date=job_start,
-                end_date=min(job_end or month_end, month_end),
+        if not args.skip_route_details:
+            refs.extend(
+                read_route_refs(
+                    courier_id=args.courier_id,
+                    year=year,
+                    month=month,
+                    warehouse_id=args.warehouse_id,
+                    day=args.day or "",
+                    start_date=job_start,
+                    end_date=min(job_end or month_end, month_end),
+                )
             )
-        )
 
     period_label = (
         f"{start_date.isoformat()}..{end_date.isoformat()}"
