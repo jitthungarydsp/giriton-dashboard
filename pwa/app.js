@@ -27,6 +27,7 @@ const state = {
   statisticsMonth: new Date().toISOString().slice(0, 7),
   statisticsDay: "",
   statisticsHistoryDate: "",
+  statisticsQualityTopic: "",
   statisticsRequestSeq: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
@@ -894,21 +895,23 @@ function qualitySummaryFromDailyHistory(rows = []) {
 
 function renderQualitySummaryChart(payload = {}) {
   const summary = payload.qualitySummary || qualitySummaryFromDailyHistory(payload.dailyHistory || []);
+  const activeTopic = state.statisticsQualityTopic || "";
+  const details = summary.details || {};
   const items = [
     {
-      key: "late-shift",
+      key: "lateShift",
       label: "Műszak késés",
       value: Number(summary.lateShiftCount || 0),
       note: "Késő sorba állás / műszakkezdéshez képest",
     },
     {
-      key: "late-window",
+      key: "uncleanedTimeWindowLate",
       label: "Nem mentesített címkésés",
       value: Number(summary.uncleanedTimeWindowLateCount || 0),
       note: `${formatCount(summary.uncleanedTimeWindowLateMinutes || 0)} perc összesen`,
     },
     {
-      key: "no-show",
+      key: "noShow",
       label: "No-show",
       value: Number(summary.noShowCount || 0),
       note: "Nem jelent meg műszakban",
@@ -929,18 +932,41 @@ function renderQualitySummaryChart(payload = {}) {
         ${items.map((item) => {
           const width = Math.max(4, Math.round((item.value / maxValue) * 100));
           return `
-            <div class="quality-bar-row">
+            <button class="quality-bar-row ${activeTopic === item.key ? "active" : ""}" type="button" data-quality-topic="${escapeHtml(item.key)}">
               <div>
                 <strong>${escapeHtml(item.label)}</strong>
                 <small>${escapeHtml(item.note)}</small>
               </div>
               <div class="quality-bar-track"><span style="width: ${width}%"></span></div>
               <b>${formatCount(item.value)}</b>
-            </div>
+            </button>
           `;
         }).join("")}
       </div>
+      ${renderQualitySummaryDetails(activeTopic, details)}
     </section>
+  `;
+}
+
+function renderQualitySummaryDetails(topic, details = {}) {
+  if (!topic) return "";
+  const labels = {
+    lateShift: "Vizsgálandó műszak késések",
+    uncleanedTimeWindowLate: "Vizsgálandó időkapun túli késések",
+    noShow: "Vizsgálandó no-show műszakok",
+  };
+  const rows = Array.isArray(details[topic]) ? details[topic] : [];
+  return `
+    <div class="quality-detail-list">
+      <h4>${escapeHtml(labels[topic] || "Vizsgálandó tételek")}</h4>
+      ${rows.length ? rows.map((row) => `
+        <div class="quality-detail-row">
+          <strong>${escapeHtml(row.date || "-")}</strong>
+          <span>${escapeHtml(row.label || "-")}</span>
+          <small>${escapeHtml(row.note || "")}${row.routeId ? ` · Route ${escapeHtml(row.routeId)}` : ""}</small>
+        </div>
+      `).join("") : `<p>Nincs külön vizsgálandó sor ehhez a jelzéshez.</p>`}
+    </div>
   `;
 }
 
@@ -1404,6 +1430,7 @@ async function loadStatistics(options = {}) {
   const monthInput = $("#statistics-month");
   if (monthInput?.value) state.statisticsMonth = monthInput.value;
   if (options.resetHistory) state.statisticsHistoryDate = "";
+  state.statisticsQualityTopic = "";
   const requestSeq = ++state.statisticsRequestSeq;
   const requestedHistoryDate = state.statisticsHistoryDate;
   $("#statistics-message").innerHTML = `<div class="notice">Statisztika betöltése...</div>`;
@@ -3644,6 +3671,7 @@ $("#workflow-refresh").addEventListener("click", () => {
 $("#statistics-month").addEventListener("change", (event) => {
   state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
   state.statisticsDay = "";
+  state.statisticsQualityTopic = "";
   state.statistics = null;
   loadStatistics({ resetHistory: true });
 });
@@ -3658,7 +3686,16 @@ $("#statistics-day").addEventListener("change", (event) => {
 
 $("#statistics-refresh").addEventListener("click", () => {
   state.statistics = null;
+  state.statisticsQualityTopic = "";
   loadStatistics();
+});
+
+$("#statistics-quality")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-quality-topic]");
+  if (!button) return;
+  const topic = button.getAttribute("data-quality-topic") || "";
+  state.statisticsQualityTopic = state.statisticsQualityTopic === topic ? "" : topic;
+  renderStatistics();
 });
 
 $("#statistics-breakdown").addEventListener("submit", (event) => {

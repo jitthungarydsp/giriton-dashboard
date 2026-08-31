@@ -327,13 +327,22 @@ textarea { min-height: 96px; resize: vertical; }
 .quality-summary-head h3 { margin: 0; font-size: 17px; letter-spacing: 0; }
 .quality-summary-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; font-weight: 750; }
 .quality-bars { display: grid; gap: 10px; }
-.quality-bar-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(96px, 1fr) auto; gap: 10px; align-items: center; }
+.quality-bar-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(96px, 1fr) auto; gap: 10px; align-items: center; width: 100%; padding: 8px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.quality-bar-row.active { background: #ffffffa8; box-shadow: inset 0 0 0 1px #e1b5b1; }
 .quality-bar-row strong { display: block; font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
 .quality-bar-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 750; line-height: 1.3; }
 .quality-bar-row b { min-width: 28px; text-align: right; font-size: 16px; }
 .quality-bar-track { height: 10px; overflow: hidden; border-radius: 999px; background: #e9ede7; }
 .quality-bar-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #d99a28, var(--danger)); }
 .quality-summary-card.ok .quality-bar-track span { background: var(--green); }
+.quality-detail-list { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.quality-detail-list h4 { margin: 0; font-size: 13px; letter-spacing: 0; }
+.quality-detail-list p { margin: 0; color: var(--muted); font-size: 12px; font-weight: 750; }
+.quality-detail-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); }
+.quality-detail-row:first-of-type { border-top: 0; }
+.quality-detail-row strong { font-size: 12px; }
+.quality-detail-row span { font-size: 12px; font-weight: 900; overflow-wrap: anywhere; }
+.quality-detail-row small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 750; }
 .route-note-form { display: grid; gap: 8px; padding-top: 6px; }
 .route-note-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 850; }
 .route-note-form textarea { min-height: 76px; border-radius: 12px; }

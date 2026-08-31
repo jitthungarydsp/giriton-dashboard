@@ -174,10 +174,21 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: Sync Courier Hub shift overview for current month
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --only-shifts)
+
+          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
+          fi
+
+          "${CMD[@]}"
+
       - name: Sync Courier Hub route details from latest DB day
         shell: bash
         run: |
-          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --since-last-work-date)
+          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --since-last-work-date --skip-shifts)
 
           if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
             CMD+=(--apply)

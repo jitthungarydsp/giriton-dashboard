@@ -4753,6 +4753,45 @@ def load_daily_performance_for_courier(
     )
 
 
+def load_shift_overview_raw_quality_for_courier(
+    courier_id: str,
+    period_start: date,
+) -> dict[str, Any]:
+    rows = optional_supabase_rows(
+        "courier_shift_overview_raw",
+        params={
+            "select": "warehouse_id,response_json",
+            "courier_id": f"eq.{courier_id}",
+            "year": f"eq.{period_start.year}",
+            "month": f"eq.{period_start.month}",
+            "status_code": "eq.200",
+            "limit": "10",
+        },
+        timeout=60,
+    )
+    total_shifts = 0
+    no_show_shifts = 0
+    late_login_shifts = 0
+    for row in rows:
+        payload = row.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        total_shifts += safe_int(payload.get("totalShifts") or payload.get("total_shifts"))
+        no_show_shifts += safe_int(payload.get("noShowShifts") or payload.get("no_show_shifts"))
+        late_login_shifts += safe_int(payload.get("lateLoginShifts") or payload.get("late_login_shifts"))
+    return {
+        "hasData": bool(rows),
+        "totalShifts": total_shifts,
+        "noShowShifts": no_show_shifts,
+        "lateLoginShifts": late_login_shifts,
+    }
+
+
 def load_route_delay_rows_for_courier(
     courier_id: str,
     period_start: date,
@@ -4897,7 +4936,7 @@ def load_attendance_shift_rows_for_courier(
     shift_overview_rows = optional_supabase_rows(
         "courier_shift_overview",
         params={
-            "select": "work_date,warehouse_id,shift_id,shift_name,shift_start,shift_end,planned_start_at,planned_end_at,raw_shift",
+            "select": "work_date,warehouse_id,shift_id,shift_name,shift_start,shift_end,planned_start_at,planned_end_at,status,raw_shift",
             "courier_id": f"eq.{courier_key}",
             "and": f"(work_date.gte.{period_start.isoformat()},work_date.lte.{period_end.isoformat()})",
             "order": "work_date.asc,shift_start.asc",
@@ -4931,6 +4970,8 @@ def load_attendance_shift_rows_for_courier(
             "shiftStart": shift_start,
             "shiftEnd": shift_end,
             "availableForShiftSince": available,
+            "status": str(shift_row.get("status") or raw_shift.get("status") or raw_shift.get("state") or ""),
+            "rawShift": raw_shift,
             "source": "courier_shift_overview",
         })
     raw_rows = optional_supabase_rows(
@@ -5248,24 +5289,134 @@ def build_route_quality_summary(
     *,
     daily_rows: list[dict[str, Any]],
     route_quality_records: list[dict[str, Any]],
+    shift_rows: list[dict[str, Any]] | None = None,
+    shift_overview_quality: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
-    late_shift_keys = {
+    shift_rows = shift_rows or []
+    shift_overview_quality = shift_overview_quality or {}
+    route_late_shift_keys = {
         str(row.get("shift_key") or f"{row.get('work_date') or ''}_{row.get('route_id') or ''}").strip()
         for row in route_quality_records
         if safe_int(row.get("late_start_minutes")) > 0
     }
-    late_shift_keys.discard("")
+    route_late_shift_keys.discard("")
+    no_show_details: list[dict[str, Any]] = []
+    late_shift_details: list[dict[str, Any]] = []
+    seen_no_show: set[str] = set()
+    seen_late_shift: set[str] = set()
+
+    def raw_truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return normalize_text(value) in {"1", "true", "yes", "igen"}
+
+    for row in shift_rows:
+        work_date = str(row.get("date") or "")[:10]
+        shift_label = str(row.get("shiftName") or "").strip()
+        shift_start = local_datetime(row.get("shiftStart"))
+        actual_start = local_datetime(row.get("availableForShiftSince"))
+        raw_shift = row.get("rawShift") if isinstance(row.get("rawShift"), dict) else {}
+        status_text = normalize_text(
+            " ".join(
+                str(value)
+                for value in (
+                    row.get("status"),
+                    raw_shift.get("status"),
+                    raw_shift.get("state"),
+                    raw_shift.get("evaluation"),
+                    raw_shift.get("attendanceStatus"),
+                    raw_shift.get("loginStatus"),
+                )
+                if value is not None
+            )
+        )
+        no_show = (
+            raw_truthy(raw_shift.get("noShow"))
+            or raw_truthy(raw_shift.get("didNotCome"))
+            or raw_truthy(raw_shift.get("did_not_come"))
+            or "no show" in status_text
+            or "no_show" in status_text
+            or "noshow" in status_text
+            or "did not come" in status_text
+            or "did_not_come" in status_text
+            or "nem jelent meg" in status_text
+        )
+        detail_key = f"{work_date}|{row.get('shiftId') or row.get('shiftStart') or shift_label}"
+        if no_show and detail_key not in seen_no_show:
+            seen_no_show.add(detail_key)
+            no_show_details.append({
+                "date": work_date,
+                "label": shift_label or "Műszak",
+                "note": "Nem jelent meg a műszakban",
+            })
+        if shift_start and actual_start:
+            late_minutes = int(round((actual_start - shift_start).total_seconds() / 60))
+            if late_minutes > 0 and detail_key not in seen_late_shift:
+                seen_late_shift.add(detail_key)
+                late_shift_details.append({
+                    "date": work_date,
+                    "label": shift_label or shift_start.strftime("%H:%M"),
+                    "note": f"{late_minutes} perc késés a műszakkezdéshez képest",
+                })
+
+    for row in daily_rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        count = safe_int(row.get("did_not_come_count"))
+        if count <= 0:
+            continue
+        detail_key = f"{work_date}|daily-no-show"
+        if detail_key in seen_no_show:
+            continue
+        seen_no_show.add(detail_key)
+        no_show_details.append({
+            "date": work_date,
+            "label": "Napi műszak ellenőrzés",
+            "note": f"{count} nem megjelent műszak",
+        })
+
+    route_late_shift_details = [
+        {
+            "date": str(row.get("work_date") or "")[:10],
+            "label": str(row.get("shift_start_at") or row.get("shift_key") or "Műszak"),
+            "note": f"{safe_int(row.get('late_start_minutes'))} perc késés a műszakkezdéshez képest",
+            "routeId": str(row.get("route_id") or ""),
+        }
+        for row in route_quality_records
+        if safe_int(row.get("late_start_minutes")) > 0
+    ]
+    daily_no_show_count = sum(safe_int(row.get("did_not_come_count")) for row in daily_rows)
+    no_show_count = max(daily_no_show_count, len(no_show_details))
+    late_shift_count = len(route_late_shift_keys)
+    if shift_overview_quality.get("hasData"):
+        no_show_count = max(no_show_count, safe_int(shift_overview_quality.get("noShowShifts")))
+        late_shift_count = max(safe_int(shift_overview_quality.get("lateLoginShifts")), len(late_shift_details))
+    else:
+        late_shift_details = route_late_shift_details
     uncleaned_late_count = sum(safe_int(row.get("late_stop_count")) for row in route_quality_records)
     uncleaned_late_minutes = sum(safe_int(row.get("late_stop_minutes")) for row in route_quality_records)
-    total_problems = no_show_count + len(late_shift_keys) + uncleaned_late_count
+    time_window_details = [
+        {
+            "date": str(row.get("work_date") or "")[:10],
+            "label": f"Route {row.get('route_id') or '-'}",
+            "note": f"{safe_int(row.get('late_stop_count'))} cím · {safe_int(row.get('late_stop_minutes'))} perc",
+            "routeId": str(row.get("route_id") or ""),
+        }
+        for row in route_quality_records
+        if safe_int(row.get("late_stop_count")) > 0
+    ]
+    total_problems = no_show_count + late_shift_count + uncleaned_late_count
     return {
         "noShowCount": no_show_count,
-        "lateShiftCount": len(late_shift_keys),
+        "lateShiftCount": late_shift_count,
         "uncleanedTimeWindowLateCount": uncleaned_late_count,
         "uncleanedTimeWindowLateMinutes": uncleaned_late_minutes,
         "totalProblems": total_problems,
         "ok": total_problems <= 0,
+        "details": {
+            "lateShift": late_shift_details or route_late_shift_details[:late_shift_count],
+            "uncleanedTimeWindowLate": time_window_details,
+            "noShow": no_show_details,
+        },
     }
 
 
@@ -5355,6 +5506,7 @@ def build_monthly_courier_statistics(
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
+        shift_overview_quality_future = executor.submit(load_shift_overview_raw_quality_for_courier, courier_id, period_start)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
         settlement_future = executor.submit(
             read_courier_settlement_summary_row,
@@ -5368,6 +5520,7 @@ def build_monthly_courier_statistics(
         history_rows = history_future.result()
         story_rows = story_future.result()
         attendance_shift_rows = attendance_future.result()
+        shift_overview_quality = shift_overview_quality_future.result()
         route_notes = notes_future.result()
         settlement_summary_row = settlement_future.result()
     stories_by_route = route_story_lookup(story_rows)
@@ -5737,6 +5890,8 @@ def build_monthly_courier_statistics(
     route_quality_summary = build_route_quality_summary(
         daily_rows=daily_rows,
         route_quality_records=route_quality_records,
+        shift_rows=attendance_shift_rows,
+        shift_overview_quality=shift_overview_quality,
     )
 
     return {
