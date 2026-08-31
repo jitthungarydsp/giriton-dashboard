@@ -1320,11 +1320,13 @@ function renderStatistics() {
   const payload = state.statistics;
   const grid = $("#statistics-grid");
   const message = $("#statistics-message");
+  const qualityPanel = $("#statistics-quality");
   const breakdown = $("#statistics-breakdown");
-  if (!grid || !message || !breakdown) return;
+  if (!grid || !message || !qualityPanel || !breakdown) return;
 
   if (!payload) {
     grid.innerHTML = "";
+    qualityPanel.innerHTML = "";
     breakdown.innerHTML = "";
     message.innerHTML = `<div class="notice">Válassz hónapot, majd frissítsd a statisztikát.</div>`;
     return;
@@ -1360,6 +1362,7 @@ function renderStatistics() {
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
+  qualityPanel.innerHTML = renderQualitySummaryChart(payload);
 
   const routeBreakdown = payload.routeBreakdown || {};
   const quality = payload.dataQuality || {};
@@ -1370,7 +1373,6 @@ function renderStatistics() {
     </div>
   `).join("");
   breakdown.innerHTML = `
-    ${renderQualitySummaryChart(payload)}
     ${renderDailyHistory(payload)}
     <div class="process-title">
       <span class="step-code">∑</span>
@@ -1422,6 +1424,7 @@ async function loadStatistics(options = {}) {
     if (requestSeq !== state.statisticsRequestSeq) return;
     state.statistics = null;
     $("#statistics-grid").innerHTML = "";
+    $("#statistics-quality").innerHTML = "";
     $("#statistics-breakdown").innerHTML = "";
     $("#statistics-message").innerHTML = `<div class="notice error">A statisztika nem tölthető be: ${escapeHtml(error.message)}</div>`;
   }
