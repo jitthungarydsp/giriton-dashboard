@@ -7482,21 +7482,23 @@ def logout(response: Response):
 def register(payload: RegistrationRequest):
     courier_id = normalize_profile_courier_id(payload.courier_id)
     email = normalize_email_address(payload.email)
-    master_row = read_master_auth_row(courier_id)
-    if master_row:
-        existing_email = master_email(master_row)
-        email_updated = False
-        if not existing_email:
-            email_updated = update_master_email_if_missing(master_row, email)
+    pwa_user = find_pwa_user_by_courier_id(courier_id)
+    if pwa_user:
         return {
             "ok": False,
             "redirect": "password_reset",
             "message": (
-                "Ez a futár ID már szerepel a törzsben, ezért regisztráció helyett "
+                "Ez a futár ID már rendelkezik mobil felhasználóval, ezért regisztráció helyett "
                 "jelszó-visszaállítást kell indítani."
             ),
-            "emailUpdated": email_updated,
+            "emailUpdated": False,
         }
+
+    master_row = read_master_auth_row(courier_id)
+    if master_row:
+        existing_email = master_email(master_row)
+        if not existing_email:
+            update_master_email_if_missing(master_row, email)
 
     request_row = save_registration_request(payload)
     return {
