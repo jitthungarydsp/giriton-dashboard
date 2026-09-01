@@ -450,6 +450,32 @@
 
         <section class="process-card">
           <div class="process-title">
+            <span class="step-code">10N</span>
+            <div>
+              <h3>Elmúlt 10 nap autói</h3>
+              <p>Azok a rendszámok, amelyek a műszakbeosztás alapján hozzád voltak rendelve.</p>
+            </div>
+          </div>
+          <section id="vehicle-assignment-history" class="vehicle-assignment-list"></section>
+        </section>
+
+        <section id="vehicle-hr-panel" class="process-card hidden">
+          <div class="process-title">
+            <span class="step-code">HR</span>
+            <div>
+              <h3>Autóhasználat kereső</h3>
+              <p>Rendszám vagy kolléga neve alapján megmutatja, ki használta utoljára az autót.</p>
+            </div>
+          </div>
+          <form id="vehicle-hr-search-form" class="process-form">
+            <label>Keresés rendszámra vagy névre<input id="vehicle-hr-search" autocomplete="off" placeholder="pl. ABC123 vagy Kovács Péter" /></label>
+            <button class="primary" type="submit">Keresés</button>
+          </form>
+          <section id="vehicle-hr-search-results" class="vehicle-assignment-list"></section>
+        </section>
+
+        <section class="process-card">
+          <div class="process-title">
             <span class="step-code">AUTO</span>
             <div>
               <h3>Autó fotós ellenőrzés</h3>

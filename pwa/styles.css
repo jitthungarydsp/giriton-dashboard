@@ -377,6 +377,15 @@ textarea { min-height: 96px; resize: vertical; }
 .device-photo-list a { display: grid; gap: 6px; padding: 7px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 850; text-decoration: none; }
 .device-photo-list img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 9px; background: #0d1510; }
 .device-photo-list span { overflow-wrap: anywhere; }
+.vehicle-assignment-list { display: grid; gap: 10px; margin-top: 14px; }
+.vehicle-assignment-row { display: grid; grid-template-columns: minmax(82px, .7fr) minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #f8faf6; }
+.vehicle-assignment-row strong { display: block; font-size: 14px; font-weight: 950; overflow-wrap: anywhere; }
+.vehicle-assignment-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; }
+.vehicle-assignment-row > span { justify-self: end; max-width: 90px; color: var(--green-dark); font-size: 11px; font-weight: 900; text-align: right; overflow-wrap: anywhere; }
+.vehicle-last-usage { display: grid; gap: 3px; padding: 14px; border: 1px solid #b8d5b4; border-radius: 15px; background: #eff8ed; }
+.vehicle-last-usage span { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.vehicle-last-usage strong { font-size: 17px; font-weight: 950; }
+.vehicle-last-usage small { color: var(--muted); font-size: 12px; font-weight: 750; }
 .ai-comparison { display: grid; gap: 5px; padding: 10px; border: 1px solid #cddbc7; border-radius: 12px; background: #eff8ed; }
 .ai-comparison.possible_new_damage, .ai-comparison.failed { border-color: #e2aaa5; background: #fff0ef; }
 .ai-comparison strong { font-size: 12px; }
@@ -401,4 +410,6 @@ textarea { min-height: 96px; resize: vertical; }
   .tig-row span:nth-child(2)::before { content: "Netto: "; color: var(--muted); font-weight: 750; }
   .tig-row span:nth-child(3)::before { content: "AFA: "; color: var(--muted); font-weight: 750; }
   .tig-row span:nth-child(4)::before { content: "Brutto: "; color: var(--muted); font-weight: 750; }
+  .vehicle-assignment-row { grid-template-columns: minmax(0, 1fr); }
+  .vehicle-assignment-row > span { justify-self: start; max-width: none; text-align: left; }
 }

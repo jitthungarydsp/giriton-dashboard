@@ -10,6 +10,8 @@ const state = {
   coordinatorSetup: null,
   deviceReports: [],
   vehicleReports: [],
+  vehicleAssignments: [],
+  vehicleSearchResults: [],
   queueStatus: null,
   queueTimer: null,
   salaryAdvanceRequests: [],
@@ -90,7 +92,7 @@ function currentSectionRefresh() {
   if (state.section === "workflow") return loadWorkflow();
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
-  if (state.section === "vehicle") return loadVehicleReports();
+  if (state.section === "vehicle") return loadVehicleSection();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
 }
@@ -236,8 +238,14 @@ function showApp() {
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   const coordinatorOnly = role === "coordinator";
+  const hrOnly = role === "hr";
   ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
+  if (hrOnly) {
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-game"]
+      .forEach((selector) => $(selector)?.classList.add("hidden"));
+    ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
+  }
   $("#nav-expense")?.classList.add("hidden");
   ["#workflow-preview-wrapper", "#statistics-preview-wrapper"].forEach((selector) => {
     const previewWrapper = $(selector);
@@ -293,7 +301,7 @@ function showSection(section) {
     refreshNotificationToggle();
   }
   if (section === "device") loadDeviceReports();
-  if (section === "vehicle") loadVehicleReports();
+  if (section === "vehicle") loadVehicleSection();
   if (section === "tours") {
     loadCurrentRoute();
   }
@@ -3273,9 +3281,101 @@ function renderVehicleReports() {
   });
 }
 
+function vehicleAssignmentRows(items = []) {
+  if (!items.length) return `<div class="empty-card">Nincs autó-hozzárendelés az adott időszakban.</div>`;
+  return items.map((item) => `
+    <article class="vehicle-assignment-row">
+      <div>
+        <strong>${escapeHtml(item.licensePlate || "-")}</strong>
+        <small>${escapeHtml(item.car || "Autó típus nélkül")}</small>
+      </div>
+      <div>
+        <strong>${escapeHtml(item.driverName || "-")}</strong>
+        <small>${escapeHtml(item.date || "-")} · ${escapeHtml([item.shiftStart, item.shiftEnd].filter(Boolean).join("–") || "-")}</small>
+      </div>
+      ${item.shiftType ? `<span>${escapeHtml(item.shiftType)}</span>` : `<span>-</span>`}
+    </article>
+  `).join("");
+}
+
+function renderVehicleAssignments() {
+  const target = $("#vehicle-assignment-history");
+  if (!target) return;
+  target.innerHTML = `
+    <div class="device-history-head">
+      <strong>Saját autóhasználat</strong>
+      <span>${(state.vehicleAssignments || []).length} bejegyzés</span>
+    </div>
+    ${vehicleAssignmentRows(state.vehicleAssignments || [])}
+  `;
+}
+
+async function loadVehicleAssignments() {
+  const target = $("#vehicle-assignment-history");
+  if (!target) return;
+  target.innerHTML = `<div class="empty-card">Autó-hozzárendelések betöltése...</div>`;
+  try {
+    const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=10"));
+    state.vehicleAssignments = payload.items || [];
+    renderVehicleAssignments();
+  } catch (error) {
+    target.innerHTML = `<div class="notice error">Az autó-hozzárendelések nem tölthetők be: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderVehicleHrPanel() {
+  const panel = $("#vehicle-hr-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !state.user?.canManageVehicles);
+}
+
+function renderVehicleSearchResults(lastUsage, items = []) {
+  const target = $("#vehicle-hr-search-results");
+  if (!target) return;
+  if (!items.length) {
+    target.innerHTML = `<div class="empty-card">Nincs találat erre a keresésre.</div>`;
+    return;
+  }
+  target.innerHTML = `
+    ${lastUsage ? `<div class="vehicle-last-usage">
+      <span>Utolsó használat</span>
+      <strong>${escapeHtml(lastUsage.licensePlate || "-")} · ${escapeHtml(lastUsage.driverName || "-")}</strong>
+      <small>${escapeHtml(lastUsage.date || "-")} · ${escapeHtml([lastUsage.shiftStart, lastUsage.shiftEnd].filter(Boolean).join("–") || "-")} · ${escapeHtml(lastUsage.car || "")}</small>
+    </div>` : ""}
+    <div class="device-history-head">
+      <strong>Keresési találatok</strong>
+      <span>${items.length} bejegyzés</span>
+    </div>
+    ${vehicleAssignmentRows(items)}
+  `;
+}
+
+async function searchVehicleAssignments() {
+  const target = $("#vehicle-hr-search-results");
+  const input = $("#vehicle-hr-search");
+  if (!target || !input) return;
+  const query = String(input.value || "").trim();
+  if (!query) {
+    target.innerHTML = `<div class="empty-card">Adj meg rendszámot vagy nevet.</div>`;
+    return;
+  }
+  target.innerHTML = `<div class="empty-card">Keresés folyamatban...</div>`;
+  try {
+    const payload = await api(`/api/vehicles/assignments/search?query=${encodeURIComponent(query)}`);
+    state.vehicleSearchResults = payload.items || [];
+    renderVehicleSearchResults(payload.lastUsage, state.vehicleSearchResults);
+  } catch (error) {
+    target.innerHTML = `<div class="notice error">A keresés nem sikerült: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 async function loadVehicleReports() {
   const target = $("#vehicle-condition-history");
   if (!target) return;
+  if (!state.user?.courierId && state.user?.canManageVehicles) {
+    target.innerHTML = `<div class="empty-card">HR nézetben a fotós előzményhez keress rendszámra vagy válassz futár előnézetet admin jogosultsággal.</div>`;
+    return;
+  }
   const plate = String($("#vehicle-license-plate")?.value || "").trim();
   target.innerHTML = `<div class="empty-card">Autó előzmények betöltése...</div>`;
   try {
@@ -3287,6 +3387,11 @@ async function loadVehicleReports() {
   } catch (error) {
     target.innerHTML = `<div class="notice error">Az autó előzmények nem tölthetők be: ${escapeHtml(error.message)}</div>`;
   }
+}
+
+async function loadVehicleSection() {
+  renderVehicleHrPanel();
+  await Promise.all([loadVehicleAssignments(), loadVehicleReports()]);
 }
 
 const deviceConditionForm = $("#device-condition-form");
@@ -3338,6 +3443,11 @@ vehiclePlateInput?.addEventListener("keydown", (event) => {
     state.vehicleReports = [];
     loadVehicleReports();
   }
+});
+
+$("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  searchVehicleAssignments();
 });
 
 const vehicleConditionForm = $("#vehicle-condition-form");
@@ -3910,8 +4020,12 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.queueStatus = queueStorageRead();
     renderQueueStatus();
     showApp();
-    showSection("home");
-    await loadShifts();
+    if (String(state.user.role || "").toLowerCase() === "hr") {
+      showSection("vehicle");
+    } else {
+      showSection("home");
+      await loadShifts();
+    }
   } catch (error) {
     $("#login-error").textContent = error.message;
   }
@@ -4055,6 +4169,8 @@ async function start() {
     showApp();
     if (String(state.user.role || "").toLowerCase() === "coordinator") {
       showSection("coordinator");
+    } else if (String(state.user.role || "").toLowerCase() === "hr") {
+      showSection("vehicle");
     } else {
       showSection("home");
       await loadShifts();

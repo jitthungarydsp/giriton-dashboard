@@ -250,6 +250,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "courierId": str(user.get("courierId") or ""),
         "role": str(user.get("role") or "user"),
         "canPreviewCouriers": can_preview_couriers(user),
+        "canManageVehicles": can_manage_vehicle_history(user),
     }
 
 
@@ -266,6 +267,18 @@ def can_preview_couriers(user: dict[str, Any]) -> bool:
 
 def can_view_financial_amounts(user: dict[str, Any]) -> bool:
     return can_preview_couriers(user)
+
+
+def can_manage_vehicle_history(user: dict[str, Any]) -> bool:
+    role = str(user.get("role") or "").strip().lower()
+    username_key = normalize_text(user.get("username"))
+    return role in {"admin", "superadmin", "hr"} or username_key == normalize_text("admin")
+
+
+def require_vehicle_history_manager(user: dict[str, Any]) -> dict[str, Any]:
+    if not can_manage_vehicle_history(user):
+        raise HTTPException(status_code=403, detail="Ehhez HR vagy admin jogosultság szükséges.")
+    return user
 
 
 def is_unrestricted_legacy_settlement_month(month: date) -> bool:
@@ -807,12 +820,50 @@ def vehicle_assignment_payload(row: dict[str, Any] | None) -> dict[str, str] | N
     return {
         "car": car,
         "licensePlate": plate,
+        "driverName": str(row.get("driver_name") or row.get("courier_name") or "").strip(),
+        "date": str(row.get("work_date") or "")[:10],
         "shiftStart": normalize_time(row.get("shift_start")),
         "shiftEnd": normalize_time(row.get("shift_end")),
         "shiftType": str(row.get("shift_type") or "").strip(),
         "source": str(row.get("source_name") or "").strip(),
         "fetchedAt": str(row.get("fetched_at") or "").strip(),
     }
+
+
+def safe_vehicle_assignment(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "date": str(row.get("work_date") or "")[:10],
+        "driverName": str(row.get("driver_name") or "").strip(),
+        "car": str(row.get("car") or "").strip(),
+        "licensePlate": str(row.get("license_plate") or "").strip(),
+        "shiftStart": normalize_time(row.get("shift_start")),
+        "shiftEnd": normalize_time(row.get("shift_end")),
+        "shiftType": str(row.get("shift_type") or "").strip(),
+        "source": str(row.get("source_name") or "").strip(),
+        "fetchedAt": str(row.get("fetched_at") or "").strip(),
+    }
+
+
+def read_vehicle_assignment_rows(
+    start: date,
+    end: date,
+    *,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "dsp_vehicle_assignments",
+        params={
+            "select": "source_name,work_date,driver_name,shift_start,shift_end,car,license_plate,shift_type,fetched_at",
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.desc,shift_start.desc.nullslast,fetched_at.desc",
+            "limit": str(int(limit)),
+        },
+        timeout=30,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
 
 
 def live_vehicle_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
@@ -897,16 +948,7 @@ def read_vehicle_assignment_rows_for_user(
     end: date,
 ) -> list[dict[str, Any]]:
     _courier_id, courier_name = courier_identity(user)
-    rows = optional_supabase_rows(
-        "dsp_vehicle_assignments",
-        params={
-            "select": "source_name,work_date,driver_name,shift_start,shift_end,car,license_plate,shift_type,fetched_at",
-            "work_date": f"gte.{start.isoformat()}",
-            "order": "work_date.asc,shift_start.asc.nullslast,fetched_at.desc",
-            "limit": "5000",
-        },
-        timeout=30,
-    )
+    rows = read_vehicle_assignment_rows(start, end, limit=5000)
     wanted_names = {
         normalize_text(courier_name),
         normalize_text(user.get("username")),
@@ -7797,6 +7839,67 @@ def list_vehicle_condition_reports(
         courier=courier,
         giriton_pwa_session=giriton_pwa_session,
     )
+
+
+@app.get("/api/vehicles/assignments")
+def list_vehicle_assignments(
+    days: int = Query(default=10, ge=1, le=60),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    start = today - timedelta(days=days - 1)
+    if not user_courier_id(view_user):
+        return {"from": start.isoformat(), "to": today.isoformat(), "items": []}
+    rows = read_vehicle_assignment_rows_for_user(view_user, start, today)
+    rows = sorted(
+        rows,
+        key=lambda row: (str(row.get("work_date") or ""), normalize_time(row.get("shift_start")), str(row.get("fetched_at") or "")),
+        reverse=True,
+    )
+    return {"from": start.isoformat(), "to": today.isoformat(), "items": [safe_vehicle_assignment(row) for row in rows]}
+
+
+@app.get("/api/vehicles/assignments/search")
+def search_vehicle_assignments(
+    query: str = Query(default="", min_length=1),
+    days: int = Query(default=180, ge=1, le=730),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_vehicle_history_manager(require_user(giriton_pwa_session))
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    start = today - timedelta(days=days - 1)
+    search_text = normalize_text(query)
+    search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
+    rows = read_vehicle_assignment_rows(start, today, limit=10000)
+    matches = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for row in rows:
+        driver_text = normalize_text(row.get("driver_name"))
+        plate_text = normalize_text(row.get("license_plate"))
+        compact_plate = re.sub(r"[^a-z0-9]+", "", plate_text)
+        if (
+            search_text not in driver_text
+            and search_text not in plate_text
+            and search_plate not in compact_plate
+        ):
+            continue
+        key = (
+            str(row.get("work_date") or "")[:10],
+            str(row.get("driver_name") or ""),
+            normalize_time(row.get("shift_start")),
+            normalize_time(row.get("shift_end")),
+            str(row.get("license_plate") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        matches.append(safe_vehicle_assignment(row))
+        if len(matches) >= 80:
+            break
+    return {"items": matches, "lastUsage": matches[0] if matches else None}
 
 
 @app.post("/api/devices/reports")
