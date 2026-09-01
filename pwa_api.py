@@ -1862,12 +1862,13 @@ def process_action_key(action: str, process_id: str | None = "") -> str:
 
 
 def base_action_key(action_key: str) -> str:
-    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
-    return match.group(2) if match else str(action_key or "").strip()
+    text = str(action_key or "").strip().lower()
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", text)
+    return match.group(2).strip().lower() if match else text
 
 
 def process_id_from_action_key(action_key: str) -> str:
-    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip())
+    match = re.fullmatch(r"process:([a-z0-9_-]+):(.+)", str(action_key or "").strip().lower())
     return match.group(1) if match else ""
 
 

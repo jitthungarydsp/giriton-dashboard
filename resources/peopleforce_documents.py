@@ -543,10 +543,11 @@ def upload_peopleforce_document(
 ):
     supabase_url = require_supabase()
     file_bytes = uploaded_file.getvalue()
+    clean_document_type = str(document_type or "").strip().lower()
     payload = {
         "courier_id": str(courier_id or "").strip(),
         "courier_name": str(courier_name or "").strip(),
-        "document_type": str(document_type or "").strip(),
+        "document_type": clean_document_type,
         "document_month": format_month(document_month),
         "title": str(title or "").strip(),
         "file_name": str(uploaded_file.name or "").strip(),
@@ -589,10 +590,11 @@ def upload_peopleforce_document_bytes(
 ):
     supabase_url = require_supabase()
     file_bytes = file_bytes or b""
+    clean_document_type = str(document_type or "").strip().lower()
     payload = {
         "courier_id": str(courier_id or "").strip(),
         "courier_name": str(courier_name or "").strip(),
-        "document_type": str(document_type or "").strip(),
+        "document_type": clean_document_type,
         "document_month": format_month(document_month),
         "title": str(title or "").strip(),
         "file_name": str(file_name or "").strip(),
