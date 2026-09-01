@@ -1842,6 +1842,7 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Raktár</span><strong>${escapeHtml(selected.warehouse || "-")}</strong></div>
         <div class="stat-row"><span>Címek / stopok</span><strong>${formatCount(selected.orders || 0)} / ${formatCount(selected.stops || 0)}</strong></div>
         <div class="stat-row"><span>Kiflis autó</span><strong>${escapeHtml(selected.kifliVehicle || "Nincs adat")}</strong></div>
+        <div class="stat-row"><span>Forrás</span><strong>${escapeHtml(selected.dataSource || "-")}</strong></div>
       </div>
     </article>
   `;

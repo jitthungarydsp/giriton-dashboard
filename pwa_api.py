@@ -5340,7 +5340,8 @@ def route_detail_narrative(item: dict[str, Any]) -> str:
         f"bepakolással együtt pedig {total_duration} volt. "
         f"A túratípus: {item.get('routeTypeLabel') or 'Normál'}. "
         f"A használt autó: {vehicle_text}; Kiflis autó: {item.get('kifliVehicle') or 'Nincs adat'}. "
-        f"A mért távolság {distance_text}."
+        f"A mért távolság {distance_text}. "
+        f"Forrás: {item.get('dataSource') or 'PWA route adatok'}."
     )
 
 
@@ -5409,9 +5410,123 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "orders": safe_int(row.get("orders") or story.get("addressCount")),
         "stops": safe_int(row.get("stops") or story.get("addressCount")),
         "sourceStoryText": str(story.get("storyText") or ""),
+        "dataSource": "Courier Hub route-detail API" if row.get("courierHubRouteDetail") else "PWA route adatok",
     }
     item["narrative"] = route_detail_narrative(item)
     return item
+
+
+def courier_hub_route_type(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if "express" in text:
+        return "express"
+    if "region" in text or "régio" in text or "regio" in text:
+        return "regional"
+    return "normal"
+
+
+def first_route_log_event_at(response_json: Any, event_name: str) -> str:
+    if not isinstance(response_json, dict):
+        return ""
+    wanted = str(event_name or "").strip().upper()
+    for event in response_json.get("routeLogs") or response_json.get("logs") or []:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or event.get("eventType") or event.get("event") or "").strip().upper()
+        if event_type != wanted:
+            continue
+        return str(
+            event.get("createdAt")
+            or event.get("created_at")
+            or event.get("time")
+            or event.get("timestamp")
+            or ""
+        ).strip()
+    return ""
+
+
+def safe_float_value(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def compact_courier_hub_route_detail_raw(row: dict[str, Any]) -> dict[str, Any] | None:
+    response_json = row.get("response_json") or {}
+    if isinstance(response_json, str):
+        try:
+            response_json = json.loads(response_json)
+        except json.JSONDecodeError:
+            response_json = {}
+    if not isinstance(response_json, dict):
+        return None
+    shift = response_json.get("shift") if isinstance(response_json.get("shift"), dict) else {}
+    stops = response_json.get("stops") if isinstance(response_json.get("stops"), list) else []
+    route_id = str(row.get("route_id") or response_json.get("routeId") or response_json.get("id") or "").strip()
+    if not route_id:
+        return None
+    planned_start = str(shift.get("plannedStartAt") or "").strip()
+    actual_start = str(shift.get("actualStartAt") or "").strip()
+    route_assigned = first_route_log_event_at(response_json, "ROUTE_ASSIGNED")
+    shift_available = first_route_log_event_at(response_json, "SHIFT_AVAILABLE") or actual_start
+    departed = str(shift.get("departedAt") or "").strip() or first_route_log_event_at(response_json, "DEPARTED")
+    last_order_finished = first_route_log_event_at(response_json, "LAST_ORDER_FINISHED")
+    returned = first_route_log_event_at(response_json, "WAREHOUSE_ARRIVED")
+    work_date = (
+        str(response_json.get("deliveryDate") or "")[:10]
+        or str(shift.get("deliveryDate") or "")[:10]
+        or str(planned_start or actual_start or "")[:10]
+    )
+    return {
+        "date": work_date,
+        "routeId": route_id,
+        "warehouseId": safe_int(row.get("warehouse_id")),
+        "orders": safe_int(response_json.get("orderCount") or response_json.get("orders")) or len(stops),
+        "stops": len(stops),
+        "plannedStartAt": planned_start,
+        "actualStartAt": actual_start,
+        "shiftAvailableAt": shift_available,
+        "routeAssignedAt": route_assigned,
+        "plannedDepartureAt": str(shift.get("plannedDepartureAt") or "").strip(),
+        "departedAt": departed,
+        "lastOrderFinishedAt": last_order_finished,
+        "warehouseArrivedAt": returned,
+        "vehicleModel": str(shift.get("vehicleModel") or "").strip(),
+        "vehiclePlate": str(shift.get("vehiclePlate") or "").strip(),
+        "mileageKm": safe_float_value(shift.get("mileageKm")),
+        "vehicleOwnership": str(shift.get("vehicleOwnership") or "").strip(),
+        "routeType": courier_hub_route_type(
+            response_json.get("routeLayer")
+            or response_json.get("routeType")
+            or shift.get("routeLayer")
+            or shift.get("routeType")
+        ),
+        "courierHubRouteDetail": True,
+    }
+
+
+def load_courier_hub_route_detail_rows_for_courier(courier_id: str, month_value: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_route_performance_detail_raw",
+        params={
+            "select": "courier_id,route_id,warehouse_id,response_json,status_code",
+            "courier_id": f"eq.{courier_id}",
+            "year": f"eq.{month_value.year}",
+            "month": f"eq.{month_value.month}",
+            "status_code": "eq.200",
+            "limit": "1000",
+        },
+        timeout=60,
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        compact = compact_courier_hub_route_detail_raw(row)
+        if compact:
+            result.append(compact)
+    return result
 
 
 def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
@@ -5419,11 +5534,50 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
     courier = stats.get("courier") or {}
     courier_id = str(courier.get("id") or user_courier_id(view_user))
     courier_name = str(courier.get("name") or view_user.get("username") or "")
+    raw_detail_rows = load_courier_hub_route_detail_rows_for_courier(courier_id, month_value)
+    raw_by_route = {
+        (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip()): row
+        for row in raw_detail_rows
+        if str(row.get("date") or "").strip() and str(row.get("routeId") or "").strip()
+    }
+    raw_by_route_id = {
+        str(row.get("routeId") or "").strip(): row
+        for row in raw_detail_rows
+        if str(row.get("routeId") or "").strip()
+    }
+
+    def merge_raw_detail(row: dict[str, Any]) -> dict[str, Any]:
+        route_id = str(row.get("routeId") or "").strip()
+        date_key = str(row.get("date") or "")[:10]
+        raw = raw_by_route.get((date_key, route_id)) or raw_by_route_id.get(route_id) or {}
+        if not raw:
+            return row
+        merged = dict(row)
+        prefer_raw_keys = {"vehicleModel", "vehiclePlate", "vehicleOwnership", "mileageKm", "courierHubRouteDetail"}
+        for key, value in raw.items():
+            if value in (None, ""):
+                continue
+            if key in prefer_raw_keys:
+                merged[key] = value
+                continue
+            current = merged.get(key)
+            if current in (None, "", 0, 0.0):
+                merged[key] = value
+        merged["courierHubRouteDetail"] = True
+        return merged
+
     rows = [
-        build_route_detail_item(row, courier_id, courier_name)
+        build_route_detail_item(merge_raw_detail(row), courier_id, courier_name)
         for row in stats.get("dailyHistory") or []
         if str(row.get("routeId") or "").strip()
     ]
+    known_routes = {str(row.get("routeId") or "").strip() for row in rows}
+    rows.extend(
+        build_route_detail_item(row, courier_id, courier_name)
+        for row in raw_detail_rows
+        if str(row.get("routeId") or "").strip()
+        and str(row.get("routeId") or "").strip() not in known_routes
+    )
     rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -8491,6 +8645,7 @@ def route_details_excel(
         "Km",
         "Címek",
         "Stopok",
+        "Forrás",
         "Szöveges részletező",
     ]
     sheet.append(headers)
@@ -8522,6 +8677,7 @@ def route_details_excel(
             item.get("distanceKm"),
             item.get("orders"),
             item.get("stops"),
+            item.get("dataSource"),
             item.get("narrative"),
         ])
     for column_cells in sheet.columns:
