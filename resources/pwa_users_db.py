@@ -186,21 +186,28 @@ def upsert_pwa_user_with_password(
     }
 
 
-def change_pwa_user_password(courier_id: str, current_password: str, new_password: str) -> bool:
+def change_pwa_user_password(courier_id: str, current_password: str, new_password: str, username: str = "") -> bool:
     clean_courier_id = normalize_courier_id(courier_id)
-    if not clean_courier_id:
+    clean_username = str(username or "").strip()
+    if not clean_courier_id and not clean_username:
         return False
-    rows = _request(
-        "GET",
-        PWA_USERS_TABLE,
-        params={
-            "select": "courier_id,password_hash",
-            "courier_id": f"eq.{clean_courier_id}",
-            "limit": "1",
-        },
-    )
-    if rows is None:
-        return False
+
+    rows = []
+    if clean_courier_id:
+        rows = _request(
+            "GET",
+            PWA_USERS_TABLE,
+            params={
+                "select": "courier_id,username,password_hash",
+                "courier_id": f"eq.{clean_courier_id}",
+                "limit": "1",
+            },
+        )
+        if rows is None:
+            return False
+    if not rows and clean_username:
+        row = find_pwa_user_by_login(clean_username)
+        rows = [row] if row else []
     if not rows:
         return False
 
@@ -208,11 +215,15 @@ def change_pwa_user_password(courier_id: str, current_password: str, new_passwor
     if not password_hash or not verify_password(current_password, password_hash):
         raise ValueError("A jelenlegi jelszó nem megfelelő.")
 
+    target_courier_id = normalize_courier_id(rows[0].get("courier_id") or clean_courier_id)
+    if not target_courier_id:
+        return False
+
     now = datetime.now(timezone.utc).isoformat()
     _request(
         "PATCH",
         PWA_USERS_TABLE,
-        params={"courier_id": f"eq.{clean_courier_id}"},
+        params={"courier_id": f"eq.{target_courier_id}"},
         payload={
             "password_hash": hash_password(new_password),
             "password_updated_at": now,

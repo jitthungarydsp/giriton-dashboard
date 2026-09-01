@@ -7654,7 +7654,12 @@ def update_profile_password(
         raise HTTPException(status_code=422, detail="Az új jelszó legyen eltérő a jelenlegitől.")
 
     try:
-        if change_pwa_user_password(user_courier_id(user), current_password, new_password):
+        if change_pwa_user_password(
+            user_courier_id(user),
+            current_password,
+            new_password,
+            username=str(user.get("username") or ""),
+        ):
             return {"ok": True}
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
