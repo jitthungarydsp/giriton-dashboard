@@ -88,6 +88,47 @@ def find_pwa_user_by_login(username: str) -> dict[str, Any] | None:
     return None
 
 
+def find_pwa_user_by_courier_id(courier_id: str) -> dict[str, Any] | None:
+    clean_courier_id = normalize_courier_id(courier_id)
+    if not clean_courier_id:
+        return None
+    rows = _request(
+        "GET",
+        PWA_USERS_TABLE,
+        params={
+            "select": "courier_id,username,email,role,active,password_hash",
+            "courier_id": f"eq.{clean_courier_id}",
+            "active": "eq.true",
+            "limit": "1",
+        },
+    )
+    if rows is None or not rows:
+        return None
+    return rows[0]
+
+
+def update_pwa_user_email_if_missing(courier_id: str, email: str) -> bool:
+    clean_courier_id = normalize_courier_id(courier_id)
+    clean_email = str(email or "").strip()
+    if not clean_courier_id or not clean_email:
+        return False
+    row = find_pwa_user_by_courier_id(clean_courier_id)
+    if not row or str(row.get("email") or "").strip():
+        return False
+
+    _request(
+        "PATCH",
+        PWA_USERS_TABLE,
+        params={"courier_id": f"eq.{clean_courier_id}"},
+        payload={
+            "email": clean_email,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+    return True
+
+
 def authenticate_pwa_db_user(username: str, password: str) -> dict[str, Any] | None:
     row = find_pwa_user_by_login(username)
     if not row or not bool(row.get("active", True)):

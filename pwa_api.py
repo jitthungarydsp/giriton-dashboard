@@ -31,9 +31,11 @@ from resources.pwa_invoice_validation import MAX_INVOICE_BYTES, extract_expected
 from resources.pwa_users_db import (
     authenticate_pwa_db_user,
     change_pwa_user_password,
+    find_pwa_user_by_courier_id,
     find_pwa_user_by_login,
     public_pwa_user,
     reset_pwa_user_password,
+    update_pwa_user_email_if_missing,
 )
 from resources.security import hash_password, verify_password
 from resources.users import generate_password
@@ -7514,19 +7516,24 @@ def password_reset(payload: PasswordResetRequest):
             status_code=503,
             detail=f"Az e-mail küldés nincs beállítva, ezért a jelszó nem lett módosítva: {exc}",
         ) from exc
+    pwa_user = find_pwa_user_by_courier_id(courier_id)
     master_row = read_master_auth_row(courier_id)
-    if not master_row:
-        raise HTTPException(status_code=404, detail="Ez a futár ID nincs a futár törzsben.")
+    if not master_row and not pwa_user:
+        raise HTTPException(status_code=404, detail="Ehhez a futár ID-hoz nincs aktív mobil felhasználó.")
 
-    existing_email = master_email(master_row)
+    pwa_email = str((pwa_user or {}).get("email") or "").strip()
+    existing_email = pwa_email or master_email(master_row)
     email_updated = False
     if existing_email and existing_email.casefold() != email.casefold():
         raise HTTPException(
             status_code=403,
-            detail="A megadott e-mail cím nem egyezik a törzsben rögzített e-mail címmel.",
+            detail="A megadott e-mail cím nem egyezik a rögzített e-mail címmel.",
         )
     if not existing_email:
-        email_updated = update_master_email_if_missing(master_row, email)
+        if master_row:
+            email_updated = update_master_email_if_missing(master_row, email)
+        if pwa_user:
+            email_updated = update_pwa_user_email_if_missing(courier_id, email) or email_updated
 
     reset_user = None
     try:
