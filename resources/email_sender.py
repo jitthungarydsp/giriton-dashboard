@@ -22,6 +22,14 @@ def get_setting(name, default=""):
     return str(value or default)
 
 
+def first_setting(*names, default=""):
+    for name in names:
+        value = get_setting(name)
+        if str(value or "").strip():
+            return str(value)
+    return default
+
+
 def parse_bool(value, default=False):
     text = str(value or "").strip().casefold()
     if not text:
@@ -46,15 +54,23 @@ def validate_email(value):
 
 
 def smtp_config():
-    host = get_setting("SMTP_HOST")
-    username = get_setting("SMTP_USERNAME")
-    password = get_setting("SMTP_PASSWORD")
-    from_email = get_setting("SMTP_FROM_EMAIL", username)
+    host = first_setting("SMTP_HOST", "EMAIL_HOST", "MAIL_HOST", "SMTP_SERVER")
+    username = first_setting("SMTP_USERNAME", "SMTP_USER", "EMAIL_USERNAME", "EMAIL_USER", "MAIL_USERNAME", "MAIL_USER")
+    password = first_setting("SMTP_PASSWORD", "SMTP_PASS", "EMAIL_PASSWORD", "EMAIL_PASS", "MAIL_PASSWORD", "MAIL_PASS")
+    from_email = first_setting("SMTP_FROM_EMAIL", "EMAIL_FROM", "MAIL_FROM", "FROM_EMAIL", default=username)
 
     if not host or not username or not password or not from_email:
+        missing = []
+        if not host:
+            missing.append("SMTP_HOST")
+        if not username:
+            missing.append("SMTP_USERNAME")
+        if not password:
+            missing.append("SMTP_PASSWORD")
+        if not from_email:
+            missing.append("SMTP_FROM_EMAIL")
         raise RuntimeError(
-            "Hiányos SMTP-beállítás. SMTP_HOST, SMTP_USERNAME, "
-            "SMTP_PASSWORD és SMTP_FROM_EMAIL szükséges."
+            "Hiányos SMTP-beállítás. Hiányzik: " + ", ".join(missing) + "."
         )
 
     use_ssl = parse_bool(get_setting("SMTP_USE_SSL"), default=False)
@@ -62,14 +78,14 @@ def smtp_config():
 
     return {
         "host": host,
-        "port": int(get_setting("SMTP_PORT", port_default)),
+        "port": int(first_setting("SMTP_PORT", "EMAIL_PORT", "MAIL_PORT", default=port_default)),
         "username": username,
         "password": password,
         "from_email": from_email,
-        "from_name": get_setting("SMTP_FROM_NAME", "JITT"),
+        "from_name": first_setting("SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JITT"),
         "use_ssl": use_ssl,
         "use_starttls": parse_bool(
-            get_setting("SMTP_USE_STARTTLS"),
+            first_setting("SMTP_USE_STARTTLS", "EMAIL_USE_STARTTLS", "MAIL_USE_STARTTLS"),
             default=not use_ssl,
         ),
     }
