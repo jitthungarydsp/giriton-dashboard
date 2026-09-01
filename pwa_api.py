@@ -484,6 +484,11 @@ def normalize_text(value: Any) -> str:
     return "".join(char for char in text if not unicodedata.combining(char))
 
 
+def normalize_person_match_text(value: Any) -> str:
+    text = re.sub(r"(?<!\d)\d{3,10}(?!\d)", " ", normalize_text(value))
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def normalized_field_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", normalize_text(value))
 
@@ -950,12 +955,13 @@ def read_vehicle_assignment_rows_for_user(
     _courier_id, courier_name = courier_identity(user)
     rows = read_vehicle_assignment_rows(start, end, limit=5000)
     wanted_names = {
-        normalize_text(courier_name),
-        normalize_text(user.get("username")),
+        normalize_person_match_text(courier_name),
+        normalize_person_match_text(user.get("username")),
     }
+    wanted_names = {name for name in wanted_names if name}
     return [
         row for row in rows
-        if normalize_text(row.get("driver_name")) in wanted_names
+        if normalize_person_match_text(row.get("driver_name")) in wanted_names
         and str(row.get("work_date") or "")[:10] <= end.isoformat()
     ]
 
@@ -7611,6 +7617,50 @@ def me(giriton_pwa_session: str | None = Cookie(default=None)):
     return {"user": public_user(require_user(giriton_pwa_session))}
 
 
+@app.get("/api/couriers")
+def list_couriers(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not (can_preview_couriers(user) or can_manage_vehicle_history(user)):
+        raise HTTPException(status_code=403, detail="Ehhez admin vagy HR jogosultság szükséges.")
+    rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name,warehouse_name,email",
+            "active": "eq.true",
+            "order": "courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
+    if not rows:
+        rows = optional_supabase_rows(
+            "courier_master",
+            params={
+                "select": "courier_id,courier_name,warehouse_name,email",
+                "order": "courier_name.asc",
+                "limit": "10000",
+            },
+            timeout=30,
+        )
+    couriers = []
+    seen: set[str] = set()
+    for row in rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        courier_name = str(row.get("courier_name") or "").strip()
+        if not courier_id or courier_id in seen:
+            continue
+        seen.add(courier_id)
+        couriers.append({
+            "courierId": courier_id,
+            "courierName": courier_name or f"Futár {courier_id}",
+            "warehouse": str(row.get("warehouse_name") or "").strip(),
+            "email": str(row.get("email") or "").strip(),
+        })
+    return {"couriers": couriers}
+
+
 @app.get("/api/push/public-key")
 def get_push_public_key(
     giriton_pwa_session: str | None = Cookie(default=None),
@@ -7871,19 +7921,31 @@ def search_vehicle_assignments(
     user = require_vehicle_history_manager(require_user(giriton_pwa_session))
     today = datetime.now(LOCAL_TIMEZONE).date()
     start = today - timedelta(days=days - 1)
-    search_text = normalize_text(query)
+    clean_query = str(query or "").strip()
+    search_text = normalize_text(clean_query)
+    person_searches = {normalize_person_match_text(clean_query)}
+    if clean_query.isdigit():
+        try:
+            _resolved_id, resolved_name = resolve_preview_courier(clean_query)
+            if resolved_name:
+                person_searches.add(normalize_person_match_text(resolved_name))
+        except HTTPException:
+            pass
+    person_searches = {value for value in person_searches if value}
     search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
     rows = read_vehicle_assignment_rows(start, today, limit=10000)
     matches = []
     seen: set[tuple[str, str, str, str, str]] = set()
     for row in rows:
-        driver_text = normalize_text(row.get("driver_name"))
+        driver_text = normalize_person_match_text(row.get("driver_name"))
         plate_text = normalize_text(row.get("license_plate"))
         compact_plate = re.sub(r"[^a-z0-9]+", "", plate_text)
+        driver_match = any(search in driver_text for search in person_searches)
+        plate_match = bool(search_plate and search_plate in compact_plate)
         if (
-            search_text not in driver_text
+            not driver_match
             and search_text not in plate_text
-            and search_plate not in compact_plate
+            and not plate_match
         ):
             continue
         key = (

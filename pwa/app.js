@@ -8,6 +8,7 @@ const state = {
   checkedInvoiceMonth: null,
   currentRoute: null,
   coordinatorSetup: null,
+  couriers: [],
   deviceReports: [],
   vehicleReports: [],
   vehicleAssignments: [],
@@ -34,7 +35,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v90";
+const APP_VERSION = "v91";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -100,6 +101,45 @@ function currentSectionRefresh() {
 function setAdminPreviewStatus(message = "") {
   const target = $("#admin-preview-status");
   if (target) target.textContent = message;
+}
+
+function courierOptionLabel(courier) {
+  const name = courier?.courierName || "Futár";
+  const id = courier?.courierId || "";
+  const warehouse = courier?.warehouse || "";
+  return `${name}${id ? ` · #${id}` : ""}${warehouse ? ` · ${warehouse}` : ""}`;
+}
+
+function renderCourierMasterOptions() {
+  const datalist = $("#courier-master-list");
+  if (datalist) {
+    datalist.innerHTML = (state.couriers || [])
+      .map((courier) => `<option value="${escapeHtml(courier.courierId)}" label="${escapeHtml(courierOptionLabel(courier))}"></option>`)
+      .join("");
+  }
+  const vehicleCourier = $("#vehicle-hr-courier");
+  if (vehicleCourier) {
+    const currentValue = vehicleCourier.value;
+    vehicleCourier.innerHTML = `<option value="">Válassz futárt</option>${(state.couriers || [])
+      .map((courier) => `<option value="${escapeHtml(courier.courierId)}">${escapeHtml(courierOptionLabel(courier))}</option>`)
+      .join("")}`;
+    if (currentValue) vehicleCourier.value = currentValue;
+  }
+}
+
+async function loadCourierMasterOptions() {
+  if (!state.user || (!state.user.canPreviewCouriers && !state.user.canManageVehicles)) return;
+  if (state.couriers.length) {
+    renderCourierMasterOptions();
+    return;
+  }
+  try {
+    const payload = await api("/api/couriers");
+    state.couriers = payload.couriers || [];
+    renderCourierMasterOptions();
+  } catch (error) {
+    console.warn("Courier master list failed", error);
+  }
 }
 
 function localDate(offset = 0) {
@@ -255,6 +295,7 @@ function showApp() {
   if (adminPreviewBar) adminPreviewBar.classList.toggle("hidden", !state.user.canPreviewCouriers);
   const adminPreviewInput = $("#admin-preview-courier");
   if (adminPreviewInput) adminPreviewInput.value = state.workflowPreviewCourierId;
+  loadCourierMasterOptions();
 }
 
 function showSection(section) {
@@ -2819,7 +2860,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=90");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=91");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3352,11 +3393,14 @@ function renderVehicleSearchResults(lastUsage, items = []) {
 
 async function searchVehicleAssignments() {
   const target = $("#vehicle-hr-search-results");
-  const input = $("#vehicle-hr-search");
-  if (!target || !input) return;
-  const query = String(input.value || "").trim();
+  const plateInput = $("#vehicle-hr-plate");
+  const courierSelect = $("#vehicle-hr-courier");
+  if (!target || !plateInput || !courierSelect) return;
+  const plate = String(plateInput.value || "").trim();
+  const courierId = String(courierSelect.value || "").trim();
+  const query = plate || courierId;
   if (!query) {
-    target.innerHTML = `<div class="empty-card">Adj meg rendszámot vagy nevet.</div>`;
+    target.innerHTML = `<div class="empty-card">Válassz futárt vagy adj meg rendszámot.</div>`;
     return;
   }
   target.innerHTML = `<div class="empty-card">Keresés folyamatban...</div>`;
@@ -3391,7 +3435,7 @@ async function loadVehicleReports() {
 
 async function loadVehicleSection() {
   renderVehicleHrPanel();
-  await Promise.all([loadVehicleAssignments(), loadVehicleReports()]);
+  await Promise.all([loadCourierMasterOptions(), loadVehicleAssignments(), loadVehicleReports()]);
 }
 
 const deviceConditionForm = $("#device-condition-form");

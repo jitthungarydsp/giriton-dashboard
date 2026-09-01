@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=90" />
+    <link rel="stylesheet" href="/styles.css?v=91" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -63,8 +63,9 @@
       <section id="admin-preview-bar" class="admin-preview-bar hidden">
         <label>
           Admin előnézet
-          <input id="admin-preview-courier" placeholder="Futár név vagy ID" />
+          <input id="admin-preview-courier" list="courier-master-list" placeholder="Futár név vagy ID" />
         </label>
+        <datalist id="courier-master-list"></datalist>
         <div class="admin-preview-actions">
           <button id="admin-preview-open" class="secondary" type="button">Megnyitás</button>
           <button id="admin-preview-clear" class="text-button" type="button">Saját profil</button>
@@ -456,7 +457,9 @@
               <p>Azok a rendszámok, amelyek a műszakbeosztás alapján hozzád voltak rendelve.</p>
             </div>
           </div>
-          <section id="vehicle-assignment-history" class="vehicle-assignment-list"></section>
+          <section id="vehicle-assignment-history" class="vehicle-assignment-list">
+            <div class="empty-card">Autó-hozzárendelések betöltése...</div>
+          </section>
         </section>
 
         <section id="vehicle-hr-panel" class="process-card hidden">
@@ -467,11 +470,18 @@
               <p>Rendszám vagy kolléga neve alapján megmutatja, ki használta utoljára az autót.</p>
             </div>
           </div>
-          <form id="vehicle-hr-search-form" class="process-form">
-            <label>Keresés rendszámra vagy névre<input id="vehicle-hr-search" autocomplete="off" placeholder="pl. ABC123 vagy Kovács Péter" /></label>
+          <form id="vehicle-hr-search-form" class="process-form two-column">
+            <label>Futár kiválasztása
+              <select id="vehicle-hr-courier">
+                <option value="">Válassz futárt</option>
+              </select>
+            </label>
+            <label>Rendszám keresése<input id="vehicle-hr-plate" autocomplete="off" placeholder="pl. ABC123" /></label>
             <button class="primary" type="submit">Keresés</button>
           </form>
-          <section id="vehicle-hr-search-results" class="vehicle-assignment-list"></section>
+          <section id="vehicle-hr-search-results" class="vehicle-assignment-list">
+            <div class="empty-card">Válassz futárt vagy adj meg rendszámot.</div>
+          </section>
         </section>
 
         <section class="process-card">
@@ -576,6 +586,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=90" defer></script>
+    <script src="/app.js?v=91" defer></script>
   </body>
 </html>
