@@ -2166,6 +2166,15 @@ function documentList(documents) {
     </div>`).join("")}</div>`;
 }
 
+function latestDocumentList(documents) {
+  const latestDocuments = [...documents].sort((a, b) => {
+    const left = String(a.uploaded_at || a.uploadedAt || a.created_at || "");
+    const right = String(b.uploaded_at || b.uploadedAt || b.created_at || "");
+    return right.localeCompare(left);
+  });
+  return documentList(latestDocuments.slice(0, 1));
+}
+
 function allWorkflowDocuments() {
   const docs = state.workflow?.documents || {};
   const responses = state.workflow?.complaintResponses || {};
@@ -2371,6 +2380,13 @@ function renderLegacySettlementDocumentPanel(documents, complaints, accepted, lo
   `;
 }
 
+function renderLegacyTigDocumentPanel(documents) {
+  return `
+    <div class="notice">Régi TIG dokumentum alapján kezelhető folyamat. Nyisd meg a legutolsó TIG PDF-et, majd fogadd el vagy küldj reklamációt.</div>
+    ${latestDocumentList(documents)}
+  `;
+}
+
 function tigValue(value) {
   return formatHuf(Number(value || 0));
 }
@@ -2472,10 +2488,15 @@ function renderDocumentPanel(action, title, stepNumber) {
     return;
   }
   if (action === "tig" && !isExtraWorkflow()) {
-    const tigReady = Boolean(tig.available);
+    const tigReady = Boolean(tig.available) || documents.length > 0;
+    const tigContent = tig.available
+      ? renderTigBreakdown()
+      : documents.length
+        ? renderLegacyTigDocumentPanel(documents)
+        : renderTigBreakdown();
     panel.innerHTML = `
       <div class="process-title"><span class="step-code">${stepNumber}</span><div><h3>TIG és elfogadás</h3><p>A TIG tételes bontása itt jelenik meg, külön KP sorral.</p></div></div>
-      ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : renderTigBreakdown()}
+      ${locked ? `<div class="empty-card">Az előző lépés még nincs lezárva.</div>` : tigContent}
       ${accepted
         ? `<div class="accept-row done">A TIG-et elfogadtad.</div>`
         : readOnly
