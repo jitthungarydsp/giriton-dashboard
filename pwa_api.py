@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import requests
 import tomllib
 from fastapi import Cookie, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -5241,6 +5241,198 @@ def save_route_note_for_user(user: dict[str, Any], payload: RouteNoteRequest) ->
     }
 
 
+def route_detail_minutes_between(start: Any, end: Any) -> int | None:
+    start_at = local_datetime(start)
+    end_at = local_datetime(end)
+    if not start_at or not end_at or end_at < start_at:
+        return None
+    return int(round((end_at - start_at).total_seconds() / 60))
+
+
+def route_detail_duration_text(minutes: Any) -> str:
+    if minutes is None or minutes == "":
+        return "Nincs adat"
+    try:
+        value = max(0, int(round(float(str(minutes).replace(",", ".")))))
+    except (TypeError, ValueError):
+        return "Nincs adat"
+    hours, mins = divmod(value, 60)
+    if hours and mins:
+        return f"{hours} óra {mins} perc"
+    if hours:
+        return f"{hours} óra"
+    return f"{mins} perc"
+
+
+def route_detail_datetime_text(value: Any) -> str:
+    parsed = local_datetime(value)
+    if not parsed:
+        text = str(value or "").strip()
+        return text[:16] if text else "Nincs adat"
+    return parsed.strftime("%Y. %m. %d. %H:%M")
+
+
+def route_detail_time_text(value: Any) -> str:
+    parsed = local_datetime(value)
+    if not parsed:
+        text = str(value or "").strip()
+        return text[11:16] if len(text) >= 16 else (text or "Nincs adat")
+    return parsed.strftime("%H:%M")
+
+
+def route_detail_route_type_label(value: Any) -> str:
+    key = normalize_text(value)
+    if key == "express":
+        return "Express"
+    if key == "regional":
+        return "Regionális"
+    return "Normál"
+
+
+def route_detail_warehouse_label(row: dict[str, Any], story: dict[str, Any]) -> str:
+    warehouse = str(row.get("warehouse") or story.get("warehouseName") or "").strip()
+    if warehouse:
+        return warehouse
+    warehouse_id = safe_int(row.get("warehouseId"))
+    if warehouse_id == 1:
+        return "BUD1"
+    if warehouse_id == 2:
+        return "BUD2"
+    return str(warehouse_id or "")
+
+
+def is_kifli_vehicle(row: dict[str, Any], vehicle: dict[str, Any] | None) -> str:
+    text = normalize_text(
+        " ".join(
+            str(value or "")
+            for value in (
+                row.get("vehicleOwnership"),
+                (vehicle or {}).get("source"),
+                (vehicle or {}).get("car"),
+            )
+        )
+    )
+    if any(marker in text for marker in ("kifli", "kiflis")):
+        return "Igen"
+    if text:
+        return "Nem"
+    return "Nincs adat"
+
+
+def route_detail_narrative(item: dict[str, Any]) -> str:
+    assigned_text = route_detail_time_text(item.get("routeAssignedAt"))
+    loading = route_detail_duration_text(item.get("loadingMinutes"))
+    route_duration = route_detail_duration_text(item.get("routeMinutes"))
+    total_duration = route_detail_duration_text(item.get("totalMinutes"))
+    distance = item.get("distanceKm")
+    distance_text = "Nincs adat" if distance is None else f"{float(distance):.1f}".replace(".", ",") + " km"
+    vehicle_text = item.get("vehicleLabel") or "Nincs autóadat"
+    shift_text = (
+        f"A műszak {route_detail_datetime_text(item.get('shiftStartAt'))}"
+        f" és {route_detail_time_text(item.get('shiftEndAt'))} között volt."
+        if item.get("shiftStartAt") or item.get("shiftEndAt")
+        else "A műszak pontos kezdete és vége nincs meg az adatok között."
+    )
+    return (
+        f"Route {item.get('routeId') or '-'}: {shift_text} "
+        f"A futár {assigned_text}-kor kapta meg a túrát. "
+        f"A bepakolási idő {loading}, maga a túra {route_duration}, "
+        f"bepakolással együtt pedig {total_duration} volt. "
+        f"A túratípus: {item.get('routeTypeLabel') or 'Normál'}. "
+        f"A használt autó: {vehicle_text}; Kiflis autó: {item.get('kifliVehicle') or 'Nincs adat'}. "
+        f"A mért távolság {distance_text}."
+    )
+
+
+def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: str) -> dict[str, Any]:
+    story = row.get("routeStory") if isinstance(row.get("routeStory"), dict) else {}
+    vehicle = row.get("vehicle") if isinstance(row.get("vehicle"), dict) else None
+    assigned_at = story.get("assignedAt") or row.get("routeAssignedAt")
+    departed_at = story.get("realDeparture") or row.get("departedAt")
+    returned_at = story.get("realReturn") or row.get("warehouseArrivedAt") or row.get("lastOrderFinishedAt")
+    planned_departure = story.get("plannedDeparture") or row.get("plannedDepartureAt")
+    planned_return = story.get("plannedReturn") or row.get("plannedReturnAt")
+    loading_minutes = (
+        story.get("realLoadingMinutes")
+        if story.get("realLoadingMinutes") is not None
+        else route_detail_minutes_between(assigned_at, departed_at)
+    )
+    route_minutes = (
+        story.get("realRouteMinutes")
+        if story.get("realRouteMinutes") is not None
+        else route_detail_minutes_between(departed_at, returned_at)
+    )
+    total_minutes = (
+        story.get("totalRouteMinutes")
+        if story.get("totalRouteMinutes") is not None
+        else route_detail_minutes_between(assigned_at, returned_at)
+    )
+    planned_loading_minutes = story.get("plannedLoadingMinutes")
+    if planned_loading_minutes is None:
+        planned_loading_minutes = route_detail_minutes_between(assigned_at, planned_departure)
+    planned_route_minutes = story.get("plannedRouteMinutes")
+    if planned_route_minutes is None:
+        planned_route_minutes = route_detail_minutes_between(planned_departure, planned_return)
+    distance = story.get("gpsDistanceKm")
+    if distance is None:
+        try:
+            distance = float(row.get("mileageKm") or 0) or None
+        except (TypeError, ValueError):
+            distance = None
+    plate = str(row.get("vehiclePlate") or (vehicle or {}).get("licensePlate") or "").strip()
+    car = str(row.get("vehicleModel") or (vehicle or {}).get("car") or "").strip()
+    vehicle_label = " · ".join(part for part in (plate, car) if part)
+    route_type = str(row.get("routeType") or story.get("assignmentMode") or "normal").strip() or "normal"
+    item = {
+        "courierId": courier_id,
+        "courierName": courier_name,
+        "date": str(row.get("date") or "")[:10],
+        "warehouse": route_detail_warehouse_label(row, story),
+        "routeId": str(row.get("routeId") or ""),
+        "routeType": route_type,
+        "routeTypeLabel": route_detail_route_type_label(route_type),
+        "shiftStartAt": story.get("shiftStart") or row.get("plannedStartAt"),
+        "shiftEndAt": story.get("shiftEnd") or row.get("plannedEndAt"),
+        "routeAssignedAt": assigned_at,
+        "departedAt": departed_at,
+        "returnedAt": returned_at,
+        "plannedLoadingMinutes": planned_loading_minutes,
+        "loadingMinutes": loading_minutes,
+        "plannedRouteMinutes": planned_route_minutes,
+        "routeMinutes": route_minutes,
+        "totalMinutes": total_minutes,
+        "vehiclePlate": plate,
+        "vehicleModel": car,
+        "vehicleLabel": vehicle_label,
+        "kifliVehicle": is_kifli_vehicle(row, vehicle),
+        "distanceKm": distance,
+        "orders": safe_int(row.get("orders") or story.get("addressCount")),
+        "stops": safe_int(row.get("stops") or story.get("addressCount")),
+        "sourceStoryText": str(story.get("storyText") or ""),
+    }
+    item["narrative"] = route_detail_narrative(item)
+    return item
+
+
+def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
+    stats = build_monthly_courier_statistics(view_user, month_value, allow_unpublished=allow_unpublished)
+    courier = stats.get("courier") or {}
+    courier_id = str(courier.get("id") or user_courier_id(view_user))
+    courier_name = str(courier.get("name") or view_user.get("username") or "")
+    rows = [
+        build_route_detail_item(row, courier_id, courier_name)
+        for row in stats.get("dailyHistory") or []
+        if str(row.get("routeId") or "").strip()
+    ]
+    rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
+    return {
+        "month": month_value.replace(day=1).strftime("%Y-%m"),
+        "courier": {"id": courier_id, "name": courier_name},
+        "rows": rows,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def route_quality_shift_key(row: dict[str, Any]) -> str:
     story = row.get("routeStory") or {}
     return str(
@@ -8239,6 +8431,112 @@ def current_route(
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     return build_route_card(view_user)
+
+
+@app.get("/api/routes/details")
+def route_details(
+    month: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A túra részletezőhöz admin jogosultság szükséges.")
+    if not str(courier or "").strip():
+        raise HTTPException(status_code=422, detail="Válassz futárt a futártörzsből.")
+    view_user, _preview = workflow_view_user(user, courier)
+    return route_details_for_user(view_user, parse_month(month), allow_unpublished=True)
+
+
+@app.get("/api/routes/details.xlsx")
+def route_details_excel(
+    month: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A túra részletezőhöz admin jogosultság szükséges.")
+    if not str(courier or "").strip():
+        raise HTTPException(status_code=422, detail="Válassz futárt a futártörzsből.")
+    view_user, _preview = workflow_view_user(user, courier)
+    payload = route_details_for_user(view_user, parse_month(month), allow_unpublished=True)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Tura reszletek"
+    headers = [
+        "Futár ID",
+        "Futár",
+        "Dátum",
+        "Raktár",
+        "Route ID",
+        "Túratípus",
+        "Műszak kezdete",
+        "Műszak vége",
+        "Túrát kapott",
+        "Indulás a raktárból",
+        "Visszaérkezés",
+        "Tervezett bepakolás (perc)",
+        "Bepakolás (perc)",
+        "Tervezett túra (perc)",
+        "Túra hossza (perc)",
+        "Túra bepakolással (perc)",
+        "Rendszám",
+        "Autó",
+        "Kiflis autó",
+        "Km",
+        "Címek",
+        "Stopok",
+        "Szöveges részletező",
+    ]
+    sheet.append(headers)
+    header_fill = PatternFill("solid", fgColor="17231C")
+    for cell in sheet[1]:
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = header_fill
+    for item in payload.get("rows") or []:
+        sheet.append([
+            item.get("courierId"),
+            item.get("courierName"),
+            item.get("date"),
+            item.get("warehouse"),
+            item.get("routeId"),
+            item.get("routeTypeLabel"),
+            route_detail_datetime_text(item.get("shiftStartAt")),
+            route_detail_time_text(item.get("shiftEndAt")),
+            route_detail_time_text(item.get("routeAssignedAt")),
+            route_detail_time_text(item.get("departedAt")),
+            route_detail_time_text(item.get("returnedAt")),
+            item.get("plannedLoadingMinutes"),
+            item.get("loadingMinutes"),
+            item.get("plannedRouteMinutes"),
+            item.get("routeMinutes"),
+            item.get("totalMinutes"),
+            item.get("vehiclePlate"),
+            item.get("vehicleModel"),
+            item.get("kifliVehicle"),
+            item.get("distanceKm"),
+            item.get("orders"),
+            item.get("stops"),
+            item.get("narrative"),
+        ])
+    for column_cells in sheet.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column_cells[:200])
+        sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 10), 55)
+    sheet.freeze_panes = "A2"
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"tura-reszletek-{slugify_filename((payload.get('courier') or {}).get('name'))}-{payload.get('month')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/routes/delay-alert")

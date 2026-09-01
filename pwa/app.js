@@ -32,10 +32,12 @@ const state = {
   statisticsHistoryDate: "",
   statisticsQualityTopic: "",
   statisticsRequestSeq: 0,
+  routeDetails: null,
+  routeDetailsSelectedIndex: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v91";
+const APP_VERSION = "v92";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -90,6 +92,7 @@ function currentSectionRefresh() {
   if (state.section === "home") return loadShifts();
   if (state.section === "tours") return loadCurrentRoute();
   if (state.section === "statistics") return loadStatistics();
+  if (state.section === "route-details") return loadRouteDetails();
   if (state.section === "workflow") return loadWorkflow();
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
@@ -124,6 +127,14 @@ function renderCourierMasterOptions() {
       .map((courier) => `<option value="${escapeHtml(courier.courierId)}">${escapeHtml(courierOptionLabel(courier))}</option>`)
       .join("")}`;
     if (currentValue) vehicleCourier.value = currentValue;
+  }
+  const routeDetailsCourier = $("#route-details-courier");
+  if (routeDetailsCourier) {
+    const currentValue = routeDetailsCourier.value || state.workflowPreviewCourierId;
+    routeDetailsCourier.innerHTML = `<option value="">Válassz futárt</option>${(state.couriers || [])
+      .map((courier) => `<option value="${escapeHtml(courier.courierId)}">${escapeHtml(courierOptionLabel(courier))}</option>`)
+      .join("")}`;
+    if (currentValue) routeDetailsCourier.value = currentValue;
   }
 }
 
@@ -277,12 +288,13 @@ function showApp() {
   const role = String(state.user.role || "").toLowerCase();
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
+  $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-game"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   if (hrOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-game"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
     ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
   }
@@ -303,6 +315,7 @@ function showSection(section) {
   $("#home-content").classList.toggle("hidden", section !== "home");
   $("#settlement-content").classList.toggle("hidden", section !== "settlement");
   $("#statistics-content").classList.toggle("hidden", section !== "statistics");
+  $("#route-details-content").classList.toggle("hidden", section !== "route-details");
   $("#phonebook-content").classList.toggle("hidden", section !== "phonebook");
   $("#atm-content").classList.toggle("hidden", section !== "atm");
   $("#salary-advance-content").classList.toggle("hidden", section !== "salary-advance");
@@ -318,6 +331,7 @@ function showSection(section) {
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
   $("#nav-statistics").classList.toggle("active", section === "statistics");
+  $("#nav-route-details").classList.toggle("active", section === "route-details");
   $("#nav-phonebook").classList.toggle("active", section === "phonebook");
   $("#nav-atm").classList.toggle("active", section === "atm");
   $("#nav-salary-advance").classList.toggle("active", section === "salary-advance");
@@ -332,6 +346,13 @@ function showSection(section) {
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "statistics" && !state.statistics) loadStatistics();
+  if (section === "route-details") {
+    loadCourierMasterOptions().then(() => {
+      if (!$("#route-details-month")?.value) $("#route-details-month").value = state.statisticsMonth;
+      if (state.workflowPreviewCourierId && $("#route-details-courier")) $("#route-details-courier").value = state.workflowPreviewCourierId;
+    });
+    renderRouteDetails();
+  }
   if (section === "phonebook") renderPhonebook();
   if (section === "atm") loadAtmPayments();
   if (section === "salary-advance") loadSalaryAdvanceRequests();
@@ -1717,6 +1738,142 @@ async function loadCurrentRoute() {
   }
 }
 
+function routeDetailValue(value, fallback = "-") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function routeDetailMinutes(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${formatCount(numeric)} perc` : "-";
+}
+
+function routeDetailDistance(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${formatAverage(numeric)} km` : "-";
+}
+
+function routeDetailsExcelUrl() {
+  const month = $("#route-details-month")?.value || state.statisticsMonth;
+  const courier = $("#route-details-courier")?.value || "";
+  if (!month || !courier) return "";
+  return `/api/routes/details.xlsx?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(courier)}`;
+}
+
+function renderRouteDetails() {
+  const panel = $("#route-details-panel");
+  if (!panel) return;
+  if (!state.user?.canPreviewCouriers) {
+    panel.innerHTML = `<div class="route-empty error-state"><span class="route-empty-icon">!</span><div><h3>Nincs jogosultság</h3><p>Ezt a nézetet admin jogosultsággal lehet használni.</p></div></div>`;
+    return;
+  }
+  const payload = state.routeDetails;
+  const rows = payload?.rows || [];
+  if (!payload) {
+    panel.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">⇲</span>
+        <div><h3>Túra részletező</h3><p>Válassz futárt és hónapot, majd kérd le a route adatokat.</p></div>
+      </div>
+    `;
+    return;
+  }
+  if (!rows.length) {
+    panel.innerHTML = `
+      <div class="route-empty">
+        <span class="route-empty-icon">0</span>
+        <div><h3>Nincs túra adat</h3><p>A kiválasztott hónapban ehhez a futárhoz nem találtam route sort.</p></div>
+      </div>
+    `;
+    return;
+  }
+  const selectedIndex = Math.min(Math.max(0, state.routeDetailsSelectedIndex || 0), rows.length - 1);
+  const selected = rows[selectedIndex];
+  const excelUrl = routeDetailsExcelUrl();
+  panel.innerHTML = `
+    <div class="route-details-head">
+      <div>
+        <span>${escapeHtml(payload.month || "-")}</span>
+        <strong>${escapeHtml(payload.courier?.name || "Futár")}</strong>
+        <small>${formatCount(rows.length)} route sor</small>
+      </div>
+      ${excelUrl ? `<a class="download-link" href="${excelUrl}">Excel letöltés</a>` : ""}
+    </div>
+    <div class="route-details-table-wrap">
+      <table class="route-details-table">
+        <thead>
+          <tr>
+            <th>Dátum</th>
+            <th>Route ID</th>
+            <th>Típus</th>
+            <th>Bepakolás</th>
+            <th>Túra</th>
+            <th>Összes</th>
+            <th>Autó</th>
+            <th>Km</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row, index) => `
+            <tr class="${index === selectedIndex ? "active" : ""}" data-route-detail-index="${index}">
+              <td>${escapeHtml(routeDetailValue(row.date))}</td>
+              <td><strong>${escapeHtml(routeDetailValue(row.routeId))}</strong></td>
+              <td>${escapeHtml(routeDetailValue(row.routeTypeLabel))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.loadingMinutes))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.routeMinutes))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.totalMinutes))}</td>
+              <td>${escapeHtml(routeDetailValue(row.vehicleLabel || row.vehiclePlate || row.vehicleModel))}</td>
+              <td>${escapeHtml(routeDetailDistance(row.distanceKm))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    <article class="route-story-card">
+      <div class="route-story-card-head">
+        <span>Szöveges túra részletező</span>
+        <strong>Route ${escapeHtml(selected.routeId || "-")}</strong>
+      </div>
+      <p>${escapeHtml(selected.narrative || "Ehhez a route-hoz nincs szöveges részletező.")}</p>
+      <div class="route-timeline-grid">
+        <div class="stat-row"><span>Futár</span><strong>${escapeHtml(selected.courierName || "-")} (#${escapeHtml(selected.courierId || "-")})</strong></div>
+        <div class="stat-row"><span>Raktár</span><strong>${escapeHtml(selected.warehouse || "-")}</strong></div>
+        <div class="stat-row"><span>Címek / stopok</span><strong>${formatCount(selected.orders || 0)} / ${formatCount(selected.stops || 0)}</strong></div>
+        <div class="stat-row"><span>Kiflis autó</span><strong>${escapeHtml(selected.kifliVehicle || "Nincs adat")}</strong></div>
+      </div>
+    </article>
+  `;
+  panel.querySelectorAll("[data-route-detail-index]").forEach((row) => {
+    row.addEventListener("click", () => {
+      state.routeDetailsSelectedIndex = Number(row.dataset.routeDetailIndex || 0);
+      renderRouteDetails();
+    });
+  });
+}
+
+async function loadRouteDetails() {
+  const message = $("#route-details-message");
+  const monthInput = $("#route-details-month");
+  const courierSelect = $("#route-details-courier");
+  const month = monthInput?.value || state.statisticsMonth;
+  const courier = courierSelect?.value || "";
+  if (!courier) {
+    if (message) message.innerHTML = `<div class="notice error">Válassz futárt a futártörzsből.</div>`;
+    return;
+  }
+  try {
+    if (message) message.innerHTML = `<div class="notice">Túra részletek betöltése...</div>`;
+    state.routeDetailsSelectedIndex = 0;
+    state.routeDetails = await api(`/api/routes/details?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(courier)}`);
+    if (message) message.innerHTML = "";
+    renderRouteDetails();
+  } catch (error) {
+    if (message) message.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function ensureDelayAlertDialog() {
   let dialog = $("#delay-alert-dialog");
   if (dialog) return dialog;
@@ -2860,7 +3017,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=91");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=92");
   }
   return navigator.serviceWorker.ready;
 }
@@ -4155,6 +4312,8 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.queueStatus = null;
   state.statistics = null;
+  state.routeDetails = null;
+  state.routeDetailsSelectedIndex = 0;
   state.game = null;
   state.gameStartedAt = null;
   state.openMuszakproShifts = null;
@@ -4175,9 +4334,21 @@ $("#nav-profile").addEventListener("click", () => showSection("profile"));
 $("#nav-device").addEventListener("click", () => showSection("device"));
 $("#nav-vehicle").addEventListener("click", () => showSection("vehicle"));
 $("#nav-tours").addEventListener("click", () => showSection("tours"));
+$("#nav-route-details").addEventListener("click", () => showSection("route-details"));
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
+$("#route-details-load")?.addEventListener("click", loadRouteDetails);
+$("#route-details-courier")?.addEventListener("change", () => {
+  state.routeDetails = null;
+  state.routeDetailsSelectedIndex = 0;
+  renderRouteDetails();
+});
+$("#route-details-month")?.addEventListener("change", () => {
+  state.routeDetails = null;
+  state.routeDetailsSelectedIndex = 0;
+  renderRouteDetails();
+});
 
 setInterval(() => {
   currentSectionRefresh().catch(() => {});

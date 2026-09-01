@@ -356,6 +356,19 @@ textarea { min-height: 96px; resize: vertical; }
 .route-story-card h4 { margin: 0; color: var(--green-dark); font-size: 13px; }
 .route-story-card p { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.5; }
 .route-story-card p strong { font-weight: 900; }
+.route-details-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-bottom: 14px; }
+.route-details-head span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-details-head strong { display: block; margin-top: 3px; font-size: 19px; overflow-wrap: anywhere; }
+.route-details-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.route-details-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+.route-details-table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 12px; }
+.route-details-table th,
+.route-details-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.route-details-table th { background: #17231c; color: #fff; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-details-table tbody tr { cursor: pointer; }
+.route-details-table tbody tr:hover,
+.route-details-table tbody tr.active { background: #eff8ed; }
+.route-details-table tbody tr.active td:first-child { box-shadow: inset 4px 0 0 var(--green-dark); }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }
