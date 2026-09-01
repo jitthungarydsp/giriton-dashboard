@@ -2175,6 +2175,25 @@ function latestDocumentList(documents) {
   return documentList(latestDocuments.slice(0, 1));
 }
 
+function finalDocumentList(documents) {
+  const rankedDocuments = [...documents].sort((a, b) => {
+    const finalScore = (document) => {
+      const text = [
+        document.title,
+        document.file_name,
+        document.note,
+      ].map((value) => String(value || "").toLowerCase()).join(" ");
+      return text.includes("végleges") || text.includes("vegleges") ? 1 : 0;
+    };
+    const scoreDiff = finalScore(b) - finalScore(a);
+    if (scoreDiff) return scoreDiff;
+    const left = String(a.uploaded_at || a.uploadedAt || a.created_at || "");
+    const right = String(b.uploaded_at || b.uploadedAt || b.created_at || "");
+    return right.localeCompare(left);
+  });
+  return documentList(rankedDocuments.slice(0, 1));
+}
+
 function allWorkflowDocuments() {
   const docs = state.workflow?.documents || {};
   const responses = state.workflow?.complaintResponses || {};
@@ -2382,8 +2401,8 @@ function renderLegacySettlementDocumentPanel(documents, complaints, accepted, lo
 
 function renderLegacyTigDocumentPanel(documents) {
   return `
-    <div class="notice">Régi TIG dokumentum alapján kezelhető folyamat. Nyisd meg a legutolsó TIG PDF-et, majd fogadd el vagy küldj reklamációt.</div>
-    ${latestDocumentList(documents)}
+    <div class="notice">Régi TIG dokumentum alapján kezelhető folyamat. Nyisd meg a végleges TIG PDF-et, majd fogadd el vagy küldj reklamációt.</div>
+    ${finalDocumentList(documents)}
   `;
 }
 
