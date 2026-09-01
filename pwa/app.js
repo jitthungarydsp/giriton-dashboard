@@ -1490,7 +1490,10 @@ function routeStopBlock(title, checkpoint, cssClass = "") {
   if (!checkpoint) return "";
 
   const windowText = checkpoint.windowFrom || checkpoint.windowTo
-    ? `<small>${routeTimeRange(checkpoint.windowFrom, checkpoint.windowTo)}</small>`
+    ? `<small>Időkapu: ${routeTimeRange(checkpoint.windowFrom, checkpoint.windowTo)}</small>`
+    : "";
+  const arrivalText = checkpoint.estimatedArrival || checkpoint.plannedArrival
+    ? `<small>${checkpoint.estimatedArrival ? "Várható érkezés" : "Tervezett érkezés"}: ${escapeHtml(checkpoint.estimatedArrival || checkpoint.plannedArrival)}</small>`
     : "";
   const position = checkpoint.position ? `<span class="route-stop-index">${escapeHtml(checkpoint.position)}</span>` : `<span class="route-stop-index">-</span>`;
   const delayClass = checkpoint.isLate ? " delayed" : "";
@@ -1505,6 +1508,7 @@ function routeStopBlock(title, checkpoint, cssClass = "") {
         <span>${escapeHtml(title)}</span>
         <strong>${escapeHtml(checkpoint.address || "Cím nincs megadva")}</strong>
         ${windowText}
+        ${arrivalText}
         ${delayText}
       </div>
     </div>
@@ -1584,7 +1588,9 @@ function renderCurrentRoute() {
   const departure = route.realDeparture || route.plannedDeparture || "";
   const returnTime = route.realReturn || route.plannedReturn || "";
   const current = route.current;
-  const nextWaze = wazeUrl(route.next?.address);
+  const nextWaze = wazeUrl(current?.address);
+  const currentWindow = current ? routeTimeRange(current.windowFrom, current.windowTo) : "";
+  const currentArrival = current?.estimatedArrival || current?.plannedArrival || "";
 
   container.innerHTML = `
     <div class="route-hero">
@@ -1612,14 +1618,15 @@ function renderCurrentRoute() {
     ${renderCurrentRouteStory(route)}
 
     <div class="route-current">
-      <span>Mostani cím</span>
+      <span>Következő cím</span>
       <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
-      <small>${current ? `#${escapeHtml(current.orderId || "-")} · ${routeTimeRange(current.windowFrom, current.windowTo)}` : "A túra még nem indult el."}</small>
+      <small>${current ? `#${escapeHtml(current.orderId || "-")} · Időkapu: ${escapeHtml(currentWindow || "-")}` : "A túra még nem indult el."}</small>
+      ${currentArrival ? `<small>${current?.estimatedArrival ? "Várható érkezés" : "Tervezett érkezés"}: ${escapeHtml(currentArrival)}</small>` : ""}
     </div>
 
     <div class="route-stop-list">
       ${routeStopBlock("Előző", route.previous)}
-      ${routeStopBlock("Következő", route.next)}
+      ${routeStopBlock("Utána következő", route.next)}
     </div>
 
     ${nextWaze ? `<a class="waze-button" href="${nextWaze}" target="_blank" rel="noopener">Irány a cím felé</a>` : ""}
