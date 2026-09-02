@@ -8732,9 +8732,11 @@ def muszakpro_open_shifts(
 @app.post("/api/shifts/delay-alert")
 def create_shift_delay_alert(
     payload: ShiftDelayAlertRequest,
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
+    user, _preview = workflow_view_user(user, courier)
     try:
         save_shift_queue_checkin(
             user,

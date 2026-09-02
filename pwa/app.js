@@ -2191,7 +2191,7 @@ async function sendShiftDelayAlert(item, button) {
   button.disabled = true;
   button.textContent = "Küldés...";
   try {
-    await api("/api/shifts/delay-alert", {
+    await api(withPreviewCourier("/api/shifts/delay-alert"), {
       method: "POST",
       body: JSON.stringify({
         work_date: item.date || "",
@@ -2209,6 +2209,7 @@ async function sendShiftDelayAlert(item, button) {
     button.textContent = originalText;
     button.disabled = false;
     $("#warning-list").innerHTML = `<div class="warning-card">${escapeHtml(error.message)}</div>`;
+    $("#warning-list").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 }
 

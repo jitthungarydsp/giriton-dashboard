@@ -82,12 +82,36 @@ textarea { min-height: 96px; resize: vertical; }
 .source.ok { background: #e2f2df; color: #2e6735; }
 .source.missing { border: 1px solid var(--danger); background: #fff0ef; color: var(--danger); }
 .shift-action-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
-.shift-delay-button, .shift-queue-button, .shift-return-button { width: 100%; min-height: 46px; border: 0; border-radius: 14px; color: #fff; font-weight: 850; }
-.shift-delay-button { background: var(--danger); }
-.shift-queue-button { background: var(--green-dark); }
-.shift-return-button { background: var(--ink); }
-.shift-delay-button.sent, .shift-queue-button.sent, .shift-return-button.sent { background: var(--green); }
-.shift-delay-button:disabled, .shift-queue-button:disabled, .shift-return-button:disabled { opacity: .65; }
+.shift-delay-button, .shift-queue-button, .shift-return-button {
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 10px 22px #17231c22, inset 0 1px 0 #ffffff30;
+  transition: transform .14s ease, box-shadow .14s ease, filter .14s ease;
+}
+.shift-delay-button { background: linear-gradient(135deg, #c8443f, #8f2f2b); }
+.shift-queue-button { background: linear-gradient(135deg, #287040, #174928); }
+.shift-return-button { background: linear-gradient(135deg, #25322a, #101812); }
+.shift-delay-button:hover, .shift-queue-button:hover, .shift-return-button:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 12px 26px #17231c2f, inset 0 1px 0 #ffffff38;
+}
+.shift-delay-button:active, .shift-queue-button:active, .shift-return-button:active {
+  transform: translateY(1px);
+  box-shadow: 0 6px 14px #17231c24, inset 0 1px 0 #ffffff24;
+}
+.shift-delay-button.sent, .shift-queue-button.sent, .shift-return-button.sent {
+  background: linear-gradient(135deg, #78ad42, #4f842f);
+}
+.shift-delay-button:disabled, .shift-queue-button:disabled, .shift-return-button:disabled {
+  cursor: not-allowed;
+  opacity: .42;
+  filter: grayscale(.45);
+  box-shadow: none;
+}
 .empty-card, .warning-card { padding: 22px 18px; border-radius: 18px; text-align: center; }
 .empty-card { border: 1px dashed #c7d0c5; color: var(--muted); }
 .warning-card { margin-bottom: 10px; background: #fff3d4; color: var(--warning); font-size: 13px; }
