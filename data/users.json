@@ -585,8 +585,17 @@
             "active": true,
             "token": ""
         },
-                {
+        {
             "username": "Rusvai 8264 Marcell",
+            "trainer": "trainer_name",
+            "password": "3R75ruSm",
+            "role": "user",
+            "courierId": 8264,
+            "active": true,
+            "token": ""
+        },
+                {
+            "username": "Ember Gábor",
             "trainer": "trainer_name",
             "password": "3R75ruSm",
             "role": "user",
@@ -596,7 +605,7 @@
         },
         {
             "username": "Kristóf Attila",
-            "trainer": "trainer_name",
+            "trainer": "trainername",
             "password": "UiF9LcC7",
             "role": "user",
             "courierId": 7221,
