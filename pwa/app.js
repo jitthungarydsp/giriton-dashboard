@@ -27,6 +27,7 @@ const state = {
   workflowProcess: "",
   workflowProcesses: [{ id: "", label: "Havi folyamat" }],
   workflowPreviewCourierId: "",
+  workflowLoading: false,
   statisticsMonth: new Date().toISOString().slice(0, 7),
   statisticsDay: "",
   statisticsHistoryDate: "",
@@ -2339,6 +2340,7 @@ function workflowQuery() {
   if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
     params.set("courier", state.workflowPreviewCourierId);
   }
+  params.set("_", String(Date.now()));
   return params.toString();
 }
 
@@ -2347,6 +2349,7 @@ function workflowProcessQuery() {
   if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
     params.set("courier", state.workflowPreviewCourierId);
   }
+  params.set("_", String(Date.now()));
   return params.toString();
 }
 
@@ -2897,6 +2900,8 @@ function waitingWorkflow() {
 }
 
 async function loadWorkflow() {
+  if (state.workflowLoading) return;
+  state.workflowLoading = true;
   const refreshButton = $("#workflow-refresh");
   if (refreshButton) {
     refreshButton.disabled = true;
@@ -2920,6 +2925,7 @@ async function loadWorkflow() {
     renderWorkflow();
     showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
   } finally {
+    state.workflowLoading = false;
     if (refreshButton) {
       refreshButton.disabled = false;
       refreshButton.textContent = "Frissítés";
@@ -4043,6 +4049,13 @@ $("#admin-preview-clear")?.addEventListener("click", () => {
 $("#workflow-refresh").addEventListener("click", () => {
   loadWorkflow();
 });
+
+setInterval(() => {
+  if (!state.user) return;
+  if (!["settlement", "documents"].includes(state.section)) return;
+  if (document.hidden) return;
+  loadWorkflow();
+}, 15000);
 
 $("#statistics-month").addEventListener("change", (event) => {
   state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
