@@ -2101,7 +2101,7 @@ def enrich_mobile_settlement_row_for_snapshot(
     if not route_detail.empty:
         for target_column in ["Rendelések", "Késedelmi díj", "Túramegfelelés"]:
             if target_column in route_detail.columns:
-                enriched[target_column] = float(pd.to_numeric(route_detail[target_column], errors="coerce").fillna(0.0).sum())
+                enriched[target_column] = float(route_detail[target_column].map(parse_huf_value).sum())
         route_count = int(len(route_detail))
         enriched["Útvonalak"] = route_count
         enriched["Számolt túrák"] = route_count
@@ -2113,9 +2113,9 @@ def enrich_mobile_settlement_row_for_snapshot(
         enriched["Kiemelt túrák"] = highlighted
         enriched["Normál túrák"] = normal
         if parse_huf_value(enriched.get("Nettó bevétel")) == 0 and "Alapdíj" in route_detail.columns:
-            enriched["Nettó bevétel"] = float(pd.to_numeric(route_detail["Alapdíj"], errors="coerce").fillna(0.0).sum())
+            enriched["Nettó bevétel"] = float(route_detail["Alapdíj"].map(parse_huf_value).sum())
         if parse_huf_value(enriched.get("Borravaló")) == 0 and "Borravaló" in route_detail.columns:
-            enriched["Borravaló"] = float(pd.to_numeric(route_detail["Borravaló"], errors="coerce").fillna(0.0).sum())
+            enriched["Borravaló"] = float(route_detail["Borravaló"].map(parse_huf_value).sum())
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     if summary_row:
         summary_map = {
@@ -9399,6 +9399,15 @@ def load_courier_route_detail(
             return pd.DataFrame(columns=columns)
     if str(calculation_mode).casefold() == "api" and period_start is not None:
         _, api_period_end = month_bounds(period_start)
+        api_rows = load_api_financial_overview_rows_for_courier(period_start.year, period_start.month, courier_id)
+        warehouse_id = settlement_warehouse_id(warehouse_label)
+        if warehouse_id is not None and not api_rows.empty and "warehouse_id" in api_rows.columns:
+            api_rows = api_rows.loc[
+                pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
+            ]
+        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
+        if not api_detail.empty:
+            return api_detail.drop(columns=["_courier_id"], errors="ignore")
         if not session_id:
             session_id = load_latest_api_jit_session_id(period_start, warehouse_label)
     try:
