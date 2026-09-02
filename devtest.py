@@ -12141,14 +12141,16 @@ def show_courier_dialog() -> None:
 
         def finance_detail_frame(detail_label: str) -> pd.DataFrame:
             if detail_label == "Kör":
+                route_source_label = "courier_settlement_summary" if summary_available else "route_detail"
+                settlement_session_label = str(session_id or "-")
                 return pd.DataFrame([
                     {"Tétel": "Foglalás sor", "Darab": advance_booking_row_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
                     {"Tétel": "Visszatörölt", "Darab": advance_deleted_shift_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
                     {"Tétel": "Megmaradt", "Darab": advance_remaining_shift_count, "Forrás": str(advance_booking_summary.get("source") or "-")},
                     {"Tétel": "MűszakPro foglalt műszak", "Darab": booked_shift_count, "Forrás": str(booking_summary.get("source") or "-")},
                     {"Tétel": "Giriton műszak", "Darab": giriton_shift_count, "Forrás": str(giriton_shift_summary.get("source") or "-")},
-                    {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
-                    {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": "courier_settlement_summary" if summary_available else "route_detail"},
+                    {"Tétel": "Kifutott túra", "Darab": route_total, "Forrás": route_source_label, "Session": settlement_session_label},
+                    {"Tétel": "Cím / rendelés", "Darab": order_total, "Forrás": route_source_label, "Session": settlement_session_label},
                 ])
             if detail_label == "Alapdíj":
                 if not route_detail.empty and "Alapdíj" in route_detail.columns:
@@ -12349,8 +12351,18 @@ def show_courier_dialog() -> None:
                 ])
             if detail_label == "ATM hatás":
                 return pd.DataFrame([
-                    {"Tétel": "Importált ATM levonás", "Összeg": -imported_atm_total},
-                    {"Tétel": "Manuális ATM levonás", "Összeg": -manual_atm_total},
+                    {
+                        "Tétel": "Importált ATM levonás",
+                        "Összeg": -imported_atm_total,
+                        "Forrás": "Excel balance / ATM import",
+                        "Session": str(imported_balance_session_id or "-"),
+                    },
+                    {
+                        "Tétel": "Manuális ATM levonás",
+                        "Összeg": -manual_atm_total,
+                        "Forrás": "settlement.courier_settlement_adjustment",
+                        "Session": str(session_id or "-"),
+                    },
                 ])
             if detail_label == "Fizetés előleg":
                 return pd.DataFrame([{"Tétel": "Aktuális havi fizetés előleg", "Összeg": -salary_advance_total}])
@@ -12395,7 +12407,7 @@ def show_courier_dialog() -> None:
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
-            ("ATM hatás", format_huf(-atm_deduction_total), "", ""),
+            ("ATM hatás", format_huf(-atm_deduction_total), "", f"Excel import: {format_huf(-imported_atm_total)} | kézi: {format_huf(-manual_atm_total)}"),
             ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
             ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
             ("Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
