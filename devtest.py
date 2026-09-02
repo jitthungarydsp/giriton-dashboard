@@ -1321,6 +1321,27 @@ def load_active_bonus_level_rules(table_name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_active_base_rate_rules(period_start: date, period_end: date) -> pd.DataFrame:
+    """Read active base-fee rules that overlap the selected settlement month."""
+    try:
+        rows = (
+            get_db().schema("settlement").table("cfg_jitt_base_rates").select("*")
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .lte("valid_from", period_end.isoformat())
+            .order("priority")
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    rules = pd.DataFrame(rows)
+    if rules.empty:
+        return rules
+    valid_to = pd.to_datetime(rules.get("valid_to"), errors="coerce")
+    return rules.loc[valid_to.isna() | (valid_to >= pd.Timestamp(period_start))].copy()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_active_periodic_fee_rules(period_start: date, period_end: date) -> pd.DataFrame:
     """Read JITT periodic fees that overlap the selected settlement month."""
     try:
@@ -5557,6 +5578,97 @@ def _api_route_fee(route: dict[str, object], *fee_types: str) -> float:
     return total
 
 
+def _base_rate_warehouse_key(value: object) -> str:
+    text = str(value or "").strip().upper().replace("-", "").replace("_", "").replace(" ", "")
+    if text in {"1", "BUD", "BUDAPEST"} or "BUD1" in text:
+        return "BUD1"
+    if text == "2" or "BUD2" in text:
+        return "BUD2"
+    return text
+
+
+def _base_rate_amount_from_rule(rule: pd.Series, orders: object) -> float:
+    courier_amount = parse_huf_value(rule.get("courier_amount_huf"))
+    calculation_unit = str(rule.get("calculation_unit") or "per_route").casefold()
+    if calculation_unit == "per_order":
+        return courier_amount * parse_huf_value(orders)
+    if calculation_unit in {"fixed", "per_route"}:
+        return courier_amount
+    return 0.0
+
+
+def _base_rate_rule_for_route(
+    rules: pd.DataFrame,
+    route_date: object,
+    day_type: object,
+    route_type: object,
+    warehouse_code: object = None,
+) -> pd.Series | None:
+    if rules.empty:
+        return None
+    try:
+        work_date = date.fromisoformat(str(route_date)[:10])
+    except ValueError:
+        work_date = None
+    day_type_key = _performance_key_from_label(day_type, "day")
+    route_type_key = _performance_key_from_label(route_type, "route")
+    warehouse_key = _base_rate_warehouse_key(warehouse_code)
+    for _, rule in rules.sort_values("priority", kind="stable").iterrows():
+        if str(rule.get("day_type") or "any").casefold() not in {"any", day_type_key}:
+            continue
+        if str(rule.get("route_type") or "any").casefold() not in {"any", route_type_key}:
+            continue
+        rule_warehouse = _base_rate_warehouse_key(rule.get("warehouse_code"))
+        if rule_warehouse and warehouse_key and rule_warehouse != warehouse_key:
+            continue
+        if work_date:
+            try:
+                valid_from = date.fromisoformat(str(rule.get("valid_from"))[:10])
+                valid_to_value = rule.get("valid_to")
+                valid_to = date.fromisoformat(str(valid_to_value)[:10]) if pd.notna(valid_to_value) else None
+            except ValueError:
+                continue
+            if work_date < valid_from or (valid_to and work_date > valid_to):
+                continue
+        return rule
+    return None
+
+
+def apply_api_base_rates_to_route_detail(
+    route_detail: pd.DataFrame,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None = None,
+) -> pd.DataFrame:
+    if route_detail.empty:
+        return route_detail
+    rules = load_active_base_rate_rules(period_start, period_end)
+    if rules.empty:
+        return route_detail
+    result = route_detail.copy()
+    amounts: list[float] = []
+    statuses: list[str] = []
+    for _, item in result.iterrows():
+        warehouse_value = item.get("_warehouse_code") or warehouse_label
+        rule = _base_rate_rule_for_route(
+            rules,
+            item.get("Excel dátum"),
+            item.get("Naptípus"),
+            item.get("Túratípus"),
+            warehouse_value,
+        )
+        if rule is None:
+            amounts.append(parse_huf_value(item.get("Alapdíj")))
+            statuses.append(str(item.get("DB státusz") or "missing_base_rate"))
+            continue
+        amount = _base_rate_amount_from_rule(rule, item.get("Rendelések"))
+        amounts.append(amount)
+        statuses.append("Paraméter alapdíj")
+    result["Alapdíj"] = amounts
+    result["DB státusz"] = statuses
+    return result
+
+
 def _api_route_courier_fee_from_rules(
     route: dict[str, object],
     raw_amount: object,
@@ -5858,8 +5970,10 @@ def api_financial_routes_to_detail(
                 day_type,
                 route_type,
             )
+            warehouse_id_value = int(parse_huf_value(source.get("warehouse_id")))
             parsed.append({
                 "_courier_id": _courier_id_key(source.get("courier_id")),
+                "_warehouse_code": "BUD2" if warehouse_id_value == 2 else "BUD1" if warehouse_id_value == 1 else "",
                 "Route ID": str(route.get("routeId") or "–"),
                 "Excel dátum": delivery_date or "–",
                 "Hét napja": weekday_names.get(int(parsed_date.dayofweek) + 1, "–") if pd.notna(parsed_date) else "–",
@@ -5876,7 +5990,9 @@ def api_financial_routes_to_detail(
             })
     if not parsed:
         return pd.DataFrame(columns=columns)
-    return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+    detail = pd.DataFrame(parsed)
+    detail = apply_api_base_rates_to_route_detail(detail, period_start, period_end)
+    return detail.sort_values(["Excel dátum", "Route ID"])
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -9380,6 +9496,7 @@ def load_courier_route_detail(
         compliance_bonus = parse_huf_value(source.get("courier_compliance_bonus_huf"))
         parsed.append({
             "Route ID": str(source.get("route_unique_id") or "–"),
+            "_warehouse_code": str(normalized.get("Location") or normalized.get("warehouse_code") or warehouse_label or ""),
             "Excel dátum": str(source.get("route_date") or "–"),
             "Hét napja": weekday_names.get(source.get("weekday_iso"), "–"),
             "Túratípus": route_type,
@@ -9405,7 +9522,11 @@ def load_courier_route_detail(
             if not api_detail.empty:
                 return api_detail.drop(columns=["_courier_id"], errors="ignore")
         return pd.DataFrame(columns=columns)
-    return pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+    detail = pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
+    if str(calculation_mode).casefold() == "api" and period_start is not None:
+        _, api_period_end = month_bounds(period_start)
+        detail = apply_api_base_rates_to_route_detail(detail, period_start, api_period_end, warehouse_label)
+    return detail
 
 
 def summarize_courier_route_detail(route_detail: pd.DataFrame) -> pd.DataFrame:
@@ -10612,6 +10733,7 @@ def refresh_settlement_profile_data() -> None:
     load_latest_excel_jit_session_id.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
+    load_active_base_rate_rules.clear()
     load_active_bonus_level_rules.clear()
     load_courier_route_detail.clear()
     load_imported_balance_components.clear()
@@ -10638,6 +10760,7 @@ def refresh_settlement_profile_data() -> None:
 
 
 def refresh_loyalty_calculation_data() -> None:
+    load_active_base_rate_rules.clear()
     load_active_bonus_level_rules.clear()
     load_courier_route_detail.clear()
     load_courier_settlement_summary.clear()
@@ -11419,13 +11542,13 @@ def show_courier_dialog() -> None:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
         ]
-        parameterized_base_total = float(_numeric_series(parameterized_detail, "Alapdíj").sum()) if not parameterized_detail.empty else 0.0
-        route_base_total = float(_numeric_series(route_detail, "Alapdíj").sum()) if "Alapdíj" in route_detail.columns else 0.0
+        parameterized_base_total = float(parameterized_detail["Alapdíj"].map(parse_huf_value).sum()) if not parameterized_detail.empty and "Alapdíj" in parameterized_detail.columns else 0.0
+        route_base_total = float(route_detail["Alapdíj"].map(parse_huf_value).sum()) if "Alapdíj" in route_detail.columns else 0.0
         if parameterized_base_total:
             base_total = parameterized_base_total
         elif route_base_total and not base_total:
             base_total = route_base_total
-        route_tip_total = float(_numeric_series(route_detail, "Borravaló").sum()) if "Borravaló" in route_detail.columns else 0.0
+        route_tip_total = float(route_detail["Borravaló"].map(parse_huf_value).sum()) if "Borravaló" in route_detail.columns else 0.0
         if not tip_total and route_tip_total:
             tip_total = route_tip_total
     display_base_total = base_total
@@ -11732,12 +11855,12 @@ def show_courier_dialog() -> None:
             )
         route_breakdown = summarize_courier_route_detail(route_detail)
         route_detail_base_total = (
-            float(_numeric_series(route_detail, "Alapdíj").sum())
+            float(route_detail["Alapdíj"].map(parse_huf_value).sum())
             if not route_detail.empty and "Alapdíj" in route_detail.columns
             else 0.0
         )
         route_detail_tip_total = (
-            float(_numeric_series(route_detail, "Borravaló").sum())
+            float(route_detail["Borravaló"].map(parse_huf_value).sum())
             if not route_detail.empty and "Borravaló" in route_detail.columns
             else 0.0
         )
@@ -12184,7 +12307,7 @@ def show_courier_dialog() -> None:
             if detail_label == "Alapdíj":
                 if not route_detail.empty and "Alapdíj" in route_detail.columns:
                     base_detail = route_detail.copy()
-                    base_detail["_amount"] = pd.to_numeric(base_detail["Alapdíj"], errors="coerce").fillna(0.0)
+                    base_detail["_amount"] = base_detail["Alapdíj"].map(parse_huf_value)
                     base_detail = base_detail[base_detail["_amount"].ne(0)].copy()
                     if not base_detail.empty:
                         base_detail["_route_type"] = base_detail.get("Túratípus", pd.Series("", index=base_detail.index)).astype(str).str.casefold()
