@@ -251,6 +251,7 @@ def courier_hub_headers() -> dict[str, str]:
         headers["Cookie"] = cookie
     if api_key:
         headers["x-api-key"] = api_key
+    headers.update(read_auth_cache_headers())
     headers.update(_AUTH_REFRESHED_HEADERS)
     return headers
 
@@ -260,6 +261,8 @@ def courier_hub_auth_configured() -> bool:
         clean_text(os.getenv("COURIER_HUB_AUTHORIZATION"))
         or clean_text(os.getenv("COURIER_HUB_COOKIE"))
         or clean_text(os.getenv("COURIER_HUB_API_KEY"))
+        or clean_text(os.getenv("COURIER_HUB_AUTH_CACHE_FILE"))
+        or clean_text(os.getenv("KIFLI_COURIER_HUB_AUTH_CACHE_FILE"))
         or clean_text(os.getenv("COURIER_HUB_AUTH_REFRESH_COMMAND"))
         or (
             clean_text(os.getenv("COURIER_HUB_USERNAME"))
@@ -293,6 +296,21 @@ def parse_auth_command_output(output: str) -> dict[str, Any]:
             continue
         return payload if isinstance(payload, dict) else {}
     return {}
+
+
+def read_auth_cache_headers() -> dict[str, str]:
+    cache_file = clean_text(
+        os.getenv("COURIER_HUB_AUTH_CACHE_FILE")
+        or os.getenv("KIFLI_COURIER_HUB_AUTH_CACHE_FILE")
+    )
+    if not cache_file or not os.path.exists(cache_file):
+        return {}
+    try:
+        with open(cache_file, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return headers_from_auth_payload(payload if isinstance(payload, dict) else {})
 
 
 def headers_from_auth_payload(payload: dict[str, Any]) -> dict[str, str]:

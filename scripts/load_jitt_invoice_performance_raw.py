@@ -193,6 +193,8 @@ def build_courier_hub_headers():
             }
         )
 
+    headers.update(read_auth_cache_headers())
+
     return headers
 
 
@@ -299,6 +301,22 @@ def _headers_from_auth_payload(payload):
         )
 
     return headers
+
+
+def read_auth_cache_headers():
+    cache_file = str(
+        get_setting("KIFLI_COURIER_HUB_AUTH_CACHE_FILE")
+        or get_setting("COURIER_HUB_AUTH_CACHE_FILE")
+        or ""
+    ).strip()
+    if not cache_file or not os.path.exists(cache_file):
+        return {}
+    try:
+        with open(cache_file, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return _headers_from_auth_payload(payload)
 
 
 def refresh_courier_hub_headers():

@@ -9,6 +9,7 @@ and never include the token value.
 from __future__ import annotations
 
 import argparse
+from http.cookies import SimpleCookie
 import json
 import os
 import sys
@@ -143,6 +144,77 @@ def tokens_from_storage(driver: webdriver.Chrome) -> list[str]:
     return tokens
 
 
+def tokens_from_indexeddb(driver: webdriver.Chrome) -> list[str]:
+    try:
+        values = driver.execute_async_script(
+            """
+const done = arguments[arguments.length - 1];
+(async () => {
+  if (!window.indexedDB || !indexedDB.databases) return [];
+  const result = [];
+  const databases = await indexedDB.databases();
+  for (const databaseInfo of databases) {
+    if (!databaseInfo.name) continue;
+    await new Promise((resolve) => {
+      const openRequest = indexedDB.open(databaseInfo.name);
+      openRequest.onerror = () => resolve();
+      openRequest.onsuccess = () => {
+        const db = openRequest.result;
+        const storeNames = Array.from(db.objectStoreNames || []);
+        if (!storeNames.length) {
+          db.close();
+          resolve();
+          return;
+        }
+        const transaction = db.transaction(storeNames, "readonly");
+        transaction.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        transaction.onerror = () => {
+          db.close();
+          resolve();
+        };
+        for (const storeName of storeNames) {
+          const store = transaction.objectStore(storeName);
+          const getRequest = store.getAll();
+          getRequest.onsuccess = () => {
+            for (const item of getRequest.result || []) {
+              try {
+                result.push(JSON.stringify(item));
+              } catch (_) {
+                result.push(String(item));
+              }
+            }
+          };
+        }
+      };
+    });
+  }
+  return result;
+})()
+  .then(done)
+  .catch((error) => done({error: String(error)}));
+"""
+        )
+    except JavascriptException:
+        return []
+
+    tokens: list[str] = []
+    if not isinstance(values, list):
+        return tokens
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        try:
+            tokens.extend(flatten_json_tokens(json.loads(text)))
+        except Exception:
+            if text_is_token(text):
+                tokens.append(text)
+    return tokens
+
+
 def authorization_from_performance_logs(driver: webdriver.Chrome) -> str:
     try:
         logs = driver.get_log("performance")
@@ -176,6 +248,42 @@ def cookie_header(driver: webdriver.Chrome) -> str:
     return "; ".join(pairs)
 
 
+def seed_browser_cookies(driver: webdriver.Chrome, base_url: str) -> int:
+    cookie_text = setting("COURIER_HUB_COOKIE", "KIFLI_COURIER_HUB_COOKIE")
+    if not cookie_text:
+        return 0
+
+    parsed = SimpleCookie()
+    try:
+        parsed.load(cookie_text)
+    except Exception:
+        return 0
+
+    driver.get(base_url)
+    added = 0
+    for morsel in parsed.values():
+        name = str(morsel.key or "").strip()
+        value = str(morsel.value or "").strip()
+        if not name or not value:
+            continue
+        cookie = {
+            "name": name,
+            "value": value,
+            "path": "/",
+            "secure": True,
+            "sameSite": "Lax",
+        }
+        try:
+            driver.add_cookie(cookie)
+            added += 1
+        except Exception:
+            continue
+    if added:
+        driver.get(base_url)
+        time.sleep(2)
+    return added
+
+
 def find_first(driver: webdriver.Chrome, selectors: list[str]):
     for selector in selectors:
         matches = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -185,9 +293,44 @@ def find_first(driver: webdriver.Chrome, selectors: list[str]):
     return None
 
 
+def click_rohlik_login_if_present(driver: webdriver.Chrome, wait_seconds: int) -> bool:
+    try:
+        button = driver.execute_script(
+            """
+const candidates = Array.from(document.querySelectorAll('a, button'));
+return candidates.find((element) => {
+  const text = (element.innerText || element.textContent || '').toLowerCase();
+  return text.includes('rohlik') || text.includes('bejelentkez');
+}) || null;
+"""
+        )
+    except JavascriptException:
+        button = None
+
+    if not button:
+        return False
+
+    try:
+        button.click()
+        WebDriverWait(driver, wait_seconds).until(
+            lambda current_driver: (
+                current_driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+                or current_driver.find_elements(By.CSS_SELECTOR, "input[name='username']")
+                or current_driver.find_elements(By.CSS_SELECTOR, "input#username")
+            )
+        )
+        time.sleep(1)
+        return True
+    except Exception as exc:
+        debug(f"COURIER_HUB_AUTH_ROHLIK_LOGIN_CLICK_FAILED={type(exc).__name__}")
+        return False
+
+
 def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait_seconds: int) -> None:
     wait = WebDriverWait(driver, wait_seconds)
     password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
+    if not password_input and click_rohlik_login_if_present(driver, wait_seconds):
+        password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
     if not password_input:
         debug("COURIER_HUB_AUTH_LOGIN_FORM=not_found")
         return
@@ -240,12 +383,38 @@ fetch(url, {credentials: 'include'})
         return {}
 
 
+def refresh_session(driver: webdriver.Chrome, base_url: str) -> dict[str, Any]:
+    url = base_url.rstrip("/") + "/api/auth/session"
+    try:
+        result = driver.execute_async_script(
+            """
+const url = arguments[0];
+const done = arguments[arguments.length - 1];
+fetch(url, {
+  credentials: 'include',
+  headers: {'Accept': 'application/json'},
+})
+  .then(async (response) => done({
+    status: response.status,
+    ok: response.ok,
+  }))
+  .catch(error => done({error: String(error)}));
+""",
+            url,
+        )
+        return result if isinstance(result, dict) else {}
+    except JavascriptException as exc:
+        debug(f"COURIER_HUB_AUTH_SESSION_REFRESH_ERROR={type(exc).__name__}")
+        return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=setting("COURIER_HUB_LOGIN_URL", "KIFLI_COURIER_HUB_LOGIN_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--probe-path", default=setting("COURIER_HUB_AUTH_PROBE_PATH", "KIFLI_COURIER_HUB_AUTH_PROBE_PATH") or DEFAULT_PROBE_PATH)
     parser.add_argument("--wait", type=int, default=int(setting("COURIER_HUB_AUTH_WAIT_SECONDS", "KIFLI_COURIER_HUB_AUTH_WAIT_SECONDS") or "45"))
     parser.add_argument("--debug-dir", default=setting("COURIER_HUB_AUTH_DEBUG_DIR", "KIFLI_COURIER_HUB_AUTH_DEBUG_DIR"))
+    parser.add_argument("--cache-file", default=setting("COURIER_HUB_AUTH_CACHE_FILE", "KIFLI_COURIER_HUB_AUTH_CACHE_FILE"))
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
 
@@ -262,7 +431,14 @@ def main() -> int:
             pass
         driver.get(args.url)
         time.sleep(3)
+        seeded_cookies = seed_browser_cookies(driver, args.url)
+        debug(f"COURIER_HUB_AUTH_COOKIE_SEED={seeded_cookies}")
         login_if_needed(driver, username, password, args.wait)
+        session_result = refresh_session(driver, args.url)
+        debug(
+            "COURIER_HUB_AUTH_SESSION_REFRESH="
+            f"{session_result.get('status') or session_result.get('error') or '-'}"
+        )
         probe_result = probe_api(driver, args.url, args.probe_path)
         time.sleep(2)
 
@@ -270,10 +446,13 @@ def main() -> int:
         if not authorization:
             tokens = tokens_from_storage(driver)
             authorization = normalize_authorization(tokens[0]) if tokens else ""
+        if not authorization:
+            tokens = tokens_from_indexeddb(driver)
+            authorization = normalize_authorization(tokens[0]) if tokens else ""
         cookie = cookie_header(driver)
 
         probe_status = probe_result.get("status")
-        if not authorization:
+        if not authorization and probe_status != 200:
             save_debug_artifacts(driver, args.debug_dir, "missing_bearer")
             raise RuntimeError(
                 "Courier Hub auth refresh did not find Bearer authorization. "
@@ -286,16 +465,20 @@ def main() -> int:
             f"cookies={'yes' if cookie else 'no'} "
             f"probe_status={probe_status or '-'}"
         )
+        payload = {
+            "headers": {
+                **({"Authorization": authorization} if authorization else {}),
+                **({"Cookie": cookie} if cookie else {}),
+            }
+        }
+        if args.cache_file:
+            cache_path = Path(args.cache_file)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            debug(f"COURIER_HUB_AUTH_CACHE_WRITE={cache_path}")
+
         print(
-            json.dumps(
-                {
-                    "headers": {
-                        **({"Authorization": authorization} if authorization else {}),
-                        **({"Cookie": cookie} if cookie else {}),
-                    }
-                },
-                ensure_ascii=False,
-            )
+            json.dumps(payload, ensure_ascii=False)
         )
         return 0
     finally:

@@ -37,10 +37,12 @@ jobs:
       COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
       COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
       COURIER_HUB_AUTH_DEBUG_DIR: results/courier-hub-auth
-      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
+      COURIER_HUB_AUTH_CACHE_FILE: ${{ runner.temp }}/courier-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file "${{ runner.temp }}/courier-hub-auth.json"
       KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
       KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
-      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: ${{ runner.temp }}/courier-hub-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file "${{ runner.temp }}/courier-hub-auth.json"
 
     steps:
       - name: Checkout
@@ -87,6 +89,17 @@ jobs:
           echo "YEAR=$YEAR"
           echo "MONTH=$MONTH"
           echo "DRY_RUN=$DRY_RUN"
+
+      - name: Refresh Courier Hub auth
+        shell: bash
+        run: |
+          if [ -n "$COURIER_HUB_USERNAME" ] && [ -n "$COURIER_HUB_PASSWORD" ]; then
+            python scripts/refresh_courier_hub_auth.py \
+              --debug-dir results/courier-hub-auth \
+              --cache-file "$COURIER_HUB_AUTH_CACHE_FILE"
+          else
+            echo "Courier Hub login secrets not set, using static auth secrets."
+          fi
 
       - name: Resolve missing-day range
         id: days
