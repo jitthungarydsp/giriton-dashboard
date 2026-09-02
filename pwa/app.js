@@ -37,7 +37,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v93";
+const APP_VERSION = "v94";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -131,7 +131,7 @@ function renderCourierMasterOptions() {
   const routeDetailsCourier = $("#route-details-courier");
   if (routeDetailsCourier) {
     const currentValue = routeDetailsCourier.value || state.workflowPreviewCourierId;
-    routeDetailsCourier.innerHTML = `<option value="">Válassz futárt</option>${(state.couriers || [])
+    routeDetailsCourier.innerHTML = `<option value="">Összes futár (Excel export)</option>${(state.couriers || [])
       .map((courier) => `<option value="${escapeHtml(courier.courierId)}">${escapeHtml(courierOptionLabel(courier))}</option>`)
       .join("")}`;
     if (currentValue) routeDetailsCourier.value = currentValue;
@@ -3022,7 +3022,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=93");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=94");
   }
   return navigator.serviceWorker.ready;
 }

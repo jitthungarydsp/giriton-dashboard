@@ -8079,31 +8079,32 @@ def list_couriers(
         timeout=30,
     )
     couriers = []
-    seen: set[str] = set()
-    for row in master_rows:
-        courier_id = str(row.get("courier_id") or "").strip()
-        courier_name = str(row.get("courier_name") or "").strip()
-        if not courier_id or courier_id in seen:
-            continue
-        seen.add(courier_id)
+    seen: set[tuple[str, str]] = set()
+
+    def append_courier(courier_id: str, courier_name: str, warehouse: str = "", email: str = "") -> None:
+        courier_id = str(courier_id or "").strip()
+        courier_name = str(courier_name or "").strip()
+        if not courier_id:
+            return
+        normalized_key = (courier_id, normalize_text(courier_name or f"Futár {courier_id}"))
+        if normalized_key in seen:
+            return
+        seen.add(normalized_key)
         couriers.append({
             "courierId": courier_id,
             "courierName": courier_name or f"Futár {courier_id}",
-            "warehouse": str(row.get("warehouse_name") or "").strip(),
-            "email": str(row.get("email") or "").strip(),
+            "warehouse": str(warehouse or "").strip(),
+            "email": str(email or "").strip(),
         })
+
+    for row in master_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        courier_name = str(row.get("courier_name") or "").strip()
+        append_courier(courier_id, courier_name, row.get("warehouse_name"), row.get("email"))
     for row in pwa_rows:
         courier_id = str(row.get("courier_id") or "").strip()
         username = str(row.get("username") or "").strip()
-        if not courier_id or courier_id in seen:
-            continue
-        seen.add(courier_id)
-        couriers.append({
-            "courierId": courier_id,
-            "courierName": username or f"Futár {courier_id}",
-            "warehouse": "",
-            "email": str(row.get("email") or "").strip(),
-        })
+        append_courier(courier_id, username, "", row.get("email"))
     try:
         legacy_rows = load_users()
     except Exception:
@@ -8113,15 +8114,7 @@ def list_couriers(
             continue
         courier_id = str(row.get("courierId") or row.get("courier_id") or "").strip()
         username = str(row.get("username") or row.get("courierName") or row.get("courier_name") or "").strip()
-        if not courier_id or courier_id in seen:
-            continue
-        seen.add(courier_id)
-        couriers.append({
-            "courierId": courier_id,
-            "courierName": username or f"Futár {courier_id}",
-            "warehouse": str(row.get("warehouse") or row.get("warehouseName") or "").strip(),
-            "email": str(row.get("email") or "").strip(),
-        })
+        append_courier(courier_id, username, row.get("warehouse") or row.get("warehouseName"), row.get("email"))
     couriers.sort(key=lambda row: normalize_text(row.get("courierName")))
     return {"couriers": couriers}
 

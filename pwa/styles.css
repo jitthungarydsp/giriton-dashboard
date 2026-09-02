@@ -369,6 +369,7 @@ textarea { min-height: 96px; resize: vertical; }
 .route-details-table tbody tr:hover,
 .route-details-table tbody tr.active { background: #eff8ed; }
 .route-details-table tbody tr.active td:first-child { box-shadow: inset 4px 0 0 var(--green-dark); }
+.route-details-export-all { display: grid; place-items: center; min-height: 44px; margin-top: 14px; text-align: center; }
 .bottom-nav { position: fixed; z-index: 10; right: 0; bottom: 0; left: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(82px, 1fr); overflow-x: auto; padding: 9px 8px calc(9px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fffffff2; backdrop-filter: blur(18px); }
 .bottom-nav button { display: grid; gap: 3px; place-items: center; min-width: 0; border: 0; background: transparent; color: #8a938c; font-size: 10px; font-weight: 700; }
 .bottom-nav button span { font-size: 20px; }
