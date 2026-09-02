@@ -10785,22 +10785,6 @@ def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
         return
-    period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-    profile_by_id = _export_courier_profile_lookup()
-    mobile_values_by_id: dict[str, dict[str, float]] = {}
-    mobile_rows = load_mobile_breakdown_overrides_for_period(period_start)
-    if isinstance(mobile_rows, pd.DataFrame) and not mobile_rows.empty:
-        mobile_rows = mobile_rows.copy()
-        mobile_rows["_courier_id_lookup"] = mobile_rows["courier_id"].map(_courier_id_key)
-        for courier_key, part in mobile_rows.groupby("_courier_id_lookup", dropna=False):
-            if not courier_key:
-                continue
-            value_map: dict[str, float] = {}
-            for mobile_item in part.to_dict("records"):
-                item_key = str(mobile_item.get("item_key") or "")
-                if item_key in {"payable", "tig_final_total"}:
-                    value_map[item_key] = parse_huf_value(mobile_item.get("amount_value"))
-            mobile_values_by_id[str(courier_key)] = value_map
 
     st.markdown(
         """
@@ -10906,26 +10890,10 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            courier_key = _courier_id_key(row.get("Courier ID") or row.get("courier_id"))
-            profile_row = profile_by_id.get(courier_key, {})
-            raw_row = row.to_dict()
-            finance_payable = parse_huf_value(row.get("Kifizetendő"))
-            finance_tig = effective_payment_total_from_row({**raw_row, **profile_row}, period_start)
-            mobile_values = mobile_values_by_id.get(courier_key, {})
-            pwa_payable = mobile_values.get("payable")
-            pwa_tig = mobile_values.get("tig_final_total")
-            cols[1].markdown(f"**{format_huf(finance_payable)}**")
-            if pwa_payable is not None:
-                cols[2].markdown(f"**{format_huf(pwa_payable)}**")
-            else:
-                cols[2].markdown(f"**{format_huf(finance_payable)}**")
-                cols[2].caption("nincs PWA sor")
-            cols[3].markdown(f"**{format_huf(finance_tig)}**")
-            if pwa_tig is not None:
-                cols[4].markdown(f"**{format_huf(pwa_tig)}**")
-            else:
-                cols[4].markdown(f"**{format_huf(finance_tig)}**")
-                cols[4].caption("nincs PWA TIG sor")
+            cols[1].markdown(f"**{format_huf(0)}**")
+            cols[2].markdown(f"**{format_huf(0)}**")
+            cols[3].markdown(f"**{format_huf(0)}**")
+            cols[4].markdown(f"**{format_huf(0)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
             complaint_label = str(row.get("Bejelentés státusz") or "Nincs bejelentés")
