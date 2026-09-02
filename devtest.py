@@ -11392,6 +11392,7 @@ def show_courier_dialog() -> None:
         base_total = parse_huf_value(row.get("Nettó bevétel"))
     if not tip_total:
         tip_total = parse_huf_value(row.get("Borravaló"))
+    is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
     contractor_base_total = settlement_amount("company_base_rate_huf", "Alvállalkozói összeg")
     contractor_received_total = parse_huf_value(row.get("Alvállalkozói összeg")) or settlement_amount("contractor_total_huf")
     if not contractor_received_total:
@@ -11414,13 +11415,16 @@ def show_courier_dialog() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = 0.0
-    if str(active_calculation_mode or "").strip().casefold() == "api" and not route_detail.empty:
+    if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
         ]
         parameterized_base_total = float(_numeric_series(parameterized_detail, "Alapdíj").sum()) if not parameterized_detail.empty else 0.0
+        route_base_total = float(_numeric_series(route_detail, "Alapdíj").sum()) if "Alapdíj" in route_detail.columns else 0.0
         if parameterized_base_total:
             base_total = parameterized_base_total
+        elif route_base_total and not base_total:
+            base_total = route_base_total
         route_tip_total = float(_numeric_series(route_detail, "Borravaló").sum()) if "Borravaló" in route_detail.columns else 0.0
         if not tip_total and route_tip_total:
             tip_total = route_tip_total
@@ -11428,6 +11432,8 @@ def show_courier_dialog() -> None:
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
+    if is_api_mode:
+        imported_atm_total = 0.0
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     if loyalty_total == 0 and summary_available:
@@ -11447,6 +11453,8 @@ def show_courier_dialog() -> None:
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
     manual_atm_total = float(profile_adjustment_totals.get("atm_deduction", 0.0))
+    if is_api_mode:
+        manual_atm_total = 0.0
     other_expense_total = float(profile_adjustment_totals.get("other_expense", 0.0))
     malus_total = imported_malus_total + manual_malus_total
     atm_deduction_total = imported_atm_total + manual_atm_total
@@ -11712,6 +11720,7 @@ def show_courier_dialog() -> None:
             )
 
     if selected_menu == "Pénzügy":
+        is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
         if route_detail.empty:
             route_detail = load_courier_route_detail(
                 courier_id,
@@ -11722,6 +11731,16 @@ def show_courier_dialog() -> None:
                 st.session_state.get("new_warehouse", "Összes"),
             )
         route_breakdown = summarize_courier_route_detail(route_detail)
+        route_detail_base_total = (
+            float(_numeric_series(route_detail, "Alapdíj").sum())
+            if not route_detail.empty and "Alapdíj" in route_detail.columns
+            else 0.0
+        )
+        route_detail_tip_total = (
+            float(_numeric_series(route_detail, "Borravaló").sum())
+            if not route_detail.empty and "Borravaló" in route_detail.columns
+            else 0.0
+        )
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
         # These two totals are calculated and persisted by the DB view.  The
@@ -11759,6 +11778,8 @@ def show_courier_dialog() -> None:
         imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
         imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
         imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
+        if is_api_mode:
+            imported_atm_total = 0.0
         imported_bonus_note = str(row.get("Importált bónusz megjegyzés") or "").strip()
         imported_malus_note = str(row.get("Importált málusz megjegyzés") or "").strip()
         bonus_total += imported_bonus_total
@@ -11792,17 +11813,23 @@ def show_courier_dialog() -> None:
             imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
+            if is_api_mode:
+                imported_atm_total = 0.0
             order_total = int(amount("order_count"))
             route_total = int(amount("route_count"))
         elif summary_available:
-            base_total = parse_huf_value(summary_row.get("courier_base_rate_huf"))
-            tip_total = parse_huf_value(summary_row.get("tip_huf"))
+            summary_base_total = parse_huf_value(summary_row.get("courier_base_rate_huf"))
+            summary_tip_total = parse_huf_value(summary_row.get("tip_huf"))
+            base_total = route_detail_base_total if is_api_mode and route_detail_base_total else summary_base_total
+            tip_total = route_detail_tip_total if is_api_mode and route_detail_tip_total else summary_tip_total
             delay_total = parse_huf_value(summary_row.get("delay_bonus_huf"))
             compliance_total = parse_huf_value(summary_row.get("compliance_bonus_huf"))
             route_other_bonus_total = 0.0
             imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
+            if is_api_mode:
+                imported_atm_total = 0.0
             order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
             route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
 
@@ -11812,6 +11839,8 @@ def show_courier_dialog() -> None:
         imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
         manual_malus_total = float(adjustment_totals.get("malus", 0.0))
         manual_atm_total = float(adjustment_totals.get("atm_deduction", 0.0))
+        if is_api_mode:
+            manual_atm_total = 0.0
         manual_other_total = float(adjustment_totals.get("other_expense", 0.0))
         bonus_total = imported_bonus_total + manual_bonus_total
         customer_rating_total = imported_customer_rating_total + manual_customer_rating_total
@@ -12401,7 +12430,7 @@ def show_courier_dialog() -> None:
             ("Borravaló", format_huf(tip_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
-            ("Lojalitás", format_huf(loyalty_total), "", ""),
+            ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
