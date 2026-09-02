@@ -57,7 +57,7 @@ SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 MAX_DEVICE_PHOTO_BYTES = 8 * 1024 * 1024
 MAX_DEVICE_PHOTOS = 8
 DEVICE_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
-FINANCIAL_LOOKUP_CACHE_SECONDS = 60
+FINANCIAL_LOOKUP_CACHE_SECONDS = 0
 _FINANCIAL_LOOKUP_CACHE: dict[tuple[str, str, str], tuple[float, Any]] = {}
 
 COURIER_DETAIL_API_BASE = (
@@ -1378,6 +1378,36 @@ def checkpoint_from_order_arrival(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def checkpoint_from_driver_detail(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "orderId": str(checkpoint.get("orderId") or checkpoint.get("id") or ""),
+        "position": safe_int(checkpoint.get("position")) or None,
+        "address": str(checkpoint.get("address") or ""),
+        "windowFrom": local_iso_time(checkpoint.get("deliverSince")),
+        "windowTo": local_iso_time(checkpoint.get("deliverTill")),
+        "plannedArrival": local_iso_time(checkpoint.get("plannedArrivalTime")),
+        "estimatedArrival": local_iso_time(checkpoint.get("estimatedArrivalTime")),
+        "realArrival": local_iso_time(checkpoint.get("realArrivalTime")),
+        "delayMinutes": checkpoint_delay_minutes(checkpoint),
+        "isLate": checkpoint_delay_minutes(checkpoint) > 0,
+    }
+
+
+def route_checkpoint_triplet_from_detail_route(route: dict[str, Any]) -> dict[str, Any]:
+    checkpoints = sorted(
+        route.get("checkpoints") or [],
+        key=lambda row: int(row.get("position") or 999999),
+    )
+    index = current_checkpoint_index(checkpoints)
+    if index is None:
+        return {"previous": None, "current": None, "next": None}
+    return {
+        "previous": checkpoint_from_driver_detail(checkpoints[index - 1]) if index > 0 else None,
+        "current": checkpoint_from_driver_detail(checkpoints[index]) if index < len(checkpoints) else None,
+        "next": checkpoint_from_driver_detail(checkpoints[index + 1]) if index + 1 < len(checkpoints) else None,
+    }
+
+
 def current_order_arrival_index(rows: list[dict[str, Any]]) -> int | None:
     if not rows:
         return None
@@ -1385,6 +1415,54 @@ def current_order_arrival_index(rows: list[dict[str, Any]]) -> int | None:
         if not row.get("valos_erkezes"):
             return index
     return len(rows) - 1
+
+
+def read_raw_driver_detail_route(
+    courier_id: str,
+    route_id: Any,
+    work_date: date,
+) -> dict[str, Any] | None:
+    clean_route_id = str(route_id or "").strip()
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_route_id or not clean_courier_id:
+        return None
+    rows = optional_supabase_rows(
+        "dsp_driver_detail_raw",
+        params={
+            "select": "response_json,fetched_at,status_code",
+            "driver_id": f"eq.{clean_courier_id}",
+            "work_date": f"eq.{work_date.isoformat()}",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc",
+            "limit": "5",
+        },
+        timeout=30,
+    )
+    for row in rows:
+        payload = row.get("response_json")
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        for route in payload.get("routes") or []:
+            found_route_id = str(route.get("id") or route.get("routeId") or "").strip()
+            if found_route_id == clean_route_id:
+                return route
+    return None
+
+
+def route_checkpoint_triplet_from_raw_driver_detail(
+    courier_id: str,
+    route_id: Any,
+    work_date: date,
+) -> dict[str, Any]:
+    route = read_raw_driver_detail_route(courier_id, route_id, work_date)
+    if not route:
+        return {"previous": None, "current": None, "next": None}
+    return route_checkpoint_triplet_from_detail_route(route)
 
 
 def read_route_order_arrivals(
@@ -1431,6 +1509,14 @@ def route_checkpoint_triplet_from_db(
     route_id: Any,
     work_date: date,
 ) -> dict[str, Any]:
+    raw_triplet = route_checkpoint_triplet_from_raw_driver_detail(
+        courier_id,
+        route_id,
+        work_date,
+    )
+    if raw_triplet.get("previous") or raw_triplet.get("current") or raw_triplet.get("next"):
+        return raw_triplet
+
     rows = read_route_order_arrivals(courier_id, route_id, work_date)
     index = current_order_arrival_index(rows)
     if index is None:
@@ -3261,6 +3347,8 @@ def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> in
 
 
 def cached_financial_lookup(cache_group: str, cache_key: str) -> Any | None:
+    if FINANCIAL_LOOKUP_CACHE_SECONDS <= 0:
+        return None
     cached = _FINANCIAL_LOOKUP_CACHE.get((cache_group, cache_key, ""))
     if not cached:
         return None
@@ -3272,6 +3360,8 @@ def cached_financial_lookup(cache_group: str, cache_key: str) -> Any | None:
 
 
 def store_financial_lookup(cache_group: str, cache_key: str, value: Any) -> Any:
+    if FINANCIAL_LOOKUP_CACHE_SECONDS <= 0:
+        return value
     _FINANCIAL_LOOKUP_CACHE[(cache_group, cache_key, "")] = (time.time(), value)
     return value
 
