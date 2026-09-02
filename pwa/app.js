@@ -37,7 +37,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v94";
+const APP_VERSION = "v95";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -3022,7 +3022,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=94");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=95");
   }
   return navigator.serviceWorker.ready;
 }

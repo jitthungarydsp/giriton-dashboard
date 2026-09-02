@@ -8078,8 +8078,51 @@ def list_couriers(
         },
         timeout=30,
     )
+    staging_rows = optional_supabase_rows(
+        "courier_master_sheet_import",
+        params={
+            "select": "courier_id,courier_name,email,raw_payload,imported_at",
+            "order": "imported_at.desc",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
+    financial_rows: list[dict[str, Any]] = []
+    for table_name in (
+        "courier_financial_overview_raw_bud1",
+        "courier_financial_overview_raw_bud2",
+        "courier_financial_overview_raw",
+    ):
+        financial_rows.extend(optional_supabase_rows(
+            table_name,
+            params={
+                "select": "courier_id,courier_name,warehouse_id,response_json,fetched_at",
+                "status_code": "eq.200",
+                "order": "fetched_at.desc",
+                "limit": "10000",
+            },
+            timeout=30,
+        ))
+    route_detail_rows = optional_supabase_rows(
+        "courier_route_performance_detail_raw",
+        params={
+            "select": "courier_id,warehouse_id,response_json,fetched_at",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
     couriers = []
     seen: set[tuple[str, str]] = set()
+
+    def warehouse_from_id(value: Any) -> str:
+        warehouse_id = safe_int(value)
+        if warehouse_id == 1:
+            return "BUD1"
+        if warehouse_id == 2:
+            return "BUD2"
+        return str(value or "").strip()
 
     def append_courier(courier_id: str, courier_name: str, warehouse: str = "", email: str = "") -> None:
         courier_id = str(courier_id or "").strip()
@@ -8105,6 +8148,33 @@ def list_couriers(
         courier_id = str(row.get("courier_id") or "").strip()
         username = str(row.get("username") or "").strip()
         append_courier(courier_id, username, "", row.get("email"))
+    for row in staging_rows:
+        payload = row.get("raw_payload") if isinstance(row.get("raw_payload"), dict) else {}
+        courier_id = str(row.get("courier_id") or payload.get("courier_id") or payload.get("Courier ID") or "").strip()
+        courier_name = str(row.get("courier_name") or payload.get("courier_name") or payload.get("Futár") or payload.get("Név") or "").strip()
+        warehouse = str(payload.get("warehouse_name") or payload.get("Raktár") or payload.get("warehouse") or "").strip()
+        email = str(row.get("email") or payload.get("email") or payload.get("E-mail") or "").strip()
+        append_courier(courier_id, courier_name, warehouse, email)
+    for row in financial_rows:
+        payload = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+        courier_id = str(row.get("courier_id") or payload.get("courierId") or payload.get("courier_id") or "").strip()
+        courier_name = str(row.get("courier_name") or payload.get("courierName") or payload.get("courier_name") or "").strip()
+        append_courier(courier_id, courier_name, warehouse_from_id(row.get("warehouse_id") or payload.get("warehouseId")), "")
+    known_names_by_id = {
+        str(item.get("courierId") or "").strip(): str(item.get("courierName") or "").strip()
+        for item in couriers
+        if str(item.get("courierId") or "").strip() and str(item.get("courierName") or "").strip()
+    }
+    for row in route_detail_rows:
+        payload = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+        courier_id = str(row.get("courier_id") or payload.get("courierId") or payload.get("courier_id") or "").strip()
+        courier_name = str(
+            payload.get("courierName")
+            or payload.get("courier_name")
+            or known_names_by_id.get(courier_id)
+            or ""
+        ).strip()
+        append_courier(courier_id, courier_name, warehouse_from_id(row.get("warehouse_id") or payload.get("warehouseId")), "")
     try:
         legacy_rows = load_users()
     except Exception:
