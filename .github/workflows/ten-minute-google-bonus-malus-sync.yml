@@ -1,0 +1,61 @@
+name: Ten Minute Google Bonus Malus Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true eseten nem ir DB-be."
+        required: false
+        default: "false"
+  schedule:
+    # GitHub cron UTC-ben fut. A Google bonus/malus tabla 10 percenkent frissul.
+    - cron: "*/10 * * * *"
+
+concurrency:
+  group: ten-minute-google-bonus-malus-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate environment
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+
+      - name: Import Google bonus/malus adjustments
+        shell: bash
+        run: |
+          DRY_RUN="${{ inputs.dry_run }}"
+          DRY_RUN="${DRY_RUN:-false}"
+
+          CMD=(python scripts/import_google_bonus_malus_adjustments.py)
+          if [ "$DRY_RUN" != "true" ]; then
+            CMD+=(--apply)
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
