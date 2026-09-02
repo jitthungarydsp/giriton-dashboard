@@ -1661,6 +1661,10 @@ function renderCurrentRoute() {
   const nextWaze = wazeUrl(current?.address);
   const currentWindow = current ? routeTimeRange(current.windowFrom, current.windowTo) : "";
   const currentArrival = current?.estimatedArrival || current?.plannedArrival || "";
+  const hasCheckpointDetails = Boolean(route.previous || route.current || route.next);
+  const missingCheckpointText = route.source && route.source !== "live"
+    ? "Ehhez a mentett túraadathoz nincs cím-szintű lista."
+    : "A túra még nem indult el.";
 
   container.innerHTML = `
     <div class="route-hero">
@@ -1690,11 +1694,11 @@ function renderCurrentRoute() {
     <div class="route-current">
       <span>Következő cím</span>
       <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
-      <small>${current ? `#${escapeHtml(current.orderId || "-")} · Időkapu: ${escapeHtml(currentWindow || "-")}` : "A túra még nem indult el."}</small>
+      <small>${current ? `#${escapeHtml(current.orderId || "-")} · Időkapu: ${escapeHtml(currentWindow || "-")}` : escapeHtml(missingCheckpointText)}</small>
       ${currentArrival ? `<small>${current?.estimatedArrival ? "Várható érkezés" : "Tervezett érkezés"}: ${escapeHtml(currentArrival)}</small>` : ""}
     </div>
 
-    <div class="route-stop-list">
+    <div class="route-stop-list ${hasCheckpointDetails ? "" : "hidden"}">
       ${routeStopBlock("Előző", route.previous)}
       ${routeStopBlock("Utána következő", route.next)}
     </div>

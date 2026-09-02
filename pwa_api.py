@@ -1363,6 +1363,85 @@ def checkpoint_delay_minutes(checkpoint: dict[str, Any] | None) -> int:
     return max(0, int((actual - deadline).total_seconds() // 60))
 
 
+def checkpoint_from_order_arrival(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "orderId": str(row.get("order_id") or row.get("checkpoint_id") or ""),
+        "position": safe_int(row.get("position")) or None,
+        "address": str(row.get("address") or ""),
+        "windowFrom": local_iso_time(row.get("idoablak_kezdete")),
+        "windowTo": local_iso_time(row.get("idoablak_vege")),
+        "plannedArrival": local_iso_time(row.get("tervezett_erkezes")),
+        "estimatedArrival": "",
+        "realArrival": local_iso_time(row.get("valos_erkezes")),
+        "delayMinutes": max(0, safe_int(row.get("idoablak_vegehez_kepest_perc"))),
+        "isLate": safe_int(row.get("idoablak_vegehez_kepest_perc")) > 0,
+    }
+
+
+def current_order_arrival_index(rows: list[dict[str, Any]]) -> int | None:
+    if not rows:
+        return None
+    for index, row in enumerate(rows):
+        if not row.get("valos_erkezes"):
+            return index
+    return len(rows) - 1
+
+
+def read_route_order_arrivals(
+    courier_id: str,
+    route_id: Any,
+    work_date: date,
+) -> list[dict[str, Any]]:
+    clean_route_id = str(route_id or "").strip()
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_route_id or not clean_courier_id:
+        return []
+
+    select_columns = (
+        "work_date,driver_id,courier_id,route_id,checkpoint_id,order_id,position,address,"
+        "idoablak_kezdete,idoablak_vege,tervezett_erkezes,valos_erkezes,"
+        "idoablak_vegehez_kepest_perc,idoablakhoz_kepest_statusz"
+    )
+    base_params = {
+        "select": select_columns,
+        "work_date": f"eq.{work_date.isoformat()}",
+        "route_id": f"eq.{clean_route_id}",
+        "order": "position.asc",
+        "limit": "200",
+    }
+    query_variants = [
+        {"courier_id": f"eq.{clean_courier_id}"},
+        {"driver_id": f"eq.{clean_courier_id}"},
+    ]
+
+    for table in ("stg_dsp_order_arrivals", "dsp_order_arrivals"):
+        for query in query_variants:
+            rows = optional_supabase_rows(
+                table,
+                params={**base_params, **query},
+                timeout=30,
+            )
+            if rows:
+                return rows
+    return []
+
+
+def route_checkpoint_triplet_from_db(
+    courier_id: str,
+    route_id: Any,
+    work_date: date,
+) -> dict[str, Any]:
+    rows = read_route_order_arrivals(courier_id, route_id, work_date)
+    index = current_order_arrival_index(rows)
+    if index is None:
+        return {"previous": None, "current": None, "next": None}
+    return {
+        "previous": checkpoint_from_order_arrival(rows[index - 1]) if index > 0 else None,
+        "current": checkpoint_from_order_arrival(rows[index]),
+        "next": checkpoint_from_order_arrival(rows[index + 1]) if index + 1 < len(rows) else None,
+    }
+
+
 def read_current_route_story(
     courier_id: str,
     route_id: Any,
@@ -1424,6 +1503,11 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
     courier_name = str(story_row.get("courier_name") or "").strip()
     work_date = parse_date_value(story_row.get("work_date")) or datetime.now(LOCAL_TIMEZONE).date()
     live_vehicle = read_live_vehicle_for_user({"courierId": courier_id, "username": courier_name})
+    checkpoints = route_checkpoint_triplet_from_db(
+        courier_id,
+        story_row.get("route_id"),
+        work_date,
+    )
     route_payload = {
         "routeId": str(story_row.get("route_id") or ""),
         "warehouse": str(story_row.get("warehouse_name") or ""),
@@ -1440,9 +1524,9 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
                 "plannedReturn": story_row.get("planned_return"),
             }
         ),
-        "previous": None,
-        "current": None,
-        "next": None,
+        "previous": checkpoints.get("previous"),
+        "current": checkpoints.get("current"),
+        "next": checkpoints.get("next"),
         "routeStory": story,
         "vehicle": live_vehicle,
     }
@@ -1492,6 +1576,17 @@ def build_route_card_from_discord_notification(notification: dict[str, Any] | No
     if not courier_id or not route_id:
         return None
     vehicle_plate = str(notification.get("licence_plate") or "").strip()
+    route_time = (
+        local_datetime(notification.get("assigned_at"))
+        or local_datetime(notification.get("planned_departure"))
+        or local_datetime(notification.get("notified_at"))
+        or datetime.now(LOCAL_TIMEZONE)
+    )
+    checkpoints = route_checkpoint_triplet_from_db(
+        courier_id,
+        route_id,
+        route_time.date(),
+    )
     route_payload = {
         "routeId": route_id,
         "warehouse": str(notification.get("warehouse") or ""),
@@ -1505,9 +1600,9 @@ def build_route_card_from_discord_notification(notification: dict[str, Any] | No
         "minutesUntilReturn": minutes_until_route_return(
             {"plannedReturn": notification.get("planned_return"), "realReturn": ""}
         ),
-        "previous": None,
-        "current": None,
-        "next": None,
+        "previous": checkpoints.get("previous"),
+        "current": checkpoints.get("current"),
+        "next": checkpoints.get("next"),
         "vehicle": {
             "licensePlate": vehicle_plate,
             "car": "",
@@ -1537,6 +1632,13 @@ def build_route_card_from_route_detail_row(
         return None
 
     story = row.get("routeStory") if isinstance(row.get("routeStory"), dict) else {}
+    work_date = parse_date_value(row.get("date")) or datetime.now(LOCAL_TIMEZONE).date()
+    courier_id, _courier_name = courier_identity(user)
+    checkpoints = route_checkpoint_triplet_from_db(
+        courier_id,
+        route_id,
+        work_date,
+    )
     warehouse = (
         story.get("warehouseName")
         or row.get("warehouse")
@@ -1571,9 +1673,9 @@ def build_route_card_from_route_detail_row(
                 "realReturn": row.get("warehouseArrivedAt"),
             }
         ),
-        "previous": None,
-        "current": None,
-        "next": None,
+        "previous": checkpoints.get("previous"),
+        "current": checkpoints.get("current"),
+        "next": checkpoints.get("next"),
         "vehicle": vehicle,
     }
     if story:
