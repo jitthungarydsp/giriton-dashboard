@@ -37,7 +37,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v92";
+const APP_VERSION = "v93";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -1758,8 +1758,10 @@ function routeDetailDistance(value) {
 function routeDetailsExcelUrl() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
   const courier = $("#route-details-courier")?.value || "";
-  if (!month || !courier) return "";
-  return `/api/routes/details.xlsx?month=${encodeURIComponent(month)}&courier=${encodeURIComponent(courier)}`;
+  if (!month) return "";
+  const params = new URLSearchParams({ month });
+  if (courier) params.set("courier", courier);
+  return `/api/routes/details.xlsx?${params.toString()}`;
 }
 
 function renderRouteDetails() {
@@ -1772,11 +1774,13 @@ function renderRouteDetails() {
   const payload = state.routeDetails;
   const rows = payload?.rows || [];
   if (!payload) {
+    const excelUrl = routeDetailsExcelUrl();
     panel.innerHTML = `
       <div class="process-title">
         <span class="step-code">⇲</span>
-        <div><h3>Túra részletező</h3><p>Válassz futárt és hónapot, majd kérd le a route adatokat.</p></div>
+        <div><h3>Túra részletező</h3><p>Válassz futárt és hónapot, majd kérd le a route adatokat. Futár nélkül a hónap összes route-ja letölthető Excelben.</p></div>
       </div>
+      ${excelUrl ? `<a class="download-link route-details-export-all" href="${excelUrl}">Összes futár Excel letöltés</a>` : ""}
     `;
     return;
   }
@@ -3018,7 +3022,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=92");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=93");
   }
   return navigator.serviceWorker.ready;
 }
@@ -3526,6 +3530,10 @@ function renderVehicleHrPanel() {
   const panel = $("#vehicle-hr-panel");
   if (!panel) return;
   panel.classList.toggle("hidden", !state.user?.canManageVehicles);
+  const monthInput = $("#vehicle-hr-month");
+  if (monthInput && !monthInput.value) {
+    monthInput.value = new Date().toISOString().slice(0, 7);
+  }
 }
 
 function renderVehicleSearchResults(lastUsage, items = []) {
@@ -3553,9 +3561,11 @@ async function searchVehicleAssignments() {
   const target = $("#vehicle-hr-search-results");
   const plateInput = $("#vehicle-hr-plate");
   const courierSelect = $("#vehicle-hr-courier");
+  const monthInput = $("#vehicle-hr-month");
   if (!target || !plateInput || !courierSelect) return;
   const plate = String(plateInput.value || "").trim();
   const courierId = String(courierSelect.value || "").trim();
+  const month = String(monthInput?.value || "").trim();
   const query = plate || courierId;
   if (!query) {
     target.innerHTML = `<div class="empty-card">Válassz futárt vagy adj meg rendszámot.</div>`;
@@ -3563,7 +3573,9 @@ async function searchVehicleAssignments() {
   }
   target.innerHTML = `<div class="empty-card">Keresés folyamatban...</div>`;
   try {
-    const payload = await api(`/api/vehicles/assignments/search?query=${encodeURIComponent(query)}`);
+    const params = new URLSearchParams({ query });
+    if (month) params.set("month", month);
+    const payload = await api(`/api/vehicles/assignments/search?${params.toString()}`);
     state.vehicleSearchResults = payload.items || [];
     renderVehicleSearchResults(payload.lastUsage, state.vehicleSearchResults);
   } catch (error) {

@@ -5529,6 +5529,85 @@ def load_courier_hub_route_detail_rows_for_courier(courier_id: str, month_value:
     return result
 
 
+def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_route_performance_detail_raw",
+        params={
+            "select": "courier_id,route_id,warehouse_id,response_json,status_code",
+            "year": f"eq.{month_value.year}",
+            "month": f"eq.{month_value.month}",
+            "status_code": "eq.200",
+            "order": "courier_id.asc,route_id.asc",
+            "limit": "10000",
+        },
+        timeout=60,
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        compact = compact_courier_hub_route_detail_raw(row)
+        if not compact:
+            continue
+        compact["courierId"] = str(row.get("courier_id") or "").strip()
+        result.append(compact)
+    return result
+
+
+def courier_name_lookup() -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    master_rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "courier_id,courier_name",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
+    for row in master_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        name = str(row.get("courier_name") or "").strip()
+        if courier_id and name:
+            lookup[courier_id] = name
+    pwa_rows = optional_supabase_rows(
+        "pwa_users",
+        params={
+            "select": "courier_id,username",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
+    for row in pwa_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        name = str(row.get("username") or "").strip()
+        if courier_id and name and courier_id not in lookup:
+            lookup[courier_id] = name
+    try:
+        legacy_users = load_users()
+    except Exception:
+        legacy_users = []
+    for row in legacy_users:
+        courier_id = str(row.get("courierId") or row.get("courier_id") or "").strip()
+        name = str(row.get("username") or row.get("courierName") or row.get("courier_name") or "").strip()
+        if courier_id and name and courier_id not in lookup:
+            lookup[courier_id] = name
+    return lookup
+
+
+def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
+    names = courier_name_lookup()
+    rows = []
+    for raw_row in load_courier_hub_route_detail_rows_for_month(month_value):
+        courier_id = str(raw_row.get("courierId") or "").strip()
+        courier_name = names.get(courier_id) or f"Futár {courier_id}" if courier_id else "Ismeretlen futár"
+        rows.append(build_route_detail_item(raw_row, courier_id, courier_name))
+    rows.sort(key=lambda item: (item.get("courierName") or "", item.get("date") or "", item.get("routeAssignedAt") or ""), reverse=False)
+    return {
+        "month": month_value.replace(day=1).strftime("%Y-%m"),
+        "courier": {"id": "", "name": "Összes futár"},
+        "rows": rows,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
     stats = build_monthly_courier_statistics(view_user, month_value, allow_unpublished=allow_unpublished)
     courier = stats.get("courier") or {}
@@ -7994,7 +8073,6 @@ def list_couriers(
         "pwa_users",
         params={
             "select": "courier_id,username,email,role,active",
-            "active": "eq.true",
             "order": "username.asc",
             "limit": "10000",
         },
@@ -8024,6 +8102,24 @@ def list_couriers(
             "courierId": courier_id,
             "courierName": username or f"Futár {courier_id}",
             "warehouse": "",
+            "email": str(row.get("email") or "").strip(),
+        })
+    try:
+        legacy_rows = load_users()
+    except Exception:
+        legacy_rows = []
+    for row in legacy_rows:
+        if not bool(row.get("active", True)):
+            continue
+        courier_id = str(row.get("courierId") or row.get("courier_id") or "").strip()
+        username = str(row.get("username") or row.get("courierName") or row.get("courier_name") or "").strip()
+        if not courier_id or courier_id in seen:
+            continue
+        seen.add(courier_id)
+        couriers.append({
+            "courierId": courier_id,
+            "courierName": username or f"Futár {courier_id}",
+            "warehouse": str(row.get("warehouse") or row.get("warehouseName") or "").strip(),
             "email": str(row.get("email") or "").strip(),
         })
     couriers.sort(key=lambda row: normalize_text(row.get("courierName")))
@@ -8285,11 +8381,18 @@ def list_vehicle_assignments(
 def search_vehicle_assignments(
     query: str = Query(default="", min_length=1),
     days: int = Query(default=180, ge=1, le=730),
+    month: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_vehicle_history_manager(require_user(giriton_pwa_session))
     today = datetime.now(LOCAL_TIMEZONE).date()
-    start = today - timedelta(days=days - 1)
+    clean_month = str(month or "").strip()
+    if clean_month:
+        start = parse_month(clean_month)
+        end = min(month_end(start), today)
+    else:
+        end = today
+        start = today - timedelta(days=days - 1)
     clean_query = str(query or "").strip()
     search_text = normalize_text(clean_query)
     person_searches = {normalize_person_match_text(clean_query)}
@@ -8302,7 +8405,7 @@ def search_vehicle_assignments(
             pass
     person_searches = {value for value in person_searches if value}
     search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
-    rows = read_vehicle_assignment_rows(start, today, limit=10000)
+    rows = read_vehicle_assignment_rows(start, end, limit=10000)
     matches = []
     seen: set[tuple[str, str, str, str, str]] = set()
     for row in rows:
@@ -8330,7 +8433,12 @@ def search_vehicle_assignments(
         matches.append(safe_vehicle_assignment(row))
         if len(matches) >= 80:
             break
-    return {"items": matches, "lastUsage": matches[0] if matches else None}
+    return {
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "items": matches,
+        "lastUsage": matches[0] if matches else None,
+    }
 
 
 @app.post("/api/devices/reports")
@@ -8634,10 +8742,12 @@ def route_details_excel(
     user = require_user(giriton_pwa_session)
     if not can_preview_couriers(user):
         raise HTTPException(status_code=403, detail="A túra részletezőhöz admin jogosultság szükséges.")
-    if not str(courier or "").strip():
-        raise HTTPException(status_code=422, detail="Válassz futárt a futártörzsből.")
-    view_user, _preview = workflow_view_user(user, courier)
-    payload = route_details_for_user(view_user, parse_month(month), allow_unpublished=True)
+    month_value = parse_month(month)
+    if str(courier or "").strip():
+        view_user, _preview = workflow_view_user(user, courier)
+        payload = route_details_for_user(view_user, month_value, allow_unpublished=True)
+    else:
+        payload = route_details_for_all_couriers(month_value)
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
