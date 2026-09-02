@@ -7970,7 +7970,7 @@ def list_couriers(
     user = require_user(giriton_pwa_session)
     if not (can_preview_couriers(user) or can_manage_vehicle_history(user)):
         raise HTTPException(status_code=403, detail="Ehhez admin vagy HR jogosultság szükséges.")
-    rows = optional_supabase_rows(
+    master_rows = optional_supabase_rows(
         "courier_master",
         params={
             "select": "courier_id,courier_name,warehouse_name,email",
@@ -7980,8 +7980,8 @@ def list_couriers(
         },
         timeout=30,
     )
-    if not rows:
-        rows = optional_supabase_rows(
+    if not master_rows:
+        master_rows = optional_supabase_rows(
             "courier_master",
             params={
                 "select": "courier_id,courier_name,warehouse_name,email",
@@ -7990,9 +7990,19 @@ def list_couriers(
             },
             timeout=30,
         )
+    pwa_rows = optional_supabase_rows(
+        "pwa_users",
+        params={
+            "select": "courier_id,username,email,role,active",
+            "active": "eq.true",
+            "order": "username.asc",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
     couriers = []
     seen: set[str] = set()
-    for row in rows:
+    for row in master_rows:
         courier_id = str(row.get("courier_id") or "").strip()
         courier_name = str(row.get("courier_name") or "").strip()
         if not courier_id or courier_id in seen:
@@ -8004,6 +8014,19 @@ def list_couriers(
             "warehouse": str(row.get("warehouse_name") or "").strip(),
             "email": str(row.get("email") or "").strip(),
         })
+    for row in pwa_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        username = str(row.get("username") or "").strip()
+        if not courier_id or courier_id in seen:
+            continue
+        seen.add(courier_id)
+        couriers.append({
+            "courierId": courier_id,
+            "courierName": username or f"Futár {courier_id}",
+            "warehouse": "",
+            "email": str(row.get("email") or "").strip(),
+        })
+    couriers.sort(key=lambda row: normalize_text(row.get("courierName")))
     return {"couriers": couriers}
 
 
