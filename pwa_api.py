@@ -1455,6 +1455,173 @@ def build_route_card_from_story(story_row: dict[str, Any] | None) -> dict[str, A
     }
 
 
+def read_latest_discord_route_notification(courier_id: str, work_date: date) -> dict[str, Any] | None:
+    rows = optional_supabase_rows(
+        "discord_route_notifications",
+        params={
+            "select": (
+                "warehouse,courier_id,courier_name,route_id,order_id,assigned_at,"
+                "planned_departure,planned_return,notified_at,orders_in_route,licence_plate"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "order": "notified_at.desc",
+            "limit": "5",
+        },
+        timeout=30,
+    )
+    if not rows:
+        return None
+    for row in rows:
+        route_time = (
+            local_datetime(row.get("assigned_at"))
+            or local_datetime(row.get("planned_departure"))
+            or local_datetime(row.get("notified_at"))
+        )
+        if route_time and route_time.date() != work_date:
+            continue
+        return row
+    return None
+
+
+def build_route_card_from_discord_notification(notification: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not notification:
+        return None
+    courier_id = str(notification.get("courier_id") or "").strip()
+    courier_name = str(notification.get("courier_name") or "").strip()
+    route_id = str(notification.get("route_id") or "").strip()
+    if not courier_id or not route_id:
+        return None
+    vehicle_plate = str(notification.get("licence_plate") or "").strip()
+    route_payload = {
+        "routeId": route_id,
+        "warehouse": str(notification.get("warehouse") or ""),
+        "status": "Discord route log",
+        "totalOrders": safe_int(notification.get("orders_in_route")),
+        "deliveredOrders": 0,
+        "plannedDeparture": local_iso_time(notification.get("planned_departure")),
+        "realDeparture": "",
+        "plannedReturn": local_iso_time(notification.get("planned_return")),
+        "realReturn": "",
+        "minutesUntilReturn": minutes_until_route_return(
+            {"plannedReturn": notification.get("planned_return"), "realReturn": ""}
+        ),
+        "previous": None,
+        "current": None,
+        "next": None,
+        "vehicle": {
+            "licensePlate": vehicle_plate,
+            "car": "",
+            "source": "Discord route log",
+            "shiftType": "",
+            "shiftStart": "",
+            "shiftEnd": "",
+        } if vehicle_plate else read_live_vehicle_for_user({"courierId": courier_id, "username": courier_name}),
+    }
+    return {
+        "found": True,
+        "totalRoutes": 1,
+        "route": route_payload,
+        "source": "discord_route_notifications",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_route_card_from_route_detail_row(
+    row: dict[str, Any] | None,
+    user: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not row:
+        return None
+    route_id = str(row.get("routeId") or "").strip()
+    if not route_id:
+        return None
+
+    story = row.get("routeStory") if isinstance(row.get("routeStory"), dict) else {}
+    warehouse = (
+        story.get("warehouseName")
+        or row.get("warehouse")
+        or row.get("warehouseName")
+        or row.get("warehouseId")
+        or ""
+    )
+    vehicle_plate = str(row.get("vehiclePlate") or "").strip()
+    vehicle_model = str(row.get("vehicleModel") or "").strip()
+    vehicle = {
+        "licensePlate": vehicle_plate,
+        "car": vehicle_model,
+        "source": "Tura reszletezo",
+        "shiftType": str(row.get("vehicleOwnership") or ""),
+        "shiftStart": "",
+        "shiftEnd": "",
+    } if vehicle_plate or vehicle_model else read_live_vehicle_for_user(user)
+
+    route_payload = {
+        "routeId": route_id,
+        "warehouse": str(warehouse),
+        "status": "Tura reszletezo",
+        "totalOrders": safe_int(row.get("orders") or row.get("stops")),
+        "deliveredOrders": safe_int(row.get("orders") or row.get("stops")) if row.get("warehouseArrivedAt") else 0,
+        "plannedDeparture": local_iso_time(row.get("plannedDepartureAt")),
+        "realDeparture": local_iso_time(row.get("departedAt")),
+        "plannedReturn": local_iso_time(row.get("plannedReturnAt")),
+        "realReturn": local_iso_time(row.get("warehouseArrivedAt")),
+        "minutesUntilReturn": minutes_until_route_return(
+            {
+                "plannedReturn": row.get("plannedReturnAt"),
+                "realReturn": row.get("warehouseArrivedAt"),
+            }
+        ),
+        "previous": None,
+        "current": None,
+        "next": None,
+        "vehicle": vehicle,
+    }
+    if story:
+        route_payload["routeStory"] = story
+
+    return {
+        "found": True,
+        "totalRoutes": 1,
+        "route": route_payload,
+        "source": "route_details",
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_route_card_from_route_details(user: dict[str, Any], work_date: date) -> dict[str, Any] | None:
+    try:
+        payload = route_details_for_user(
+            user,
+            work_date.replace(day=1),
+            allow_unpublished=True,
+        )
+    except Exception as exc:
+        print(f"Route details fallback hiba: {exc}")
+        return None
+
+    rows = [
+        row for row in payload.get("dailyHistory") or []
+        if str(row.get("date") or "")[:10] == work_date.isoformat()
+    ]
+    if not rows:
+        return None
+
+    def sort_key(row: dict[str, Any]) -> str:
+        return str(
+            row.get("warehouseArrivedAt")
+            or row.get("departedAt")
+            or row.get("plannedDepartureAt")
+            or row.get("routeAssignedAt")
+            or row.get("actualStartAt")
+            or ""
+        )
+
+    return build_route_card_from_route_detail_row(
+        sorted(rows, key=sort_key, reverse=True)[0],
+        user,
+    )
+
+
 def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
@@ -1467,6 +1634,11 @@ def fetch_driver_detail(user: dict[str, Any]) -> dict[str, Any]:
     if not response.ok:
         print("Driver detail status:", response.status_code)
         print("Driver detail response:", response.text[:2000])
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="Ehhez a futárhoz ma nincs aktuális túraadat a Courier Hubban.",
+            )
         raise HTTPException(
             status_code=502,
             detail=f"A túraadatok nem érhetők el ({response.status_code}).",
@@ -1535,12 +1707,28 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
     today = datetime.now(LOCAL_TIMEZONE).date()
     try:
         payload = fetch_driver_detail(user)
-    except HTTPException:
+    except HTTPException as exc:
         fallback_card = build_route_card_from_story(
             read_latest_route_story_for_courier(courier_id, today)
         )
         if fallback_card:
             return fallback_card
+        fallback_card = build_route_card_from_route_details(user, today)
+        if fallback_card:
+            return fallback_card
+        fallback_card = build_route_card_from_discord_notification(
+            read_latest_discord_route_notification(courier_id, today)
+        )
+        if fallback_card:
+            return fallback_card
+        if exc.status_code == 404:
+            return {
+                "found": False,
+                "route": None,
+                "totalRoutes": 0,
+                "message": exc.detail,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
         raise
     routes = payload.get("routes") or []
     route = active_route(routes)
@@ -1551,6 +1739,9 @@ def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
             today,
         )
         fallback_card = build_route_card_from_story(fallback_story)
+        if fallback_card:
+            return fallback_card
+        fallback_card = build_route_card_from_route_details(user, today)
         if fallback_card:
             return fallback_card
         return {
