@@ -563,10 +563,21 @@ div[data-testid="stDialog"] div[data-baseweb="radio"] label:has(input:checked) {
 
 /* --- Futárprofil modal v2: elszámolási cockpit --- */
 div[data-testid="stDialog"] [role="dialog"] {
-    width:min(1280px, 96vw) !important;
+    width:min(1540px, 98vw) !important;
     max-height:92vh !important;
     overflow-y:auto !important;
     overflow-x:hidden !important;
+}
+div[data-testid="stDialog"] [role="dialog"] > div:first-child {
+    max-width:none !important;
+}
+div[data-testid="stDialog"] button[title="Bezárás"],
+div[data-testid="stDialog"] button[aria-label="Bezárás"] {
+    background:#e03b3b !important;
+    color:#fff !important;
+    border-color:#e03b3b !important;
+    border-radius:8px !important;
+    font-weight:900 !important;
 }
 .settlement-profile-shell {
     --sp-ink:#17251d;
@@ -11282,6 +11293,12 @@ def render_fast_courier_profile(
 @st.dialog("Futár részletei", width="large", dismissible=False)
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
+    close_cols = st.columns([0.95, 0.05])
+    with close_cols[1]:
+        if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás"):
+            st.session_state.pop("reopen_courier_dialog", None)
+            st.rerun()
+
     def rerun_courier_profile(menu_name: str | None = None) -> None:
         st.session_state["selected_courier_id"] = courier_id
         st.session_state["reopen_courier_dialog"] = True
@@ -11619,12 +11636,7 @@ def show_courier_dialog() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    displayed_payable_total = (
-        parse_huf_value(summary_row.get("payable_huf")) if summary_available else 0.0
-    ) or (
-        parse_huf_value(row.get("Kifizetendő"))
-        or parse_huf_value(row.get("Kifizetendő kifizetésre"))
-    )
+    displayed_payable_total = parse_huf_value(summary_row.get("payable_huf")) if summary_available else 0.0
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
