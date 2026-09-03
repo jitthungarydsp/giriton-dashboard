@@ -11665,7 +11665,7 @@ def show_courier_dialog() -> None:
             </div>
             </div>
             <div class="settlement-top-kpis">
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(overview_tig_payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon red"></div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
@@ -11677,10 +11677,10 @@ def show_courier_dialog() -> None:
     )
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
-    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Útvonalak"]
-    if str(active_calculation_mode or "API").strip().casefold() == "api":
-        courier_menu_items.append("Statisztika")
+    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg"]
     courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
+    if st.session_state.get(menu_key) not in courier_menu_items:
+        st.session_state[menu_key] = "Pénzügy"
     selected_menu = st.radio(
         "Futármenü", courier_menu_items,
         horizontal=True, label_visibility="collapsed", key=menu_key,
@@ -12556,7 +12556,7 @@ def show_courier_dialog() -> None:
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("Fizetendő", format_huf(displayed_payable_total), "payable", ""),
+            ("Fizetendő", format_huf(payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
@@ -12623,35 +12623,6 @@ def show_courier_dialog() -> None:
             + "</div></div>",
             unsafe_allow_html=True,
         )
-        with st.expander("Kör részletei - műszakok és kifutott túrák", expanded=False):
-            route_source_label = "courier_settlement_summary" if summary_available else "route_detail"
-            st.dataframe(
-                pd.DataFrame([
-                    {
-                        "Mutató": "MűszakPro foglalt műszak",
-                        "Darab": booked_shift_count,
-                        "Forrás": str(booking_summary.get("source") or "-"),
-                    },
-                    {
-                        "Mutató": "Giriton műszak",
-                        "Darab": giriton_shift_count,
-                        "Forrás": str(giriton_shift_summary.get("source") or "-"),
-                    },
-                    {
-                        "Mutató": "Kifutott túra",
-                        "Darab": route_total,
-                        "Forrás": route_source_label,
-                    },
-                    {
-                        "Mutató": "Cím / rendelés",
-                        "Darab": order_total,
-                        "Forrás": route_source_label,
-                    },
-                ]),
-                hide_index=True,
-                use_container_width=True,
-            )
-
         kiflis_bonus_malus_effect = imported_bonus_total - imported_malus_total
         jitt_bonus_malus_effect = manual_bonus_total - manual_malus_total
         mobile_monthly_bonus = imported_bonus_total + manual_bonus_total
