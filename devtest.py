@@ -541,24 +541,6 @@ div[data-testid="stMetricValue"] {
 .profile-alert { border-radius:14px;padding:13px 15px;margin-top:10px;font-size:13px;font-weight:750; }
 .profile-alert-ok { background:#EAF8F0;color:#157254;border:1px solid #CDEEDB; }
 .profile-alert-warn { background:#FFF8E7;color:#946200;border:1px solid #F5E1A8; }
-div[data-testid="stDialog"] div[data-baseweb="radio"] {
-    position:sticky;
-    top:122px;
-    z-index:34;
-    background:#fff;
-    padding:6px 0;
-}
-div[data-testid="stDialog"] div[data-baseweb="radio"] > div {
-    position:static;
-    gap:4px;background:#F5F8F6;border:1px solid #DDE9E0;border-radius:14px;padding:5px;
-    overflow-x:auto;flex-wrap:nowrap;
-}
-div[data-testid="stDialog"] div[data-baseweb="radio"] label {
-    background:transparent;border-radius:10px;padding:7px 11px;white-space:nowrap;
-}
-div[data-testid="stDialog"] div[data-baseweb="radio"] label:has(input:checked) {
-    background:#ffffff;box-shadow:0 3px 10px rgba(23,53,31,.08);
-}
 @media (max-width:900px) {
     .courier-profile-hero { align-items:flex-start;flex-direction:column; }
     .courier-profile-badges { justify-content:flex-start; }
@@ -566,43 +548,6 @@ div[data-testid="stDialog"] div[data-baseweb="radio"] label:has(input:checked) {
     .profile-mini-grid { grid-template-columns:1fr; }
 }
 
-/* --- Futárprofil modal v2: elszámolási cockpit --- */
-div[data-testid="stDialog"] {
-    width:100vw !important;
-    max-width:100vw !important;
-}
-div[data-testid="stDialog"][role="dialog"],
-div[role="dialog"][aria-modal="true"] {
-    width:calc(100vw - 48px) !important;
-    max-width:calc(100vw - 48px) !important;
-    max-height:92vh !important;
-    overflow-y:auto !important;
-    overflow-x:hidden !important;
-}
-div[data-testid="stDialog"] [role="dialog"],
-div[data-testid="stDialog"] section[role="dialog"],
-div[data-testid="stDialog"] div[role="dialog"] {
-    width:min(1640px, 98vw) !important;
-    max-width:min(1640px, 98vw) !important;
-    max-height:92vh !important;
-    overflow-y:auto !important;
-    overflow-x:hidden !important;
-}
-div[data-testid="stDialog"] [role="dialog"] > div,
-div[data-testid="stDialog"][role="dialog"] > div,
-div[role="dialog"][aria-modal="true"] > div,
-div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlock"],
-div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlockBorderWrapper"] {
-    width:100% !important;
-    max-width:none !important;
-}
-div[data-testid="stDialog"] [data-testid="stBaseButton-primary"] {
-    background:#e03b3b !important;
-    color:#fff !important;
-    border-color:#e03b3b !important;
-    border-radius:8px !important;
-    font-weight:900 !important;
-}
 .settlement-profile-shell {
     --sp-ink:#17251d;
     --sp-muted:#64736b;
@@ -1156,9 +1101,6 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     .settlement-top-kpis,
     .settlement-mini-kpis {
         grid-template-columns:repeat(2,minmax(0,1fr));
-    }
-    div[data-testid="stDialog"] div[data-baseweb="radio"] {
-        top:210px;
     }
 }
 
@@ -11056,7 +10998,7 @@ def render_table(df: pd.DataFrame) -> None:
                 help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
-                show_courier_dialog()
+                st.rerun()
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
                 cols[0].caption(audit_text)
@@ -11317,26 +11259,25 @@ def render_fast_courier_profile(
             st.dataframe(profile_log.rename(columns={"changed_fields": "Változások", "changed_by": "Módosította", "created_at": "Időpont"}), use_container_width=True, hide_index=True)
 
 
-@st.dialog("Futár részletei", width="large", dismissible=False)
-def show_courier_dialog() -> None:
+def render_courier_detail_page() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    action_spacer, refresh_col, close_col = st.columns([0.72, 0.18, 0.10], gap="small", vertical_alignment="top")
+    st.markdown('<div class="section-title">Futár részletei</div>', unsafe_allow_html=True)
+    back_col, refresh_col, action_spacer = st.columns([0.18, 0.18, 0.64], gap="small", vertical_alignment="top")
+    with back_col:
+        if st.button("Vissza a listához", key=f"back_from_courier_detail_{courier_id}", use_container_width=True):
+            st.session_state.pop("selected_courier_id", None)
+            st.session_state.pop("reopen_courier_dialog", None)
+            st.rerun()
     with refresh_col:
-        if st.button("Frissítés", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
+        if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
             st.session_state[f"refresh_mobile_breakdown_on_open_{courier_id}"] = True
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
-            st.session_state["reopen_courier_dialog"] = True
-            st.rerun()
-    with close_col:
-        if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás", type="primary", use_container_width=True):
-            st.session_state.pop("reopen_courier_dialog", None)
             st.rerun()
 
     def rerun_courier_profile(menu_name: str | None = None) -> None:
         st.session_state["selected_courier_id"] = courier_id
-        st.session_state["reopen_courier_dialog"] = True
         if menu_name:
             st.session_state[f"courier_menu_target_{courier_id}"] = menu_name
         st.rerun()
@@ -17943,6 +17884,10 @@ def show_new_settlement_page() -> None:
 
     st.session_state["current_filtered_data"]=filtered.copy()
 
+    if st.session_state.get("selected_courier_id"):
+        render_courier_detail_page()
+        return
+
     previous_period_start = add_months(balance_period_start, -1)
     previous_period_start, previous_period_end = month_bounds(previous_period_start)
 
@@ -18239,8 +18184,6 @@ def show_new_settlement_page() -> None:
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
 
     render_table(filtered)
-    if st.session_state.pop("reopen_courier_dialog", False) and st.session_state.get("selected_courier_id"):
-        show_courier_dialog()
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d,e,f=st.columns(6)
