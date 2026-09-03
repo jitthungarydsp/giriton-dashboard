@@ -30,8 +30,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 DEFAULT_BASE_URL = "https://courier-hub.kifli.hu/"
 DEFAULT_PROBE_PATH = (
-    "/services/courier-hub-service/external/performance/dsp/JIT/couriers"
-    "?dateFrom={today}&dateTo={today}&dspId=8&warehouseId=1"
+    "/services/courier-hub-service/external/warehouses/2/"
+    "live-monitoring-dashboard?dspId=8"
 )
 TOKEN_KEY_PARTS = ("token", "authorization", "auth", "jwt", "access")
 
