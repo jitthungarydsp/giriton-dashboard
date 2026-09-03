@@ -11921,6 +11921,8 @@ def show_courier_dialog() -> None:
         imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
         imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
         if is_api_mode:
+            imported_bonus_total = 0.0
+            imported_malus_total = 0.0
             imported_atm_total = 0.0
         imported_bonus_note = str(row.get("Importált bónusz megjegyzés") or "").strip()
         imported_malus_note = str(row.get("Importált málusz megjegyzés") or "").strip()
@@ -11956,6 +11958,8 @@ def show_courier_dialog() -> None:
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
+                imported_bonus_total = 0.0
+                imported_malus_total = 0.0
                 imported_atm_total = 0.0
             order_total = int(amount("order_count"))
             route_total = int(amount("route_count"))
@@ -11971,6 +11975,8 @@ def show_courier_dialog() -> None:
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
+                imported_bonus_total = 0.0
+                imported_malus_total = 0.0
                 imported_atm_total = 0.0
             order_total = max(order_total, int(parse_huf_value(summary_row.get("order_count"))))
             route_total = max(route_total, int(parse_huf_value(summary_row.get("route_count"))))
