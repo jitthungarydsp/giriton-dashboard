@@ -541,10 +541,15 @@ div[data-testid="stMetricValue"] {
 .profile-alert { border-radius:14px;padding:13px 15px;margin-top:10px;font-size:13px;font-weight:750; }
 .profile-alert-ok { background:#EAF8F0;color:#157254;border:1px solid #CDEEDB; }
 .profile-alert-warn { background:#FFF8E7;color:#946200;border:1px solid #F5E1A8; }
-div[data-testid="stDialog"] div[data-baseweb="radio"] > div {
+div[data-testid="stDialog"] div[data-baseweb="radio"] {
     position:sticky;
-    top:116px;
+    top:122px;
     z-index:34;
+    background:#fff;
+    padding:6px 0;
+}
+div[data-testid="stDialog"] div[data-baseweb="radio"] > div {
+    position:static;
     gap:4px;background:#F5F8F6;border:1px solid #DDE9E0;border-radius:14px;padding:5px;
     overflow-x:auto;flex-wrap:nowrap;
 }
@@ -562,17 +567,35 @@ div[data-testid="stDialog"] div[data-baseweb="radio"] label:has(input:checked) {
 }
 
 /* --- Futárprofil modal v2: elszámolási cockpit --- */
-div[data-testid="stDialog"] [role="dialog"] {
-    width:min(1540px, 98vw) !important;
+div[data-testid="stDialog"] {
+    width:100vw !important;
+    max-width:100vw !important;
+}
+div[data-testid="stDialog"] [role="dialog"],
+div[data-testid="stDialog"] section[role="dialog"],
+div[data-testid="stDialog"] div[role="dialog"] {
+    width:min(1640px, 98vw) !important;
+    max-width:min(1640px, 98vw) !important;
     max-height:92vh !important;
     overflow-y:auto !important;
     overflow-x:hidden !important;
 }
-div[data-testid="stDialog"] [role="dialog"] > div:first-child {
+div[data-testid="stDialog"] [role="dialog"] > div,
+div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlock"],
+div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlockBorderWrapper"] {
     max-width:none !important;
 }
-div[data-testid="stDialog"] button[title="Bezárás"],
-div[data-testid="stDialog"] button[aria-label="Bezárás"] {
+.dialog-action-bar {
+    position:sticky;
+    top:0;
+    z-index:50;
+    display:flex;
+    justify-content:flex-end;
+    gap:8px;
+    padding:0 0 8px;
+    background:#fff;
+}
+div[data-testid="stDialog"] [data-testid="stBaseButton-primary"] {
     background:#e03b3b !important;
     color:#fff !important;
     border-color:#e03b3b !important;
@@ -1132,6 +1155,9 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     .settlement-top-kpis,
     .settlement-mini-kpis {
         grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    div[data-testid="stDialog"] div[data-baseweb="radio"] {
+        top:210px;
     }
 }
 
@@ -11293,19 +11319,21 @@ def render_fast_courier_profile(
 @st.dialog("Futár részletei", width="large", dismissible=False)
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    close_cols = st.columns([0.90, 0.05, 0.05])
-    with close_cols[1]:
-        if st.button("↔", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése"):
+    st.markdown('<div class="dialog-action-bar">', unsafe_allow_html=True)
+    action_spacer, refresh_col, close_col = st.columns([1, 0.08, 0.08], gap="small", vertical_alignment="top")
+    with refresh_col:
+        if st.button("↻", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
             st.session_state[f"refresh_mobile_breakdown_on_open_{courier_id}"] = True
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.session_state["reopen_courier_dialog"] = True
             st.rerun()
-    with close_cols[2]:
-        if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás"):
+    with close_col:
+        if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás", type="primary", use_container_width=True):
             st.session_state.pop("reopen_courier_dialog", None)
             st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
     def rerun_courier_profile(menu_name: str | None = None) -> None:
         st.session_state["selected_courier_id"] = courier_id
