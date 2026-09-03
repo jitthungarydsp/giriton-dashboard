@@ -11873,6 +11873,16 @@ def show_courier_dialog() -> None:
             if not route_detail.empty and "Borravaló" in route_detail.columns
             else 0.0
         )
+        route_detail_delay_total = (
+            float(route_detail["Késedelmi díj"].map(parse_huf_value).sum())
+            if not route_detail.empty and "Késedelmi díj" in route_detail.columns
+            else 0.0
+        )
+        route_detail_compliance_total = (
+            float(route_detail["Túramegfelelés"].map(parse_huf_value).sum())
+            if not route_detail.empty and "Túramegfelelés" in route_detail.columns
+            else 0.0
+        )
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
         # These two totals are calculated and persisted by the DB view.  The
@@ -11954,8 +11964,8 @@ def show_courier_dialog() -> None:
             summary_tip_total = parse_huf_value(summary_row.get("tip_huf"))
             base_total = route_detail_base_total if is_api_mode and route_detail_base_total else summary_base_total
             tip_total = route_detail_tip_total if is_api_mode and route_detail_tip_total else summary_tip_total
-            delay_total = parse_huf_value(summary_row.get("delay_bonus_huf"))
-            compliance_total = parse_huf_value(summary_row.get("compliance_bonus_huf"))
+            delay_total = route_detail_delay_total if is_api_mode else parse_huf_value(summary_row.get("delay_bonus_huf"))
+            compliance_total = route_detail_compliance_total if is_api_mode else parse_huf_value(summary_row.get("compliance_bonus_huf"))
             route_other_bonus_total = 0.0
             imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
