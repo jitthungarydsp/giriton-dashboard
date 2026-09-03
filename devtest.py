@@ -11362,15 +11362,6 @@ def show_courier_dialog() -> None:
         )
         return
     route_detail = pd.DataFrame()
-    if selected_menu_hint in {"Pénzügy", "Kifizetés", "Útvonalak"}:
-        route_detail = load_courier_route_detail(
-            courier_id,
-            courier_name,
-            session_id,
-            active_calculation_mode,
-            period_start,
-            st.session_state.get("new_warehouse", "Összes"),
-        )
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
@@ -11576,17 +11567,7 @@ def show_courier_dialog() -> None:
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     if loyalty_total == 0 and summary_available:
         loyalty_total = parse_huf_value(summary_row.get("loyalty_bonus_huf"))
-    overview_route_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
-    overview_order_total = int(overview_route_metrics.get("order_total") or 0)
-    overview_route_total = int(overview_route_metrics.get("route_total") or 0)
-    if summary_available:
-        overview_order_total = max(overview_order_total, int(parse_huf_value(summary_row.get("order_count"))))
-        overview_route_total = max(overview_route_total, int(parse_huf_value(summary_row.get("route_count"))))
-    overview_loyalty = resolve_profile_loyalty_values(row, overview_order_total, overview_route_total)
-    loyalty_total = parse_huf_value(overview_loyalty.get("total"))
     row = row.copy()
-    for loyalty_column, loyalty_value in dict(overview_loyalty.get("row_values") or {}).items():
-        row[loyalty_column] = loyalty_value
     imported_customer_rating_total = parse_huf_value(row.get("Ügyfélértékelés"))
     customer_rating_total = imported_customer_rating_total + float(profile_adjustment_totals.get("customer_rating", 0.0))
     manual_malus_total = float(profile_adjustment_totals.get("malus", 0.0))
@@ -11878,8 +11859,8 @@ def show_courier_dialog() -> None:
             if not route_detail.empty and "Túramegfelelés" in route_detail.columns
             else 0.0
         )
-        adjustments = load_courier_adjustments(courier_id, period_start, period_end)
-        adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict() if not adjustments.empty else {}
+        adjustments = profile_adjustments
+        adjustment_totals = profile_adjustment_totals
         # These two totals are calculated and persisted by the DB view.  The
         # Route ID table below is an audit drill-down, not a second calculator.
         base_total = float(row.get("Nettó bevétel", 0.0))
