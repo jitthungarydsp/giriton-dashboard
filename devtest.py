@@ -5371,10 +5371,7 @@ def load_courier_settlement_summary_row(
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_excel_month_payable_totals(period_start: date | None) -> dict[str, float]:
-    if not period_start:
-        return {}
-    session_id = load_latest_excel_jit_session_id(period_start)
+def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
     if not session_id:
         return {}
     try:
@@ -5396,6 +5393,20 @@ def load_excel_month_payable_totals(period_start: date | None) -> dict[str, floa
         if courier_key:
             totals[courier_key] = parse_huf_value(item.get("payable_huf"))
     return totals
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_api_month_payable_totals(period_start: date | None, warehouse_label: str | None = None) -> dict[str, float]:
+    if not period_start:
+        return {}
+    return load_session_payable_totals(load_latest_api_jit_session_id(period_start, warehouse_label))
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_excel_month_payable_totals(period_start: date | None) -> dict[str, float]:
+    if not period_start:
+        return {}
+    return load_session_payable_totals(load_latest_excel_jit_session_id(period_start))
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -10939,12 +10950,14 @@ def render_table(df: pd.DataFrame) -> None:
         list_period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
     except BaseException:
         list_period_start = None
+    list_warehouse = st.session_state.get("new_warehouse", "Összes")
+    api_payable_totals = load_api_month_payable_totals(list_period_start, list_warehouse)
     excel_payable_totals = load_excel_month_payable_totals(list_period_start)
 
     st.markdown(
         """
         <div class="courier-list-header">
-        <div>Futár</div><div>Elszámolás</div><div>PWA elszámolás</div>
+        <div>Futár</div><div>API elszámolás</div><div>Excel elszámolás</div>
         <div>TIG</div><div>TIG PWA</div><div>Státusz</div>
         </div>
         """,
@@ -11045,9 +11058,11 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            excel_payable_total = excel_payable_totals.get(_courier_id_key(row.get("Courier ID")), 0.0)
-            cols[1].markdown(f"**{format_huf(excel_payable_total)}**")
-            cols[2].markdown(f"**{format_huf(0)}**")
+            courier_key = _courier_id_key(row.get("Courier ID"))
+            api_payable_total = api_payable_totals.get(courier_key, 0.0)
+            excel_payable_total = excel_payable_totals.get(courier_key, 0.0)
+            cols[1].markdown(f"**{format_huf(api_payable_total)}**")
+            cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
             cols[4].markdown(f"**{format_huf(0)}**")
 
