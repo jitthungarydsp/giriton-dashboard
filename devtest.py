@@ -11629,8 +11629,8 @@ def show_courier_dialog() -> None:
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
     displayed_payable_total = (
-        parse_huf_value(row.get("Kifizetendő kifizetésre"))
-        or parse_huf_value(row.get("Kifizetendő"))
+        parse_huf_value(row.get("Kifizetendő"))
+        or parse_huf_value(row.get("Kifizetendő kifizetésre"))
     )
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
