@@ -5379,7 +5379,7 @@ def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
             get_db()
             .schema("settlement")
             .table("courier_settlement_summary")
-            .select("courier_id,driver_name,payable_huf")
+            .select("courier_id,payable_huf")
             .eq("session_id", str(session_id))
             .execute()
             .data
@@ -5393,41 +5393,32 @@ def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
         courier_key = _courier_id_key(item.get("courier_id"))
         if courier_key:
             totals[courier_key] = amount
-            totals[f"id:{courier_key}"] = amount
-        name_key = _courier_match_key(item.get("driver_name"))
-        if name_key:
-            totals[f"name:{name_key}"] = amount
     return totals
 
 
-def lookup_session_payable_total(totals: dict[str, float], courier_id: object, courier_name: object) -> float:
+def lookup_session_payable_total(totals: dict[str, float], courier_id: object) -> float:
     courier_key = _courier_id_key(courier_id)
-    if courier_key:
-        id_key = f"id:{courier_key}"
-        if id_key in totals:
-            return totals[id_key]
-        if courier_key in totals:
-            return totals[courier_key]
-    name_key = _courier_match_key(courier_name)
-    if name_key:
-        name_lookup_key = f"name:{name_key}"
-        if name_lookup_key in totals:
-            return totals[name_lookup_key]
-    return 0.0
+    return totals.get(courier_key, 0.0) if courier_key else 0.0
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_api_month_settlement_totals(period_start: date | None, warehouse_label: str | None = None) -> dict[str, float]:
+def load_api_month_settlement_totals(
+    period_start: date | None,
+    warehouse_label: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, float]:
     if not period_start:
         return {}
-    return load_session_payable_totals(load_latest_api_jit_session_id(period_start, warehouse_label))
+    selected_session_id = session_id if jit_session_has_rows_in_month(session_id, period_start) else None
+    return load_session_payable_totals(selected_session_id or load_latest_api_jit_session_id(period_start, warehouse_label))
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_excel_month_payable_totals(period_start: date | None) -> dict[str, float]:
+def load_excel_month_payable_totals(period_start: date | None, session_id: str | None = None) -> dict[str, float]:
     if not period_start:
         return {}
-    return load_session_payable_totals(load_latest_excel_jit_session_id(period_start))
+    selected_session_id = session_id if jit_session_has_rows_in_month(session_id, period_start) else None
+    return load_session_payable_totals(selected_session_id or load_latest_excel_jit_session_id(period_start))
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -10972,8 +10963,15 @@ def render_table(df: pd.DataFrame) -> None:
     except BaseException:
         list_period_start = None
     list_warehouse = st.session_state.get("new_warehouse", "Összes")
-    api_settlement_totals = load_api_month_settlement_totals(list_period_start, list_warehouse)
-    excel_payable_totals = load_excel_month_payable_totals(list_period_start)
+    api_settlement_totals = load_api_month_settlement_totals(
+        list_period_start,
+        list_warehouse,
+        st.session_state.get("settlement_api_session_id"),
+    )
+    excel_payable_totals = load_excel_month_payable_totals(
+        list_period_start,
+        st.session_state.get("settlement_excel_session_id"),
+    )
 
     st.markdown(
         """
@@ -11080,8 +11078,8 @@ def render_table(df: pd.DataFrame) -> None:
                 cols[0].caption(no_show_audit_text)
 
             courier_key = _courier_id_key(row.get("Courier ID"))
-            api_settlement_total = lookup_session_payable_total(api_settlement_totals, courier_key, row.get("Futár"))
-            excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
+            api_settlement_total = lookup_session_payable_total(api_settlement_totals, courier_key)
+            excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key)
             cols[1].markdown(f"**{format_huf(api_settlement_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
