@@ -420,6 +420,44 @@ fetch(url, {
         return {}
 
 
+def auth_payload_from_driver(driver: webdriver.Chrome) -> dict[str, Any]:
+    authorization = authorization_from_performance_logs(driver)
+    if not authorization:
+        tokens = tokens_from_storage(driver)
+        authorization = normalize_authorization(tokens[0]) if tokens else ""
+    if not authorization:
+        tokens = tokens_from_indexeddb(driver)
+        authorization = normalize_authorization(tokens[0]) if tokens else ""
+    cookie = cookie_header(driver)
+    return {
+        "headers": {
+            **({"Authorization": authorization} if authorization else {}),
+            **({"Cookie": cookie} if cookie else {}),
+        }
+    }
+
+
+def probe_auth_payload(driver: webdriver.Chrome, base_url: str, probe_path: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    header_probe_result = probe_api_with_headers(
+        base_url,
+        probe_path,
+        payload.get("headers") or {},
+    )
+    if header_probe_result.get("status") == 200:
+        return header_probe_result, {}
+    browser_probe_result = probe_api(driver, base_url, probe_path)
+    return header_probe_result, browser_probe_result
+
+
+def write_cache_file(payload: dict[str, Any], cache_file: str) -> None:
+    if not cache_file:
+        return
+    cache_path = Path(cache_file)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    debug(f"COURIER_HUB_AUTH_CACHE_WRITE={cache_path}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=setting("COURIER_HUB_LOGIN_URL", "KIFLI_COURIER_HUB_LOGIN_URL") or DEFAULT_BASE_URL)
@@ -432,8 +470,10 @@ def main() -> int:
 
     username = setting("COURIER_HUB_USERNAME", "KIFLI_COURIER_HUB_USERNAME")
     password = setting("COURIER_HUB_PASSWORD", "KIFLI_COURIER_HUB_PASSWORD")
-    if not username or not password:
-        raise RuntimeError("Missing COURIER_HUB_USERNAME/COURIER_HUB_PASSWORD secrets.")
+    configured_cookie = setting("COURIER_HUB_COOKIE", "KIFLI_COURIER_HUB_COOKIE")
+    configured_authorization = setting("COURIER_HUB_AUTHORIZATION", "KIFLI_COURIER_HUB_AUTHORIZATION")
+    if not ((username and password) or configured_cookie or configured_authorization):
+        raise RuntimeError("Missing Courier Hub auth secrets.")
 
     driver = webdriver.Chrome(options=chrome_options(args.headed))
     try:
@@ -445,6 +485,47 @@ def main() -> int:
         time.sleep(3)
         seeded_cookies = seed_browser_cookies(driver, args.url)
         debug(f"COURIER_HUB_AUTH_COOKIE_SEED={seeded_cookies}")
+
+        session_result = refresh_session(driver, args.url)
+        debug(
+            "COURIER_HUB_AUTH_SESSION_REFRESH="
+            f"{session_result.get('status') or session_result.get('error') or '-'}"
+        )
+        payload = auth_payload_from_driver(driver)
+        if configured_authorization:
+            payload.setdefault("headers", {})["Authorization"] = normalize_authorization(configured_authorization)
+        header_probe_result, browser_probe_result = probe_auth_payload(
+            driver,
+            args.url,
+            args.probe_path,
+            payload,
+        )
+        header_probe_status = header_probe_result.get("status")
+        browser_probe_status = browser_probe_result.get("status")
+        if header_probe_status == 200 or browser_probe_status == 200:
+            debug(
+                "COURIER_HUB_AUTH_REFRESH=OK "
+                f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'} "
+                f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'} "
+                f"probe_status={header_probe_status or browser_probe_status or '-'} "
+                f"header_probe_status={header_probe_status or '-'} "
+                f"browser_probe_status={browser_probe_status or '-'} "
+                "source=seeded_session"
+            )
+            write_cache_file(payload, args.cache_file)
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+
+        if not (username and password):
+            save_debug_artifacts(driver, args.debug_dir, "auth_probe_failed")
+            raise RuntimeError(
+                "Courier Hub auth refresh did not pass API probe and login secrets are missing. "
+                f"Header probe status={header_probe_status or header_probe_result.get('error') or '-'}, "
+                f"browser probe status={browser_probe_status or browser_probe_result.get('error') or '-'}, "
+                f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'}, "
+                f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}."
+            )
+
         login_if_needed(driver, username, password, args.wait)
         session_result = refresh_session(driver, args.url)
         debug(
@@ -454,21 +535,7 @@ def main() -> int:
         browser_probe_result = probe_api(driver, args.url, args.probe_path)
         time.sleep(2)
 
-        authorization = authorization_from_performance_logs(driver)
-        if not authorization:
-            tokens = tokens_from_storage(driver)
-            authorization = normalize_authorization(tokens[0]) if tokens else ""
-        if not authorization:
-            tokens = tokens_from_indexeddb(driver)
-            authorization = normalize_authorization(tokens[0]) if tokens else ""
-        cookie = cookie_header(driver)
-
-        payload = {
-            "headers": {
-                **({"Authorization": authorization} if authorization else {}),
-                **({"Cookie": cookie} if cookie else {}),
-            }
-        }
+        payload = auth_payload_from_driver(driver)
         header_probe_result = probe_api_with_headers(
             args.url,
             args.probe_path,
@@ -483,22 +550,20 @@ def main() -> int:
                 "Courier Hub auth refresh did not pass API probe. "
                 f"Header probe status={header_probe_status or header_probe_result.get('error') or '-'}, "
                 f"browser probe status={browser_probe_status or browser_probe_result.get('error') or '-'}, "
-                f"authorization={'yes' if authorization else 'no'}, cookies={'yes' if cookie else 'no'}."
+                f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'}, "
+                f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}."
             )
 
         debug(
             "COURIER_HUB_AUTH_REFRESH=OK "
-            f"authorization={'yes' if authorization else 'no'} "
-            f"cookies={'yes' if cookie else 'no'} "
+            f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'} "
+            f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'} "
             f"probe_status={probe_status or '-'} "
             f"header_probe_status={header_probe_status or '-'} "
-            f"browser_probe_status={browser_probe_status or '-'}"
+            f"browser_probe_status={browser_probe_status or '-'} "
+            "source=login"
         )
-        if args.cache_file:
-            cache_path = Path(args.cache_file)
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            debug(f"COURIER_HUB_AUTH_CACHE_WRITE={cache_path}")
+        write_cache_file(payload, args.cache_file)
 
         print(
             json.dumps(payload, ensure_ascii=False)

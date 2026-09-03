@@ -93,10 +93,11 @@ jobs:
       - name: Refresh Courier Hub auth
         shell: bash
         run: |
-          if [ -n "$COURIER_HUB_USERNAME" ] && [ -n "$COURIER_HUB_PASSWORD" ]; then
+          if [ -n "$COURIER_HUB_USERNAME$COURIER_HUB_PASSWORD$COURIER_HUB_COOKIE$COURIER_HUB_AUTHORIZATION" ]; then
             python scripts/refresh_courier_hub_auth.py \
               --debug-dir results/courier-hub-auth \
-              --cache-file "$COURIER_HUB_AUTH_CACHE_FILE"
+              --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+              > /tmp/courier-hub-auth-output.json
           else
             echo "Courier Hub login secrets not set, using static auth secrets."
           fi
