@@ -5379,7 +5379,7 @@ def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
             get_db()
             .schema("settlement")
             .table("courier_settlement_summary")
-            .select("courier_id,payable_huf")
+            .select("courier_id,driver_name,payable_huf")
             .eq("session_id", str(session_id))
             .execute()
             .data
@@ -5389,10 +5389,31 @@ def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
         return {}
     totals: dict[str, float] = {}
     for item in rows:
+        amount = parse_huf_value(item.get("payable_huf"))
         courier_key = _courier_id_key(item.get("courier_id"))
         if courier_key:
-            totals[courier_key] = parse_huf_value(item.get("payable_huf"))
+            totals[courier_key] = amount
+            totals[f"id:{courier_key}"] = amount
+        name_key = _courier_match_key(item.get("driver_name"))
+        if name_key:
+            totals[f"name:{name_key}"] = amount
     return totals
+
+
+def lookup_session_payable_total(totals: dict[str, float], courier_id: object, courier_name: object) -> float:
+    courier_key = _courier_id_key(courier_id)
+    if courier_key:
+        id_key = f"id:{courier_key}"
+        if id_key in totals:
+            return totals[id_key]
+        if courier_key in totals:
+            return totals[courier_key]
+    name_key = _courier_match_key(courier_name)
+    if name_key:
+        name_lookup_key = f"name:{name_key}"
+        if name_lookup_key in totals:
+            return totals[name_lookup_key]
+    return 0.0
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -11059,8 +11080,8 @@ def render_table(df: pd.DataFrame) -> None:
                 cols[0].caption(no_show_audit_text)
 
             courier_key = _courier_id_key(row.get("Courier ID"))
-            api_settlement_total = api_settlement_totals.get(courier_key, 0.0)
-            excel_payable_total = excel_payable_totals.get(courier_key, 0.0)
+            api_settlement_total = lookup_session_payable_total(api_settlement_totals, courier_key, row.get("Futár"))
+            excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
             cols[1].markdown(f"**{format_huf(api_settlement_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
