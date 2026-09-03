@@ -11279,7 +11279,7 @@ def render_fast_courier_profile(
             st.dataframe(profile_log.rename(columns={"changed_fields": "Változások", "changed_by": "Módosította", "created_at": "Időpont"}), use_container_width=True, hide_index=True)
 
 
-@st.dialog("Futár részletei", width="large")
+@st.dialog("Futár részletei", width="large", dismissible=False)
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     def rerun_courier_profile(menu_name: str | None = None) -> None:
