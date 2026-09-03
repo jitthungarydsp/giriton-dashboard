@@ -571,6 +571,14 @@ div[data-testid="stDialog"] {
     width:100vw !important;
     max-width:100vw !important;
 }
+div[data-testid="stDialog"][role="dialog"],
+div[role="dialog"][aria-modal="true"] {
+    width:calc(100vw - 48px) !important;
+    max-width:calc(100vw - 48px) !important;
+    max-height:92vh !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
+}
 div[data-testid="stDialog"] [role="dialog"],
 div[data-testid="stDialog"] section[role="dialog"],
 div[data-testid="stDialog"] div[role="dialog"] {
@@ -581,19 +589,12 @@ div[data-testid="stDialog"] div[role="dialog"] {
     overflow-x:hidden !important;
 }
 div[data-testid="stDialog"] [role="dialog"] > div,
+div[data-testid="stDialog"][role="dialog"] > div,
+div[role="dialog"][aria-modal="true"] > div,
 div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlock"],
 div[data-testid="stDialog"] [role="dialog"] [data-testid="stVerticalBlockBorderWrapper"] {
+    width:100% !important;
     max-width:none !important;
-}
-.dialog-action-bar {
-    position:sticky;
-    top:0;
-    z-index:50;
-    display:flex;
-    justify-content:flex-end;
-    gap:8px;
-    padding:0 0 8px;
-    background:#fff;
 }
 div[data-testid="stDialog"] [data-testid="stBaseButton-primary"] {
     background:#e03b3b !important;
@@ -11319,10 +11320,9 @@ def render_fast_courier_profile(
 @st.dialog("Futár részletei", width="large", dismissible=False)
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    st.markdown('<div class="dialog-action-bar">', unsafe_allow_html=True)
-    action_spacer, refresh_col, close_col = st.columns([1, 0.08, 0.08], gap="small", vertical_alignment="top")
+    action_spacer, refresh_col, close_col = st.columns([0.72, 0.18, 0.10], gap="small", vertical_alignment="top")
     with refresh_col:
-        if st.button("↻", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
+        if st.button("Frissítés", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
             st.session_state[f"refresh_mobile_breakdown_on_open_{courier_id}"] = True
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
             refresh_settlement_profile_data()
@@ -11333,7 +11333,6 @@ def show_courier_dialog() -> None:
         if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás", type="primary", use_container_width=True):
             st.session_state.pop("reopen_courier_dialog", None)
             st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
     def rerun_courier_profile(menu_name: str | None = None) -> None:
         st.session_state["selected_courier_id"] = courier_id
