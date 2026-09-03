@@ -11560,11 +11560,17 @@ def show_courier_dialog() -> None:
         route_tip_total = float(route_detail["Borravaló"].map(parse_huf_value).sum()) if "Borravaló" in route_detail.columns else 0.0
         if not tip_total and route_tip_total:
             tip_total = route_tip_total
+        route_delay_total = float(route_detail["Késedelmi díj"].map(parse_huf_value).sum()) if "Késedelmi díj" in route_detail.columns else 0.0
+        route_compliance_total = float(route_detail["Túramegfelelés"].map(parse_huf_value).sum()) if "Túramegfelelés" in route_detail.columns else 0.0
+        delay_total = route_delay_total
+        compliance_total = route_compliance_total
     display_base_total = base_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
     if is_api_mode:
+        imported_bonus_total = 0.0
+        imported_malus_total = 0.0
         imported_atm_total = 0.0
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
@@ -11622,23 +11628,12 @@ def show_courier_dialog() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    overview_payable_total = (
+    displayed_payable_total = (
         parse_huf_value(row.get("Kifizetendő kifizetésre"))
         or parse_huf_value(row.get("Kifizetendő"))
-        or payable_total
     )
-    overview_tig_payable_total = effective_payment_total_from_row(
-        {
-            **row.to_dict(),
-            **profile,
-            "Courier ID": courier_id,
-            "Futár": courier_name,
-            "Kifizetendő": overview_payable_total,
-            "Borravaló": tip_total,
-            "ATM hatás": atm_deduction_total,
-        },
-        period_start,
-    )
+    overview_payable_total = displayed_payable_total
+    overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
@@ -12580,7 +12575,7 @@ def show_courier_dialog() -> None:
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("Fizetendő", format_huf(payable_total), "payable", ""),
+            ("Fizetendő", format_huf(displayed_payable_total), "payable", ""),
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
