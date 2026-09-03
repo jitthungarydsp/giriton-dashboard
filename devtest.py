@@ -5396,18 +5396,10 @@ def load_session_payable_totals(session_id: str | None) -> dict[str, float]:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_api_month_final_totals(period_start: date | None, warehouse_label: str | None = None) -> dict[str, float]:
+def load_api_month_settlement_totals(period_start: date | None, warehouse_label: str | None = None) -> dict[str, float]:
     if not period_start:
         return {}
-    api_summary = load_api_monthly_courier_revenue_summary(period_start, warehouse_label)
-    if api_summary.empty:
-        return {}
-    totals: dict[str, float] = {}
-    for item in api_summary.to_dict("records"):
-        courier_key = _courier_id_key(item.get("Courier ID"))
-        if courier_key:
-            totals[courier_key] = totals.get(courier_key, 0.0) + parse_huf_value(item.get("Nyers beérkezett összeg"))
-    return totals
+    return load_session_payable_totals(load_latest_api_jit_session_id(period_start, warehouse_label))
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -10959,7 +10951,7 @@ def render_table(df: pd.DataFrame) -> None:
     except BaseException:
         list_period_start = None
     list_warehouse = st.session_state.get("new_warehouse", "Összes")
-    api_final_totals = load_api_month_final_totals(list_period_start, list_warehouse)
+    api_settlement_totals = load_api_month_settlement_totals(list_period_start, list_warehouse)
     excel_payable_totals = load_excel_month_payable_totals(list_period_start)
 
     st.markdown(
@@ -11067,9 +11059,9 @@ def render_table(df: pd.DataFrame) -> None:
                 cols[0].caption(no_show_audit_text)
 
             courier_key = _courier_id_key(row.get("Courier ID"))
-            api_final_total = api_final_totals.get(courier_key, 0.0)
+            api_settlement_total = api_settlement_totals.get(courier_key, 0.0)
             excel_payable_total = excel_payable_totals.get(courier_key, 0.0)
-            cols[1].markdown(f"**{format_huf(api_final_total)}**")
+            cols[1].markdown(f"**{format_huf(api_settlement_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
             cols[4].markdown(f"**{format_huf(0)}**")
