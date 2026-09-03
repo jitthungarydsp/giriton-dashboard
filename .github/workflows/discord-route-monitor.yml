@@ -36,6 +36,13 @@ jobs:
       VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
       VAPID_PRIVATE_KEY_B64: ${{ secrets.VAPID_PRIVATE_KEY_B64 }}
       VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
+      COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/courier-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file /tmp/courier-hub-auth.json
 
     steps:
       - name: Checkout
@@ -61,6 +68,17 @@ jobs:
           test -n "$VAPID_SUBJECT" || (echo "Missing VAPID_SUBJECT secret" && exit 1)
           echo "Discord courier filter: ${DISCORD_NOTIFY_COURIER_IDS:-disabled/all couriers}"
 
+      - name: Refresh Courier Hub auth
+        shell: bash
+        run: |
+          if [ -n "$COURIER_HUB_USERNAME" ] && [ -n "$COURIER_HUB_PASSWORD" ]; then
+            python scripts/refresh_courier_hub_auth.py \
+              --debug-dir results/courier-hub-auth \
+              --cache-file "$COURIER_HUB_AUTH_CACHE_FILE"
+          else
+            echo "Courier Hub login secrets not set, using static auth secrets."
+          fi
+
       - name: Run Discord route monitor
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
@@ -75,3 +93,11 @@ jobs:
           POLL_SECONDS="${POLL_SECONDS:-300}"
 
           python scripts/discord_route_monitor.py --loop-minutes "$LOOP_MINUTES" --poll-seconds "$POLL_SECONDS" --max-age-minutes 0
+
+      - name: Upload Courier Hub auth debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: courier-hub-auth-debug
+          path: results/courier-hub-auth
+          if-no-files-found: ignore

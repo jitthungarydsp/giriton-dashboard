@@ -32,6 +32,11 @@ from resources.supabase_raw import (
     raise_for_supabase_error,
 )
 
+from sync_courier_financial_overview import (
+    courier_hub_headers,
+    refresh_courier_hub_headers,
+)
+
 
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 NOTIFICATION_TABLE = "discord_route_notifications"
@@ -39,6 +44,8 @@ PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
 PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
 PUSH_NOTIFICATION_TYPE = "route_assigned"
 ATTENDANCE_CACHE = {}
+COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
+COURIER_HUB_DSP_ID = int(os.getenv("COURIER_HUB_DSP_ID") or "8")
 
 
 def normalize_id(value):
@@ -212,6 +219,89 @@ def load_departure_dashboard():
         json=payload,
         headers=headers,
     )
+
+
+def load_live_monitoring_dashboard(warehouse_id):
+    url = (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/live-monitoring-dashboard?dspId={COURIER_HUB_DSP_ID}"
+    )
+    response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    if response.status_code in {401, 403} and refresh_courier_hub_headers():
+        response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def find_live_monitoring_rows(value):
+    rows = []
+    if isinstance(value, dict):
+        keys = {str(key).lower() for key in value}
+        if "courierid" in keys and ("routeexternalid" in keys or "cargorouteid" in keys):
+            rows.append(value)
+        for child in value.values():
+            rows.extend(find_live_monitoring_rows(child))
+    elif isinstance(value, list):
+        for item in value:
+            rows.extend(find_live_monitoring_rows(item))
+    return rows
+
+
+def live_route_id(row):
+    return normalize_id(
+        row.get("routeExternalId")
+        or row.get("cargoRouteId")
+        or row.get("routeId")
+        or row.get("id")
+    )
+
+
+def normalize_live_monitoring_route(row, warehouse_id):
+    route_id = live_route_id(row)
+    courier_id = normalize_id(row.get("courierId") or row.get("courier_id"))
+    warehouse = normalize_warehouse(row.get("warehouseCode") or warehouse_id)
+    return {
+        "courierId": courier_id,
+        "courier_id": courier_id,
+        "routeId": route_id,
+        "route_id": route_id,
+        "courier_name": str(row.get("name") or row.get("courierName") or "").strip(),
+        "warehouse": warehouse,
+        "warehouseCode": warehouse,
+        "licence_plate": str(row.get("vehiclePlate") or "").strip(),
+        "orders_in_route": str(row.get("stopsTotal") or row.get("stopProgress") or "").strip(),
+        "plannedDeparture": row.get("plannedDepartureAt"),
+        "realDeparture": row.get("departedAt"),
+        "assignedAt": row.get("actualStartAt") or row.get("plannedDepartureAt") or row.get("plannedStartAt"),
+        "plannedStartAt": row.get("plannedStartAt"),
+        "actualStartAt": row.get("actualStartAt"),
+        "raw_live_monitoring": row,
+    }
+
+
+def load_live_monitoring_routes():
+    routes = []
+    errors = []
+    for warehouse_id in (1, 2):
+        try:
+            payload = load_live_monitoring_dashboard(warehouse_id)
+        except Exception as exc:
+            errors.append(f"WH{warehouse_id}: {exc}")
+            continue
+        rows = find_live_monitoring_rows(payload)
+        routes.extend(
+            normalize_live_monitoring_route(row, warehouse_id)
+            for row in rows
+            if normalize_id(row.get("courierId")) and live_route_id(row)
+        )
+    if not routes and errors:
+        raise RuntimeError("; ".join(errors))
+    if errors:
+        print(
+            "live-monitoring partial hiba: " + " | ".join(errors),
+            flush=True,
+        )
+    return routes
 
 
 def load_driver_detail(courier_id):
@@ -927,28 +1017,38 @@ def run_once(max_age_minutes, dry_run=False):
     print(
         "Discord monitor status: "
         f"webhook_configured={discord_status.get('webhook_configured')} "
-        "source=departure-dashboard.routes "
+        "source=courier-hub-live-monitoring "
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
 
     try:
-        dashboard_data = load_departure_dashboard()
-        dashboard_routes = get_dashboard_routes(dashboard_data)
+        dashboard_routes = load_live_monitoring_routes()
+        dashboard_source = "courier-hub-live-monitoring"
     except Exception as exc:
-        counters["departure_dashboard_error"] += 1
+        counters["live_monitoring_error"] += 1
         print(
-            f"departure-dashboard hiba: {exc}",
+            f"live-monitoring-dashboard hiba: {exc}",
             flush=True,
         )
-        print(
-            f"Monitor kor kesz: sent=0, skipped=0, reasons={dict(counters)}",
-            flush=True,
-        )
-        return
+        try:
+            dashboard_data = load_departure_dashboard()
+            dashboard_routes = get_dashboard_routes(dashboard_data)
+            dashboard_source = "departure-dashboard"
+        except Exception as fallback_exc:
+            counters["departure_dashboard_error"] += 1
+            print(
+                f"departure-dashboard hiba: {fallback_exc}",
+                flush=True,
+            )
+            print(
+                f"Monitor kor kesz: sent=0, skipped=0, reasons={dict(counters)}",
+                flush=True,
+            )
+            return
 
     print(
-        f"departure-dashboard routes talalat: {len(dashboard_routes)}",
+        f"{dashboard_source} routes talalat: {len(dashboard_routes)}",
         flush=True,
     )
 
@@ -972,17 +1072,21 @@ def run_once(max_age_minutes, dry_run=False):
             skipped_count += 1
             continue
 
-        try:
-            driver_detail = load_driver_detail(courier_id)
-            route = get_detail_route_for_dashboard_route(
-                driver_detail,
-                route_id,
-            )
-        except Exception as exc:
-            print(f"#{courier_id} route detail hiba: {exc}")
-            counters["detail_error"] += 1
-            skipped_count += 1
-            continue
+        if dashboard_route.get("raw_live_monitoring"):
+            driver_detail = {}
+            route = dashboard_route
+        else:
+            try:
+                driver_detail = load_driver_detail(courier_id)
+                route = get_detail_route_for_dashboard_route(
+                    driver_detail,
+                    route_id,
+                )
+            except Exception as exc:
+                print(f"#{courier_id} route detail hiba: {exc}")
+                counters["detail_error"] += 1
+                skipped_count += 1
+                continue
 
         if not route:
             counters["no_detail_route"] += 1
@@ -1004,11 +1108,12 @@ def run_once(max_age_minutes, dry_run=False):
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
         licence_plate = ( 
-            str(dashboard_route.get("licence_plate") or "").strip()
+            str(dashboard_route.get("licence_plate") or dashboard_route.get("vehiclePlate") or "").strip()
         )
         orders_in_route = (
             str(
                 dashboard_route.get("orders_in_route")
+                or dashboard_route.get("stopsTotal")
                 or route.get("numTotalOrders")
                 or len(route.get("checkpoints", []) or [])
                 or ""
@@ -1016,6 +1121,7 @@ def run_once(max_age_minutes, dry_run=False):
         )
         courier_name = (
             str(dashboard_route.get("courier_name") or "").strip()
+            or str(dashboard_route.get("name") or "").strip()
             or get_courier_name(courier_id, driver_detail)
         )
         shift_notes = build_shift_notification_notes(courier_id, route)
@@ -1058,7 +1164,7 @@ def run_once(max_age_minutes, dry_run=False):
                 ),
                 ignore_courier_filter=True,
                 licence_plate=licence_plate,
-                orders_in_route="",
+                orders_in_route=orders_in_route,
                 warehouse=route_warehouse,
                 current_shift_note=shift_notes.get("current_shift_note", ""),
                 next_shift_note=shift_notes.get("next_shift_note", ""),

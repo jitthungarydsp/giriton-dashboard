@@ -44,7 +44,7 @@ def route_like_rows(value: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
-        if any(key in keys for key in ("routeid", "route_id", "courierid", "courier_id")):
+        if any(key in keys for key in ("routeid", "route_id", "routeexternalid", "cargorouteid", "courierid", "courier_id")):
             rows.append(value)
         for child in value.values():
             rows.extend(route_like_rows(child))
@@ -105,8 +105,8 @@ def main() -> int:
         print(
             "LIVE_MONITORING_ROUTE_SAMPLE "
             f"courier={pick(row, 'courierId', 'courier_id', 'driverId', 'driver_id') or '-'} "
-            f"route={pick(row, 'routeId', 'route_id', 'id') or '-'} "
-            f"warehouse={pick(row, 'warehouseId', 'warehouse_id', 'warehouse') or '-'} "
+            f"route={pick(row, 'routeExternalId', 'cargoRouteId', 'routeId', 'route_id', 'id') or '-'} "
+            f"warehouse={pick(row, 'warehouseCode', 'warehouseId', 'warehouse_id', 'warehouse') or '-'} "
             f"plate={pick(row, 'licensePlate', 'licencePlate', 'licence_plate', 'vehiclePlate', 'vehicle_plate') or '-'} "
             f"keys={','.join(sorted(str(key) for key in row.keys())[:30])}"
         )
