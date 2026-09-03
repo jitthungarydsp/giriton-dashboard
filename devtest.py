@@ -11293,8 +11293,16 @@ def render_fast_courier_profile(
 @st.dialog("Futár részletei", width="large", dismissible=False)
 def show_courier_dialog() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
-    close_cols = st.columns([0.95, 0.05])
+    close_cols = st.columns([0.90, 0.05, 0.05])
     with close_cols[1]:
+        if st.button("↔", key=f"refresh_courier_dialog_{courier_id}", help="Frissítés és PWA mobil adatok mentése"):
+            st.session_state[f"refresh_mobile_breakdown_on_open_{courier_id}"] = True
+            st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
+            refresh_settlement_profile_data()
+            st.session_state["selected_courier_id"] = courier_id
+            st.session_state["reopen_courier_dialog"] = True
+            st.rerun()
+    with close_cols[2]:
         if st.button("X", key=f"close_courier_dialog_{courier_id}", help="Bezárás"):
             st.session_state.pop("reopen_courier_dialog", None)
             st.rerun()
@@ -12832,6 +12840,22 @@ def show_courier_dialog() -> None:
                 "Lojalitás előre foglalt nap": loyalty_advance_booking_days,
             })
             return snapshot_row
+
+        if st.session_state.pop(f"refresh_mobile_breakdown_on_open_{courier_id}", False):
+            try:
+                updated_by = str(st.session_state.get("user", {}).get("username") or "unknown")
+                courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
+                    pd.DataFrame([current_mobile_snapshot_row()]),
+                    period_start,
+                    active_calculation_mode,
+                    st.session_state.get("new_warehouse", "Összes"),
+                    session_id,
+                    updated_by,
+                )
+                clear_mobile_breakdown_override_cache()
+                st.toast(f"PWA mobil adatok frissítve: {row_count} sor.", icon="✅")
+            except Exception as exc:
+                st.warning(f"A PWA mobil adatok frissítése sikertelen: {exc}")
 
         mobile_editor = mobile_default_rows.rename(columns={
             "item_key": "Kulcs",
