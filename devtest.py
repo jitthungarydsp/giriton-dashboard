@@ -11348,22 +11348,8 @@ def render_courier_detail_page() -> None:
 
     menu_key = f"courier_menu_{courier_id}"
     menu_target_key = f"courier_menu_target_{courier_id}"
-    menu_target = st.session_state.pop(menu_target_key, None)
-    if menu_target:
-        st.session_state[menu_key] = menu_target
-    if st.session_state.get(menu_key) == "ttekintés":
-        st.session_state[menu_key] = "Pénzügy"
-    selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
-    if selected_menu_hint == "Profil":
-        render_fast_courier_profile(
-            courier_id=courier_id,
-            courier_name=courier_name,
-            row=row,
-            period_start=period_start,
-            menu_key=menu_key,
-            menu_target_key=menu_target_key,
-        )
-        return
+    selected_menu_hint = "Pénzügy"
+    st.session_state[menu_key] = selected_menu_hint
     route_detail = pd.DataFrame()
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
@@ -11676,16 +11662,7 @@ def render_courier_detail_page() -> None:
         """,
         unsafe_allow_html=True,
     )
-    if st.session_state.get(menu_key) == "ttekintés":
-        st.session_state[menu_key] = "Pénzügy"
-    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg"]
-    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
-    if st.session_state.get(menu_key) not in courier_menu_items:
-        st.session_state[menu_key] = "Pénzügy"
-    selected_menu = st.radio(
-        "Futármenü", courier_menu_items,
-        horizontal=True, label_visibility="collapsed", key=menu_key,
-    )
+    selected_menu = "Pénzügy"
 
     def keep_courier_menu(menu_name: str) -> None:
         st.session_state[menu_target_key] = menu_name
@@ -12164,29 +12141,28 @@ def render_courier_detail_page() -> None:
             f"""
             <div class="settlement-profile-shell">
             <div class="finance-toolbar">
-                <div><div class="finance-toolbar-label">Elszámolási hónap</div><div class="finance-toolbar-value">{period_end:%Y. %B}</div></div>
-                <div><div class="finance-toolbar-label">Státusz</div><div class="finance-status">{html.escape(process_status_label)}</div></div>
-                <div class="finance-toolbar-actions">A havi tételek mentése lent, a szerkeszthető táblánál történik.</div>
+                <div><div class="finance-toolbar-label">Adatforrás</div><div class="finance-toolbar-value">{html.escape(data_source_label)}</div></div>
+                <div><div class="finance-toolbar-label">Folyamat státusz</div><div class="finance-status">{html.escape(process_status_label)}</div></div>
+                <div class="finance-toolbar-actions">{html.escape(period_label)} · {html.escape(str(active_calculation_mode or "-"))} mód · a nézet megjelenít, nem számol újra.</div>
+            </div>
+            <div class="finance-kpi-grid">
+                <div class="finance-kpi payable"><div class="finance-kpi-label">Fizetendő</div><div class="finance-kpi-value">{format_huf(displayed_payable_total)}</div><div class="finance-kpi-note">mentett DB érték</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Foglalás sor</div><div class="finance-kpi-value">{advance_booking_row_count}</div><div class="finance-kpi-note">MűszakPro forrás</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Visszatörölt</div><div class="finance-kpi-value">{advance_deleted_shift_count}</div><div class="finance-kpi-note">foglalásból törölve</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Megmaradt</div><div class="finance-kpi-value">{advance_remaining_shift_count}</div><div class="finance-kpi-note">elszámolási alap</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Giriton műszak</div><div class="finance-kpi-value">{giriton_shift_count}</div><div class="finance-kpi-note">{html.escape(str(giriton_shift_summary.get("source") or "-"))}</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Kifutott túra</div><div class="finance-kpi-value">{route_total}</div><div class="finance-kpi-note">{html.escape("courier_settlement_summary" if summary_available else "route_detail")}</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Cím / rendelés</div><div class="finance-kpi-value">{order_total}</div><div class="finance-kpi-note">aktuális hónap</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Normál túra</div><div class="finance-kpi-value">{normal_route_total}</div><div class="finance-kpi-note">összesítő szerint</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Kiemelt túra</div><div class="finance-kpi-value">{highlighted_route_total}</div><div class="finance-kpi-note">összesítő szerint</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Express normál</div><div class="finance-kpi-value">{express_normal_total}</div><div class="finance-kpi-note">összesítő szerint</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Express kiemelt</div><div class="finance-kpi-value">{express_highlighted_total}</div><div class="finance-kpi-note">összesítő szerint</div></div>
+                <div class="finance-kpi"><div class="finance-kpi-label">Lojalitás</div><div class="finance-kpi-value">{format_huf(loyalty_total)}</div><div class="finance-kpi-note">{html.escape(loyalty_status or "-")}</div></div>
             </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        workload_cols = st.columns(6)
-        workload_cols[0].metric("Foglalás sor", advance_booking_row_count)
-        workload_cols[1].metric("Visszatörölt", advance_deleted_shift_count)
-        workload_cols[2].metric("Megmaradt", advance_remaining_shift_count)
-        workload_cols[3].markdown(
-            f"""
-            <div class="workload-kpi-card {'is-good' if giriton_shift_count > 30 else ''}">
-                <div class="workload-kpi-label">Giriton műszak</div>
-                <div class="workload-kpi-value">{giriton_shift_count}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        workload_cols[4].metric("Kifutott túra", route_total)
-        workload_cols[5].metric("Cím / rendelés", order_total)
         doc_a, doc_b = st.columns([0.18, 0.18])
         settlement_file_name = f"jitt_elszamolas_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{settlement_document_reference}.pdf"
         tig_file_name = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{period_start:%Y-%m}_{tig_document_reference}.pdf"
@@ -12557,7 +12533,7 @@ def render_courier_detail_page() -> None:
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("Fizetendő", format_huf(payable_total), "payable", ""),
+            ("Fizetendő", format_huf(displayed_payable_total), "payable", "mentett DB érték"),
             ("Korrekció", format_huf(correction_total), "", ""),
             ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
             ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),

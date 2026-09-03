@@ -1,0 +1,426 @@
+<div id="futar360allinone">
+  <style>
+    #futar360allinone {
+      color-scheme: light dark;
+      --f360-page: light-dark(#eef3f0, #121816);
+      --f360-surface: light-dark(#ffffff, #17201c);
+      --f360-soft: light-dark(#f6faf7, #1d2823);
+      --f360-line: light-dark(#dce8df, #31443a);
+      --f360-text: light-dark(#14221a, #eef8f0);
+      --f360-muted: light-dark(#66766d, #a5b3ab);
+      --f360-green: light-dark(#169647, #48c878);
+      --f360-green-soft: light-dark(#e4f8e9, #1d3b28);
+      --f360-red: light-dark(#e13f3f, #ff7575);
+      --f360-blue-soft: light-dark(#eef4ff, #1b2b48);
+      --f360-yellow-soft: light-dark(#fff7dd, #3b3218);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--f360-page);
+      padding: 16px;
+      border-radius: 10px;
+    }
+    #futar360allinone * { box-sizing: border-box; }
+    #futar360allinone .window {
+      background: var(--f360-surface);
+      border: 1px solid var(--f360-line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 20px 55px rgba(10, 26, 16, .12);
+    }
+    #futar360allinone .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--f360-line);
+      background: var(--f360-surface);
+    }
+    #futar360allinone .identity {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+    }
+    #futar360allinone .avatar {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--f360-green-soft);
+      color: var(--f360-green);
+      font-size: 22px;
+      font-weight: 500;
+    }
+    #futar360allinone h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.15;
+      font-weight: 500;
+      color: var(--f360-text);
+    }
+    #futar360allinone .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--f360-muted);
+      font-size: 12px;
+    }
+    #futar360allinone .badge {
+      color: var(--f360-green);
+      background: var(--f360-green-soft);
+      padding: 3px 7px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+    #futar360allinone .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    #futar360allinone button {
+      border: 1px solid var(--f360-line);
+      background: var(--f360-surface);
+      color: var(--f360-text);
+      border-radius: 7px;
+      padding: 9px 12px;
+      font-weight: 500;
+      font-size: 13px;
+    }
+    #futar360allinone .primary {
+      background: var(--f360-green);
+      border-color: var(--f360-green);
+      color: white;
+    }
+    #futar360allinone .body {
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 14px;
+    }
+    #futar360allinone .source-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--f360-line);
+      border-radius: 8px;
+      background: var(--f360-soft);
+      padding: 10px 12px;
+      color: var(--f360-muted);
+      font-size: 12px;
+    }
+    #futar360allinone .source-bar strong {
+      color: var(--f360-text);
+      font-weight: 500;
+    }
+    #futar360allinone .kpis,
+    #futar360allinone .work {
+      display: grid;
+      gap: 10px;
+    }
+    #futar360allinone .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    #futar360allinone .work { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+    #futar360allinone .tile {
+      border: 1px solid var(--f360-line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--f360-surface);
+      min-height: 76px;
+    }
+    #futar360allinone .tile.payable {
+      background: var(--f360-green);
+      border-color: var(--f360-green);
+      color: white;
+    }
+    #futar360allinone .label {
+      color: var(--f360-muted);
+      font-size: 12px;
+      margin-bottom: 7px;
+    }
+    #futar360allinone .payable .label { color: rgba(255,255,255,.82); }
+    #futar360allinone .value {
+      color: var(--f360-text);
+      font-size: 21px;
+      line-height: 1.1;
+      font-weight: 500;
+    }
+    #futar360allinone .payable .value { color: white; }
+    #futar360allinone .note {
+      color: var(--f360-muted);
+      font-size: 11px;
+      margin-top: 7px;
+    }
+    #futar360allinone .payable .note { color: rgba(255,255,255,.8); }
+    #futar360allinone .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(310px, .75fr);
+      gap: 14px;
+      align-items: start;
+    }
+    #futar360allinone .panel {
+      border: 1px solid var(--f360-line);
+      border-radius: 8px;
+      background: var(--f360-surface);
+      overflow: hidden;
+    }
+    #futar360allinone .panel-head {
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--f360-line);
+      font-weight: 500;
+      color: var(--f360-text);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    #futar360allinone .ledger {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    #futar360allinone .ledger-col {
+      padding: 12px 13px;
+    }
+    #futar360allinone .ledger-col:first-child { border-right: 1px solid var(--f360-line); }
+    #futar360allinone .subhead {
+      color: var(--f360-muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    #futar360allinone .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid light-dark(#eef3ef, #27372f);
+      font-size: 13px;
+    }
+    #futar360allinone .row:last-child { border-bottom: 0; }
+    #futar360allinone .row span { color: var(--f360-muted); }
+    #futar360allinone .row strong {
+      color: var(--f360-text);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    #futar360allinone .right-stack {
+      display: grid;
+      gap: 14px;
+    }
+    #futar360allinone .doc-list,
+    #futar360allinone .compact-list {
+      padding: 12px 13px;
+      display: grid;
+      gap: 9px;
+    }
+    #futar360allinone .doc {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--f360-line);
+      border-radius: 8px;
+      background: var(--f360-soft);
+    }
+    #futar360allinone .doc-name {
+      font-weight: 500;
+      color: var(--f360-text);
+      font-size: 13px;
+    }
+    #futar360allinone .doc-meta {
+      color: var(--f360-muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+    #futar360allinone .state {
+      color: var(--f360-green);
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    #futar360allinone .bottom {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    #futar360allinone .wide-bottom {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
+      gap: 14px;
+    }
+    #futar360allinone table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    #futar360allinone th,
+    #futar360allinone td {
+      text-align: left;
+      padding: 8px 9px;
+      border-bottom: 1px solid light-dark(#eef3ef, #27372f);
+      color: var(--f360-muted);
+    }
+    #futar360allinone th {
+      color: var(--f360-text);
+      font-weight: 500;
+      background: var(--f360-soft);
+    }
+    #futar360allinone td:last-child,
+    #futar360allinone th:last-child {
+      text-align: right;
+      color: var(--f360-text);
+      white-space: nowrap;
+    }
+    @media (max-width: 920px) {
+      #futar360allinone { padding: 10px; }
+      #futar360allinone .topbar,
+      #futar360allinone .grid,
+      #futar360allinone .ledger,
+      #futar360allinone .bottom,
+      #futar360allinone .wide-bottom,
+      #futar360allinone .source-bar {
+        grid-template-columns: 1fr;
+      }
+      #futar360allinone .kpis,
+      #futar360allinone .work {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #futar360allinone .ledger-col:first-child {
+        border-right: 0;
+        border-bottom: 1px solid var(--f360-line);
+      }
+    }
+  </style>
+  <div class="window" role="img" aria-label="Futár 360 látványterv menü nélkül, minden fontos adattal egy oldalon.">
+    <div class="topbar">
+      <div class="identity">
+        <div class="avatar">AG</div>
+        <div>
+          <h2>Abonyi György</h2>
+          <div class="meta">
+            <span>#6498</span>
+            <span>BUD1 / Budapest</span>
+            <span class="badge">Elszámolásra vár</span>
+            <span>FA: Belföldi adóalany</span>
+            <span>Biztosítás: nincs</span>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button">Vissza</button>
+        <button type="button">PWA adatok mentése</button>
+        <button class="primary" type="button">Frissítés</button>
+      </div>
+    </div>
+    <div class="body">
+      <div class="source-bar">
+        <div><strong>Forrás:</strong> mentett havi elszámolási sorok és PWA mobil bontás. A nézet csak megjelenít, nem számol újra.</div>
+        <div><strong>Hónap:</strong> 2026. szeptember</div>
+        <div><strong>Mód:</strong> API</div>
+      </div>
+      <div class="kpis">
+        <div class="tile payable"><div class="label">Fizetendő</div><div class="value">141 300 Ft</div><div class="note">DB-ben mentett érték</div></div>
+        <div class="tile"><div class="label">Vállalkozói díj</div><div class="value">132 300 Ft</div><div class="note">2026. szeptember</div></div>
+        <div class="tile"><div class="label">Összes levonás</div><div class="value">0 Ft</div><div class="note">API módban nincs fallback</div></div>
+        <div class="tile"><div class="label">Utolsó elszámolás</div><div class="value">2026. 09. 30.</div><div class="note">Folyamat szerint</div></div>
+      </div>
+      <div class="work">
+        <div class="tile"><div class="label">Foglalás sor</div><div class="value">48</div></div>
+        <div class="tile"><div class="label">Visszatörölt</div><div class="value">0</div></div>
+        <div class="tile"><div class="label">Megmaradt</div><div class="value">48</div></div>
+        <div class="tile"><div class="label">Giriton műszak</div><div class="value">9</div></div>
+        <div class="tile"><div class="label">Kifutott túra</div><div class="value">9</div></div>
+        <div class="tile"><div class="label">Rendelés</div><div class="value">110</div></div>
+        <div class="tile"><div class="label">Normál</div><div class="value">9</div></div>
+        <div class="tile"><div class="label">Kiemelt</div><div class="value">0</div></div>
+      </div>
+      <div class="grid">
+        <section class="panel">
+          <div class="panel-head"><span>Pénzügyi levezetés</span><span class="state">Minden összeg egyben látható</span></div>
+          <div class="ledger">
+            <div class="ledger-col">
+              <div class="subhead">Bevételek</div>
+              <div class="row"><span>Alapdíj</span><strong>52 500 Ft</strong></div>
+              <div class="row"><span>Borravaló</span><strong>25 800 Ft</strong></div>
+              <div class="row"><span>Késedelmi díj</span><strong>27 000 Ft</strong></div>
+              <div class="row"><span>Túramegfelelés</span><strong>27 000 Ft</strong></div>
+              <div class="row"><span>Lojalitás</span><strong>9 000 Ft</strong></div>
+              <div class="row"><span>Ügyfélértékelés</span><strong>0 Ft</strong></div>
+            </div>
+            <div class="ledger-col">
+              <div class="subhead">Levonások és korrekciók</div>
+              <div class="row"><span>Korrekció</span><strong>0 Ft</strong></div>
+              <div class="row"><span>Kiflis levonás / bónusz</span><strong>0 Ft</strong></div>
+              <div class="row"><span>JITT bónusz / malus</span><strong>0 Ft</strong></div>
+              <div class="row"><span>ATM hatás</span><strong>0 Ft</strong></div>
+              <div class="row"><span>Fizetés előleg</span><strong>0 Ft</strong></div>
+              <div class="row"><span>Biztosítási díj</span><strong>0 Ft</strong></div>
+            </div>
+          </div>
+        </section>
+        <div class="right-stack">
+          <section class="panel">
+            <div class="panel-head"><span>Dokumentumok</span><span class="state">2 aktív</span></div>
+            <div class="doc-list">
+              <div class="doc"><div><div class="doc-name">Elszámolás PDF</div><div class="doc-meta">Legutolsó mentett PDF</div></div><div class="state">Megnyitás</div></div>
+              <div class="doc"><div><div class="doc-name">TIG PDF</div><div class="doc-meta">Végleges TIG típus</div></div><div class="state">Megnyitás</div></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><span>Folyamat</span><span class="badge">Aktív</span></div>
+            <div class="compact-list">
+              <div class="row"><span>Elszámolás</span><strong>Elkészült</strong></div>
+              <div class="row"><span>TIG</span><strong>Elfogadásra vár</strong></div>
+              <div class="row"><span>Számla</span><strong>Nincs feltöltve</strong></div>
+              <div class="row"><span>Kifizetés</span><strong>Nem indult</strong></div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="bottom">
+        <section class="panel">
+          <div class="panel-head">Profil</div>
+          <div class="compact-list">
+            <div class="row"><span>Jogviszony</span><strong>Egyéni vállalkozó</strong></div>
+            <div class="row"><span>Raktár</span><strong>BUD1</strong></div>
+            <div class="row"><span>Aktív hónap</span><strong>2026. szeptember</strong></div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">Reklamációk</div>
+          <div class="compact-list">
+            <div class="row"><span>Nyitott</span><strong>0 db</strong></div>
+            <div class="row"><span>Utolsó üzenet</span><strong>Nincs</strong></div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">Mobilon látható értékek</div>
+          <div class="compact-list">
+            <div class="row"><span>PWA bontás</span><strong>Frissítve</strong></div>
+            <div class="row"><span>Forrás</span><strong>DB mentett sorok</strong></div>
+          </div>
+        </section>
+      </div>
+      <div class="wide-bottom">
+        <section class="panel">
+          <div class="panel-head">Alapdíj bontás</div>
+          <table aria-label="Alapdíj bontás">
+            <thead><tr><th>Tétel</th><th>Darab</th><th>Egység</th><th>Összeg</th></tr></thead>
+            <tbody>
+              <tr><td>Normál city</td><td>9</td><td>5 833 Ft</td><td>52 500 Ft</td></tr>
+              <tr><td>Kiemelt city</td><td>0</td><td>0 Ft</td><td>0 Ft</td></tr>
+              <tr><td>Express</td><td>0</td><td>0 Ft</td><td>0 Ft</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="panel">
+          <div class="panel-head">Módosítási napló</div>
+          <div class="compact-list">
+            <div class="row"><span>2026.09.03 19:12</span><strong>PWA bontás frissítve</strong></div>
+            <div class="row"><span>2026.09.03 18:58</span><strong>TIG PDF feltöltve</strong></div>
+            <div class="row"><span>2026.09.03 18:42</span><strong>Elszámolás ellenőrizve</strong></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
