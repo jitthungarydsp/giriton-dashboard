@@ -18,6 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import requests
 from selenium import webdriver
 from selenium.common.exceptions import JavascriptException, TimeoutException
 from selenium.webdriver.chrome.options import Options
@@ -383,6 +384,17 @@ fetch(url, {credentials: 'include'})
         return {}
 
 
+def probe_api_with_headers(base_url: str, probe_path: str, headers: dict[str, str]) -> dict[str, Any]:
+    today = date.today().isoformat()
+    path = probe_path.format(today=today)
+    url = path if path.startswith("http") else base_url.rstrip("/") + "/" + path.lstrip("/")
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        return {"status": response.status_code}
+    except requests.RequestException as exc:
+        return {"error": str(exc)}
+
+
 def refresh_session(driver: webdriver.Chrome, base_url: str) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/api/auth/session"
     try:
@@ -439,7 +451,7 @@ def main() -> int:
             "COURIER_HUB_AUTH_SESSION_REFRESH="
             f"{session_result.get('status') or session_result.get('error') or '-'}"
         )
-        probe_result = probe_api(driver, args.url, args.probe_path)
+        browser_probe_result = probe_api(driver, args.url, args.probe_path)
         time.sleep(2)
 
         authorization = authorization_from_performance_logs(driver)
@@ -451,26 +463,37 @@ def main() -> int:
             authorization = normalize_authorization(tokens[0]) if tokens else ""
         cookie = cookie_header(driver)
 
-        probe_status = probe_result.get("status")
-        if not authorization and probe_status != 200:
-            save_debug_artifacts(driver, args.debug_dir, "missing_bearer")
-            raise RuntimeError(
-                "Courier Hub auth refresh did not find Bearer authorization. "
-                f"Browser probe status={probe_status or '-'}, cookies={'yes' if cookie else 'no'}."
-            )
-
-        debug(
-            "COURIER_HUB_AUTH_REFRESH=OK "
-            f"authorization={'yes' if authorization else 'no'} "
-            f"cookies={'yes' if cookie else 'no'} "
-            f"probe_status={probe_status or '-'}"
-        )
         payload = {
             "headers": {
                 **({"Authorization": authorization} if authorization else {}),
                 **({"Cookie": cookie} if cookie else {}),
             }
         }
+        header_probe_result = probe_api_with_headers(
+            args.url,
+            args.probe_path,
+            payload["headers"],
+        )
+        browser_probe_status = browser_probe_result.get("status")
+        header_probe_status = header_probe_result.get("status")
+        probe_status = header_probe_status or browser_probe_status
+        if header_probe_status != 200 and browser_probe_status != 200:
+            save_debug_artifacts(driver, args.debug_dir, "auth_probe_failed")
+            raise RuntimeError(
+                "Courier Hub auth refresh did not pass API probe. "
+                f"Header probe status={header_probe_status or header_probe_result.get('error') or '-'}, "
+                f"browser probe status={browser_probe_status or browser_probe_result.get('error') or '-'}, "
+                f"authorization={'yes' if authorization else 'no'}, cookies={'yes' if cookie else 'no'}."
+            )
+
+        debug(
+            "COURIER_HUB_AUTH_REFRESH=OK "
+            f"authorization={'yes' if authorization else 'no'} "
+            f"cookies={'yes' if cookie else 'no'} "
+            f"probe_status={probe_status or '-'} "
+            f"header_probe_status={header_probe_status or '-'} "
+            f"browser_probe_status={browser_probe_status or '-'}"
+        )
         if args.cache_file:
             cache_path = Path(args.cache_file)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
