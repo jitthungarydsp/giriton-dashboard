@@ -542,6 +542,9 @@ div[data-testid="stMetricValue"] {
 .profile-alert-ok { background:#EAF8F0;color:#157254;border:1px solid #CDEEDB; }
 .profile-alert-warn { background:#FFF8E7;color:#946200;border:1px solid #F5E1A8; }
 div[data-testid="stDialog"] div[data-baseweb="radio"] > div {
+    position:sticky;
+    top:116px;
+    z-index:34;
     gap:4px;background:#F5F8F6;border:1px solid #DDE9E0;border-radius:14px;padding:5px;
     overflow-x:auto;flex-wrap:nowrap;
 }
@@ -561,6 +564,9 @@ div[data-testid="stDialog"] div[data-baseweb="radio"] label:has(input:checked) {
 /* --- Futárprofil modal v2: elszámolási cockpit --- */
 div[data-testid="stDialog"] [role="dialog"] {
     width:min(1280px, 96vw) !important;
+    max-height:92vh !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
 }
 .settlement-profile-shell {
     --sp-ink:#17251d;
@@ -576,11 +582,15 @@ div[data-testid="stDialog"] [role="dialog"] {
     color:var(--sp-ink);
 }
 .settlement-profile-top {
+    position:sticky;
+    top:0;
+    z-index:35;
     display:grid;
     grid-template-columns:minmax(340px, 1fr) minmax(520px, 1.6fr);
     gap:22px;
     align-items:center;
     padding:10px 2px 18px;
+    background:#fff;
     border-bottom:1px solid var(--sp-border);
 }
 .settlement-driver {
@@ -11610,6 +11620,8 @@ def show_courier_dialog() -> None:
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
     displayed_payable_total = (
+        parse_huf_value(summary_row.get("payable_huf")) if summary_available else 0.0
+    ) or (
         parse_huf_value(row.get("Kifizetendő"))
         or parse_huf_value(row.get("Kifizetendő kifizetésre"))
     )
@@ -11646,6 +11658,7 @@ def show_courier_dialog() -> None:
     data_source_label = "DB összesítő" if summary_available else "Főoldali adat"
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
+    process_status_label = "Kifizetve" if closure_done else str(row.get("Státusz") or "Elszámolásra vár")
 
     st.markdown(
         f"""
@@ -12164,7 +12177,7 @@ def show_courier_dialog() -> None:
             <div class="settlement-profile-shell">
             <div class="finance-toolbar">
                 <div><div class="finance-toolbar-label">Elszámolási hónap</div><div class="finance-toolbar-value">{period_end:%Y. %B}</div></div>
-                <div><div class="finance-toolbar-label">Státusz</div><div class="finance-status">Szerkeszthető</div></div>
+                <div><div class="finance-toolbar-label">Státusz</div><div class="finance-status">{html.escape(process_status_label)}</div></div>
                 <div class="finance-toolbar-actions">A havi tételek mentése lent, a szerkeszthető táblánál történik.</div>
             </div>
             </div>
