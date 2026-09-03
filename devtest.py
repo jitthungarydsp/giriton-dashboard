@@ -5371,6 +5371,34 @@ def load_courier_settlement_summary_row(
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_excel_month_payable_totals(period_start: date | None) -> dict[str, float]:
+    if not period_start:
+        return {}
+    session_id = load_latest_excel_jit_session_id(period_start)
+    if not session_id:
+        return {}
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_settlement_summary")
+            .select("courier_id,payable_huf")
+            .eq("session_id", str(session_id))
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return {}
+    totals: dict[str, float] = {}
+    for item in rows:
+        courier_key = _courier_id_key(item.get("courier_id"))
+        if courier_key:
+            totals[courier_key] = parse_huf_value(item.get("payable_huf"))
+    return totals
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Show DB-stored matching outcomes; no amount is calculated in the UI."""
     try:
@@ -10907,6 +10935,11 @@ def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
         return
+    try:
+        list_period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+    except BaseException:
+        list_period_start = None
+    excel_payable_totals = load_excel_month_payable_totals(list_period_start)
 
     st.markdown(
         """
@@ -11012,7 +11045,8 @@ def render_table(df: pd.DataFrame) -> None:
             if no_show_audit_text:
                 cols[0].caption(no_show_audit_text)
 
-            cols[1].markdown(f"**{format_huf(0)}**")
+            excel_payable_total = excel_payable_totals.get(_courier_id_key(row.get("Courier ID")), 0.0)
+            cols[1].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[2].markdown(f"**{format_huf(0)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
             cols[4].markdown(f"**{format_huf(0)}**")
