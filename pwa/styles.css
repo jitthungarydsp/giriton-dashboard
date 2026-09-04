@@ -18,6 +18,41 @@ body { margin: 0; background: var(--canvas); color: var(--ink); }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
+.global-loading-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 35, 28, .28);
+  backdrop-filter: blur(3px);
+}
+.global-loading-card {
+  width: min(100%, 320px);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px 22px;
+  border: 1px solid #c6d8c2;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px #08100a42;
+  text-align: center;
+}
+.global-loading-card strong { font-size: 17px; }
+.global-loading-card small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.global-loading-spinner {
+  width: 38px;
+  height: 38px;
+  border: 4px solid #e4ebe1;
+  border-top-color: var(--green-dark);
+  border-radius: 50%;
+  animation: loading-spin .8s linear infinite;
+}
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
 .eyebrow { margin: 0 0 6px; color: var(--green-dark); font-size: 11px; font-weight: 800; letter-spacing: .14em; }
 .muted { color: var(--muted); line-height: 1.55; }
 

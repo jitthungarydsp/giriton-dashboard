@@ -8,10 +8,18 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=95" />
+    <link rel="stylesheet" href="/styles.css?v=96" />
     <title>Kifli Futár</title>
   </head>
   <body>
+    <div id="global-loading-panel" class="global-loading-panel hidden" role="status" aria-live="polite" aria-hidden="true">
+      <div class="global-loading-card">
+        <span class="global-loading-spinner" aria-hidden="true"></span>
+        <strong id="global-loading-text">Adatok betöltése...</strong>
+        <small>Kérlek várj, amíg minden adat megérkezik.</small>
+      </div>
+    </div>
+
     <main id="login-view" class="login-shell hidden">
       <section class="login-card">
         <div class="brand-mark">G</div>
@@ -605,6 +613,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=95" defer></script>
+    <script src="/app.js?v=96" defer></script>
   </body>
 </html>

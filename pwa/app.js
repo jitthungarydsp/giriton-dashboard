@@ -33,12 +33,14 @@ const state = {
   statisticsHistoryDate: "",
   statisticsQualityTopic: "",
   statisticsRequestSeq: 0,
+  loadingCount: 0,
+  silentLoading: false,
   routeDetails: null,
   routeDetailsSelectedIndex: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v95";
+const APP_VERSION = "v96";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -58,18 +60,54 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function setLoadingPanel(visible, message = "Adatok betöltése...") {
+  const panel = $("#global-loading-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !visible);
+  panel.setAttribute("aria-hidden", visible ? "false" : "true");
+  const text = $("#global-loading-text");
+  if (text) text.textContent = message || "Adatok betöltése...";
+}
+
+function beginLoading(message = "") {
+  state.loadingCount += 1;
+  setLoadingPanel(true, message);
+}
+
+function endLoading() {
+  state.loadingCount = Math.max(0, state.loadingCount - 1);
+  if (state.loadingCount <= 0) setLoadingPanel(false);
+}
+
+async function withSilentLoading(callback) {
+  const previous = state.silentLoading;
+  state.silentLoading = true;
+  try {
+    return await callback();
+  } finally {
+    state.silentLoading = previous;
+  }
+}
+
 async function api(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) {
+  const { silentLoading = false, loadingMessage = "", ...fetchOptions } = options;
+  const shouldShowLoading = !silentLoading && !state.silentLoading;
+  if (shouldShowLoading) beginLoading(loadingMessage);
+  const headers = { ...(fetchOptions.headers || {}) };
+  if (fetchOptions.body && !(fetchOptions.body instanceof FormData) && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
-  const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...options, headers });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = payload.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message || "A kérés nem sikerült.");
+  try {
+    const response = await fetch(path, { credentials: "same-origin", cache: "no-store", ...fetchOptions, headers });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = payload.detail;
+      throw new Error(typeof detail === "string" ? detail : detail?.message || "A kérés nem sikerült.");
+    }
+    return payload;
+  } finally {
+    if (shouldShowLoading) endLoading();
   }
-  return payload;
 }
 
 function previewCourierValue() {
@@ -2315,7 +2353,7 @@ function workflowStep(key) {
 
 async function loadQueueStatus() {
   if (isAdminPreviewMode()) return;
-  const payload = await api("/api/shifts/queue-status");
+  const payload = await api("/api/shifts/queue-status", { silentLoading: true });
   state.queueStatus = payload.queue || null;
   queueStorageWrite(state.queueStatus);
   renderQueueStatus();
@@ -3033,7 +3071,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=95");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=96");
   }
   return navigator.serviceWorker.ready;
 }
@@ -4054,7 +4092,7 @@ setInterval(() => {
   if (!state.user) return;
   if (!["settlement", "documents"].includes(state.section)) return;
   if (document.hidden) return;
-  loadWorkflow();
+  withSilentLoading(() => loadWorkflow()).catch(() => {});
 }, 15000);
 
 $("#statistics-month").addEventListener("change", (event) => {
@@ -4382,7 +4420,7 @@ $("#route-details-month")?.addEventListener("change", () => {
 });
 
 setInterval(() => {
-  currentSectionRefresh().catch(() => {});
+  withSilentLoading(() => currentSectionRefresh()).catch(() => {});
 }, 5 * 60 * 1000);
 startQueueTimer();
 
