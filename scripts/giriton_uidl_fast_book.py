@@ -38,6 +38,7 @@ from scripts.parse_giriton_uidl_shift_list import (  # noqa: E402
     shift_cards_from_uidl,
     walk_json,
 )
+from resources.giriton_auto_booking import log_success_robotlog_write  # noqa: E402
 
 
 def clean(value: object) -> str:
@@ -553,6 +554,20 @@ def main() -> int:
         status = "COURIER_ADDED" if response_mentions_courier(confirm_payload, courier_id, courier_name, email) else "DONE"
         trace_path = client.write_trace(status, args)
         print(f"GIRITON_UIDL_FAST_BOOK_RESULT={status} trace={trace_path}")
+        robotlog_result = log_success_robotlog_write(
+            {
+                "work_date": work_date.isoformat(),
+                "warehouse": warehouse,
+                "shift_start": shift_start,
+                "shift_text": shift_start,
+                "courier_id": courier_id,
+                "courier_name": courier_name,
+                "email": email,
+                "serial": clean(args.serial),
+            },
+            status,
+        )
+        print(f"ROBOTLOG_WRITE={robotlog_result}")
         return 0
     except Exception as error:
         if client is not None:
