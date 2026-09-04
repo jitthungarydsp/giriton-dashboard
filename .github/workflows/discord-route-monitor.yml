@@ -43,6 +43,13 @@ jobs:
       COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
       COURIER_HUB_AUTH_CACHE_FILE: /tmp/courier-hub-auth.json
       COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file /tmp/courier-hub-auth.json
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      KIFLI_COURIER_HUB_AUTHORIZATION: ${{ secrets.COURIER_HUB_AUTHORIZATION }}
+      KIFLI_COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/courier-hub-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file /tmp/courier-hub-auth.json
 
     steps:
       - name: Checkout

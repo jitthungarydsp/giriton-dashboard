@@ -406,10 +406,19 @@ fetch(url, {
   credentials: 'include',
   headers: {'Accept': 'application/json'},
 })
-  .then(async (response) => done({
+  .then(async (response) => {
+    let body = null;
+    try {
+      body = await response.json();
+    } catch (_) {
+      body = null;
+    }
+    done({
     status: response.status,
     ok: response.ok,
-  }))
+    body,
+    });
+  })
   .catch(error => done({error: String(error)}));
 """,
             url,
@@ -418,6 +427,16 @@ fetch(url, {
     except JavascriptException as exc:
         debug(f"COURIER_HUB_AUTH_SESSION_REFRESH_ERROR={type(exc).__name__}")
         return {}
+
+
+def authorization_from_session_result(session_result: dict[str, Any]) -> str:
+    if not isinstance(session_result, dict):
+        return ""
+    body = session_result.get("body")
+    if not isinstance(body, (dict, list)):
+        return ""
+    tokens = flatten_json_tokens(body)
+    return normalize_authorization(tokens[0]) if tokens else ""
 
 
 def auth_payload_from_driver(driver: webdriver.Chrome) -> dict[str, Any]:
@@ -492,6 +511,9 @@ def main() -> int:
             f"{session_result.get('status') or session_result.get('error') or '-'}"
         )
         payload = auth_payload_from_driver(driver)
+        session_authorization = authorization_from_session_result(session_result)
+        if session_authorization and not payload.get("headers", {}).get("Authorization"):
+            payload.setdefault("headers", {})["Authorization"] = session_authorization
         if configured_authorization:
             payload.setdefault("headers", {})["Authorization"] = normalize_authorization(configured_authorization)
         header_probe_result, browser_probe_result = probe_auth_payload(
@@ -536,6 +558,9 @@ def main() -> int:
         time.sleep(2)
 
         payload = auth_payload_from_driver(driver)
+        session_authorization = authorization_from_session_result(session_result)
+        if session_authorization and not payload.get("headers", {}).get("Authorization"):
+            payload.setdefault("headers", {})["Authorization"] = session_authorization
         header_probe_result = probe_api_with_headers(
             args.url,
             args.probe_path,
