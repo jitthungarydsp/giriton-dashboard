@@ -384,7 +384,14 @@ def click_rohlik_login_if_present(driver: webdriver.Chrome, wait_seconds: int) -
 const candidates = Array.from(document.querySelectorAll('a, button'));
 return candidates.find((element) => {
   const text = (element.innerText || element.textContent || '').toLowerCase();
-  return text.includes('rohlik') || text.includes('bejelentkez');
+  const href = String(element.href || element.getAttribute('href') || '').toLowerCase();
+  return (
+    text.includes('sign in with rohlik') ||
+    text.includes('bejelentkezés rohlikkal') ||
+    text.includes('bejelentkezes rohlikkal') ||
+    (text.includes('rohlik') && (text.includes('sign') || text.includes('bejelentkez'))) ||
+    href.includes('rohlik')
+  );
 }) || null;
 """
         )
@@ -395,7 +402,14 @@ return candidates.find((element) => {
         return False
 
     try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+    except JavascriptException:
+        pass
+    try:
         button.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", button)
+    try:
         WebDriverWait(driver, wait_seconds).until(
             lambda current_driver: (
                 current_driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
@@ -410,8 +424,16 @@ return candidates.find((element) => {
         return False
 
 
+def open_rohlik_login_page(driver: webdriver.Chrome, wait_seconds: int) -> None:
+    if visible_password_inputs(driver):
+        return
+    clicked = click_rohlik_login_if_present(driver, wait_seconds)
+    debug(f"COURIER_HUB_AUTH_ROHLIK_LOGIN_BUTTON={'clicked' if clicked else 'not_found'}")
+
+
 def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait_seconds: int) -> None:
     wait = WebDriverWait(driver, wait_seconds)
+    open_rohlik_login_page(driver, wait_seconds)
     password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
     if not password_input and click_rohlik_login_if_present(driver, wait_seconds):
         password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
