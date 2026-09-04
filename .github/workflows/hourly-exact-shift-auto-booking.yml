@@ -43,6 +43,7 @@ jobs:
       GITHUB_OWNER: ${{ github.repository_owner }}
       GITHUB_REPO: ${{ github.event.repository.name }}
       GITHUB_REF: ${{ github.ref_name }}
+      DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL: ${{ secrets.DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL }}
 
     steps:
       - name: Checkout
@@ -77,6 +78,30 @@ jobs:
           DRY_RUN="${DRY_RUN:-false}"
 
           CMD=(python scripts/auto_book_exact_shift_matches.py --min-lead-hours "$MIN_LEAD_HOURS" --lookahead-days "$LOOKAHEAD_DAYS" --limit "$LIMIT")
+
+          if [ "$DRY_RUN" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Notify failed manual shift requests
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-5}"
+          DRY_RUN="${DRY_RUN:-false}"
+          START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"
+          END_DATE="$(LOOKAHEAD_DAYS="$LOOKAHEAD_DAYS" python -c 'import os; from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=max(int(os.environ.get("LOOKAHEAD_DAYS", "5")), 1))).isoformat())')"
+
+          CMD=(python scripts/notify_failed_shift_requests.py \
+            --start-date "$START_DATE" \
+            --end-date "$END_DATE" \
+            --tolerance-minutes 0)
 
           if [ "$DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)

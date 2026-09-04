@@ -161,12 +161,14 @@ def build_messages(rows: pd.DataFrame) -> list[dict]:
 def notify_failed_shift_requests(
     *,
     start_date: date,
+    end_date: date | None,
     days: int,
     tolerance_minutes: int,
     source_limit: int,
     dry_run: bool,
 ) -> tuple[int, int, int]:
-    end_date = start_date + timedelta(days=max(int(days), 1) - 1)
+    if end_date is None:
+        end_date = start_date + timedelta(days=max(int(days), 1) - 1)
     summary_df = load_summary(start_date, end_date, tolerance_minutes, source_limit)
     request_rows = foglalas._slack_daily_plan_rows(summary_df)
     request_rows = filter_not_yet_notified(request_rows, start_date, end_date)
@@ -229,16 +231,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Discordra küldi a következő napok sikertelen, kézzel kérendő MűszakPro sorait."
     )
-    parser.add_argument("--start-date", default="", help="Kezdő nap YYYY-MM-DD. Alap: holnap.")
+    parser.add_argument("--start-date", default="", help="Kezdő nap YYYY-MM-DD. Alap: ma.")
+    parser.add_argument("--end-date", default="", help="Záró nap YYYY-MM-DD. Üresen: start-date + days - 1.")
     parser.add_argument("--days", type=int, default=5)
     parser.add_argument("--tolerance-minutes", type=int, default=30)
     parser.add_argument("--source-limit", type=int, default=20000)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    start_date = parse_date(args.start_date, today + timedelta(days=1))
+    start_date = parse_date(args.start_date, today)
+    end_date = parse_date(args.end_date, today) if clean(args.end_date) else None
     sent_messages, logged_rows, failed_messages = notify_failed_shift_requests(
         start_date=start_date,
+        end_date=end_date,
         days=args.days,
         tolerance_minutes=args.tolerance_minutes,
         source_limit=args.source_limit,

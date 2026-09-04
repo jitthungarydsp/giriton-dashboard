@@ -54,7 +54,6 @@ jobs:
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL: ${{ secrets.DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL }}
 
     steps:
       - name: Checkout
@@ -255,19 +254,6 @@ jobs:
           python scripts/verify_shift_auto_booking_candidates.py \
             --candidate-file results/three-day-shift-auto-booking/alternative-candidates.json \
             --phase alternative
-
-      - name: Notify failed manual shift requests
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          CMD=(python scripts/notify_failed_shift_requests.py \
-            --start-date "$SHIFT_AUTO_START_DATE" \
-            --days "$SHIFT_AUTO_DAYS")
-          if [ "$SHIFT_AUTO_DRY_RUN" = "true" ]; then
-            CMD+=(--dry-run)
-          fi
-          echo "Running: ${CMD[*]}"
-          "${CMD[@]}"
 
       - name: Upload artifacts
         if: always()
