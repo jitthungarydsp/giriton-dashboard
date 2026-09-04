@@ -304,14 +304,24 @@ def visible_password_inputs(driver: webdriver.Chrome) -> list:
 
 def set_input_value(driver: webdriver.Chrome, element, value: str) -> None:
     try:
+        element.click()
+        element.send_keys(Keys.CONTROL, "a")
+        element.send_keys(Keys.DELETE)
+        element.send_keys(value)
+        return
+    except Exception:
+        pass
+
+    try:
         driver.execute_script(
             """
 const element = arguments[0];
 const value = arguments[1];
+const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 element.focus();
-element.value = "";
+setter.call(element, "");
 element.dispatchEvent(new Event("input", {bubbles: true}));
-element.value = value;
+setter.call(element, value);
 element.dispatchEvent(new Event("input", {bubbles: true}));
 element.dispatchEvent(new Event("change", {bubbles: true}));
 """,
@@ -321,6 +331,17 @@ element.dispatchEvent(new Event("change", {bubbles: true}));
     except JavascriptException:
         element.clear()
         element.send_keys(value)
+
+
+def safe_username_hint(username: str) -> str:
+    text = str(username or "")
+    if "@" in text:
+        local, domain = text.split("@", 1)
+        local_hint = (local[:2] + "***") if local else "***"
+        return f"{local_hint}@{domain}"
+    if not text:
+        return "-"
+    return f"{text[:2]}***"
 
 
 def login_diagnostic_text(driver: webdriver.Chrome) -> str:
@@ -348,6 +369,28 @@ return Array.from(new Set(parts)).join(' | ');
     except JavascriptException:
         return ""
     return str(text or "").replace("\n", " ")[:300]
+
+
+def input_value_lengths(driver: webdriver.Chrome, user_input, password_input) -> dict[str, int]:
+    try:
+        values = driver.execute_script(
+            """
+return {
+  username: String(arguments[0].value || '').length,
+  password: String(arguments[1].value || '').length,
+};
+""",
+            user_input,
+            password_input,
+        )
+    except JavascriptException:
+        return {"username": -1, "password": -1}
+    if not isinstance(values, dict):
+        return {"username": -1, "password": -1}
+    return {
+        "username": int(values.get("username", -1)),
+        "password": int(values.get("password", -1)),
+    }
 
 
 def click_login_submit(driver: webdriver.Chrome) -> bool:
@@ -455,8 +498,18 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     if not user_input:
         raise RuntimeError("Courier Hub login form found, but username input was not found.")
 
+    debug(
+        "COURIER_HUB_AUTH_LOGIN_INPUTS="
+        f"username={safe_username_hint(username)} "
+        f"username_len={len(username)} password_len={len(password)}"
+    )
     set_input_value(driver, user_input, username)
     set_input_value(driver, password_input, password)
+    field_lengths = input_value_lengths(driver, user_input, password_input)
+    debug(
+        "COURIER_HUB_AUTH_LOGIN_FIELD_LENGTHS="
+        f"username={field_lengths['username']} password={field_lengths['password']}"
+    )
 
     submitted = click_login_submit(driver)
     if not submitted:
