@@ -96,7 +96,7 @@ jobs:
           LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-5}"
           DRY_RUN="${DRY_RUN:-false}"
           START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"
-          END_DATE="$(LOOKAHEAD_DAYS="$LOOKAHEAD_DAYS" python -c 'import os; from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=max(int(os.environ.get("LOOKAHEAD_DAYS", "5")), 1))).isoformat())')"
+          END_DATE="$(LOOKAHEAD_DAYS="$LOOKAHEAD_DAYS" python -c 'import os; from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=max(int(os.environ.get("LOOKAHEAD_DAYS", "5")), 1) - 1)).isoformat())')"
 
           CMD=(python scripts/notify_failed_shift_requests.py \
             --start-date "$START_DATE" \

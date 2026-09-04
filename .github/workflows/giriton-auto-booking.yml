@@ -140,6 +140,14 @@ jobs:
           echo "Running: ${CMD[*]}"
           "${CMD[@]}"
 
+      - name: Sync ROBOTLOG sheet
+        if: ${{ always() && inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          python scripts/sync_giriton_robotlog_sheet.py \
+            --start-date "${{ inputs.start_date }}" \
+            --end-date "${{ inputs.end_date }}"
+
       - name: Upload Robot artifacts
         if: always()
         uses: actions/upload-artifact@v4

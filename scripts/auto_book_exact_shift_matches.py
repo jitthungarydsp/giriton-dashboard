@@ -295,7 +295,7 @@ def main() -> None:
     args = parser.parse_args()
 
     start_date = parse_date(args.start_date, today)
-    default_end = today + timedelta(days=max(int(args.lookahead_days), 1))
+    default_end = today + timedelta(days=max(int(args.lookahead_days), 1) - 1)
     end_date = parse_date(args.end_date, default_end)
 
     rows = load_exact_matches(
