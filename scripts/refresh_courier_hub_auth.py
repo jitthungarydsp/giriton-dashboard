@@ -359,6 +359,22 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     try:
         wait.until_not(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
     except TimeoutException:
+        submit_button = find_first(
+            driver,
+            [
+                "button[type='submit']",
+                "button[name*='submit' i]",
+                "input[type='submit']",
+            ],
+        )
+        if submit_button:
+            try:
+                submit_button.click()
+                wait.until_not(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+                time.sleep(3)
+                return
+            except Exception:
+                pass
         debug("COURIER_HUB_AUTH_LOGIN_WAIT=password_still_visible")
     time.sleep(3)
 
@@ -367,6 +383,7 @@ def probe_api(driver: webdriver.Chrome, base_url: str, probe_path: str) -> dict[
     today = date.today().isoformat()
     path = probe_path.format(today=today)
     url = path if path.startswith("http") else base_url.rstrip("/") + "/" + path.lstrip("/")
+    ensure_origin(driver, base_url)
     try:
         result = driver.execute_async_script(
             """
@@ -384,6 +401,18 @@ fetch(url, {credentials: 'include'})
         return {}
 
 
+def ensure_origin(driver: webdriver.Chrome, base_url: str) -> None:
+    origin = base_url.rstrip("/")
+    try:
+        current_url = str(driver.current_url or "")
+    except Exception:
+        current_url = ""
+    if current_url.startswith(origin + "/") or current_url == origin:
+        return
+    driver.get(base_url)
+    time.sleep(2)
+
+
 def probe_api_with_headers(base_url: str, probe_path: str, headers: dict[str, str]) -> dict[str, Any]:
     today = date.today().isoformat()
     path = probe_path.format(today=today)
@@ -397,6 +426,7 @@ def probe_api_with_headers(base_url: str, probe_path: str, headers: dict[str, st
 
 def refresh_session(driver: webdriver.Chrome, base_url: str) -> dict[str, Any]:
     url = base_url.rstrip("/") + "/api/auth/session"
+    ensure_origin(driver, base_url)
     try:
         result = driver.execute_async_script(
             """
@@ -524,7 +554,7 @@ def main() -> int:
         )
         header_probe_status = header_probe_result.get("status")
         browser_probe_status = browser_probe_result.get("status")
-        if header_probe_status == 200 or browser_probe_status == 200:
+        if header_probe_status == 200:
             debug(
                 "COURIER_HUB_AUTH_REFRESH=OK "
                 f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'} "
@@ -569,7 +599,7 @@ def main() -> int:
         browser_probe_status = browser_probe_result.get("status")
         header_probe_status = header_probe_result.get("status")
         probe_status = header_probe_status or browser_probe_status
-        if header_probe_status != 200 and browser_probe_status != 200:
+        if header_probe_status != 200:
             save_debug_artifacts(driver, args.debug_dir, "auth_probe_failed")
             raise RuntimeError(
                 "Courier Hub auth refresh did not pass API probe. "
