@@ -551,7 +551,7 @@ def main() -> int:
             "confirm_courier_picker",
             [[confirm_node, "com.vaadin.shared.ui.button.ButtonServerRpc", "click", [mouse_event(1)]]],
         )
-        status = "COURIER_ADDED" if response_mentions_courier(confirm_payload, courier_id, courier_name, email) else "DONE"
+        status = "COURIER_ADDED" if response_mentions_courier(confirm_payload, courier_id, courier_name, email) else "COURIER_ADDED_UNVERIFIED"
         trace_path = client.write_trace(status, args)
         print(f"GIRITON_UIDL_FAST_BOOK_RESULT={status} trace={trace_path}")
         robotlog_result = log_success_robotlog_write(
@@ -568,6 +568,8 @@ def main() -> int:
             status,
         )
         print(f"ROBOTLOG_WRITE={robotlog_result}")
+        if robotlog_result != "OK":
+            raise RuntimeError(f"Google Sheet ROBOTLOG iras sikertelen: {robotlog_result}")
         return 0
     except Exception as error:
         if client is not None:

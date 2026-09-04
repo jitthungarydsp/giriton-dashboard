@@ -229,6 +229,10 @@ Giriton Auto Booking From Foglalasok
                 ...    ${candidate}
                 ...    ${add_result}
                 Log To Console    ROBOTLOG_WRITE=${robotlog_write}
+                Should Be Equal As Strings
+                ...    ${robotlog_write}
+                ...    OK
+                ...    Google Sheet ROBOTLOG iras sikertelen: ${robotlog_write}
                 Log Auto Booking Step
                 ...    ${candidate}
                 ...    STEP_ROBOTLOG_WRITE_DONE
