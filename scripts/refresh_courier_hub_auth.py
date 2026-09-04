@@ -294,6 +294,89 @@ def find_first(driver: webdriver.Chrome, selectors: list[str]):
     return None
 
 
+def visible_password_inputs(driver: webdriver.Chrome) -> list:
+    return [
+        item
+        for item in driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+        if item.is_displayed()
+    ]
+
+
+def set_input_value(driver: webdriver.Chrome, element, value: str) -> None:
+    try:
+        driver.execute_script(
+            """
+const element = arguments[0];
+const value = arguments[1];
+element.focus();
+element.value = "";
+element.dispatchEvent(new Event("input", {bubbles: true}));
+element.value = value;
+element.dispatchEvent(new Event("input", {bubbles: true}));
+element.dispatchEvent(new Event("change", {bubbles: true}));
+""",
+            element,
+            value,
+        )
+    except JavascriptException:
+        element.clear()
+        element.send_keys(value)
+
+
+def login_diagnostic_text(driver: webdriver.Chrome) -> str:
+    try:
+        text = driver.execute_script(
+            """
+const selectors = [
+  '[role="alert"]',
+  '.alert',
+  '.error',
+  '.invalid-feedback',
+  '[class*="error" i]',
+  '[class*="alert" i]'
+];
+const parts = [];
+for (const selector of selectors) {
+  for (const element of document.querySelectorAll(selector)) {
+    const text = (element.innerText || element.textContent || '').trim();
+    if (text) parts.push(text);
+  }
+}
+return Array.from(new Set(parts)).join(' | ');
+"""
+        )
+    except JavascriptException:
+        return ""
+    return str(text or "").replace("\n", " ")[:300]
+
+
+def click_login_submit(driver: webdriver.Chrome) -> bool:
+    selectors = [
+        "button[name='credentials-submit']",
+        "button[type='submit']",
+        "button[name*='submit' i]",
+        "input[type='submit']",
+    ]
+    submit_button = find_first(driver, selectors)
+    if not submit_button:
+        return False
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_button)
+    except JavascriptException:
+        pass
+
+    try:
+        submit_button.click()
+        return True
+    except Exception:
+        try:
+            driver.execute_script("arguments[0].click();", submit_button)
+            return True
+        except Exception:
+            return False
+
+
 def click_rohlik_login_if_present(driver: webdriver.Chrome, wait_seconds: int) -> bool:
     try:
         button = driver.execute_script(
@@ -350,31 +433,26 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     if not user_input:
         raise RuntimeError("Courier Hub login form found, but username input was not found.")
 
-    user_input.clear()
-    user_input.send_keys(username)
-    password_input.clear()
-    password_input.send_keys(password)
-    password_input.send_keys(Keys.ENTER)
+    set_input_value(driver, user_input, username)
+    set_input_value(driver, password_input, password)
+
+    submitted = click_login_submit(driver)
+    if not submitted:
+        password_input.send_keys(Keys.ENTER)
 
     try:
-        wait.until_not(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+        wait.until(lambda current_driver: not visible_password_inputs(current_driver))
     except TimeoutException:
-        submit_button = find_first(
-            driver,
-            [
-                "button[type='submit']",
-                "button[name*='submit' i]",
-                "input[type='submit']",
-            ],
-        )
-        if submit_button:
+        if click_login_submit(driver):
             try:
-                submit_button.click()
-                wait.until_not(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
+                wait.until(lambda current_driver: not visible_password_inputs(current_driver))
                 time.sleep(3)
                 return
-            except Exception:
+            except TimeoutException:
                 pass
+        diagnostic = login_diagnostic_text(driver)
+        if diagnostic:
+            debug(f"COURIER_HUB_AUTH_LOGIN_ERROR_TEXT={diagnostic}")
         debug("COURIER_HUB_AUTH_LOGIN_WAIT=password_still_visible")
     time.sleep(3)
 
@@ -469,6 +547,33 @@ def authorization_from_session_result(session_result: dict[str, Any]) -> str:
     return normalize_authorization(tokens[0]) if tokens else ""
 
 
+def session_token_key_paths(value: Any, prefix: str = "") -> list[str]:
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key or "")
+            path = f"{prefix}.{key_text}" if prefix else key_text
+            if any(part in key_text.lower() for part in TOKEN_KEY_PARTS):
+                paths.append(path)
+            paths.extend(session_token_key_paths(child, path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(session_token_key_paths(child, f"{prefix}[{index}]"))
+    return paths
+
+
+def debug_session_shape(session_result: dict[str, Any], label: str) -> None:
+    body = session_result.get("body") if isinstance(session_result, dict) else None
+    if isinstance(body, dict):
+        top_keys = ",".join(sorted(str(key) for key in body.keys())[:20])
+        token_keys = ",".join(session_token_key_paths(body)[:20])
+        debug(f"COURIER_HUB_AUTH_SESSION_KEYS_{label}={top_keys or '-'}")
+        debug(f"COURIER_HUB_AUTH_SESSION_TOKEN_KEYS_{label}={token_keys or '-'}")
+    elif isinstance(body, list):
+        debug(f"COURIER_HUB_AUTH_SESSION_KEYS_{label}=list[{len(body)}]")
+        debug(f"COURIER_HUB_AUTH_SESSION_TOKEN_KEYS_{label}={','.join(session_token_key_paths(body)[:20]) or '-'}")
+
+
 def auth_payload_from_driver(driver: webdriver.Chrome) -> dict[str, Any]:
     authorization = authorization_from_performance_logs(driver)
     if not authorization:
@@ -540,6 +645,7 @@ def main() -> int:
             "COURIER_HUB_AUTH_SESSION_REFRESH="
             f"{session_result.get('status') or session_result.get('error') or '-'}"
         )
+        debug_session_shape(session_result, "SEEDED")
         payload = auth_payload_from_driver(driver)
         session_authorization = authorization_from_session_result(session_result)
         if session_authorization and not payload.get("headers", {}).get("Authorization"):
@@ -584,6 +690,7 @@ def main() -> int:
             "COURIER_HUB_AUTH_SESSION_REFRESH="
             f"{session_result.get('status') or session_result.get('error') or '-'}"
         )
+        debug_session_shape(session_result, "LOGIN")
         browser_probe_result = probe_api(driver, args.url, args.probe_path)
         time.sleep(2)
 
