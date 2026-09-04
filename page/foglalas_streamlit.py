@@ -27,6 +27,7 @@ if str(ROOT_DIR) not in sys.path:
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
+from resources.discord_notifier import send_discord_text_message_to_setting
 from resources.shift_comparison_db import read_next_5_day_shift_comparison
 from resources.shift_start_parameters_db import read_shift_start_parameters
 
@@ -1772,6 +1773,86 @@ def _build_slack_daily_plan_request(summary_df: pd.DataFrame) -> str:
     return "\n\n".join(blocks)
 
 
+def _discord_warehouse_key(value) -> str:
+    warehouse = _clean(value).upper()
+    if "BUD1" in warehouse:
+        return "BUD1"
+    if "BUD2" in warehouse:
+        return "BUD2"
+    return warehouse or "Egyéb"
+
+
+def _split_discord_message(lines: list[str], limit: int = 1800) -> list[str]:
+    messages: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in lines:
+        extra_len = len(line) + (1 if current else 0)
+        if current and current_len + extra_len > limit:
+            messages.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += len(line) + (1 if current_len else 0)
+
+    if current:
+        messages.append("\n".join(current))
+    return messages
+
+
+def _build_discord_daily_plan_requests(summary_df: pd.DataFrame) -> list[dict[str, str]]:
+    request_rows = _slack_daily_plan_rows(summary_df)
+    if request_rows.empty:
+        return []
+
+    rows = request_rows.copy()
+    rows["_discord_warehouse"] = rows.get("Raktár", pd.Series("", index=rows.index)).apply(_discord_warehouse_key)
+    payloads: list[dict[str, str]] = []
+
+    for warehouse, warehouse_rows in rows.groupby("_discord_warehouse", sort=False):
+        lines = [
+            "**Sikertelen foglalás - kézi megkérés kell**",
+            "Az alábbi MűszakPro sorokra nincs érvényes napi terv, ezért kézzel kell megkérni:",
+        ]
+        for work_date, day_rows in warehouse_rows.groupby("Dátum", sort=False):
+            lines.append("")
+            lines.append(f"**{_format_slack_request_date(work_date)}**")
+            for row in day_rows.to_dict("records"):
+                courier_name = _clean(row.get("Dolgozó")) or "Név nélkül"
+                muszakpro_shift = _clean(row.get("MűszakPro")) or "-"
+                row_warehouse = _clean(row.get("Raktár")) or "-"
+                if warehouse in {"BUD1", "BUD2"}:
+                    lines.append(f"- {courier_name} - {muszakpro_shift}")
+                else:
+                    lines.append(f"- {row_warehouse} - {courier_name} - {muszakpro_shift}")
+
+        target_warehouse = warehouse if warehouse in {"BUD1", "BUD2"} else ""
+        for chunk in _split_discord_message(lines):
+            payloads.append({"warehouse": target_warehouse, "content": chunk})
+
+    return payloads
+
+
+def _send_discord_daily_plan_requests(summary_df: pd.DataFrame) -> tuple[int, list[str]]:
+    payloads = _build_discord_daily_plan_requests(summary_df)
+    if not payloads:
+        return 0, ["Nincs kiküldhető sikertelen megkérés."]
+
+    sent_count = 0
+    errors: list[str] = []
+    for payload in payloads:
+        ok, status_message = send_discord_text_message_to_setting(
+            payload["content"],
+            "DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL",
+        )
+        if ok:
+            sent_count += 1
+        else:
+            errors.append(status_message)
+    return sent_count, errors
+
+
 def _render_copyable_slack_message(message: str, key_prefix: str) -> None:
     component_key = re.sub(r"[^a-zA-Z0-9_-]+", "_", key_prefix)
     components.html(
@@ -1826,6 +1907,16 @@ def _render_slack_daily_plan_request(summary_df: pd.DataFrame, key_prefix: str) 
 
     message = st.session_state.get(message_key) or _build_slack_daily_plan_request(summary_df)
     _render_copyable_slack_message(message, key_prefix)
+    if st.button(
+        "Slack megkérés küldése Discordra",
+        width="stretch",
+        key=f"{key_prefix}_discord_daily_plan_button",
+    ):
+        sent_count, errors = _send_discord_daily_plan_requests(summary_df)
+        if sent_count:
+            st.success(f"Discordra kiküldve: {sent_count} üzenet.")
+        for error in errors:
+            st.error(error)
 
 
 def _format_frame(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> pd.DataFrame:

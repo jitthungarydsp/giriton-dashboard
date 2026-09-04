@@ -130,6 +130,21 @@ def send_discord_text_message(content, warehouse=""):
     return True, "Discord értesítés kiküldve."
 
 
+def send_discord_text_message_to_setting(content, setting_name):
+    webhook_url = str(_read_setting(setting_name) or "").strip()
+    if not webhook_url:
+        return False, f"Nincs beállított Discord webhook: {setting_name}."
+
+    response = requests.post(
+        webhook_url,
+        json={"content": str(content or "").strip()},
+        timeout=20,
+    )
+    if response.status_code >= 300:
+        return False, f"Discord hiba: HTTP {response.status_code}"
+    return True, "Discord értesítés kiküldve."
+
+
 @st.cache_resource
 def _sent_route_notifications():
     return set()
