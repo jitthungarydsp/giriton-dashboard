@@ -827,11 +827,14 @@ def merge_shift_notes(primary, fallback):
     return merged
 
 
-def build_shift_notification_notes(courier_id, route, courier_hub_detail=None):
+def build_shift_notification_notes(courier_id, route, courier_hub_detail=None, use_attendance=True):
     courier_hub_notes = build_courier_hub_shift_notification_notes(
         courier_hub_detail,
         route,
     )
+    if not use_attendance:
+        return courier_hub_notes
+
     work_date = route_work_date(route)
 
     try:
@@ -1462,21 +1465,11 @@ def run_once(max_age_minutes, dry_run=False):
             f"live-monitoring-dashboard hiba: {exc}",
             flush=True,
         )
-        try:
-            dashboard_data = load_departure_dashboard()
-            dashboard_routes = get_dashboard_routes(dashboard_data)
-            dashboard_source = "departure-dashboard"
-        except Exception as fallback_exc:
-            counters["departure_dashboard_error"] += 1
-            print(
-                f"departure-dashboard hiba: {fallback_exc}",
-                flush=True,
-            )
-            print(
-                f"Monitor kor kesz: sent=0, skipped=0, reasons={dict(counters)}",
-                flush=True,
-            )
-            return
+        print(
+            f"Monitor kor kesz: sent=0, skipped=0, reasons={dict(counters)}",
+            flush=True,
+        )
+        return
 
     print(
         f"{dashboard_source} routes talalat: {len(dashboard_routes)}",
@@ -1577,6 +1570,7 @@ def run_once(max_age_minutes, dry_run=False):
             courier_id,
             route,
             courier_hub_detail=driver_detail if dashboard_route.get("raw_live_monitoring") else None,
+            use_attendance=not dashboard_route.get("raw_live_monitoring"),
         )
 
         if dry_run:
