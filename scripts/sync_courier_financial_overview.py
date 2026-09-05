@@ -1080,6 +1080,11 @@ def main() -> int:
     parser.add_argument("--warehouse-id", type=int, choices=[1, 2])
     parser.add_argument("--skip-month-overview", action="store_true")
     parser.add_argument(
+        "--skip-api-import",
+        action="store_true",
+        help="Skip settlement API import after saving Courier Hub raw data.",
+    )
+    parser.add_argument(
         "--with-route-details",
         action="store_true",
         help="Also fetch slow route performance details. Default: skip; use sync_courier_route_performance_details.py instead.",
@@ -1375,7 +1380,7 @@ def main() -> int:
         except Exception as exc:
             print(f"RAW DB statisztika HIBA: {exc}", file=sys.stderr)
 
-    if args.apply and success > 0:
+    if args.apply and success > 0 and not args.skip_api_import:
         try:
             session_id = import_api_overview_to_jit(
                 year=year,

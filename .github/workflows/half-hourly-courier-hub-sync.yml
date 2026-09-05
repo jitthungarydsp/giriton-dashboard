@@ -116,7 +116,7 @@ jobs:
       - name: Sync Courier Hub financial overview raw
         shell: bash
         run: |
-          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}")
+          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --skip-api-import)
 
           if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
             CMD+=(--apply)
