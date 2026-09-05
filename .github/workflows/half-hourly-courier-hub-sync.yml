@@ -102,10 +102,16 @@ jobs:
             echo "Courier Hub login secrets not set, using static auth secrets."
           fi
 
-      - name: Probe Courier Hub live monitoring dashboard
+      - name: Sync Courier Hub live monitoring
         shell: bash
         run: |
-          python scripts/probe_courier_hub_live_monitoring.py --warehouse-id 2 --dsp-id 8
+          CMD=(python scripts/sync_courier_hub_live_monitoring.py --warehouse-ids "1,2" --dsp-id 8)
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
 
       - name: Resolve missing-day range
         id: days
