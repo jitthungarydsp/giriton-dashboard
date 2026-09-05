@@ -109,6 +109,26 @@ def route_like_couriers(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def detail_target_couriers(payload: Any, detail_scope: str) -> list[dict[str, Any]]:
+    candidates = (
+        top_level_couriers(payload)
+        if detail_scope == "all"
+        else route_like_couriers(payload)
+    )
+    targets: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for row in candidates:
+        courier_id_text = normalize_id(row.get("courierId"))
+        if not courier_id_text:
+            continue
+        courier_id = int(courier_id_text)
+        if courier_id in seen:
+            continue
+        seen.add(courier_id)
+        targets.append(row)
+    return targets
+
+
 def supabase_post(table: str, rows: list[dict[str, Any]], on_conflict: str) -> int:
     if not rows:
         return 0
@@ -197,6 +217,7 @@ def main() -> int:
     parser.add_argument("--warehouse-ids", default="1,2")
     parser.add_argument("--dsp-id", type=int, default=int(os.getenv("COURIER_HUB_DSP_ID") or "8"))
     parser.add_argument("--base-url", default=os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL)
+    parser.add_argument("--detail-scope", choices=["routes", "all"], default="routes")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -223,10 +244,11 @@ def main() -> int:
         )
         list_rows.append(list_row)
 
-        couriers = route_like_couriers(payload) if status_code < 400 else []
+        couriers = detail_target_couriers(payload, args.detail_scope) if status_code < 400 else []
         print(
             f"HUB_LIVE_LIST warehouse={warehouse_id} status={status_code} "
-            f"couriers={list_row['courier_count']} routes={len(couriers)}",
+            f"couriers={list_row['courier_count']} routes={list_row['route_count']} "
+            f"detail_targets={len(couriers)} scope={args.detail_scope}",
             flush=True,
         )
 

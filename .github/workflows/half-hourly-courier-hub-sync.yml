@@ -105,10 +105,21 @@ jobs:
       - name: Sync Courier Hub live monitoring
         shell: bash
         run: |
-          CMD=(python scripts/sync_courier_hub_live_monitoring.py --warehouse-ids "1,2" --dsp-id 8)
+          CMD=(python scripts/sync_courier_hub_live_monitoring.py --warehouse-ids "1,2" --dsp-id 8 --detail-scope all)
 
           if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
             CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Sync Courier Hub financial overview raw
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}")
+
+          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply)
           fi
 
           "${CMD[@]}"
