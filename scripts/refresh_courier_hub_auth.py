@@ -474,7 +474,16 @@ def open_rohlik_login_page(driver: webdriver.Chrome, wait_seconds: int) -> None:
     debug(f"COURIER_HUB_AUTH_ROHLIK_LOGIN_BUTTON={'clicked' if clicked else 'not_found'}")
 
 
-def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait_seconds: int) -> None:
+def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait_seconds: int, debug_dir: str = "") -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "username_hint": safe_username_hint(username),
+        "username_len": len(username),
+        "password_len": len(password),
+        "field_username_len": -1,
+        "field_password_len": -1,
+        "error_text": "",
+        "password_still_visible": False,
+    }
     wait = WebDriverWait(driver, wait_seconds)
     open_rohlik_login_page(driver, wait_seconds)
     password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
@@ -482,7 +491,7 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
         password_input = find_first(driver, ["input[type='password']", "input[name*='password' i]"])
     if not password_input:
         debug("COURIER_HUB_AUTH_LOGIN_FORM=not_found")
-        return
+        return diagnostics
 
     user_input = find_first(
         driver,
@@ -506,6 +515,8 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     set_input_value(driver, user_input, username)
     set_input_value(driver, password_input, password)
     field_lengths = input_value_lengths(driver, user_input, password_input)
+    diagnostics["field_username_len"] = field_lengths["username"]
+    diagnostics["field_password_len"] = field_lengths["password"]
     debug(
         "COURIER_HUB_AUTH_LOGIN_FIELD_LENGTHS="
         f"username={field_lengths['username']} password={field_lengths['password']}"
@@ -527,9 +538,27 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
                 pass
         diagnostic = login_diagnostic_text(driver)
         if diagnostic:
+            diagnostics["error_text"] = diagnostic
             debug(f"COURIER_HUB_AUTH_LOGIN_ERROR_TEXT={diagnostic}")
         debug("COURIER_HUB_AUTH_LOGIN_WAIT=password_still_visible")
+        diagnostics["password_still_visible"] = True
+        save_debug_artifacts(driver, debug_dir, "login_failed")
     time.sleep(3)
+    return diagnostics
+
+
+def login_diagnostic_summary(diagnostics: dict[str, Any]) -> str:
+    if not diagnostics:
+        return "-"
+    return (
+        f"username={diagnostics.get('username_hint') or '-'}, "
+        f"username_len={diagnostics.get('username_len', '-')}, "
+        f"password_len={diagnostics.get('password_len', '-')}, "
+        f"field_username_len={diagnostics.get('field_username_len', '-')}, "
+        f"field_password_len={diagnostics.get('field_password_len', '-')}, "
+        f"password_still_visible={diagnostics.get('password_still_visible', '-')}, "
+        f"error_text={diagnostics.get('error_text') or '-'}"
+    )
 
 
 def probe_api(driver: webdriver.Chrome, base_url: str, probe_path: str) -> dict[str, Any]:
@@ -759,7 +788,7 @@ def main() -> int:
                 f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}."
             )
 
-        login_if_needed(driver, username, password, args.wait)
+        login_diagnostics = login_if_needed(driver, username, password, args.wait, args.debug_dir)
         session_result = refresh_session(driver, args.url)
         debug(
             "COURIER_HUB_AUTH_SESSION_REFRESH="
@@ -788,7 +817,8 @@ def main() -> int:
                 f"Header probe status={header_probe_status or header_probe_result.get('error') or '-'}, "
                 f"browser probe status={browser_probe_status or browser_probe_result.get('error') or '-'}, "
                 f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'}, "
-                f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}."
+                f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}, "
+                f"login={login_diagnostic_summary(login_diagnostics)}."
             )
 
         debug(

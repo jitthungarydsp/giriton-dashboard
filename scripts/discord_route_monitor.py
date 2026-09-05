@@ -46,6 +46,7 @@ PUSH_NOTIFICATION_TYPE = "route_assigned"
 ATTENDANCE_CACHE = {}
 COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 COURIER_HUB_DSP_ID = int(os.getenv("COURIER_HUB_DSP_ID") or "8")
+COURIER_HUB_DETAIL_CACHE = {}
 
 
 def normalize_id(value):
@@ -117,6 +118,15 @@ def find_route_warehouse(*sources):
             return normalized
 
     return ""
+
+
+def warehouse_id_for_courier_hub(value):
+    warehouse = normalize_warehouse(value)
+    if warehouse == "BUD1":
+        return 1
+    if warehouse == "BUD2":
+        return 2
+    return None
 
 
 def parse_datetime(value):
@@ -233,6 +243,41 @@ def load_live_monitoring_dashboard(warehouse_id):
     return response.json()
 
 
+def load_live_monitoring_courier_detail(warehouse, courier_id):
+    warehouse_id = warehouse_id_for_courier_hub(warehouse)
+    normalized_courier_id = normalize_id(courier_id)
+
+    if not warehouse_id or not normalized_courier_id:
+        return {}
+
+    cache_key = (warehouse_id, normalized_courier_id)
+    if cache_key in COURIER_HUB_DETAIL_CACHE:
+        return COURIER_HUB_DETAIL_CACHE[cache_key]
+
+    url = (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{warehouse_id}"
+        f"/live-monitoring-dashboard/couriers/{normalized_courier_id}"
+        f"?dspId={COURIER_HUB_DSP_ID}"
+    )
+    response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    if response.status_code in {401, 403} and refresh_courier_hub_headers():
+        response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    COURIER_HUB_DETAIL_CACHE[cache_key] = payload
+
+    if isinstance(payload, dict):
+        keys = ",".join(sorted(str(key) for key in payload.keys())[:30])
+    else:
+        keys = type(payload).__name__
+    print(
+        "COURIER_HUB_COURIER_DETAIL "
+        f"warehouse={warehouse_id} courier={normalized_courier_id} keys={keys}",
+        flush=True,
+    )
+    return payload
+
+
 def find_live_monitoring_rows(value):
     rows = []
     if isinstance(value, dict):
@@ -256,6 +301,18 @@ def live_route_id(row):
     )
 
 
+def coalesce(*values):
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, dict)) and not value:
+            continue
+        return value
+    return ""
+
+
 def normalize_live_monitoring_route(row, warehouse_id):
     route_id = live_route_id(row)
     courier_id = normalize_id(row.get("courierId") or row.get("courier_id"))
@@ -276,6 +333,150 @@ def normalize_live_monitoring_route(row, warehouse_id):
         "plannedStartAt": row.get("plannedStartAt"),
         "actualStartAt": row.get("actualStartAt"),
         "raw_live_monitoring": row,
+    }
+
+
+def find_route_like_rows(value):
+    rows = []
+    if isinstance(value, dict):
+        keys = {str(key).lower() for key in value}
+        has_explicit_route_id = bool(
+            {
+                "routeexternalid",
+                "cargorouteid",
+                "routeid",
+                "route_id",
+            } & keys
+        )
+        has_route_shape_id = "id" in keys and bool(
+            {
+                "checkpoints",
+                "planneddeparture",
+                "planneddepartureat",
+                "plannedreturn",
+                "numtotalorders",
+            } & keys
+        )
+        if live_route_id(value) and (has_explicit_route_id or has_route_shape_id):
+            rows.append(value)
+        for child in value.values():
+            rows.extend(find_route_like_rows(child))
+    elif isinstance(value, list):
+        for item in value:
+            rows.extend(find_route_like_rows(item))
+    return rows
+
+
+def find_courier_hub_detail_route(detail_payload, route_id):
+    normalized_route_id = normalize_id(route_id)
+    if not normalized_route_id:
+        return {}
+
+    for row in find_route_like_rows(detail_payload):
+        if live_route_id(row) == normalized_route_id:
+            return row
+
+    rows = find_route_like_rows(detail_payload)
+    return rows[0] if rows else {}
+
+
+def normalize_courier_hub_detail_route(detail_route, detail_payload, fallback_route):
+    source = detail_route if isinstance(detail_route, dict) else {}
+    payload = detail_payload if isinstance(detail_payload, dict) else {}
+    fallback = fallback_route if isinstance(fallback_route, dict) else {}
+
+    source_route_id = live_route_id(source)
+    fallback_route_id = live_route_id(fallback)
+    route_id = source_route_id or fallback_route_id
+    if source_route_id and fallback_route_id and source_route_id != fallback_route_id:
+        route_id = fallback_route_id
+    courier_id = normalize_id(
+        coalesce(
+            source.get("courierId"),
+            source.get("courier_id"),
+            payload.get("courierId"),
+            payload.get("courier_id"),
+            fallback.get("courierId"),
+            fallback.get("courier_id"),
+        )
+    )
+    warehouse = normalize_warehouse(
+        coalesce(
+            source.get("warehouseCode"),
+            source.get("warehouse"),
+            payload.get("warehouseCode"),
+            payload.get("warehouse"),
+            fallback.get("warehouseCode"),
+            fallback.get("warehouse"),
+        )
+    )
+
+    return {
+        **fallback,
+        **source,
+        "courierId": courier_id,
+        "courier_id": courier_id,
+        "routeId": route_id,
+        "route_id": route_id,
+        "courier_name": str(
+            coalesce(
+                fallback.get("courier_name"),
+                source.get("name"),
+                source.get("courierName"),
+                payload.get("name"),
+                payload.get("courierName"),
+            )
+        ).strip(),
+        "warehouse": warehouse,
+        "warehouseCode": warehouse,
+        "licence_plate": str(
+            coalesce(
+                source.get("vehiclePlate"),
+                source.get("licensePlate"),
+                source.get("licencePlate"),
+                fallback.get("licence_plate"),
+                fallback.get("vehiclePlate"),
+            )
+        ).strip(),
+        "orders_in_route": str(
+            coalesce(
+                source.get("stopsTotal"),
+                source.get("numTotalOrders"),
+                fallback.get("orders_in_route"),
+                fallback.get("stopsTotal"),
+            )
+        ).strip(),
+        "plannedDeparture": coalesce(
+            source.get("plannedDeparture"),
+            source.get("plannedDepartureAt"),
+            fallback.get("plannedDeparture"),
+            fallback.get("plannedDepartureAt"),
+        ),
+        "plannedReturn": coalesce(
+            source.get("plannedReturn"),
+            source.get("plannedReturnAt"),
+            source.get("expectedReturn"),
+            fallback.get("plannedReturn"),
+            fallback.get("plannedReturnAt"),
+            fallback.get("expectedReturn"),
+        ),
+        "realReturn": coalesce(
+            source.get("realReturn"),
+            source.get("actualReturnAt"),
+            source.get("finishedAt"),
+            fallback.get("realReturn"),
+            fallback.get("actualReturnAt"),
+            fallback.get("finishedAt"),
+        ),
+        "assignedAt": coalesce(
+            source.get("assignedAt"),
+            source.get("actualStartAt"),
+            source.get("plannedDepartureAt"),
+            source.get("plannedStartAt"),
+            fallback.get("assignedAt"),
+        ),
+        "raw_live_monitoring": fallback.get("raw_live_monitoring") or source,
+        "raw_courier_hub_detail": detail_payload,
     }
 
 
@@ -401,31 +602,260 @@ def choose_current_shift(shifts, assigned_at, return_at):
     return shifts[0]
 
 
-def build_shift_notification_notes(courier_id, route):
+def walk_dicts(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from walk_dicts(child)
+    elif isinstance(value, list):
+        for item in value:
+            yield from walk_dicts(item)
+
+
+def find_named_dict(value, names):
+    normalized_names = {
+        str(name).lower().replace("_", "").replace("-", "")
+        for name in names
+    }
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key).lower().replace("_", "").replace("-", "")
+            if key_text in normalized_names and isinstance(child, dict):
+                return child
+            found = find_named_dict(child, names)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = find_named_dict(item, names)
+            if found:
+                return found
+    return {}
+
+
+def parse_courier_hub_shift_item(item):
+    if not isinstance(item, dict):
+        return {}
+
+    start_at = parse_datetime(
+        coalesce(
+            item.get("shiftStart"),
+            item.get("shiftStartAt"),
+            item.get("plannedStartAt"),
+            item.get("startAt"),
+            item.get("from"),
+        )
+    )
+    end_at = parse_datetime(
+        coalesce(
+            item.get("shiftEnd"),
+            item.get("shiftEndAt"),
+            item.get("plannedEndAt"),
+            item.get("endAt"),
+            item.get("to"),
+        )
+    )
+    label = str(
+        coalesce(
+            item.get("shiftName"),
+            item.get("name"),
+            item.get("title"),
+            item.get("shiftStatus"),
+            item.get("status"),
+        )
+    ).strip()
+
+    if not start_at and not end_at and not label:
+        return {}
+
+    return {
+        "shift_name": label,
+        "shift_start": start_at,
+        "shift_end": end_at,
+        "available_for_shift_since": parse_datetime(
+            coalesce(
+                item.get("availableForShiftSince"),
+                item.get("queuedAt"),
+                item.get("checkedInAt"),
+                item.get("noShowAutoFlaggedAt"),
+            )
+        ),
+    }
+
+
+def collect_courier_hub_shifts(detail_payload, route):
+    shifts = []
+    seen = set()
+
+    for item in list(walk_dicts(detail_payload)) + [route]:
+        if not isinstance(item, dict):
+            continue
+        keys = {str(key).lower() for key in item}
+        if not (
+            {"shiftstart", "shiftstartat", "plannedstartat", "shiftstatus"} & keys
+            or any("shift" in key for key in keys)
+        ):
+            continue
+        shift = parse_courier_hub_shift_item(item)
+        if not shift:
+            continue
+        identity = (
+            shift.get("shift_name"),
+            shift.get("shift_start"),
+            shift.get("shift_end"),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        shifts.append(shift)
+
+    return sorted(
+        shifts,
+        key=lambda item: item.get("shift_start") or datetime.max.replace(tzinfo=LOCAL_TIMEZONE),
+    )
+
+
+def build_courier_hub_shift_notification_notes(detail_payload, route):
+    if not detail_payload and not route:
+        return {}
+
+    current_shift = parse_courier_hub_shift_item(
+        find_named_dict(
+            detail_payload,
+            {"currentShift", "activeShift", "actualShift", "current_shift"},
+        )
+    )
+    next_shift = parse_courier_hub_shift_item(
+        find_named_dict(
+            detail_payload,
+            {"nextShift", "upcomingShift", "next_shift", "followingShift"},
+        )
+    )
+    shifts = collect_courier_hub_shifts(detail_payload, route)
+    now = datetime.now(LOCAL_TIMEZONE)
+
+    if not current_shift:
+        for shift in shifts:
+            shift_start = shift.get("shift_start")
+            shift_end = shift.get("shift_end")
+            if shift_start and shift_end and shift_start <= now < shift_end:
+                current_shift = shift
+                break
+
+    if not next_shift:
+        future_shifts = [
+            shift
+            for shift in shifts
+            if shift.get("shift_start") and shift["shift_start"] > now
+        ]
+        if future_shifts:
+            next_shift = future_shifts[0]
+
+    current_shift_note = (
+        format_shift_label(current_shift)
+        if current_shift
+        else ""
+    )
+    next_shift_note = (
+        format_shift_label(next_shift, include_times=False)
+        if next_shift
+        else ""
+    )
+    next_shift_delay_note = ""
+    route_return_at = parse_datetime(route.get("realReturn") or route.get("plannedReturn"))
+    next_shift_start = next_shift.get("shift_start") if next_shift else None
+    if route_return_at and next_shift_start:
+        delay_minutes = int((route_return_at - next_shift_start).total_seconds() // 60)
+        if delay_minutes > 0:
+            next_shift_delay_note = f"{delay_minutes} perc"
+
+    queue_since = parse_datetime(
+        coalesce(
+            route.get("queuedAt"),
+            route.get("checkedInAt"),
+            route.get("availableForShiftSince"),
+            route.get("noShowAutoFlaggedAt"),
+        )
+    )
+    if not queue_since:
+        for shift in reversed(shifts):
+            if shift.get("available_for_shift_since"):
+                queue_since = shift["available_for_shift_since"]
+                break
+
+    assigned_at = parse_datetime(route.get("assignedAt")) or now
+
+    notes = {}
+    if current_shift_note:
+        notes["current_shift_note"] = current_shift_note
+    if next_shift_note:
+        notes["next_shift_note"] = next_shift_note
+    if next_shift_delay_note:
+        notes["next_shift_delay_note"] = next_shift_delay_note
+    if queue_since:
+        notes["queue_since_note"] = format_datetime_time(queue_since)
+        notes["queue_wait_note"] = format_wait_duration(queue_since, assigned_at)
+    return notes
+
+
+def is_unavailable_shift_note(value):
+    text = str(value or "").strip().lower()
+    return (
+        not text
+        or "nem ellenorizheto" in text
+        or "nincs attendance adat" in text
+        or "nincs adat" in text
+        or "jelenleg nincs aktualis muszakban" in text
+        or "nincs kovetkezo muszak" in text
+    )
+
+
+def merge_shift_notes(primary, fallback):
+    merged = dict(primary or {})
+    fallback = fallback or {}
+
+    for key in (
+        "current_shift_note",
+        "next_shift_note",
+        "next_shift_delay_note",
+        "queue_since_note",
+        "queue_wait_note",
+    ):
+        if is_unavailable_shift_note(merged.get(key)) and fallback.get(key):
+            merged[key] = fallback[key]
+
+    return merged
+
+
+def build_shift_notification_notes(courier_id, route, courier_hub_detail=None):
+    courier_hub_notes = build_courier_hub_shift_notification_notes(
+        courier_hub_detail,
+        route,
+    )
     work_date = route_work_date(route)
 
     try:
         attendance_data = load_attendance_for_date(work_date)
     except Exception as exc:
         error_note = f"nem ellenorizheto (fetch-attendance hiba: {exc})"
-        return {
+        return merge_shift_notes({
             "current_shift_note": error_note,
             "next_shift_note": error_note,
             "next_shift_delay_note": "",
             "queue_since_note": "",
             "queue_wait_note": "",
-        }
+        }, courier_hub_notes)
 
     courier = find_attendance_courier(attendance_data, courier_id)
     if not courier:
         error_note = "nem ellenorizheto (nincs attendance adat)"
-        return {
+        return merge_shift_notes({
             "current_shift_note": error_note,
             "next_shift_note": error_note,
             "next_shift_delay_note": "",
             "queue_since_note": "",
             "queue_wait_note": "",
-        }
+        }, courier_hub_notes)
 
     shifts = parse_shift_times(courier)
     now = datetime.now(LOCAL_TIMEZONE)
@@ -486,13 +916,13 @@ def build_shift_notification_notes(courier_id, route):
     queue_since_note = format_datetime_time(queue_since)
     queue_wait_note = format_wait_duration(queue_since, queue_until)
 
-    return {
+    return merge_shift_notes({
         "current_shift_note": current_shift_note,
         "next_shift_note": next_shift_note,
         "next_shift_delay_note": next_shift_delay_note,
         "queue_since_note": queue_since_note or "nincs adat",
         "queue_wait_note": queue_wait_note or "nincs adat",
-    }
+    }, courier_hub_notes)
 
 
 def build_next_shift_note(courier_id, route):
@@ -1009,6 +1439,7 @@ def send_route_push(
 
 
 def run_once(max_age_minutes, dry_run=False):
+    COURIER_HUB_DETAIL_CACHE.clear()
     discord_status = read_discord_status()
     counters = Counter()
     sent_count = 0
@@ -1073,8 +1504,26 @@ def run_once(max_age_minutes, dry_run=False):
             continue
 
         if dashboard_route.get("raw_live_monitoring"):
-            driver_detail = {}
-            route = dashboard_route
+            route_warehouse_hint = find_route_warehouse(dashboard_route)
+            try:
+                driver_detail = load_live_monitoring_courier_detail(
+                    route_warehouse_hint,
+                    courier_id,
+                )
+            except Exception as exc:
+                driver_detail = {}
+                counters["courier_hub_detail_error"] += 1
+                print(
+                    f"#{courier_id} live courier detail hiba: {exc}",
+                    flush=True,
+                )
+
+            detail_route = find_courier_hub_detail_route(driver_detail, route_id)
+            route = normalize_courier_hub_detail_route(
+                detail_route,
+                driver_detail,
+                dashboard_route,
+            )
         else:
             try:
                 driver_detail = load_driver_detail(courier_id)
@@ -1124,7 +1573,11 @@ def run_once(max_age_minutes, dry_run=False):
             or str(dashboard_route.get("name") or "").strip()
             or get_courier_name(courier_id, driver_detail)
         )
-        shift_notes = build_shift_notification_notes(courier_id, route)
+        shift_notes = build_shift_notification_notes(
+            courier_id,
+            route,
+            courier_hub_detail=driver_detail if dashboard_route.get("raw_live_monitoring") else None,
+        )
 
         if dry_run:
             counters["dry_run_would_send"] += 1
@@ -1226,7 +1679,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-age-minutes", type=int, default=10)
     parser.add_argument("--loop-minutes", type=int, default=0)
-    parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--poll-seconds", type=int, default=120)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 

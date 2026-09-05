@@ -10,7 +10,7 @@ on:
       poll_seconds:
         description: "Poll gyakoriság másodpercben, ha loop_minutes nagyobb mint 0."
         required: false
-        default: "300"
+        default: "120"
   repository_dispatch:
     types:
       - discord-route-monitor
@@ -91,14 +91,14 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             LOOP_MINUTES="14"
-            POLL_SECONDS="300"
+            POLL_SECONDS="120"
           else
             LOOP_MINUTES="${{ inputs.loop_minutes }}"
             POLL_SECONDS="${{ inputs.poll_seconds }}"
           fi
 
           LOOP_MINUTES="${LOOP_MINUTES:-0}"
-          POLL_SECONDS="${POLL_SECONDS:-300}"
+          POLL_SECONDS="${POLL_SECONDS:-120}"
 
           python scripts/discord_route_monitor.py --loop-minutes "$LOOP_MINUTES" --poll-seconds "$POLL_SECONDS" --max-age-minutes 0
 
