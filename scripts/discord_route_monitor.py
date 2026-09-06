@@ -243,6 +243,18 @@ def load_live_monitoring_dashboard(warehouse_id):
     return response.json()
 
 
+def load_courier_hub_departure_dashboard(warehouse_id):
+    url = (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/dsps/{COURIER_HUB_DSP_ID}/departure-dashboard"
+    )
+    response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    if response.status_code in {401, 403} and refresh_courier_hub_headers():
+        response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
 def load_live_monitoring_courier_detail(warehouse, courier_id):
     warehouse_id = warehouse_id_for_courier_hub(warehouse)
     normalized_courier_id = normalize_id(courier_id)
@@ -333,6 +345,60 @@ def normalize_live_monitoring_route(row, warehouse_id):
         "plannedStartAt": row.get("plannedStartAt"),
         "actualStartAt": row.get("actualStartAt"),
         "raw_live_monitoring": row,
+    }
+
+
+def normalize_courier_hub_departure_route(row, warehouse_id):
+    route_id = live_route_id(row)
+    courier_id = normalize_id(
+        coalesce(
+            row.get("courierId"),
+            row.get("courier_id"),
+            row.get("driverId"),
+            row.get("driver_id"),
+        )
+    )
+    warehouse = normalize_warehouse(row.get("warehouseCode") or warehouse_id)
+    return {
+        "courierId": courier_id,
+        "courier_id": courier_id,
+        "routeId": route_id,
+        "route_id": route_id,
+        "courier_name": str(
+            coalesce(
+                row.get("name"),
+                row.get("courierName"),
+                row.get("driverName"),
+                row.get("driver_name"),
+            )
+        ).strip(),
+        "warehouse": warehouse,
+        "warehouseCode": warehouse,
+        "licence_plate": str(
+            coalesce(
+                row.get("vehiclePlate"),
+                row.get("licensePlate"),
+                row.get("licencePlate"),
+            )
+        ).strip(),
+        "orders_in_route": str(
+            coalesce(
+                row.get("stopsTotal"),
+                row.get("numTotalOrders"),
+                row.get("ordersInRoute"),
+                row.get("orders_in_route"),
+            )
+        ).strip(),
+        "plannedDeparture": coalesce(row.get("plannedDeparture"), row.get("plannedDepartureAt")),
+        "realDeparture": coalesce(row.get("realDeparture"), row.get("departedAt")),
+        "assignedAt": coalesce(
+            row.get("assignedAt"),
+            row.get("courierRegisteredAt"),
+            row.get("plannedDepartureAt"),
+            row.get("plannedDeparture"),
+            row.get("plannedStartAt"),
+        ),
+        "raw_courier_hub_departure_dashboard": row,
     }
 
 
@@ -500,6 +566,39 @@ def load_live_monitoring_routes():
     if errors:
         print(
             "live-monitoring partial hiba: " + " | ".join(errors),
+            flush=True,
+        )
+    return routes
+
+
+def load_courier_hub_departure_routes():
+    routes = []
+    errors = []
+    for warehouse_id in (1, 2):
+        try:
+            payload = load_courier_hub_departure_dashboard(warehouse_id)
+        except Exception as exc:
+            errors.append(f"WH{warehouse_id}: {exc}")
+            continue
+        rows = find_route_like_rows(payload)
+        routes.extend(
+            normalize_courier_hub_departure_route(row, warehouse_id)
+            for row in rows
+            if normalize_id(
+                coalesce(
+                    row.get("courierId"),
+                    row.get("courier_id"),
+                    row.get("driverId"),
+                    row.get("driver_id"),
+                )
+            )
+            and live_route_id(row)
+        )
+    if not routes and errors:
+        raise RuntimeError("; ".join(errors))
+    if errors:
+        print(
+            "courier-hub departure-dashboard partial hiba: " + " | ".join(errors),
             flush=True,
         )
     return routes
@@ -1436,18 +1535,18 @@ def run_once(max_age_minutes, dry_run=False):
     print(
         "Discord monitor status: "
         f"webhook_configured={discord_status.get('webhook_configured')} "
-        "source=courier-hub-live-monitoring "
+        "source=courier-hub-departure-dashboard "
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
 
     try:
-        dashboard_routes = load_live_monitoring_routes()
-        dashboard_source = "courier-hub-live-monitoring"
+        dashboard_routes = load_courier_hub_departure_routes()
+        dashboard_source = "courier-hub-departure-dashboard"
     except Exception as exc:
-        counters["live_monitoring_error"] += 1
+        counters["courier_hub_departure_dashboard_error"] += 1
         print(
-            f"live-monitoring-dashboard hiba: {exc}",
+            f"courier-hub departure-dashboard hiba: {exc}",
             flush=True,
         )
         print(
@@ -1481,7 +1580,10 @@ def run_once(max_age_minutes, dry_run=False):
             skipped_count += 1
             continue
 
-        if dashboard_route.get("raw_live_monitoring"):
+        if (
+            dashboard_route.get("raw_live_monitoring")
+            or dashboard_route.get("raw_courier_hub_departure_dashboard")
+        ):
             route_warehouse_hint = find_route_warehouse(dashboard_route)
             try:
                 driver_detail = load_live_monitoring_courier_detail(
@@ -1554,8 +1656,16 @@ def run_once(max_age_minutes, dry_run=False):
         shift_notes = build_shift_notification_notes(
             courier_id,
             route,
-            courier_hub_detail=driver_detail if dashboard_route.get("raw_live_monitoring") else None,
-            use_attendance=not dashboard_route.get("raw_live_monitoring"),
+            courier_hub_detail=driver_detail
+            if (
+                dashboard_route.get("raw_live_monitoring")
+                or dashboard_route.get("raw_courier_hub_departure_dashboard")
+            )
+            else None,
+            use_attendance=not (
+                dashboard_route.get("raw_live_monitoring")
+                or dashboard_route.get("raw_courier_hub_departure_dashboard")
+            ),
         )
 
         if dry_run:
