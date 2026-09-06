@@ -1528,6 +1528,267 @@ def route_checkpoint_triplet_from_db(
     }
 
 
+def hub_live_route_id(value: dict[str, Any] | None) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(
+        value.get("routeExternalId")
+        or value.get("cargoRouteId")
+        or value.get("routeId")
+        or value.get("route_id")
+        or value.get("id")
+        or ""
+    ).strip()
+
+
+def hub_live_route_objects(value: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        keys = {str(key).lower() for key in value}
+        has_route_id = bool({"routeexternalid", "cargorouteid", "routeid", "route_id"} & keys)
+        has_route_shape = "id" in keys and bool(
+            {"checkpoints", "stopprogress", "planneddepartureat", "planneddeparture"} & keys
+        )
+        if hub_live_route_id(value) and (has_route_id or has_route_shape):
+            rows.append(value)
+        for child in value.values():
+            rows.extend(hub_live_route_objects(child))
+    elif isinstance(value, list):
+        for item in value:
+            rows.extend(hub_live_route_objects(item))
+    return rows
+
+
+def first_hub_route(payload: dict[str, Any], stored_route_id: Any) -> dict[str, Any]:
+    clean_route_id = str(stored_route_id or "").strip()
+    for route in hub_live_route_objects(payload):
+        route_id = hub_live_route_id(route)
+        if route_id and clean_route_id and route_id == clean_route_id:
+            return route
+    routes = hub_live_route_objects(payload)
+    if routes:
+        return routes[0]
+    return payload if isinstance(payload, dict) else {}
+
+
+def hub_stop_position(stop: dict[str, Any], index: int) -> int:
+    return safe_int(
+        stop.get("position")
+        or stop.get("stopPosition")
+        or stop.get("sequence")
+        or stop.get("order")
+        or index
+    ) or index
+
+
+def checkpoint_from_hub_stop(stop: dict[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "orderId": str(
+            stop.get("orderId")
+            or stop.get("order_id")
+            or stop.get("customerOrderId")
+            or stop.get("id")
+            or ""
+        ),
+        "position": hub_stop_position(stop, index),
+        "address": str(
+            stop.get("address")
+            or stop.get("fullAddress")
+            or stop.get("addressText")
+            or stop.get("street")
+            or ""
+        ),
+        "windowFrom": local_iso_time(
+            stop.get("deliverSince")
+            or stop.get("windowFrom")
+            or stop.get("timeWindowFrom")
+        ),
+        "windowTo": local_iso_time(
+            stop.get("deliverTill")
+            or stop.get("windowTo")
+            or stop.get("timeWindowTo")
+        ),
+        "plannedArrival": local_iso_time(
+            stop.get("plannedArrivalTime")
+            or stop.get("plannedArrivalAt")
+            or stop.get("plannedAt")
+        ),
+        "estimatedArrival": local_iso_time(
+            stop.get("estimatedArrivalTime")
+            or stop.get("estimatedArrivalAt")
+            or stop.get("eta")
+        ),
+        "realArrival": local_iso_time(
+            stop.get("realArrivalTime")
+            or stop.get("actualArrivalAt")
+            or stop.get("arrivedAt")
+        ),
+        "delayMinutes": max(
+            0,
+            safe_int(stop.get("delayMinutes") or stop.get("lateMinutes")),
+        ),
+        "isLate": safe_int(stop.get("delayMinutes") or stop.get("lateMinutes")) > 0,
+    }
+
+
+def hub_stop_is_completed(stop: dict[str, Any]) -> bool:
+    status = str(stop.get("status") or stop.get("state") or "").strip().lower()
+    return bool(
+        stop.get("realDepartureTime")
+        or stop.get("deliveredAt")
+        or stop.get("finishedAt")
+        or status in {"done", "delivered", "completed", "finished"}
+    )
+
+
+def hub_current_stop_index(stops: list[dict[str, Any]]) -> int | None:
+    if not stops:
+        return None
+    for index, stop in enumerate(stops):
+        if not hub_stop_is_completed(stop):
+            return index
+    return len(stops) - 1
+
+
+def hub_stop_triplet(route: dict[str, Any]) -> dict[str, Any]:
+    raw_stops = (
+        route.get("checkpoints")
+        or route.get("stopProgress")
+        or route.get("stops")
+        or []
+    )
+    stops = [item for item in raw_stops if isinstance(item, dict)]
+    if not stops:
+        return {"previous": None, "current": None, "next": None}
+    stops = sorted(
+        enumerate(stops, start=1),
+        key=lambda item: hub_stop_position(item[1], item[0]),
+    )
+    stops = [stop for _index, stop in stops]
+    index = hub_current_stop_index(stops)
+    if index is None:
+        return {"previous": None, "current": None, "next": None}
+    return {
+        "previous": checkpoint_from_hub_stop(stops[index - 1], index) if index > 0 else None,
+        "current": checkpoint_from_hub_stop(stops[index], index + 1) if index < len(stops) else None,
+        "next": checkpoint_from_hub_stop(stops[index + 1], index + 2) if index + 1 < len(stops) else None,
+    }
+
+
+def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
+    courier_id, courier_name = courier_identity(user)
+    rows = optional_supabase_rows(
+        "courier_hub_live_monitoring_courier_latest",
+        params={
+            "select": (
+                "snapshot_key,warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,"
+                "route_id,request_url,status_code,response_json,fetched_at"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc",
+            "limit": "1",
+        },
+        timeout=20,
+    )
+    if not rows:
+        return None
+
+    row = rows[0]
+    stored_route_id = str(row.get("route_id") or "").strip()
+    if not stored_route_id:
+        return None
+
+    payload = row.get("response_json")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    route = first_hub_route(payload, stored_route_id)
+    route_id = hub_live_route_id(route) or stored_route_id
+    if not route_id:
+        return None
+
+    fetched_at = local_datetime(row.get("fetched_at")) or datetime.now(LOCAL_TIMEZONE)
+    if fetched_at.date() != datetime.now(LOCAL_TIMEZONE).date():
+        return None
+
+    checkpoints = hub_stop_triplet(route)
+    story = read_current_route_story(courier_id, route_id, fetched_at.date())
+    vehicle_plate = str(
+        route.get("vehiclePlate")
+        or route.get("licensePlate")
+        or route.get("licencePlate")
+        or ""
+    ).strip()
+    vehicle = {
+        "licensePlate": vehicle_plate,
+        "car": "",
+        "source": "Courier Hub",
+        "shiftType": str(route.get("fridgeConfig") or ""),
+        "shiftStart": local_iso_time(route.get("plannedStartAt")),
+        "shiftEnd": "",
+    } if vehicle_plate else read_live_vehicle_for_user(user)
+
+    planned_return = (
+        route.get("plannedReturn")
+        or route.get("plannedReturnAt")
+        or route.get("expectedReturn")
+    )
+    real_return = (
+        route.get("realReturn")
+        or route.get("actualReturnAt")
+        or route.get("finishedAt")
+    )
+    route_payload = {
+        "routeId": route_id,
+        "warehouse": str(row.get("warehouse_code") or route.get("warehouseCode") or ""),
+        "status": str(route.get("status") or route.get("departureStatus") or "Folyamatban"),
+        "totalOrders": safe_int(
+            route.get("stopsTotal")
+            or route.get("numTotalOrders")
+            or route.get("deliveriesTotal")
+            or len(route.get("checkpoints") or route.get("stopProgress") or [])
+        ),
+        "deliveredOrders": safe_int(
+            route.get("deliveriesCompleted")
+            or route.get("stopProgressCompleted")
+            or route.get("numDeliveredOrders")
+        ),
+        "plannedDeparture": local_iso_time(route.get("plannedDeparture") or route.get("plannedDepartureAt")),
+        "realDeparture": local_iso_time(route.get("realDeparture") or route.get("departedAt")),
+        "plannedReturn": local_iso_time(planned_return),
+        "realReturn": local_iso_time(real_return),
+        "minutesUntilReturn": minutes_until_route_return(
+            {
+                "plannedReturn": planned_return,
+                "realReturn": real_return,
+            }
+        ),
+        "previous": checkpoints.get("previous"),
+        "current": checkpoints.get("current"),
+        "next": checkpoints.get("next"),
+        "vehicle": vehicle,
+        "source": "courier_hub_live_monitoring",
+        "updatedAt": row.get("fetched_at"),
+    }
+    if story:
+        route_payload["routeStory"] = story
+
+    return {
+        "found": True,
+        "totalRoutes": 1,
+        "route": route_payload,
+        "source": "courier_hub_live_monitoring_courier_latest",
+        "updatedAt": row.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
+        "courierName": str(row.get("courier_name") or courier_name),
+    }
+
+
 def read_current_route_story(
     courier_id: str,
     route_id: Any,
@@ -1893,6 +2154,10 @@ def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
 def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date()
+    hub_card = read_latest_hub_current_route(user)
+    if hub_card:
+        return hub_card
+
     try:
         payload = fetch_driver_detail(user)
     except HTTPException as exc:
