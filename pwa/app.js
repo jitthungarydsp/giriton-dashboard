@@ -40,7 +40,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v96";
+const APP_VERSION = "v97";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -1630,6 +1630,121 @@ function wazeUrl(address) {
   return `https://waze.com/ul?q=${encodeURIComponent(value)}&navigate=yes`;
 }
 
+function googleMapsUrl(address) {
+  const value = String(address || "").trim();
+  if (!value) return "";
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(value)}&travelmode=driving`;
+}
+
+function stopStateClass(stop) {
+  const stateValue = String(stop?.state || "").toLowerCase();
+  if (stateValue === "completed") return "done";
+  if (stateValue === "current") return "active";
+  if (stop?.isLate || stop?.slotMissProjected) return "risk";
+  return "pending";
+}
+
+function stopTimingLabel(stop) {
+  if (!stop) return "";
+  const arrival = stop.realArrival || stop.estimatedArrival || stop.plannedArrival || "";
+  const arrivalLabel = stop.realArrival ? "Érkezett" : stop.estimatedArrival ? "Várható" : "Tervezett";
+  const windowText = routeTimeRange(stop.windowFrom, stop.windowTo);
+  return `${arrival ? `${arrivalLabel}: ${arrival}` : "Érkezés: -"} · Ügyfélablak: ${windowText}`;
+}
+
+function stopDeltaText(stop) {
+  if (!stop) return "";
+  if (stop.slotMissProjected) return "kockázat";
+  const delta = Number(stop.deltaMinutes);
+  if (!Number.isFinite(delta) || delta === 0) return "időben";
+  if (delta < 0) return `${formatCount(Math.abs(delta))} p előny`;
+  return `${formatCount(delta)} p késés`;
+}
+
+function nextBreakText(current, next) {
+  if (!current || !next) return "Nincs számolható pihenő";
+  const currentDate = new Date(`2000-01-01T${current.realArrival || current.estimatedArrival || current.plannedArrival || "00:00"}:00`);
+  const nextWindow = new Date(`2000-01-01T${next.windowFrom || "00:00"}:00`);
+  if (Number.isNaN(currentDate.getTime()) || Number.isNaN(nextWindow.getTime())) return "Nincs számolható pihenő";
+  const minutes = Math.round((nextWindow.getTime() - currentDate.getTime()) / 60000);
+  if (minutes <= 5) return "Nincs érdemi várakozás";
+  return `${formatCount(minutes)} perc pihenhető`;
+}
+
+function renderRoutePlannerMap(stops) {
+  const visibleStops = (stops || []).slice(0, 9);
+  if (!visibleStops.length) return "";
+  const points = visibleStops.map((stop, index) => {
+    const x = 12 + ((index * 31) % 76);
+    const y = 82 - index * (58 / Math.max(visibleStops.length - 1, 1)) + (index % 2 ? -7 : 6);
+    return { stop, x, y };
+  });
+  const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
+  return `
+    <div class="route-planner-map" aria-label="Túra térkép nézet">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <path class="route-planner-path-bg" d="${path}"></path>
+        <path class="route-planner-path" d="${path}"></path>
+        ${points.map((point) => `
+          <circle class="route-planner-pin ${stopStateClass(point.stop)}" cx="${point.x}" cy="${point.y}" r="3.8"></circle>
+        `).join("")}
+      </svg>
+      <div class="route-planner-map-labels">
+        ${points.slice(0, 5).map((point) => `
+          <span style="left:${point.x}%;top:${point.y}%;">${escapeHtml(point.stop.position || "-")}</span>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderRoutePlanner(route) {
+  const stops = Array.isArray(route?.stops) ? route.stops : [];
+  if (!stops.length) return "";
+  const status = route.plannerStatus || {};
+  const current = route.current || stops.find((stop) => String(stop.state || "").toUpperCase() === "CURRENT") || stops.find((stop) => String(stop.state || "").toUpperCase() !== "COMPLETED") || stops[0];
+  const next = route.next || stops.find((stop) => Number(stop.position) > Number(current?.position || 0) && String(stop.state || "").toUpperCase() !== "COMPLETED");
+  const nextAddress = next?.address || current?.address || "";
+  return `
+    <section class="route-planner">
+      <div class="route-planner-head">
+        <div>
+          <span>Túra állapota</span>
+          <strong>${escapeHtml(status.label || `${current?.position || "-"} / ${stops.length}`)}</strong>
+          <small>${escapeHtml(formatCount(status.remainingStops ?? 0))} megálló van hátra</small>
+        </div>
+        <div>
+          <span>Aktuális cím</span>
+          <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
+          <small>${escapeHtml(stopTimingLabel(current))}</small>
+        </div>
+      </div>
+      ${renderRoutePlannerMap(stops)}
+      <div class="route-planner-insights">
+        <div><span>Forgalmi eltérés</span><strong>Nincs élő adat</strong><small>Google/Waze API bekötés után számolható</small></div>
+        <div><span>Pihenő / várakozás</span><strong>${escapeHtml(nextBreakText(current, next))}</strong><small>Következő ügyfélablak alapján</small></div>
+        <div><span>Időablak állapot</span><strong>${status.lateOrRiskyStops ? `${formatCount(status.lateOrRiskyStops)} figyelendő` : "Rendben"}</strong><small>Hub stop adatok alapján</small></div>
+      </div>
+      <div class="route-planner-actions">
+        ${nextAddress ? `<a class="waze-button" href="${wazeUrl(nextAddress)}" target="_blank" rel="noopener">Waze</a>` : ""}
+        ${nextAddress ? `<a class="route-map-button" href="${googleMapsUrl(nextAddress)}" target="_blank" rel="noopener">Google térkép</a>` : ""}
+      </div>
+      <div class="route-planner-stop-list">
+        ${stops.map((stop) => `
+          <article class="route-planner-stop ${stopStateClass(stop)}">
+            <span class="route-planner-stop-number">${escapeHtml(stop.position || "-")}</span>
+            <div>
+              <strong>${escapeHtml(stop.address || "Cím nincs megadva")}</strong>
+              <small>${escapeHtml(stopTimingLabel(stop))}</small>
+            </div>
+            <em>${escapeHtml(stopDeltaText(stop))}</em>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function vehicleLabel(vehicle) {
   if (!vehicle) return "";
   const plate = vehicle.licensePlate || "";
@@ -1729,6 +1844,8 @@ function renderCurrentRoute() {
     ${routeVehicleBlock(route.vehicle)}
 
     ${renderCurrentRouteStory(route)}
+
+    ${renderRoutePlanner(route)}
 
     <div class="route-current">
       <span>Következő cím</span>

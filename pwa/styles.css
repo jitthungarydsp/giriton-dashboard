@@ -238,6 +238,41 @@ textarea { min-height: 96px; resize: vertical; }
 .route-stop strong { display: block; margin-top: 4px; line-height: 1.35; }
 .waze-button { display: grid; place-items: center; min-height: 50px; border-radius: 16px; background: #1f74ff; color: #fff; font-weight: 900; text-decoration: none; box-shadow: 0 10px 24px #1f74ff24; }
 .route-problem-button { width: 100%; min-height: 52px; border: 0; border-radius: 16px; background: var(--danger); color: #fff; font-weight: 900; box-shadow: 0 10px 24px #a8433e24; }
+.route-planner { display: grid; gap: 10px; padding: 14px; border: 1px solid #b8d5b4; border-radius: 20px; background: #f8fbf5; box-shadow: 0 7px 20px #3141340a; }
+.route-planner-head { display: grid; grid-template-columns: .7fr 1.3fr; gap: 8px; }
+.route-planner-head > div,
+.route-planner-insights > div { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.route-planner-head span,
+.route-planner-insights span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.route-planner-head strong,
+.route-planner-insights strong { display: block; margin-top: 6px; font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
+.route-planner-head small,
+.route-planner-insights small,
+.route-planner-stop small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; }
+.route-planner-map { position: relative; height: 260px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, #eef5ec, #ddeade); }
+.route-planner-map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.route-planner-path-bg,
+.route-planner-path { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.route-planner-path-bg { stroke: #c7d5c5; stroke-width: 15; }
+.route-planner-path { stroke: var(--green-dark); stroke-width: 7; }
+.route-planner-pin { fill: #fff; stroke: var(--green-dark); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.route-planner-pin.done { fill: #dff1da; }
+.route-planner-pin.active { fill: var(--green-dark); stroke: #cfe88f; stroke-width: 2; }
+.route-planner-pin.risk { fill: #fff0ef; stroke: var(--danger); }
+.route-planner-map-labels span { position: absolute; transform: translate(8px, -50%); display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 900; }
+.route-planner-insights { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.route-planner-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.route-map-button { display: grid; place-items: center; min-height: 50px; border-radius: 16px; background: var(--ink); color: #fff; font-weight: 900; text-decoration: none; box-shadow: 0 10px 24px #17231c20; }
+.route-planner-stop-list { display: grid; gap: 8px; max-height: 460px; overflow: auto; padding-right: 2px; }
+.route-planner-stop { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.route-planner-stop.active { border-color: var(--green-dark); background: #eff8ed; box-shadow: 0 0 0 3px #6f9d3d1f; }
+.route-planner-stop.risk { border-color: #d46a62; background: #fff0ef; }
+.route-planner-stop-number { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 12px; background: #edf1eb; color: var(--muted); font-size: 13px; font-weight: 900; }
+.route-planner-stop.done .route-planner-stop-number,
+.route-planner-stop.active .route-planner-stop-number { background: var(--green-dark); color: #fff; }
+.route-planner-stop strong { display: block; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
+.route-planner-stop em { color: var(--green-dark); font-style: normal; font-size: 12px; font-weight: 900; text-align: right; white-space: nowrap; }
+.route-planner-stop.risk em { color: var(--danger); }
 .route-empty { display: flex; gap: 13px; align-items: center; padding: 22px; border: 1px dashed #c7d0c5; border-radius: 20px; background: var(--surface); }
 .route-empty.error-state { border-color: var(--danger); background: #fff0ef; }
 .route-empty-icon { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 14px; background: #edf1eb; color: var(--green-dark); font-size: 24px; font-weight: 900; }
@@ -471,6 +506,12 @@ textarea { min-height: 96px; resize: vertical; }
 }
 
 @media (max-width: 430px) {
+  .route-planner-head,
+  .route-planner-insights,
+  .route-planner-actions { grid-template-columns: 1fr; }
+  .route-planner-map { height: 220px; }
+  .route-planner-stop { grid-template-columns: 34px minmax(0, 1fr); }
+  .route-planner-stop em { grid-column: 2; text-align: left; }
   .game-summary { grid-template-columns: 1fr; }
   .word-list { grid-template-columns: 1fr; }
   .word-search-grid { gap: 3px; }

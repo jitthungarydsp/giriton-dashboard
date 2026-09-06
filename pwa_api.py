@@ -1582,6 +1582,14 @@ def hub_stop_position(stop: dict[str, Any], index: int) -> int:
 
 
 def checkpoint_from_hub_stop(stop: dict[str, Any], index: int) -> dict[str, Any]:
+    raw_state = str(stop.get("state") or stop.get("status") or "").strip().upper()
+    slot_miss_projected = bool(stop.get("slotMissProjected"))
+    delta_minutes = safe_int(
+        stop.get("deltaMinutes")
+        or stop.get("delayMinutes")
+        or stop.get("lateMinutes")
+    )
+    position = hub_stop_position(stop, index)
     return {
         "orderId": str(
             stop.get("orderId")
@@ -1590,7 +1598,15 @@ def checkpoint_from_hub_stop(stop: dict[str, Any], index: int) -> dict[str, Any]
             or stop.get("id")
             or ""
         ),
-        "position": hub_stop_position(stop, index),
+        "position": position,
+        "sequence": position,
+        "state": raw_state or "PENDING",
+        "stateLabel": {
+            "COMPLETED": "Teljesítve",
+            "CURRENT": "Aktuális",
+            "PENDING": "Hátra van",
+            "REJECTED": "Elutasítva",
+        }.get(raw_state, raw_state.title() if raw_state else "Hátra van"),
         "address": str(
             stop.get("address")
             or stop.get("fullAddress")
@@ -1600,11 +1616,13 @@ def checkpoint_from_hub_stop(stop: dict[str, Any], index: int) -> dict[str, Any]
         ),
         "windowFrom": local_iso_time(
             stop.get("deliverSince")
+            or stop.get("customerSlotFrom")
             or stop.get("windowFrom")
             or stop.get("timeWindowFrom")
         ),
         "windowTo": local_iso_time(
             stop.get("deliverTill")
+            or stop.get("customerSlotTo")
             or stop.get("windowTo")
             or stop.get("timeWindowTo")
         ),
@@ -1623,11 +1641,10 @@ def checkpoint_from_hub_stop(stop: dict[str, Any], index: int) -> dict[str, Any]
             or stop.get("actualArrivalAt")
             or stop.get("arrivedAt")
         ),
-        "delayMinutes": max(
-            0,
-            safe_int(stop.get("delayMinutes") or stop.get("lateMinutes")),
-        ),
-        "isLate": safe_int(stop.get("delayMinutes") or stop.get("lateMinutes")) > 0,
+        "deltaMinutes": delta_minutes,
+        "delayMinutes": max(0, delta_minutes),
+        "isLate": slot_miss_projected or delta_minutes > 0,
+        "slotMissProjected": slot_miss_projected,
     }
 
 
@@ -1675,6 +1692,60 @@ def hub_stop_triplet(route: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def hub_stop_list(route: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_stops = (
+        route.get("checkpoints")
+        or route.get("stopProgress")
+        or route.get("stops")
+        or []
+    )
+    stops = [item for item in raw_stops if isinstance(item, dict)]
+    stops = sorted(
+        enumerate(stops, start=1),
+        key=lambda item: hub_stop_position(item[1], item[0]),
+    )
+    return [
+        checkpoint_from_hub_stop(stop, index)
+        for index, (_raw_index, stop) in enumerate(stops, start=1)
+    ]
+
+
+def route_planner_status(stops: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(stops)
+    completed = len([
+        stop for stop in stops
+        if str(stop.get("state") or "").upper() == "COMPLETED"
+    ])
+    current = next(
+        (
+            stop for stop in stops
+            if str(stop.get("state") or "").upper() == "CURRENT"
+        ),
+        None,
+    )
+    if current is None and stops:
+        current = next(
+            (
+                stop for stop in stops
+                if str(stop.get("state") or "").upper() != "COMPLETED"
+            ),
+            stops[-1],
+        )
+    current_position = safe_int((current or {}).get("position"))
+    late_or_risky = len([
+        stop for stop in stops
+        if stop.get("isLate") or stop.get("slotMissProjected")
+    ])
+    return {
+        "completedStops": completed,
+        "totalStops": total,
+        "currentStop": current_position,
+        "remainingStops": max(total - completed, 0),
+        "lateOrRiskyStops": late_or_risky,
+        "label": f"{current_position or completed}/{total}" if total else "-",
+    }
+
+
 def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
     courier_id, courier_name = courier_identity(user)
     rows = optional_supabase_rows(
@@ -1718,6 +1789,8 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
         return None
 
     checkpoints = hub_stop_triplet(route)
+    stops = hub_stop_list(route)
+    planner_status = route_planner_status(stops)
     story = read_current_route_story(courier_id, route_id, fetched_at.date())
     vehicle_plate = str(
         route.get("vehiclePlate")
@@ -1772,6 +1845,8 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
         "previous": checkpoints.get("previous"),
         "current": checkpoints.get("current"),
         "next": checkpoints.get("next"),
+        "stops": stops,
+        "plannerStatus": planner_status,
         "vehicle": vehicle,
         "source": "courier_hub_live_monitoring",
         "updatedAt": row.get("fetched_at"),
