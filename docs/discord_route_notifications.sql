@@ -22,5 +22,11 @@ create index if not exists discord_route_notifications_notified_at_idx
 alter table public.discord_route_notifications
     add column if not exists warehouse text;
 
+alter table public.discord_route_notifications
+    add column if not exists licence_plate text;
+
+alter table public.discord_route_notifications
+    add column if not exists orders_in_route text;
+
 create index if not exists discord_route_notifications_warehouse_idx
     on public.discord_route_notifications (warehouse);

@@ -1047,35 +1047,20 @@ def notification_already_logged(courier_id, route_id, warehouse=""):
     if not supabase_url or not service_role_key:
         return False
 
+    # A route értesítés üzleti kulcsa a futár + route. A raktár csak leíró adat:
+    # ha régi log sorban üres vagy eltérő, akkor sem szabad újraküldeni.
     endpoint = (
         f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
         "?select=route_id"
         f"&courier_id=eq.{courier_id}"
         f"&route_id=eq.{route_id}"
+        "&limit=1"
     )
-    normalized_warehouse = normalize_warehouse(warehouse)
-    if normalized_warehouse:
-        endpoint += f"&warehouse=eq.{normalized_warehouse}"
-    endpoint += "&limit=1"
     response = requests.get(
         endpoint,
         headers=supabase_headers(service_role_key),
         timeout=20,
     )
-
-    if response.status_code == 400 and normalized_warehouse:
-        endpoint = (
-            f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
-            "?select=route_id"
-            f"&courier_id=eq.{courier_id}"
-            f"&route_id=eq.{route_id}"
-            "&limit=1"
-        )
-        response = requests.get(
-            endpoint,
-            headers=supabase_headers(service_role_key),
-            timeout=20,
-        )
 
     if response.status_code in [404, 406]:
         return False
@@ -1115,25 +1100,12 @@ def log_notification(
     if normalized_warehouse:
         payload["warehouse"] = normalized_warehouse
 
+    optional_columns = ("warehouse", "licence_plate", "orders_in_route")
     endpoint = (
         f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
         "?on_conflict=courier_id,route_id"
     )
-    response = requests.post(
-        endpoint,
-        headers=supabase_headers(
-            service_role_key,
-            "resolution=merge-duplicates,return=minimal",
-        ),
-        json=payload,
-        timeout=20,
-    )
-
-    if response.status_code in [404, 406]:
-        return
-
-    if response.status_code == 400 and "warehouse" in payload:
-        payload.pop("warehouse", None)
+    while True:
         response = requests.post(
             endpoint,
             headers=supabase_headers(
@@ -1143,8 +1115,21 @@ def log_notification(
             json=payload,
             timeout=20,
         )
+
         if response.status_code in [404, 406]:
             return
+
+        if response.status_code == 400:
+            removed = False
+            for column in optional_columns:
+                if column in payload:
+                    payload.pop(column, None)
+                    removed = True
+                    break
+            if removed:
+                continue
+
+        break
 
     raise_for_supabase_error(response)
 
@@ -1621,16 +1606,23 @@ def run_once(max_age_minutes, dry_run=False):
             )
 
             if result == "sent":
-                log_notification(
-                    courier_id,
-                    courier_name,
-                    route_id,
-                    route,
-                    checkpoint,
-                    licence_plate,
-                    orders_in_route,
-                    route_warehouse
-                )
+                try:
+                    log_notification(
+                        courier_id,
+                        courier_name,
+                        route_id,
+                        route,
+                        checkpoint,
+                        licence_plate,
+                        orders_in_route,
+                        route_warehouse
+                    )
+                except Exception as exc:
+                    counters["notification_log_error"] += 1
+                    print(
+                        f"Discord route log hiba: #{courier_id} route {route_id} | {exc}",
+                        flush=True,
+                    )
                 sent_count += 1
                 print(
                     f"Discord route jelzes elkuldve: "
