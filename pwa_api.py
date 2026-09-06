@@ -1549,7 +1549,12 @@ def hub_live_route_objects(value: Any) -> list[dict[str, Any]]:
         has_route_shape = "id" in keys and bool(
             {"checkpoints", "stopprogress", "planneddepartureat", "planneddeparture"} & keys
         )
+        has_hub_detail_stops = "stops" in keys and (
+            "courierid" in keys or "courier_id" in keys
+        )
         if hub_live_route_id(value) and (has_route_id or has_route_shape):
+            rows.append(value)
+        elif has_hub_detail_stops:
             rows.append(value)
         for child in value.values():
             rows.extend(hub_live_route_objects(child))
@@ -1746,6 +1751,155 @@ def route_planner_status(stops: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def parse_google_duration_seconds(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)s", text)
+    if match:
+        return int(round(float(match.group(1))))
+    try:
+        return int(round(float(text)))
+    except ValueError:
+        return None
+
+
+def route_planner_next_leg(stops: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    current = next(
+        (
+            stop for stop in stops
+            if str(stop.get("state") or "").upper() == "CURRENT"
+        ),
+        None,
+    )
+    if current is None and stops:
+        current = next(
+            (
+                stop for stop in stops
+                if str(stop.get("state") or "").upper() != "COMPLETED"
+            ),
+            stops[-1],
+        )
+    if not current:
+        return None, None
+    current_position = safe_int(current.get("position"))
+    next_stop = next(
+        (
+            stop for stop in stops
+            if safe_int(stop.get("position")) > current_position
+            and str(stop.get("state") or "").upper() != "COMPLETED"
+        ),
+        None,
+    )
+    return current, next_stop
+
+
+def google_routes_api_key() -> str:
+    return str(
+        os.getenv("GOOGLE_ROUTES_API_KEY")
+        or os.getenv("GOOGLE_MAPS_API_KEY")
+        or ""
+    ).strip()
+
+
+def route_planner_traffic(current_stop: dict[str, Any] | None, next_stop: dict[str, Any] | None) -> dict[str, Any]:
+    origin = str((current_stop or {}).get("address") or "").strip()
+    destination = str((next_stop or {}).get("address") or "").strip()
+    if not origin or not destination:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "message": "Nincs elég címadat a forgalmi becsléshez.",
+        }
+
+    api_key = google_routes_api_key()
+    if not api_key:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "origin": origin,
+            "destination": destination,
+            "message": "Nincs GOOGLE_ROUTES_API_KEY vagy GOOGLE_MAPS_API_KEY beállítva.",
+        }
+
+    request_body = {
+        "origin": {"address": origin},
+        "destination": {"address": destination},
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "languageCode": "hu-HU",
+        "units": "METRIC",
+    }
+    try:
+        response = requests.post(
+            "https://routes.googleapis.com/directions/v2:computeRoutes",
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
+            },
+            json=request_body,
+            timeout=8,
+        )
+        if response.status_code >= 400:
+            return {
+                "available": False,
+                "provider": "google_routes",
+                "origin": origin,
+                "destination": destination,
+                "message": f"Google Routes hiba: HTTP {response.status_code}",
+            }
+        payload = response.json()
+    except Exception as exc:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "origin": origin,
+            "destination": destination,
+            "message": f"Forgalmi adat nem érhető el: {exc}",
+        }
+
+    route = (payload.get("routes") or [{}])[0]
+    duration_seconds = parse_google_duration_seconds(route.get("duration"))
+    static_seconds = parse_google_duration_seconds(route.get("staticDuration"))
+    if duration_seconds is None:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "origin": origin,
+            "destination": destination,
+            "message": "A Google Routes válaszban nincs menetidő.",
+        }
+    traffic_delta_seconds = (
+        duration_seconds - static_seconds
+        if static_seconds is not None
+        else None
+    )
+    return {
+        "available": True,
+        "provider": "google_routes",
+        "origin": origin,
+        "destination": destination,
+        "durationMinutes": max(0, round(duration_seconds / 60)),
+        "staticDurationMinutes": (
+            max(0, round(static_seconds / 60))
+            if static_seconds is not None
+            else None
+        ),
+        "trafficDeltaMinutes": (
+            round(traffic_delta_seconds / 60)
+            if traffic_delta_seconds is not None
+            else None
+        ),
+        "distanceKm": (
+            round(float(route.get("distanceMeters") or 0) / 1000, 1)
+            if route.get("distanceMeters") is not None
+            else None
+        ),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
     courier_id, courier_name = courier_identity(user)
     rows = optional_supabase_rows(
@@ -1791,6 +1945,8 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
     checkpoints = hub_stop_triplet(route)
     stops = hub_stop_list(route)
     planner_status = route_planner_status(stops)
+    current_stop, next_stop = route_planner_next_leg(stops)
+    traffic = route_planner_traffic(current_stop, next_stop)
     story = read_current_route_story(courier_id, route_id, fetched_at.date())
     vehicle_plate = str(
         route.get("vehiclePlate")
@@ -1847,6 +2003,7 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
         "next": checkpoints.get("next"),
         "stops": stops,
         "plannerStatus": planner_status,
+        "traffic": traffic,
         "vehicle": vehicle,
         "source": "courier_hub_live_monitoring",
         "updatedAt": row.get("fetched_at"),

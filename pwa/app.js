@@ -40,7 +40,7 @@ const state = {
   section: "home",
   routeAutoDelayKeys: new Set(),
 };
-const APP_VERSION = "v97";
+const APP_VERSION = "v98";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -1671,6 +1671,28 @@ function nextBreakText(current, next) {
   return `${formatCount(minutes)} perc pihenhető`;
 }
 
+function trafficSummaryText(traffic) {
+  if (!traffic?.available) return "Nincs élő adat";
+  const duration = Number(traffic.durationMinutes);
+  if (!Number.isFinite(duration)) return "Nincs élő adat";
+  const delta = Number(traffic.trafficDeltaMinutes);
+  if (!Number.isFinite(delta) || delta === 0) return `${formatCount(duration)} perc`;
+  const sign = delta > 0 ? "+" : "-";
+  return `${formatCount(duration)} perc (${sign}${formatCount(Math.abs(delta))} p)`;
+}
+
+function trafficDetailText(traffic) {
+  if (!traffic?.available) return traffic?.message || "Google/Waze API bekötés után számolható";
+  const parts = [];
+  if (traffic.staticDurationMinutes !== null && traffic.staticDurationMinutes !== undefined) {
+    parts.push(`alap ${formatCount(traffic.staticDurationMinutes)} p`);
+  }
+  if (traffic.distanceKm !== null && traffic.distanceKm !== undefined) {
+    parts.push(`${formatAverage(traffic.distanceKm)} km`);
+  }
+  return parts.join(" · ") || "Google Routes élő adat";
+}
+
 function renderRoutePlannerMap(stops) {
   const visibleStops = (stops || []).slice(0, 9);
   if (!visibleStops.length) return "";
@@ -1721,7 +1743,7 @@ function renderRoutePlanner(route) {
       </div>
       ${renderRoutePlannerMap(stops)}
       <div class="route-planner-insights">
-        <div><span>Forgalmi eltérés</span><strong>Nincs élő adat</strong><small>Google/Waze API bekötés után számolható</small></div>
+        <div><span>Forgalmi eltérés</span><strong>${escapeHtml(trafficSummaryText(route.traffic))}</strong><small>${escapeHtml(trafficDetailText(route.traffic))}</small></div>
         <div><span>Pihenő / várakozás</span><strong>${escapeHtml(nextBreakText(current, next))}</strong><small>Következő ügyfélablak alapján</small></div>
         <div><span>Időablak állapot</span><strong>${status.lateOrRiskyStops ? `${formatCount(status.lateOrRiskyStops)} figyelendő` : "Rendben"}</strong><small>Hub stop adatok alapján</small></div>
       </div>
@@ -3188,7 +3210,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=96");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=98");
   }
   return navigator.serviceWorker.ready;
 }
