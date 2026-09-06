@@ -294,8 +294,8 @@ def find_live_monitoring_rows(value):
 
 def live_route_id(row):
     return normalize_id(
-        row.get("routeExternalId")
-        or row.get("cargoRouteId")
+        row.get("cargoRouteId")
+        or row.get("routeExternalId")
         or row.get("routeId")
         or row.get("id")
     )

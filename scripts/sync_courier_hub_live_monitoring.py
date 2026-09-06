@@ -40,8 +40,8 @@ def normalize_id(value: Any) -> str:
 
 def live_route_id(row: dict[str, Any]) -> str:
     return normalize_id(
-        row.get("routeExternalId")
-        or row.get("cargoRouteId")
+        row.get("cargoRouteId")
+        or row.get("routeExternalId")
         or row.get("routeId")
         or row.get("route_id")
         or row.get("id")

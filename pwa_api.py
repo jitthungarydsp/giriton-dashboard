@@ -1532,8 +1532,8 @@ def hub_live_route_id(value: dict[str, Any] | None) -> str:
     if not isinstance(value, dict):
         return ""
     return str(
-        value.get("routeExternalId")
-        or value.get("cargoRouteId")
+        value.get("cargoRouteId")
+        or value.get("routeExternalId")
         or value.get("routeId")
         or value.get("route_id")
         or value.get("id")

@@ -28,5 +28,25 @@ alter table public.discord_route_notifications
 alter table public.discord_route_notifications
     add column if not exists orders_in_route text;
 
+delete from public.discord_route_notifications duplicate_row
+using public.discord_route_notifications kept_row
+where duplicate_row.courier_id = kept_row.courier_id
+  and duplicate_row.route_id = kept_row.route_id
+  and duplicate_row.id > kept_row.id;
+
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'discord_route_notifications_courier_route_unique'
+          and conrelid = 'public.discord_route_notifications'::regclass
+    ) then
+        alter table public.discord_route_notifications
+            add constraint discord_route_notifications_courier_route_unique
+            unique (courier_id, route_id);
+    end if;
+end $$;
+
 create index if not exists discord_route_notifications_warehouse_idx
     on public.discord_route_notifications (warehouse);

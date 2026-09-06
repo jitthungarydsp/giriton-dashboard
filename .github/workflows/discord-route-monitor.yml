@@ -90,7 +90,7 @@ jobs:
       - name: Run Discord route monitor
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            LOOP_MINUTES="14"
+            LOOP_MINUTES="0"
             POLL_SECONDS="120"
           else
             LOOP_MINUTES="${{ inputs.loop_minutes }}"

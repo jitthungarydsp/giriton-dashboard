@@ -248,7 +248,9 @@ def notify_route_assigned_once(
     ):
         return "filtered"
 
-    notification_key = f"{normalized_warehouse}:{courier_id}:{route_id}"
+    # A route notification is unique by courier + route. Warehouse is only
+    # descriptive and can arrive in different formats between polls.
+    notification_key = f"{normalized_courier_id}:{_normalize_id(route_id)}"
     sent_notifications = _sent_route_notifications()
 
     if notification_key in sent_notifications:
