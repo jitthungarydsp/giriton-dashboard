@@ -1169,6 +1169,106 @@ def notification_already_logged(courier_id, route_id, warehouse=""):
     return bool(response.json())
 
 
+def build_notification_payload(
+    courier_id,
+    courier_name,
+    route_id,
+    route,
+    checkpoint,
+    licence_plate,
+    orders_in_route,
+    warehouse="",
+):
+    payload = {
+        "courier_id": str(courier_id),
+        "courier_name": str(courier_name or ""),
+        "route_id": str(route_id),
+        "order_id": str(checkpoint.get("orderId") or ""),
+        "assigned_at": route.get("assignedAt"),
+        "planned_departure": route.get("plannedDeparture"),
+        "planned_return": route.get("plannedReturn"),
+        "licence_plate": str(licence_plate),
+        "orders_in_route": str(orders_in_route),
+    }
+    normalized_warehouse = normalize_warehouse(warehouse)
+    if normalized_warehouse:
+        payload["warehouse"] = normalized_warehouse
+    return payload
+
+
+def reserve_notification_if_new(
+    courier_id,
+    courier_name,
+    route_id,
+    route,
+    checkpoint,
+    licence_plate,
+    orders_in_route,
+    warehouse="",
+):
+    supabase_url, service_role_key = get_supabase_config()
+
+    if not supabase_url or not service_role_key:
+        return "reserved"
+
+    payload = build_notification_payload(
+        courier_id,
+        courier_name,
+        route_id,
+        route,
+        checkpoint,
+        licence_plate,
+        orders_in_route,
+        warehouse,
+    )
+
+    optional_columns = ("warehouse", "licence_plate", "orders_in_route")
+    endpoint = (
+        f"{supabase_url}/rest/v1/{NOTIFICATION_TABLE}"
+        "?on_conflict=courier_id,route_id"
+    )
+    while True:
+        response = requests.post(
+            endpoint,
+            headers=supabase_headers(
+                service_role_key,
+                "resolution=ignore-duplicates,return=representation",
+            ),
+            json=payload,
+            timeout=20,
+        )
+
+        if response.status_code in [404, 406]:
+            return "reserved"
+
+        if response.status_code == 400:
+            response_text = response.text or ""
+            if (
+                "no unique" in response_text.lower()
+                or "42P10" in response_text
+                or "ON CONFLICT" in response_text
+            ):
+                raise RuntimeError(
+                    "A discord_route_notifications táblán még nincs aktív "
+                    "unique(courier_id, route_id) védelem. Futtasd le: "
+                    "docs/discord_route_notifications.sql"
+                )
+            removed = False
+            for column in optional_columns:
+                if column in payload:
+                    payload.pop(column, None)
+                    removed = True
+                    break
+            if removed:
+                continue
+
+        break
+
+    raise_for_supabase_error(response)
+    rows = response.json() if response.content else []
+    return "reserved" if rows else "already_logged"
+
+
 def log_notification(
     courier_id,
     courier_name,
@@ -1184,20 +1284,16 @@ def log_notification(
     if not supabase_url or not service_role_key:
         return
 
-    payload = {
-        "courier_id": str(courier_id),
-        "courier_name": str(courier_name or ""),
-        "route_id": str(route_id),
-        "order_id": str(checkpoint.get("orderId") or ""),
-        "assigned_at": route.get("assignedAt"),
-        "planned_departure": route.get("plannedDeparture"),
-        "planned_return": route.get("plannedReturn"),
-        "licence_plate": str(licence_plate),
-        "orders_in_route": str(orders_in_route),
-    }
-    normalized_warehouse = normalize_warehouse(warehouse)
-    if normalized_warehouse:
-        payload["warehouse"] = normalized_warehouse
+    payload = build_notification_payload(
+        courier_id,
+        courier_name,
+        route_id,
+        route,
+        checkpoint,
+        licence_plate,
+        orders_in_route,
+        warehouse,
+    )
 
     optional_columns = ("warehouse", "licence_plate", "orders_in_route")
     endpoint = (
@@ -1694,6 +1790,40 @@ def run_once(max_age_minutes, dry_run=False):
                 f"#{courier_id} route {route_id} (already_logged)"
             )
         else:
+            try:
+                reservation_result = reserve_notification_if_new(
+                    courier_id,
+                    courier_name,
+                    route_id,
+                    route,
+                    checkpoint,
+                    licence_plate,
+                    orders_in_route,
+                    route_warehouse,
+                )
+            except Exception as exc:
+                counters["notification_reserve_error"] += 1
+                skipped_count += 1
+                print(
+                    f"Discord route foglalas hiba: #{courier_id} route {route_id} | {exc}",
+                    flush=True,
+                )
+                continue
+
+            if reservation_result == "already_logged":
+                counters["already_logged"] += 1
+                skipped_count += 1
+                print(
+                    f"Discord route jelzes kihagyva: "
+                    f"#{courier_id} route {route_id} (already_reserved)"
+                )
+                continue
+
+            print(
+                f"Discord route foglalva: "
+                f"#{courier_id} route {route_id} warehouse={route_warehouse or '-'}",
+                flush=True,
+            )
             result = notify_route_assigned_once(
                 courier_id,
                 courier_name,
@@ -1716,23 +1846,6 @@ def run_once(max_age_minutes, dry_run=False):
             )
 
             if result == "sent":
-                try:
-                    log_notification(
-                        courier_id,
-                        courier_name,
-                        route_id,
-                        route,
-                        checkpoint,
-                        licence_plate,
-                        orders_in_route,
-                        route_warehouse
-                    )
-                except Exception as exc:
-                    counters["notification_log_error"] += 1
-                    print(
-                        f"Discord route log hiba: #{courier_id} route {route_id} | {exc}",
-                        flush=True,
-                    )
                 sent_count += 1
                 print(
                     f"Discord route jelzes elkuldve: "
