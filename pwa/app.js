@@ -39,8 +39,10 @@ const state = {
   routeDetailsSelectedIndex: 0,
   section: "home",
   routeAutoDelayKeys: new Set(),
+  routePlannerSelectedStopIndex: null,
+  routePlannerRouteKey: "",
 };
-const APP_VERSION = "v98";
+const APP_VERSION = "v99";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -1636,6 +1638,22 @@ function googleMapsUrl(address) {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(value)}&travelmode=driving`;
 }
 
+function googleMapsRouteUrl(stops) {
+  const addresses = (stops || []).map((stop) => String(stop.address || "").trim()).filter(Boolean);
+  if (!addresses.length) return "";
+  const origin = addresses[0];
+  const destination = addresses[addresses.length - 1] || origin;
+  const waypoints = addresses.slice(1, -1).slice(0, 23);
+  const params = new URLSearchParams({
+    api: "1",
+    origin,
+    destination,
+    travelmode: "driving",
+  });
+  if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 function stopStateClass(stop) {
   const stateValue = String(stop?.state || "").toLowerCase();
   if (stateValue === "completed") return "done";
@@ -1693,15 +1711,31 @@ function trafficDetailText(traffic) {
   return parts.join(" · ") || "Google Routes élő adat";
 }
 
-function renderRoutePlannerMap(stops) {
-  const visibleStops = (stops || []).slice(0, 9);
+function routePlannerDefaultStopIndex(stops) {
+  const index = (stops || []).findIndex((stop) => String(stop.state || "").toUpperCase() === "CURRENT");
+  if (index >= 0) return index;
+  const pendingIndex = (stops || []).findIndex((stop) => String(stop.state || "").toUpperCase() !== "COMPLETED");
+  return pendingIndex >= 0 ? pendingIndex : 0;
+}
+
+function selectedRoutePlannerStop(stops) {
+  if (!Array.isArray(stops) || !stops.length) return null;
+  const selected = Number(state.routePlannerSelectedStopIndex);
+  if (Number.isInteger(selected) && selected >= 0 && selected < stops.length) return stops[selected];
+  return stops[routePlannerDefaultStopIndex(stops)];
+}
+
+function renderRoutePlannerMap(stops, selectedStop) {
+  const visibleStops = stops || [];
   if (!visibleStops.length) return "";
   const points = visibleStops.map((stop, index) => {
-    const x = 12 + ((index * 31) % 76);
-    const y = 82 - index * (58 / Math.max(visibleStops.length - 1, 1)) + (index % 2 ? -7 : 6);
+    const progress = index / Math.max(visibleStops.length - 1, 1);
+    const x = 10 + progress * 80 + (index % 2 ? 5 : -4);
+    const y = 82 - progress * 66 + (index % 3 === 1 ? -8 : index % 3 === 2 ? 5 : 0);
     return { stop, x, y };
   });
   const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
+  const selectedPosition = String(selectedStop?.position || "");
   return `
     <div class="route-planner-map" aria-label="Túra térkép nézet">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -1712,8 +1746,8 @@ function renderRoutePlannerMap(stops) {
         `).join("")}
       </svg>
       <div class="route-planner-map-labels">
-        ${points.slice(0, 5).map((point) => `
-          <span style="left:${point.x}%;top:${point.y}%;">${escapeHtml(point.stop.position || "-")}</span>
+        ${points.map((point, index) => `
+          <button class="${String(point.stop.position || "") === selectedPosition ? "selected" : ""}" type="button" data-route-stop-index="${index}" style="left:${point.x}%;top:${point.y}%;">${escapeHtml(point.stop.position || "-")}</button>
         `).join("")}
       </div>
     </div>
@@ -1723,10 +1757,17 @@ function renderRoutePlannerMap(stops) {
 function renderRoutePlanner(route) {
   const stops = Array.isArray(route?.stops) ? route.stops : [];
   if (!stops.length) return "";
+  const routeKey = [route?.routeId, route?.courierId, route?.warehouse].filter(Boolean).join(":");
+  if (routeKey && state.routePlannerRouteKey !== routeKey) {
+    state.routePlannerRouteKey = routeKey;
+    state.routePlannerSelectedStopIndex = null;
+  }
   const status = route.plannerStatus || {};
   const current = route.current || stops.find((stop) => String(stop.state || "").toUpperCase() === "CURRENT") || stops.find((stop) => String(stop.state || "").toUpperCase() !== "COMPLETED") || stops[0];
   const next = route.next || stops.find((stop) => Number(stop.position) > Number(current?.position || 0) && String(stop.state || "").toUpperCase() !== "COMPLETED");
-  const nextAddress = next?.address || current?.address || "";
+  const selectedStop = selectedRoutePlannerStop(stops) || current;
+  const nextAddress = selectedStop?.address || next?.address || current?.address || "";
+  const fullRouteUrl = googleMapsRouteUrl(stops);
   return `
     <section class="route-planner">
       <div class="route-planner-head">
@@ -1741,7 +1782,13 @@ function renderRoutePlanner(route) {
           <small>${escapeHtml(stopTimingLabel(current))}</small>
         </div>
       </div>
-      ${renderRoutePlannerMap(stops)}
+      ${renderRoutePlannerMap(stops, selectedStop)}
+      <div class="route-planner-selected">
+        <span>Kiválasztott megálló</span>
+        <strong>#${escapeHtml(selectedStop?.position || "-")} · ${escapeHtml(selectedStop?.address || "Cím nincs megadva")}</strong>
+        <small>${escapeHtml(stopTimingLabel(selectedStop))}</small>
+        <small>Állapot: ${escapeHtml(selectedStop?.stateLabel || "-")} · ${escapeHtml(stopDeltaText(selectedStop))}</small>
+      </div>
       <div class="route-planner-insights">
         <div><span>Forgalmi eltérés</span><strong>${escapeHtml(trafficSummaryText(route.traffic))}</strong><small>${escapeHtml(trafficDetailText(route.traffic))}</small></div>
         <div><span>Pihenő / várakozás</span><strong>${escapeHtml(nextBreakText(current, next))}</strong><small>Következő ügyfélablak alapján</small></div>
@@ -1750,21 +1797,31 @@ function renderRoutePlanner(route) {
       <div class="route-planner-actions">
         ${nextAddress ? `<a class="waze-button" href="${wazeUrl(nextAddress)}" target="_blank" rel="noopener">Waze</a>` : ""}
         ${nextAddress ? `<a class="route-map-button" href="${googleMapsUrl(nextAddress)}" target="_blank" rel="noopener">Google térkép</a>` : ""}
+        ${fullRouteUrl ? `<a class="route-map-button route-map-button-wide" href="${fullRouteUrl}" target="_blank" rel="noopener">Teljes túra térképen</a>` : ""}
       </div>
       <div class="route-planner-stop-list">
-        ${stops.map((stop) => `
-          <article class="route-planner-stop ${stopStateClass(stop)}">
+        ${stops.map((stop, index) => `
+          <button class="route-planner-stop ${stopStateClass(stop)} ${String(stop.position || "") === String(selectedStop?.position || "") ? "selected" : ""}" type="button" data-route-stop-index="${index}">
             <span class="route-planner-stop-number">${escapeHtml(stop.position || "-")}</span>
             <div>
               <strong>${escapeHtml(stop.address || "Cím nincs megadva")}</strong>
               <small>${escapeHtml(stopTimingLabel(stop))}</small>
             </div>
             <em>${escapeHtml(stopDeltaText(stop))}</em>
-          </article>
+          </button>
         `).join("")}
       </div>
     </section>
   `;
+}
+
+function bindRoutePlannerInteractions() {
+  document.querySelectorAll("[data-route-stop-index]").forEach((element) => {
+    element.addEventListener("click", () => {
+      state.routePlannerSelectedStopIndex = Number(element.dataset.routeStopIndex);
+      renderCurrentRoute();
+    });
+  });
 }
 
 function vehicleLabel(vehicle) {
@@ -1892,6 +1949,7 @@ function renderCurrentRoute() {
     "click",
     openDelayAlertDialog
   );
+  bindRoutePlannerInteractions();
   logRouteAutoDelay(route);
 }
 
@@ -3210,7 +3268,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=98");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=99");
   }
   return navigator.serviceWorker.ready;
 }
