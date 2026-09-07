@@ -766,6 +766,108 @@ def comparison_shift_status(row: dict[str, Any]) -> tuple[str, str]:
     return "review", "Eltérés – ellenőrzés szükséges"
 
 
+def courier_hub_shift_status_label(status: Any) -> tuple[str, str]:
+    value = normalize_text(status).replace(" ", "_")
+    if value in {"cancelled", "canceled", "deleted"}:
+        return "review", "Törölt műszak"
+    if value in {"completed", "finished", "done"}:
+        return "confirmed", "Teljesített műszak"
+    if value in {"available", "checked_in", "started", "in_progress", "active"}:
+        return "confirmed", "Aktív Courier Hub műszak"
+    if value in {"planned", "assigned", "accepted", "confirmed", ""}:
+        return "confirmed", "Courier Hub műszak"
+    return "confirmed", str(status or "Courier Hub műszak")
+
+
+def shift_time_from_overview(work_date: str, value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        return local_iso_time(text)
+    return normalize_time(text)
+
+
+def read_courier_hub_shift_overview_shifts(
+    user: dict[str, Any],
+    start: date,
+    end: date,
+) -> list[dict[str, Any]]:
+    courier_id = user_courier_id(user)
+    if not courier_id:
+        return []
+    rows = optional_supabase_rows(
+        "courier_shift_overview",
+        params={
+            "select": (
+                "work_date,warehouse_id,shift_id,shift_name,shift_start,shift_end,"
+                "planned_start_at,planned_end_at,status,raw_shift"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "and": f"(work_date.gte.{start.isoformat()},work_date.lte.{end.isoformat()})",
+            "order": "work_date.asc,shift_start.asc",
+            "limit": "500",
+        },
+        timeout=60,
+    )
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        if not work_date:
+            continue
+        raw_shift = row.get("raw_shift") if isinstance(row.get("raw_shift"), dict) else {}
+        start_value = (
+            row.get("planned_start_at")
+            or row.get("shift_start")
+            or raw_shift.get("plannedStartAt")
+            or raw_shift.get("shiftStart")
+            or raw_shift.get("start")
+        )
+        end_value = (
+            row.get("planned_end_at")
+            or row.get("shift_end")
+            or raw_shift.get("plannedEndAt")
+            or raw_shift.get("shiftEnd")
+            or raw_shift.get("end")
+        )
+        start_time = shift_time_from_overview(work_date, start_value)
+        if not start_time:
+            continue
+        end_time = shift_time_from_overview(work_date, end_value)
+        shift_id = str(row.get("shift_id") or raw_shift.get("shiftId") or raw_shift.get("id") or "")
+        key = (work_date, start_time, shift_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        status, status_label = courier_hub_shift_status_label(
+            row.get("status") or raw_shift.get("status") or raw_shift.get("state")
+        )
+        warehouse_id = str(row.get("warehouse_id") or raw_shift.get("warehouseId") or "").strip()
+        warehouse = raw_shift.get("warehouseCode") or raw_shift.get("warehouseName") or ""
+        if not warehouse and warehouse_id:
+            warehouse = f"BUD{warehouse_id}" if warehouse_id in {"1", "2"} else warehouse_id
+        items.append(
+            {
+                "date": work_date,
+                "start": start_time,
+                "end": end_time,
+                "warehouse": str(warehouse or ""),
+                "bookingCode": shift_id,
+                "status": status,
+                "statusLabel": status_label,
+                "giriton": True,
+                "attendance": True,
+                "muszakpro": False,
+                "missingSource": "",
+                "attendanceShiftName": str(row.get("shift_name") or raw_shift.get("shiftName") or raw_shift.get("name") or ""),
+                "muszakproShiftText": "",
+                "source": "courier_shift_overview",
+            }
+        )
+    return sorted(items, key=lambda item: (item["date"], item["start"], item["warehouse"]))
+
+
 def read_attendance_muszakpro_shifts(
     user: dict[str, Any],
     start: date,
@@ -1018,16 +1120,35 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     live_vehicle = read_live_vehicle_for_user(user)
 
     try:
+        hub_items = read_courier_hub_shift_overview_shifts(user, start, end)
+        if hub_items:
+            return {
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+                "days": days,
+                "items": attach_vehicle_assignments(hub_items, vehicle_rows, live_vehicle),
+                "warnings": [],
+                "source": "courier_shift_overview",
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            }
+        source_errors.append("Courier Hub műszakadat még nincs ehhez az időszakhoz.")
+    except Exception as exc:
+        print("Courier Hub shift overview error:", exc)
+        source_errors.append("A Courier Hub műszaknézet jelenleg nem érhető el.")
+
+    try:
         comparison_items = read_attendance_muszakpro_shifts(user, start, end, days)
-        return {
-            "from": start.isoformat(),
-            "to": end.isoformat(),
-            "days": days,
-            "items": attach_vehicle_assignments(comparison_items, vehicle_rows, live_vehicle),
-            "warnings": [],
-            "source": "attendance_muszakpro_comparison",
-            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        }
+        if comparison_items:
+            return {
+                "from": start.isoformat(),
+                "to": end.isoformat(),
+                "days": days,
+                "items": attach_vehicle_assignments(comparison_items, vehicle_rows, live_vehicle),
+                "warnings": [],
+                "source": "attendance_muszakpro_comparison",
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            }
+        source_errors.append("Az Attendance/MűszakPro műszaknézetben nincs megjeleníthető sor.")
     except Exception as exc:
         print("Attendance MuszakPro comparison shifts error:", exc)
         source_errors.append("Az új Attendance/MűszakPro műszaknézet jelenleg nem érhető el, régi forrásból próbálom.")

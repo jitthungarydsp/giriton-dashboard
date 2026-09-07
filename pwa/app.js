@@ -42,7 +42,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v99";
+const APP_VERSION = "v100";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -2287,17 +2287,18 @@ function shiftCard(item, index = 0) {
   const queueButton = `<button class="shift-queue-button" type="button" data-shift-index="${index}" data-shift-event="queued"${actionDisabled}>Sorba álltam</button>`;
   const returnButton = `<button class="shift-return-button" type="button" data-shift-index="${index}" data-shift-event="returned"${actionDisabled}>Visszaérkeztem</button>`;
   const vehicleText = vehicleLabel(item.vehicle);
+  const isCourierHubSource = item.source === "courier_shift_overview";
   const hasMuszakpro = Boolean(item.muszakpro);
   const hasKiflis = Boolean(item.attendance || item.giriton);
   const sourceChip = (label, ok) => `<span class="source ${ok ? "ok" : "missing"}">${escapeHtml(label)} ${ok ? "✓" : "!"}</span>`;
-  return `<article class="shift-card ${!hasMuszakpro || !hasKiflis ? "has-missing-source" : ""}">
+  return `<article class="shift-card ${!isCourierHubSource && (!hasMuszakpro || !hasKiflis) ? "has-missing-source" : ""}">
     <div class="shift-top">
       <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
       <span class="shift-state ${escapeHtml(item.status)}">${escapeHtml(item.statusLabel)}</span>
     </div>
     <div class="source-row">
-      ${sourceChip("MűszakPro", hasMuszakpro)}
-      ${sourceChip("Kiflis", hasKiflis)}
+      ${isCourierHubSource ? sourceChip("Courier Hub", true) : sourceChip("MűszakPro", hasMuszakpro)}
+      ${isCourierHubSource ? "" : sourceChip("Kiflis", hasKiflis)}
       ${item.bookingCode ? `<span class="source">${escapeHtml(item.bookingCode)}</span>` : ""}
       ${vehicleText ? `<span class="source ok">Autó ${escapeHtml(vehicleText)}</span>` : ""}
     </div>
@@ -3268,7 +3269,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=99");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=100");
   }
   return navigator.serviceWorker.ready;
 }
