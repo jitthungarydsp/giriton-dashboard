@@ -184,6 +184,7 @@ jobs:
               --days "$SHIFT_AUTO_DAYS" \
               --source uidl \
               --fast-uidl \
+              --continue-on-day-error \
               --uidl-dir results/three-day-shift-auto-booking/giriton-after-exact/uidl-trace \
               --csv results/three-day-shift-auto-booking/giriton-after-exact/giriton-live-shifts.csv \
               --write-raw-export
@@ -240,6 +241,7 @@ jobs:
               --days "$SHIFT_AUTO_DAYS" \
               --source uidl \
               --fast-uidl \
+              --continue-on-day-error \
               --uidl-dir results/three-day-shift-auto-booking/giriton-after-alternative/uidl-trace \
               --csv results/three-day-shift-auto-booking/giriton-after-alternative/giriton-live-shifts.csv \
               --write-raw-export

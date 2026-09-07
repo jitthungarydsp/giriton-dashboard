@@ -705,6 +705,7 @@ def main() -> None:
     parser.add_argument("--csv", default="")
     parser.add_argument("--uidl-dir", default="", help="UIDL request/response események mentése könyvtárba.")
     parser.add_argument("--write-raw-export", action="store_true", help="A lekért UIDL/DOM műszakokat írja a megszokott Giriton raw export célba.")
+    parser.add_argument("--continue-on-day-error", action="store_true", help="Többnapos lekérésnél egy hibás nap ne állítsa meg a teljes futást.")
     parser.add_argument("--headed", action="store_true", help="Látható Chrome ablakban fusson.")
     parser.add_argument("--chromedriver", default="", help="Opcionális konkrét chromedriver útvonal.")
     parser.add_argument("--timeout", type=int, default=30)
@@ -737,90 +738,99 @@ def main() -> None:
         collect_uidl_events(driver)
         for offset in range(days_to_collect):
             work_date = start_date + timedelta(days=offset)
-            if args.fast_uidl and offset > 0 and fast_templates:
-                try:
-                    uidl_events, fast_sync_id, fast_client_id = post_uidl_sequence(
-                        templates=fast_templates,
-                        work_date=work_date,
-                        cookie=fast_cookie,
-                        base_sync_id=fast_sync_id,
-                        base_client_id=fast_client_id,
-                        timeout=args.timeout,
-                    )
-                    write_uidl_events(uidl_events, args.uidl_dir, work_date)
-                    payloads = response_payloads_from_events(uidl_events)
-                    day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
-                    for row in day_rows:
-                        row["source"] = "uidl-direct"
-                    print(
-                        f"GIRITON_UIDL_DIRECT_DAY date={work_date.isoformat()} events={len(uidl_events)} payloads={len(payloads)} rows={len(day_rows)}",
-                        file=sys.stderr,
-                    )
-                    if not day_rows:
-                        raise RuntimeError("A direkt UIDL kérés nem adott műszakkártyákat.")
-                except Exception as error:
-                    print(
-                        f"GIRITON_UIDL_DIRECT_FALLBACK_UI date={work_date.isoformat()} error={error}",
-                        file=sys.stderr,
-                    )
-                    fast_templates = []
+            try:
+                if args.fast_uidl and offset > 0 and fast_templates:
+                    try:
+                        uidl_events, fast_sync_id, fast_client_id = post_uidl_sequence(
+                            templates=fast_templates,
+                            work_date=work_date,
+                            cookie=fast_cookie,
+                            base_sync_id=fast_sync_id,
+                            base_client_id=fast_client_id,
+                            timeout=args.timeout,
+                        )
+                        write_uidl_events(uidl_events, args.uidl_dir, work_date)
+                        payloads = response_payloads_from_events(uidl_events)
+                        day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
+                        for row in day_rows:
+                            row["source"] = "uidl-direct"
+                        print(
+                            f"GIRITON_UIDL_DIRECT_DAY date={work_date.isoformat()} events={len(uidl_events)} payloads={len(payloads)} rows={len(day_rows)}",
+                            file=sys.stderr,
+                        )
+                        if not day_rows:
+                            raise RuntimeError("A direkt UIDL kérés nem adott műszakkártyákat.")
+                    except Exception as error:
+                        print(
+                            f"GIRITON_UIDL_DIRECT_FALLBACK_UI date={work_date.isoformat()} error={error}",
+                            file=sys.stderr,
+                        )
+                        fast_templates = []
+                        set_giriton_date(driver, work_date)
+                        wait_until_loaded(driver, args.timeout)
+                        scroll_all_shifts(driver)
+                        uidl_events = collect_uidl_events(driver)
+                        write_uidl_events(uidl_events, args.uidl_dir, work_date)
+                        payloads = response_payloads_from_events(uidl_events)
+                        day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
+                        if not day_rows:
+                            day_rows = extract_shift_cards(driver, work_date)
+                            for row in day_rows:
+                                row["source"] = "dom-fallback"
+                else:
                     set_giriton_date(driver, work_date)
                     wait_until_loaded(driver, args.timeout)
                     scroll_all_shifts(driver)
-                    uidl_events = collect_uidl_events(driver)
-                    write_uidl_events(uidl_events, args.uidl_dir, work_date)
-                    payloads = response_payloads_from_events(uidl_events)
-                    day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
-                    if not day_rows:
-                        day_rows = extract_shift_cards(driver, work_date)
-                        for row in day_rows:
-                            row["source"] = "dom-fallback"
-            else:
-                set_giriton_date(driver, work_date)
-                wait_until_loaded(driver, args.timeout)
-                scroll_all_shifts(driver)
-                if args.source == "uidl":
-                    uidl_events = collect_uidl_events(driver)
-                    write_uidl_events(uidl_events, args.uidl_dir, work_date)
-                    payloads = response_payloads_from_events(uidl_events)
-                    day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
-                    print(
-                        f"GIRITON_UIDL_DAY date={work_date.isoformat()} events={len(uidl_events)} payloads={len(payloads)} rows={len(day_rows)}",
-                        file=sys.stderr,
-                    )
-                    if args.fast_uidl and not fast_templates:
-                        fast_templates = request_templates_from_events(uidl_events)
-                        fast_cookie = browser_cookie_header(driver)
-                        fast_sync_id = max_response_sync_id(
-                            uidl_events,
-                            fast_templates[-1]["request_json"].get("syncId", 0) if fast_templates else 0,
+                    if args.source == "uidl":
+                        uidl_events = collect_uidl_events(driver)
+                        write_uidl_events(uidl_events, args.uidl_dir, work_date)
+                        payloads = response_payloads_from_events(uidl_events)
+                        day_rows = extract_shift_cards_from_uidl_payloads(payloads, work_date)
+                        print(
+                            f"GIRITON_UIDL_DAY date={work_date.isoformat()} events={len(uidl_events)} payloads={len(payloads)} rows={len(day_rows)}",
+                            file=sys.stderr,
                         )
-                        fast_client_id = (
-                            max(
-                                event["request_json"].get("clientId", 0)
-                                for event in fast_templates
-                                if isinstance(event.get("request_json"), dict)
+                        if args.fast_uidl and not fast_templates:
+                            fast_templates = request_templates_from_events(uidl_events)
+                            fast_cookie = browser_cookie_header(driver)
+                            fast_sync_id = max_response_sync_id(
+                                uidl_events,
+                                fast_templates[-1]["request_json"].get("syncId", 0) if fast_templates else 0,
                             )
-                            + 1
-                            if fast_templates
-                            else 0
-                        )
-                        print(
-                            f"GIRITON_UIDL_FAST_TEMPLATE requests={len(fast_templates)} next_sync={fast_sync_id} next_client={fast_client_id}",
-                            file=sys.stderr,
-                        )
-                    if not day_rows:
-                        print(
-                            f"GIRITON_UIDL_EMPTY_FALLBACK_DOM date={work_date.isoformat()}",
-                            file=sys.stderr,
-                        )
+                            fast_client_id = (
+                                max(
+                                    event["request_json"].get("clientId", 0)
+                                    for event in fast_templates
+                                    if isinstance(event.get("request_json"), dict)
+                                )
+                                + 1
+                                if fast_templates
+                                else 0
+                            )
+                            print(
+                                f"GIRITON_UIDL_FAST_TEMPLATE requests={len(fast_templates)} next_sync={fast_sync_id} next_client={fast_client_id}",
+                                file=sys.stderr,
+                            )
+                        if not day_rows:
+                            print(
+                                f"GIRITON_UIDL_EMPTY_FALLBACK_DOM date={work_date.isoformat()}",
+                                file=sys.stderr,
+                            )
+                            day_rows = extract_shift_cards(driver, work_date)
+                            for row in day_rows:
+                                row["source"] = "dom-fallback"
+                    else:
                         day_rows = extract_shift_cards(driver, work_date)
                         for row in day_rows:
-                            row["source"] = "dom-fallback"
-                else:
-                    day_rows = extract_shift_cards(driver, work_date)
-                    for row in day_rows:
-                        row["source"] = "dom"
+                            row["source"] = "dom"
+            except Exception as error:
+                if not args.continue_on_day_error:
+                    raise
+                print(
+                    f"GIRITON_LIVE_DAY_ERROR date={work_date.isoformat()} error={type(error).__name__}: {error}",
+                    file=sys.stderr,
+                )
+                continue
             if args.source == "uidl":
                 if not day_rows:
                     print(f"GIRITON_UIDL_NO_ROWS date={work_date.isoformat()}", file=sys.stderr)
