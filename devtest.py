@@ -1612,6 +1612,26 @@ def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | 
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_latest_excel_jit_period_start() -> date | None:
+    """Return the settlement month of the latest uploaded Excel JIT session."""
+    session_id = load_latest_excel_jit_session_id()
+    if not session_id:
+        return None
+    try:
+        period_start, _period_end = load_settlement_month(session_id)
+        return period_start.replace(day=1)
+    except BaseException:
+        return None
+
+
+def default_settlement_month_label() -> str:
+    latest_excel_month = load_latest_excel_jit_period_start()
+    if latest_excel_month:
+        return month_option_label(latest_excel_month)
+    return month_options()[0]
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def jit_session_has_rows_in_month(session_id: str | None, period_start: date) -> bool:
     if not session_id:
         return False
@@ -8431,6 +8451,12 @@ def month_options(count: int = 24) -> list[str]:
     return items
 
 
+def month_option_label(value: date) -> str:
+    names = ["január","február","március","április","május","június","július","augusztus","szeptember","október","november","december"]
+    month = value.replace(day=1)
+    return f"{month.year}. {names[month.month - 1]}"
+
+
 def parse_month_option(value: str | None) -> date:
     names = {
         "január": 1, "február": 2, "március": 3, "április": 4,
@@ -10823,6 +10849,7 @@ def refresh_settlement_profile_data() -> None:
     load_api_financial_overview_rows.clear()
     load_latest_api_jit_session_id.clear()
     load_latest_excel_jit_session_id.clear()
+    load_latest_excel_jit_period_start.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
     load_active_base_rate_rules.clear()
@@ -17142,6 +17169,7 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_courier_master.clear()
         load_latest_jit_session_id.clear()
         load_latest_excel_jit_session_id.clear()
+        load_latest_excel_jit_period_start.clear()
         load_excel_courier_base_rates.clear()
         load_excel_base_rate_diagnostics.clear()
         load_courier_route_detail.clear()
@@ -17233,6 +17261,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_courier_master.clear()
                 load_latest_jit_session_id.clear()
                 load_latest_excel_jit_session_id.clear()
+                load_latest_excel_jit_period_start.clear()
                 load_excel_courier_base_rates.clear()
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
@@ -17274,6 +17303,10 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                     "Futártörzs frissítve Excel alapján: "
                     f"{master_sync.get('upserted', 0)} sor."
                 )
+            uploaded_period_start, _uploaded_period_end = load_settlement_month(result["session_id"])
+            selected_month = month_option_label(uploaded_period_start)
+            st.session_state["new_month"] = selected_month
+            st.session_state["new_month_auto_default"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 result["session_id"],
@@ -17329,6 +17362,9 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     ):
         try:
             reprocess_existing_excel_session(excel_import_session_id)
+            excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
+            selected_month = month_option_label(excel_period_start)
+            st.session_state["new_month"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 excel_import_session_id,
@@ -17351,6 +17387,8 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
         try:
             reprocess_existing_excel_session(excel_import_session_id)
             st.session_state["new_calculation_mode"] = "Excel"
+            excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
+            selected_month = month_option_label(excel_period_start)
             st.session_state["new_month"] = selected_month
             st.session_state["new_status"] = "Összes"
             mobile_saved = publish_excel_session_to_mobile_if_possible(
@@ -17437,6 +17475,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             load_courier_master.clear()
             load_latest_jit_session_id.clear()
             load_latest_excel_jit_session_id.clear()
+            load_latest_excel_jit_period_start.clear()
             load_excel_courier_base_rates.clear()
             load_excel_base_rate_diagnostics.clear()
             load_courier_route_detail.clear()
@@ -17467,7 +17506,16 @@ def show_new_settlement_page() -> None:
     if requested_calculation_mode in {"API", "Excel"}:
         st.session_state["new_calculation_mode"] = requested_calculation_mode
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
-    selected_month_label = st.session_state.get("new_month") or month_options()[0]
+    latest_default_month_label = default_settlement_month_label()
+    previous_auto_default = st.session_state.get("new_month_auto_default")
+    current_month_label = st.session_state.get("new_month")
+    if not current_month_label or previous_auto_default is None:
+        st.session_state["new_month"] = latest_default_month_label
+        st.session_state["new_month_auto_default"] = latest_default_month_label
+    elif current_month_label == previous_auto_default and previous_auto_default != latest_default_month_label:
+        st.session_state["new_month"] = latest_default_month_label
+        st.session_state["new_month_auto_default"] = latest_default_month_label
+    selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
     balance_period_start = selected_period_start
@@ -17553,7 +17601,10 @@ def show_new_settlement_page() -> None:
     with st.sidebar:
         st.markdown("## Elszámolás")
         st.caption("Szűrés és műveletek")
-        selected_month=st.selectbox("Elszámolási hónap",month_options(),key="new_month")
+        sidebar_month_options = month_options()
+        if selected_month_label not in sidebar_month_options:
+            sidebar_month_options.insert(0, selected_month_label)
+        selected_month=st.selectbox("Elszámolási hónap",sidebar_month_options,key="new_month")
         branch=st.selectbox("Branch",["Összes"]+sorted(data["Branch"].unique().tolist()),key="new_branch")
         calculation_mode=st.selectbox("Számítás módja",["API","Excel","Összes"],key="new_calculation_mode")
         if str(calculation_mode or "API").strip().casefold() == "excel":
