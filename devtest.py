@@ -5072,6 +5072,75 @@ def load_courier_settlement_summary(session_id: str | None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+STOP_COUNT_BONUS_FIELD_KEYS = {
+    "stop-count bonus",
+    "stop count bonus",
+    "stop_count_bonus",
+    "stopcount bonus",
+    "stopcountbonus",
+}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_stop_count_bonus_from_jit_rows(
+    session_id: str | None,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+) -> float:
+    """Fallback for old summaries where Stop-count Bonus was imported but not persisted."""
+    if not session_id:
+        return 0.0
+    try:
+        _, period_end = month_bounds(period_start)
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("normalized_data,is_route_primary")
+            .eq("session_id", session_id)
+            .gte("route_date", period_start.isoformat())
+            .lte("route_date", period_end.isoformat())
+            .limit(10000)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return 0.0
+
+    target_id = _courier_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    total = 0.0
+    for jit_row in rows:
+        normalized_data = jit_row.get("normalized_data") or {}
+        if not isinstance(normalized_data, dict):
+            continue
+        row_id = _courier_id_key(
+            normalized_data.get("Courier ID")
+            or normalized_data.get("courier_id")
+            or normalized_data.get("courierId")
+        )
+        row_name = _courier_match_key(
+            normalized_data.get("Driver")
+            or normalized_data.get("driver_name")
+            or normalized_data.get("name")
+        )
+        if target_id:
+            if row_id != target_id:
+                continue
+        elif target_name and row_name != target_name:
+            continue
+        else:
+            continue
+        if jit_row.get("is_route_primary") is False:
+            continue
+        for key, value in normalized_data.items():
+            if str(key or "").strip().casefold() in STOP_COUNT_BONUS_FIELD_KEYS:
+                total += parse_huf_value(value)
+    return total
+
+
 SETTLEMENT_AUDIT_INCOME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("courier_base_rate_huf", "Alapdíj"),
     ("tip_huf", "Borravaló"),
@@ -11653,6 +11722,13 @@ def render_courier_detail_page() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
+    if not is_api_mode and other_route_bonus_total == 0:
+        other_route_bonus_total = load_stop_count_bonus_from_jit_rows(
+            session_id,
+            courier_id,
+            courier_name,
+            period_start,
+        )
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
@@ -12043,6 +12119,13 @@ def render_courier_detail_page() -> None:
             delay_total = amount("delay_bonus_huf")
             compliance_total = amount("compliance_bonus_huf")
             route_other_bonus_total = amount("other_route_bonus_huf")
+            if not is_api_mode and route_other_bonus_total == 0:
+                route_other_bonus_total = load_stop_count_bonus_from_jit_rows(
+                    session_id,
+                    courier_id,
+                    courier_name,
+                    period_start,
+                )
             imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -12060,6 +12143,13 @@ def render_courier_detail_page() -> None:
             delay_total = route_detail_delay_total if is_api_mode else parse_huf_value(summary_row.get("delay_bonus_huf"))
             compliance_total = route_detail_compliance_total if is_api_mode else parse_huf_value(summary_row.get("compliance_bonus_huf"))
             route_other_bonus_total = parse_huf_value(summary_row.get("other_route_bonus_huf"))
+            if not is_api_mode and route_other_bonus_total == 0:
+                route_other_bonus_total = load_stop_count_bonus_from_jit_rows(
+                    session_id,
+                    courier_id,
+                    courier_name,
+                    period_start,
+                )
             imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
