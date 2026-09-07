@@ -53,6 +53,46 @@ def _extract_courier_id_from_text(value):
     return match.group(1) if match else ""
 
 
+def _normalized_data(row):
+    value = (row or {}).get("normalized_data")
+    return value if isinstance(value, dict) else {}
+
+
+def _row_value(row, keys):
+    data = row or {}
+    normalized = _normalized_data(data)
+    for key in keys:
+        value = data.get(key)
+        if _clean_text(value):
+            return value
+        value = normalized.get(key)
+        if _clean_text(value):
+            return value
+    return ""
+
+
+def _excel_summary_courier_name(row):
+    return _clean_text(
+        _row_value(
+            row,
+            ("driver_name", "courier_name", "Driver", "Futár", "Futar", "Dolgozó", "Dolgozo"),
+        )
+    )
+
+
+def _excel_summary_courier_id(row):
+    courier_id = _normalize_courier_id(
+        _row_value(row, ("courier_id", "Courier ID", "Futár azonosító", "Futar azonosito"))
+    )
+    return courier_id or _extract_courier_id_from_text(_excel_summary_courier_name(row))
+
+
+def _excel_summary_warehouse(row):
+    return _clean_text(
+        _row_value(row, ("warehouse_name", "warehouse", "Raktár", "Raktar", "source_sheet"))
+    )
+
+
 def _warehouse_from_worksheet(value):
     text = _clean_text(value).upper()
     if "BUD1" in text:
@@ -540,7 +580,7 @@ def sync_courier_master_from_excel_summary(db, session_id):
         rows = (
             db.schema("settlement")
             .table("jit_row")
-            .select("courier_id,driver_name,source_sheet")
+            .select("normalized_data,source_sheet")
             .eq("session_id", session_id)
             .execute()
             .data
@@ -550,7 +590,7 @@ def sync_courier_master_from_excel_summary(db, session_id):
         sheet_rows = (
             db.schema("settlement")
             .table("jit_row")
-            .select("courier_id,driver_name,source_sheet")
+            .select("normalized_data,source_sheet")
             .eq("session_id", session_id)
             .execute()
             .data
@@ -560,11 +600,8 @@ def sync_courier_master_from_excel_summary(db, session_id):
             sheet_name = _clean_text(sheet_row.get("source_sheet"))
             if not sheet_name:
                 continue
-            sheet_courier_name = _clean_text(sheet_row.get("driver_name"))
-            sheet_courier_id = (
-                _normalize_courier_id(sheet_row.get("courier_id"))
-                or _extract_courier_id_from_text(sheet_courier_name)
-            )
+            sheet_courier_name = _excel_summary_courier_name(sheet_row)
+            sheet_courier_id = _excel_summary_courier_id(sheet_row)
             if sheet_courier_id and sheet_courier_id not in sheet_by_id:
                 sheet_by_id[sheet_courier_id] = sheet_name
             if sheet_courier_name and sheet_courier_name not in sheet_by_name:
@@ -574,8 +611,8 @@ def sync_courier_master_from_excel_summary(db, session_id):
     by_id = {}
     skipped = 0
     for row in rows:
-        courier_name = _clean_text(row.get("driver_name"))
-        courier_id = _normalize_courier_id(row.get("courier_id")) or _extract_courier_id_from_text(courier_name)
+        courier_name = _excel_summary_courier_name(row)
+        courier_id = _excel_summary_courier_id(row)
         if not courier_id or not courier_name:
             skipped += 1
             continue
@@ -588,7 +625,7 @@ def sync_courier_master_from_excel_summary(db, session_id):
         source_sheet = _clean_text(row.get("source_sheet"))
         if not source_sheet:
             source_sheet = sheet_by_id.get(courier_id) or sheet_by_name.get(courier_name) or ""
-        warehouse_name = _clean_text(row.get("warehouse_name")) or _warehouse_from_worksheet(source_sheet)
+        warehouse_name = _excel_summary_warehouse(row) or _warehouse_from_worksheet(source_sheet)
         existing = by_id.get(courier_id)
         if existing and len(courier_name) <= len(str(existing.get("courier_name") or "")):
             continue
