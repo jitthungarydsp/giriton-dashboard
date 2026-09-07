@@ -65,6 +65,12 @@ def normalize_person_key(value: Any) -> str:
     return " ".join(sorted(re.findall(r"[a-z0-9]+", text)))
 
 
+def normalize_header_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", normalize_text(value).casefold())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]", "", text)
+
+
 def parse_number(value: Any) -> Decimal:
     text = normalize_text(value)
     if not text:
@@ -258,11 +264,27 @@ def parse_rating_rows(values, billing_month, courier_lookup):
 
 def parse_monthly_rows(values, billing_month, courier_lookup):
     rows = []
+    headers = [normalize_header_key(value) for value in (values[0] if values else [])]
+
+    def cell(padded, aliases, fallback_index):
+        for alias in aliases:
+            if alias in headers:
+                index = headers.index(alias)
+                if index < len(padded):
+                    return padded[index]
+        return padded[fallback_index] if 0 <= fallback_index < len(padded) else ""
+
     for row_number, row in enumerate(values[1:], start=2):
         padded = list(row) + [""] * 6
-        driver_name = normalize_text(padded[0])
+        driver_name = normalize_text(cell(padded, {"futar", "driver", "drivername", "courier", "couriername", "nev", "name"}, 0))
         if not driver_name:
             continue
+        base_bonus = parse_number(cell(padded, {"bonus", "bonusz", "bonushuf"}, 1))
+        stop_count_bonus = parse_number(cell(padded, {"stopcountbonus", "stopcountbonushuf", "stopcountbonusft"}, -1))
+        malus = parse_number(cell(padded, {"malus", "malusz", "malushuf"}, 2))
+        returned_route = parse_number(cell(padded, {"korleadott", "returnedroute", "returnedroutehuf"}, 3))
+        accepted_route = parse_number(cell(padded, {"korfelvett", "acceptedroute", "acceptedroutehuf"}, 4))
+        source_total = parse_number(cell(padded, {"osszesen", "total", "sourcetotal", "sourcetotalhuf"}, 5))
 
         rows.append(
             {
@@ -272,18 +294,19 @@ def parse_monthly_rows(values, billing_month, courier_lookup):
                 "billing_month": billing_month,
                 "courier_id": courier_lookup.get(normalize_person_key(driver_name)),
                 "driver_name": driver_name,
-                "bonus_huf": str(parse_number(padded[1])),
-                "malus_huf": str(parse_number(padded[2])),
-                "returned_route_huf": str(parse_number(padded[3])),
-                "accepted_route_huf": str(parse_number(padded[4])),
-                "source_total_huf": str(parse_number(padded[5])),
+                "bonus_huf": str(base_bonus + stop_count_bonus),
+                "malus_huf": str(malus),
+                "returned_route_huf": str(returned_route),
+                "accepted_route_huf": str(accepted_route),
+                "source_total_huf": str(source_total),
                 "row_data": {
-                    "Futár": padded[0],
-                    "Bónusz": padded[1],
-                    "Málusz": padded[2],
-                    "Kör Leadott": padded[3],
-                    "Kör Felvett": padded[4],
-                    "Összesen": padded[5],
+                    "Futár": driver_name,
+                    "Bónusz": str(base_bonus),
+                    "Stop-count Bonus": str(stop_count_bonus),
+                    "Málusz": str(malus),
+                    "Kör Leadott": str(returned_route),
+                    "Kör Felvett": str(accepted_route),
+                    "Összesen": str(source_total),
                 },
                 "imported_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),

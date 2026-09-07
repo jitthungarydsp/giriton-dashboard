@@ -1182,6 +1182,11 @@ IMPORTED_COURIER_NAME_KEYS = {
 IMPORTED_IDENTITY_TOKENS = (
     "courier", "driver", "futar", "nev", "name", "azonosito", "kollega", "munkatars", "id",
 )
+IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS = (
+    "bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg",
+    "totalhuf", "total", "stopcountbonus", "stopcountbonushuf", "stopcountbonusft",
+    "stopcount", "stopcountbonusamount",
+)
 
 
 def _clean_imported_courier_name(value: object) -> str:
@@ -7685,7 +7690,7 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     definitions = {
         ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): (
             "Importált bónusz",
-            ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total"),
+            IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS,
             ("bonus", "bonusz", "amount", "osszeg", "total", "huf"),
             False,
         ),
@@ -7769,7 +7774,7 @@ def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.Da
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): ("Kiflis bónusz", 1, ("bonushuf", "bonus", "bonusz", "amounthuf", "amount", "osszeghuf", "osszeg", "totalhuf", "total")),
+        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): ("Kiflis bónusz", 1, IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS),
         ("penalty_row", "bill_jitt_invoice_penalties", "jitt_invoice_penalties"): ("Kiflis malus", -1, ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas")),
     }
     rows_out: list[dict[str, object]] = []
