@@ -18,6 +18,7 @@ const state = {
   salaryAdvanceRequests: [],
   expenseRequests: [],
   atmPayments: [],
+  atmSubmitting: false,
   game: null,
   gameStartedAt: null,
   statistics: null,
@@ -42,7 +43,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v100";
+const APP_VERSION = "v101";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -3269,7 +3270,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=100");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=101");
   }
   return navigator.serviceWorker.ready;
 }
@@ -4422,6 +4423,8 @@ $("#atm-form")?.addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
   const message = $("#atm-message");
+  if (state.atmSubmitting || button?.disabled) return;
+  state.atmSubmitting = true;
   if (button) button.disabled = true;
   if (message) message.textContent = "ATM befizetés mentése...";
   try {
@@ -4438,11 +4441,12 @@ $("#atm-form")?.addEventListener("submit", async (event) => {
     state.atmPayments = payload.payments || [];
     renderAtmPayments(payload.balance || null);
     form.reset();
+    if (button) button.textContent = "ATM befizetés beküldve";
     if (message) message.textContent = "Az ATM befizetés rögzítve.";
   } catch (error) {
-    if (message) message.textContent = error.message;
-  } finally {
+    state.atmSubmitting = false;
     if (button) button.disabled = false;
+    if (message) message.textContent = error.message;
   }
 });
 

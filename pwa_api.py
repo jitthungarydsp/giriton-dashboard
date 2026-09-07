@@ -10862,6 +10862,23 @@ async def create_atm_payment(
     if not content:
         raise HTTPException(status_code=422, detail="A feltöltött bizonylat üres.")
 
+    duplicate_rows = optional_supabase_rows(
+        "pwa_atm_payment",
+        params={
+            "select": "id",
+            "courier_id": f"eq.{courier_id}",
+            "amount_huf": f"eq.{amount_value}",
+            "invoice_number": f"eq.{clean_invoice_number}",
+            "file_name": f"eq.{receipt_file.filename}",
+            "file_size": f"eq.{len(content)}",
+            "status": "neq.rejected",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    if duplicate_rows:
+        return atm_payments(giriton_pwa_session=giriton_pwa_session)
+
     now = datetime.now(timezone.utc)
     supabase_rest(
         "POST",
