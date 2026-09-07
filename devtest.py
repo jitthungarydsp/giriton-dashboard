@@ -18189,6 +18189,18 @@ def show_new_settlement_page() -> None:
     filtered = base_filtered.copy()
     if active_workflow_filter:
         filtered = filtered[filtered["Státusz"] == active_workflow_filter]
+    if not filtered.empty and "Kifizetendő" in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_payable_sort"] = _numeric_series(filtered, "Kifizetendő")
+        sort_columns = ["_payable_sort"]
+        ascending = [False]
+        if "Futár" in filtered.columns:
+            sort_columns.append("Futár")
+            ascending.append(True)
+        filtered = (
+            filtered.sort_values(sort_columns, ascending=ascending, kind="stable")
+            .drop(columns=["_payable_sort"])
+        )
 
     st.session_state["current_filtered_data"]=filtered.copy()
 
