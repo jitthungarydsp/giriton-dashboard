@@ -1923,6 +1923,27 @@ def google_routes_api_key() -> str:
     ).strip()
 
 
+def google_maps_embed_api_key() -> str:
+    return str(
+        load_setting("PWA_GOOGLE_MAPS_EMBED_KEY")
+        or load_setting("GOOGLE_MAPS_EMBED_API_KEY")
+        or load_setting("GOOGLE_MAPS_BROWSER_KEY")
+        or load_setting("GOOGLE_MAPS_API_KEY")
+        or ""
+    ).strip()
+
+
+def attach_route_map_config(card: dict[str, Any]) -> dict[str, Any]:
+    key = google_maps_embed_api_key()
+    card["map"] = {
+        "provider": "google_maps_embed",
+        "enabled": bool(key),
+        "apiKey": key,
+        "message": "" if key else "Nincs PWA_GOOGLE_MAPS_EMBED_KEY / GOOGLE_MAPS_BROWSER_KEY beállítva.",
+    }
+    return card
+
+
 def route_planner_traffic(current_stop: dict[str, Any] | None, next_stop: dict[str, Any] | None) -> dict[str, Any]:
     origin = str((current_stop or {}).get("address") or "").strip()
     destination = str((next_stop or {}).get("address") or "").strip()
@@ -9781,7 +9802,7 @@ def current_route(
 ):
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
-    return build_route_card(view_user)
+    return attach_route_map_config(build_route_card(view_user))
 
 
 @app.get("/api/routes/details")

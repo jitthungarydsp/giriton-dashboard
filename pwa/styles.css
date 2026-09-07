@@ -253,7 +253,13 @@ textarea { min-height: 96px; resize: vertical; }
 .route-planner-insights small,
 .route-planner-selected small,
 .route-planner-stop small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; }
-.route-planner-map { position: relative; height: 260px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, #eef5ec, #ddeade); }
+.route-planner-map { position: relative; height: 340px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #e6ede4; }
+.route-planner-live-map iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.route-planner-map-toolbar { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 14px; background: #fffffff2; box-shadow: 0 10px 24px #17231c24; font-size: 12px; font-weight: 900; }
+.route-planner-map-toolbar a { color: var(--green-dark); text-decoration: none; }
+.route-planner-map-missing { display: grid; place-items: center; align-content: center; gap: 8px; padding: 20px; text-align: center; }
+.route-planner-map-missing strong { font-size: 18px; }
+.route-planner-map-missing small { max-width: 320px; color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.4; }
 .route-planner-map svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .route-planner-path-bg,
 .route-planner-path { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }

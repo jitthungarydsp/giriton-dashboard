@@ -43,7 +43,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v101";
+const APP_VERSION = "v102";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const PHONEBOOK_CONTACTS = [
@@ -1655,6 +1655,25 @@ function googleMapsRouteUrl(stops) {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+function googleMapsEmbedRouteUrl(stops, apiKey) {
+  const addresses = (stops || []).map((stop) => String(stop.address || "").trim()).filter(Boolean);
+  const key = String(apiKey || "").trim();
+  if (!key || addresses.length < 2) return "";
+  const origin = addresses[0];
+  const destination = addresses[addresses.length - 1];
+  const waypoints = addresses.slice(1, -1).slice(0, 20);
+  const params = new URLSearchParams({
+    key,
+    origin,
+    destination,
+    mode: "driving",
+    language: "hu",
+    region: "hu",
+  });
+  if (waypoints.length) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/embed/v1/directions?${params.toString()}`;
+}
+
 function stopStateClass(stop) {
   const stateValue = String(stop?.state || "").toLowerCase();
   if (stateValue === "completed") return "done";
@@ -1727,29 +1746,29 @@ function selectedRoutePlannerStop(stops) {
 }
 
 function renderRoutePlannerMap(stops, selectedStop) {
-  const visibleStops = stops || [];
-  if (!visibleStops.length) return "";
-  const points = visibleStops.map((stop, index) => {
-    const progress = index / Math.max(visibleStops.length - 1, 1);
-    const x = 10 + progress * 80 + (index % 2 ? 5 : -4);
-    const y = 82 - progress * 66 + (index % 3 === 1 ? -8 : index % 3 === 2 ? 5 : 0);
-    return { stop, x, y };
-  });
-  const path = points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ");
-  const selectedPosition = String(selectedStop?.position || "");
+  const mapConfig = state.currentRoute?.map || {};
+  const liveMapUrl = googleMapsEmbedRouteUrl(stops, mapConfig.apiKey);
+  const selectedUrl = selectedStop?.address ? googleMapsUrl(selectedStop.address) : "";
+  if (!liveMapUrl) {
+    return `
+      <div class="route-planner-map route-planner-map-missing" aria-label="Túra térkép nézet">
+        <strong>Élő térkép nem elérhető</strong>
+        <small>${escapeHtml(mapConfig.message || "A teljes útvonalhoz legalább két cím és Google Maps Embed kulcs kell.")}</small>
+      </div>
+    `;
+  }
   return `
-    <div class="route-planner-map" aria-label="Túra térkép nézet">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <path class="route-planner-path-bg" d="${path}"></path>
-        <path class="route-planner-path" d="${path}"></path>
-        ${points.map((point) => `
-          <circle class="route-planner-pin ${stopStateClass(point.stop)}" cx="${point.x}" cy="${point.y}" r="3.8"></circle>
-        `).join("")}
-      </svg>
-      <div class="route-planner-map-labels">
-        ${points.map((point, index) => `
-          <button class="${String(point.stop.position || "") === selectedPosition ? "selected" : ""}" type="button" data-route-stop-index="${index}" style="left:${point.x}%;top:${point.y}%;">${escapeHtml(point.stop.position || "-")}</button>
-        `).join("")}
+    <div class="route-planner-map route-planner-live-map" aria-label="Élő Google térkép">
+      <iframe
+        title="Élő túratérkép"
+        src="${escapeHtml(liveMapUrl)}"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+        allowfullscreen>
+      </iframe>
+      <div class="route-planner-map-toolbar">
+        <span>${escapeHtml(formatCount(stops.length))} megálló</span>
+        ${selectedUrl ? `<a href="${selectedUrl}" target="_blank" rel="noopener">Kiválasztott cím</a>` : ""}
       </div>
     </div>
   `;
@@ -3270,7 +3289,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=101");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=102");
   }
   return navigator.serviceWorker.ready;
 }
