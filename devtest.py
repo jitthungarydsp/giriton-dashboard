@@ -1593,6 +1593,7 @@ def load_latest_excel_jit_session_id(period_start: date | None = None) -> str | 
                 dated_session = _first_excel_session(dated_rows)
                 if dated_session:
                     return dated_session
+                return None
             except BaseException:
                 pass
 
@@ -1618,6 +1619,7 @@ def jit_session_has_rows_in_month(session_id: str | None, period_start: date) ->
         return False
     try:
         _, period_end = month_bounds(period_start)
+        date_query_failed = False
         try:
             rows = (
                 get_db()
@@ -1635,7 +1637,9 @@ def jit_session_has_rows_in_month(session_id: str | None, period_start: date) ->
             if rows:
                 return True
         except BaseException:
-            pass
+            date_query_failed = True
+        if not date_query_failed:
+            return False
 
         fallback_rows = (
             get_db()
@@ -11357,13 +11361,18 @@ def render_courier_detail_page() -> None:
 
     data = st.session_state.get("current_filtered_data")
     if not isinstance(data, pd.DataFrame) or data.empty:
-        dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         dialog_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+        dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+        _, dialog_end = month_bounds(dialog_start)
         if str(dialog_calculation_mode or "API").strip().casefold() == "excel":
-            dialog_start, dialog_end = load_settlement_month(dialog_session_id)
+            state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+            dialog_session_id = (
+                state_excel_session_id
+                if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, dialog_start)
+                else load_latest_excel_jit_session_id(dialog_start)
+            )
         else:
-            dialog_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-            _, dialog_end = month_bounds(dialog_start)
+            dialog_session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
             dialog_api_session_id = load_latest_api_jit_session_id(dialog_start, st.session_state.get("new_warehouse", "Összes"))
             if dialog_api_session_id:
                 dialog_session_id = dialog_api_session_id
@@ -11400,13 +11409,18 @@ def render_courier_detail_page() -> None:
         row = row.copy()
         row["Futár"] = courier_name
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
-    session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
     active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
+    _, period_end = month_bounds(period_start)
     if str(active_calculation_mode or "API").strip().casefold() == "excel":
-        period_start, period_end = load_settlement_month(session_id)
+        state_excel_session_id = st.session_state.get("settlement_excel_session_id")
+        session_id = (
+            state_excel_session_id
+            if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, period_start)
+            else load_latest_excel_jit_session_id(period_start)
+        )
     else:
-        period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
-        _, period_end = month_bounds(period_start)
+        session_id = st.session_state.get("settlement_import_session_id") or load_latest_jit_session_id()
         api_session_id = load_latest_api_jit_session_id(period_start, st.session_state.get("new_warehouse", "Összes"))
         if api_session_id:
             session_id = api_session_id
@@ -17420,8 +17434,16 @@ def show_new_settlement_page() -> None:
             import_session_id = load_latest_excel_jit_session_id(balance_period_start)
             if import_session_id:
                 st.session_state["settlement_excel_session_id"] = import_session_id
+            else:
+                st.session_state.pop("settlement_excel_session_id", None)
+                if str(st.session_state.get("settlement_import_session_id") or "") == str(state_excel_session_id or ""):
+                    st.session_state.pop("settlement_import_session_id", None)
     else:
-        api_session_id = st.session_state.get("settlement_api_session_id") or load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
+        state_api_session_id = st.session_state.get("settlement_api_session_id")
+        if state_api_session_id and jit_session_has_rows_in_month(state_api_session_id, balance_period_start):
+            api_session_id = state_api_session_id
+        else:
+            api_session_id = load_latest_api_jit_session_id(balance_period_start, selected_warehouse_label)
         import_session_id = api_session_id
         if api_session_id:
             st.session_state["settlement_api_session_id"] = api_session_id
@@ -17518,6 +17540,8 @@ def show_new_settlement_page() -> None:
                 mobile_source_session_id = load_latest_excel_jit_session_id(mobile_period_start)
                 if mobile_source_session_id:
                     st.session_state["settlement_excel_session_id"] = mobile_source_session_id
+                else:
+                    st.session_state.pop("settlement_excel_session_id", None)
         else:
             mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
@@ -17617,9 +17641,12 @@ def show_new_settlement_page() -> None:
             st.session_state.pop("settlement_show_api_sidebar_diagnostics_for", None)
             st.rerun()
 
+        excel_import_period_start = parse_month_option(selected_month)
+        state_excel_import_session_id = st.session_state.get("settlement_excel_session_id")
         excel_import_session_id = (
-            st.session_state.get("settlement_excel_session_id")
-            or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+            state_excel_import_session_id
+            if state_excel_import_session_id and jit_session_has_rows_in_month(state_excel_import_session_id, excel_import_period_start)
+            else load_latest_excel_jit_session_id(excel_import_period_start)
         )
 
         if excel_import_session_id and st.button(
