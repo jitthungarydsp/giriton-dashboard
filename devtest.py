@@ -10987,6 +10987,7 @@ def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_
     }).execute()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
+    load_monthly_adjustment_totals.clear()
 
 
 def update_courier_adjustment(
@@ -11021,6 +11022,7 @@ def update_courier_adjustment(
     }).execute()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
+    load_monthly_adjustment_totals.clear()
 
 
 def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustment_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
@@ -11038,6 +11040,7 @@ def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustmen
     }).execute()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
+    load_monthly_adjustment_totals.clear()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -11067,6 +11070,7 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
     }).execute()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
+    load_monthly_adjustment_totals.clear()
 
 
 def refresh_settlement_profile_data() -> None:
@@ -11090,6 +11094,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_settlement_summary_row.clear()
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
+    load_monthly_adjustment_totals.clear()
     load_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
     load_courier_monthly_closure.clear()
@@ -11412,6 +11417,11 @@ def render_table(df: pd.DataFrame) -> None:
             excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
             if str(row.get("Számítás módja") or "").strip().casefold() == "excel":
                 excel_payable_total = parse_huf_value(row.get("Kifizetendő")) or excel_payable_total
+            if list_period_start:
+                finance_sync = st.session_state.get(f"finance_payment_sync_{courier_key}_{list_period_start:%Y%m}") or {}
+                synced_payable = parse_huf_value(finance_sync.get("payable_huf"))
+                if synced_payable:
+                    excel_payable_total = synced_payable
             contractor_total = parse_huf_value(row.get("Alvállalkozói összeg"))
             cols[1].markdown(f"**{format_huf(contractor_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
@@ -12029,6 +12039,15 @@ def render_courier_detail_page() -> None:
     displayed_payable_total = payable_total
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
+    saved_finance_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+    saved_payable_total = parse_huf_value(saved_finance_sync.get("payable_huf"))
+    if saved_payable_total:
+        displayed_payable_total = saved_payable_total
+        overview_payable_total = saved_payable_total
+        overview_tig_payable_total = saved_payable_total
+        saved_total_deduction = parse_huf_value(saved_finance_sync.get("total_deduction"))
+        if saved_total_deduction:
+            total_deduction = saved_total_deduction
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
@@ -12062,8 +12081,11 @@ def render_courier_detail_page() -> None:
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
     process_status_label = "Kifizetve" if closure_done else str(row.get("Státusz") or "Elszámolásra vár")
 
-    st.markdown(
-        f"""
+    profile_header_slot = st.empty()
+
+    def render_profile_header(payable_value: float, contractor_value: float, deduction_value: float) -> None:
+        profile_header_slot.markdown(
+            f"""
         <div class="settlement-profile-shell">
         <div class="settlement-profile-top">
             <div class="settlement-driver">
@@ -12080,16 +12102,18 @@ def render_courier_detail_page() -> None:
             </div>
             </div>
             <div class="settlement-top-kpis">
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(displayed_payable_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_received_total)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
-            <div class="settlement-kpi-card"><div class="settlement-kpi-icon red"></div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(total_deduction)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon">Ft</div><div><div class="settlement-kpi-label">Havi fizetendő {paid_badge}</div><div class="settlement-kpi-value">{format_huf(payable_value)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon blue">Σ</div><div><div class="settlement-kpi-label">Vállalkozói díj</div><div class="settlement-kpi-value">{format_huf(contractor_value)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
+            <div class="settlement-kpi-card"><div class="settlement-kpi-icon red"></div><div><div class="settlement-kpi-label">Összes levonás</div><div class="settlement-kpi-value">{format_huf(deduction_value)}</div><div class="settlement-kpi-note">{html.escape(month_label)}</div></div></div>
             <div class="settlement-kpi-card"><div class="settlement-kpi-icon purple">✓</div><div><div class="settlement-kpi-label">Utolsó elszámolás</div><div class="settlement-kpi-value">{html.escape(last_settlement_label)}</div><div class="settlement-kpi-note">Fizetve</div></div></div>
             </div>
         </div>
         </div>
         """,
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
+
+    render_profile_header(displayed_payable_total, contractor_received_total, total_deduction)
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg"]
@@ -12454,20 +12478,22 @@ def render_courier_detail_page() -> None:
             },
         )
         tig_display_total = parse_huf_value(tig_breakdown.get("finalTotalHuf")) or payable_total
+        final_total_income = (
+            base_total + tip_total + delay_total + compliance_total
+            + imported_bonus_total + manual_bonus_total + loyalty_total
+            + customer_rating_total + correction_income_total
+        )
+        final_total_deduction = (
+            malus_total + atm_deduction_total + other_expense_total
+            + correction_deduction_total + salary_advance_total
+            + reserve_addition_total + insurance_fee_total
+        )
         st.session_state[f"finance_payment_sync_{courier_id}_{period_start:%Y%m}"] = {
             "payable_huf": payable_total,
             "tig_final_huf": tig_display_total,
             "tig_breakdown": tig_breakdown,
-            "total_income": (
-                base_total + tip_total + delay_total + compliance_total
-                + imported_bonus_total + manual_bonus_total + loyalty_total
-                + customer_rating_total + correction_income_total
-            ),
-            "total_deduction": (
-                malus_total + atm_deduction_total + other_expense_total
-                + correction_deduction_total + salary_advance_total
-                + reserve_addition_total + insurance_fee_total
-            ),
+            "total_income": final_total_income,
+            "total_deduction": final_total_deduction,
             "display_base_total": display_base_total,
             "tip_total": tip_total,
             "delay_total": delay_total,
@@ -12486,6 +12512,14 @@ def render_courier_detail_page() -> None:
             "reserve_addition_total": reserve_addition_total,
             "insurance_fee_total": insurance_fee_total,
         }
+        current_filtered_data = st.session_state.get("current_filtered_data")
+        if isinstance(current_filtered_data, pd.DataFrame) and not current_filtered_data.empty:
+            current_filtered_data = current_filtered_data.copy()
+            courier_mask = current_filtered_data["Courier ID"].astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
+            if courier_mask.any():
+                current_filtered_data.loc[courier_mask, "Kifizetendő"] = payable_total
+                st.session_state["current_filtered_data"] = current_filtered_data
+        render_profile_header(payable_total, contractor_received_total, final_total_deduction)
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         monthly_bonus_malus_effect = (
