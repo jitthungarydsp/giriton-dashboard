@@ -1838,6 +1838,40 @@ def hub_stop_list(route: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def hub_route_activity_datetime(route: dict[str, Any]) -> datetime | None:
+    candidates = [
+        route.get("generatedAt"),
+        route.get("actualStartAt"),
+        route.get("plannedStartAt"),
+        route.get("departedAt"),
+        route.get("plannedDepartureAt"),
+        route.get("plannedDeparture"),
+        route.get("finishedAt"),
+        route.get("actualReturnAt"),
+    ]
+    raw_stops = (
+        route.get("checkpoints")
+        or route.get("stopProgress")
+        or route.get("stops")
+        or []
+    )
+    for stop in raw_stops if isinstance(raw_stops, list) else []:
+        if not isinstance(stop, dict):
+            continue
+        candidates.extend([
+            stop.get("customerSlotFrom"),
+            stop.get("customerSlotTo"),
+            stop.get("plannedArrivalAt"),
+            stop.get("actualArrivalAt"),
+            stop.get("estimatedArrivalAt"),
+        ])
+    parsed = [local_datetime(value) for value in candidates if value]
+    parsed = [value for value in parsed if value is not None]
+    if not parsed:
+        return None
+    return max(parsed)
+
+
 def route_planner_status(stops: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(stops)
     completed = len([
@@ -2036,6 +2070,8 @@ def refresh_live_hub_detail_for_user(user: dict[str, Any]) -> None:
         return
 
     fetched_at = datetime.now(timezone.utc)
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    candidates: list[dict[str, Any]] = []
     for warehouse_id in warehouse_ids:
         if not warehouse_id:
             continue
@@ -2056,29 +2092,63 @@ def refresh_live_hub_detail_for_user(user: dict[str, Any]) -> None:
         refreshed_route_id = hub_live_route_id(route) or route_id
         if not refreshed_route_id and not hub_stop_list(route):
             continue
-        row = {
-            "snapshot_key": f"pwa-live-{fetched_at:%Y%m%d%H%M%S}-wh{warehouse_id}-{courier_id}",
+        activity_at = hub_route_activity_datetime(route)
+        if activity_at and activity_at.date() != today:
+            continue
+        stops = hub_stop_list(route)
+        active_stop_count = len([
+            stop for stop in stops
+            if str(stop.get("state") or "").upper() != "COMPLETED"
+        ])
+        candidates.append({
             "warehouse_id": warehouse_id,
-            "warehouse_code": f"BUD{warehouse_id}",
-            "dsp_id": COURIER_HUB_DSP_ID,
-            "courier_id": int(courier_id),
-            "courier_name": courier_name,
-            "route_id": refreshed_route_id,
             "request_url": request_url,
             "status_code": status_code,
-            "response_json": payload,
-            "fetched_at": fetched_at.isoformat(),
-            "updated_at": fetched_at.isoformat(),
-        }
-        supabase_rest(
-            "POST",
-            "courier_hub_live_monitoring_courier_latest",
-            params={"on_conflict": "courier_id,warehouse_id,dsp_id"},
-            payload=row,
-            prefer="resolution=merge-duplicates,return=minimal",
-            timeout=30,
-        )
+            "payload": payload,
+            "route": route,
+            "route_id": refreshed_route_id,
+            "activity_at": activity_at,
+            "active_stop_count": active_stop_count,
+        })
+
+    if not candidates:
         return
+
+    def candidate_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+        activity_at = item.get("activity_at")
+        return (
+            safe_int(item.get("active_stop_count")),
+            activity_at.isoformat() if isinstance(activity_at, datetime) else "",
+        )
+
+    selected = sorted(candidates, key=candidate_sort_key, reverse=True)[0]
+    warehouse_id = selected["warehouse_id"]
+    request_url = selected["request_url"]
+    status_code = selected["status_code"]
+    payload = selected["payload"]
+    refreshed_route_id = selected["route_id"]
+    row = {
+        "snapshot_key": f"pwa-live-{fetched_at:%Y%m%d%H%M%S}-wh{warehouse_id}-{courier_id}",
+        "warehouse_id": warehouse_id,
+        "warehouse_code": f"BUD{warehouse_id}",
+        "dsp_id": COURIER_HUB_DSP_ID,
+        "courier_id": int(courier_id),
+        "courier_name": courier_name,
+        "route_id": refreshed_route_id,
+        "request_url": request_url,
+        "status_code": status_code,
+        "response_json": payload,
+        "fetched_at": fetched_at.isoformat(),
+        "updated_at": fetched_at.isoformat(),
+    }
+    supabase_rest(
+        "POST",
+        "courier_hub_live_monitoring_courier_latest",
+        params={"on_conflict": "courier_id,warehouse_id,dsp_id"},
+        payload=row,
+        prefer="resolution=merge-duplicates,return=minimal",
+        timeout=30,
+    )
 
 
 def route_planner_traffic(current_stop: dict[str, Any] | None, next_stop: dict[str, Any] | None) -> dict[str, Any]:
@@ -2216,7 +2286,11 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
         return None
 
     fetched_at = local_datetime(row.get("fetched_at")) or datetime.now(LOCAL_TIMEZONE)
-    if fetched_at.date() != datetime.now(LOCAL_TIMEZONE).date():
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    activity_at = hub_route_activity_datetime(route)
+    if fetched_at.date() != today:
+        return None
+    if activity_at and activity_at.date() != today:
         return None
 
     checkpoints = hub_stop_triplet(route)

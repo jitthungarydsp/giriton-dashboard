@@ -1682,6 +1682,22 @@ function googleMapsPublicEmbedUrl(address) {
   return `https://maps.google.com/maps?q=${encodeURIComponent(value)}&output=embed`;
 }
 
+function googleMapsPublicRouteEmbed(stops) {
+  const addresses = (stops || []).map((stop) => String(stop.address || "").trim()).filter(Boolean);
+  if (addresses.length < 2) return null;
+  const visibleAddresses = addresses.slice(0, 25);
+  const params = new URLSearchParams({
+    output: "embed",
+    saddr: visibleAddresses[0],
+    daddr: visibleAddresses.slice(1).join(" to:"),
+  });
+  return {
+    url: `https://maps.google.com/maps?${params.toString()}`,
+    visibleCount: visibleAddresses.length,
+    totalCount: addresses.length,
+  };
+}
+
 function stopStateClass(stop) {
   const stateValue = String(stop?.state || "").toLowerCase();
   if (stateValue === "completed") return "done";
@@ -1756,9 +1772,10 @@ function selectedRoutePlannerStop(stops) {
 function renderRoutePlannerMap(stops, selectedStop) {
   const mapConfig = state.currentRoute?.map || {};
   const liveMapUrl = googleMapsEmbedRouteUrl(stops, mapConfig.apiKey);
+  const publicRouteMap = liveMapUrl ? null : googleMapsPublicRouteEmbed(stops);
   const selectedUrl = selectedStop?.address ? googleMapsUrl(selectedStop.address) : "";
   const selectedMapUrl = selectedStop?.address ? googleMapsPublicEmbedUrl(selectedStop.address) : "";
-  const mapUrl = liveMapUrl || selectedMapUrl;
+  const mapUrl = liveMapUrl || publicRouteMap?.url || selectedMapUrl;
   if (!mapUrl) {
     return `
       <div class="route-planner-map route-planner-map-missing" aria-label="Túra térkép nézet">
@@ -1777,7 +1794,13 @@ function renderRoutePlannerMap(stops, selectedStop) {
         allowfullscreen>
       </iframe>
       <div class="route-planner-map-toolbar">
-        <span>${liveMapUrl ? `${escapeHtml(formatCount(stops.length))} megálló` : "Kiválasztott megálló térképen"}</span>
+        <span>${
+          liveMapUrl
+            ? `${escapeHtml(formatCount(stops.length))} megálló`
+            : publicRouteMap
+              ? `${escapeHtml(formatCount(publicRouteMap.visibleCount))}/${escapeHtml(formatCount(publicRouteMap.totalCount))} megálló térképen`
+              : "Kiválasztott megálló térképen"
+        }</span>
         ${selectedUrl ? `<a href="${selectedUrl}" target="_blank" rel="noopener">Kiválasztott cím</a>` : ""}
       </div>
     </div>
