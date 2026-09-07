@@ -844,8 +844,14 @@ def main() -> None:
         print(f"GIRITON_LIVE_CSV={args.csv}")
 
     if args.write_raw_export:
-        result = write_raw_export_from_live_rows(all_rows)
-        print(f"GIRITON_UIDL_RAW_EXPORT={result}")
+        try:
+            result = write_raw_export_from_live_rows(all_rows)
+            print(f"GIRITON_UIDL_RAW_EXPORT={result}")
+        except RuntimeError as error:
+            message = str(error)
+            if "GIRITON_RAW_EXPORT_INCOMPLETE_DAY" not in message:
+                raise
+            print(f"GIRITON_UIDL_RAW_EXPORT_SKIPPED={message}", file=sys.stderr)
 
     visible_rows = [row for row in all_rows if row.get("is_open")] if args.only_open else all_rows
     if args.json_output:
