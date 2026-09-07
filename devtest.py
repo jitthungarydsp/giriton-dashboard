@@ -5141,6 +5141,109 @@ def load_stop_count_bonus_from_jit_rows(
     return total
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def load_stop_count_bonus_fallbacks_from_jit_rows(
+    session_id: str | None,
+    period_start: date,
+) -> pd.DataFrame:
+    """Read Stop-count Bonus by courier from the raw imported JIT rows."""
+    columns = ["courier_id_key", "courier_name_key", "Stop-count bónusz"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    try:
+        _, period_end = month_bounds(period_start)
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("jit_row")
+            .select("normalized_data,is_route_primary")
+            .eq("session_id", session_id)
+            .gte("route_date", period_start.isoformat())
+            .lte("route_date", period_end.isoformat())
+            .limit(10000)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+
+    totals: dict[tuple[str, str], float] = {}
+    for jit_row in rows:
+        if jit_row.get("is_route_primary") is False:
+            continue
+        normalized_data = jit_row.get("normalized_data") or {}
+        if not isinstance(normalized_data, dict):
+            continue
+        courier_id_key = _courier_id_key(
+            normalized_data.get("Courier ID")
+            or normalized_data.get("courier_id")
+            or normalized_data.get("courierId")
+        )
+        courier_name_key = _courier_match_key(
+            normalized_data.get("Driver")
+            or normalized_data.get("driver_name")
+            or normalized_data.get("name")
+        )
+        if not courier_id_key and not courier_name_key:
+            continue
+        stop_count_bonus = 0.0
+        for key, value in normalized_data.items():
+            if str(key or "").strip().casefold() in STOP_COUNT_BONUS_FIELD_KEYS:
+                stop_count_bonus += parse_huf_value(value)
+        if stop_count_bonus:
+            lookup_key = (courier_id_key, courier_name_key)
+            totals[lookup_key] = totals.get(lookup_key, 0.0) + stop_count_bonus
+
+    return pd.DataFrame(
+        [
+            {
+                "courier_id_key": courier_id_key,
+                "courier_name_key": courier_name_key,
+                "Stop-count bónusz": amount,
+            }
+            for (courier_id_key, courier_name_key), amount in totals.items()
+        ],
+        columns=columns,
+    )
+
+
+def apply_stop_count_bonus_fallback(
+    data: pd.DataFrame,
+    session_id: str | None,
+    period_start: date,
+    calculation_mode: str,
+) -> pd.DataFrame:
+    if str(calculation_mode or "").strip().casefold() != "excel":
+        return data
+    fallbacks = load_stop_count_bonus_fallbacks_from_jit_rows(session_id, period_start)
+    if fallbacks.empty:
+        return data
+    result = data.copy()
+    if "Importált bónusz" not in result.columns:
+        result["Importált bónusz"] = 0.0
+    if "Importált bónusz megjegyzés" not in result.columns:
+        result["Importált bónusz megjegyzés"] = ""
+    result["_courier_id_stop_count_key"] = result["Courier ID"].map(_courier_id_key)
+    result["_courier_name_stop_count_key"] = result["Futár"].map(_courier_match_key)
+    by_id = fallbacks.loc[fallbacks["courier_id_key"].ne("")].groupby("courier_id_key")["Stop-count bónusz"].sum()
+    by_name = fallbacks.loc[fallbacks["courier_name_key"].ne("")].groupby("courier_name_key")["Stop-count bónusz"].sum()
+    fallback_amount = result["_courier_id_stop_count_key"].map(by_id).fillna(
+        result["_courier_name_stop_count_key"].map(by_name)
+    ).fillna(0.0)
+    current_bonus = _numeric_series(result, "Importált bónusz")
+    missing_stop_count = fallback_amount.gt(0) & current_bonus.eq(0)
+    result.loc[missing_stop_count, "Importált bónusz"] = fallback_amount.loc[missing_stop_count]
+    result.loc[missing_stop_count, "Importált bónusz megjegyzés"] = (
+        result.loc[missing_stop_count, "Importált bónusz megjegyzés"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .replace("", "Stop-count Bonus a nyers Excel sorokból")
+    )
+    return result.drop(columns=["_courier_id_stop_count_key", "_courier_name_stop_count_key"])
+
+
 SETTLEMENT_AUDIT_INCOME_COLUMNS: tuple[tuple[str, str], ...] = (
     ("courier_base_rate_huf", "Alapdíj"),
     ("tip_huf", "Borravaló"),
@@ -11472,6 +11575,12 @@ def render_courier_detail_page() -> None:
             st.session_state.get("new_warehouse", "Összes"),
             dialog_session_id,
         )
+        data = apply_stop_count_bonus_fallback(
+            data,
+            dialog_session_id,
+            dialog_start,
+            dialog_calculation_mode,
+        )
         data = apply_imported_balance_components(
             data,
             balance_component_session_id(dialog_calculation_mode, dialog_start, dialog_session_id),
@@ -17572,6 +17681,12 @@ def show_new_settlement_page() -> None:
         balance_period_start,
         selected_warehouse_label,
         import_session_id,
+    )
+    data = apply_stop_count_bonus_fallback(
+        data,
+        import_session_id,
+        balance_period_start,
+        selected_calculation_mode,
     )
     data = apply_imported_balance_components(
         data,
