@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       start_date:
-        description: "Opcionális kezdőnap YYYY-MM-DD. Üresen: holnap."
+        description: "Opcionális kezdőnap YYYY-MM-DD. Üresen: ma, hogy a 24 órán belüli műszakok is bekerüljenek."
         required: false
         default: ""
       days:
@@ -98,7 +98,7 @@ jobs:
           RAW_EXPORT_ENGINE="${RAW_EXPORT_ENGINE:-uidl}"
 
           if [ -z "$START_DATE" ]; then
-            START_DATE="$(python -c 'from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Europe/Budapest")).date() + timedelta(days=1)).isoformat())')"
+            START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"
           fi
 
           echo "SHIFT_AUTO_START_DATE=$START_DATE" >> "$GITHUB_ENV"

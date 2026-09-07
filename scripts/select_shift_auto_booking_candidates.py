@@ -197,7 +197,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Kiválasztja a következő 3 nap foglalható pontos vagy alternatív sorait."
     )
-    parser.add_argument("--start-date", default="", help="Kezdő nap YYYY-MM-DD. Alap: holnap.")
+    parser.add_argument("--start-date", default="", help="Kezdő nap YYYY-MM-DD. Alap: ma.")
     parser.add_argument("--days", type=int, default=3, help="Hány napot nézzen, a kezdőnappal együtt.")
     parser.add_argument("--match-kind", choices=["exact", "alternative"], required=True)
     parser.add_argument("--tolerance-minutes", type=int, default=30)
@@ -206,7 +206,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
-    start_date = parse_date(args.start_date, today + timedelta(days=1))
+    start_date = parse_date(args.start_date, today)
     end_date = start_date + timedelta(days=max(int(args.days), 1) - 1)
     candidates = select_candidates(
         start_date=start_date,
