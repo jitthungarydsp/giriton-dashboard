@@ -44,7 +44,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v103";
+const APP_VERSION = "v104";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -1676,6 +1676,12 @@ function googleMapsEmbedRouteUrl(stops, apiKey) {
   return `https://www.google.com/maps/embed/v1/directions?${params.toString()}`;
 }
 
+function googleMapsPublicEmbedUrl(address) {
+  const value = String(address || "").trim();
+  if (!value) return "";
+  return `https://maps.google.com/maps?q=${encodeURIComponent(value)}&output=embed`;
+}
+
 function stopStateClass(stop) {
   const stateValue = String(stop?.state || "").toLowerCase();
   if (stateValue === "completed") return "done";
@@ -1751,11 +1757,13 @@ function renderRoutePlannerMap(stops, selectedStop) {
   const mapConfig = state.currentRoute?.map || {};
   const liveMapUrl = googleMapsEmbedRouteUrl(stops, mapConfig.apiKey);
   const selectedUrl = selectedStop?.address ? googleMapsUrl(selectedStop.address) : "";
-  if (!liveMapUrl) {
+  const selectedMapUrl = selectedStop?.address ? googleMapsPublicEmbedUrl(selectedStop.address) : "";
+  const mapUrl = liveMapUrl || selectedMapUrl;
+  if (!mapUrl) {
     return `
       <div class="route-planner-map route-planner-map-missing" aria-label="Túra térkép nézet">
         <strong>Élő térkép nem elérhető</strong>
-        <small>${escapeHtml(mapConfig.message || "A teljes útvonalhoz legalább két cím és Google Maps Embed kulcs kell.")}</small>
+        <small>Nincs megjeleníthető cím ehhez a túrához.</small>
       </div>
     `;
   }
@@ -1763,13 +1771,13 @@ function renderRoutePlannerMap(stops, selectedStop) {
     <div class="route-planner-map route-planner-live-map" aria-label="Élő Google térkép">
       <iframe
         title="Élő túratérkép"
-        src="${escapeHtml(liveMapUrl)}"
+        src="${escapeHtml(mapUrl)}"
         loading="lazy"
         referrerpolicy="no-referrer-when-downgrade"
         allowfullscreen>
       </iframe>
       <div class="route-planner-map-toolbar">
-        <span>${escapeHtml(formatCount(stops.length))} megálló</span>
+        <span>${liveMapUrl ? `${escapeHtml(formatCount(stops.length))} megálló` : "Kiválasztott megálló térképen"}</span>
         ${selectedUrl ? `<a href="${selectedUrl}" target="_blank" rel="noopener">Kiválasztott cím</a>` : ""}
       </div>
     </div>
