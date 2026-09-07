@@ -48,6 +48,31 @@ def live_route_id(row: dict[str, Any]) -> str:
     )
 
 
+def int_or_none(value: Any) -> int | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def float_or_none(value: Any) -> float | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def text_or_none(value: Any) -> str | None:
+    text = clean_text(value)
+    return text or None
+
+
 def build_snapshot_key(fetched_at: datetime, warehouse_id: int, dsp_id: int) -> str:
     bucket_minute = 0 if fetched_at.minute < 30 else 30
     return f"{fetched_at:%Y%m%d%H}{bucket_minute:02d}-wh{warehouse_id}-dsp{dsp_id}"
@@ -109,6 +134,51 @@ def route_like_couriers(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def compact_stop_progress(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    stops: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        stops.append({
+            "sequence": int_or_none(item.get("sequence") or item.get("position") or item.get("stopPosition")),
+            "state": clean_text(item.get("state") or item.get("status")) or None,
+            "delayMinutes": int_or_none(item.get("delayMinutes") or item.get("deltaMinutes")),
+        })
+    return stops
+
+
+def compact_courier_json(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "courierId": int_or_none(row.get("courierId")),
+        "name": text_or_none(row.get("name") or row.get("courierName")),
+        "dspName": text_or_none(row.get("dspName")),
+        "warehouseCode": text_or_none(row.get("warehouseCode")),
+        "status": text_or_none(row.get("status")),
+        "delayMinutes": int_or_none(row.get("delayMinutes")),
+        "deliveriesCompleted": int_or_none(row.get("deliveriesCompleted")),
+        "stopsTotal": int_or_none(row.get("stopsTotal")),
+        "departureStatus": text_or_none(row.get("departureStatus")),
+        "stopProgress": compact_stop_progress(row.get("stopProgress")),
+        "temperatureCelsius": float_or_none(row.get("temperatureCelsius")),
+        "temperatureStatus": text_or_none(row.get("temperatureStatus")),
+        "shiftStatus": text_or_none(row.get("shiftStatus")),
+        "shiftDeltaMinutes": int_or_none(row.get("shiftDeltaMinutes")),
+        "noShowAutoFlaggedAt": row.get("noShowAutoFlaggedAt"),
+        "finishedRouteCount": int_or_none(row.get("finishedRouteCount")),
+        "plannedStartAt": text_or_none(row.get("plannedStartAt")),
+        "actualStartAt": text_or_none(row.get("actualStartAt")),
+        "plannedDepartureAt": text_or_none(row.get("plannedDepartureAt")),
+        "departedAt": text_or_none(row.get("departedAt")),
+        "vehiclePlate": text_or_none(row.get("vehiclePlate")),
+        "fridgeConfig": row.get("fridgeConfig"),
+        "cargoRouteId": int_or_none(row.get("cargoRouteId")),
+        "routeExternalId": int_or_none(row.get("routeExternalId")),
+        "plannedKm": float_or_none(row.get("plannedKm")),
+    }
+
+
 def detail_target_couriers(payload: Any, detail_scope: str) -> list[dict[str, Any]]:
     candidates = (
         top_level_couriers(payload)
@@ -143,6 +213,14 @@ def supabase_post(table: str, rows: list[dict[str, Any]], on_conflict: str) -> i
     )
     raise_for_response(response, f"{table} upsert")
     return len(rows)
+
+
+def supabase_post_optional(table: str, rows: list[dict[str, Any]], on_conflict: str) -> int:
+    try:
+        return supabase_post(table, rows, on_conflict)
+    except Exception as exc:
+        print(f"OPTIONAL_TABLE_WRITE_SKIPPED table={table} error={exc}", flush=True)
+        return 0
 
 
 def build_list_row(
@@ -202,6 +280,56 @@ def build_detail_row(
     }
 
 
+def build_compact_courier_snapshot_row(
+    *,
+    snapshot_key: str,
+    warehouse_id: int,
+    dsp_id: int,
+    courier_row: dict[str, Any],
+    request_url: str,
+    status_code: int,
+    fetched_at: datetime,
+) -> dict[str, Any]:
+    courier_json = compact_courier_json(courier_row)
+    courier_id = courier_json.get("courierId")
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "snapshot_key": snapshot_key,
+        "warehouse_id": warehouse_id,
+        "warehouse_code": WAREHOUSE_CODES.get(warehouse_id, f"WH{warehouse_id}"),
+        "dsp_id": dsp_id,
+        "courier_id": courier_id,
+        "courier_name": courier_json.get("name"),
+        "route_id": clean_text(courier_json.get("cargoRouteId") or live_route_id(courier_row)),
+        "route_external_id": courier_json.get("routeExternalId"),
+        "status": courier_json.get("status"),
+        "departure_status": courier_json.get("departureStatus"),
+        "shift_status": courier_json.get("shiftStatus"),
+        "delay_minutes": courier_json.get("delayMinutes"),
+        "deliveries_completed": courier_json.get("deliveriesCompleted"),
+        "stops_total": courier_json.get("stopsTotal"),
+        "current_stop_sequence": next(
+            (
+                stop.get("sequence")
+                for stop in courier_json.get("stopProgress", [])
+                if clean_text(stop.get("state")).upper() == "CURRENT"
+            ),
+            None,
+        ),
+        "vehicle_plate": courier_json.get("vehiclePlate"),
+        "planned_start_at": courier_json.get("plannedStartAt"),
+        "actual_start_at": courier_json.get("actualStartAt"),
+        "planned_departure_at": courier_json.get("plannedDepartureAt"),
+        "departed_at": courier_json.get("departedAt"),
+        "planned_km": courier_json.get("plannedKm"),
+        "request_url": request_url,
+        "status_code": status_code,
+        "courier_json": courier_json,
+        "fetched_at": fetched_at.isoformat(),
+        "updated_at": now,
+    }
+
+
 def parse_warehouse_ids(value: str) -> list[int]:
     ids: list[int] = []
     for part in value.split(","):
@@ -223,6 +351,7 @@ def main() -> int:
 
     fetched_at = datetime.now(timezone.utc)
     list_rows: list[dict[str, Any]] = []
+    compact_courier_rows: list[dict[str, Any]] = []
     detail_rows: list[dict[str, Any]] = []
     failures = 0
 
@@ -243,6 +372,20 @@ def main() -> int:
             fetched_at=fetched_at,
         )
         list_rows.append(list_row)
+
+        compact_courier_rows.extend(
+            build_compact_courier_snapshot_row(
+                snapshot_key=snapshot_key,
+                warehouse_id=warehouse_id,
+                dsp_id=args.dsp_id,
+                courier_row=courier,
+                request_url=list_url,
+                status_code=status_code,
+                fetched_at=fetched_at,
+            )
+            for courier in top_level_couriers(payload)
+            if normalize_id(courier.get("courierId"))
+        )
 
         couriers = detail_target_couriers(payload, args.detail_scope) if status_code < 400 else []
         print(
@@ -278,7 +421,8 @@ def main() -> int:
 
     if args.dry_run:
         print(
-            f"DRY_RUN list_rows={len(list_rows)} detail_rows={len(detail_rows)} failures={failures}",
+            f"DRY_RUN list_rows={len(list_rows)} compact_courier_rows={len(compact_courier_rows)} "
+            f"detail_rows={len(detail_rows)} failures={failures}",
             flush=True,
         )
         return 1 if failures else 0
@@ -287,6 +431,16 @@ def main() -> int:
         "courier_hub_live_monitoring_raw",
         list_rows,
         "snapshot_key",
+    )
+    written_compact_couriers = supabase_post_optional(
+        "courier_hub_live_monitoring_courier_snapshots",
+        compact_courier_rows,
+        "snapshot_key,warehouse_id,dsp_id,courier_id",
+    )
+    written_latest_compact_couriers = supabase_post_optional(
+        "courier_hub_live_monitoring_courier_snapshot_latest",
+        compact_courier_rows,
+        "courier_id,warehouse_id,dsp_id",
     )
     written_raw_details = supabase_post(
         "courier_hub_live_monitoring_courier_raw",
@@ -302,6 +456,8 @@ def main() -> int:
     print(
         "SUMMARY "
         f"live_snapshots={written_lists} "
+        f"courier_snapshots={written_compact_couriers} "
+        f"courier_snapshots_latest={written_latest_compact_couriers} "
         f"courier_details_raw={written_raw_details} "
         f"courier_details_latest={written_latest_details} "
         f"failures={failures}",

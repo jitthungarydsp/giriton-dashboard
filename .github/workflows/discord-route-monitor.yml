@@ -15,7 +15,8 @@ on:
     types:
       - discord-route-monitor
   schedule:
-    - cron: "3,18,33,48 * * * *"
+    # GitHub Actions sajat utemezese legalabb par perces csuszassal fut; a 2 perces ritmust cron-job.org repository_dispatch adja.
+    - cron: "*/5 * * * *"
 
 concurrency:
   group: discord-route-monitor
@@ -86,6 +87,15 @@ jobs:
           else
             echo "Courier Hub login secrets not set, using static auth secrets."
           fi
+
+      - name: Sync Courier Hub live monitoring snapshots
+        continue-on-error: true
+        shell: bash
+        run: |
+          python scripts/sync_courier_hub_live_monitoring.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --detail-scope all
 
       - name: Run Discord route monitor
         run: |
