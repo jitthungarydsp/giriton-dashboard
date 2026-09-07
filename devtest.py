@@ -443,7 +443,7 @@ div[data-testid="stMetricValue"] {
 /* --- Lekerekített futárlista --- */
 .courier-list-header {
     display:grid;
-    grid-template-columns:1.55fr 1fr 1fr 1fr 1fr 1fr;
+    grid-template-columns:1.7fr 1fr 1fr 1.1fr;
     gap:1rem;
     align-items:center;
     padding:0 18px 8px 18px;
@@ -483,6 +483,35 @@ div[data-testid="stMetricValue"] {
 [class*="st-key-courier_row_"] [data-testid="stCaptionContainer"] {
     color:#6D7F71;
     font-size:13px;
+}
+.courier-flags {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin-top:6px;
+}
+.courier-flag {
+    display:inline-flex;
+    align-items:center;
+    border:1px solid #BDE9C9;
+    border-radius:999px;
+    background:#F4FBF5;
+    color:#176B35;
+    font-size:11px;
+    font-weight:850;
+    line-height:1;
+    padding:5px 8px;
+    white-space:nowrap;
+}
+.courier-flag.warn {
+    border-color:#F6D98B;
+    background:#FFF8E7;
+    color:#8A5A00;
+}
+.courier-flag.info {
+    border-color:#BFDBFE;
+    background:#EFF6FF;
+    color:#1D4ED8;
 }
 .courier-list-footer {
     color:#6D7F71;
@@ -1696,6 +1725,82 @@ def load_excel_stop_count_bonus_totals(session_id: str | None) -> pd.DataFrame:
     return (
         pd.DataFrame(records)
         .groupby(["courier_id_key", "courier_name_key"], as_index=False, dropna=False)["stop_count_bonus_huf"]
+        .sum()
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_excel_contractor_route_component_totals(session_id: str | None) -> pd.DataFrame:
+    columns = ["courier_id_key", "courier_name_key", "contractor_route_components_huf"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    contractor_component_keys = {
+        "fixedrate",
+        "fuelbonus",
+        "fuelbonu",
+        "carfridgebonus",
+        "carfridgebo",
+        "branding",
+        "delaybonus",
+        "compliancebonus",
+        "compliancebo",
+        "fillratebonus",
+    }
+    records: list[dict[str, object]] = []
+    offset = 0
+    page_size = 1000
+    try:
+        while True:
+            page = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select("normalized_data,is_route_primary")
+                .eq("session_id", session_id)
+                .eq("is_route_primary", True)
+                .range(offset, offset + page_size - 1)
+                .execute()
+                .data
+                or []
+            )
+            if not page:
+                break
+            for source_row in page:
+                payload = source_row.get("normalized_data") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        payload = {}
+                if not isinstance(payload, dict):
+                    continue
+                normalized_payload = {
+                    _normalized_field_key(key): value
+                    for key, value in payload.items()
+                }
+                courier_id_key, courier_name_key = _imported_courier_identity(normalized_payload)
+                amount = sum(
+                    parse_huf_value(value)
+                    for key, value in normalized_payload.items()
+                    if key in contractor_component_keys
+                )
+                if amount == 0 or (not courier_id_key and not courier_name_key):
+                    continue
+                records.append({
+                    "courier_id_key": courier_id_key,
+                    "courier_name_key": courier_name_key,
+                    "contractor_route_components_huf": amount,
+                })
+            if len(page) < page_size:
+                break
+            offset += page_size
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+    if not records:
+        return pd.DataFrame(columns=columns)
+    return (
+        pd.DataFrame(records)
+        .groupby(["courier_id_key", "courier_name_key"], as_index=False, dropna=False)["contractor_route_components_huf"]
         .sum()
     )
 
@@ -6502,6 +6607,26 @@ def apply_received_amounts(
         else:
             result["Alvállalkozói összeg"] = contractor_amounts.fillna(current_amounts)
         result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
+    if normalized_mode == "excel":
+        excel_component_totals = load_excel_contractor_route_component_totals(session_id)
+        if not excel_component_totals.empty:
+            result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+            result["_courier_name_lookup"] = result["Futár"].map(_courier_match_key)
+            by_id = excel_component_totals.loc[
+                excel_component_totals["courier_id_key"].ne("")
+            ].groupby("courier_id_key")["contractor_route_components_huf"].sum()
+            by_name = excel_component_totals.loc[
+                excel_component_totals["courier_name_key"].ne("")
+            ].groupby("courier_name_key")["contractor_route_components_huf"].sum()
+            component_amounts = result["_courier_id_lookup"].map(by_id).fillna(
+                result["_courier_name_lookup"].map(by_name)
+            )
+            current_amounts = _numeric_series(result, "Alvállalkozói összeg")
+            result["Alvállalkozói összeg"] = component_amounts.where(
+                component_amounts.fillna(0.0).ne(0.0),
+                current_amounts,
+            ).fillna(current_amounts)
+            result = result.drop(columns=["_courier_id_lookup", "_courier_name_lookup"])
     if normalized_mode != "api":
         return result
     received = load_api_received_amounts(period_start, warehouse_label)
@@ -10954,6 +11079,7 @@ def refresh_settlement_profile_data() -> None:
     load_latest_excel_jit_session_id.clear()
     load_latest_excel_jit_period_start.clear()
     load_excel_stop_count_bonus_totals.clear()
+    load_excel_contractor_route_component_totals.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
     load_active_base_rate_rules.clear()
@@ -11003,6 +11129,41 @@ def settlement_loyalty_cache_key(session_id: str | None, period_start: date, cal
         f"{period_start:%Y%m}_"
         f"{str(calculation_mode or '').strip().casefold()}_"
         f"{str(session_id or '')}"
+    )
+
+
+def courier_main_list_flag_html(row: pd.Series) -> str:
+    flags: list[tuple[str, str]] = []
+    vat_status = str(row.get("FA státusz") or row.get("vat_status") or "").strip()
+    vat_key = _normalized_field_key(vat_status)
+    if vat_status and any(token in vat_key for token in ("afa", "afas", "vat")):
+        flags.append(("ÁFÁS", "info"))
+
+    employment_status = str(
+        row.get("EFO státusz")
+        or row.get("EFO statusz")
+        or row.get("Jogviszony")
+        or row.get("employment_type")
+        or ""
+    ).strip()
+    if "efo" in _normalized_field_key(employment_status):
+        flags.append(("EFO", "warn"))
+
+    insurance_status = str(row.get("Biztosítás") or row.get("insurance_status") or "").strip()
+    insurance_fee = parse_huf_value(row.get("Biztosítási díj"))
+    insurance_key = _normalized_field_key(insurance_status)
+    if insurance_fee > 0 or insurance_key in {"van", "aktiv", "active", "igen", "yes", "biztositas"}:
+        flags.append(("Biztosítás", ""))
+
+    if not flags:
+        return ""
+    return (
+        '<div class="courier-flags">'
+        + "".join(
+            f'<span class="courier-flag {css_class}">{html.escape(label)}</span>'
+            for label, css_class in flags
+        )
+        + "</div>"
     )
 
 
@@ -11136,11 +11297,6 @@ def render_table(df: pd.DataFrame) -> None:
     except BaseException:
         list_period_start = None
     list_warehouse = st.session_state.get("new_warehouse", "Összes")
-    api_settlement_totals = load_api_month_settlement_totals(
-        list_period_start,
-        list_warehouse,
-        st.session_state.get("settlement_api_session_id"),
-    )
     excel_payable_totals = load_excel_month_payable_totals(
         list_period_start,
         st.session_state.get("settlement_excel_session_id"),
@@ -11149,8 +11305,7 @@ def render_table(df: pd.DataFrame) -> None:
     st.markdown(
         """
         <div class="courier-list-header">
-        <div>Futár</div><div>API elszámolás</div><div>Excel elszámolás</div>
-        <div>TIG</div><div>TIG PWA</div><div>Státusz</div>
+        <div>Futár</div><div>Vállalkozói díj összesen</div><div>Excel végösszeg</div><div>Státusz</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -11224,7 +11379,7 @@ def render_table(df: pd.DataFrame) -> None:
             )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
-                [1.55, 1, 1, 1, 1, 1],
+                [1.7, 1, 1, 1.1],
                 vertical_alignment="center",
             )
 
@@ -11240,6 +11395,9 @@ def render_table(df: pd.DataFrame) -> None:
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
                 cols[0].caption(audit_text)
+            flag_html = courier_main_list_flag_html(row)
+            if flag_html:
+                cols[0].markdown(flag_html, unsafe_allow_html=True)
             shift_late_audit_text = str(row.get("Shift late audit text") or "").strip()
             if shift_late_audit_text:
                 cols[0].caption(shift_late_audit_text)
@@ -11251,14 +11409,12 @@ def render_table(df: pd.DataFrame) -> None:
                 cols[0].caption(no_show_audit_text)
 
             courier_key = _courier_id_key(row.get("Courier ID"))
-            api_settlement_total = lookup_session_payable_total(api_settlement_totals, courier_key, row.get("Futár"))
             excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
             if str(row.get("Számítás módja") or "").strip().casefold() == "excel":
                 excel_payable_total = parse_huf_value(row.get("Kifizetendő")) or excel_payable_total
-            cols[1].markdown(f"**{format_huf(api_settlement_total)}**")
+            contractor_total = parse_huf_value(row.get("Alvállalkozói összeg"))
+            cols[1].markdown(f"**{format_huf(contractor_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
-            cols[3].markdown(f"**{format_huf(0)}**")
-            cols[4].markdown(f"**{format_huf(0)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
             complaint_label = str(row.get("Bejelentés státusz") or "Nincs bejelentés")
@@ -11271,7 +11427,7 @@ def render_table(df: pd.DataFrame) -> None:
                 complaint_badge,
                 complaint_led,
             )
-            cols[5].markdown(
+            cols[3].markdown(
                 (
                     '<div class="complaint-status-wrap">'
                     f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>'
