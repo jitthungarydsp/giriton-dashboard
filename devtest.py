@@ -18460,26 +18460,30 @@ def show_new_settlement_page() -> None:
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
     ]
-    card_columns = st.columns(len(workflow_cards))
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
 
-    for card_column, (card_status, card_note, card_icon) in zip(card_columns, workflow_cards):
-        card_count = int((base_filtered["Státusz"] == card_status).sum())
-        is_active = active_workflow_filter == card_status
-        checkmark = "  ✅" if is_active else ""
-        button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
-
-        if card_column.button(
-            button_label,
-            key=f"workflow_card_{card_status}",
-            use_container_width=True,
-            type="primary" if is_active else "secondary",
+    for workflow_row_start in range(0, len(workflow_cards), 5):
+        card_columns = st.columns(5)
+        for card_column, (card_status, card_note, card_icon) in zip(
+            card_columns,
+            workflow_cards[workflow_row_start:workflow_row_start + 5],
         ):
-            if is_active:
-                st.session_state.pop("dashboard_status_filter", None)
-            else:
-                st.session_state["dashboard_status_filter"] = card_status
-            st.rerun()
+            card_count = int((base_filtered["Státusz"] == card_status).sum())
+            is_active = active_workflow_filter == card_status
+            checkmark = "  ✅" if is_active else ""
+            button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
+
+            if card_column.button(
+                button_label,
+                key=f"workflow_card_{card_status}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                if is_active:
+                    st.session_state.pop("dashboard_status_filter", None)
+                else:
+                    st.session_state["dashboard_status_filter"] = card_status
+                st.rerun()
 
     if active_workflow_filter:
         st.caption(
