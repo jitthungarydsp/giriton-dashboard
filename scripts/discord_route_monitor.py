@@ -80,6 +80,11 @@ def normalize_warehouse(value):
     return ""
 
 
+def timestamp_or_none(value):
+    text = str(value or "").strip()
+    return text or None
+
+
 def find_route_warehouse(*sources):
     keys = (
         "warehouse",
@@ -1184,9 +1189,9 @@ def build_notification_payload(
         "courier_name": str(courier_name or ""),
         "route_id": str(route_id),
         "order_id": str(checkpoint.get("orderId") or ""),
-        "assigned_at": route.get("assignedAt"),
-        "planned_departure": route.get("plannedDeparture"),
-        "planned_return": route.get("plannedReturn"),
+        "assigned_at": timestamp_or_none(route.get("assignedAt")),
+        "planned_departure": timestamp_or_none(route.get("plannedDeparture")),
+        "planned_return": timestamp_or_none(route.get("plannedReturn")),
         "licence_plate": str(licence_plate),
         "orders_in_route": str(orders_in_route),
     }

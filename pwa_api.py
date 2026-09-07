@@ -66,6 +66,8 @@ COURIER_DETAIL_API_BASE = (
 COURIER_DETAIL_ORGANIZATION_ID = (
     "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc"
 )
+COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
+COURIER_HUB_DSP_ID = 8
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
 
 
@@ -1944,6 +1946,141 @@ def attach_route_map_config(card: dict[str, Any]) -> dict[str, Any]:
     return card
 
 
+def courier_hub_header_config() -> dict[str, str]:
+    authorization = load_setting("COURIER_HUB_AUTHORIZATION")
+    cookie = load_setting("COURIER_HUB_COOKIE")
+    api_key = load_setting("COURIER_HUB_API_KEY")
+    cache_file = (
+        load_setting("COURIER_HUB_AUTH_CACHE_FILE")
+        or load_setting("KIFLI_COURIER_HUB_AUTH_CACHE_FILE")
+    )
+    if cache_file and Path(cache_file).exists():
+        try:
+            cached = json.loads(Path(cache_file).read_text(encoding="utf-8"))
+            headers = cached.get("headers") if isinstance(cached, dict) else {}
+            if isinstance(headers, dict):
+                authorization = authorization or str(headers.get("Authorization") or "")
+                cookie = cookie or str(headers.get("Cookie") or "")
+        except Exception as exc:
+            print(f"Courier Hub auth cache read skipped: {exc}")
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "giriton-pwa/1.0",
+    }
+    if authorization:
+        headers["Authorization"] = authorization
+    if cookie:
+        headers["Cookie"] = cookie
+    if api_key:
+        headers["apikey"] = api_key
+    return headers
+
+
+def warehouse_id_for_hub(value: Any) -> int | None:
+    normalized = normalize_warehouse(value)
+    if normalized == "BUD1":
+        return 1
+    if normalized == "BUD2":
+        return 2
+    text = str(value or "").strip()
+    if text in {"1", "2"}:
+        return int(text)
+    return None
+
+
+def hub_courier_detail_url(warehouse_id: int, courier_id: str) -> str:
+    return (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/live-monitoring-dashboard/couriers/{int(courier_id)}"
+        f"?dspId={COURIER_HUB_DSP_ID}"
+    )
+
+
+def route_reference_for_live_refresh(courier_id: str) -> tuple[str, int | None]:
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    notification = read_latest_discord_route_notification(courier_id, today)
+    if notification:
+        return (
+            str(notification.get("route_id") or "").strip(),
+            warehouse_id_for_hub(notification.get("warehouse")),
+        )
+    rows = optional_supabase_rows(
+        "courier_hub_live_monitoring_courier_latest",
+        params={
+            "select": "route_id,warehouse_id,warehouse_code,fetched_at",
+            "courier_id": f"eq.{courier_id}",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc",
+            "limit": "1",
+        },
+        timeout=10,
+    )
+    if not rows:
+        return "", None
+    row = rows[0]
+    return (
+        str(row.get("route_id") or "").strip(),
+        warehouse_id_for_hub(row.get("warehouse_id") or row.get("warehouse_code")),
+    )
+
+
+def refresh_live_hub_detail_for_user(user: dict[str, Any]) -> None:
+    courier_id, courier_name = courier_identity(user)
+    if not courier_id:
+        return
+    route_id, preferred_warehouse_id = route_reference_for_live_refresh(courier_id)
+    warehouse_ids = [preferred_warehouse_id] if preferred_warehouse_id else []
+    warehouse_ids.extend(warehouse_id for warehouse_id in (1, 2) if warehouse_id not in warehouse_ids)
+    headers = courier_hub_header_config()
+    if "Authorization" not in headers and "Cookie" not in headers and "apikey" not in headers:
+        return
+
+    fetched_at = datetime.now(timezone.utc)
+    for warehouse_id in warehouse_ids:
+        if not warehouse_id:
+            continue
+        request_url = hub_courier_detail_url(warehouse_id, courier_id)
+        try:
+            response = requests.get(request_url, headers=headers, timeout=25)
+            status_code = response.status_code
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {"text": response.text[:2000]}
+        except Exception as exc:
+            print(f"Courier Hub live detail refresh skipped: courier={courier_id} wh={warehouse_id}; {exc}")
+            continue
+        if status_code >= 400:
+            continue
+        route = first_hub_route(payload if isinstance(payload, dict) else {}, route_id)
+        refreshed_route_id = hub_live_route_id(route) or route_id
+        if not refreshed_route_id and not hub_stop_list(route):
+            continue
+        row = {
+            "snapshot_key": f"pwa-live-{fetched_at:%Y%m%d%H%M%S}-wh{warehouse_id}-{courier_id}",
+            "warehouse_id": warehouse_id,
+            "warehouse_code": f"BUD{warehouse_id}",
+            "dsp_id": COURIER_HUB_DSP_ID,
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "route_id": refreshed_route_id,
+            "request_url": request_url,
+            "status_code": status_code,
+            "response_json": payload,
+            "fetched_at": fetched_at.isoformat(),
+            "updated_at": fetched_at.isoformat(),
+        }
+        supabase_rest(
+            "POST",
+            "courier_hub_live_monitoring_courier_latest",
+            params={"on_conflict": "courier_id,warehouse_id,dsp_id"},
+            payload=row,
+            prefer="resolution=merge-duplicates,return=minimal",
+            timeout=30,
+        )
+        return
+
+
 def route_planner_traffic(current_stop: dict[str, Any] | None, next_stop: dict[str, Any] | None) -> dict[str, Any]:
     origin = str((current_stop or {}).get("address") or "").strip()
     destination = str((next_stop or {}).get("address") or "").strip()
@@ -2063,8 +2200,6 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
 
     row = rows[0]
     stored_route_id = str(row.get("route_id") or "").strip()
-    if not stored_route_id:
-        return None
 
     payload = row.get("response_json")
     if isinstance(payload, str):
@@ -2077,7 +2212,7 @@ def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None
 
     route = first_hub_route(payload, stored_route_id)
     route_id = hub_live_route_id(route) or stored_route_id
-    if not route_id:
+    if not route_id and not hub_stop_list(route):
         return None
 
     fetched_at = local_datetime(row.get("fetched_at")) or datetime.now(LOCAL_TIMEZONE)
@@ -2528,6 +2663,10 @@ def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
 def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date()
+    try:
+        refresh_live_hub_detail_for_user(user)
+    except Exception as exc:
+        print(f"Courier Hub live detail refresh hiba: {exc}")
     hub_card = read_latest_hub_current_route(user)
     if hub_card:
         return hub_card

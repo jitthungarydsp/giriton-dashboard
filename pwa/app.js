@@ -19,6 +19,7 @@ const state = {
   expenseRequests: [],
   atmPayments: [],
   atmSubmitting: false,
+  currentRouteLoading: false,
   game: null,
   gameStartedAt: null,
   statistics: null,
@@ -43,9 +44,10 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v102";
+const APP_VERSION = "v103";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
+const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
 const PHONEBOOK_CONTACTS = [
   { label: "Diszpécser", phone: "+3612000391", note: "Kifli támogatás" },
   { label: "FC2 Diszpécser", phone: "+3612002763", note: "FC2 támogatás" },
@@ -1974,6 +1976,8 @@ function renderCurrentRoute() {
 }
 
 async function loadCurrentRoute() {
+  if (state.currentRouteLoading) return;
+  state.currentRouteLoading = true;
   try {
     state.currentRoute = await api(withPreviewCourier("/api/routes/current"));
     if (state.currentRoute?.found) {
@@ -1995,6 +1999,8 @@ async function loadCurrentRoute() {
         </div>
       `;
     }
+  } finally {
+    state.currentRouteLoading = false;
   }
 }
 
@@ -3289,7 +3295,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=102");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=103");
   }
   return navigator.serviceWorker.ready;
 }
@@ -4643,6 +4649,12 @@ $("#route-details-month")?.addEventListener("change", () => {
 setInterval(() => {
   withSilentLoading(() => currentSectionRefresh()).catch(() => {});
 }, 5 * 60 * 1000);
+
+setInterval(() => {
+  if (!state.user || state.section !== "tours" || document.hidden) return;
+  withSilentLoading(() => loadCurrentRoute()).catch(() => {});
+}, ROUTE_LIVE_REFRESH_MS);
+
 startQueueTimer();
 
 let pullStartY = null;
