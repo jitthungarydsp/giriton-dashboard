@@ -1841,6 +1841,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     imported_bonus = parse_huf_value(row.get("Importált bónusz"))
     imported_malus = abs(parse_huf_value(row.get("Importált málusz")))
     imported_atm = abs(parse_huf_value(row.get("Importált ATM levonás")))
+    address_bonus_kifli = parse_huf_value(row.get("Cím bónusz (Kifli)") or row.get("other_route_bonus_huf"))
     deduction = parse_huf_value(row.get("Levonás"))
     payable = parse_huf_value(row.get("Kifizetendő"))
     orders = parse_huf_value(row.get("Rendelések"))
@@ -1890,7 +1891,18 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         + correction_deduction
     )
     remaining_deduction = max(abs(deduction) - known_deductions, 0.0)
-    income = base + tip + imported_bonus + manual_bonus + delay + compliance + loyalty + customer_rating + correction_income
+    income = (
+        base
+        + tip
+        + address_bonus_kifli
+        + imported_bonus
+        + manual_bonus
+        + delay
+        + compliance
+        + loyalty
+        + customer_rating
+        + correction_income
+    )
     return [
         {"item_key": "payable", "item_label": "Teljes összeg", "amount_kind": "huf", "amount_value": payable, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "income", "item_label": "Jóváírások", "amount_kind": "huf", "amount_value": income, "note": "Havi nyitáskor publikált snapshot"},
@@ -1900,6 +1912,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
+        {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": address_bonus_kifli, "note": "Stop-count Bonus"},
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
@@ -1966,6 +1979,7 @@ def recalculate_mobile_breakdown_totals(rows: list[dict[str, object]]) -> list[d
     monthly_malus = abs(_mobile_breakdown_amount(rows, "monthly_malus"))
     manual_bonus = _mobile_breakdown_amount(rows, "manual_bonus")
     manual_malus = abs(_mobile_breakdown_amount(rows, "manual_malus"))
+    address_bonus_kifli = _mobile_breakdown_amount(rows, "address_bonus_kifli")
     correction = _mobile_breakdown_amount(rows, "correction")
     correction_income = max(correction, 0.0)
     correction_deduction = abs(min(correction, 0.0))
@@ -1990,6 +2004,7 @@ def recalculate_mobile_breakdown_totals(rows: list[dict[str, object]]) -> list[d
         + _mobile_breakdown_amount(rows, "tip")
         + _mobile_breakdown_amount(rows, "delay_bonus")
         + _mobile_breakdown_amount(rows, "compliance_bonus")
+        + address_bonus_kifli
         + _mobile_breakdown_amount(rows, "loyalty_bonus")
         + _mobile_breakdown_amount(rows, "customer_rating")
         + monthly_bonus
@@ -12746,7 +12761,8 @@ def render_courier_detail_page() -> None:
         mobile_monthly_malus = imported_malus_total + manual_malus_total
         mobile_income_total = (
             base_total + tip_total + delay_total + compliance_total
-            + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
+            + other_route_bonus_total + imported_bonus_total + manual_bonus_total
+            + loyalty_total + customer_rating_total
         )
         mobile_deduction_total = -(
             mobile_monthly_malus + atm_deduction_total + other_expense_total
@@ -12763,6 +12779,7 @@ def render_courier_detail_page() -> None:
             {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
             {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay_total, "note": "Valós elszámolási adat"},
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
+            {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": other_route_bonus_total, "note": "Stop-count Bonus"},
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": mobile_correction_total, "note": "Valós elszámolási adat"},

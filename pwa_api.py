@@ -4231,6 +4231,7 @@ def build_financial_breakdown_from_mobile_rows(
         "tip",
         "delay_bonus",
         "compliance_bonus",
+        "address_bonus_kifli",
         "loyalty_bonus",
         "customer_rating",
         "monthly_bonus",
@@ -4353,6 +4354,7 @@ def build_financial_breakdown_from_mobile_rows(
         "tip",
         "delay_bonus",
         "compliance_bonus",
+        "address_bonus_kifli",
         "loyalty_bonus",
         "customer_rating",
         "monthly_bonus",
@@ -4430,6 +4432,7 @@ def build_financial_breakdown_from_mobile_rows(
     base_total = override_amount_or("base", sum(money_int(current.get("amountHuf")) for current in base_items))
     delay_total = override_amount_or("delay_bonus", sum(money_int(current.get("amountHuf")) for current in delay_items))
     compliance_total = override_amount_or("compliance_bonus", sum(money_int(current.get("amountHuf")) for current in compliance_items))
+    address_bonus_kifli_total = mobile_override_amount(overrides, "address_bonus_kifli")
     customer_rating_total = override_amount_or("customer_rating", sum(money_int(current.get("amountHuf")) for current in customer_rating_items))
     loyalty_total = mobile_override_amount(overrides, "loyalty_bonus")
     atm_total = mobile_override_amount(overrides, "atm_effect")
@@ -4443,6 +4446,7 @@ def build_financial_breakdown_from_mobile_rows(
             tip_total,
             delay_total,
             compliance_total,
+            address_bonus_kifli_total,
             loyalty_total,
             customer_rating_total,
         )
@@ -4478,6 +4482,7 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "tip", "label": "Borraval\u00f3", "amountHuf": tip_total, "tone": "income", "items": tip_items},
         {"key": "delay_bonus", "label": "K\u00e9sedelmi d\u00edj", "amountHuf": delay_total, "tone": "income", "items": delay_items},
         {"key": "compliance_bonus", "label": "T\u00faramegfelel\u00e9s", "amountHuf": compliance_total, "tone": "income", "items": compliance_items},
+        {"key": "address_bonus_kifli", "label": "C\u00edm b\u00f3nusz (Kifli)", "amountHuf": address_bonus_kifli_total, "tone": "income", "items": money_items(["address_bonus_kifli"])},
         {"key": "deductions", "label": "Levon\u00e1sok \u00f6sszesen", "amountHuf": deduction_total, "tone": "deduction", "items": deduction_items},
         {"key": "loyalty_bonus", "label": "Lojalit\u00e1si b\u00f3nusz", "amountHuf": loyalty_total, "tone": "income", "items": money_items(["loyalty_bonus"])},
         {"key": "customer_rating", "label": "\u00dcgyf\u00e9l\u00e9rt\u00e9kel\u00e9s", "amountHuf": customer_rating_total, "tone": "income", "items": customer_rating_items},
@@ -5512,11 +5517,11 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     tip = money_from(row, "tip_huf")
     delay = money_from(row, "delay_bonus_huf")
     compliance = money_from(row, "compliance_bonus_huf")
+    address_bonus_kifli = money_from(row, "other_route_bonus_huf")
     loyalty = money_from(row, "loyalty_bonus_huf")
     customer_rating = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
     monthly_bonus = money_from(row, "monthly_bonus_huf") or money_sum_from(
         row,
-        "other_route_bonus_huf",
         "imported_bonus_huf",
         "manual_bonus_huf",
     )
@@ -5568,6 +5573,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("tip", "Borravaló", tip),
         signed_item("delay_bonus", "Késedelmi díj", delay),
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
+        signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus"),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
         signed_item("monthly_bonus", "Bónuszok összesen", monthly_bonus),
@@ -5765,6 +5771,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         {"key": "base", "label": "Alapdíj", "amountHuf": base, "tone": "income", "items": [signed_item("base", "Alapdíj", base)]},
         {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": delay, "tone": "income", "items": [signed_item("delay_bonus", "Késedelmi díj", delay)]},
         {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": compliance, "tone": "income", "items": [signed_item("compliance_bonus", "Túramegfelelés", compliance)]},
+        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": address_bonus_kifli, "tone": "income", "items": [signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus")]},
         {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": loyalty, "tone": "income", "items": loyalty_items},
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": customer_rating, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levonások / bónuszok", "amountHuf": kiflis_bonus_malus_total, "tone": "info", "items": kiflis_bonus_malus_items},
