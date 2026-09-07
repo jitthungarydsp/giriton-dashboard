@@ -4983,7 +4983,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     columns = [
         "Courier ID", "Futár", "Vállalkozói alapdíj", "Nettó bevétel", "Borravaló",
         "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
-        "Importált bónusz",
+        "Cím bónusz (Kifli)",
         "Lojalitás",
         "Kiemelt túrák", "Normál túrák", "Számolt túrák", "Nem számolt túrák",
     ]
@@ -5038,6 +5038,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "route_bonus_total_huf": "Rendszerbónusz",
         "delay_bonus_huf": "Késedelmi díj",
         "compliance_bonus_huf": "Túramegfelelés",
+        "other_route_bonus_huf": "Cím bónusz (Kifli)",
         "loyalty_bonus_huf": "Lojalitás",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
@@ -5497,7 +5498,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
             [
                 "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
                 "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
-                "Importált bónusz",
+                "Cím bónusz (Kifli)",
                 "Lojalitás",
                 "Számolt túrák", "Nem számolt túrák",
             ]
@@ -5508,7 +5509,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         [
             "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
             "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
-            "Importált bónusz",
+            "Cím bónusz (Kifli)",
             "Lojalitás",
             "Számolt túrák", "Nem számolt túrák",
         ]
@@ -5519,7 +5520,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     system_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Rendszerbónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
     delay_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Késedelmi díj"] if not calculated_by_id.empty else pd.Series(dtype=float)
     compliance_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Túramegfelelés"] if not calculated_by_id.empty else pd.Series(dtype=float)
-    imported_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Importált bónusz"] if not calculated_by_id.empty else pd.Series(dtype=float)
+    stop_count_bonus_by_id = calculated_by_id.set_index("_courier_id_lookup")["Cím bónusz (Kifli)"] if not calculated_by_id.empty else pd.Series(dtype=float)
     loyalty_by_id = calculated_by_id.set_index("_courier_id_lookup")["Lojalitás"] if not calculated_by_id.empty else pd.Series(dtype=float)
     matched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
     unmatched_routes_by_id = calculated_by_id.set_index("_courier_id_lookup")["Nem számolt túrák"] if not calculated_by_id.empty else pd.Series(dtype=float)
@@ -5529,7 +5530,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     system_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Rendszerbónusz"]
     delay_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Késedelmi díj"]
     compliance_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Túramegfelelés"]
-    imported_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Importált bónusz"]
+    stop_count_bonus_by_courier = calculated_by_name.set_index("_courier_lookup")["Cím bónusz (Kifli)"]
     loyalty_by_courier = calculated_by_name.set_index("_courier_lookup")["Lojalitás"]
     matched_routes = calculated_by_name.set_index("_courier_lookup")["Számolt túrák"]
     unmatched_routes = calculated_by_name.set_index("_courier_lookup")["Nem számolt túrák"]
@@ -5543,7 +5544,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
     result["Bónusz"] = result["_courier_id_lookup"].map(system_bonus_by_id).fillna(resolved_lookup.map(system_bonus_by_courier)).fillna(0.0)
     result["Késedelmi díj"] = result["_courier_id_lookup"].map(delay_bonus_by_id).fillna(resolved_lookup.map(delay_bonus_by_courier)).fillna(0.0)
     result["Túramegfelelés"] = result["_courier_id_lookup"].map(compliance_bonus_by_id).fillna(resolved_lookup.map(compliance_bonus_by_courier)).fillna(0.0)
-    result["Importált bónusz"] = result["_courier_id_lookup"].map(imported_bonus_by_id).fillna(resolved_lookup.map(imported_bonus_by_courier)).fillna(0.0)
+    result["Cím bónusz (Kifli)"] = result["_courier_id_lookup"].map(stop_count_bonus_by_id).fillna(resolved_lookup.map(stop_count_bonus_by_courier)).fillna(0.0)
     result["Lojalitás"] = result["_courier_id_lookup"].map(loyalty_by_id).fillna(resolved_lookup.map(loyalty_by_courier)).fillna(_numeric_series(result, "Lojalitás"))
     result["Számolt túrák"] = result["_courier_id_lookup"].map(matched_routes_by_id).fillna(resolved_lookup.map(matched_routes)).fillna(0).astype(int)
     result["Nem számolt túrák"] = result["_courier_id_lookup"].map(unmatched_routes_by_id).fillna(resolved_lookup.map(unmatched_routes)).fillna(0).astype(int)
@@ -5563,7 +5564,7 @@ def apply_excel_base_rates(data: pd.DataFrame, session_id: str | None) -> pd.Dat
         amount_columns = [
             "Nettó bevétel", "Vállalkozói alapdíj", "Borravaló",
             "Rendszerbónusz", "Késedelmi díj", "Túramegfelelés",
-            "Importált bónusz",
+            "Cím bónusz (Kifli)",
             "Lojalitás",
             "Számolt túrák", "Nem számolt túrák",
         ]
@@ -6405,6 +6406,7 @@ def payable_bonus_total(data: pd.DataFrame) -> pd.Series:
     itemized_columns = [
         "Késedelmi díj",
         "Túramegfelelés",
+        "Cím bónusz (Kifli)",
         "Importált bónusz",
         "JITT bónusz",
         "Lojalitás",
@@ -11689,7 +11691,7 @@ def render_courier_detail_page() -> None:
     correction_total = correction_income_total - correction_deduction_total
     total_income = (
         base_total + tip_total + delay_total + compliance_total
-        + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
+        + other_route_bonus_total + imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total
         + correction_income_total
     )
     salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
@@ -12471,6 +12473,13 @@ def render_courier_detail_page() -> None:
                 return build_amount_drilldown(route_detail, "Késedelmi díj", delay_level_rules)
             if detail_label == "Túramegfelelés":
                 return build_amount_drilldown(route_detail, "Túramegfelelés", compliance_level_rules)
+            if detail_label == "Cím bónusz (Kifli)":
+                return pd.DataFrame([{
+                    "Tétel": "Stop-count Bonus",
+                    "Összeg": other_route_bonus_total,
+                    "Forrás": "Excel JIT / courier_settlement_summary.other_route_bonus_huf",
+                    "Session": str(session_id or "-"),
+                }])
             if detail_label == "Lojalitás":
                 unit_amount = loyalty_rate or (loyalty_total / loyalty_current_routes if loyalty_current_routes else 0)
                 return pd.DataFrame([
@@ -12661,6 +12670,7 @@ def render_courier_detail_page() -> None:
             ("Borravaló", format_huf(tip_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
+            ("Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Stop-count Bonus"),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
@@ -12698,7 +12708,7 @@ def render_courier_detail_page() -> None:
             )
 
         detail_labels = {
-            "Kör", "Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Lojalitás", "Ügyfélértékelési bónusz",
+            "Kör", "Alapdíj", "Borravaló", "Késedelmi díj", "Túramegfelelés", "Cím bónusz (Kifli)", "Lojalitás", "Ügyfélértékelési bónusz",
             "Korrekció", "Kiflis levonások / bónuszok", "JITT bónusz / malus", "ATM hatás", "Fizetés előleg", "Céltartalék 10%",
         }
 
