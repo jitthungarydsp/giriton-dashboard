@@ -5146,7 +5146,13 @@ def load_stop_count_bonus_fallbacks_from_jit_rows(
     session_id: str | None,
     period_start: date,
 ) -> pd.DataFrame:
-    """Read Stop-count Bonus by courier from the raw imported JIT rows."""
+    """Read Stop-count Bonus by courier from raw JIT rows.
+
+    Older summaries can miss Stop-count Bonus. Some months also have multiple
+    Excel imports, including partial sessions, so use the largest same-month
+    Excel-session total per courier instead of trusting one possibly partial
+    session.
+    """
     columns = ["courier_id_key", "courier_name_key", "Stop-count bónusz"]
     if not session_id:
         return pd.DataFrame(columns=columns)
@@ -5156,8 +5162,7 @@ def load_stop_count_bonus_fallbacks_from_jit_rows(
             get_db()
             .schema("settlement")
             .table("jit_row")
-            .select("normalized_data,is_route_primary")
-            .eq("session_id", session_id)
+            .select("session_id,source_sheet,normalized_data,is_route_primary")
             .gte("route_date", period_start.isoformat())
             .lte("route_date", period_end.isoformat())
             .limit(10000)
@@ -5168,9 +5173,15 @@ def load_stop_count_bonus_fallbacks_from_jit_rows(
     except BaseException:
         return pd.DataFrame(columns=columns)
 
-    totals: dict[tuple[str, str], float] = {}
+    totals_by_session: dict[tuple[str, str, str], float] = {}
     for jit_row in rows:
         if jit_row.get("is_route_primary") is False:
+            continue
+        source_sheet = str(jit_row.get("source_sheet") or "")
+        if source_sheet.lower().startswith("api financial overview"):
+            continue
+        row_session_id = str(jit_row.get("session_id") or "").strip()
+        if not row_session_id:
             continue
         normalized_data = jit_row.get("normalized_data") or {}
         if not isinstance(normalized_data, dict):
@@ -5192,8 +5203,13 @@ def load_stop_count_bonus_fallbacks_from_jit_rows(
             if str(key or "").strip().casefold() in STOP_COUNT_BONUS_FIELD_KEYS:
                 stop_count_bonus += parse_huf_value(value)
         if stop_count_bonus:
-            lookup_key = (courier_id_key, courier_name_key)
-            totals[lookup_key] = totals.get(lookup_key, 0.0) + stop_count_bonus
+            lookup_key = (row_session_id, courier_id_key, courier_name_key)
+            totals_by_session[lookup_key] = totals_by_session.get(lookup_key, 0.0) + stop_count_bonus
+
+    totals: dict[tuple[str, str], float] = {}
+    for (_row_session_id, courier_id_key, courier_name_key), amount in totals_by_session.items():
+        courier_key = (courier_id_key, courier_name_key)
+        totals[courier_key] = max(totals.get(courier_key, 0.0), amount)
 
     return pd.DataFrame(
         [
