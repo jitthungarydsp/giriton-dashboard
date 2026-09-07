@@ -11252,6 +11252,8 @@ def render_table(df: pd.DataFrame) -> None:
             courier_key = _courier_id_key(row.get("Courier ID"))
             api_settlement_total = lookup_session_payable_total(api_settlement_totals, courier_key, row.get("Futár"))
             excel_payable_total = lookup_session_payable_total(excel_payable_totals, courier_key, row.get("Futár"))
+            if str(row.get("Számítás módja") or "").strip().casefold() == "excel":
+                excel_payable_total = parse_huf_value(row.get("Kifizetendő")) or excel_payable_total
             cols[1].markdown(f"**{format_huf(api_settlement_total)}**")
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
             cols[3].markdown(f"**{format_huf(0)}**")
@@ -11868,7 +11870,7 @@ def render_courier_detail_page() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    displayed_payable_total = parse_huf_value(summary_row.get("payable_huf")) if summary_available else 0.0
+    displayed_payable_total = payable_total
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
