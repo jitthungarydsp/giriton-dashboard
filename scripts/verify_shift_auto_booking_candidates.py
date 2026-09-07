@@ -83,7 +83,12 @@ def main() -> None:
     parser.add_argument("--fail-on-missing", action="store_true")
     args = parser.parse_args()
 
-    candidates = load_candidates(Path(args.candidate_file))
+    candidate_path = Path(args.candidate_file)
+    if not candidate_path.exists() and not args.fail_on_missing:
+        print(f"SHIFT_AUTO_VERIFY_NO_CANDIDATE_FILE path={candidate_path}")
+        candidates = []
+    else:
+        candidates = load_candidates(candidate_path)
     print(f"SHIFT_AUTO_VERIFY phase={args.phase} candidates={len(candidates)}")
     if not candidates:
         return

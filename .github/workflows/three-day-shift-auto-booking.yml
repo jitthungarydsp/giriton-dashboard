@@ -118,7 +118,9 @@ jobs:
             CMD+=(--dry-run)
           fi
           echo "Running: ${CMD[*]}"
-          "${CMD[@]}"
+          if ! "${CMD[@]}"; then
+            echo "::warning::MuszakPro/fetch-attendance frissites sikertelen, a foglalas folytatodik a meglevo adatokkal."
+          fi
 
       - name: Refresh Giriton before booking
         shell: bash
@@ -133,6 +135,7 @@ jobs:
               --days "$SHIFT_AUTO_DAYS" \
               --source uidl \
               --fast-uidl \
+              --continue-on-day-error \
               --uidl-dir results/three-day-shift-auto-booking/giriton-before/uidl-trace \
               --csv results/three-day-shift-auto-booking/giriton-before/giriton-live-shifts.csv \
               --write-raw-export
