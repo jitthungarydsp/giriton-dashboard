@@ -11627,7 +11627,7 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    other_route_bonus_total = 0.0
+    other_route_bonus_total = settlement_amount("other_route_bonus_huf")
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
@@ -11647,6 +11647,8 @@ def render_courier_detail_page() -> None:
         compliance_total = route_compliance_total
     display_base_total = base_total
     imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
+    if not is_api_mode:
+        imported_bonus_total += other_route_bonus_total
     imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
     imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
     if is_api_mode:

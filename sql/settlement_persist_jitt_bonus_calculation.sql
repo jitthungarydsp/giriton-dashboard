@@ -42,7 +42,13 @@ with raw as (
                 else coalesce(nullif(regexp_replace(item.value, '[^0-9.-]', '', 'g'), '')::numeric, 0)
             end)
             from jsonb_each_text(j.normalized_data) as item(key, value)
-            where lower(trim(item.key)) in ('fuel bonus', 'car & fridge bonus', 'fill rate bonus', 'branding')
+            where lower(trim(item.key)) in (
+                'stop-count bonus',
+                'stop count bonus',
+                'stop_count_bonus',
+                'stopcount bonus',
+                'stopcountbonus'
+            )
         ), 0) as other_bonus_huf
     from settlement.jit_row j
     cross join lateral (

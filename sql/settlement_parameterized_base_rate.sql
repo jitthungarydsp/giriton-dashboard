@@ -316,7 +316,13 @@ with raw as (
         coalesce((
             select sum(settlement.safe_excel_numeric(item.value))
             from jsonb_each_text(j.normalized_data) as item(key, value)
-            where lower(trim(item.key)) in ('fuel bonus', 'car & fridge bonus', 'fill rate bonus', 'branding')
+            where lower(trim(item.key)) in (
+                'stop-count bonus',
+                'stop count bonus',
+                'stop_count_bonus',
+                'stopcount bonus',
+                'stopcountbonus'
+            )
         ), 0) as other_bonus_huf
     from settlement.jit_row j
     cross join lateral (
@@ -460,9 +466,9 @@ set
     courier_tip_huf = case when resolved.route_rank = 1 then resolved.tip_huf else 0 end,
     courier_delay_bonus_huf = case when resolved.route_rank = 1 then resolved.delay_amount_huf else 0 end,
     courier_compliance_bonus_huf = case when resolved.route_rank = 1 then resolved.compliance_amount_huf else 0 end,
-    courier_other_bonus_huf = 0,
+    courier_other_bonus_huf = case when resolved.route_rank = 1 then resolved.other_bonus_huf else 0 end,
     courier_bonus_total_huf = case when resolved.route_rank = 1
-        then resolved.delay_amount_huf + resolved.compliance_amount_huf else 0 end,
+        then resolved.delay_amount_huf + resolved.compliance_amount_huf + resolved.other_bonus_huf else 0 end,
     is_route_primary = resolved.route_rank = 1,
     base_rate_status = case
         when resolved.route_rank <> 1 then 'duplicate_route_id'
