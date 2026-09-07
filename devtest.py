@@ -1632,6 +1632,74 @@ def default_settlement_month_label() -> str:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_excel_stop_count_bonus_totals(session_id: str | None) -> pd.DataFrame:
+    columns = ["courier_id_key", "courier_name_key", "stop_count_bonus_huf"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    stop_count_keys = {
+        "stopcountbonus",
+        "stopcountbonushuf",
+        "stopcountbonusft",
+    }
+    records: list[dict[str, object]] = []
+    offset = 0
+    page_size = 1000
+    try:
+        while True:
+            page = (
+                get_db()
+                .schema("settlement")
+                .table("jit_row")
+                .select("normalized_data")
+                .eq("session_id", session_id)
+                .range(offset, offset + page_size - 1)
+                .execute()
+                .data
+                or []
+            )
+            if not page:
+                break
+            for source_row in page:
+                payload = source_row.get("normalized_data") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        payload = {}
+                if not isinstance(payload, dict):
+                    continue
+                normalized_payload = {
+                    _normalized_field_key(key): value
+                    for key, value in payload.items()
+                }
+                courier_id_key, courier_name_key = _imported_courier_identity(normalized_payload)
+                amount = sum(
+                    parse_huf_value(value)
+                    for key, value in normalized_payload.items()
+                    if key in stop_count_keys
+                )
+                if amount == 0 or (not courier_id_key and not courier_name_key):
+                    continue
+                records.append({
+                    "courier_id_key": courier_id_key,
+                    "courier_name_key": courier_name_key,
+                    "stop_count_bonus_huf": amount,
+                })
+            if len(page) < page_size:
+                break
+            offset += page_size
+    except BaseException:
+        return pd.DataFrame(columns=columns)
+    if not records:
+        return pd.DataFrame(columns=columns)
+    return (
+        pd.DataFrame(records)
+        .groupby(["courier_id_key", "courier_name_key"], as_index=False, dropna=False)["stop_count_bonus_huf"]
+        .sum()
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def jit_session_has_rows_in_month(session_id: str | None, period_start: date) -> bool:
     if not session_id:
         return False
@@ -5087,6 +5155,24 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     result["Courier ID"] = result["Courier ID"].where(result["Courier ID"].map(_courier_id_key) != "", embedded_ids)
     for column in columns[2:]:
         result[column] = _numeric_series(result, column)
+    stop_count_bonus = load_excel_stop_count_bonus_totals(session_id)
+    if not stop_count_bonus.empty:
+        result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
+        result["_courier_lookup"] = result["Futár"].map(_courier_match_key)
+        by_id = (
+            stop_count_bonus[stop_count_bonus["courier_id_key"].astype(str).ne("")]
+            .groupby("courier_id_key")["stop_count_bonus_huf"]
+            .sum()
+        )
+        by_name = (
+            stop_count_bonus[stop_count_bonus["courier_name_key"].astype(str).ne("")]
+            .groupby("courier_name_key")["stop_count_bonus_huf"]
+            .sum()
+        )
+        raw_bonus = result["_courier_id_lookup"].map(by_id).fillna(result["_courier_lookup"].map(by_name)).fillna(0.0)
+        current_bonus = _numeric_series(result, "Cím bónusz (Kifli)")
+        result["Cím bónusz (Kifli)"] = current_bonus.where(current_bonus.ne(0.0), raw_bonus)
+        result = result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
     return result[columns]
 
 
@@ -10850,6 +10936,7 @@ def refresh_settlement_profile_data() -> None:
     load_latest_api_jit_session_id.clear()
     load_latest_excel_jit_session_id.clear()
     load_latest_excel_jit_period_start.clear()
+    load_excel_stop_count_bonus_totals.clear()
     load_excel_courier_base_rates.clear()
     load_excel_base_rate_diagnostics.clear()
     load_active_base_rate_rules.clear()
@@ -11643,6 +11730,7 @@ def render_courier_detail_page() -> None:
                     get_db().schema("settlement").table("courier_settlement_summary").update(
                         {"loyalty_bonus_huf": loyalty_amount_value}
                     ).eq("session_id", session_id).eq("courier_id", _courier_id_key(courier_id)).execute()
+                    load_excel_stop_count_bonus_totals.clear()
                     load_excel_courier_base_rates.clear()
                     load_courier_settlement_summary.clear()
                     load_courier_settlement_summary_row.clear()
@@ -11691,6 +11779,8 @@ def render_courier_detail_page() -> None:
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
     other_route_bonus_total = settlement_amount("other_route_bonus_huf")
+    if not other_route_bonus_total:
+        other_route_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
@@ -17170,6 +17260,7 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_latest_jit_session_id.clear()
         load_latest_excel_jit_session_id.clear()
         load_latest_excel_jit_period_start.clear()
+        load_excel_stop_count_bonus_totals.clear()
         load_excel_courier_base_rates.clear()
         load_excel_base_rate_diagnostics.clear()
         load_courier_route_detail.clear()
@@ -17262,6 +17353,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_latest_jit_session_id.clear()
                 load_latest_excel_jit_session_id.clear()
                 load_latest_excel_jit_period_start.clear()
+                load_excel_stop_count_bonus_totals.clear()
                 load_excel_courier_base_rates.clear()
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
@@ -17476,6 +17568,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             load_latest_jit_session_id.clear()
             load_latest_excel_jit_session_id.clear()
             load_latest_excel_jit_period_start.clear()
+            load_excel_stop_count_bonus_totals.clear()
             load_excel_courier_base_rates.clear()
             load_excel_base_rate_diagnostics.clear()
             load_courier_route_detail.clear()
