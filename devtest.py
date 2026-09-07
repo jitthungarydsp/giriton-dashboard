@@ -1650,8 +1650,9 @@ def load_excel_stop_count_bonus_totals(session_id: str | None) -> pd.DataFrame:
                 get_db()
                 .schema("settlement")
                 .table("jit_row")
-                .select("normalized_data")
+                .select("normalized_data,is_route_primary")
                 .eq("session_id", session_id)
+                .eq("is_route_primary", True)
                 .range(offset, offset + page_size - 1)
                 .execute()
                 .data
@@ -5171,7 +5172,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         )
         raw_bonus = result["_courier_id_lookup"].map(by_id).fillna(result["_courier_lookup"].map(by_name)).fillna(0.0)
         current_bonus = _numeric_series(result, "Cím bónusz (Kifli)")
-        result["Cím bónusz (Kifli)"] = current_bonus.where(current_bonus.ne(0.0), raw_bonus)
+        result["Cím bónusz (Kifli)"] = current_bonus.where(raw_bonus.eq(0.0), raw_bonus)
         result = result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
     return result[columns]
 
@@ -11796,9 +11797,8 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    other_route_bonus_total = settlement_amount("other_route_bonus_huf")
-    if not other_route_bonus_total:
-        other_route_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
+    row_other_route_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
+    other_route_bonus_total = row_other_route_bonus_total or settlement_amount("other_route_bonus_huf")
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
@@ -12164,9 +12164,9 @@ def render_courier_detail_page() -> None:
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
-        route_other_bonus_total = 0.0
+        route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
         payable_total = (
-            base_total + tip_total + delay_total + compliance_total + bonus_total
+            base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
@@ -12188,7 +12188,7 @@ def render_courier_detail_page() -> None:
             tip_total = amount("tip_huf")
             delay_total = amount("delay_bonus_huf")
             compliance_total = amount("compliance_bonus_huf")
-            route_other_bonus_total = amount("other_route_bonus_huf")
+            route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)")) or amount("other_route_bonus_huf")
             imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -12205,7 +12205,7 @@ def render_courier_detail_page() -> None:
             tip_total = route_detail_tip_total if is_api_mode and route_detail_tip_total else summary_tip_total
             delay_total = route_detail_delay_total if is_api_mode else parse_huf_value(summary_row.get("delay_bonus_huf"))
             compliance_total = route_detail_compliance_total if is_api_mode else parse_huf_value(summary_row.get("compliance_bonus_huf"))
-            route_other_bonus_total = parse_huf_value(summary_row.get("other_route_bonus_huf"))
+            route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)")) or parse_huf_value(summary_row.get("other_route_bonus_huf"))
             imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
@@ -12247,7 +12247,7 @@ def render_courier_detail_page() -> None:
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
-        route_other_bonus_total = 0.0
+        route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
         display_base_total = base_total
         imported_customer_rating_total = resolve_customer_rating_bonus_total(
             courier_id,
@@ -12258,7 +12258,7 @@ def render_courier_detail_page() -> None:
         )
         customer_rating_total = imported_customer_rating_total + manual_customer_rating_total
         payable_total = (
-            base_total + tip_total + delay_total + compliance_total + bonus_total
+            base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
             - malus_total - atm_deduction_total - other_expense_total - correction_deduction_total - salary_advance_total
         )
@@ -12627,7 +12627,7 @@ def render_courier_detail_page() -> None:
                 return pd.DataFrame([{
                     "Tétel": "Stop-count Bonus",
                     "Összeg": other_route_bonus_total,
-                    "Forrás": "Excel JIT / courier_settlement_summary.other_route_bonus_huf",
+                    "Forrás": "Excel JIT / Stop-count Bonus",
                     "Session": str(session_id or "-"),
                 }])
             if detail_label == "Lojalitás":
