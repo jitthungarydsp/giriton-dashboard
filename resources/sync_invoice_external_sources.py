@@ -290,7 +290,7 @@ def parse_monthly_rows(values, billing_month, courier_lookup):
                 "billing_month": billing_month,
                 "courier_id": courier_lookup.get(normalize_person_key(driver_name)),
                 "driver_name": driver_name,
-                "bonus_huf": str(base_bonus + stop_count_bonus),
+                "bonus_huf": str(base_bonus),
                 "malus_huf": str(malus),
                 "returned_route_huf": str(returned_route),
                 "accepted_route_huf": str(accepted_route),
