@@ -457,7 +457,7 @@ textarea { min-height: 96px; resize: vertical; }
 .route-details-head strong { display: block; margin-top: 3px; font-size: 19px; overflow-wrap: anywhere; }
 .route-details-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .route-details-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
-.route-details-table { width: 100%; min-width: 1420px; border-collapse: collapse; font-size: 12px; }
+.route-details-table { width: 100%; min-width: 1780px; border-collapse: collapse; font-size: 12px; }
 .route-details-table th,
 .route-details-table td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .route-details-table th { background: #17231c; color: #fff; font-size: 11px; font-weight: 900; text-transform: uppercase; }

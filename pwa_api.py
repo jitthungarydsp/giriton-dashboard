@@ -2285,56 +2285,79 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
             "message": "Nincs GOOGLE_ROUTES_API_KEY vagy GOOGLE_MAPS_API_KEY beállítva.",
         }
 
-    if len(stops) > 25:
-        return {
-            "available": False,
-            "provider": "google_routes",
-            "warehouseAddress": warehouse_address,
-            "stopCount": len(stops),
-            "message": "A route túl sok stopot tartalmaz egy Google Routes kéréshez.",
+    route_points = [warehouse_address, *stops, warehouse_address]
+    segments = [
+        route_points[index:index + 25]
+        for index in range(0, len(route_points) - 1, 24)
+    ]
+    total_distance_meters = 0.0
+    total_duration_seconds = 0
+    total_static_seconds = 0
+    has_duration = False
+    has_static_duration = False
+    for segment in segments:
+        if len(segment) < 2:
+            continue
+        request_body: dict[str, Any] = {
+            "origin": {"address": segment[0]},
+            "destination": {"address": segment[-1]},
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE",
+            "languageCode": "hu-HU",
+            "units": "METRIC",
         }
-
-    request_body: dict[str, Any] = {
-        "origin": {"address": warehouse_address},
-        "destination": {"address": warehouse_address},
-        "intermediates": [{"address": address} for address in stops],
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "languageCode": "hu-HU",
-        "units": "METRIC",
-    }
-    try:
-        response = requests.post(
-            "https://routes.googleapis.com/directions/v2:computeRoutes",
-            headers={
-                "Content-Type": "application/json",
-                "X-Goog-Api-Key": api_key,
-                "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
-            },
-            json=request_body,
-            timeout=12,
-        )
-        if response.status_code >= 400:
+        if len(segment) > 2:
+            request_body["intermediates"] = [{"address": address} for address in segment[1:-1]]
+        try:
+            response = requests.post(
+                "https://routes.googleapis.com/directions/v2:computeRoutes",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": api_key,
+                    "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
+                },
+                json=request_body,
+                timeout=12,
+            )
+            if response.status_code >= 400:
+                return {
+                    "available": False,
+                    "provider": "google_routes",
+                    "warehouseAddress": warehouse_address,
+                    "stopCount": len(stops),
+                    "message": f"Google Routes hiba: HTTP {response.status_code}",
+                }
+            payload = response.json()
+        except Exception as exc:
             return {
                 "available": False,
                 "provider": "google_routes",
                 "warehouseAddress": warehouse_address,
                 "stopCount": len(stops),
-                "message": f"Google Routes hiba: HTTP {response.status_code}",
+                "message": f"Útvonal-km nem érhető el: {exc}",
             }
-        payload = response.json()
-    except Exception as exc:
-        return {
-            "available": False,
-            "provider": "google_routes",
-            "warehouseAddress": warehouse_address,
-            "stopCount": len(stops),
-            "message": f"Útvonal-km nem érhető el: {exc}",
-        }
 
-    route = (payload.get("routes") or [{}])[0]
-    distance_meters = route.get("distanceMeters")
-    if distance_meters is None:
+        route = (payload.get("routes") or [{}])[0]
+        distance_meters = route.get("distanceMeters")
+        if distance_meters is None:
+            return {
+                "available": False,
+                "provider": "google_routes",
+                "warehouseAddress": warehouse_address,
+                "stopCount": len(stops),
+                "message": "A Google Routes válaszban nincs távolság.",
+            }
+        total_distance_meters += float(distance_meters)
+        duration_seconds = parse_google_duration_seconds(route.get("duration"))
+        static_seconds = parse_google_duration_seconds(route.get("staticDuration"))
+        if duration_seconds is not None:
+            has_duration = True
+            total_duration_seconds += duration_seconds
+        if static_seconds is not None:
+            has_static_duration = True
+            total_static_seconds += static_seconds
+
+    if total_distance_meters <= 0:
         return {
             "available": False,
             "provider": "google_routes",
@@ -2342,11 +2365,9 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
             "stopCount": len(stops),
             "message": "A Google Routes válaszban nincs távolság.",
         }
-    duration_seconds = parse_google_duration_seconds(route.get("duration"))
-    static_seconds = parse_google_duration_seconds(route.get("staticDuration"))
     traffic_delta_seconds = (
-        duration_seconds - static_seconds
-        if duration_seconds is not None and static_seconds is not None
+        total_duration_seconds - total_static_seconds
+        if has_duration and has_static_duration
         else None
     )
     return {
@@ -2354,8 +2375,8 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
         "provider": "google_routes",
         "warehouseAddress": warehouse_address,
         "stopCount": len(stops),
-        "distanceKm": round(float(distance_meters) / 1000, 1),
-        "durationMinutes": max(0, round(duration_seconds / 60)) if duration_seconds is not None else None,
+        "distanceKm": round(total_distance_meters / 1000, 1),
+        "durationMinutes": max(0, round(total_duration_seconds / 60)) if has_duration else None,
         "trafficDeltaMinutes": round(traffic_delta_seconds / 60) if traffic_delta_seconds is not None else None,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
@@ -2385,6 +2406,7 @@ def enrich_route_detail_distances(rows: list[dict[str, Any]]) -> list[dict[str, 
         row["routeDistance"] = result
         if result.get("available"):
             row["calculatedRouteKm"] = result.get("distanceKm")
+            row["actualKm"] = result.get("distanceKm")
             row["distanceSource"] = "Google Routes"
             hub_km = safe_float_value(row.get("hubPlannedKm"))
             calculated_km = safe_float_value(result.get("distanceKm"))
@@ -2395,6 +2417,35 @@ def enrich_route_detail_distances(rows: list[dict[str, Any]]) -> list[dict[str, 
             )
             continue
         row["distanceStatus"] = str(result.get("message") or "Km számítás nem érhető el.")
+    return rows
+
+
+def attach_next_shift_same_day(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (str(row.get("courierId") or ""), str(row.get("date") or "")[:10])
+        if key[0] and key[1]:
+            grouped.setdefault(key, []).append(row)
+
+    for group_rows in grouped.values():
+        ordered = sorted(
+            group_rows,
+            key=lambda item: (
+                local_datetime(item.get("shiftStartAt"))
+                or local_datetime(item.get("routeAssignedAt"))
+                or datetime.min.replace(tzinfo=LOCAL_TIMEZONE)
+            ),
+        )
+        for index, row in enumerate(ordered):
+            next_row = ordered[index + 1] if index + 1 < len(ordered) else None
+            if not next_row:
+                row["nextShiftSameDay"] = ""
+                continue
+            row["nextShiftSameDay"] = (
+                next_row.get("shiftName")
+                or route_detail_time_text(next_row.get("shiftStartAt"))
+                or route_detail_time_text(next_row.get("routeAssignedAt"))
+            )
     return rows
 
 
@@ -6712,6 +6763,41 @@ def compact_hub_stop_addresses(stops: list[Any]) -> list[str]:
     return addresses
 
 
+def compact_hub_route_delay_count(stops: list[Any]) -> int:
+    count = 0
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        delay = safe_int(stop.get("delayMinutes") or stop.get("deltaMinutes"))
+        if delay > 0:
+            count += 1
+    return count
+
+
+def compact_hub_route_delay_minutes(stops: list[Any]) -> int:
+    total = 0
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        delay = safe_int(stop.get("delayMinutes") or stop.get("deltaMinutes"))
+        if delay > 0:
+            total += delay
+    return total
+
+
+def shift_name_from_hub_shift(shift: dict[str, Any], planned_start: str) -> str:
+    text = str(
+        shift.get("shiftName")
+        or shift.get("name")
+        or shift.get("title")
+        or shift.get("label")
+        or ""
+    ).strip()
+    if text:
+        return text
+    return route_detail_time_text(planned_start)
+
+
 def is_kifli_vehicle(row: dict[str, Any], vehicle: dict[str, Any] | None) -> str:
     text = normalize_text(
         " ".join(
@@ -6812,8 +6898,10 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "routeId": str(row.get("routeId") or ""),
         "routeType": route_type,
         "routeTypeLabel": route_detail_route_type_label(route_type),
+        "shiftName": row.get("shiftName") or story.get("shiftName") or route_detail_time_text(story.get("shiftStart") or row.get("plannedStartAt")),
         "shiftStartAt": story.get("shiftStart") or row.get("plannedStartAt"),
         "shiftEndAt": story.get("shiftEnd") or row.get("plannedEndAt"),
+        "queueStartedAt": row.get("shiftAvailableAt") or story.get("courierRegisteredAt") or row.get("actualStartAt"),
         "routeAssignedAt": assigned_at,
         "departedAt": departed_at,
         "returnedAt": returned_at,
@@ -6829,10 +6917,15 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "distanceKm": distance,
         "hubPlannedKm": hub_planned_km,
         "calculatedRouteKm": None,
+        "actualKm": None,
         "distanceSource": "Courier Hub plannedKm" if hub_planned_km is not None else "Nincs adat",
         "stopAddresses": row.get("stopAddresses") if isinstance(row.get("stopAddresses"), list) else [],
         "orders": safe_int(row.get("orders") or story.get("addressCount")),
         "stops": safe_int(row.get("stops") or story.get("addressCount")),
+        "routeDelayCount": safe_int(row.get("routeDelayCount") or story.get("timeWindowLateCount")),
+        "routeDelayMinutes": safe_int(row.get("routeDelayMinutes") or story.get("timeWindowLateMinutes")),
+        "nextShiftSameDay": row.get("nextShiftSameDay") or story.get("nextShiftText") or "",
+        "tipHuf": safe_float_value(row.get("tipHuf") or row.get("tipsHuf") or story.get("tipHuf")),
         "sourceStoryText": str(story.get("storyText") or ""),
         "dataSource": "Courier Hub route-detail API" if row.get("courierHubRouteDetail") else "PWA route adatok",
     }
@@ -6913,6 +7006,7 @@ def compact_courier_hub_route_detail_raw(row: dict[str, Any]) -> dict[str, Any] 
         "stopAddresses": compact_hub_stop_addresses(stops),
         "plannedStartAt": planned_start,
         "actualStartAt": actual_start,
+        "shiftName": shift_name_from_hub_shift(shift, planned_start),
         "shiftAvailableAt": shift_available,
         "routeAssignedAt": route_assigned,
         "plannedDepartureAt": str(shift.get("plannedDepartureAt") or "").strip(),
@@ -6925,6 +7019,14 @@ def compact_courier_hub_route_detail_raw(row: dict[str, Any]) -> dict[str, Any] 
         "mileageKm": safe_float_value(shift.get("mileageKm")),
         "plannedKm": safe_float_value(shift.get("plannedKm") or response_json.get("plannedKm")),
         "vehicleOwnership": str(shift.get("vehicleOwnership") or "").strip(),
+        "routeDelayCount": compact_hub_route_delay_count(stops),
+        "routeDelayMinutes": compact_hub_route_delay_minutes(stops),
+        "tipHuf": safe_float_value(
+            response_json.get("customerTipsTotal")
+            or response_json.get("tipsHuf")
+            or response_json.get("tipHuf")
+            or shift.get("customerTipsTotal")
+        ),
         "routeType": courier_hub_route_type(
             response_json.get("routeLayer")
             or response_json.get("routeType")
@@ -7026,7 +7128,7 @@ def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
         courier_id = str(raw_row.get("courierId") or "").strip()
         courier_name = names.get(courier_id) or f"Futár {courier_id}" if courier_id else "Ismeretlen futár"
         rows.append(build_route_detail_item(raw_row, courier_id, courier_name))
-    rows = enrich_route_detail_distances(rows)
+    rows = enrich_route_detail_distances(attach_next_shift_same_day(rows))
     rows.sort(key=lambda item: (item.get("courierName") or "", item.get("date") or "", item.get("routeAssignedAt") or ""), reverse=False)
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -7048,7 +7150,7 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
             for row in raw_detail_rows
             if str(row.get("routeId") or "").strip()
         ]
-        rows = enrich_route_detail_distances(rows)
+        rows = enrich_route_detail_distances(attach_next_shift_same_day(rows))
         rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
         return {
             "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -7105,7 +7207,7 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
         if str(row.get("routeId") or "").strip()
         and str(row.get("routeId") or "").strip() not in known_routes
     )
-    rows = enrich_route_detail_distances(rows)
+    rows = enrich_route_detail_distances(attach_next_shift_same_day(rows))
     rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -10282,32 +10384,27 @@ def route_details_excel(
     sheet = workbook.active
     sheet.title = "Tura reszletek"
     headers = [
-        "Futár ID",
-        "Futár",
-        "Dátum",
         "Raktár",
-        "Raktár cím",
+        "Futár ID",
+        "Futár neve",
         "Route ID",
-        "Túratípus",
-        "Műszak kezdete",
-        "Műszak vége",
+        "Műszak neve",
+        "Sorbaállt",
         "Túrát kapott",
         "Indulás a raktárból",
-        "Visszaérkezés",
-        "Tervezett bepakolás (perc)",
-        "Bepakolás (perc)",
-        "Tervezett túra (perc)",
-        "Túra hossza (perc)",
-        "Túra bepakolással (perc)",
-        "Rendszám",
-        "Autó",
-        "Kiflis autó",
-        "Hub tervezett km",
-        "Számolt útvonal km",
+        "Késés a túrán (db)",
+        "Tervezett hossz/idő",
+        "Tervezett km",
+        "Tényleges túraidő",
+        "Tényleges visszaérkezés",
+        "Tényleges km",
+        "Következő műszak aznap",
+        "Túra típusa",
+        "Borravaló",
+        "Dátum",
+        "Raktár cím",
+        "Címek / stopok",
         "Km eltérés",
-        "Km forrás",
-        "Címek",
-        "Stopok",
         "Forrás",
         "Szöveges részletező",
     ]
@@ -10318,32 +10415,27 @@ def route_details_excel(
         cell.fill = header_fill
     for item in payload.get("rows") or []:
         sheet.append([
+            item.get("warehouse"),
             item.get("courierId"),
             item.get("courierName"),
-            item.get("date"),
-            item.get("warehouse"),
-            item.get("warehouseAddress"),
             item.get("routeId"),
-            item.get("routeTypeLabel"),
-            route_detail_datetime_text(item.get("shiftStartAt")),
-            route_detail_time_text(item.get("shiftEndAt")),
+            item.get("shiftName"),
+            route_detail_time_text(item.get("queueStartedAt")),
             route_detail_time_text(item.get("routeAssignedAt")),
             route_detail_time_text(item.get("departedAt")),
-            route_detail_time_text(item.get("returnedAt")),
-            item.get("plannedLoadingMinutes"),
-            item.get("loadingMinutes"),
-            item.get("plannedRouteMinutes"),
-            item.get("routeMinutes"),
-            item.get("totalMinutes"),
-            item.get("vehiclePlate"),
-            item.get("vehicleModel"),
-            item.get("kifliVehicle"),
+            item.get("routeDelayCount"),
+            route_detail_duration_text(item.get("plannedRouteMinutes")),
             item.get("hubPlannedKm"),
-            item.get("calculatedRouteKm"),
+            route_detail_duration_text(item.get("routeMinutes")),
+            route_detail_time_text(item.get("returnedAt")),
+            item.get("actualKm") or item.get("calculatedRouteKm"),
+            item.get("nextShiftSameDay"),
+            item.get("routeTypeLabel"),
+            item.get("tipHuf"),
+            item.get("date"),
+            item.get("warehouseAddress"),
+            f"{item.get('orders') or 0} / {item.get('stops') or 0}",
             item.get("distanceDeltaKm"),
-            item.get("distanceSource") or item.get("distanceStatus"),
-            item.get("orders"),
-            item.get("stops"),
             item.get("dataSource"),
             item.get("narrative"),
         ])
