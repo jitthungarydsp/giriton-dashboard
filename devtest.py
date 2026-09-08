@@ -11141,7 +11141,7 @@ def courier_main_list_flag_html(row: pd.Series) -> str:
     flags: list[tuple[str, str]] = []
     vat_status = str(row.get("FA státusz") or row.get("vat_status") or "").strip()
     vat_key = _normalized_field_key(vat_status)
-    if vat_status and any(token in vat_key for token in ("afa", "afas", "vat")):
+    if vat_status and any(token in vat_key for token in ("afa", "afas", "vat", "adoalany")):
         flags.append(("ÁFÁS", "info"))
 
     employment_status = str(
@@ -11157,7 +11157,8 @@ def courier_main_list_flag_html(row: pd.Series) -> str:
     insurance_status = str(row.get("Biztosítás") or row.get("insurance_status") or "").strip()
     insurance_fee = parse_huf_value(row.get("Biztosítási díj"))
     insurance_key = _normalized_field_key(insurance_status)
-    if insurance_fee > 0 or insurance_key in {"van", "aktiv", "active", "igen", "yes", "biztositas"}:
+    no_insurance_keys = {"", "nincs", "nem", "inactive", "inaktiv", "no", "false", "0"}
+    if insurance_fee > 0 or insurance_key not in no_insurance_keys:
         flags.append(("Biztosítás", ""))
 
     salary_advance = abs(parse_huf_value(row.get("Fizetés előleg")))
