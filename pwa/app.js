@@ -44,7 +44,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v104";
+const APP_VERSION = "v105";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -3192,17 +3192,20 @@ function waitingWorkflow() {
   };
 }
 
-async function loadWorkflow() {
+async function loadWorkflow(options = {}) {
+  const background = Boolean(options.background);
   if (state.workflowLoading) return;
   state.workflowLoading = true;
   const refreshButton = $("#workflow-refresh");
-  if (refreshButton) {
+  if (refreshButton && !background) {
     refreshButton.disabled = true;
     refreshButton.textContent = "Frissítés…";
   }
-  state.workflow = waitingWorkflow();
-  renderWorkflow();
-  showWorkflowMessage("Folyamat betöltése…");
+  if (!background || !state.workflow) {
+    state.workflow = waitingWorkflow();
+    renderWorkflow();
+    showWorkflowMessage("Folyamat betöltése…");
+  }
   try {
     const processPayload = await api(`/api/workflow/processes?${workflowProcessQuery()}`);
     state.workflowProcesses = processPayload.processes || [{ id: "", label: "Havi folyamat" }];
@@ -3214,12 +3217,14 @@ async function loadWorkflow() {
     renderWorkflow();
     showWorkflowMessage("");
   } catch (error) {
-    state.workflow = waitingWorkflow();
-    renderWorkflow();
-    showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
+    if (!background || !state.workflow) {
+      state.workflow = waitingWorkflow();
+      renderWorkflow();
+      showWorkflowMessage("Az elszámolás adatai jelenleg nem érhetők el. A folyamat várakozó állapotban marad; próbáld meg később frissíteni.", true);
+    }
   } finally {
     state.workflowLoading = false;
-    if (refreshButton) {
+    if (refreshButton && !background) {
       refreshButton.disabled = false;
       refreshButton.textContent = "Frissítés";
     }
@@ -3326,7 +3331,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=103");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=105");
   }
   return navigator.serviceWorker.ready;
 }
@@ -4347,8 +4352,8 @@ setInterval(() => {
   if (!state.user) return;
   if (!["settlement", "documents"].includes(state.section)) return;
   if (document.hidden) return;
-  withSilentLoading(() => loadWorkflow()).catch(() => {});
-}, 15000);
+  withSilentLoading(() => loadWorkflow({ background: true })).catch(() => {});
+}, 2 * 60 * 1000);
 
 $("#statistics-month").addEventListener("change", (event) => {
   state.statisticsMonth = event.target.value || new Date().toISOString().slice(0, 7);
