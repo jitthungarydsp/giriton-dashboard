@@ -166,6 +166,7 @@ def _build_route_notification_lines(
     next_shift_delay_note="",
     queue_since_note="",
     queue_wait_note="",
+    performance_shift_note="",
 ):
     content_lines = [
         "**Uj tura erkezett**",
@@ -191,6 +192,9 @@ def _build_route_notification_lines(
 
     if queue_wait_note:
         content_lines.append(f"**Varakozott:** {queue_wait_note}")
+
+    if performance_shift_note:
+        content_lines.append(f"**Hub muszak teljesitmeny:** {performance_shift_note}")
 
     if planned_departure:
         content_lines.append(f"**Tervezett elindulas:** {planned_departure}")
@@ -227,6 +231,7 @@ def notify_route_assigned_once(
     next_shift_delay_note="",
     queue_since_note="",
     queue_wait_note="",
+    performance_shift_note="",
 ):
     settings = load_app_settings()
 
@@ -272,6 +277,7 @@ def notify_route_assigned_once(
         next_shift_delay_note=next_shift_delay_note,
         queue_since_note=queue_since_note,
         queue_wait_note=queue_wait_note,
+        performance_shift_note=performance_shift_note,
     )
 
     response = requests.post(

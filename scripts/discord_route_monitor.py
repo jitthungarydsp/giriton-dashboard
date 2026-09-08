@@ -47,6 +47,7 @@ ATTENDANCE_CACHE = {}
 COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 COURIER_HUB_DSP_ID = int(os.getenv("COURIER_HUB_DSP_ID") or "8")
 COURIER_HUB_DETAIL_CACHE = {}
+COURIER_HUB_PERFORMANCE_SHIFT_CACHE = {}
 
 
 def normalize_id(value):
@@ -293,6 +294,88 @@ def load_live_monitoring_courier_detail(warehouse, courier_id):
         flush=True,
     )
     return payload
+
+
+def load_courier_hub_performance_shifts(courier_id, warehouse, date_from, date_to):
+    warehouse_id = warehouse_id_for_courier_hub(warehouse)
+    normalized_courier_id = normalize_id(courier_id)
+    if not warehouse_id or not normalized_courier_id:
+        return {}
+
+    cache_key = (warehouse_id, normalized_courier_id, date_from, date_to)
+    if cache_key in COURIER_HUB_PERFORMANCE_SHIFT_CACHE:
+        return COURIER_HUB_PERFORMANCE_SHIFT_CACHE[cache_key]
+
+    url = (
+        f"{COURIER_HUB_BASE_URL}/external/performance/courier/{int(normalized_courier_id)}/shifts"
+        f"?dateFrom={date_from}&dateTo={date_to}"
+        f"&dspId={COURIER_HUB_DSP_ID}&warehouseId={warehouse_id}"
+    )
+    response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    if response.status_code in {401, 403} and refresh_courier_hub_headers():
+        response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    COURIER_HUB_PERFORMANCE_SHIFT_CACHE[cache_key] = payload
+    return payload
+
+
+def format_performance_shift_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    parsed = parse_datetime(text)
+    if parsed:
+        return parsed.strftime("%H:%M")
+    return text[:5] if len(text) >= 5 else text
+
+
+def build_performance_shift_note(courier_id, warehouse, route):
+    warehouse_id = warehouse_id_for_courier_hub(warehouse)
+    if not warehouse_id:
+        return ""
+    work_date_text = route_work_date(route)
+    try:
+        work_date = datetime.strptime(work_date_text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        work_date = datetime.now(LOCAL_TIMEZONE).date()
+    date_from = (work_date - timedelta(days=6)).isoformat()
+    date_to = work_date.isoformat()
+    try:
+        payload = load_courier_hub_performance_shifts(
+            courier_id,
+            warehouse,
+            date_from,
+            date_to,
+        )
+    except Exception as exc:
+        return f"nem elerheto ({exc})"
+
+    shifts = payload.get("shifts") if isinstance(payload, dict) else []
+    if not isinstance(shifts, list):
+        shifts = []
+    total = payload.get("totalShifts", len(shifts)) if isinstance(payload, dict) else len(shifts)
+    late = payload.get("lateLoginShifts", 0) if isinstance(payload, dict) else 0
+    no_show = payload.get("noShowShifts", 0) if isinstance(payload, dict) else 0
+    same_day = [
+        shift
+        for shift in shifts
+        if isinstance(shift, dict)
+        and str(shift.get("date") or "")[:10] == work_date.isoformat()
+    ]
+    shift_parts = []
+    for shift in same_day[:4]:
+        planned = (
+            f"{format_performance_shift_time(shift.get('plannedStart'))}-"
+            f"{format_performance_shift_time(shift.get('plannedEnd'))}"
+        )
+        actual = format_performance_shift_time(shift.get("actualStart"))
+        evaluation = str(shift.get("evaluation") or "-").strip()
+        shift_parts.append(f"{planned} actual {actual} {evaluation}")
+    summary = f"{date_from}..{date_to}: osszes {total}, keso {late}, no-show {no_show}"
+    if shift_parts:
+        summary += " | mai: " + "; ".join(shift_parts)
+    return summary
 
 
 def find_live_monitoring_rows(value):
@@ -1768,6 +1851,11 @@ def run_once(max_age_minutes, dry_run=False):
                 or dashboard_route.get("raw_courier_hub_departure_dashboard")
             ),
         )
+        performance_shift_note = build_performance_shift_note(
+            courier_id,
+            route_warehouse,
+            route,
+        )
 
         if dry_run:
             counters["dry_run_would_send"] += 1
@@ -1783,7 +1871,8 @@ def run_once(max_age_minutes, dry_run=False):
                 f"next_shift={shift_notes.get('next_shift_note') or '-'} "
                 f"next_shift_delay={shift_notes.get('next_shift_delay_note') or '-'} "
                 f"queue_since={shift_notes.get('queue_since_note') or '-'} "
-                f"queue_wait={shift_notes.get('queue_wait_note') or '-'}",
+                f"queue_wait={shift_notes.get('queue_wait_note') or '-'} "
+                f"hub_performance={performance_shift_note or '-'}",
                 flush=True,
             )
             continue
@@ -1848,6 +1937,7 @@ def run_once(max_age_minutes, dry_run=False):
                 next_shift_delay_note=shift_notes.get("next_shift_delay_note", ""),
                 queue_since_note=shift_notes.get("queue_since_note", ""),
                 queue_wait_note=shift_notes.get("queue_wait_note", ""),
+                performance_shift_note=performance_shift_note,
             )
 
             if result == "sent":
