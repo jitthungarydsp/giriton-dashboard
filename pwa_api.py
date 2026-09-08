@@ -69,6 +69,10 @@ COURIER_DETAIL_ORGANIZATION_ID = (
 COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 COURIER_HUB_DSP_ID = 8
 LOCAL_TIMEZONE = ZoneInfo("Europe/Budapest")
+COURIER_HUB_WAREHOUSE_ADDRESSES = {
+    1: "Budapest, Jászberényi út 45, 1106",
+    2: "Biatorbágy, Mészárosok útja 6, 2051",
+}
 
 
 class LoginRequest(BaseModel):
@@ -125,6 +129,11 @@ class RouteNoteRequest(BaseModel):
     work_date: str
     route_id: str
     note: str = ""
+
+
+class RouteDistanceRequest(BaseModel):
+    warehouse_id: int
+    stop_addresses: list[str] = []
 
 
 class ShiftDelayAlertRequest(BaseModel):
@@ -2247,6 +2256,146 @@ def route_planner_traffic(current_stop: dict[str, Any] | None, next_stop: dict[s
         ),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> dict[str, Any]:
+    warehouse_address = route_detail_warehouse_address(warehouse_id)
+    stops = [str(address or "").strip() for address in stop_addresses if str(address or "").strip()]
+    if not warehouse_address:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "message": "Ismeretlen raktár cím.",
+        }
+    if not stops:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "warehouseAddress": warehouse_address,
+            "message": "Nincs stop cím a km számításhoz.",
+        }
+
+    api_key = google_routes_api_key()
+    if not api_key:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "warehouseAddress": warehouse_address,
+            "stopCount": len(stops),
+            "message": "Nincs GOOGLE_ROUTES_API_KEY vagy GOOGLE_MAPS_API_KEY beállítva.",
+        }
+
+    if len(stops) > 25:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "warehouseAddress": warehouse_address,
+            "stopCount": len(stops),
+            "message": "A route túl sok stopot tartalmaz egy Google Routes kéréshez.",
+        }
+
+    request_body: dict[str, Any] = {
+        "origin": {"address": warehouse_address},
+        "destination": {"address": warehouse_address},
+        "intermediates": [{"address": address} for address in stops],
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "languageCode": "hu-HU",
+        "units": "METRIC",
+    }
+    try:
+        response = requests.post(
+            "https://routes.googleapis.com/directions/v2:computeRoutes",
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
+            },
+            json=request_body,
+            timeout=12,
+        )
+        if response.status_code >= 400:
+            return {
+                "available": False,
+                "provider": "google_routes",
+                "warehouseAddress": warehouse_address,
+                "stopCount": len(stops),
+                "message": f"Google Routes hiba: HTTP {response.status_code}",
+            }
+        payload = response.json()
+    except Exception as exc:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "warehouseAddress": warehouse_address,
+            "stopCount": len(stops),
+            "message": f"Útvonal-km nem érhető el: {exc}",
+        }
+
+    route = (payload.get("routes") or [{}])[0]
+    distance_meters = route.get("distanceMeters")
+    if distance_meters is None:
+        return {
+            "available": False,
+            "provider": "google_routes",
+            "warehouseAddress": warehouse_address,
+            "stopCount": len(stops),
+            "message": "A Google Routes válaszban nincs távolság.",
+        }
+    duration_seconds = parse_google_duration_seconds(route.get("duration"))
+    static_seconds = parse_google_duration_seconds(route.get("staticDuration"))
+    traffic_delta_seconds = (
+        duration_seconds - static_seconds
+        if duration_seconds is not None and static_seconds is not None
+        else None
+    )
+    return {
+        "available": True,
+        "provider": "google_routes",
+        "warehouseAddress": warehouse_address,
+        "stopCount": len(stops),
+        "distanceKm": round(float(distance_meters) / 1000, 1),
+        "durationMinutes": max(0, round(duration_seconds / 60)) if duration_seconds is not None else None,
+        "trafficDeltaMinutes": round(traffic_delta_seconds / 60) if traffic_delta_seconds is not None else None,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def enrich_route_detail_distances(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return rows
+    if not google_routes_api_key():
+        for row in rows:
+            row["distanceStatus"] = "Nincs GOOGLE_ROUTES_API_KEY vagy GOOGLE_MAPS_API_KEY beállítva."
+        return rows
+
+    def calculate(item: tuple[int, dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+        index, row = item
+        result = route_detail_full_distance(
+            safe_int(row.get("warehouseId")),
+            row.get("stopAddresses") if isinstance(row.get("stopAddresses"), list) else [],
+        )
+        return index, result
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = dict(executor.map(calculate, enumerate(rows)))
+
+    for index, row in enumerate(rows):
+        result = results.get(index) or {}
+        row["routeDistance"] = result
+        if result.get("available"):
+            row["calculatedRouteKm"] = result.get("distanceKm")
+            row["distanceSource"] = "Google Routes"
+            hub_km = safe_float_value(row.get("hubPlannedKm"))
+            calculated_km = safe_float_value(result.get("distanceKm"))
+            row["distanceDeltaKm"] = (
+                round(calculated_km - hub_km, 1)
+                if calculated_km is not None and hub_km is not None
+                else None
+            )
+            continue
+        row["distanceStatus"] = str(result.get("message") or "Km számítás nem érhető el.")
+    return rows
 
 
 def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
@@ -6543,6 +6692,26 @@ def route_detail_warehouse_label(row: dict[str, Any], story: dict[str, Any]) -> 
     return str(warehouse_id or "")
 
 
+def route_detail_warehouse_address(warehouse_id: Any) -> str:
+    return COURIER_HUB_WAREHOUSE_ADDRESSES.get(safe_int(warehouse_id), "")
+
+
+def compact_hub_stop_addresses(stops: list[Any]) -> list[str]:
+    addresses: list[str] = []
+    for stop in stops:
+        if not isinstance(stop, dict):
+            continue
+        address = str(
+            stop.get("address")
+            or stop.get("formattedAddress")
+            or stop.get("customerAddress")
+            or ""
+        ).strip()
+        if address:
+            addresses.append(address)
+    return addresses
+
+
 def is_kifli_vehicle(row: dict[str, Any], vehicle: dict[str, Any] | None) -> str:
     text = normalize_text(
         " ".join(
@@ -6563,11 +6732,13 @@ def is_kifli_vehicle(row: dict[str, Any], vehicle: dict[str, Any] | None) -> str
 
 def route_detail_narrative(item: dict[str, Any]) -> str:
     assigned_text = route_detail_time_text(item.get("routeAssignedAt"))
+    planned_loading = route_detail_duration_text(item.get("plannedLoadingMinutes"))
     loading = route_detail_duration_text(item.get("loadingMinutes"))
+    planned_route = route_detail_duration_text(item.get("plannedRouteMinutes"))
     route_duration = route_detail_duration_text(item.get("routeMinutes"))
     total_duration = route_detail_duration_text(item.get("totalMinutes"))
-    distance = item.get("distanceKm")
-    distance_text = "Nincs adat" if distance is None else f"{float(distance):.1f}".replace(".", ",") + " km"
+    hub_distance = item.get("hubPlannedKm")
+    hub_distance_text = "Nincs adat" if hub_distance is None else f"{float(hub_distance):.1f}".replace(".", ",") + " km"
     vehicle_text = item.get("vehicleLabel") or "Nincs autóadat"
     shift_text = (
         f"A műszak {route_detail_datetime_text(item.get('shiftStartAt'))}"
@@ -6578,11 +6749,12 @@ def route_detail_narrative(item: dict[str, Any]) -> str:
     return (
         f"Route {item.get('routeId') or '-'}: {shift_text} "
         f"A futár {assigned_text}-kor kapta meg a túrát. "
-        f"A bepakolási idő {loading}, maga a túra {route_duration}, "
+        f"A tervezett bepakolás {planned_loading}, a tényleges bepakolás {loading}. "
+        f"A tervezett túra {planned_route}, a tényleges túra {route_duration}, "
         f"bepakolással együtt pedig {total_duration} volt. "
         f"A túratípus: {item.get('routeTypeLabel') or 'Normál'}. "
         f"A használt autó: {vehicle_text}; Kiflis autó: {item.get('kifliVehicle') or 'Nincs adat'}. "
-        f"A mért távolság {distance_text}. "
+        f"A Hub tervezett távolság {hub_distance_text}. "
         f"Forrás: {item.get('dataSource') or 'PWA route adatok'}."
     )
 
@@ -6626,11 +6798,17 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
     car = str(row.get("vehicleModel") or (vehicle or {}).get("car") or "").strip()
     vehicle_label = " · ".join(part for part in (plate, car) if part)
     route_type = str(row.get("routeType") or story.get("assignmentMode") or "normal").strip() or "normal"
+    warehouse_id = safe_int(row.get("warehouseId"))
+    hub_planned_km = safe_float_value(row.get("plannedKm"))
+    if hub_planned_km is None:
+        hub_planned_km = safe_float_value(row.get("mileageKm"))
     item = {
         "courierId": courier_id,
         "courierName": courier_name,
         "date": str(row.get("date") or "")[:10],
         "warehouse": route_detail_warehouse_label(row, story),
+        "warehouseId": warehouse_id,
+        "warehouseAddress": route_detail_warehouse_address(warehouse_id),
         "routeId": str(row.get("routeId") or ""),
         "routeType": route_type,
         "routeTypeLabel": route_detail_route_type_label(route_type),
@@ -6649,6 +6827,10 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "vehicleLabel": vehicle_label,
         "kifliVehicle": is_kifli_vehicle(row, vehicle),
         "distanceKm": distance,
+        "hubPlannedKm": hub_planned_km,
+        "calculatedRouteKm": None,
+        "distanceSource": "Courier Hub plannedKm" if hub_planned_km is not None else "Nincs adat",
+        "stopAddresses": row.get("stopAddresses") if isinstance(row.get("stopAddresses"), list) else [],
         "orders": safe_int(row.get("orders") or story.get("addressCount")),
         "stops": safe_int(row.get("stops") or story.get("addressCount")),
         "sourceStoryText": str(story.get("storyText") or ""),
@@ -6728,17 +6910,20 @@ def compact_courier_hub_route_detail_raw(row: dict[str, Any]) -> dict[str, Any] 
         "warehouseId": safe_int(row.get("warehouse_id")),
         "orders": safe_int(response_json.get("orderCount") or response_json.get("orders")) or len(stops),
         "stops": len(stops),
+        "stopAddresses": compact_hub_stop_addresses(stops),
         "plannedStartAt": planned_start,
         "actualStartAt": actual_start,
         "shiftAvailableAt": shift_available,
         "routeAssignedAt": route_assigned,
         "plannedDepartureAt": str(shift.get("plannedDepartureAt") or "").strip(),
+        "plannedReturnAt": str(shift.get("plannedReturnAt") or response_json.get("plannedReturnAt") or "").strip(),
         "departedAt": departed,
         "lastOrderFinishedAt": last_order_finished,
         "warehouseArrivedAt": returned,
         "vehicleModel": str(shift.get("vehicleModel") or "").strip(),
         "vehiclePlate": str(shift.get("vehiclePlate") or "").strip(),
         "mileageKm": safe_float_value(shift.get("mileageKm")),
+        "plannedKm": safe_float_value(shift.get("plannedKm") or response_json.get("plannedKm")),
         "vehicleOwnership": str(shift.get("vehicleOwnership") or "").strip(),
         "routeType": courier_hub_route_type(
             response_json.get("routeLayer")
@@ -6841,6 +7026,7 @@ def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
         courier_id = str(raw_row.get("courierId") or "").strip()
         courier_name = names.get(courier_id) or f"Futár {courier_id}" if courier_id else "Ismeretlen futár"
         rows.append(build_route_detail_item(raw_row, courier_id, courier_name))
+    rows = enrich_route_detail_distances(rows)
     rows.sort(key=lambda item: (item.get("courierName") or "", item.get("date") or "", item.get("routeAssignedAt") or ""), reverse=False)
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -6851,11 +7037,31 @@ def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
 
 
 def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
+    courier_id = str(user_courier_id(view_user))
+    courier_name = str(view_user.get("courierName") or view_user.get("courier_name") or view_user.get("username") or "")
+    raw_detail_rows = load_courier_hub_route_detail_rows_for_courier(courier_id, month_value)
+    if raw_detail_rows:
+        if not courier_name:
+            courier_name = courier_name_lookup().get(courier_id, "")
+        rows = [
+            build_route_detail_item(row, courier_id, courier_name)
+            for row in raw_detail_rows
+            if str(row.get("routeId") or "").strip()
+        ]
+        rows = enrich_route_detail_distances(rows)
+        rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
+        return {
+            "month": month_value.replace(day=1).strftime("%Y-%m"),
+            "courier": {"id": courier_id, "name": courier_name},
+            "rows": rows,
+            "source": "courier_hub_route_detail",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+
     stats = build_monthly_courier_statistics(view_user, month_value, allow_unpublished=allow_unpublished)
     courier = stats.get("courier") or {}
-    courier_id = str(courier.get("id") or user_courier_id(view_user))
-    courier_name = str(courier.get("name") or view_user.get("username") or "")
-    raw_detail_rows = load_courier_hub_route_detail_rows_for_courier(courier_id, month_value)
+    courier_id = str(courier.get("id") or courier_id)
+    courier_name = str(courier.get("name") or courier_name)
     raw_by_route = {
         (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip()): row
         for row in raw_detail_rows
@@ -6899,11 +7105,13 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
         if str(row.get("routeId") or "").strip()
         and str(row.get("routeId") or "").strip() not in known_routes
     )
+    rows = enrich_route_detail_distances(rows)
     rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
     return {
         "month": month_value.replace(day=1).strftime("%Y-%m"),
         "courier": {"id": courier_id, "name": courier_name},
         "rows": rows,
+        "source": "pwa_route_history_fallback",
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -10040,6 +10248,17 @@ def route_details(
     return route_details_for_user(view_user, parse_month(month), allow_unpublished=True)
 
 
+@app.post("/api/routes/details/distance")
+def route_details_distance(
+    payload: RouteDistanceRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A túra km számításhoz admin jogosultság szükséges.")
+    return route_detail_full_distance(payload.warehouse_id, payload.stop_addresses)
+
+
 @app.get("/api/routes/details.xlsx")
 def route_details_excel(
     month: str = Query(default=""),
@@ -10067,6 +10286,7 @@ def route_details_excel(
         "Futár",
         "Dátum",
         "Raktár",
+        "Raktár cím",
         "Route ID",
         "Túratípus",
         "Műszak kezdete",
@@ -10082,7 +10302,10 @@ def route_details_excel(
         "Rendszám",
         "Autó",
         "Kiflis autó",
-        "Km",
+        "Hub tervezett km",
+        "Számolt útvonal km",
+        "Km eltérés",
+        "Km forrás",
         "Címek",
         "Stopok",
         "Forrás",
@@ -10099,6 +10322,7 @@ def route_details_excel(
             item.get("courierName"),
             item.get("date"),
             item.get("warehouse"),
+            item.get("warehouseAddress"),
             item.get("routeId"),
             item.get("routeTypeLabel"),
             route_detail_datetime_text(item.get("shiftStartAt")),
@@ -10114,7 +10338,10 @@ def route_details_excel(
             item.get("vehiclePlate"),
             item.get("vehicleModel"),
             item.get("kifliVehicle"),
-            item.get("distanceKm"),
+            item.get("hubPlannedKm"),
+            item.get("calculatedRouteKm"),
+            item.get("distanceDeltaKm"),
+            item.get("distanceSource") or item.get("distanceStatus"),
             item.get("orders"),
             item.get("stops"),
             item.get("dataSource"),

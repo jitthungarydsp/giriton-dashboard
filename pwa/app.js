@@ -44,7 +44,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v105";
+const APP_VERSION = "v106";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2109,11 +2109,18 @@ function renderRouteDetails() {
             <th>Dátum</th>
             <th>Route ID</th>
             <th>Típus</th>
+            <th>Túrát kapott</th>
+            <th>Indulás</th>
+            <th>Visszaérkezés</th>
+            <th>Tervezett bepakolás</th>
             <th>Bepakolás</th>
-            <th>Túra</th>
-            <th>Összes</th>
+            <th>Tervezett túra</th>
+            <th>Túra hossza</th>
+            <th>Túra bepakolással</th>
+            <th>Hub km</th>
+            <th>Számolt km</th>
+            <th>Eltérés</th>
             <th>Autó</th>
-            <th>Km</th>
           </tr>
         </thead>
         <tbody>
@@ -2122,11 +2129,18 @@ function renderRouteDetails() {
               <td>${escapeHtml(routeDetailValue(row.date))}</td>
               <td><strong>${escapeHtml(routeDetailValue(row.routeId))}</strong></td>
               <td>${escapeHtml(routeDetailValue(row.routeTypeLabel))}</td>
+              <td>${escapeHtml(timeOnly(row.routeAssignedAt))}</td>
+              <td>${escapeHtml(timeOnly(row.departedAt))}</td>
+              <td>${escapeHtml(timeOnly(row.returnedAt))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.plannedLoadingMinutes))}</td>
               <td>${escapeHtml(routeDetailMinutes(row.loadingMinutes))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.plannedRouteMinutes))}</td>
               <td>${escapeHtml(routeDetailMinutes(row.routeMinutes))}</td>
               <td>${escapeHtml(routeDetailMinutes(row.totalMinutes))}</td>
+              <td>${escapeHtml(routeDetailDistance(row.hubPlannedKm))}</td>
+              <td>${escapeHtml(routeDetailDistance(row.calculatedRouteKm))}</td>
+              <td>${escapeHtml(routeDetailDistance(row.distanceDeltaKm))}</td>
               <td>${escapeHtml(routeDetailValue(row.vehicleLabel || row.vehiclePlate || row.vehicleModel))}</td>
-              <td>${escapeHtml(routeDetailDistance(row.distanceKm))}</td>
             </tr>
           `).join("")}
         </tbody>
@@ -2141,7 +2155,20 @@ function renderRouteDetails() {
       <div class="route-timeline-grid">
         <div class="stat-row"><span>Futár</span><strong>${escapeHtml(selected.courierName || "-")} (#${escapeHtml(selected.courierId || "-")})</strong></div>
         <div class="stat-row"><span>Raktár</span><strong>${escapeHtml(selected.warehouse || "-")}</strong></div>
+        <div class="stat-row"><span>Raktár cím</span><strong>${escapeHtml(selected.warehouseAddress || "-")}</strong></div>
         <div class="stat-row"><span>Címek / stopok</span><strong>${formatCount(selected.orders || 0)} / ${formatCount(selected.stops || 0)}</strong></div>
+        <div class="stat-row"><span>Túrát kapott</span><strong>${escapeHtml(shortDateTime(selected.routeAssignedAt))}</strong></div>
+        <div class="stat-row"><span>Indulás a raktárból</span><strong>${escapeHtml(shortDateTime(selected.departedAt))}</strong></div>
+        <div class="stat-row"><span>Visszaérkezés</span><strong>${escapeHtml(shortDateTime(selected.returnedAt))}</strong></div>
+        <div class="stat-row"><span>Tervezett bepakolás</span><strong>${escapeHtml(routeDetailMinutes(selected.plannedLoadingMinutes))}</strong></div>
+        <div class="stat-row"><span>Bepakolás</span><strong>${escapeHtml(routeDetailMinutes(selected.loadingMinutes))}</strong></div>
+        <div class="stat-row"><span>Tervezett túra</span><strong>${escapeHtml(routeDetailMinutes(selected.plannedRouteMinutes))}</strong></div>
+        <div class="stat-row"><span>Túra hossza</span><strong>${escapeHtml(routeDetailMinutes(selected.routeMinutes))}</strong></div>
+        <div class="stat-row"><span>Túra bepakolással</span><strong>${escapeHtml(routeDetailMinutes(selected.totalMinutes))}</strong></div>
+        <div class="stat-row"><span>Hub tervezett km</span><strong>${escapeHtml(routeDetailDistance(selected.hubPlannedKm))}</strong></div>
+        <div class="stat-row"><span>Számolt útvonal km</span><strong>${escapeHtml(routeDetailDistance(selected.calculatedRouteKm))}</strong></div>
+        <div class="stat-row"><span>Km eltérés</span><strong>${escapeHtml(routeDetailDistance(selected.distanceDeltaKm))}</strong></div>
+        <div class="stat-row"><span>Km forrás</span><strong>${escapeHtml(selected.distanceSource || selected.distanceStatus || "Nincs adat")}</strong></div>
         <div class="stat-row"><span>Kiflis autó</span><strong>${escapeHtml(selected.kifliVehicle || "Nincs adat")}</strong></div>
         <div class="stat-row"><span>Forrás</span><strong>${escapeHtml(selected.dataSource || "-")}</strong></div>
       </div>
@@ -3331,7 +3358,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=105");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=106");
   }
   return navigator.serviceWorker.ready;
 }
