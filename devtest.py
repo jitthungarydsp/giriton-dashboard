@@ -11160,6 +11160,14 @@ def courier_main_list_flag_html(row: pd.Series) -> str:
     if insurance_fee > 0 or insurance_key in {"van", "aktiv", "active", "igen", "yes", "biztositas"}:
         flags.append(("Biztosítás", ""))
 
+    salary_advance = abs(parse_huf_value(row.get("Fizetés előleg")))
+    if salary_advance > 0:
+        flags.append((f"Előleg {format_huf(salary_advance)}", "warn"))
+
+    loyalty_bonus = parse_huf_value(row.get("Lojalitás"))
+    if loyalty_bonus > 0:
+        flags.append((f"Lojalitás {format_huf(loyalty_bonus)}", "info"))
+
     if not flags:
         return ""
     return (

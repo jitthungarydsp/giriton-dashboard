@@ -791,6 +791,15 @@
             "courierId": 8013,
             "active": true,
             "token": ""
+        },
+        {
+            "username": "Nagy 8532 Norbert",
+            "trainer": "trainer_name",
+            "password": "opLC9Jsa",
+            "role": "user",
+            "courierId": 8532,
+            "active": true,
+            "token": ""
         }
     ]
 }
