@@ -800,6 +800,15 @@
             "courierId": 8532,
             "active": true,
             "token": ""
+        },
+                {
+            "username": "Péchy Tamás László",
+            "trainer": "trainer_name",
+            "password": "opLC9Jsa",
+            "role": "user",
+            "courierId": 8706,
+            "active": true,
+            "token": ""
         }
     ]
 }
