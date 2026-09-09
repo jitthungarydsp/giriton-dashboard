@@ -52,7 +52,7 @@ def _safe_streamlit_data_editor(data=None, *args, **kwargs):
 st.dataframe = _safe_streamlit_dataframe
 st.data_editor = _safe_streamlit_data_editor
 from resources.settlement_excel_import import (
-    delete_all_settlement_data,
+    delete_excel_import,
     get_import_preview,
     get_supabase_client,
     save_excel_to_supabase,
@@ -17704,8 +17704,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 )
             uploaded_period_start, _uploaded_period_end = load_settlement_month(result["session_id"])
             selected_month = month_option_label(uploaded_period_start)
-            st.session_state["new_month"] = selected_month
-            st.session_state["new_month_auto_default"] = selected_month
+            st.session_state["new_month_pending"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 result["session_id"],
@@ -17763,7 +17762,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             reprocess_existing_excel_session(excel_import_session_id)
             excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
             selected_month = month_option_label(excel_period_start)
-            st.session_state["new_month"] = selected_month
+            st.session_state["new_month_pending"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 excel_import_session_id,
@@ -17785,10 +17784,9 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     ):
         try:
             reprocess_existing_excel_session(excel_import_session_id)
-            st.session_state["new_calculation_mode"] = "Excel"
             excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
             selected_month = month_option_label(excel_period_start)
-            st.session_state["new_month"] = selected_month
+            st.session_state["new_month_pending"] = selected_month
             st.session_state["new_status"] = "Összes"
             mobile_saved = publish_excel_session_to_mobile_if_possible(
                 selected_month,
@@ -17849,13 +17847,19 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     if excel_action2.button(
         "Törlés",
         use_container_width=True,
-        disabled=False,
+        disabled=not excel_import_session_id,
         key="delete_excel_calculation",
-        help="Kiüríti az importhoz és feldolgozáshoz tartozó settlement táblákat.",
+        help="Csak a kiválasztott hónaphoz betöltött Excel importot és annak feldolgozott sorait törli.",
     ):
         try:
-            deleted_by_table = delete_all_settlement_data(get_db())
-            deleted_total = sum(deleted_by_table.values())
+            deleted_period_start = None
+            try:
+                deleted_period_start, _deleted_period_end = load_settlement_month(excel_import_session_id)
+            except Exception:
+                deleted_period_start = parse_month_option(selected_month)
+            deleted_total = delete_excel_import(get_db(), excel_import_session_id)
+            if deleted_period_start:
+                clear_mobile_settlement_period_config(deleted_period_start)
 
             st.session_state["excel_upload_version"] += 1
             st.session_state["excel_calculation_loaded"] = False
@@ -17884,7 +17888,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             build_excel_settlement_number_audit.clear()
             load_excel_route_coverage_audit.clear()
 
-            st.toast(f"Settlement adatok törölve: {deleted_total} sor.")
+            st.toast(f"Excel import törölve: {deleted_total} nyers sor.")
             st.rerun()
 
         except Exception as exc:
@@ -17905,6 +17909,10 @@ def show_new_settlement_page() -> None:
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
     if requested_calculation_mode in {"API", "Excel"}:
         st.session_state["new_calculation_mode"] = requested_calculation_mode
+    pending_month_label = st.session_state.pop("new_month_pending", None)
+    if pending_month_label:
+        st.session_state["new_month"] = pending_month_label
+        st.session_state["new_month_auto_default"] = pending_month_label
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     latest_default_month_label = default_settlement_month_label()
     previous_auto_default = st.session_state.get("new_month_auto_default")
