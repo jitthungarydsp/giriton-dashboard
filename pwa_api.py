@@ -36,6 +36,7 @@ from resources.pwa_users_db import (
     public_pwa_user,
     reset_pwa_user_password,
     update_pwa_user_email_if_missing,
+    upsert_pwa_user_with_password,
 )
 from resources.security import hash_password, verify_password
 from resources.users import generate_password
@@ -85,6 +86,10 @@ class RegistrationRequest(BaseModel):
     courier_name: str
     phone_number: str
     email: str
+
+
+class RegistrationAdminAction(BaseModel):
+    admin_note: str = ""
 
 
 class PasswordResetRequest(BaseModel):
@@ -262,6 +267,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "role": str(user.get("role") or "user"),
         "canPreviewCouriers": can_preview_couriers(user),
         "canManageVehicles": can_manage_vehicle_history(user),
+        "canApproveRegistrations": can_approve_pwa_registrations(user),
     }
 
 
@@ -286,9 +292,21 @@ def can_manage_vehicle_history(user: dict[str, Any]) -> bool:
     return role in {"admin", "superadmin", "hr"} or username_key == normalize_text("admin")
 
 
+def can_approve_pwa_registrations(user: dict[str, Any]) -> bool:
+    role = str(user.get("role") or "").strip().lower()
+    username_key = normalize_text(user.get("username"))
+    return role in {"admin", "superadmin"} or username_key == normalize_text("admin")
+
+
 def require_vehicle_history_manager(user: dict[str, Any]) -> dict[str, Any]:
     if not can_manage_vehicle_history(user):
         raise HTTPException(status_code=403, detail="Ehhez HR vagy admin jogosultság szükséges.")
+    return user
+
+
+def require_registration_admin(user: dict[str, Any]) -> dict[str, Any]:
+    if not can_approve_pwa_registrations(user):
+        raise HTTPException(status_code=403, detail="Ehhez admin jogosultság szükséges.")
     return user
 
 
@@ -8407,6 +8425,82 @@ def save_registration_request(payload: RegistrationRequest) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
+def normalize_registration_request_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "courierId": str(row.get("courier_id") or "").strip(),
+        "courierName": str(row.get("courier_name") or "").strip(),
+        "phoneNumber": str(row.get("phone_number") or "").strip(),
+        "email": str(row.get("email") or "").strip(),
+        "status": str(row.get("status") or "new").strip(),
+        "adminNote": str(row.get("admin_note") or "").strip(),
+        "createdAt": str(row.get("created_at") or ""),
+        "updatedAt": str(row.get("updated_at") or ""),
+    }
+
+
+def read_registration_request_by_id(request_id: int) -> dict[str, Any]:
+    rows = supabase_rest(
+        "GET",
+        "pwa_registration_requests",
+        params={
+            "select": "id,courier_id,courier_name,phone_number,email,status,admin_note,created_at,updated_at",
+            "id": f"eq.{request_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A regisztrációs kérelem nem található.")
+    return rows[0]
+
+
+def upsert_courier_master_from_registration(row: dict[str, Any], actor: dict[str, Any]) -> None:
+    courier_id = normalize_profile_courier_id(row.get("courier_id"))
+    courier_name = clean_text(row.get("courier_name"), limit=160)
+    phone_number = clean_text(row.get("phone_number"), limit=60)
+    email = normalize_email_address(str(row.get("email") or ""))
+    now = datetime.now(timezone.utc).isoformat()
+    supabase_rest(
+        "POST",
+        "courier_master",
+        params={"on_conflict": "courier_id"},
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": courier_name,
+            "phone_number": phone_number,
+            "email": email,
+            "billing_email": email,
+            "source_name": "pwa_registration",
+            "organization_id": COURIER_DETAIL_ORGANIZATION_ID,
+            "dsp_id": "JIT",
+            "active": True,
+            "response_json": {
+                "imported_from": "pwa_registration_approval",
+                "registration_request_id": row.get("id"),
+                "approved_by": str(actor.get("username") or ""),
+            },
+            "fetched_at": now,
+            "updated_at": now,
+            "billing_data_updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+
+
+def update_registration_request_status(request_id: int, status: str, note: str = "") -> None:
+    supabase_rest(
+        "PATCH",
+        "pwa_registration_requests",
+        params={"id": f"eq.{request_id}"},
+        payload={
+            "status": status,
+            "admin_note": clean_text(note, limit=500),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
 def read_workflow_rows(user: dict[str, Any], month: date) -> tuple[list[dict], list[dict], list[dict]]:
     courier_id, _courier_name = courier_identity(user)
     month_value = month.isoformat()
@@ -9922,6 +10016,85 @@ def register(payload: RegistrationRequest):
         "ok": True,
         "message": "A regisztrációs kérelmet rögzítettük. Admin jóváhagyás után lesz belépésed.",
         "request": request_row,
+    }
+
+
+@app.get("/api/admin/registration-requests")
+def admin_registration_requests(
+    status: str = Query(default="new"),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_registration_admin(require_user(giriton_pwa_session))
+    clean_status = str(status or "new").strip().lower()
+    params = {
+        "select": "id,courier_id,courier_name,phone_number,email,status,admin_note,created_at,updated_at",
+        "order": "updated_at.desc,created_at.desc",
+        "limit": "200",
+    }
+    if clean_status and clean_status != "all":
+        params["status"] = f"eq.{clean_status}"
+    rows = supabase_rest(
+        "GET",
+        "pwa_registration_requests",
+        params=params,
+    )
+    return {
+        "requests": [normalize_registration_request_row(row) for row in rows or []],
+        "user": public_user(user),
+    }
+
+
+@app.post("/api/admin/registration-requests/{request_id}/approve")
+def admin_approve_registration_request(
+    request_id: int,
+    payload: RegistrationAdminAction,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_registration_admin(require_user(giriton_pwa_session))
+    request_row = read_registration_request_by_id(request_id)
+    status = str(request_row.get("status") or "new").strip().lower()
+    if status == "approved":
+        raise HTTPException(status_code=409, detail="Ez a regisztrációs kérelem már jóvá lett hagyva.")
+    if status == "rejected":
+        raise HTTPException(status_code=409, detail="Elutasított kérelmet nem lehet jóváhagyni.")
+
+    upsert_courier_master_from_registration(request_row, user)
+    auth_result = upsert_pwa_user_with_password(
+        courier_id=str(request_row.get("courier_id") or ""),
+        username=str(request_row.get("courier_name") or ""),
+        recipient_email=str(request_row.get("email") or ""),
+        role="user",
+    )
+    try:
+        send_login_credentials(
+            str(request_row.get("email") or ""),
+            auth_result["username"],
+            auth_result["password"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"A belépési e-mail küldése sikertelen: {exc}") from exc
+
+    update_registration_request_status(request_id, "approved", payload.admin_note)
+    return {
+        "ok": True,
+        "message": "Regisztráció jóváhagyva, a futár bekerült a futártörzsbe és megkapta a belépést.",
+        "request": normalize_registration_request_row(read_registration_request_by_id(request_id)),
+    }
+
+
+@app.post("/api/admin/registration-requests/{request_id}/reject")
+def admin_reject_registration_request(
+    request_id: int,
+    payload: RegistrationAdminAction,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_registration_admin(require_user(giriton_pwa_session))
+    read_registration_request_by_id(request_id)
+    update_registration_request_status(request_id, "rejected", payload.admin_note)
+    return {
+        "ok": True,
+        "message": "Regisztrációs kérelem elutasítva.",
+        "request": normalize_registration_request_row(read_registration_request_by_id(request_id)),
     }
 
 

@@ -18,6 +18,7 @@ const state = {
   salaryAdvanceRequests: [],
   expenseRequests: [],
   atmPayments: [],
+  registrationRequests: [],
   atmSubmitting: false,
   currentRouteLoading: false,
   game: null,
@@ -44,7 +45,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v112";
+const APP_VERSION = "v113";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -140,6 +141,7 @@ function currentSectionRefresh() {
   if (state.section === "workflow") return loadWorkflow();
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
+  if (state.section === "registration-admin") return loadRegistrationRequests();
   if (state.section === "vehicle") return loadVehicleSection();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
@@ -332,13 +334,14 @@ function showApp() {
   const role = String(state.user.role || "").toLowerCase();
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
+  $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   const coordinatorOnly = role === "coordinator";
   const hrOnly = role === "hr";
-  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game"]
+  ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-profile", "#nav-device", "#nav-vehicle", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin"]
     .forEach((selector) => $(selector).classList.toggle("hidden", coordinatorOnly));
   if (hrOnly) {
-    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game"]
+    ["#nav-home", "#nav-settlement", "#nav-statistics", "#nav-phonebook", "#nav-atm", "#nav-salary-advance", "#nav-documents", "#nav-device", "#nav-tours", "#nav-route-details", "#nav-game", "#nav-registration-admin"]
       .forEach((selector) => $(selector)?.classList.add("hidden"));
     ["#nav-profile", "#nav-vehicle"].forEach((selector) => $(selector)?.classList.remove("hidden"));
   }
@@ -371,6 +374,7 @@ function showSection(section) {
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#game-content").classList.toggle("hidden", section !== "game");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
+  $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
 
   $("#nav-home").classList.toggle("active", section === "home");
   $("#nav-settlement").classList.toggle("active", section === "settlement");
@@ -387,6 +391,7 @@ function showSection(section) {
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-game").classList.toggle("active", section === "game");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
+  $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
   if (section === "statistics" && !state.statistics) loadStatistics();
@@ -413,6 +418,7 @@ function showSection(section) {
   }
   if (section === "game") loadGame();
   if (section === "coordinator") loadCoordinatorAdjustments();
+  if (section === "registration-admin") loadRegistrationRequests();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -4327,6 +4333,95 @@ $("#coordinator-entry-list").addEventListener("click", async (event) => {
   }
 });
 
+function registrationStatusLabel(status) {
+  return {
+    new: "Jóváhagyásra vár",
+    approved: "Jóváhagyva",
+    rejected: "Elutasítva",
+  }[String(status || "").toLowerCase()] || String(status || "-");
+}
+
+function renderRegistrationRequests() {
+  const container = $("#registration-admin-list");
+  if (!container) return;
+  const rows = state.registrationRequests || [];
+  if (!rows.length) {
+    container.innerHTML = `
+      <div class="process-title">
+        <span class="step-code">ID</span>
+        <div><h3>Nincs jóváhagyásra váró futár</h3><p>Minden PWA regisztráció feldolgozva.</p></div>
+      </div>
+    `;
+    return;
+  }
+  container.innerHTML = `
+    <div class="process-title">
+      <span class="step-code">${rows.length}</span>
+      <div><h3>Jóváhagyásra váró futárok</h3><p>Jóváhagyás után bekerülnek a futártörzsbe és megkapják a PWA belépést.</p></div>
+    </div>
+    <div class="financial-card-grid salary-advance-grid">
+      ${rows.map((item) => `
+        <article class="financial-card registration-request-card">
+          <summary>
+            <span>${escapeHtml(registrationStatusLabel(item.status))}</span>
+            <strong>${escapeHtml(item.courierName || "Névtelen futár")}</strong>
+          </summary>
+          <div class="stat-breakdown-list">
+            <div class="stat-row"><span>Futár ID</span><strong>${escapeHtml(item.courierId || "-")}</strong></div>
+            <div class="stat-row"><span>E-mail</span><strong>${escapeHtml(item.email || "-")}</strong></div>
+            <div class="stat-row"><span>Telefon</span><strong>${escapeHtml(item.phoneNumber || "-")}</strong></div>
+            <div class="stat-row"><span>Beküldve</span><strong>${item.createdAt ? escapeHtml(new Date(item.createdAt).toLocaleString("hu-HU")) : "-"}</strong></div>
+          </div>
+          <div class="request-actions">
+            <button class="primary registration-approve" type="button" data-id="${escapeHtml(item.id)}">Jóváhagyás</button>
+            <button class="secondary registration-reject" type="button" data-id="${escapeHtml(item.id)}">Elutasítás</button>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+async function loadRegistrationRequests() {
+  const container = $("#registration-admin-list");
+  if (container) container.innerHTML = `<div class="process-title"><span class="step-code">...</span><div><h3>Regisztrációk betöltése</h3><p>Kérelmek frissítése folyamatban.</p></div></div>`;
+  try {
+    const payload = await api("/api/admin/registration-requests?status=new");
+    state.registrationRequests = payload.requests || [];
+    renderRegistrationRequests();
+  } catch (error) {
+    if (container) container.innerHTML = `<div class="empty-card error-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+$("#registration-admin-refresh")?.addEventListener("click", loadRegistrationRequests);
+$("#registration-admin-list")?.addEventListener("click", async (event) => {
+  const approveButton = event.target.closest(".registration-approve");
+  const rejectButton = event.target.closest(".registration-reject");
+  const button = approveButton || rejectButton;
+  if (!button) return;
+  const requestId = button.dataset.id;
+  if (!requestId) return;
+  const approving = Boolean(approveButton);
+  const adminNote = approving ? "" : window.prompt("Mi legyen az elutasítás oka?") || "";
+  if (!approving && !adminNote.trim()) return;
+  button.disabled = true;
+  try {
+    const endpoint = approving ? "approve" : "reject";
+    await api(`/api/admin/registration-requests/${encodeURIComponent(requestId)}/${endpoint}`, {
+      method: "POST",
+      body: JSON.stringify({ admin_note: adminNote.trim() }),
+      loadingMessage: approving ? "Futár jóváhagyása..." : "Kérelem elutasítása...",
+    });
+    state.couriers = [];
+    await loadRegistrationRequests();
+    await loadCourierMasterOptions();
+  } catch (error) {
+    button.disabled = false;
+    window.alert(error.message);
+  }
+});
+
 $("#workflow-month").value = state.workflowMonth;
 const workflowPreviewCourierInput = $("#workflow-preview-courier");
 if (workflowPreviewCourierInput) workflowPreviewCourierInput.value = state.workflowPreviewCourierId;
@@ -4710,6 +4805,7 @@ $("#logout").addEventListener("click", async () => {
   state.vehicleReports = [];
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
+  state.registrationRequests = [];
   state.queueStatus = null;
   state.statistics = null;
   state.routeDetails = null;
@@ -4738,6 +4834,7 @@ $("#nav-route-details").addEventListener("click", () => showSection("route-detai
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
+$("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
 $("#route-details-courier")?.addEventListener("change", () => {
   state.routeDetails = null;
