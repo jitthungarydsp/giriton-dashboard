@@ -11328,9 +11328,29 @@ def apply_cached_loyalty_values(
     session_id: str | None,
     calculation_mode: str,
 ) -> pd.DataFrame:
-    cache_rows = st.session_state.get(settlement_loyalty_cache_key(session_id, period_start, calculation_mode))
+    cache_key = settlement_loyalty_cache_key(session_id, period_start, calculation_mode)
+    cache_rows = st.session_state.get(cache_key)
     if not cache_rows:
-        return data
+        result = apply_loyalty_bonus(data, period_start, month_bounds(period_start)[1], session_id, calculation_mode)
+        value_columns = [
+            "Lojalitás",
+            "Lojalitás előző havi normál kör",
+            "Lojalitás aktuális normál kör",
+            "Lojalitás Ft/kör",
+            "Lojalitás előre foglalt nap",
+            "Lojalitás státusz",
+        ]
+        generated_cache: dict[str, dict[str, object]] = {}
+        for item in result.to_dict("records"):
+            values = {column: item.get(column) for column in value_columns if column in item}
+            for key in [
+                f"id:{_courier_id_key(item.get('Courier ID'))}",
+                f"name:{_courier_match_key(item.get('Futár'))}",
+            ]:
+                if key.split(":", 1)[1]:
+                    generated_cache[key] = values
+        st.session_state[cache_key] = generated_cache
+        return result
     result = data.copy()
     value_columns = [
         "Lojalitás",
