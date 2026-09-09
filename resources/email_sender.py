@@ -2,11 +2,15 @@ import os
 import re
 import smtplib
 import ssl
+import tomllib
 from email.message import EmailMessage
 from email.utils import formataddr
+from pathlib import Path
 from string import Formatter
 
 import streamlit as st
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def get_setting(name, default=""):
@@ -18,6 +22,27 @@ def get_setting(name, default=""):
         value = st.secrets.get(name, default)
     except Exception:
         value = default
+
+    if value not in (None, ""):
+        return str(value)
+
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+    if secrets_path.exists():
+        try:
+            with secrets_path.open("rb") as file:
+                settings = tomllib.load(file)
+            value = settings.get(name)
+            if value in (None, ""):
+                value = settings.get(name.lower())
+            if value in (None, ""):
+                for section_name in ("smtp", "email", "mail", "pwa"):
+                    section = settings.get(section_name, {})
+                    if isinstance(section, dict):
+                        value = section.get(name) or section.get(name.lower())
+                    if value not in (None, ""):
+                        break
+        except Exception:
+            value = default
 
     return str(value or default)
 
@@ -73,7 +98,7 @@ def smtp_config():
             "Hiányos SMTP-beállítás. Hiányzik: " + ", ".join(missing) + "."
         )
 
-    use_ssl = parse_bool(get_setting("SMTP_USE_SSL"), default=False)
+    use_ssl = parse_bool(first_setting("SMTP_USE_SSL", "SMTP_USE_SS"), default=False)
     port_default = "465" if use_ssl else "587"
 
     return {
