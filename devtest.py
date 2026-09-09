@@ -2106,7 +2106,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
         {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance, "note": "Havi nyitáskor publikált snapshot"},
-        {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": address_bonus_kifli, "note": "Stop-count Bonus"},
+        {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": address_bonus_kifli, "note": "Bonus routes"},
         {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating, "note": "Havi nyitáskor publikált snapshot"},
         {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": correction, "note": "Havi nyitáskor publikált snapshot"},
@@ -5333,24 +5333,6 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
     result["Courier ID"] = result["Courier ID"].where(result["Courier ID"].map(_courier_id_key) != "", embedded_ids)
     for column in columns[2:]:
         result[column] = _numeric_series(result, column)
-    stop_count_bonus = load_excel_stop_count_bonus_totals(session_id)
-    if not stop_count_bonus.empty:
-        result["_courier_id_lookup"] = result["Courier ID"].map(_courier_id_key)
-        result["_courier_lookup"] = result["Futár"].map(_courier_match_key)
-        by_id = (
-            stop_count_bonus[stop_count_bonus["courier_id_key"].astype(str).ne("")]
-            .groupby("courier_id_key")["stop_count_bonus_huf"]
-            .sum()
-        )
-        by_name = (
-            stop_count_bonus[stop_count_bonus["courier_name_key"].astype(str).ne("")]
-            .groupby("courier_name_key")["stop_count_bonus_huf"]
-            .sum()
-        )
-        raw_bonus = result["_courier_id_lookup"].map(by_id).fillna(result["_courier_lookup"].map(by_name)).fillna(0.0)
-        current_bonus = _numeric_series(result, "Cím bónusz (Kifli)")
-        result["Cím bónusz (Kifli)"] = current_bonus.where(raw_bonus.eq(0.0), raw_bonus)
-        result = result.drop(columns=["_courier_id_lookup", "_courier_lookup"])
     return result[columns]
 
 
@@ -12914,9 +12896,9 @@ def render_courier_detail_page() -> None:
                 return build_amount_drilldown(route_detail, "Túramegfelelés", compliance_level_rules)
             if detail_label == "Cím bónusz (Kifli)":
                 return pd.DataFrame([{
-                    "Tétel": "Stop-count Bonus",
+                    "Tétel": "Cím bónusz",
                     "Összeg": other_route_bonus_total,
-                    "Forrás": "Excel JIT / Stop-count Bonus",
+                    "Forrás": "Excel / Bonus routes",
                     "Session": str(session_id or "-"),
                 }])
             if detail_label == "Lojalitás":
@@ -13109,7 +13091,7 @@ def render_courier_detail_page() -> None:
             ("Borravaló", format_huf(tip_total), "", ""),
             ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
             ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
-            ("Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Stop-count Bonus"),
+            ("Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Bonus routes"),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
             ("Fizetendő", format_huf(payable_total), "payable", ""),
@@ -13203,7 +13185,7 @@ def render_courier_detail_page() -> None:
             {"item_key": "tip", "item_label": "Borravaló", "amount_kind": "huf", "amount_value": tip_total, "note": "Valós elszámolási adat"},
             {"item_key": "delay_bonus", "item_label": "Késedelmi díj", "amount_kind": "huf", "amount_value": delay_total, "note": "Valós elszámolási adat"},
             {"item_key": "compliance_bonus", "item_label": "Túramegfelelés", "amount_kind": "huf", "amount_value": compliance_total, "note": "Valós elszámolási adat"},
-            {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": other_route_bonus_total, "note": "Stop-count Bonus"},
+            {"item_key": "address_bonus_kifli", "item_label": "Cím bónusz (Kifli)", "amount_kind": "huf", "amount_value": other_route_bonus_total, "note": "Bonus routes"},
             {"item_key": "loyalty_bonus", "item_label": "Lojalitási bónusz", "amount_kind": "huf", "amount_value": loyalty_total, "note": "Valós elszámolási adat"},
             {"item_key": "customer_rating", "item_label": "Ügyfélértékelési bónusz", "amount_kind": "huf", "amount_value": customer_rating_total, "note": "Valós elszámolási adat"},
             {"item_key": "correction", "item_label": "Korrekciók összesen", "amount_kind": "huf", "amount_value": mobile_correction_total, "note": "Valós elszámolási adat"},
