@@ -6933,6 +6933,66 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
     return item
 
 
+def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]:
+    courier_id = str(row.get("courier_id") or "").strip()
+    courier_name = str(row.get("courier_name") or "").strip()
+    planned_km = safe_float_value(row.get("planned_km"))
+    hub_mileage_km = safe_float_value(row.get("hub_mileage_km"))
+    google_km = safe_float_value(row.get("google_route_km"))
+    actual_km = safe_float_value(row.get("actual_km"))
+    item = {
+        "courierId": courier_id,
+        "courierName": courier_name,
+        "date": str(row.get("work_date") or "")[:10],
+        "warehouse": str(row.get("warehouse_code") or "").strip(),
+        "warehouseId": safe_int(row.get("warehouse_id")),
+        "warehouseAddress": str(row.get("warehouse_address") or "").strip() or route_detail_warehouse_address(row.get("warehouse_id")),
+        "routeId": str(row.get("route_id") or ""),
+        "routeType": str(row.get("route_type") or "").strip() or "normal",
+        "routeTypeLabel": str(row.get("route_type_label") or "").strip() or route_detail_route_type_label(row.get("route_type")),
+        "shiftName": str(row.get("shift_name") or "").strip(),
+        "shiftStartAt": row.get("actual_shift_start_at") or row.get("queue_started_at"),
+        "queueStartedAt": row.get("queue_started_at") or row.get("actual_shift_start_at"),
+        "actualShiftStartAt": row.get("actual_shift_start_at"),
+        "routeAssignedAt": row.get("route_assigned_at"),
+        "departedAt": row.get("departed_at"),
+        "returnedAt": row.get("returned_at"),
+        "plannedDepartureAt": row.get("planned_departure_at"),
+        "plannedReturnAt": row.get("planned_return_at"),
+        "plannedLoadingMinutes": None,
+        "waitingMinutes": row.get("waiting_minutes"),
+        "loadingMinutes": row.get("loading_minutes"),
+        "plannedRouteMinutes": row.get("planned_route_minutes"),
+        "routeMinutes": row.get("actual_route_minutes"),
+        "totalMinutes": row.get("total_minutes"),
+        "vehiclePlate": str(row.get("vehicle_plate") or "").strip(),
+        "vehicleModel": "",
+        "vehicleLabel": str(row.get("vehicle_plate") or "").strip(),
+        "kifliVehicle": "Nincs adat",
+        "distanceKm": hub_mileage_km,
+        "hubPlannedKm": planned_km,
+        "hubMileageKm": hub_mileage_km,
+        "googleRouteKm": google_km,
+        "calculatedRouteKm": google_km,
+        "actualKm": actual_km,
+        "distanceDeltaKm": safe_float_value(row.get("distance_delta_km")),
+        "distanceSource": str(row.get("distance_source") or "").strip() or "Nincs adat",
+        "distanceStatus": str(row.get("google_route_status") or "").strip(),
+        "stopAddresses": [],
+        "orders": safe_int(row.get("orders")),
+        "stops": safe_int(row.get("stops")),
+        "routeDelayCount": safe_int(row.get("late_stop_count")),
+        "routeDelayMinutes": safe_int(row.get("late_stop_minutes")),
+        "nextShiftSameDay": str(row.get("next_shift_same_day") or "").strip(),
+        "tipHuf": safe_float_value(row.get("tip_huf")) or 0,
+        "tipSource": str(row.get("tip_source") or "").strip(),
+        "sourceStoryText": str(row.get("story_text") or "").strip(),
+        "dataSource": "Courier Hub statisztika",
+    }
+    item["narrative"] = item["sourceStoryText"] or route_detail_narrative(item)
+    return item
+
+
 def courier_hub_route_type(value: Any) -> str:
     text = str(value or "").strip().lower()
     if "express" in text:
@@ -7058,6 +7118,31 @@ def load_courier_hub_route_detail_rows_for_courier(courier_id: str, month_value:
     return result
 
 
+def load_courier_hub_route_stat_rows_for_courier(courier_id: str, month_value: date) -> list[dict[str, Any]]:
+    month_start = month_value.replace(day=1)
+    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return optional_supabase_rows(
+        "courier_hub_route_statistics",
+        params={
+            "select": (
+                "courier_id,work_date,route_id,warehouse_id,warehouse_code,dsp_id,courier_name,shift_name,"
+                "queue_started_at,actual_shift_start_at,route_assigned_at,departed_at,returned_at,"
+                "planned_departure_at,planned_return_at,next_shift_same_day,late_stop_count,late_stop_minutes,"
+                "planned_route_minutes,actual_route_minutes,waiting_minutes,loading_minutes,total_minutes,"
+                "planned_km,hub_mileage_km,google_route_km,google_route_minutes,google_traffic_delay_minutes,"
+                "google_route_status,actual_km,distance_delta_km,distance_source,route_type,route_type_label,"
+                "tip_huf,tip_source,orders,stops,vehicle_plate,warehouse_address,story_text,updated_at"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "work_date": f"gte.{month_start.isoformat()}",
+            "and": f"(work_date.lte.{month_end.isoformat()})",
+            "order": "work_date.desc,route_assigned_at.desc,route_id.desc",
+            "limit": "1500",
+        },
+        timeout=60,
+    )
+
+
 def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
         "courier_route_performance_detail_raw",
@@ -7079,6 +7164,30 @@ def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict
         compact["courierId"] = str(row.get("courier_id") or "").strip()
         result.append(compact)
     return result
+
+
+def load_courier_hub_route_stat_rows_for_month(month_value: date) -> list[dict[str, Any]]:
+    month_start = month_value.replace(day=1)
+    month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return optional_supabase_rows(
+        "courier_hub_route_statistics",
+        params={
+            "select": (
+                "courier_id,work_date,route_id,warehouse_id,warehouse_code,dsp_id,courier_name,shift_name,"
+                "queue_started_at,actual_shift_start_at,route_assigned_at,departed_at,returned_at,"
+                "planned_departure_at,planned_return_at,next_shift_same_day,late_stop_count,late_stop_minutes,"
+                "planned_route_minutes,actual_route_minutes,waiting_minutes,loading_minutes,total_minutes,"
+                "planned_km,hub_mileage_km,google_route_km,google_route_minutes,google_traffic_delay_minutes,"
+                "google_route_status,actual_km,distance_delta_km,distance_source,route_type,route_type_label,"
+                "tip_huf,tip_source,orders,stops,vehicle_plate,warehouse_address,story_text,updated_at"
+            ),
+            "work_date": f"gte.{month_start.isoformat()}",
+            "and": f"(work_date.lte.{month_end.isoformat()})",
+            "order": "courier_name.asc,work_date.desc,route_assigned_at.desc,route_id.desc",
+            "limit": "10000",
+        },
+        timeout=60,
+    )
 
 
 def courier_name_lookup() -> dict[str, str]:
@@ -7124,6 +7233,21 @@ def courier_name_lookup() -> dict[str, str]:
 def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
     names = courier_name_lookup()
     rows = []
+    stat_rows = load_courier_hub_route_stat_rows_for_month(month_value)
+    if stat_rows:
+        for stat_row in stat_rows:
+            item = build_route_detail_item_from_hub_stat(stat_row)
+            if not item.get("courierName"):
+                item["courierName"] = names.get(str(item.get("courierId") or "")) or f"Futár {item.get('courierId') or ''}".strip()
+            rows.append(item)
+        rows.sort(key=lambda item: (item.get("courierName") or "", item.get("date") or "", item.get("routeAssignedAt") or ""), reverse=False)
+        return {
+            "month": month_value.replace(day=1).strftime("%Y-%m"),
+            "courier": {"id": "", "name": "Összes futár"},
+            "rows": rows,
+            "source": "courier_hub_route_statistics",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
     for raw_row in load_courier_hub_route_detail_rows_for_month(month_value):
         courier_id = str(raw_row.get("courierId") or "").strip()
         courier_name = names.get(courier_id) or f"Futár {courier_id}" if courier_id else "Ismeretlen futár"
@@ -7141,6 +7265,22 @@ def route_details_for_all_couriers(month_value: date) -> dict[str, Any]:
 def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allow_unpublished: bool = True) -> dict[str, Any]:
     courier_id = str(user_courier_id(view_user))
     courier_name = str(view_user.get("courierName") or view_user.get("courier_name") or view_user.get("username") or "")
+    stat_rows = load_courier_hub_route_stat_rows_for_courier(courier_id, month_value)
+    if stat_rows:
+        if not courier_name:
+            courier_name = courier_name_lookup().get(courier_id, "")
+        rows = [build_route_detail_item_from_hub_stat(row) for row in stat_rows]
+        for row in rows:
+            if not row.get("courierName"):
+                row["courierName"] = courier_name
+        rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
+        return {
+            "month": month_value.replace(day=1).strftime("%Y-%m"),
+            "courier": {"id": courier_id, "name": courier_name},
+            "rows": rows,
+            "source": "courier_hub_route_statistics",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
     raw_detail_rows = load_courier_hub_route_detail_rows_for_courier(courier_id, month_value)
     if raw_detail_rows:
         if not courier_name:
@@ -10390,17 +10530,23 @@ def route_details_excel(
         "Route ID",
         "Műszak neve",
         "Sorbaállt",
+        "Tényleges műszak kezdés",
         "Túrát kapott",
+        "Várakozás túrakiosztásig perc",
+        "Bepakolási idő perc",
         "Indulás a raktárból",
         "Késés a túrán (db)",
         "Tervezett hossz/idő",
+        "Tervezett visszaérkezés",
         "Tervezett km",
         "Tényleges túraidő",
         "Tényleges visszaérkezés",
         "Tényleges km",
+        "Hub mileage km",
         "Következő műszak aznap",
         "Túra típusa",
         "Borravaló",
+        "Borravaló forrás",
         "Dátum",
         "Raktár cím",
         "Címek / stopok",
@@ -10421,17 +10567,23 @@ def route_details_excel(
             item.get("routeId"),
             item.get("shiftName"),
             route_detail_time_text(item.get("queueStartedAt")),
+            route_detail_time_text(item.get("actualShiftStartAt")),
             route_detail_time_text(item.get("routeAssignedAt")),
+            item.get("waitingMinutes"),
+            item.get("loadingMinutes"),
             route_detail_time_text(item.get("departedAt")),
             item.get("routeDelayCount"),
             route_detail_duration_text(item.get("plannedRouteMinutes")),
+            route_detail_time_text(item.get("plannedReturnAt")),
             item.get("hubPlannedKm"),
             route_detail_duration_text(item.get("routeMinutes")),
             route_detail_time_text(item.get("returnedAt")),
             item.get("actualKm") or item.get("calculatedRouteKm"),
+            item.get("hubMileageKm"),
             item.get("nextShiftSameDay"),
             item.get("routeTypeLabel"),
             item.get("tipHuf"),
+            item.get("tipSource"),
             item.get("date"),
             item.get("warehouseAddress"),
             f"{item.get('orders') or 0} / {item.get('stops') or 0}",

@@ -44,7 +44,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v108";
+const APP_VERSION = "v109";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2122,14 +2122,19 @@ function renderRouteDetails() {
             <th>Route ID</th>
             <th>Műszak neve</th>
             <th>Sorbaállt</th>
+            <th>Tényleges műszak kezdés</th>
             <th>Túrát kapott</th>
+            <th>Várakozás</th>
+            <th>Bepakolási idő</th>
             <th>Indulás a raktárból</th>
             <th>Késés a túrán</th>
             <th>Tervezett hossz/idő</th>
+            <th>Tervezett visszaérkezés</th>
             <th>Tervezett km</th>
             <th>Tényleges túraidő</th>
             <th>Tényleges visszaérkezés</th>
             <th>Tényleges km</th>
+            <th>Hub mileage km</th>
             <th>Következő műszak aznap</th>
             <th>Túra típusa</th>
             <th>Borravaló</th>
@@ -2144,14 +2149,19 @@ function renderRouteDetails() {
               <td><strong>${escapeHtml(routeDetailValue(row.routeId))}</strong></td>
               <td>${escapeHtml(routeDetailValue(row.shiftName))}</td>
               <td>${escapeHtml(timeOnly(row.queueStartedAt))}</td>
+              <td>${escapeHtml(timeOnly(row.actualShiftStartAt))}</td>
               <td>${escapeHtml(timeOnly(row.routeAssignedAt))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.waitingMinutes))}</td>
+              <td>${escapeHtml(routeDetailMinutes(row.loadingMinutes))}</td>
               <td>${escapeHtml(timeOnly(row.departedAt))}</td>
               <td>${formatCount(row.routeDelayCount || 0)} db</td>
               <td>${escapeHtml(routeDetailClock(row.plannedRouteMinutes))}</td>
+              <td>${escapeHtml(timeOnly(row.plannedReturnAt))}</td>
               <td>${escapeHtml(routeDetailDistance(row.hubPlannedKm))}</td>
               <td>${escapeHtml(routeDetailClock(row.routeMinutes))}</td>
               <td>${escapeHtml(timeOnly(row.returnedAt))}</td>
               <td>${escapeHtml(routeDetailDistance(row.actualKm || row.calculatedRouteKm))}</td>
+              <td>${escapeHtml(routeDetailDistance(row.hubMileageKm))}</td>
               <td>${escapeHtml(routeDetailValue(row.nextShiftSameDay))}</td>
               <td>${escapeHtml(routeDetailValue(row.routeTypeLabel))}</td>
               <td>${escapeHtml(formatHuf(row.tipHuf || 0))}</td>
@@ -2172,6 +2182,7 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Raktár cím</span><strong>${escapeHtml(selected.warehouseAddress || "-")}</strong></div>
         <div class="stat-row"><span>Műszak neve</span><strong>${escapeHtml(selected.shiftName || "-")}</strong></div>
         <div class="stat-row"><span>Sorbaállt</span><strong>${escapeHtml(shortDateTime(selected.queueStartedAt))}</strong></div>
+        <div class="stat-row"><span>Tényleges műszak kezdés</span><strong>${escapeHtml(shortDateTime(selected.actualShiftStartAt))}</strong></div>
         <div class="stat-row"><span>Túrát kapott</span><strong>${escapeHtml(shortDateTime(selected.routeAssignedAt))}</strong></div>
         <div class="stat-row"><span>Címek / stopok</span><strong>${formatCount(selected.orders || 0)} / ${formatCount(selected.stops || 0)}</strong></div>
         <div class="stat-row"><span>Késés a túrán</span><strong>${formatCount(selected.routeDelayCount || 0)} db</strong></div>
@@ -2180,10 +2191,12 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Tervezett bepakolás</span><strong>${escapeHtml(routeDetailMinutes(selected.plannedLoadingMinutes))}</strong></div>
         <div class="stat-row"><span>Bepakolás</span><strong>${escapeHtml(routeDetailMinutes(selected.loadingMinutes))}</strong></div>
         <div class="stat-row"><span>Tervezett hossz/idő</span><strong>${escapeHtml(routeDetailClock(selected.plannedRouteMinutes))}</strong></div>
+        <div class="stat-row"><span>Tervezett visszaérkezés</span><strong>${escapeHtml(shortDateTime(selected.plannedReturnAt))}</strong></div>
         <div class="stat-row"><span>Tényleges túraidő</span><strong>${escapeHtml(routeDetailClock(selected.routeMinutes))}</strong></div>
         <div class="stat-row"><span>Túra bepakolással</span><strong>${escapeHtml(routeDetailMinutes(selected.totalMinutes))}</strong></div>
         <div class="stat-row"><span>Tervezett km</span><strong>${escapeHtml(routeDetailDistance(selected.hubPlannedKm))}</strong></div>
         <div class="stat-row"><span>Tényleges km</span><strong>${escapeHtml(routeDetailDistance(selected.actualKm || selected.calculatedRouteKm))}</strong></div>
+        <div class="stat-row"><span>Hub mileage km</span><strong>${escapeHtml(routeDetailDistance(selected.hubMileageKm))}</strong></div>
         <div class="stat-row"><span>Km eltérés</span><strong>${escapeHtml(routeDetailDistance(selected.distanceDeltaKm))}</strong></div>
         <div class="stat-row"><span>Km forrás</span><strong>${escapeHtml(selected.distanceSource || selected.distanceStatus || "Nincs adat")}</strong></div>
         <div class="stat-row"><span>Következő műszak aznap</span><strong>${escapeHtml(selected.nextShiftSameDay || "-")}</strong></div>
