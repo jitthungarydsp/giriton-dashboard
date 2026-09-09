@@ -4607,6 +4607,10 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
         workflow_statuses = read_peopleforce_card_statuses_for_month(period_start.replace(day=1))
     except Exception:
         workflow_statuses = pd.DataFrame()
+    try:
+        invoice_documents = read_peopleforce_documents_for_month(period_start.replace(day=1), "invoice")
+    except Exception:
+        invoice_documents = pd.DataFrame()
 
     process_statuses: dict[tuple[str, str], str] = {}
     if not workflow_statuses.empty:
@@ -4619,6 +4623,16 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
                     (courier_key, f"{process_id}:{action}"),
                     str(item.get("status") or "").strip().casefold(),
                 )
+    invoice_document_processes: set[tuple[str, str]] = set()
+    invoice_document_couriers: set[str] = set()
+    if not invoice_documents.empty:
+        for item in invoice_documents.to_dict("records"):
+            courier_key = _courier_id_key(item.get("courier_id"))
+            process_id = process_id_from_note(item.get("note"))
+            if courier_key:
+                invoice_document_couriers.add(courier_key)
+            if courier_key and process_id:
+                invoice_document_processes.add((courier_key, process_id))
 
     status_by_courier: dict[str, str] = {}
     for row in requests.to_dict("records"):
@@ -4635,12 +4649,17 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
         if request_status == "approved" and process_id:
             invoice_payment_done = process_statuses.get((courier_key, f"{process_id}:invoice_payment")) == "done"
             invoice_check_done = process_statuses.get((courier_key, f"{process_id}:invoice_check")) == "done"
+            invoice_submit_done = process_statuses.get((courier_key, f"{process_id}:invoice_submit")) == "done"
+            invoice_uploaded = (courier_key, process_id) in invoice_document_processes
             if invoice_payment_done:
                 status_by_courier[courier_key] = "Kifizetve (Fizetés előleg)"
-            elif invoice_check_done:
+            elif invoice_check_done or invoice_submit_done or invoice_uploaded:
                 status_by_courier[courier_key] = "Kifizetésre vár (Fizetés előleg)"
             else:
                 status_by_courier[courier_key] = "Új fizetés előleg"
+            continue
+        if request_status == "approved" and courier_key in invoice_document_couriers:
+            status_by_courier[courier_key] = "Kifizetésre vár (Fizetés előleg)"
             continue
         if request_status in {"requested", "approved"}:
             status_by_courier[courier_key] = "Új fizetés előleg"
