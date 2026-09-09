@@ -4603,20 +4603,57 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
     requests = load_salary_advance_requests_for_month(period_start, period_end)
     if requests.empty:
         return result
-    open_statuses = {"requested", "approved"}
-    request_couriers = {
-        _courier_id_key(row.get("courier_id"))
-        for row in requests.to_dict("records")
-        if str(row.get("status") or "").strip().casefold() in open_statuses
-    }
-    request_couriers.discard("")
-    if not request_couriers:
+    try:
+        workflow_statuses = read_peopleforce_card_statuses_for_month(period_start.replace(day=1))
+    except Exception:
+        workflow_statuses = pd.DataFrame()
+
+    process_statuses: dict[tuple[str, str], str] = {}
+    if not workflow_statuses.empty:
+        for item in workflow_statuses.sort_values("updated_at", ascending=False, na_position="last").to_dict("records"):
+            courier_key = _courier_id_key(item.get("courier_id"))
+            process_id = process_id_from_action_key(item.get("action_key"))
+            action = base_action_key(item.get("action_key"))
+            if courier_key and process_id and action:
+                process_statuses.setdefault(
+                    (courier_key, f"{process_id}:{action}"),
+                    str(item.get("status") or "").strip().casefold(),
+                )
+
+    status_by_courier: dict[str, str] = {}
+    for row in requests.to_dict("records"):
+        courier_key = _courier_id_key(row.get("courier_id"))
+        if not courier_key:
+            continue
+        request_status = str(row.get("status") or "").strip().casefold()
+        process_id = normalize_process_id(row.get("process_id"))
+        if request_status in {"closed", "paid"}:
+            status_by_courier[courier_key] = "Kifizetve (Fizetés előleg)"
+            continue
+        if request_status in {"rejected", "cancelled"}:
+            continue
+        if request_status == "approved" and process_id:
+            invoice_payment_done = process_statuses.get((courier_key, f"{process_id}:invoice_payment")) == "done"
+            invoice_check_done = process_statuses.get((courier_key, f"{process_id}:invoice_check")) == "done"
+            if invoice_payment_done:
+                status_by_courier[courier_key] = "Kifizetve (Fizetés előleg)"
+            elif invoice_check_done:
+                status_by_courier[courier_key] = "Kifizetésre vár (Fizetés előleg)"
+            else:
+                status_by_courier[courier_key] = "Új fizetés előleg"
+            continue
+        if request_status in {"requested", "approved"}:
+            status_by_courier[courier_key] = "Új fizetés előleg"
+    if not status_by_courier:
         return result
     courier_ids = result["Courier ID"].map(_courier_id_key)
-    advance_mask = courier_ids.isin(request_couriers)
+    mapped_status = courier_ids.map(status_by_courier)
+    advance_mask = mapped_status.notna()
     if "Státusz" in result.columns:
-        advance_mask = advance_mask & result["Státusz"].astype(str).ne("Kifizetve")
-    result.loc[advance_mask, "Státusz"] = "Új fizetés előleg"
+        current_status = result["Státusz"].astype(str)
+        paid_advance_mask = mapped_status.astype(str).eq("Kifizetve (Fizetés előleg)")
+        advance_mask = advance_mask & (~current_status.isin({"Kifizetve"}) | paid_advance_mask)
+    result.loc[advance_mask, "Státusz"] = mapped_status[advance_mask]
     return result
 
 
@@ -9404,7 +9441,9 @@ STATUS_EMAIL_TEMPLATE_KEYS = {
     "Számlaellenőrzésre vár": "status_invoice_check_waiting",
     "Bejelentések": "status_complaint_open",
     "Új fizetés előleg": "status_salary_advance_open",
+    "Kifizetésre vár (Fizetés előleg)": "status_payment_waiting",
     "Kifizetésre vár": "status_payment_waiting",
+    "Kifizetve (Fizetés előleg)": "status_paid",
     "Kifizetve": "status_paid",
 }
 
@@ -9662,7 +9701,9 @@ def status_meta(status: str) -> tuple[str,str]:
         "TIG elfogadásra vár":("status-purple","led-purple"),
         "Bejelentések":("status-orange","led-orange"),
         "Új fizetés előleg":("status-yellow","led-yellow"),
+        "Kifizetésre vár (Fizetés előleg)":("status-yellow","led-yellow"),
         "Kifizetésre vár":("status-yellow","led-yellow"),
+        "Kifizetve (Fizetés előleg)":("status-green","led-green"),
         "Kifizetve":("status-green","led-green"),
     }
     return mapping.get(status,("status-yellow","led-yellow"))
@@ -17932,7 +17973,9 @@ def show_new_settlement_page() -> None:
                 "Számlaellenőrzésre vár",
                 "Bejelentések",
                 "Új fizetés előleg",
+                "Kifizetésre vár (Fizetés előleg)",
                 "Kifizetésre vár",
+                "Kifizetve (Fizetés előleg)",
                 "Kifizetve",
             ],
             key="new_status",
@@ -18656,7 +18699,9 @@ def show_new_settlement_page() -> None:
         ("Számlaellenőrzésre vár", "Admin ellenőrzésre vár", "🟡"),
         ("Bejelentések", "Nyitott ügyek", "🟠"),
         ("Új fizetés előleg", "Előlegigénylés nyitva", "🟡"),
+        ("Kifizetésre vár (Fizetés előleg)", "Előleg számla jóváhagyva", "🟡"),
         ("Kifizetésre vár", "Jóváhagyás után", "🟡"),
+        ("Kifizetve (Fizetés előleg)", "Előleg folyamat kifizetve", "🟢"),
         ("Kifizetve", "Havi zárás kész", "🟢"),
     ]
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
