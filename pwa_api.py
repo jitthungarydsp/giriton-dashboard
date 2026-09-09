@@ -1274,43 +1274,6 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     }
 
 
-def month_range_from_key(month_key: str | None) -> tuple[date, date]:
-    text = str(month_key or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}", text):
-        today = datetime.now(LOCAL_TIMEZONE).date()
-        year, month = today.year, today.month
-    else:
-        year, month = (int(part) for part in text.split("-", 1))
-        if month < 1 or month > 12:
-            today = datetime.now(LOCAL_TIMEZONE).date()
-            year, month = today.year, today.month
-    start = date(year, month, 1)
-    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    return start, end - timedelta(days=1)
-
-
-def read_shift_history(user: dict, month_key: str | None) -> dict[str, Any]:
-    start, end = month_range_from_key(month_key)
-    source_errors: list[str] = []
-    vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
-    live_vehicle = read_live_vehicle_for_user(user)
-    try:
-        hub_items = read_courier_hub_shift_overview_shifts(user, start, end)
-    except Exception as exc:
-        print("Courier Hub shift history error:", exc)
-        hub_items = []
-        source_errors.append("A Courier Hub műszakelőzmény jelenleg nem érhető el.")
-    return {
-        "from": start.isoformat(),
-        "to": end.isoformat(),
-        "month": start.strftime("%Y-%m"),
-        "items": attach_vehicle_assignments(hub_items, vehicle_rows, live_vehicle),
-        "warnings": source_errors,
-        "source": "courier_shift_overview",
-        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    }
-
-
 def read_courier_warehouse(user: dict[str, Any]) -> str:
     courier_id, _courier_name = courier_identity(user)
     direct = normalize_warehouse(
@@ -7686,6 +7649,104 @@ def load_customer_rating_stats(courier_id: str, period_start: date) -> dict[str,
     }
 
 
+def hub_stat_shift_planned_start(row: dict[str, Any]) -> str:
+    work_date = str(row.get("work_date") or "")[:10]
+    shift_name = normalize_time(row.get("shift_name"))
+    if work_date and shift_name:
+        return f"{work_date}T{shift_name}:00"
+    return str(row.get("actual_shift_start_at") or row.get("queue_started_at") or "")
+
+
+def hub_stat_late_start_minutes(row: dict[str, Any]) -> int:
+    planned = local_datetime(hub_stat_shift_planned_start(row))
+    actual = local_datetime(row.get("actual_shift_start_at") or row.get("queue_started_at"))
+    if not planned or not actual:
+        return 0
+    return max(0, int(round((actual - planned).total_seconds() / 60)))
+
+
+def hub_stat_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    route_id = str(row.get("route_id") or "")
+    note_row = route_notes.get((work_date, route_id), {})
+    planned_start = hub_stat_shift_planned_start(row)
+    queue_started = str(row.get("queue_started_at") or row.get("actual_shift_start_at") or "")
+    route_assigned = str(row.get("route_assigned_at") or "")
+    departed = str(row.get("departed_at") or "")
+    returned = str(row.get("returned_at") or "")
+    planned_return = str(row.get("planned_return_at") or "")
+    route_type = str(row.get("route_type") or "").strip() or "normal"
+    mileage = (
+        safe_float_value(row.get("actual_km"))
+        or safe_float_value(row.get("google_route_km"))
+        or safe_float_value(row.get("hub_mileage_km"))
+        or 0
+    )
+    story = {
+        "shiftName": str(row.get("shift_name") or "").strip(),
+        "shiftStart": planned_start,
+        "queueStartedAt": queue_started,
+        "availableForShiftSince": queue_started,
+        "assignedAt": route_assigned,
+        "realDeparture": departed,
+        "plannedReturn": planned_return,
+        "realReturn": returned,
+        "queueWaitMinutes": row.get("waiting_minutes"),
+        "realLoadingMinutes": row.get("loading_minutes"),
+        "plannedRouteMinutes": row.get("planned_route_minutes"),
+        "realRouteMinutes": row.get("actual_route_minutes"),
+        "totalRouteMinutes": row.get("total_minutes"),
+        "assignedToReturnMinutes": row.get("total_minutes"),
+        "gpsDistanceKm": mileage,
+        "addressCount": safe_int(row.get("orders") or row.get("stops")),
+        "timeWindowLateCount": safe_int(row.get("late_stop_count")),
+        "timeWindowLateMinutes": safe_int(row.get("late_stop_minutes")),
+        "tipHuf": safe_float_value(row.get("tip_huf")) or 0,
+        "storyText": str(row.get("story_text") or "").strip(),
+    }
+    return {
+        "date": work_date,
+        "routeId": route_id,
+        "warehouseId": safe_int(row.get("warehouse_id")),
+        "orders": safe_int(row.get("orders")),
+        "stops": safe_int(row.get("stops") or row.get("orders")),
+        "plannedStartAt": planned_start,
+        "actualStartAt": str(row.get("actual_shift_start_at") or queue_started),
+        "shiftAvailableAt": queue_started,
+        "routeAssignedAt": route_assigned,
+        "plannedDepartureAt": str(row.get("planned_departure_at") or ""),
+        "departedAt": departed,
+        "lastOrderFinishedAt": "",
+        "warehouseArrivedAt": returned,
+        "plannedReturnAt": planned_return,
+        "plannedStartDelayMinutes": hub_stat_late_start_minutes(row),
+        "departureDelayMinutes": 0,
+        "returnDelayMinutes": 0,
+        "apiShiftCount": 0,
+        "apiLateCount": 0,
+        "apiDidNotComeCount": 0,
+        "apiDelayedOrderCount": safe_int(row.get("late_stop_count")),
+        "timeWindowLateCount": safe_int(row.get("late_stop_count")),
+        "timeWindowLateMinutes": safe_int(row.get("late_stop_minutes")),
+        "maxDelayMinutes": 0,
+        "cleanedDelayCount": 0,
+        "uncleanedDelayCount": safe_int(row.get("late_stop_count")),
+        "cleanedDelayMinutes": 0,
+        "uncleanedDelayMinutes": safe_int(row.get("late_stop_minutes")),
+        "hasDelayCleaning": False,
+        "cleanedReasons": [],
+        "routeType": route_type,
+        "routeNote": str(note_row.get("note") or ""),
+        "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
+        "vehicleModel": "",
+        "vehiclePlate": str(row.get("vehicle_plate") or ""),
+        "mileageKm": mileage,
+        "vehicleOwnership": "",
+        "tipHuf": safe_float_value(row.get("tip_huf")) or 0,
+        "routeStory": story,
+    }
+
+
 def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> list[dict[str, Any]]:
     cache_key = f"{courier_id}|{period_start.isoformat()}"
     cached = cached_financial_lookup("customer_rating_bonus_items", cache_key)
@@ -7748,6 +7809,7 @@ def build_monthly_courier_statistics(
         day_rules_future = executor.submit(load_month_day_rules, period_start, period_end)
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
+        hub_stat_future = executor.submit(load_courier_hub_route_stat_rows_for_courier, courier_id, period_start)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
         shift_overview_quality_future = executor.submit(load_shift_overview_raw_quality_for_courier, courier_id, period_start)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
@@ -7762,10 +7824,129 @@ def build_monthly_courier_statistics(
         day_rules, day_rule_source = day_rules_future.result()
         history_rows = history_future.result()
         story_rows = story_future.result()
+        hub_stat_rows = hub_stat_future.result()
         attendance_shift_rows = attendance_future.result()
         shift_overview_quality = shift_overview_quality_future.result()
         route_notes = notes_future.result()
         settlement_summary_row = settlement_future.result()
+    can_show_amounts = can_view_financial_amounts(user)
+    if hub_stat_rows:
+        daily_history_rows = [hub_stat_daily_history_row(row, route_notes) for row in hub_stat_rows]
+        total_routes = len({
+            (str(row.get("work_date") or "")[:10], str(row.get("route_id") or "").strip())
+            for row in hub_stat_rows
+            if str(row.get("route_id") or "").strip()
+        })
+        total_orders = sum(safe_int(row.get("orders")) for row in hub_stat_rows)
+        route_tips = sum(safe_int(row.get("tip_huf")) for row in hub_stat_rows)
+        average_orders = round(total_orders / total_routes, 1) if total_routes else 0
+        shift_keys = {
+            f"{str(row.get('work_date') or '')[:10]}|{str(row.get('shift_name') or '').strip()}"
+            for row in hub_stat_rows
+            if str(row.get("work_date") or "").strip() and str(row.get("shift_name") or "").strip()
+        }
+        shift_count = len(shift_keys) or len({str(row.get("work_date") or "")[:10] for row in hub_stat_rows if row.get("work_date")})
+        route_types = {"normal": 0, "express": 0, "regional": 0}
+        highlighted_routes = 0
+        normal_day_routes = 0
+        express_routes = 0
+        express_orders = 0
+        highlighted_city_routes = 0
+        normal_city_routes = 0
+        highlighted_express_routes = 0
+        normal_express_routes = 0
+        for row in hub_stat_rows:
+            route_type = str(row.get("route_type") or "").strip() or "normal"
+            if route_type not in route_types:
+                route_type = "normal"
+            route_types[route_type] = route_types.get(route_type, 0) + 1
+            is_highlighted = day_type_for_date(parse_date_value(row.get("work_date")), day_rules) == "highlighted"
+            if route_type == "express":
+                express_routes += 1
+                express_orders += safe_int(row.get("orders"))
+                if is_highlighted:
+                    highlighted_express_routes += 1
+                else:
+                    normal_express_routes += 1
+            elif route_type == "regional":
+                pass
+            elif is_highlighted:
+                highlighted_city_routes += 1
+            else:
+                normal_city_routes += 1
+            if is_highlighted:
+                highlighted_routes += 1
+            else:
+                normal_day_routes += 1
+        route_quality_records = build_route_quality_records(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            month=period_start,
+            rows=daily_history_rows,
+        )
+        persist_route_quality_records(route_quality_records)
+        route_quality_summary = build_route_quality_summary(
+            daily_rows=[],
+            route_quality_records=route_quality_records,
+            shift_rows=attendance_shift_rows,
+            shift_overview_quality=shift_overview_quality,
+        )
+        return {
+            "month": period_start.strftime("%Y-%m"),
+            "courier": {"id": courier_id, "name": courier_name},
+            "amountsHidden": not can_show_amounts,
+            "amountsNote": (
+                "A havi elszamolasi idoszak meg van nyitva, a publikalt osszegek megjelenhetnek."
+                if can_show_amounts
+                else "A forint osszegek csak havi nyitas utan jelennek meg a futaroknak."
+            ),
+            "summary": {
+                "routes": total_routes,
+                "orders": total_orders,
+                "averageOrdersPerRoute": average_orders,
+                "shiftCount": shift_count,
+                "tipsTotalHuf": route_tips,
+            },
+            "performanceDetails": {
+                "delayRows": [],
+                "complianceRows": [],
+                "delaySourceRows": 0,
+                "complianceSourceRows": 0,
+            },
+            "dailyHistory": daily_history_rows,
+            "routeQuality": {
+                "savedRows": len(route_quality_records),
+                "okRows": sum(1 for row in route_quality_records if row.get("quality_ok")),
+                "problemRows": sum(1 for row in route_quality_records if not row.get("quality_ok")),
+            },
+            "qualitySummary": route_quality_summary,
+            "rawRouteOverview": {
+                "source": "courier_hub_route_statistics",
+                "routes": [],
+            },
+            "routeBreakdown": {
+                "highlightedRoutes": highlighted_routes,
+                "normalDayRoutes": normal_day_routes,
+                "highlightedCityRoutes": highlighted_city_routes,
+                "normalCityRoutes": normal_city_routes,
+                "highlightedExpressRoutes": highlighted_express_routes,
+                "normalExpressRoutes": normal_express_routes,
+                "expressRoutes": express_routes,
+                "expressOrders": express_orders,
+                "normalRoutes": route_types.get("normal", 0),
+                "regionalRoutes": route_types.get("regional", 0),
+            },
+            "customerRating": load_customer_rating_stats(courier_id, period_start),
+            "dataQuality": {
+                "dailyRows": len(hub_stat_rows),
+                "routeRows": len(hub_stat_rows),
+                "routeStoryRows": 0,
+                "routeSource": "courier_hub_route_statistics",
+                "settlementSummaryFallback": False,
+                "dayRuleSource": day_rule_source,
+                "dayRules": serialize_day_rules(day_rules),
+            },
+        }
     stories_by_route = route_story_lookup(story_rows)
     attendance_by_shift = attendance_shift_lookup(attendance_shift_rows)
     delay_rows = load_route_delay_rows_for_courier(courier_id, period_start, period_end)
@@ -7811,7 +7992,6 @@ def build_monthly_courier_statistics(
     route_orders = sum(safe_int(row.get("orders")) for row in route_rows)
     story_orders = sum(safe_int(row.get("address_count")) for row in story_route_rows)
     route_tips = sum(safe_int(route.get("tips_huf")) for route in route_rows)
-    can_show_amounts = can_view_financial_amounts(user)
     route_count = len(route_rows)
     story_route_count = len(story_route_rows)
     total_routes = history_route_count or route_count or story_route_count or daily_routes
@@ -10476,17 +10656,6 @@ def shifts(
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     return read_shifts(view_user, days)
-
-
-@app.get("/api/shifts/history")
-def shift_history(
-    month: str = Query(default=""),
-    courier: str = Query(default=""),
-    giriton_pwa_session: str | None = Cookie(default=None),
-):
-    user = require_user(giriton_pwa_session)
-    view_user, _preview = workflow_view_user(user, courier)
-    return read_shift_history(view_user, month)
 
 
 @app.get("/api/muszakpro/open-shifts")
