@@ -5752,7 +5752,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     tip = money_from(row, "tip_huf")
     delay = money_from(row, "delay_bonus_huf")
     compliance = money_from(row, "compliance_bonus_huf")
-    address_bonus_kifli = money_from(row, "other_route_bonus_huf")
+    address_bonus_kifli = 0
     loyalty = money_from(row, "loyalty_bonus_huf")
     customer_rating = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
     monthly_bonus = money_from(row, "monthly_bonus_huf") or money_sum_from(

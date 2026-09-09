@@ -2035,7 +2035,7 @@ def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[di
     imported_bonus = parse_huf_value(row.get("Importált bónusz"))
     imported_malus = abs(parse_huf_value(row.get("Importált málusz")))
     imported_atm = abs(parse_huf_value(row.get("Importált ATM levonás")))
-    address_bonus_kifli = parse_huf_value(row.get("Cím bónusz (Kifli)") or row.get("other_route_bonus_huf"))
+    address_bonus_kifli = 0.0
     deduction = parse_huf_value(row.get("Levonás"))
     payable = parse_huf_value(row.get("Kifizetendő"))
     orders = parse_huf_value(row.get("Rendelések"))
@@ -5319,7 +5319,7 @@ def load_excel_courier_base_rates(session_id: str, parameter_revision: int = 0) 
         "route_bonus_total_huf": "Rendszerbónusz",
         "delay_bonus_huf": "Késedelmi díj",
         "compliance_bonus_huf": "Túramegfelelés",
-        "other_route_bonus_huf": "Cím bónusz (Kifli)",
+        "other_route_bonus_huf": "_Excel egyéb route bónusz",
         "loyalty_bonus_huf": "Lojalitás",
         "highlighted_routes": "Kiemelt túrák",
         "normal_routes": "Normál túrák",
@@ -8016,12 +8016,6 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): (
-            "Importált bónusz",
-            IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS,
-            (),
-            False,
-        ),
         ("penalty_row", "bill_jitt_invoice_penalties", "jitt_invoice_penalties"): (
             "Importált málusz",
             ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas"),
@@ -8097,12 +8091,63 @@ def load_imported_balance_components(session_id: str | None) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_excel_address_bonus_kifli_totals(session_id: str | None) -> pd.DataFrame:
+    """Read real Excel Bonus routes rows for the Cím bónusz (Kifli) card."""
+    columns = ["courier_id_key", "courier_name_key", "Cím bónusz (Kifli)", "Cím bónusz megjegyzés"]
+    if not session_id:
+        return pd.DataFrame(columns=columns)
+    rows = _load_imported_table_rows(("bonus_route_row", "bill_jitt_invoice_bonus_routes"), session_id)
+    records: list[dict[str, object]] = []
+    for row in rows:
+        payload = _merged_imported_payload(row)
+        if not isinstance(payload, dict):
+            continue
+        normalized_payload = {_normalized_field_key(key): value for key, value in payload.items()}
+        courier_id_key, courier_name_key = _imported_courier_identity(normalized_payload)
+        amount_value = _imported_amount_value(
+            normalized_payload,
+            IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS,
+            IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS,
+        )
+        amount = parse_huf_value(amount_value)
+        if amount == 0 or (not courier_id_key and not courier_name_key):
+            continue
+        note_value = next(
+            (
+                value for key, value in normalized_payload.items()
+                if key in {"note", "notes", "comment", "comment2", "megjegyzes", "leiras", "description", "bonusname", "tetel"}
+                or "comment" in key
+                or "note" in key
+                or "megjegyzes" in key
+            ),
+            "",
+        )
+        records.append({
+            "courier_id_key": courier_id_key,
+            "courier_name_key": courier_name_key,
+            "Cím bónusz (Kifli)": amount,
+            "Cím bónusz megjegyzés": str(note_value or "").strip(),
+        })
+    if not records:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(records)
+
+    def join_notes(series: pd.Series) -> str:
+        values = [str(value).strip() for value in series.tolist() if str(value).strip()]
+        return " | ".join(dict.fromkeys(values))
+
+    return (
+        result.groupby(["courier_id_key", "courier_name_key"], as_index=False, dropna=False)
+        .agg({"Cím bónusz (Kifli)": "sum", "Cím bónusz megjegyzés": join_notes})
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_imported_balance_component_detail_rows(session_id: str | None) -> pd.DataFrame:
     columns = ["Tétel", "Összeg", "Megjegyzés"]
     if not session_id:
         return pd.DataFrame(columns=columns)
     definitions = {
-        ("bonus_route_row", "bill_jitt_invoice_bonus_routes"): ("Kiflis bónusz", 1, IMPORTED_KIFLIS_BONUS_AMOUNT_KEYS),
         ("penalty_row", "bill_jitt_invoice_penalties", "jitt_invoice_penalties"): ("Kiflis malus", -1, ("amounthuf", "penaltyhuf", "malushuf", "levonashuf", "valuehuf", "value", "amount", "osszeghuf", "osszeg", "penalty", "malus", "levonas")),
     }
     rows_out: list[dict[str, object]] = []
@@ -8159,8 +8204,10 @@ def load_imported_balance_component_items(session_id: str | None, courier_id: st
 def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None) -> pd.DataFrame:
     result = data.copy()
     components = load_imported_balance_components(session_id)
+    address_bonus_rows = load_excel_address_bonus_kifli_totals(session_id)
     component_columns = ("Importált bónusz", "Importált málusz", "Importált ATM levonás")
     component_note_columns = ("Importált bónusz megjegyzés", "Importált málusz megjegyzés", "Importált ATM megjegyzés")
+    result["Cím bónusz (Kifli)"] = 0.0
     for column in component_columns:
         if column in result.columns:
             result[column] = _numeric_series(result, column)
@@ -8174,6 +8221,28 @@ def apply_imported_balance_components(data: pd.DataFrame, session_id: str | None
     if components.empty:
         result["Bónusz"] = _numeric_series(result, "Bónusz") + result["Importált bónusz"]
         result["Levonás"] = _numeric_series(result, "Levonás") + result["Importált málusz"] + result["Importált ATM levonás"]
+        if address_bonus_rows.empty:
+            return result
+    if not address_bonus_rows.empty:
+        address_by_id = (
+            address_bonus_rows[address_bonus_rows["courier_id_key"] != ""]
+            .groupby("courier_id_key", dropna=False)["Cím bónusz (Kifli)"]
+            .sum()
+        )
+        address_by_name = (
+            address_bonus_rows[address_bonus_rows["courier_name_key"] != ""]
+            .groupby("courier_name_key", dropna=False)["Cím bónusz (Kifli)"]
+            .sum()
+        )
+        result["_courier_id_address_bonus_key"] = result["Courier ID"].map(_courier_id_key)
+        result["_courier_name_address_bonus_key"] = result["Futár"].map(_courier_match_key)
+        result["Cím bónusz (Kifli)"] = (
+            result["_courier_id_address_bonus_key"].map(address_by_id)
+            .fillna(result["_courier_name_address_bonus_key"].map(address_by_name))
+            .fillna(0.0)
+        )
+        result = result.drop(columns=["_courier_id_address_bonus_key", "_courier_name_address_bonus_key"])
+    if components.empty:
         return result
     component_by_id = (
         components[components["courier_id_key"] != ""]
@@ -8232,21 +8301,40 @@ def enrich_mobile_row_with_imported_balance_components(
         return row
     try:
         components = load_imported_balance_components(component_session_id)
+        address_bonus_rows = load_excel_address_bonus_kifli_totals(component_session_id)
     except Exception:
         return row
-    if components.empty:
+    if components.empty and address_bonus_rows.empty:
         return row
     courier_id = _courier_id_key(row.get("Courier ID"))
     courier_name = _courier_match_key(row.get("Futár") or row.get("FutĂˇr"))
     selected = pd.DataFrame()
-    if courier_id and "courier_id_key" in components.columns:
+    if not components.empty and courier_id and "courier_id_key" in components.columns:
         selected = components.loc[components["courier_id_key"].astype(str).eq(courier_id)]
-    if selected.empty and courier_name and "courier_name_key" in components.columns:
+    if not components.empty and selected.empty and courier_name and "courier_name_key" in components.columns:
         selected = components.loc[components["courier_name_key"].astype(str).eq(courier_name)]
-    if selected.empty:
-        return row
 
     enriched = dict(row)
+    enriched["Cím bónusz (Kifli)"] = 0.0
+    selected_address = pd.DataFrame()
+    if not address_bonus_rows.empty and courier_id and "courier_id_key" in address_bonus_rows.columns:
+        selected_address = address_bonus_rows.loc[address_bonus_rows["courier_id_key"].astype(str).eq(courier_id)]
+    if not address_bonus_rows.empty and selected_address.empty and courier_name and "courier_name_key" in address_bonus_rows.columns:
+        selected_address = address_bonus_rows.loc[address_bonus_rows["courier_name_key"].astype(str).eq(courier_name)]
+    if not selected_address.empty and "Cím bónusz (Kifli)" in selected_address.columns:
+        enriched["Cím bónusz (Kifli)"] = float(
+            pd.to_numeric(selected_address["Cím bónusz (Kifli)"], errors="coerce").fillna(0.0).sum()
+        )
+        if "Cím bónusz megjegyzés" in selected_address.columns:
+            notes = [
+                str(value).strip()
+                for value in selected_address["Cím bónusz megjegyzés"].fillna("").tolist()
+                if str(value).strip()
+            ]
+            if notes:
+                enriched["Cím bónusz megjegyzés"] = " | ".join(dict.fromkeys(notes))
+    if selected.empty:
+        return enriched
     amount_columns = ("Importált bónusz", "Importált málusz", "Importált ATM levonás")
     note_columns = (
         "Importált bónusz megjegyzés",
@@ -12044,8 +12132,7 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    row_other_route_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
-    other_route_bonus_total = row_other_route_bonus_total or settlement_amount("other_route_bonus_huf")
+    other_route_bonus_total = 0.0
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
             ~route_detail.get("DB státusz", pd.Series("", index=route_detail.index)).astype(str).str.casefold().eq("api nyers adat")
@@ -12425,7 +12512,7 @@ def render_courier_detail_page() -> None:
         bonus_total += imported_bonus_total
         malus_total += imported_malus_total
         atm_deduction_total += imported_atm_total
-        route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
+        route_other_bonus_total = 0.0
         payable_total = (
             base_total + tip_total + delay_total + compliance_total + route_other_bonus_total + bonus_total
             + loyalty_total + customer_rating_total + correction_income_total
@@ -12449,8 +12536,8 @@ def render_courier_detail_page() -> None:
             tip_total = amount("tip_huf")
             delay_total = amount("delay_bonus_huf")
             compliance_total = amount("compliance_bonus_huf")
-            route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)")) or amount("other_route_bonus_huf")
-            imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
+            route_other_bonus_total = 0.0
+            imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
@@ -12466,8 +12553,8 @@ def render_courier_detail_page() -> None:
             tip_total = route_detail_tip_total if is_api_mode and route_detail_tip_total else summary_tip_total
             delay_total = route_detail_delay_total if is_api_mode else parse_huf_value(summary_row.get("delay_bonus_huf"))
             compliance_total = route_detail_compliance_total if is_api_mode else parse_huf_value(summary_row.get("compliance_bonus_huf"))
-            route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)")) or parse_huf_value(summary_row.get("other_route_bonus_huf"))
-            imported_bonus_total = imported_bonus_with_route_bonus(route_other_bonus_total)
+            route_other_bonus_total = 0.0
+            imported_bonus_total = imported_settlement_amount("imported_bonus_huf", "Importált bónusz")
             imported_malus_total = imported_settlement_amount("imported_malus_huf", "Importált málusz", absolute=True)
             imported_atm_total = imported_settlement_amount("imported_atm_deduction_huf", "Importált ATM levonás", absolute=True)
             if is_api_mode:
@@ -12508,7 +12595,7 @@ def render_courier_detail_page() -> None:
         atm_deduction_total = imported_atm_total + manual_atm_total
         other_expense_total = manual_other_total
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
-        route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
+        route_other_bonus_total = 0.0
         display_base_total = base_total
         imported_customer_rating_total = resolve_customer_rating_bonus_total(
             courier_id,
