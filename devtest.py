@@ -13231,7 +13231,7 @@ def render_courier_detail_page() -> None:
                 "</div>"
             )
 
-        review_states = load_finance_card_review_states(balance_period_start, courier_id, session_id)
+        review_states = load_finance_card_review_states(period_start, courier_id, session_id)
         review_table_available = True
         st.markdown('<div class="settlement-profile-shell">', unsafe_allow_html=True)
         for start_index in range(0, len(kpi_items), 6):
@@ -13242,7 +13242,7 @@ def render_courier_detail_page() -> None:
                         _label_col, check_col = st.columns([0.78, 0.22])
                         with check_col:
                             checkbox_key = (
-                                f"finance_card_review_{balance_period_start.isoformat()}_"
+                                f"finance_card_review_{period_start.isoformat()}_"
                                 f"{_courier_id_key(courier_id)}_{str(session_id or 'no-session')}_{item_key}"
                             )
                             checked = st.checkbox(
@@ -13254,7 +13254,7 @@ def render_courier_detail_page() -> None:
                             )
                         if checked != bool(review_states.get(item_key, False)):
                             saved = save_finance_card_review_state(
-                                period_start=balance_period_start,
+                                period_start=period_start,
                                 courier_id=courier_id,
                                 courier_name=courier_name,
                                 session_id=session_id,
