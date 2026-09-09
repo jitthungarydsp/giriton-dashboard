@@ -1,68 +1,72 @@
 <!doctype html>
 <html lang="hu">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#111f18" />
-  <title>JITT Hub | Járművek</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
-    <div class="login-stage">
-      <div class="brand-lockup"><span class="brand-mark">J</span><span>JITT Hub</span></div>
-      <div class="login-copy">
-        <span class="eyebrow">FLOTTA KÖZPONT</span>
-        <h1 id="loginTitle">Járművek, kiosztások és szervizek egy helyen.</h1>
-        <p>Átlátható belső felület az autók napi állapotához, raktárához, futárhoz rendeléséhez és következő szervizéhez.</p>
-      </div>
-      <div class="signal-grid">
-        <div><b>1</b><span>jármű nézet</span></div>
-        <div><b>DB</b><span>kiosztás és km</span></div>
-        <div><b>API</b><span>friss adatok</span></div>
-      </div>
-    </div>
-    <form class="login-card" id="loginForm" novalidate>
-      <span class="eyebrow">Belső hozzáférés</span>
-      <h2>Bejelentkezés</h2>
-      <p>A meglévő admin tesztbelépéssel tudsz belépni.</p>
-      <label for="loginEmail">Felhasználónév</label>
-      <input id="loginEmail" type="email" autocomplete="username" placeholder="admin@admin.hu" required />
-      <label for="loginPassword">Jelszó</label>
-      <div class="password-row">
-        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="admin123" required />
-        <button type="button" id="passwordToggle">Mutat</button>
-      </div>
-      <label class="remember"><input type="checkbox" id="rememberMe" /> Emlékezz rám ezen a gépen</label>
-      <div class="login-error" id="loginError" role="alert"></div>
-      <button class="primary-action" type="submit">Belépés a Hubba</button>
-      <div class="demo-line"><code>admin@admin.hu</code><code>admin123</code></div>
-    </form>
-  </section>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#10251a" />
+    <title>JITT Hub | Bejelentkezés</title>
+    <meta name="description" content="JITT Hub belső bejelentkező oldal." />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-hero" aria-labelledby="login-title">
+        <div class="brand">
+          <span class="brand-mark">J</span>
+          <span>JITT Hub</span>
+        </div>
 
-  <div class="hub-shell" id="appShell" hidden>
-    <aside class="rail">
-      <div class="brand-lockup compact"><span class="brand-mark">J</span><span>JITT Hub</span></div>
-      <nav id="mainNav" aria-label="Fő navigáció"></nav>
-      <button class="rail-button" id="logoutButton">Kilépés</button>
-    </aside>
-    <main class="workspace">
-      <header class="hero-panel">
-        <div>
-          <span class="eyebrow">JITT HUNGARY DSP</span>
-          <h1 id="pageTitle">Járművek</h1>
-          <p id="pageSubtitle">Autóállapot, raktár, kiosztás, km és szerviz egy helyen.</p>
+        <div class="hero-copy">
+          <p class="eyebrow">BELSŐ HOZZÁFÉRÉS</p>
+          <h1 id="login-title">Futár 360 indulópont.</h1>
+          <p>
+            Egy közös belépési felület a későbbi műszak, túra és elszámolási
+            nézetekhez.
+          </p>
         </div>
-        <div class="hero-actions">
-          <button class="secondary-action" id="themeToggle">Téma</button>
-          <button class="primary-action" data-open="pwa">PWA megnyitása</button>
+
+        <div class="signal-grid" aria-label="Tervezett modulok">
+          <div>
+            <strong>Hub</strong>
+            <span>Műszakok</span>
+          </div>
+          <div>
+            <strong>Excel</strong>
+            <span>Elszámolás</span>
+          </div>
+          <div>
+            <strong>360</strong>
+            <span>Futár nézet</span>
+          </div>
         </div>
-      </header>
-      <section class="content-grid" id="pageContent"></section>
+      </section>
+
+      <section class="login-panel">
+        <form class="login-card" id="login-form">
+          <p class="eyebrow">JITT HUB</p>
+          <h2>Bejelentkezés</h2>
+          <p class="muted">Első körben ez csak a tiszta belépőoldal sablonja.</p>
+
+          <label for="email">E-mail cím</label>
+          <input id="email" name="email" type="email" autocomplete="username" placeholder="nev@jitt.hu" required />
+
+          <label for="password">Jelszó</label>
+          <div class="password-row">
+            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Jelszó" required />
+            <button id="toggle-password" type="button">Mutat</button>
+          </div>
+
+          <label class="remember">
+            <input id="remember" type="checkbox" />
+            <span>Emlékezz rám ezen az eszközön</span>
+          </label>
+
+          <p class="message" id="message" aria-live="polite"></p>
+          <button class="primary-action" type="submit">Belépés</button>
+        </form>
+      </section>
     </main>
-  </div>
 
-  <div class="toast" id="toast"></div>
-  <script src="app.js"></script>
-</body>
+    <script src="./app.js"></script>
+  </body>
 </html>
