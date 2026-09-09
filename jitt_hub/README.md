@@ -6,9 +6,14 @@ Tiszta bejelentkező oldal sablon a `jitt.hu` alatti Hub indulásához.
 
 Nyisd meg az `index.html` fájlt böngészőben.
 
-## Cloudflare Pages
+## Cloudflare deploy
 
-Build beállítás:
+A repo gyökerében lévő `wrangler.toml` ezt a mappát szolgálja ki:
+
+- Worker entry: `jitt_hub/worker.js`
+- Assets directory: `jitt_hub`
+
+Ha Cloudflare Pages képernyőn állítod be:
 
 - Framework preset: `None`
 - Build command: üres
