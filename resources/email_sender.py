@@ -1,5 +1,6 @@
 import os
 import re
+import requests
 import smtplib
 import ssl
 import tomllib
@@ -71,6 +72,14 @@ def app_login_url():
     return fallback
 
 
+def resend_api_key():
+    return first_setting("RESEND_API_KEY", "EMAIL_API_KEY")
+
+
+def resend_from_email(default_from):
+    return first_setting("RESEND_FROM_EMAIL", "EMAIL_API_FROM", default=default_from)
+
+
 def validate_email(value):
     email = str(value or "").strip()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
@@ -79,10 +88,23 @@ def validate_email(value):
 
 
 def smtp_config():
+    api_key = resend_api_key().strip()
     host = first_setting("SMTP_HOST", "EMAIL_HOST", "MAIL_HOST", "SMTP_SERVER")
     username = first_setting("SMTP_USERNAME", "SMTP_USER", "EMAIL_USERNAME", "EMAIL_USER", "MAIL_USERNAME", "MAIL_USER")
     password = first_setting("SMTP_PASSWORD", "SMTP_PASS", "EMAIL_PASSWORD", "EMAIL_PASS", "MAIL_PASSWORD", "MAIL_PASS")
-    from_email = first_setting("SMTP_FROM_EMAIL", "EMAIL_FROM", "MAIL_FROM", "FROM_EMAIL", default=username)
+    from_email = first_setting("RESEND_FROM_EMAIL", "SMTP_FROM_EMAIL", "EMAIL_API_FROM", "EMAIL_FROM", "MAIL_FROM", "FROM_EMAIL", default=username)
+
+    if api_key and from_email:
+        return {
+            "host": host,
+            "port": int(first_setting("SMTP_PORT", "EMAIL_PORT", "MAIL_PORT", default="587") or 587),
+            "username": username,
+            "password": password,
+            "from_email": from_email,
+            "from_name": first_setting("RESEND_FROM_NAME", "SMTP_FROM_NAME", "EMAIL_FROM_NAME", "MAIL_FROM_NAME", default="JITT"),
+            "use_ssl": False,
+            "use_starttls": False,
+        }
 
     if not host or not username or not password or not from_email:
         missing = []
@@ -477,8 +499,12 @@ def build_invoice_payment_message(
 
 
 def send_message(message, config):
-    context = ssl.create_default_context()
+    api_key = resend_api_key().strip()
+    if api_key:
+        send_message_with_resend(message, config, api_key)
+        return
 
+    context = ssl.create_default_context()
     if config["use_ssl"]:
         with smtplib.SMTP_SSL(
             config["host"],
@@ -500,6 +526,37 @@ def send_message(message, config):
                 smtp.ehlo()
             smtp.login(config["username"], config["password"])
             smtp.send_message(message)
+
+
+def send_message_with_resend(message, config, api_key):
+    from_email = resend_from_email(config.get("from_email", "")).strip()
+    from_name = str(config.get("from_name") or "").strip()
+    from_header = formataddr((from_name, from_email)) if from_name else from_email
+    recipient = str(message.get("To") or "").strip()
+    subject = str(message.get("Subject") or "").strip()
+    text_body = message.get_body(preferencelist=("plain",))
+    html_body = message.get_body(preferencelist=("html",))
+    payload = {
+        "from": from_header,
+        "to": [recipient],
+        "subject": subject,
+        "text": text_body.get_content() if text_body else "",
+    }
+    if html_body:
+        payload["html"] = html_body.get_content()
+
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "giriton-dashboard/1.0",
+        },
+        json=payload,
+        timeout=30,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Resend email API hiba: HTTP {response.status_code}: {response.text[:500]}")
 
 
 def send_login_credentials(recipient, username, password):
