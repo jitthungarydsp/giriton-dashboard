@@ -17781,8 +17781,6 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                     "Futártörzs frissítve Excel alapján: "
                     f"{master_sync.get('upserted', 0)} sor."
                 )
-            uploaded_period_start, _uploaded_period_end = load_settlement_month(result["session_id"])
-            selected_month = month_option_label(uploaded_period_start)
             st.session_state["new_month_pending"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
@@ -17839,8 +17837,6 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     ):
         try:
             reprocess_existing_excel_session(excel_import_session_id)
-            excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
-            selected_month = month_option_label(excel_period_start)
             st.session_state["new_month_pending"] = selected_month
             publish_excel_session_to_mobile_if_possible(
                 selected_month,
@@ -17863,8 +17859,6 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     ):
         try:
             reprocess_existing_excel_session(excel_import_session_id)
-            excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
-            selected_month = month_option_label(excel_period_start)
             st.session_state["new_month_pending"] = selected_month
             st.session_state["new_status_pending"] = "Összes"
             mobile_saved = publish_excel_session_to_mobile_if_possible(
