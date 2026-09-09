@@ -17691,10 +17691,17 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
     if uploaded_excel is not None:
         st.success(f"Kiválasztva: {uploaded_excel.name}")
 
+    selected_period_start = parse_month_option(selected_month)
+    state_excel_session_id = st.session_state.get("settlement_excel_session_id")
     excel_import_session_id = (
-        st.session_state.get("settlement_excel_session_id")
-        or load_latest_excel_jit_session_id(parse_month_option(selected_month))
+        state_excel_session_id
+        if state_excel_session_id and jit_session_has_rows_in_month(state_excel_session_id, selected_period_start)
+        else load_latest_excel_jit_session_id(selected_period_start)
     )
+    if excel_import_session_id:
+        st.session_state["settlement_excel_session_id"] = excel_import_session_id
+    else:
+        st.session_state.pop("settlement_excel_session_id", None)
     excel_action1, excel_action_check, excel_action2 = st.columns(3)
 
     if excel_action1.button(
@@ -17992,9 +17999,11 @@ def show_new_settlement_page() -> None:
     latest_default_month_label = default_settlement_month_label()
     previous_auto_default = st.session_state.get("new_month_auto_default")
     current_month_label = st.session_state.get("new_month")
-    if not current_month_label or previous_auto_default is None:
+    if not current_month_label:
         st.session_state["new_month"] = latest_default_month_label
         st.session_state["new_month_auto_default"] = latest_default_month_label
+    elif previous_auto_default is None:
+        st.session_state["new_month_auto_default"] = current_month_label
     selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
     selected_warehouse_label = st.session_state.get("new_warehouse", "Összes")
     selected_period_start = parse_month_option(selected_month_label)
