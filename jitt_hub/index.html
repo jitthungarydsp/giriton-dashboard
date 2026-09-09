@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="login-shell">
+    <main class="login-shell" id="login-shell">
       <section class="login-hero" aria-labelledby="login-title">
         <div class="brand">
           <span class="brand-mark">J</span>
@@ -64,6 +64,137 @@
           <p class="message" id="message" aria-live="polite"></p>
           <button class="primary-action" type="submit">Belépés</button>
         </form>
+      </section>
+    </main>
+
+    <main class="hub-shell" id="hub-shell" hidden>
+      <header class="hub-topbar">
+        <div class="brand dark">
+          <span class="brand-mark">J</span>
+          <span>JITT Hub</span>
+        </div>
+        <button class="secondary-action" id="logout-button" type="button">Kilépés</button>
+      </header>
+
+      <section class="courier-hero">
+        <div class="courier-avatar">AG</div>
+        <div class="courier-title">
+          <p class="eyebrow">FUTÁR 360</p>
+          <h1>Abonyi György</h1>
+          <div class="courier-meta">
+            <span>BUD1</span>
+            <span>Futár ID: 6498</span>
+            <span>2026. szeptember</span>
+            <span>Aktív</span>
+          </div>
+        </div>
+        <div class="courier-status">
+          <span>Mai állapot</span>
+          <strong>Elszámolásra vár</strong>
+        </div>
+      </section>
+
+      <section class="kpi-grid" aria-label="Futár összesítő">
+        <article class="kpi-card primary-kpi">
+          <span>Fizetendő</span>
+          <strong>1 263 625 Ft</strong>
+          <small>Excel elszámolás alapján</small>
+        </article>
+        <article class="kpi-card">
+          <span>Aktuális műszakok</span>
+          <strong>4</strong>
+          <small>Hub shift adat</small>
+        </article>
+        <article class="kpi-card">
+          <span>Havi túrák</span>
+          <strong>18</strong>
+          <small>Route teljesítés</small>
+        </article>
+        <article class="kpi-card attention">
+          <span>Figyelmet igényel</span>
+          <strong>2</strong>
+          <small>Késés vagy hiányzó adat</small>
+        </article>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">MŰSZAKOK</p>
+              <h2>Aktuális hét</h2>
+            </div>
+            <span class="source-badge">Hub shift</span>
+          </div>
+          <div class="shift-list">
+            <div class="shift-row">
+              <div><strong>Hétfő</strong><span>08:30 - 13:00</span></div>
+              <div><b>08:23</b><span>Tényleges kezdés</span></div>
+              <em class="ok">OK</em>
+            </div>
+            <div class="shift-row">
+              <div><strong>Szerda</strong><span>13:30 - 18:00</span></div>
+              <div><b>14:06</b><span>Tényleges kezdés</span></div>
+              <em class="late">Késett</em>
+            </div>
+            <div class="shift-row">
+              <div><strong>Péntek</strong><span>08:30 - 13:00</span></div>
+              <div><b>08:20</b><span>Tényleges kezdés</span></div>
+              <em class="ok">OK</em>
+            </div>
+            <div class="shift-row">
+              <div><strong>Vasárnap</strong><span>18:30 - 23:00</span></div>
+              <div><b>-</b><span>Tényleges kezdés</span></div>
+              <em class="neutral">Várható</em>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">ELSZÁMOLÁS</p>
+              <h2>Havi kivonat</h2>
+            </div>
+            <span class="source-badge">Excel</span>
+          </div>
+          <div class="money-list">
+            <div><span>Alapdíj</span><strong>433 700 Ft</strong></div>
+            <div><span>Borravaló</span><strong>296 929 Ft</strong></div>
+            <div><span>Késedelmi díj</span><strong>217 998 Ft</strong></div>
+            <div><span>Túramegfelelés</span><strong>229 998 Ft</strong></div>
+            <div><span>Kiflis levonás / bónusz</span><strong>44 000 Ft</strong></div>
+            <div><span>JITT bónusz / malus</span><strong>-5 000 Ft</strong></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">TÚRARÉSZLETEZŐ</p>
+            <h2>Mai túrakép</h2>
+          </div>
+          <span class="source-badge">Route detail</span>
+        </div>
+        <div class="route-grid">
+          <article><span>Route ID</span><strong>1534076</strong></article>
+          <article><span>Túrát kapott</span><strong>13:43</strong></article>
+          <article><span>Raktári indulás</span><strong>14:13</strong></article>
+          <article><span>Visszaérkezés</span><strong>19:00</strong></article>
+          <article><span>Tényleges túrahossz</span><strong>5:17</strong></article>
+          <article><span>Tényleges km</span><strong>92,1 km</strong></article>
+        </div>
+      </section>
+
+      <section class="story-panel">
+        <p class="eyebrow">NAPI SZÖVEGES KÉP</p>
+        <p>
+          Abonyi György ma 13:43-kor kapott túrát, 14:13-kor indult ki a
+          raktárból, majd 19:00-kor érkezett vissza. A teljes túrahossz
+          bepakolással együtt 5 óra 17 perc volt. A műszakadatok alapján egy
+          késést érdemes ellenőrizni.
+        </p>
       </section>
     </main>
 

@@ -3,6 +3,9 @@ const email = document.querySelector("#email");
 const password = document.querySelector("#password");
 const togglePassword = document.querySelector("#toggle-password");
 const message = document.querySelector("#message");
+const loginShell = document.querySelector("#login-shell");
+const hubShell = document.querySelector("#hub-shell");
+const logoutButton = document.querySelector("#logout-button");
 
 togglePassword?.addEventListener("click", () => {
   const visible = password.type === "text";
@@ -19,6 +22,14 @@ form?.addEventListener("submit", (event) => {
     return;
   }
 
-  message.classList.add("ok");
-  message.textContent = "Belépés sablon kész. A következő körben ide kötjük be a valódi azonosítást.";
+  loginShell.hidden = true;
+  hubShell.hidden = false;
+});
+
+logoutButton?.addEventListener("click", () => {
+  hubShell.hidden = true;
+  loginShell.hidden = false;
+  password.value = "";
+  message.classList.remove("ok");
+  message.textContent = "";
 });
