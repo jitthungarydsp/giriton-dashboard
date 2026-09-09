@@ -4585,13 +4585,20 @@ def load_salary_advance_requests_for_month(period_start: date, period_end: date)
         rows = (
             get_db().schema("settlement").table("courier_salary_advance_request")
             .select("*")
-            .gte("start_date", period_start.isoformat())
-            .lte("start_date", period_end.isoformat())
             .order("requested_at", desc=True)
-            .limit(1000)
+            .limit(3000)
             .execute().data or []
         )
-        return pd.DataFrame(rows)
+        data = pd.DataFrame(rows)
+        if data.empty:
+            return data
+        start_dates = pd.to_datetime(data.get("start_date"), errors="coerce").dt.date
+        status_values = data.get("status", pd.Series("", index=data.index)).astype(str).str.strip().str.casefold()
+        process_ids = data.get("process_id", pd.Series("", index=data.index)).astype(str).map(normalize_process_id)
+        in_period = start_dates.ge(period_start) & start_dates.le(period_end)
+        active = status_values.isin({"requested", "approved", "paid", "closed"})
+        has_process = process_ids.astype(bool)
+        return data[in_period | (active & has_process)].copy()
     except BaseException:
         return pd.DataFrame()
 
@@ -4613,11 +4620,14 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
         invoice_documents = pd.DataFrame()
 
     process_statuses: dict[tuple[str, str], str] = {}
+    workflow_process_ids: set[str] = set()
     if not workflow_statuses.empty:
         for item in workflow_statuses.sort_values("updated_at", ascending=False, na_position="last").to_dict("records"):
             courier_key = _courier_id_key(item.get("courier_id"))
             process_id = process_id_from_action_key(item.get("action_key"))
             action = base_action_key(item.get("action_key"))
+            if process_id:
+                workflow_process_ids.add(process_id)
             if courier_key and process_id and action:
                 process_statuses.setdefault(
                     (courier_key, f"{process_id}:{action}"),
@@ -4629,6 +4639,8 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
         for item in invoice_documents.to_dict("records"):
             courier_key = _courier_id_key(item.get("courier_id"))
             process_id = process_id_from_note(item.get("note"))
+            if process_id:
+                workflow_process_ids.add(process_id)
             if courier_key:
                 invoice_document_couriers.add(courier_key)
             if courier_key and process_id:
@@ -4641,6 +4653,10 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
             continue
         request_status = str(row.get("status") or "").strip().casefold()
         process_id = normalize_process_id(row.get("process_id"))
+        request_start = pd.to_datetime(row.get("start_date"), errors="coerce")
+        request_in_period = not pd.isna(request_start) and period_start <= request_start.date() <= period_end
+        if not request_in_period and (not process_id or process_id not in workflow_process_ids):
+            continue
         if request_status in {"closed", "paid"}:
             status_by_courier[courier_key] = "Kifizetve (Fizetés előleg)"
             continue
@@ -11201,7 +11217,21 @@ def courier_main_list_flag_html(row: pd.Series) -> str:
     flags: list[tuple[str, str]] = []
     vat_status = str(row.get("FA státusz") or row.get("vat_status") or "").strip()
     vat_key = _normalized_field_key(vat_status)
-    if vat_status and any(token in vat_key for token in ("afa", "afas", "vat", "adoalany")):
+    non_vat_keys = {
+        "aam",
+        "alanyiadomentes",
+        "alanyimentes",
+        "mentes",
+        "nemafas",
+        "nemafa",
+        "nonvat",
+        "novat",
+        "none",
+        "nincs",
+    }
+    vat_keys = {"afa", "afas", "afakoros", "vat", "vatpayer"}
+    is_non_vat = any(token in vat_key for token in non_vat_keys)
+    if vat_status and not is_non_vat and any(token in vat_key for token in vat_keys):
         flags.append(("ÁFÁS", "info"))
 
     employment_status = str(
