@@ -5748,6 +5748,68 @@ def load_excel_month_payable_totals(period_start: date | None, session_id: str |
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_previous_excel_payable_balance(
+    period_start: date,
+    courier_id: str,
+    courier_name: str,
+) -> dict[str, object]:
+    previous_period_start = add_months(period_start, -1)
+    previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
+    result = {
+        "period_start": previous_period_start,
+        "session_id": previous_session_id or "",
+        "payable_huf": 0.0,
+        "found": False,
+    }
+    if not previous_session_id:
+        return result
+    clean_courier_id = _courier_id_key(courier_id)
+    clean_courier_name = _courier_match_key(courier_name)
+    try:
+        rows = []
+        if clean_courier_id:
+            rows = (
+                get_db()
+                .schema("settlement")
+                .table("courier_settlement_summary")
+                .select("payable_huf,payable_total_huf,calculated_total,courier_id,driver_name")
+                .eq("session_id", previous_session_id)
+                .eq("courier_id", clean_courier_id)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+        if not rows and clean_courier_name:
+            candidates = (
+                get_db()
+                .schema("settlement")
+                .table("courier_settlement_summary")
+                .select("payable_huf,payable_total_huf,calculated_total,courier_id,driver_name")
+                .eq("session_id", previous_session_id)
+                .limit(500)
+                .execute()
+                .data
+                or []
+            )
+            rows = [
+                row for row in candidates
+                if _courier_match_key(row.get("driver_name")) == clean_courier_name
+            ][:1]
+        if rows:
+            row = rows[0]
+            result["payable_huf"] = (
+                parse_huf_value(row.get("payable_huf"))
+                or parse_huf_value(row.get("payable_total_huf"))
+                or parse_huf_value(row.get("calculated_total"))
+            )
+            result["found"] = True
+    except BaseException:
+        return result
+    return result
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_excel_base_rate_diagnostics(session_id: str, parameter_revision: int = 0) -> pd.DataFrame:
     """Show DB-stored matching outcomes; no amount is calculated in the UI."""
     try:
@@ -13099,6 +13161,13 @@ def render_courier_detail_page() -> None:
                 return f"Szint: {levels[0]}"
             return f"Szintek: {', '.join(levels[:3])}" + ("..." if len(levels) > 3 else "")
 
+        previous_excel_balance = load_previous_excel_payable_balance(period_start, courier_id, courier_name)
+        previous_excel_month = previous_excel_balance.get("period_start")
+        previous_excel_note = (
+            f"{month_option_label(previous_excel_month)} | Excel"
+            if isinstance(previous_excel_month, date) and previous_excel_balance.get("found")
+            else "Előző havi Excel adat nincs"
+        )
         kpi_items = [
             ("Rendelés", f"{order_total:,}".replace(",", " "), "", ""),
             ("Kör", str(route_total), "", ""),
@@ -13122,6 +13191,7 @@ def render_courier_detail_page() -> None:
             ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
             ("Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
             ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", "", ""),
+            ("Előző havi egyenleg", format_huf(previous_excel_balance.get("payable_huf")), "", previous_excel_note),
         ]
 
         def finance_detail_html(detail_label: str) -> str:
