@@ -5748,26 +5748,49 @@ def load_excel_month_payable_totals(period_start: date | None, session_id: str |
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def load_mobile_excel_period_session_id(period_start: date) -> str:
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("mobile_settlement_period_config")
+            .select("session_id,calculation_mode")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if rows and str(rows[0].get("calculation_mode") or "").strip().casefold() == "excel":
+            return str(rows[0].get("session_id") or "").strip()
+    except BaseException:
+        return ""
+    return ""
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def load_previous_excel_payable_balance(
     period_start: date,
     courier_id: str,
     courier_name: str,
 ) -> dict[str, object]:
     previous_period_start = add_months(period_start, -1)
-    previous_session_id = load_latest_excel_jit_session_id(previous_period_start)
+    previous_session_id = (
+        load_latest_excel_jit_session_id(previous_period_start)
+        or load_mobile_excel_period_session_id(previous_period_start)
+    )
     result = {
         "period_start": previous_period_start,
         "session_id": previous_session_id or "",
         "payable_huf": 0.0,
         "found": False,
+        "source": "",
     }
-    if not previous_session_id:
-        return result
     clean_courier_id = _courier_id_key(courier_id)
     clean_courier_name = _courier_match_key(courier_name)
     try:
         rows = []
-        if clean_courier_id:
+        if previous_session_id and clean_courier_id:
             rows = (
                 get_db()
                 .schema("settlement")
@@ -5780,7 +5803,7 @@ def load_previous_excel_payable_balance(
                 .data
                 or []
             )
-        if not rows and clean_courier_name:
+        if previous_session_id and not rows and clean_courier_name:
             candidates = (
                 get_db()
                 .schema("settlement")
@@ -5804,6 +5827,27 @@ def load_previous_excel_payable_balance(
                 or parse_huf_value(row.get("calculated_total"))
             )
             result["found"] = True
+            result["source"] = "Excel summary"
+            return result
+
+        previous_period_start, previous_period_end = month_bounds(previous_period_start)
+        if clean_courier_id:
+            closure = load_courier_monthly_closure(clean_courier_id, previous_period_start, previous_period_end)
+            closure_amount = parse_huf_value(closure.get("payable_huf")) if closure else 0.0
+            if closure_amount:
+                result["payable_huf"] = closure_amount
+                result["found"] = True
+                result["source"] = "Havi zárás"
+                return result
+
+            mobile_rows = load_mobile_breakdown_overrides(clean_courier_id, previous_period_start)
+            if not mobile_rows.empty:
+                payable_rows = mobile_rows.loc[mobile_rows["item_key"].astype(str).eq("payable")]
+                if not payable_rows.empty:
+                    result["payable_huf"] = parse_huf_value(payable_rows.iloc[0].get("amount_value"))
+                    result["found"] = True
+                    result["source"] = "PWA bontás"
+                    return result
     except BaseException:
         return result
     return result
@@ -13163,8 +13207,9 @@ def render_courier_detail_page() -> None:
 
         previous_excel_balance = load_previous_excel_payable_balance(period_start, courier_id, courier_name)
         previous_excel_month = previous_excel_balance.get("period_start")
+        previous_excel_source = str(previous_excel_balance.get("source") or "Excel").strip()
         previous_excel_note = (
-            f"{month_option_label(previous_excel_month)} | Excel"
+            f"{month_option_label(previous_excel_month)} | {previous_excel_source}"
             if isinstance(previous_excel_month, date) and previous_excel_balance.get("found")
             else "Előző havi Excel adat nincs"
         )
