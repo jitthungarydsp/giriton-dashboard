@@ -5752,7 +5752,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
     tip = money_from(row, "tip_huf")
     delay = money_from(row, "delay_bonus_huf")
     compliance = money_from(row, "compliance_bonus_huf")
-    address_bonus_kifli = 0
+    address_bonus_kifli = money_from(row, "address_bonus_kifli_huf")
     loyalty = money_from(row, "loyalty_bonus_huf")
     customer_rating = money_from(row, "customer_rating_bonus_huf", "customer_rating_huf")
     monthly_bonus = money_from(row, "monthly_bonus_huf") or money_sum_from(
@@ -5808,7 +5808,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         signed_item("tip", "Borravaló", tip),
         signed_item("delay_bonus", "Késedelmi díj", delay),
         signed_item("compliance_bonus", "Túramegfelelés", compliance),
-        signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Bonus routes"),
+        signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus"),
         signed_item("loyalty_bonus", "Lojalitási bónusz", loyalty),
         signed_item("customer_rating", "Ügyfélelégedettség", customer_rating),
         signed_item("monthly_bonus", "Bónuszok összesen", monthly_bonus),
@@ -6006,7 +6006,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         {"key": "base", "label": "Alapdíj", "amountHuf": base, "tone": "income", "items": [signed_item("base", "Alapdíj", base)]},
         {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": delay, "tone": "income", "items": [signed_item("delay_bonus", "Késedelmi díj", delay)]},
         {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": compliance, "tone": "income", "items": [signed_item("compliance_bonus", "Túramegfelelés", compliance)]},
-        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": address_bonus_kifli, "tone": "income", "items": [signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Bonus routes")]},
+        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": address_bonus_kifli, "tone": "income", "items": [signed_item("address_bonus_kifli", "Cím bónusz (Kifli)", address_bonus_kifli, note="Stop-count Bonus")]},
         {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": loyalty, "tone": "income", "items": loyalty_items},
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": customer_rating, "tone": "income", "items": customer_rating_items},
         {"key": "kiflis_bonus_malus", "label": "Kiflis levonások / bónuszok", "amountHuf": kiflis_bonus_malus_total, "tone": "info", "items": kiflis_bonus_malus_items},
