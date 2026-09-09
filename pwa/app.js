@@ -39,12 +39,14 @@ const state = {
   silentLoading: false,
   routeDetails: null,
   routeDetailsSelectedIndex: 0,
+  shiftHistory: null,
+  shiftHistoryMonth: new Date().toISOString().slice(0, 7),
   section: "home",
   routeAutoDelayKeys: new Set(),
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v110";
+const APP_VERSION = "v111";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2535,6 +2537,7 @@ async function loadShifts() {
   $("#refresh").disabled = true;
   try {
     state.data = await api(withPreviewCourier("/api/shifts?days=5"));
+    if (!$("#shift-history-month").value) $("#shift-history-month").value = state.shiftHistoryMonth;
     const focusShift = activeOrNextShift(state.data?.items || []);
     state.selectedDate = focusShift?.date || state.selectedDate || localDate();
     renderHero();
@@ -2542,6 +2545,7 @@ async function loadShifts() {
     renderWarnings();
     renderShifts();
     renderOpenMuszakproShifts();
+    loadShiftHistory().catch(() => {});
     loadQueueStatus().catch(() => {});
     $("#updated-at").textContent = `Utolsó lekérés: ${new Date(state.data.updatedAt).toLocaleString("hu-HU")}`;
   } catch (error) {
@@ -3297,6 +3301,53 @@ async function loadWorkflow(options = {}) {
       refreshButton.textContent = "Frissítés";
     }
   }
+}
+
+function shiftHistoryCard(item) {
+  const end = item.end ? `-${escapeHtml(item.end)}` : "";
+  const actualStart = item.actualStartAt ? timeOnly(item.actualStartAt) : "";
+  const vehicleText = vehicleLabel(item.vehicle);
+  return `<article class="shift-card shift-history-card">
+    <div class="shift-top">
+      <div>
+        <p class="shift-time">${escapeHtml(dateLabel(item.date, true))} · ${escapeHtml(item.start || "Időpont nélkül")}${end}</p>
+        <p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p>
+      </div>
+      <span class="shift-state ${escapeHtml(item.status)}">${escapeHtml(item.statusLabel)}</span>
+    </div>
+    <div class="shift-meta">
+      ${actualStart ? `<span>Tényleges kezdés: <strong>${escapeHtml(actualStart)}</strong></span>` : ""}
+      ${item.evaluation ? `<span>Értékelés: <strong>${escapeHtml(item.evaluation)}</strong></span>` : ""}
+      ${vehicleText ? `<span>Autó: <strong>${escapeHtml(vehicleText)}</strong></span>` : ""}
+    </div>
+  </article>`;
+}
+
+function renderShiftHistory() {
+  const target = $("#shift-history-list");
+  if (!target) return;
+  const items = [...(state.shiftHistory?.items || [])].sort((left, right) => {
+    const leftKey = `${left.date || ""} ${left.start || ""}`;
+    const rightKey = `${right.date || ""} ${right.start || ""}`;
+    return rightKey.localeCompare(leftKey);
+  });
+  target.innerHTML = items.length
+    ? items.map((item) => shiftHistoryCard(item)).join("")
+    : `<div class="empty-card">Erre a hónapra nincs Hub műszakelőzmény.</div>`;
+}
+
+async function loadShiftHistory() {
+  const input = $("#shift-history-month");
+  if (!input) return;
+  const month = input.value || state.shiftHistoryMonth || new Date().toISOString().slice(0, 7);
+  state.shiftHistoryMonth = month;
+  input.value = month;
+  try {
+    state.shiftHistory = await api(withPreviewCourier(`/api/shifts/history?month=${encodeURIComponent(month)}`), { silentLoading: true });
+  } catch (error) {
+    state.shiftHistory = { items: [], warnings: [error.message] };
+  }
+  renderShiftHistory();
 }
 
 async function acceptDocument(action) {
@@ -4714,6 +4765,7 @@ $("#logout").addEventListener("click", async () => {
   state.statistics = null;
   state.routeDetails = null;
   state.routeDetailsSelectedIndex = 0;
+  state.shiftHistory = null;
   state.game = null;
   state.gameStartedAt = null;
   state.openMuszakproShifts = null;
@@ -4722,6 +4774,7 @@ $("#logout").addEventListener("click", async () => {
 });
 $("#refresh").addEventListener("click", loadShifts);
 $("#open-muszakpro-refresh").addEventListener("click", loadOpenMuszakproShifts);
+$("#shift-history-month")?.addEventListener("change", loadShiftHistory);
 $("#nav-home").addEventListener("click", () => showSection("home"));
 $("#nav-settlement").addEventListener("click", () => showSection("settlement"));
 $("#nav-statistics").addEventListener("click", () => showSection("statistics"));

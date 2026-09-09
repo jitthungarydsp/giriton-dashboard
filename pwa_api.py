@@ -1274,6 +1274,43 @@ def read_shifts(user: dict, days: int) -> dict[str, Any]:
     }
 
 
+def month_range_from_key(month_key: str | None) -> tuple[date, date]:
+    text = str(month_key or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}", text):
+        today = datetime.now(LOCAL_TIMEZONE).date()
+        year, month = today.year, today.month
+    else:
+        year, month = (int(part) for part in text.split("-", 1))
+        if month < 1 or month > 12:
+            today = datetime.now(LOCAL_TIMEZONE).date()
+            year, month = today.year, today.month
+    start = date(year, month, 1)
+    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return start, end - timedelta(days=1)
+
+
+def read_shift_history(user: dict, month_key: str | None) -> dict[str, Any]:
+    start, end = month_range_from_key(month_key)
+    source_errors: list[str] = []
+    vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
+    live_vehicle = read_live_vehicle_for_user(user)
+    try:
+        hub_items = read_courier_hub_shift_overview_shifts(user, start, end)
+    except Exception as exc:
+        print("Courier Hub shift history error:", exc)
+        hub_items = []
+        source_errors.append("A Courier Hub műszakelőzmény jelenleg nem érhető el.")
+    return {
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "month": start.strftime("%Y-%m"),
+        "items": attach_vehicle_assignments(hub_items, vehicle_rows, live_vehicle),
+        "warnings": source_errors,
+        "source": "courier_shift_overview",
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+
+
 def read_courier_warehouse(user: dict[str, Any]) -> str:
     courier_id, _courier_name = courier_identity(user)
     direct = normalize_warehouse(
@@ -10439,6 +10476,17 @@ def shifts(
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
     return read_shifts(view_user, days)
+
+
+@app.get("/api/shifts/history")
+def shift_history(
+    month: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    return read_shift_history(view_user, month)
 
 
 @app.get("/api/muszakpro/open-shifts")

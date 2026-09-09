@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=104" />
+    <link rel="stylesheet" href="/styles.css?v=111" />
     <title>Kifli Futár</title>
   </head>
   <body>
@@ -112,6 +112,12 @@
         <section id="warning-list" aria-live="polite"></section>
         <section id="queue-status-panel" class="hidden" aria-live="polite"></section>
         <section id="shift-list" class="shift-list" aria-live="polite"></section>
+
+        <section class="section-heading shift-history-heading">
+          <div><p class="eyebrow">ELŐZMÉNYEK</p><h2>Hogyan dolgoztam?</h2></div>
+          <label class="month-picker compact">Hónap<input id="shift-history-month" type="month" /></label>
+        </section>
+        <section id="shift-history-list" class="shift-list" aria-live="polite"></section>
         <p id="updated-at" class="updated-at"></p>
       </div>
 
@@ -613,6 +619,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=108" defer></script>
+    <script src="/app.js?v=111" defer></script>
   </body>
 </html>
