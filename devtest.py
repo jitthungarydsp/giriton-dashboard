@@ -2280,75 +2280,6 @@ def apply_mobile_loyalty_amount_from_finance_source(
     return rows
 
 
-@st.cache_data(show_spinner=False, ttl=30)
-def load_finance_card_review_states(
-    period_start: date,
-    courier_id: str,
-    session_id: str | None,
-) -> dict[str, bool]:
-    clean_courier_id = _courier_id_key(courier_id)
-    if not clean_courier_id:
-        return {}
-    try:
-        rows = (
-            get_db()
-            .schema("settlement")
-            .table("courier_finance_card_review")
-            .select("item_key,is_checked")
-            .eq("period_start", period_start.isoformat())
-            .eq("courier_id", clean_courier_id)
-            .eq("session_id", str(session_id or ""))
-            .execute()
-            .data
-            or []
-        )
-    except BaseException:
-        return {}
-    return {
-        str(row.get("item_key") or ""): bool(row.get("is_checked"))
-        for row in rows
-        if str(row.get("item_key") or "")
-    }
-
-
-def save_finance_card_review_state(
-    *,
-    period_start: date,
-    courier_id: str,
-    courier_name: str,
-    session_id: str | None,
-    calculation_mode: str,
-    item_key: str,
-    item_label: str,
-    is_checked: bool,
-    updated_by: str,
-) -> bool:
-    clean_courier_id = _courier_id_key(courier_id)
-    clean_item_key = str(item_key or "").strip()
-    if not clean_courier_id or not clean_item_key:
-        return False
-    try:
-        get_db().schema("settlement").table("courier_finance_card_review").upsert(
-            {
-                "period_start": period_start.isoformat(),
-                "courier_id": clean_courier_id,
-                "courier_name": str(courier_name or "").strip(),
-                "session_id": str(session_id or ""),
-                "calculation_mode": str(calculation_mode or "").strip(),
-                "item_key": clean_item_key,
-                "item_label": str(item_label or clean_item_key).strip(),
-                "is_checked": bool(is_checked),
-                "updated_by": str(updated_by or "admin").strip() or "admin",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            on_conflict="period_start,courier_id,session_id,item_key",
-        ).execute()
-        load_finance_card_review_states.clear()
-        return True
-    except BaseException:
-        return False
-
-
 def enrich_mobile_settlement_row_for_snapshot(
     row: dict[str, object],
     *,
@@ -13169,28 +13100,28 @@ def render_courier_detail_page() -> None:
             return f"Szintek: {', '.join(levels[:3])}" + ("..." if len(levels) > 3 else "")
 
         kpi_items = [
-            ("orders", "Rendelés", f"{order_total:,}".replace(",", " "), "", ""),
-            ("routes", "Kör", str(route_total), "", ""),
-            ("normal_routes", "Normál túra", str(normal_route_total), "", ""),
-            ("highlighted_routes", "Kiemelt túra", str(highlighted_route_total), "", ""),
-            ("express_normal", "Express normál", str(express_normal_total), "", ""),
-            ("express_highlighted", "Express kiemelt", str(express_highlighted_total), "", ""),
-            ("base", "Alapdíj", format_huf(display_base_total), "", ""),
-            ("tip", "Borravaló", format_huf(tip_total), "", ""),
-            ("delay_bonus", "Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
-            ("compliance_bonus", "Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
-            ("address_bonus_kifli", "Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Stop-count Bonus"),
-            ("loyalty_bonus", "Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
-            ("customer_rating", "Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
-            ("payable", "Fizetendő", format_huf(payable_total), "payable", ""),
-            ("correction", "Korrekció", format_huf(correction_total), "", ""),
-            ("kiflis_bonus_malus", "Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
-            ("jitt_bonus_malus", "JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
-            ("atm_effect", "ATM hatás", format_huf(-atm_deduction_total), "", f"Excel import: {format_huf(-imported_atm_total)} | kézi: {format_huf(-manual_atm_total)}"),
-            ("salary_advance", "Fizetés előleg", format_huf(-salary_advance_total), "", ""),
-            ("target_reserve", "Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
-            ("insurance_fee", "Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
-            ("target_reserve_status", "CT státusz", "Done" if reserve_month_status == "done" else "In progress", "", ""),
+            ("Rendelés", f"{order_total:,}".replace(",", " "), "", ""),
+            ("Kör", str(route_total), "", ""),
+            ("Normál túra", str(normal_route_total), "", ""),
+            ("Kiemelt túra", str(highlighted_route_total), "", ""),
+            ("Express normál", str(express_normal_total), "", ""),
+            ("Express kiemelt", str(express_highlighted_total), "", ""),
+            ("Alapdíj", format_huf(display_base_total), "", ""),
+            ("Borravaló", format_huf(tip_total), "", ""),
+            ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
+            ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
+            ("Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Stop-count Bonus"),
+            ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
+            ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
+            ("Fizetendő", format_huf(payable_total), "payable", ""),
+            ("Korrekció", format_huf(correction_total), "", ""),
+            ("Kiflis levonások / bónuszok", format_huf(kiflis_bonus_malus_effect), "", ""),
+            ("JITT bónusz / malus", format_huf(jitt_bonus_malus_effect), "", ""),
+            ("ATM hatás", format_huf(-atm_deduction_total), "", f"Excel import: {format_huf(-imported_atm_total)} | kézi: {format_huf(-manual_atm_total)}"),
+            ("Fizetés előleg", format_huf(-salary_advance_total), "", ""),
+            ("Céltartalék 10%", format_huf(-reserve_addition_total), "", ""),
+            ("Biztosítási díj", format_huf(-insurance_fee_total), "", ""),
+            ("CT státusz", "Done" if reserve_month_status == "done" else "In progress", "", ""),
         ]
 
         def finance_detail_html(detail_label: str) -> str:
@@ -13223,63 +13154,32 @@ def render_courier_detail_page() -> None:
 
         def render_finance_kpi(label: str, value: str, css_class: str, note: str = "") -> str:
             note_html = f'<div class="finance-kpi-note">{html.escape(note)}</div>' if note else ""
-            return (
+            card = (
                 f'<div class="finance-kpi {css_class}">'
                 f'<div class="finance-kpi-label">{html.escape(label)}</div>'
                 f'<div class="finance-kpi-value">{html.escape(value)}</div>'
                 f"{note_html}"
                 "</div>"
             )
+            if label not in detail_labels:
+                return card
+            detail_width_class = " finance-kpi-detail-wide" if label in {"Kiflis levonĂˇsok / bĂłnuszok", "JITT bĂłnusz / malus"} else ""
+            return (
+                f'<details class="finance-kpi-detail-card {css_class}{detail_width_class}">'
+                f"<summary>{card}</summary>"
+                f"{finance_detail_html(label)}"
+                "</details>"
+            )
 
-        review_states = load_finance_card_review_states(period_start, courier_id, session_id)
-        review_table_available = True
-        st.markdown('<div class="settlement-profile-shell">', unsafe_allow_html=True)
-        for start_index in range(0, len(kpi_items), 6):
-            columns = st.columns(6)
-            for column, (item_key, label, value, css_class, note) in zip(columns, kpi_items[start_index:start_index + 6]):
-                with column:
-                    with st.container(border=True):
-                        _label_col, check_col = st.columns([0.78, 0.22])
-                        with check_col:
-                            checkbox_key = (
-                                f"finance_card_review_{period_start.isoformat()}_"
-                                f"{_courier_id_key(courier_id)}_{str(session_id or 'no-session')}_{item_key}"
-                            )
-                            checked = st.checkbox(
-                                "Ellenőrizve",
-                                value=bool(review_states.get(item_key, False)),
-                                key=checkbox_key,
-                                label_visibility="collapsed",
-                                help="Ellenőrizve",
-                            )
-                        if checked != bool(review_states.get(item_key, False)):
-                            saved = save_finance_card_review_state(
-                                period_start=period_start,
-                                courier_id=courier_id,
-                                courier_name=courier_name,
-                                session_id=session_id,
-                                calculation_mode=active_calculation_mode,
-                                item_key=item_key,
-                                item_label=label,
-                                is_checked=checked,
-                                updated_by="admin",
-                            )
-                            review_table_available = review_table_available and saved
-                        st.markdown(render_finance_kpi(label, value, css_class, note), unsafe_allow_html=True)
-                        if label in detail_labels:
-                            with st.expander("Bontás", expanded=False):
-                                detail_df = finance_detail_frame(label)
-                                if detail_df.empty:
-                                    st.caption("Nincs bontott adat.")
-                                else:
-                                    display_detail = detail_df.copy()
-                                    for amount_column in ["Egységösszeg", "Összeg"]:
-                                        if amount_column in display_detail.columns:
-                                            display_detail[amount_column] = display_detail[amount_column].map(format_huf)
-                                    st.dataframe(display_detail, use_container_width=True, hide_index=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-        if not review_table_available:
-            st.warning("Az ellenőrzési pipát még nem tudtam DB-be menteni. Futtasd le a courier_finance_card_review SQL-t.")
+        st.markdown(
+            '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
+            + "".join(
+                render_finance_kpi(label, value, css_class, note)
+                for label, value, css_class, note in kpi_items
+            )
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
         kiflis_bonus_malus_effect = imported_bonus_total - imported_malus_total
         jitt_bonus_malus_effect = manual_bonus_total - manual_malus_total
         mobile_monthly_bonus = imported_bonus_total + manual_bonus_total
