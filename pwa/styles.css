@@ -112,6 +112,8 @@ textarea { min-height: 96px; resize: vertical; }
 .shift-state.confirmed { background: #e2f2df; color: #2e6735; }
 .shift-state.waiting { background: #fff1cc; color: var(--warning); }
 .shift-state.review { background: #f9dfdd; color: var(--danger); }
+.shift-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.shift-meta strong { color: var(--ink); }
 .source-row { display: flex; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .source { padding: 5px 8px; border-radius: 8px; background: #eff2ee; color: var(--muted); font-size: 11px; font-weight: 750; }
 .source.ok { background: #e2f2df; color: #2e6735; }

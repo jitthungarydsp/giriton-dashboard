@@ -44,7 +44,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v109";
+const APP_VERSION = "v110";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2408,11 +2408,19 @@ function shiftCard(item, index = 0) {
   const hasMuszakpro = Boolean(item.muszakpro);
   const hasKiflis = Boolean(item.attendance || item.giriton);
   const sourceChip = (label, ok) => `<span class="source ${ok ? "ok" : "missing"}">${escapeHtml(label)} ${ok ? "✓" : "!"}</span>`;
+  const actualStart = item.actualStartAt ? timeOnly(item.actualStartAt) : "";
+  const hubMeta = isCourierHubSource && (actualStart || item.evaluation)
+    ? `<div class="shift-meta">
+        ${actualStart ? `<span>Tényleges kezdés: <strong>${escapeHtml(actualStart)}</strong></span>` : ""}
+        ${item.evaluation ? `<span>Értékelés: <strong>${escapeHtml(item.evaluation)}</strong></span>` : ""}
+      </div>`
+    : "";
   return `<article class="shift-card ${!isCourierHubSource && (!hasMuszakpro || !hasKiflis) ? "has-missing-source" : ""}">
     <div class="shift-top">
       <div><p class="shift-time">${escapeHtml(item.start || "Időpont nélkül")}${end}</p><p class="shift-warehouse">${escapeHtml(item.warehouse || "Raktár nincs megadva")}</p></div>
       <span class="shift-state ${escapeHtml(item.status)}">${escapeHtml(item.statusLabel)}</span>
     </div>
+    ${hubMeta}
     <div class="source-row">
       ${isCourierHubSource ? sourceChip("Courier Hub", true) : sourceChip("MűszakPro", hasMuszakpro)}
       ${isCourierHubSource ? "" : sourceChip("Kiflis", hasKiflis)}

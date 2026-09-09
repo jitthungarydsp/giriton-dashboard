@@ -779,6 +779,12 @@ def comparison_shift_status(row: dict[str, Any]) -> tuple[str, str]:
 
 def courier_hub_shift_status_label(status: Any) -> tuple[str, str]:
     value = normalize_text(status).replace(" ", "_")
+    if value == "ok":
+        return "confirmed", "Rendben"
+    if value in {"late", "kesett"}:
+        return "review", "Késett"
+    if value in {"not_evaluated", "not_evaluable", "nem_ertekelt"}:
+        return "waiting", "Nem értékelt"
     if value in {"cancelled", "canceled", "deleted"}:
         return "review", "Törölt műszak"
     if value in {"completed", "finished", "done"}:
@@ -799,6 +805,17 @@ def shift_time_from_overview(work_date: str, value: Any) -> str:
     return normalize_time(text)
 
 
+def shift_datetime_from_overview(work_date: str, value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        parsed = local_datetime(text)
+    else:
+        parsed = local_datetime(f"{work_date}T{normalize_time(text)}:00")
+    return parsed.isoformat() if parsed else ""
+
+
 def read_courier_hub_shift_overview_shifts(
     user: dict[str, Any],
     start: date,
@@ -812,7 +829,7 @@ def read_courier_hub_shift_overview_shifts(
         params={
             "select": (
                 "work_date,warehouse_id,shift_id,shift_name,shift_start,shift_end,"
-                "planned_start_at,planned_end_at,status,raw_shift"
+                "planned_start_at,planned_end_at,actual_start_at,evaluation,status,raw_shift"
             ),
             "courier_id": f"eq.{courier_id}",
             "and": f"(work_date.gte.{start.isoformat()},work_date.lte.{end.isoformat()})",
@@ -829,15 +846,19 @@ def read_courier_hub_shift_overview_shifts(
             continue
         raw_shift = row.get("raw_shift") if isinstance(row.get("raw_shift"), dict) else {}
         start_value = (
-            row.get("planned_start_at")
-            or row.get("shift_start")
+            row.get("shift_start")
+            or raw_shift.get("plannedStart")
+            or raw_shift.get("planned_start")
+            or row.get("planned_start_at")
             or raw_shift.get("plannedStartAt")
             or raw_shift.get("shiftStart")
             or raw_shift.get("start")
         )
         end_value = (
-            row.get("planned_end_at")
-            or row.get("shift_end")
+            row.get("shift_end")
+            or raw_shift.get("plannedEnd")
+            or raw_shift.get("planned_end")
+            or row.get("planned_end_at")
             or raw_shift.get("plannedEndAt")
             or raw_shift.get("shiftEnd")
             or raw_shift.get("end")
@@ -851,8 +872,18 @@ def read_courier_hub_shift_overview_shifts(
         if key in seen:
             continue
         seen.add(key)
+        actual_start_value = (
+            row.get("actual_start_at")
+            or raw_shift.get("actualStart")
+            or raw_shift.get("actual_start")
+            or raw_shift.get("actualStartAt")
+        )
         status, status_label = courier_hub_shift_status_label(
-            row.get("status") or raw_shift.get("status") or raw_shift.get("state")
+            row.get("evaluation")
+            or row.get("status")
+            or raw_shift.get("evaluation")
+            or raw_shift.get("status")
+            or raw_shift.get("state")
         )
         warehouse_id = str(row.get("warehouse_id") or raw_shift.get("warehouseId") or "").strip()
         warehouse = raw_shift.get("warehouseCode") or raw_shift.get("warehouseName") or ""
@@ -874,6 +905,10 @@ def read_courier_hub_shift_overview_shifts(
                 "attendanceShiftName": str(row.get("shift_name") or raw_shift.get("shiftName") or raw_shift.get("name") or ""),
                 "muszakproShiftText": "",
                 "source": "courier_shift_overview",
+                "plannedStartAt": shift_datetime_from_overview(work_date, start_value),
+                "plannedEndAt": shift_datetime_from_overview(work_date, end_value),
+                "actualStartAt": shift_datetime_from_overview(work_date, actual_start_value),
+                "evaluation": str(row.get("evaluation") or raw_shift.get("evaluation") or ""),
             }
         )
     return sorted(items, key=lambda item: (item["date"], item["start"], item["warehouse"]))
@@ -1124,7 +1159,7 @@ def attach_vehicle_assignments(
 
 
 def read_shifts(user: dict, days: int) -> dict[str, Any]:
-    start = date.today()
+    start = datetime.now(LOCAL_TIMEZONE).date()
     end = start + timedelta(days=days - 1)
     source_errors: list[str] = []
     vehicle_rows = read_vehicle_assignment_rows_for_user(user, start, end)
@@ -1400,7 +1435,7 @@ def local_iso_time(value: Any) -> str:
     except ValueError:
         return ""
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=LOCAL_TIMEZONE)
     return parsed.astimezone(LOCAL_TIMEZONE).strftime("%H:%M")
 
 
@@ -1415,7 +1450,7 @@ def local_datetime(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=LOCAL_TIMEZONE)
     return parsed.astimezone(LOCAL_TIMEZONE)
 
 
