@@ -11236,6 +11236,7 @@ def refresh_settlement_profile_data() -> None:
     load_active_bonus_level_rules.clear()
     load_courier_route_detail.clear()
     load_imported_balance_components.clear()
+    load_excel_address_bonus_kifli_totals.clear()
     load_courier_settlement_summary.clear()
     load_courier_settlement_summary_row.clear()
     load_courier_adjustments.clear()
@@ -17641,6 +17642,7 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
         load_excel_base_rate_diagnostics.clear()
         load_courier_route_detail.clear()
         load_imported_balance_components.clear()
+        load_excel_address_bonus_kifli_totals.clear()
         load_courier_settlement_summary.clear()
         build_excel_settlement_number_audit.clear()
         parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
@@ -17734,6 +17736,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
                 load_excel_base_rate_diagnostics.clear()
                 load_courier_route_detail.clear()
                 load_imported_balance_components.clear()
+                load_excel_address_bonus_kifli_totals.clear()
                 load_courier_settlement_summary.clear()
                 build_excel_settlement_number_audit.clear()
                 parameter_revision = int(st.session_state.get("settlement_parameter_revision", 0))
@@ -17856,7 +17859,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             excel_period_start, _excel_period_end = load_settlement_month(excel_import_session_id)
             selected_month = month_option_label(excel_period_start)
             st.session_state["new_month_pending"] = selected_month
-            st.session_state["new_status"] = "Összes"
+            st.session_state["new_status_pending"] = "Összes"
             mobile_saved = publish_excel_session_to_mobile_if_possible(
                 selected_month,
                 excel_import_session_id,
@@ -17953,6 +17956,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             load_excel_base_rate_diagnostics.clear()
             load_courier_route_detail.clear()
             load_imported_balance_components.clear()
+            load_excel_address_bonus_kifli_totals.clear()
             load_courier_settlement_summary.clear()
             build_excel_settlement_number_audit.clear()
             load_excel_route_coverage_audit.clear()
@@ -17981,15 +17985,14 @@ def show_new_settlement_page() -> None:
     pending_month_label = st.session_state.pop("new_month_pending", None)
     if pending_month_label:
         st.session_state["new_month"] = pending_month_label
-        st.session_state["new_month_auto_default"] = pending_month_label
+    pending_status_label = st.session_state.pop("new_status_pending", None)
+    if pending_status_label:
+        st.session_state["new_status"] = pending_status_label
     selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     latest_default_month_label = default_settlement_month_label()
     previous_auto_default = st.session_state.get("new_month_auto_default")
     current_month_label = st.session_state.get("new_month")
     if not current_month_label or previous_auto_default is None:
-        st.session_state["new_month"] = latest_default_month_label
-        st.session_state["new_month_auto_default"] = latest_default_month_label
-    elif current_month_label == previous_auto_default and previous_auto_default != latest_default_month_label:
         st.session_state["new_month"] = latest_default_month_label
         st.session_state["new_month_auto_default"] = latest_default_month_label
     selected_month_label = st.session_state.get("new_month") or default_settlement_month_label()
