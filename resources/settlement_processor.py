@@ -22,6 +22,8 @@ from resources.settlement_parser import (
     DEFAULT_PARSERS,
     ImportedExcelRow,
     ParsedSheet,
+    _parse_name_identified_sheet,
+    detect_sheet_type_from_name,
     is_empty_row,
     normalize_text,
 )
@@ -99,6 +101,7 @@ TYPE_TO_TARGET_TABLE = {
     "bonus_routes": "bonus_route_row",
     "performance_indicator": "performance_indicator_row",
 }
+NORMALIZED_TARGET_TABLES = tuple(dict.fromkeys(TYPE_TO_TARGET_TABLE.values()))
 
 PENALTIES_SHEET_NAME = "penalties"
 PENALTY_POSITIONAL_HEADERS = (
@@ -479,11 +482,7 @@ def analyze_and_parse_sheet(
     sheet_name: str,
     rows: list[dict[str, Any]] | Sequence[ImportedExcelRow],
 ) -> SheetAnalysis:
-    """Run the registered parser classes and return the best match.
-
-    ``sheet_name`` is used only as source metadata. Sheet type detection is
-    performed exclusively by the existing parser rules.
-    """
+    """Run the registered parser classes and return the best match."""
 
     imported_rows: list[ImportedExcelRow] = []
 
@@ -501,6 +500,19 @@ def analyze_and_parse_sheet(
                 data=row.get("data") or {},
             )
         )
+
+    name_detection = detect_sheet_type_from_name(sheet_name)
+    if name_detection is not None:
+        parsed_sheet = _parse_name_identified_sheet(
+            imported_rows,
+            name_detection,
+            DEFAULT_PARSERS,
+        )
+        if parsed_sheet is not None:
+            return SheetAnalysis(
+                parsed_sheet=parsed_sheet,
+                source_rows=imported_rows,
+            )
 
     candidates: list[ParsedSheet] = []
     for parser_class in DEFAULT_PARSERS:
@@ -690,6 +702,21 @@ def _upsert_normalized_rows(
                 on_conflict="session_id,source_sheet,source_row_no",
                 returning="minimal",
             )
+            .execute()
+        )
+
+
+def _delete_existing_normalized_rows_for_session(
+    client: Client,
+    session_id: str,
+) -> None:
+    """Remove prior parsed rows for a session before rebuilding them."""
+
+    for table_name in NORMALIZED_TARGET_TABLES:
+        (
+            _table(client, table_name)
+            .delete()
+            .eq("session_id", session_id)
             .execute()
         )
 
@@ -1045,6 +1072,11 @@ def process_settlement_session(
             issues_persisted = True
             _finish_processing_run(supabase_client, report)
             return report
+
+        _delete_existing_normalized_rows_for_session(
+            supabase_client,
+            normalized_session_id,
+        )
 
         normalized_by_table: dict[str, list[dict[str, Any]]] = {}
 
