@@ -2143,6 +2143,118 @@ def save_devtest_finance_snapshot_version(
         return {"saved": False, "reason": str(exc)}
 
 
+def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
+    clean_courier_id = _courier_id_key(courier_id)
+    if not clean_courier_id:
+        return {}
+    try:
+        snapshots = (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .select("*")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .eq("courier_id", clean_courier_id)
+            .order("version", desc=True)
+            .limit(1)
+            .execute().data or []
+        )
+        if not snapshots:
+            return {}
+        snapshot = dict(snapshots[0])
+        items = (
+            get_db().schema("settlement").table("courier_finance_snapshot_item")
+            .select("*")
+            .eq("snapshot_id", str(snapshot.get("id")))
+            .order("section")
+            .order("display_order")
+            .execute().data or []
+        )
+        snapshot["items"] = items
+        return snapshot
+    except BaseException:
+        return {}
+
+
+def clear_devtest_finance_snapshot_cache() -> None:
+    clear = getattr(load_latest_devtest_finance_snapshot, "clear", None)
+    if callable(clear):
+        clear()
+
+
+def _snapshot_section_frame(snapshot: dict[str, object], section: str) -> pd.DataFrame:
+    rows = [
+        {
+            "Kulcs": item.get("item_key"),
+            "Megnevezés": item.get("item_label"),
+            "Típus": item.get("amount_kind"),
+            "Érték": parse_huf_value(item.get("amount_value")),
+            "Megjegyzés": item.get("note"),
+        }
+        for item in snapshot.get("items") or []
+        if str(item.get("section") or "") == section
+    ]
+    return pd.DataFrame(rows, columns=["Kulcs", "Megnevezés", "Típus", "Érték", "Megjegyzés"])
+
+
+def _snapshot_amount(snapshot: dict[str, object], item_key: str, section: str = "finance") -> float:
+    for item in snapshot.get("items") or []:
+        if str(item.get("section") or "") == section and str(item.get("item_key") or "") == item_key:
+            return parse_huf_value(item.get("amount_value"))
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    return parse_huf_value((metadata or {}).get(item_key))
+
+
+def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    version = int(parse_huf_value(snapshot.get("version")))
+    created_at = str(snapshot.get("created_at") or "")
+    st.caption(f"Mentett devtest pénzügyi verzió: v{version} | {created_at}")
+
+    kpi_items = [
+        ("Rendelés", _snapshot_amount(snapshot, "orders"), "", ""),
+        ("Kör", _snapshot_amount(snapshot, "routes"), "", ""),
+        ("Normál túra", _snapshot_amount(snapshot, "normal_routes"), "", ""),
+        ("Kiemelt túra", _snapshot_amount(snapshot, "highlighted_routes"), "", ""),
+        ("Alapdíj", _snapshot_amount(snapshot, "base"), "", ""),
+        ("Borravaló", _snapshot_amount(snapshot, "tip"), "", ""),
+        ("Késedelmi díj", _snapshot_amount(snapshot, "delay_bonus"), "", ""),
+        ("Túramegfelelés", _snapshot_amount(snapshot, "compliance_bonus"), "", ""),
+        ("Cím bónusz (Kifli)", _snapshot_amount(snapshot, "address_bonus_kifli"), "", ""),
+        ("Lojalitás", _snapshot_amount(snapshot, "loyalty_bonus"), "", ""),
+        ("Ügyfélértékelési bónusz", _snapshot_amount(snapshot, "customer_rating"), "", ""),
+        ("Fizetendő", _snapshot_amount(snapshot, "payable") or parse_huf_value(metadata.get("payable_total")), "primary", ""),
+        ("Korrekció", _snapshot_amount(snapshot, "correction"), "", ""),
+        ("Kiflis levonások / bónuszok", _snapshot_amount(snapshot, "kiflis_bonus_malus"), "", ""),
+        ("JITT bónusz / malus", _snapshot_amount(snapshot, "bonus_malus"), "", ""),
+        ("ATM hatás", _snapshot_amount(snapshot, "atm_effect"), "", ""),
+        ("Fizetés előleg", _snapshot_amount(snapshot, "salary_advance"), "", ""),
+        ("Céltartalék 10%", _snapshot_amount(snapshot, "reserve"), "", ""),
+        ("Biztosítási díj", _snapshot_amount(snapshot, "insurance_fee"), "", ""),
+    ]
+
+    def render_card(label: str, value: float, css_class: str, note: str) -> str:
+        value_text = f"{int(value):,}".replace(",", " ") if label in {"Rendelés", "Kör", "Normál túra", "Kiemelt túra"} else format_huf(value)
+        return (
+            f'<div class="finance-kpi {css_class}">'
+            f'<div class="finance-kpi-label">{html.escape(label)}</div>'
+            f'<div class="finance-kpi-value">{html.escape(value_text)}</div>'
+            f'<div class="finance-kpi-note">{html.escape(note or "Mentett verzió")}</div>'
+            "</div>"
+        )
+
+    st.markdown(
+        '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
+        + "".join(render_card(label, value, css_class, note) for label, value, css_class, note in kpi_items)
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
+    finance_frame = _snapshot_section_frame(snapshot, "finance")
+    tig_frame = _snapshot_section_frame(snapshot, "tig")
+    st.markdown("#### Mentett pénzügyi értékek")
+    st.dataframe(finance_frame, hide_index=True, use_container_width=True)
+    st.markdown("#### Mentett TIG")
+    st.dataframe(tig_frame, hide_index=True, use_container_width=True)
+
+
 def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[dict[str, object]]:
     base = parse_huf_value(row.get("Nettó bevétel"))
     tip = parse_huf_value(row.get("Borravaló"))
@@ -12001,6 +12113,7 @@ def render_courier_detail_page() -> None:
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
+            st.session_state[f"force_devtest_finance_recalc_{courier_id}"] = True
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
@@ -12586,6 +12699,26 @@ def render_courier_detail_page() -> None:
             )
 
     if selected_menu == "Pénzügy":
+        force_finance_recalc_key = f"force_devtest_finance_recalc_{courier_id}"
+        force_finance_recalc = bool(st.session_state.pop(force_finance_recalc_key, False))
+        latest_finance_snapshot = (
+            {}
+            if force_finance_recalc
+            else load_latest_devtest_finance_snapshot(courier_id, period_start)
+        )
+        if latest_finance_snapshot:
+            render_devtest_finance_snapshot_view(latest_finance_snapshot)
+            if st.button(
+                "Pénzügyi értékek újraszámítása",
+                type="primary",
+                use_container_width=True,
+                key=f"recalculate_devtest_finance_snapshot_{courier_id}_{period_start:%Y%m}",
+            ):
+                st.session_state[force_finance_recalc_key] = True
+                st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
+                st.rerun()
+            return
+
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
         if route_detail.empty:
             route_detail = load_courier_route_detail(
