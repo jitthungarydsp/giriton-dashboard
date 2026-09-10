@@ -2333,6 +2333,37 @@ def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) 
     return []
 
 
+def _snapshot_fallback_drilldown(snapshot: dict[str, object], detail_label: str) -> list[dict[str, object]]:
+    key_map = {
+        "Korrekció": ["correction_income", "correction_deduction", "correction"],
+        "Kiflis levonások / bónuszok": ["monthly_bonus", "monthly_malus", "kiflis_bonus_malus"],
+        "JITT bónusz / malus": ["manual_bonus", "manual_malus", "bonus_malus"],
+        "ATM hatás": ["atm_effect"],
+        "Fizetés előleg": ["salary_advance"],
+        "Céltartalék 10%": ["target_reserve_open", "reserve", "target_reserve_close"],
+    }
+    wanted_keys = key_map.get(detail_label) or []
+    if not wanted_keys:
+        return []
+    rows = []
+    for item in snapshot.get("items") or []:
+        if str(item.get("section") or "") != "finance":
+            continue
+        item_key = str(item.get("item_key") or "")
+        if item_key not in wanted_keys:
+            continue
+        amount = parse_huf_value(item.get("amount_value"))
+        if not amount and item_key not in {"target_reserve_open", "target_reserve_close"}:
+            continue
+        rows.append({
+            "Tétel": str(item.get("item_label") or item_key),
+            "Összeg": amount,
+            "Forrás": "settlement.courier_finance_snapshot_item",
+            "Megjegyzés": str(item.get("note") or ""),
+        })
+    return rows
+
+
 def _compact_amount_drilldown(label: str, rows: list[dict[str, object]]) -> list[dict[str, object]]:
     if not rows:
         return []
@@ -2408,6 +2439,8 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
     def finance_detail_html(detail_label: str) -> str:
         detail_rows = _drilldown_rows_for_label(drilldowns, detail_label)
         if not detail_rows:
+            detail_rows = _snapshot_fallback_drilldown(snapshot, detail_label)
+        if not detail_rows:
             return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
         if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"}:
             detail_rows = _compact_amount_drilldown(detail_label, detail_rows)
@@ -2448,7 +2481,8 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
             f"{note_html}"
             "</div>"
         )
-        if not _drilldown_rows_for_label(drilldowns, label):
+        has_detail_rows = bool(_drilldown_rows_for_label(drilldowns, label) or _snapshot_fallback_drilldown(snapshot, label))
+        if not has_detail_rows:
             return card
         return (
             f'<details class="finance-kpi-detail-card {css_class}">'
