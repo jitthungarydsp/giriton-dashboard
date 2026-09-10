@@ -2184,6 +2184,13 @@ def save_devtest_finance_snapshot_version(
             .execute().data or []
         )
         latest = latest_rows[0] if latest_rows else {}
+        if str(latest.get("fingerprint") or "") == fingerprint:
+            return {
+                "saved": False,
+                "unchanged": True,
+                "version": int(latest.get("version") or 0),
+                "snapshot_id": str(latest.get("id") or ""),
+            }
         version = int(latest.get("version") or 0) + 1
         snapshot_payload = {
             "period_start": period,
@@ -3158,11 +3165,12 @@ def save_devtest_finance_snapshots_for_rows(
     updated_by: str,
 ) -> dict[str, int]:
     if data.empty or str(calculation_mode or "") not in {"API", "Excel"}:
-        return {"processed": 0, "new_versions": 0, "failed": 0}
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0}
     period_end = month_bounds(period_start)[1]
     profile_by_id = _export_courier_profile_lookup()
     processed = 0
     new_versions = 0
+    unchanged = 0
     failed = 0
     for raw_item in data.to_dict("records"):
         courier_id = _courier_id_key(raw_item.get("Courier ID"))
@@ -3303,12 +3311,14 @@ def save_devtest_finance_snapshots_for_rows(
             processed += 1
             if snapshot_result.get("saved"):
                 new_versions += 1
+            elif snapshot_result.get("unchanged"):
+                unchanged += 1
             else:
                 failed += 1
         except Exception:
             failed += 1
     clear_devtest_finance_snapshot_cache()
-    return {"processed": processed, "new_versions": new_versions, "failed": failed}
+    return {"processed": processed, "new_versions": new_versions, "unchanged": unchanged, "failed": failed}
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -18711,12 +18721,14 @@ def show_new_settlement_page() -> None:
                     st.warning(
                         "Mentés kész, de volt sikertelen sor: "
                         f"{result.get('new_versions', 0)} új verzió, "
+                        f"{result.get('unchanged', 0)} változatlan, "
                         f"{result.get('failed', 0)} hiba."
                     )
                 else:
                     st.success(
                         "Adatok mentve: "
-                        f"{result.get('new_versions', 0)} új verzió."
+                        f"{result.get('new_versions', 0)} új verzió, "
+                        f"{result.get('unchanged', 0)} változatlan."
                     )
                 st.rerun()
         else:
