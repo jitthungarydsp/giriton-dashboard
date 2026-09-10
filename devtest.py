@@ -1,3 +1,4 @@
+import hashlib
 import html
 import json
 import re
@@ -2027,6 +2028,119 @@ def save_mobile_breakdown_overrides(
         return True
     except BaseException:
         return False
+
+
+def _finance_snapshot_item_rows(rows: list[dict[str, object]], section: str) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    seen_keys: dict[str, int] = {}
+    for index, row in enumerate(rows, start=1):
+        item_key = str(row.get("item_key") or row.get("Kulcs") or "").strip()
+        if not item_key:
+            continue
+        seen_keys[item_key] = seen_keys.get(item_key, 0) + 1
+        stored_item_key = item_key if seen_keys[item_key] == 1 else f"{item_key}_{seen_keys[item_key]}"
+        amount_kind = str(row.get("amount_kind") or row.get("Típus") or "huf").strip()
+        if amount_kind not in {"huf", "count"}:
+            amount_kind = "huf"
+        result.append({
+            "section": section,
+            "item_key": stored_item_key,
+            "item_label": str(row.get("item_label") or row.get("Megnevezés") or row.get("MegnevezĂ©s") or item_key),
+            "amount_kind": amount_kind,
+            "amount_value": parse_huf_value(row.get("amount_value") if "amount_value" in row else row.get("Érték", row.get("Ă‰rtĂ©k"))),
+            "note": str(row.get("note") or row.get("Megjegyzés") or row.get("MegjegyzĂ©s") or "").strip(),
+            "display_order": index,
+        })
+    return result
+
+
+def save_devtest_finance_snapshot_version(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    session_id: str | None,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    finance_rows: list[dict[str, object]],
+    tig_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    updated_by: str,
+) -> dict[str, object]:
+    clean_courier_id = _courier_id_key(courier_id)
+    if not clean_courier_id:
+        return {"saved": False, "reason": "missing_courier_id"}
+    period = period_start.replace(day=1).isoformat()
+    items = [
+        *_finance_snapshot_item_rows(finance_rows, "finance"),
+        *_finance_snapshot_item_rows(tig_rows, "tig"),
+    ]
+    canonical = {
+        "period_start": period,
+        "courier_id": clean_courier_id,
+        "calculation_mode": str(calculation_mode or ""),
+        "warehouse_label": str(warehouse_label or ""),
+        "session_id": str(session_id or ""),
+        "metadata": metadata,
+        "items": sorted(
+            items,
+            key=lambda item: (
+                str(item.get("section") or ""),
+                str(item.get("item_key") or ""),
+                int(item.get("display_order") or 0),
+            ),
+        ),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+    try:
+        latest_rows = (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .select("id,version,fingerprint")
+            .eq("period_start", period)
+            .eq("courier_id", clean_courier_id)
+            .order("version", desc=True)
+            .limit(1)
+            .execute().data or []
+        )
+        latest = latest_rows[0] if latest_rows else {}
+        if str(latest.get("fingerprint") or "") == fingerprint:
+            return {"saved": False, "unchanged": True, "version": int(latest.get("version") or 0)}
+        version = int(latest.get("version") or 0) + 1
+        snapshot_payload = {
+            "period_start": period,
+            "courier_id": clean_courier_id,
+            "courier_name": courier_name,
+            "version": version,
+            "source": "devtest_finance",
+            "calculation_mode": str(calculation_mode or ""),
+            "warehouse_label": str(warehouse_label or ""),
+            "session_id": str(session_id or ""),
+            "fingerprint": fingerprint,
+            "metadata": metadata,
+            "created_by": updated_by,
+        }
+        inserted = (
+            get_db().schema("settlement").table("courier_finance_snapshot")
+            .insert(snapshot_payload)
+            .execute().data or []
+        )
+        snapshot_id = str((inserted[0] if inserted else {}).get("id") or "")
+        if not snapshot_id:
+            return {"saved": False, "reason": "missing_snapshot_id"}
+        item_payloads = [
+            {
+                "snapshot_id": snapshot_id,
+                **item,
+            }
+            for item in items
+        ]
+        if item_payloads:
+            get_db().schema("settlement").table("courier_finance_snapshot_item").insert(item_payloads).execute()
+        return {"saved": True, "version": version, "snapshot_id": snapshot_id}
+    except BaseException as exc:
+        return {"saved": False, "reason": str(exc)}
 
 
 def mobile_breakdown_rows_from_settlement_row(row: dict[str, object]) -> list[dict[str, object]]:
@@ -11885,8 +11999,7 @@ def render_courier_detail_page() -> None:
             st.session_state.pop("reopen_courier_dialog", None)
             st.rerun()
     with refresh_col:
-        if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Frissítés és PWA mobil adatok mentése", use_container_width=True):
-            st.session_state[f"refresh_mobile_breakdown_on_open_{courier_id}"] = True
+        if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
@@ -13482,21 +13595,30 @@ def render_courier_detail_page() -> None:
             })
             return snapshot_row
 
-        if st.session_state.pop(f"refresh_mobile_breakdown_on_open_{courier_id}", False):
-            try:
-                updated_by = str(st.session_state.get("user", {}).get("username") or "unknown")
-                courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
-                    pd.DataFrame([current_mobile_snapshot_row()]),
-                    period_start,
-                    active_calculation_mode,
-                    st.session_state.get("new_warehouse", "Összes"),
-                    session_id,
-                    updated_by,
-                )
-                clear_mobile_breakdown_override_cache()
-                st.toast(f"PWA mobil adatok frissítve: {row_count} sor.", icon="✅")
-            except Exception as exc:
-                st.warning(f"A PWA mobil adatok frissítése sikertelen: {exc}")
+        calculated_tig_rows = tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides)
+        snapshot_result = save_devtest_finance_snapshot_version(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            period_start=period_start,
+            session_id=session_id,
+            calculation_mode=active_calculation_mode,
+            warehouse_label=st.session_state.get("new_warehouse", "Összes"),
+            finance_rows=mobile_default_rows.to_dict("records"),
+            tig_rows=calculated_tig_rows.to_dict("records"),
+            metadata={
+                "payable_total": payable_total,
+                "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
+                "income_total": mobile_income_total,
+                "deduction_total": mobile_deduction_total,
+                "correction_total": mobile_correction_total,
+                "route_count": route_total,
+                "order_count": order_total,
+                "source": "devtest.render_courier_detail_page",
+            },
+            updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+        )
+        if snapshot_result.get("reason"):
+            st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
 
         mobile_editor = mobile_default_rows.rename(columns={
             "item_key": "Kulcs",
@@ -13520,33 +13642,7 @@ def render_courier_detail_page() -> None:
                 "Megjegyzés": st.column_config.TextColumn("Megjegyzés"),
             },
         )
-        mobile_action_cols = st.columns(2)
-        if mobile_action_cols[0].button(
-            "Mobil értékek újraszámítása Pénzügy alapján",
-            type="primary",
-            use_container_width=True,
-            key=f"refresh_mobile_breakdown_{courier_id}_{period_start:%Y%m}",
-        ):
-            try:
-                updated_by = str(st.session_state.get("user", {}).get("username") or "unknown")
-                courier_count, row_count = refresh_mobile_settlement_breakdown_snapshot(
-                    pd.DataFrame([current_mobile_snapshot_row()]),
-                    period_start,
-                    active_calculation_mode,
-                    st.session_state.get("new_warehouse", "Összes"),
-                    session_id,
-                    updated_by,
-                )
-                clear_mobile_breakdown_override_cache()
-                if courier_count:
-                    st.success(f"Mobil értékek újraszámolva: {row_count} sor mentve.")
-                    st.rerun()
-                else:
-                    st.error("A mobil értékek újraszámítása nem mentett sort ennél a futárnál.")
-            except Exception as exc:
-                st.error(f"A mobil értékek újraszámítása sikertelen: {exc}")
-
-        if mobile_action_cols[1].button("Mobil értékek mentése", use_container_width=True, key=f"save_mobile_breakdown_{courier_id}_{period_start:%Y%m}"):
+        if st.button("Mobil értékek mentése", use_container_width=True, key=f"save_mobile_breakdown_{courier_id}_{period_start:%Y%m}"):
             saved = save_mobile_breakdown_overrides(
                 courier_id,
                 period_start,
@@ -13563,7 +13659,7 @@ def render_courier_detail_page() -> None:
         st.markdown("#### Mobilon lĂˇthatĂł TIG")
         st.caption("A TIG is az oldalon jelenik meg. A KP külön soron látszik.")
         edited_tig_mobile = st.data_editor(
-            tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides),
+            calculated_tig_rows,
             hide_index=True,
             use_container_width=True,
             key=f"mobile_tig_breakdown_editor_{courier_id}_{period_start:%Y%m}",
