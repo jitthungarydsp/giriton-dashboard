@@ -4451,6 +4451,256 @@ def mobile_override_amount(overrides: dict[str, dict[str, Any]], key: str) -> in
     return money_int((overrides.get(key) or {}).get("amount_value"))
 
 
+def read_latest_courier_finance_snapshot(courier_id: str, month: date) -> dict[str, Any]:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return {}
+    snapshots = optional_supabase_rows(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "*",
+            "period_start": f"eq.{month.replace(day=1).isoformat()}",
+            "courier_id": f"eq.{clean_courier_id}",
+            "order": "version.desc",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    if not snapshots:
+        return {}
+    snapshot = dict(snapshots[0])
+    snapshot_id = str(snapshot.get("id") or "")
+    if not snapshot_id:
+        return {}
+    snapshot["items"] = optional_supabase_rows(
+        "courier_finance_snapshot_item",
+        schema="settlement",
+        params={
+            "select": "section,item_key,item_label,amount_value,amount_kind,note,display_order",
+            "snapshot_id": f"eq.{snapshot_id}",
+            "order": "section.asc,display_order.asc",
+            "limit": "500",
+        },
+        timeout=30,
+    )
+    snapshot["sources"] = optional_supabase_rows(
+        "courier_finance_snapshot_source",
+        schema="settlement",
+        params={
+            "select": "source_key,source_table,payload,row_count",
+            "snapshot_id": f"eq.{snapshot_id}",
+            "order": "source_key.asc",
+            "limit": "100",
+        },
+        timeout=30,
+    )
+    return snapshot
+
+
+def snapshot_items_by_section(snapshot: dict[str, Any], section: str) -> list[dict[str, Any]]:
+    return [
+        dict(item)
+        for item in snapshot.get("items") or []
+        if str(item.get("section") or "") == section
+    ]
+
+
+def snapshot_item_map(snapshot: dict[str, Any], section: str) -> dict[str, dict[str, Any]]:
+    return {
+        str(item.get("item_key") or ""): dict(item)
+        for item in snapshot_items_by_section(snapshot, section)
+        if str(item.get("item_key") or "")
+    }
+
+
+def snapshot_signed_item(item: dict[str, Any], *, source: str = "settlement.courier_finance_snapshot") -> dict[str, Any]:
+    amount_kind = str(item.get("amount_kind") or "huf").strip() or "huf"
+    result = signed_item(
+        str(item.get("item_key") or ""),
+        str(item.get("item_label") or item.get("item_key") or "-"),
+        money_int(item.get("amount_value")),
+        source=source,
+        note=str(item.get("note") or ""),
+    )
+    result["amountKind"] = amount_kind
+    return result
+
+
+def build_financial_breakdown_from_snapshot(
+    user: dict[str, Any],
+    month: date,
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    finance_items = snapshot_item_map(snapshot, "finance")
+    if not finance_items:
+        return None
+
+    def amount(key: str) -> int:
+        return money_int((finance_items.get(key) or {}).get("amount_value"))
+
+    def item(key: str) -> dict[str, Any] | None:
+        source_item = finance_items.get(key)
+        return snapshot_signed_item(source_item) if source_item else None
+
+    def items(keys: list[str]) -> list[dict[str, Any]]:
+        return [current for key in keys if (current := item(key)) is not None]
+
+    def nonzero_items(keys: list[str]) -> list[dict[str, Any]]:
+        return [
+            current for current in items(keys)
+            if current.get("amountKind") == "count" or money_int(current.get("amountHuf"))
+        ]
+
+    metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+    payable = amount("payable") or money_int(metadata.get("payable_total"))
+    income_total = amount("income") or money_int(metadata.get("income_total"))
+    deduction_total = amount("deductions") or money_int(metadata.get("deduction_total"))
+    correction_total = amount("correction") or money_int(metadata.get("correction_total"))
+    if not payable:
+        payable = income_total + deduction_total + correction_total
+
+    route_items = nonzero_items([
+        "orders",
+        "routes",
+        "highlighted_routes",
+        "normal_routes",
+        "express_normal_routes",
+        "express_highlighted_routes",
+        "loyalty_previous_normal_routes",
+        "loyalty_current_normal_routes",
+        "loyalty_advance_booking_days",
+        "shift_count",
+    ])
+    cards = [
+        {
+            "key": "payable",
+            "label": "Teljes összeg",
+            "amountHuf": payable,
+            "tone": "total",
+            "items": [
+                signed_item("income_total", "Jóváírások összesen", income_total, source="settlement.courier_finance_snapshot"),
+                signed_item("deduction_total", "Levonások összesen", deduction_total, source="settlement.courier_finance_snapshot"),
+                signed_item("correction_total", "Korrekciók összesen", correction_total, source="settlement.courier_finance_snapshot"),
+                signed_item("payable_total", "Kifizetendő", payable, source="settlement.courier_finance_snapshot"),
+            ],
+        },
+        {"key": "base", "label": "Alapdíj", "amountHuf": amount("base"), "tone": "income", "items": items(["base"])},
+        {"key": "tip", "label": "Borravaló", "amountHuf": amount("tip"), "tone": "income", "items": items(["tip"])},
+        {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": amount("delay_bonus"), "tone": "income", "items": items(["delay_bonus"])},
+        {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": amount("compliance_bonus"), "tone": "income", "items": items(["compliance_bonus"])},
+        {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": amount("address_bonus_kifli"), "tone": "income", "items": items(["address_bonus_kifli"])},
+        {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": amount("loyalty_bonus"), "tone": "income", "items": items(["loyalty_bonus"])},
+        {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": amount("customer_rating"), "tone": "income", "items": items(["customer_rating"])},
+        {
+            "key": "kiflis_bonus_malus",
+            "label": "Kiflis levonások / bónuszok",
+            "amountHuf": amount("kiflis_bonus_malus"),
+            "tone": "info",
+            "items": nonzero_items(["monthly_bonus", "monthly_malus", "kiflis_bonus_malus"]),
+        },
+        {
+            "key": "bonus_malus",
+            "label": "JITT bónusz / malus",
+            "amountHuf": amount("bonus_malus"),
+            "tone": "info",
+            "items": nonzero_items(["manual_bonus", "manual_malus", "bonus_malus"]),
+        },
+        {"key": "atm_effect", "label": "ATM hatás", "amountHuf": amount("atm_effect"), "tone": "deduction", "items": items(["atm_effect"])},
+        {"key": "salary_advance", "label": "Fizetés előleg", "amountHuf": amount("salary_advance"), "tone": "deduction", "items": items(["salary_advance"])},
+        {
+            "key": "insurance",
+            "label": "Biztosítás",
+            "amountHuf": amount("reserve") + amount("insurance_fee"),
+            "tone": "deduction",
+            "items": nonzero_items(["target_reserve_open", "reserve", "insurance_fee", "target_reserve_close"]),
+        },
+        {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": nonzero_items(["correction", "correction_income", "correction_deduction"])},
+        {"key": "performance", "label": "Teljesítmény", "amountHuf": amount("orders"), "amountKind": "count", "tone": "info", "items": route_items},
+    ]
+    complaint_options = [
+        {"key": current["key"], "label": current["label"], "amountHuf": current["amountHuf"], "amountKind": current.get("amountKind", "huf")}
+        for card in cards
+        for current in card.get("items") or []
+        if current.get("key") not in {"income_total", "deduction_total", "correction_total", "payable_total"}
+        and not current.get("excludeFromTotal")
+    ]
+    return {
+        "available": True,
+        "month": month.strftime("%Y-%m"),
+        "sessionId": str(snapshot.get("session_id") or ""),
+        "sourceMode": str(snapshot.get("calculation_mode") or ""),
+        "sourceSheet": str(snapshot.get("warehouse_label") or ""),
+        "totalPayableHuf": payable,
+        "cards": cards,
+        "complaintOptions": complaint_options,
+        "source": "settlement.courier_finance_snapshot",
+        "snapshotId": str(snapshot.get("id") or ""),
+        "snapshotVersion": money_int(snapshot.get("version")),
+        "tigSnapshotRows": snapshot_items_by_section(snapshot, "tig"),
+        "message": "",
+    }
+
+
+def build_tig_breakdown_from_snapshot(
+    user: dict[str, Any],
+    month: date,
+    financial_breakdown: dict[str, Any],
+) -> dict[str, Any] | None:
+    tig_items = {
+        str(item.get("item_key") or ""): item
+        for item in financial_breakdown.get("tigSnapshotRows") or []
+        if str(item.get("item_key") or "")
+    }
+    if not tig_items:
+        return None
+    courier_id, courier_name = courier_identity(user)
+    rows: list[dict[str, Any]] = []
+    final_total = 0
+    for key, item in tig_items.items():
+        amount = money_int(item.get("amount_value"))
+        if key == "tig_final_total":
+            final_total = amount
+            continue
+        label = str(item.get("item_label") or key)
+        note = str(item.get("note") or "")
+        tax_mode = "tip" if key == "tip" else "vat"
+        net, vat, gross, vat_label = tig_split_amount(amount, tax_mode)
+        rows.append({
+            "key": key,
+            "label": label,
+            "netHuf": net,
+            "vatHuf": vat,
+            "vatLabel": vat_label,
+            "grossHuf": gross,
+            "note": note,
+        })
+    if not final_total:
+        final_total = money_int(financial_breakdown.get("totalPayableHuf"))
+    fallback_meta = tig_document_meta(month, courier_id)
+    return {
+        "available": True,
+        "month": month.strftime("%Y-%m"),
+        "courierId": courier_id,
+        "courierName": courier_name,
+        "rows": rows,
+        "finalTotalHuf": final_total,
+        "source": "settlement.courier_finance_snapshot",
+        "snapshotId": str(financial_breakdown.get("snapshotId") or ""),
+        "buyer": {
+            "label": "Vevő",
+            "name": "Just in Time Transport Hungary Kft.",
+            "postalCity": "1201 Budapest",
+            "address": "Atléta utca 44.",
+            "taxNumber": "32649460-2-43",
+            "periodLabel": fallback_meta["periodLabel"],
+            "performanceDate": fallback_meta["performanceDate"],
+            "paymentDueDate": fallback_meta["paymentDueDate"],
+            "note": fallback_meta["note"],
+        },
+    }
+
+
 def cached_financial_lookup(cache_group: str, cache_key: str) -> Any | None:
     if FINANCIAL_LOOKUP_CACHE_SECONDS <= 0:
         return None
@@ -5664,6 +5914,9 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
             "message": "A TIG bontĂˇs az elszĂˇmolĂˇsi adatok elkĂ©szĂĽlte utĂˇn lĂˇthatĂł.",
             "rows": [],
         }
+    snapshot_tig = build_tig_breakdown_from_snapshot(user, month, financial_breakdown)
+    if snapshot_tig:
+        return snapshot_tig
     profile_rows = optional_supabase_rows(
         "courier_master",
         params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
@@ -5730,6 +5983,10 @@ def hidden_financial_breakdown(month: date) -> dict[str, Any]:
 def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
+    snapshot = read_latest_courier_finance_snapshot(courier_id, month)
+    snapshot_breakdown = build_financial_breakdown_from_snapshot(user, month, snapshot) if snapshot else None
+    if snapshot_breakdown:
+        return snapshot_breakdown
     row = read_courier_settlement_summary_row(courier_id, month, allow_unpublished=allow_unpublished)
     overrides = read_mobile_breakdown_overrides(courier_id, month)
     overrides = enrich_mobile_overrides_from_financial_sources(user, month, row or {}, overrides)
