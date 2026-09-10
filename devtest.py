@@ -3095,6 +3095,164 @@ def refresh_mobile_settlement_breakdown_snapshot(
     return courier_count, row_count
 
 
+def save_devtest_finance_snapshots_for_rows(
+    data: pd.DataFrame,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    session_id: str | None,
+    updated_by: str,
+) -> dict[str, int]:
+    if data.empty or str(calculation_mode or "") not in {"API", "Excel"}:
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0}
+    period_end = month_bounds(period_start)[1]
+    profile_by_id = _export_courier_profile_lookup()
+    processed = 0
+    new_versions = 0
+    unchanged = 0
+    failed = 0
+    for raw_item in data.to_dict("records"):
+        courier_id = _courier_id_key(raw_item.get("Courier ID"))
+        if not courier_id:
+            continue
+        courier_name = str(raw_item.get("Futár") or raw_item.get("FutĂˇr") or "").strip()
+        try:
+            item, route_detail = enrich_mobile_settlement_row_for_snapshot(
+                raw_item,
+                courier_id=courier_id,
+                courier_name=courier_name,
+                session_id=session_id,
+                calculation_mode=calculation_mode,
+                period_start=period_start,
+                period_end=period_end,
+                warehouse_label=warehouse_label,
+            )
+            item = apply_cached_loyalty_values(
+                pd.DataFrame([item]),
+                period_start=period_start,
+                session_id=session_id,
+                calculation_mode=calculation_mode,
+            ).iloc[0].to_dict()
+            component_session_id = balance_component_session_id(calculation_mode, period_start, session_id)
+            item = enrich_mobile_row_with_imported_balance_components(item, component_session_id)
+            finance_rows = append_jitt_bonus_malus_mobile_rows(
+                mobile_breakdown_rows_from_settlement_row(item),
+                item,
+                period_start,
+                period_end,
+            )
+            finance_rows = append_kiflis_bonus_malus_mobile_rows(finance_rows, item, component_session_id)
+            try:
+                finance_rows = append_periodic_correction_mobile_rows(
+                    finance_rows,
+                    row=item,
+                    route_detail=route_detail,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+            except Exception:
+                pass
+            finance_rows = apply_mobile_loyalty_amount_from_finance_source(
+                finance_rows,
+                item,
+                courier_id=courier_id,
+                courier_name=courier_name,
+                session_id=session_id,
+                period_start=period_start,
+                calculation_mode=calculation_mode,
+            )
+            finance_rows = recalculate_mobile_breakdown_totals(finance_rows)
+            profile_row = profile_by_id.get(courier_id, {})
+            tig_breakdown = build_tig_breakdown(
+                tig_payment_payload_from_profile(
+                    profile_row,
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    period_start=period_start,
+                ),
+                {
+                    "payable": _mobile_breakdown_amount(finance_rows, "payable"),
+                    "tip": _mobile_breakdown_amount(finance_rows, "tip"),
+                    "cash": abs(_mobile_breakdown_amount(finance_rows, "atm_effect")),
+                },
+            )
+            tig_rows = tig_editor_rows_from_breakdown(tig_breakdown).to_dict("records")
+            summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
+            profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+            reserve_month = load_target_reserve_monthly(courier_id, period_start, period_end)
+            snapshot_result = save_devtest_finance_snapshot_version(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                period_start=period_start,
+                session_id=session_id,
+                calculation_mode=calculation_mode,
+                warehouse_label=warehouse_label,
+                finance_rows=finance_rows,
+                tig_rows=tig_rows,
+                source_payloads=[
+                    {"source_key": "working_row", "source_table": "devtest.main_settlement_data", "payload": item},
+                    {
+                        "source_key": "settlement_summary",
+                        "source_table": "settlement.courier_settlement_summary",
+                        "payload": summary_row if isinstance(summary_row, dict) else {},
+                        "row_count": 1 if summary_row else 0,
+                    },
+                    {
+                        "source_key": "courier_profile",
+                        "source_table": "public.courier_master",
+                        "payload": profile_row if isinstance(profile_row, dict) else {},
+                        "row_count": 1 if profile_row else 0,
+                    },
+                    {
+                        "source_key": "route_detail",
+                        "source_table": "settlement.jit_row/devtest.route_detail",
+                        "payload": route_detail.head(1000).to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
+                        "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
+                    },
+                    {
+                        "source_key": "manual_adjustments",
+                        "source_table": "settlement.courier_settlement_adjustment",
+                        "payload": profile_adjustments.to_dict("records") if isinstance(profile_adjustments, pd.DataFrame) and not profile_adjustments.empty else [],
+                        "row_count": int(len(profile_adjustments)) if isinstance(profile_adjustments, pd.DataFrame) else 0,
+                    },
+                    {
+                        "source_key": "target_reserve_month",
+                        "source_table": "settlement.courier_target_reserve_monthly",
+                        "payload": reserve_month if isinstance(reserve_month, dict) else {},
+                        "row_count": 1 if reserve_month else 0,
+                    },
+                    {
+                        "source_key": "tig_breakdown",
+                        "source_table": "devtest.build_tig_breakdown",
+                        "payload": tig_breakdown if isinstance(tig_breakdown, dict) else {},
+                        "row_count": 1 if tig_breakdown else 0,
+                    },
+                ],
+                metadata={
+                    "payable_total": _mobile_breakdown_amount(finance_rows, "payable"),
+                    "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
+                    "income_total": _mobile_breakdown_amount(finance_rows, "income"),
+                    "deduction_total": _mobile_breakdown_amount(finance_rows, "deductions"),
+                    "correction_total": _mobile_breakdown_amount(finance_rows, "correction"),
+                    "route_count": _mobile_breakdown_amount(finance_rows, "routes"),
+                    "order_count": _mobile_breakdown_amount(finance_rows, "orders"),
+                    "source": "devtest.bulk_finance_snapshot",
+                },
+                updated_by=updated_by,
+            )
+            processed += 1
+            if snapshot_result.get("saved"):
+                new_versions += 1
+            elif snapshot_result.get("unchanged"):
+                unchanged += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+    clear_devtest_finance_snapshot_cache()
+    return {"processed": processed, "new_versions": new_versions, "unchanged": unchanged, "failed": failed}
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_master(calculation_mode: str = "Excel") -> pd.DataFrame:
     response = (
@@ -18481,6 +18639,37 @@ def show_new_settlement_page() -> None:
             mobile_source_session_id = settlement_mobile_session_for_mode(calculation_mode, mobile_period_start, warehouse)
         if calculation_mode in {"API", "Excel"}:
             st.caption(f"Kiválasztott mobil forrás: {calculation_mode} | session={str(mobile_source_session_id or '-')[:8]}")
+            if st.button(
+                "Adatok mentése",
+                type="primary",
+                use_container_width=True,
+                disabled=data.empty or not mobile_source_session_id,
+                key=f"save_devtest_finance_snapshots_{mobile_period_start:%Y%m}_{calculation_mode}",
+                help="Az aktuális devtest pénzügyi és TIG értékeket verziózottan elmenti DB-be.",
+            ):
+                with st.spinner("Adatok mentése..."):
+                    result = save_devtest_finance_snapshots_for_rows(
+                        data,
+                        mobile_period_start,
+                        calculation_mode,
+                        warehouse,
+                        mobile_source_session_id,
+                        str(st.session_state.get("user", {}).get("username") or "unknown"),
+                    )
+                if result.get("failed"):
+                    st.warning(
+                        "Mentés kész, de volt sikertelen sor: "
+                        f"{result.get('new_versions', 0)} új verzió, "
+                        f"{result.get('unchanged', 0)} változatlan, "
+                        f"{result.get('failed', 0)} hiba."
+                    )
+                else:
+                    st.success(
+                        "Adatok mentve: "
+                        f"{result.get('new_versions', 0)} új verzió, "
+                        f"{result.get('unchanged', 0)} változatlan."
+                    )
+                st.rerun()
         else:
             st.caption("Kiválasztott mobil forrás: nincs, mert a Számítás módja Összes.")
         st.divider()
