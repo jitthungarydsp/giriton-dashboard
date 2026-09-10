@@ -2054,6 +2054,68 @@ def _finance_snapshot_item_rows(rows: list[dict[str, object]], section: str) -> 
     return result
 
 
+def _snapshot_json_safe(value):
+    if isinstance(value, pd.DataFrame):
+        return _snapshot_json_safe(value.to_dict("records"))
+    if isinstance(value, pd.Series):
+        return _snapshot_json_safe(value.to_dict())
+    if isinstance(value, dict):
+        return {str(key): _snapshot_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_snapshot_json_safe(item) for item in value]
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    return value
+
+
+def _finance_snapshot_source_row_count(payload) -> int:
+    if isinstance(payload, pd.DataFrame):
+        return len(payload)
+    if isinstance(payload, pd.Series):
+        return 1
+    if isinstance(payload, list):
+        return len(payload)
+    if isinstance(payload, dict):
+        return 1
+    return 0
+
+
+def build_finance_snapshot_drilldown_payload(
+    finance_rows: list[dict[str, object]],
+    route_detail: pd.DataFrame | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "Mobilon látható értékek": finance_rows,
+    }
+    if isinstance(route_detail, pd.DataFrame) and not route_detail.empty:
+        payload["Körök / túrák"] = route_detail.to_dict("records")
+        for label, column in [
+            ("Alapdíj", "Alapdíj"),
+            ("Késedelmi díj", "Késedelmi díj"),
+            ("Túramegfelelés", "Túramegfelelés"),
+            ("Cím bónusz (Kifli)", "Stop-count Bonus"),
+            ("Borravaló", "Borravaló"),
+        ]:
+            if column not in route_detail.columns:
+                continue
+            detail = route_detail.copy()
+            detail["_amount"] = detail[column].map(parse_huf_value)
+            detail = detail[detail["_amount"].ne(0)].copy()
+            if not detail.empty:
+                payload[label] = detail.to_dict("records")
+    return payload
+
+
 def save_devtest_finance_snapshot_version(
     *,
     courier_id: str,
@@ -2072,6 +2134,7 @@ def save_devtest_finance_snapshot_version(
     if not clean_courier_id:
         return {"saved": False, "reason": "missing_courier_id"}
     period = period_start.replace(day=1).isoformat()
+    safe_metadata = _snapshot_json_safe(metadata)
     items = [
         *_finance_snapshot_item_rows(finance_rows, "finance"),
         *_finance_snapshot_item_rows(tig_rows, "tig"),
@@ -2082,18 +2145,8 @@ def save_devtest_finance_snapshot_version(
         if not source_key:
             continue
         payload = source.get("payload")
-        if isinstance(payload, pd.DataFrame):
-            row_count = len(payload)
-            payload = payload.to_dict("records")
-        elif isinstance(payload, pd.Series):
-            row_count = 1
-            payload = payload.to_dict()
-        elif isinstance(payload, list):
-            row_count = len(payload)
-        elif isinstance(payload, dict):
-            row_count = int(source.get("row_count") or 1)
-        else:
-            row_count = int(source.get("row_count") or 0)
+        row_count = int(source.get("row_count") or _finance_snapshot_source_row_count(payload))
+        payload = _snapshot_json_safe(payload)
         normalized_sources.append({
             "source_key": source_key,
             "source_table": str(source.get("source_table") or ""),
@@ -2106,7 +2159,7 @@ def save_devtest_finance_snapshot_version(
         "calculation_mode": str(calculation_mode or ""),
         "warehouse_label": str(warehouse_label or ""),
         "session_id": str(session_id or ""),
-        "metadata": metadata,
+        "metadata": safe_metadata,
         "sources": sorted(normalized_sources, key=lambda item: str(item.get("source_key") or "")),
         "items": sorted(
             items,
@@ -2131,8 +2184,6 @@ def save_devtest_finance_snapshot_version(
             .execute().data or []
         )
         latest = latest_rows[0] if latest_rows else {}
-        if str(latest.get("fingerprint") or "") == fingerprint:
-            return {"saved": False, "unchanged": True, "version": int(latest.get("version") or 0)}
         version = int(latest.get("version") or 0) + 1
         snapshot_payload = {
             "period_start": period,
@@ -2144,7 +2195,10 @@ def save_devtest_finance_snapshot_version(
             "warehouse_label": str(warehouse_label or ""),
             "session_id": str(session_id or ""),
             "fingerprint": fingerprint,
-            "metadata": metadata,
+            "metadata": safe_metadata,
+            "previous_snapshot_id": str(latest.get("id") or "") or None,
+            "previous_fingerprint": str(latest.get("fingerprint") or "") or None,
+            "changed_from_previous": str(latest.get("fingerprint") or "") != fingerprint,
             "created_by": updated_by,
         }
         inserted = (
@@ -3104,12 +3158,11 @@ def save_devtest_finance_snapshots_for_rows(
     updated_by: str,
 ) -> dict[str, int]:
     if data.empty or str(calculation_mode or "") not in {"API", "Excel"}:
-        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0}
+        return {"processed": 0, "new_versions": 0, "failed": 0}
     period_end = month_bounds(period_start)[1]
     profile_by_id = _export_courier_profile_lookup()
     processed = 0
     new_versions = 0
-    unchanged = 0
     failed = 0
     for raw_item in data.to_dict("records"):
         courier_id = _courier_id_key(raw_item.get("Courier ID"))
@@ -3180,6 +3233,7 @@ def save_devtest_finance_snapshots_for_rows(
             summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
             profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
             reserve_month = load_target_reserve_monthly(courier_id, period_start, period_end)
+            snapshot_drilldowns = build_finance_snapshot_drilldown_payload(finance_rows, route_detail)
             snapshot_result = save_devtest_finance_snapshot_version(
                 courier_id=courier_id,
                 courier_name=courier_name,
@@ -3206,8 +3260,14 @@ def save_devtest_finance_snapshots_for_rows(
                     {
                         "source_key": "route_detail",
                         "source_table": "settlement.jit_row/devtest.route_detail",
-                        "payload": route_detail.head(1000).to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
+                        "payload": route_detail.to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
                         "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
+                    },
+                    {
+                        "source_key": "card_drilldowns",
+                        "source_table": "devtest.finance_snapshot_drilldowns",
+                        "payload": snapshot_drilldowns,
+                        "row_count": sum(len(rows) for rows in snapshot_drilldowns.values() if isinstance(rows, list)),
                     },
                     {
                         "source_key": "manual_adjustments",
@@ -3243,14 +3303,12 @@ def save_devtest_finance_snapshots_for_rows(
             processed += 1
             if snapshot_result.get("saved"):
                 new_versions += 1
-            elif snapshot_result.get("unchanged"):
-                unchanged += 1
             else:
                 failed += 1
         except Exception:
             failed += 1
     clear_devtest_finance_snapshot_cache()
-    return {"processed": processed, "new_versions": new_versions, "unchanged": unchanged, "failed": failed}
+    return {"processed": processed, "new_versions": new_versions, "failed": failed}
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -13904,6 +13962,14 @@ def render_courier_detail_page() -> None:
             return snapshot_row
 
         calculated_tig_rows = tig_editor_rows_from_breakdown(tig_breakdown, mobile_overrides)
+        card_drilldowns = build_finance_snapshot_drilldown_payload(
+            mobile_default_rows.to_dict("records"),
+            route_detail,
+        )
+        for detail_label in sorted(detail_labels):
+            detail_frame = finance_detail_frame(detail_label)
+            if isinstance(detail_frame, pd.DataFrame) and not detail_frame.empty:
+                card_drilldowns[detail_label] = detail_frame.to_dict("records")
         snapshot_result = save_devtest_finance_snapshot_version(
             courier_id=courier_id,
             courier_name=courier_name,
@@ -13934,8 +14000,14 @@ def render_courier_detail_page() -> None:
                 {
                     "source_key": "route_detail",
                     "source_table": "settlement.jit_row/devtest.route_detail",
-                    "payload": route_detail.head(1000).to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
+                    "payload": route_detail.to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
                     "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
+                },
+                {
+                    "source_key": "card_drilldowns",
+                    "source_table": "devtest.finance_detail_frame",
+                    "payload": card_drilldowns,
+                    "row_count": sum(len(rows) for rows in card_drilldowns.values() if isinstance(rows, list)),
                 },
                 {
                     "source_key": "manual_adjustments",
@@ -18639,14 +18711,12 @@ def show_new_settlement_page() -> None:
                     st.warning(
                         "Mentés kész, de volt sikertelen sor: "
                         f"{result.get('new_versions', 0)} új verzió, "
-                        f"{result.get('unchanged', 0)} változatlan, "
                         f"{result.get('failed', 0)} hiba."
                     )
                 else:
                     st.success(
                         "Adatok mentve: "
-                        f"{result.get('new_versions', 0)} új verzió, "
-                        f"{result.get('unchanged', 0)} változatlan."
+                        f"{result.get('new_versions', 0)} új verzió."
                     )
                 st.rerun()
         else:
