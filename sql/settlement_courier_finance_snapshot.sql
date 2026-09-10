@@ -32,16 +32,32 @@ create table if not exists settlement.courier_finance_snapshot_item (
     constraint courier_finance_snapshot_item_unique unique (snapshot_id, section, item_key)
 );
 
+create table if not exists settlement.courier_finance_snapshot_source (
+    id uuid primary key default gen_random_uuid(),
+    snapshot_id uuid not null references settlement.courier_finance_snapshot(id) on delete cascade,
+    source_key text not null,
+    source_table text,
+    payload jsonb not null default '{}'::jsonb,
+    row_count integer not null default 0,
+    created_at timestamptz not null default now(),
+    constraint courier_finance_snapshot_source_unique unique (snapshot_id, source_key)
+);
+
 create index if not exists idx_courier_finance_snapshot_courier_month
     on settlement.courier_finance_snapshot (courier_id, period_start, version desc);
 
 create index if not exists idx_courier_finance_snapshot_item_snapshot
     on settlement.courier_finance_snapshot_item (snapshot_id, section, display_order);
 
+create index if not exists idx_courier_finance_snapshot_source_snapshot
+    on settlement.courier_finance_snapshot_source (snapshot_id, source_key);
+
 grant select, insert, update, delete on settlement.courier_finance_snapshot to service_role;
 grant select, insert, update, delete on settlement.courier_finance_snapshot_item to service_role;
+grant select, insert, update, delete on settlement.courier_finance_snapshot_source to service_role;
 grant select on settlement.courier_finance_snapshot to authenticated;
 grant select on settlement.courier_finance_snapshot_item to authenticated;
+grant select on settlement.courier_finance_snapshot_source to authenticated;
 
 notify pgrst, 'reload schema';
 

@@ -2064,6 +2064,7 @@ def save_devtest_finance_snapshot_version(
     warehouse_label: str | None,
     finance_rows: list[dict[str, object]],
     tig_rows: list[dict[str, object]],
+    source_payloads: list[dict[str, object]] | None = None,
     metadata: dict[str, object],
     updated_by: str,
 ) -> dict[str, object]:
@@ -2075,6 +2076,30 @@ def save_devtest_finance_snapshot_version(
         *_finance_snapshot_item_rows(finance_rows, "finance"),
         *_finance_snapshot_item_rows(tig_rows, "tig"),
     ]
+    normalized_sources = []
+    for source in source_payloads or []:
+        source_key = str(source.get("source_key") or "").strip()
+        if not source_key:
+            continue
+        payload = source.get("payload")
+        if isinstance(payload, pd.DataFrame):
+            row_count = len(payload)
+            payload = payload.to_dict("records")
+        elif isinstance(payload, pd.Series):
+            row_count = 1
+            payload = payload.to_dict()
+        elif isinstance(payload, list):
+            row_count = len(payload)
+        elif isinstance(payload, dict):
+            row_count = int(source.get("row_count") or 1)
+        else:
+            row_count = int(source.get("row_count") or 0)
+        normalized_sources.append({
+            "source_key": source_key,
+            "source_table": str(source.get("source_table") or ""),
+            "payload": payload if payload is not None else {},
+            "row_count": row_count,
+        })
     canonical = {
         "period_start": period,
         "courier_id": clean_courier_id,
@@ -2082,6 +2107,7 @@ def save_devtest_finance_snapshot_version(
         "warehouse_label": str(warehouse_label or ""),
         "session_id": str(session_id or ""),
         "metadata": metadata,
+        "sources": sorted(normalized_sources, key=lambda item: str(item.get("source_key") or "")),
         "items": sorted(
             items,
             key=lambda item: (
@@ -2138,6 +2164,18 @@ def save_devtest_finance_snapshot_version(
         ]
         if item_payloads:
             get_db().schema("settlement").table("courier_finance_snapshot_item").insert(item_payloads).execute()
+        source_rows = [
+            {
+                "snapshot_id": snapshot_id,
+                "source_key": str(source.get("source_key") or ""),
+                "source_table": str(source.get("source_table") or ""),
+                "payload": source.get("payload") if source.get("payload") is not None else {},
+                "row_count": int(source.get("row_count") or 0),
+            }
+            for source in normalized_sources
+        ]
+        if source_rows:
+            get_db().schema("settlement").table("courier_finance_snapshot_source").insert(source_rows).execute()
         return {"saved": True, "version": version, "snapshot_id": snapshot_id}
     except BaseException as exc:
         return {"saved": False, "reason": str(exc)}
@@ -13738,6 +13776,49 @@ def render_courier_detail_page() -> None:
             warehouse_label=st.session_state.get("new_warehouse", "Összes"),
             finance_rows=mobile_default_rows.to_dict("records"),
             tig_rows=calculated_tig_rows.to_dict("records"),
+            source_payloads=[
+                {
+                    "source_key": "working_row",
+                    "source_table": "devtest.current_filtered_data",
+                    "payload": current_mobile_snapshot_row(),
+                },
+                {
+                    "source_key": "settlement_summary",
+                    "source_table": "settlement.courier_settlement_summary",
+                    "payload": summary_row if isinstance(summary_row, dict) else {},
+                    "row_count": 1 if summary_row else 0,
+                },
+                {
+                    "source_key": "courier_profile",
+                    "source_table": "public.courier_master",
+                    "payload": profile if isinstance(profile, dict) else {},
+                    "row_count": 1 if profile else 0,
+                },
+                {
+                    "source_key": "route_detail",
+                    "source_table": "settlement.jit_row/devtest.route_detail",
+                    "payload": route_detail.head(1000).to_dict("records") if isinstance(route_detail, pd.DataFrame) and not route_detail.empty else [],
+                    "row_count": int(len(route_detail)) if isinstance(route_detail, pd.DataFrame) else 0,
+                },
+                {
+                    "source_key": "manual_adjustments",
+                    "source_table": "settlement.courier_settlement_adjustment",
+                    "payload": profile_adjustments.to_dict("records") if isinstance(profile_adjustments, pd.DataFrame) and not profile_adjustments.empty else [],
+                    "row_count": int(len(profile_adjustments)) if isinstance(profile_adjustments, pd.DataFrame) else 0,
+                },
+                {
+                    "source_key": "target_reserve_month",
+                    "source_table": "settlement.courier_target_reserve_monthly",
+                    "payload": reserve_month if isinstance(reserve_month, dict) else {},
+                    "row_count": 1 if reserve_month else 0,
+                },
+                {
+                    "source_key": "tig_breakdown",
+                    "source_table": "devtest.build_tig_breakdown",
+                    "payload": tig_breakdown if isinstance(tig_breakdown, dict) else {},
+                    "row_count": 1 if tig_breakdown else 0,
+                },
+            ],
             metadata={
                 "payable_total": payable_total,
                 "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
