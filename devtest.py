@@ -12309,7 +12309,6 @@ def render_courier_detail_page() -> None:
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
-            st.session_state[f"force_devtest_finance_recalc_{courier_id}"] = True
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
@@ -12895,26 +12894,6 @@ def render_courier_detail_page() -> None:
             )
 
     if selected_menu == "Pénzügy":
-        force_finance_recalc_key = f"force_devtest_finance_recalc_{courier_id}"
-        force_finance_recalc = bool(st.session_state.pop(force_finance_recalc_key, False))
-        latest_finance_snapshot = (
-            {}
-            if force_finance_recalc
-            else load_latest_devtest_finance_snapshot(courier_id, period_start)
-        )
-        if latest_finance_snapshot:
-            render_devtest_finance_snapshot_view(latest_finance_snapshot)
-            if st.button(
-                "Pénzügyi értékek újraszámítása",
-                type="primary",
-                use_container_width=True,
-                key=f"recalculate_devtest_finance_snapshot_{courier_id}_{period_start:%Y%m}",
-            ):
-                st.session_state[force_finance_recalc_key] = True
-                st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
-                st.rerun()
-            return
-
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
         if route_detail.empty:
             route_detail = load_courier_route_detail(
