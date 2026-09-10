@@ -2322,30 +2322,34 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
-    st.caption(f"Mentett devtest pénzügyi verzió: v{version} | {created_at}")
+    st.caption(f"DB-ből betöltött pénzügyi verzió: v{version} | {created_at}")
     drilldowns = _snapshot_source_payload(snapshot, "card_drilldowns")
     drilldowns = drilldowns if isinstance(drilldowns, dict) else {}
 
     kpi_items = [
-        ("Rendelés", _snapshot_amount(snapshot, "orders"), "", ""),
-        ("Kör", _snapshot_amount(snapshot, "routes"), "", ""),
-        ("Normál túra", _snapshot_amount(snapshot, "normal_routes"), "", ""),
-        ("Kiemelt túra", _snapshot_amount(snapshot, "highlighted_routes"), "", ""),
-        ("Alapdíj", _snapshot_amount(snapshot, "base"), "", ""),
-        ("Borravaló", _snapshot_amount(snapshot, "tip"), "", ""),
-        ("Késedelmi díj", _snapshot_amount(snapshot, "delay_bonus"), "", ""),
-        ("Túramegfelelés", _snapshot_amount(snapshot, "compliance_bonus"), "", ""),
-        ("Cím bónusz (Kifli)", _snapshot_amount(snapshot, "address_bonus_kifli"), "", ""),
-        ("Lojalitás", _snapshot_amount(snapshot, "loyalty_bonus"), "", ""),
-        ("Ügyfélértékelési bónusz", _snapshot_amount(snapshot, "customer_rating"), "", ""),
-        ("Fizetendő", _snapshot_amount(snapshot, "payable") or parse_huf_value(metadata.get("payable_total")), "primary", ""),
-        ("Korrekció", _snapshot_amount(snapshot, "correction"), "", ""),
-        ("Kiflis levonások / bónuszok", _snapshot_amount(snapshot, "kiflis_bonus_malus"), "", ""),
-        ("JITT bónusz / malus", _snapshot_amount(snapshot, "bonus_malus"), "", ""),
-        ("ATM hatás", _snapshot_amount(snapshot, "atm_effect"), "", ""),
-        ("Fizetés előleg", _snapshot_amount(snapshot, "salary_advance"), "", ""),
-        ("Céltartalék 10%", _snapshot_amount(snapshot, "reserve"), "", ""),
-        ("Biztosítási díj", _snapshot_amount(snapshot, "insurance_fee"), "", ""),
+        ("Rendelés", _snapshot_amount(snapshot, "orders"), "count", "", ""),
+        ("Kör", _snapshot_amount(snapshot, "routes"), "count", "", ""),
+        ("Normál túra", _snapshot_amount(snapshot, "normal_routes"), "count", "", ""),
+        ("Kiemelt túra", _snapshot_amount(snapshot, "highlighted_routes"), "count", "", ""),
+        ("Express normál", _snapshot_amount(snapshot, "express_normal_routes"), "count", "", ""),
+        ("Express kiemelt", _snapshot_amount(snapshot, "express_highlighted_routes"), "count", "", ""),
+        ("Alapdíj", _snapshot_amount(snapshot, "base"), "huf", "", ""),
+        ("Borravaló", _snapshot_amount(snapshot, "tip"), "huf", "", ""),
+        ("Késedelmi díj", _snapshot_amount(snapshot, "delay_bonus"), "huf", "", ""),
+        ("Túramegfelelés", _snapshot_amount(snapshot, "compliance_bonus"), "huf", "", ""),
+        ("Cím bónusz (Kifli)", _snapshot_amount(snapshot, "address_bonus_kifli"), "huf", "", "Stop-count Bonus"),
+        ("Lojalitás", _snapshot_amount(snapshot, "loyalty_bonus"), "huf", "", ""),
+        ("Ügyfélértékelési bónusz", _snapshot_amount(snapshot, "customer_rating"), "huf", "", ""),
+        ("Fizetendő", _snapshot_amount(snapshot, "payable") or parse_huf_value(metadata.get("payable_total")), "huf", "payable", ""),
+        ("Korrekció", _snapshot_amount(snapshot, "correction"), "huf", "", ""),
+        ("Kiflis levonások / bónuszok", _snapshot_amount(snapshot, "kiflis_bonus_malus"), "huf", "", ""),
+        ("JITT bónusz / malus", _snapshot_amount(snapshot, "bonus_malus"), "huf", "", ""),
+        ("ATM hatás", _snapshot_amount(snapshot, "atm_effect"), "huf", "", ""),
+        ("Fizetés előleg", _snapshot_amount(snapshot, "salary_advance"), "huf", "", ""),
+        ("Céltartalék 10%", _snapshot_amount(snapshot, "reserve"), "huf", "", ""),
+        ("Biztosítási díj", _snapshot_amount(snapshot, "insurance_fee"), "huf", "", ""),
+        ("CT státusz", 0, "text", "", str(metadata.get("reserve_month_status") or "In progress")),
+        ("Előző havi egyenleg", _snapshot_amount(snapshot, "previous_excel_balance"), "huf", "", ""),
     ]
 
     def finance_detail_html(detail_label: str) -> str:
@@ -2373,13 +2377,20 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
             "</table></div>"
         )
 
-    def render_card(label: str, value: float, css_class: str, note: str) -> str:
-        value_text = f"{int(value):,}".replace(",", " ") if label in {"Rendelés", "Kör", "Normál túra", "Kiemelt túra"} else format_huf(value)
+    def render_card(label: str, value: float, value_kind: str, css_class: str, note: str) -> str:
+        if value_kind == "count":
+            value_text = f"{int(value):,}".replace(",", " ")
+        elif value_kind == "text":
+            value_text = str(note or value or "-")
+            note = ""
+        else:
+            value_text = format_huf(value)
+        note_html = f'<div class="finance-kpi-note">{html.escape(note)}</div>' if note else ""
         card = (
             f'<div class="finance-kpi {css_class}">'
             f'<div class="finance-kpi-label">{html.escape(label)}</div>'
             f'<div class="finance-kpi-value">{html.escape(value_text)}</div>'
-            f'<div class="finance-kpi-note">{html.escape(note or "Mentett verzió")}</div>'
+            f"{note_html}"
             "</div>"
         )
         if label not in drilldowns:
@@ -2393,7 +2404,7 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
 
     st.markdown(
         '<div class="settlement-profile-shell"><div class="finance-kpi-grid">'
-        + "".join(render_card(label, value, css_class, note) for label, value, css_class, note in kpi_items)
+        + "".join(render_card(label, value, value_kind, css_class, note) for label, value, value_kind, css_class, note in kpi_items)
         + "</div></div>",
         unsafe_allow_html=True,
     )
