@@ -2318,6 +2318,21 @@ def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
     return {}
 
 
+def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) -> list[dict[str, object]]:
+    candidates = [detail_label]
+    mojibake_map = {
+        "Kiflis levonások / bónuszok": "Kiflis levonĂˇsok / bĂłnuszok",
+        "JITT bónusz / malus": "JITT bĂłnusz / malus",
+    }
+    if detail_label in mojibake_map:
+        candidates.append(mojibake_map[detail_label])
+    for candidate in candidates:
+        rows = drilldowns.get(candidate)
+        if isinstance(rows, list) and rows:
+            return rows
+    return []
+
+
 def _compact_amount_drilldown(label: str, rows: list[dict[str, object]]) -> list[dict[str, object]]:
     if not rows:
         return []
@@ -2391,8 +2406,8 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
     ]
 
     def finance_detail_html(detail_label: str) -> str:
-        detail_rows = drilldowns.get(detail_label) or []
-        if not isinstance(detail_rows, list) or not detail_rows:
+        detail_rows = _drilldown_rows_for_label(drilldowns, detail_label)
+        if not detail_rows:
             return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
         if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"}:
             detail_rows = _compact_amount_drilldown(detail_label, detail_rows)
@@ -2433,7 +2448,7 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
             f"{note_html}"
             "</div>"
         )
-        if label not in drilldowns:
+        if not _drilldown_rows_for_label(drilldowns, label):
             return card
         return (
             f'<details class="finance-kpi-detail-card {css_class}">'
