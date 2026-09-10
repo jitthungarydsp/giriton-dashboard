@@ -2112,7 +2112,7 @@ def build_finance_snapshot_drilldown_payload(
             detail["_amount"] = detail[column].map(parse_huf_value)
             detail = detail[detail["_amount"].ne(0)].copy()
             if not detail.empty:
-                payload[label] = detail.to_dict("records")
+                payload[label] = _compact_amount_drilldown(label, detail.to_dict("records"))
     return payload
 
 
@@ -2318,6 +2318,44 @@ def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
     return {}
 
 
+def _compact_amount_drilldown(label: str, rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    if not rows:
+        return []
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        return []
+    amount_column = next(
+        (
+            column for column in ["_amount", "Összeg", "amount_value", label]
+            if column in detail.columns
+        ),
+        None,
+    )
+    if not amount_column:
+        return rows
+    detail = detail.copy()
+    detail["_snapshot_amount"] = detail[amount_column].map(parse_huf_value)
+    detail = detail[detail["_snapshot_amount"].ne(0)].copy()
+    if detail.empty:
+        return []
+    if "Tétel" not in detail.columns:
+        detail["Tétel"] = label
+    grouped = (
+        detail.groupby(["Tétel", "_snapshot_amount"], dropna=False)
+        .size()
+        .reset_index(name="Darab")
+    )
+    grouped["Egységösszeg"] = grouped["_snapshot_amount"]
+    grouped["Összeg"] = grouped["Darab"] * grouped["Egységösszeg"]
+    grouped["Számítás"] = grouped.apply(
+        lambda item: f"{int(item['Darab'])} x {format_huf(item['Egységösszeg'])}",
+        axis=1,
+    )
+    return grouped.sort_values(["Tétel", "Egységösszeg"])[
+        ["Tétel", "Darab", "Egységösszeg", "Összeg", "Számítás"]
+    ].to_dict("records")
+
+
 def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     version = int(parse_huf_value(snapshot.get("version")))
@@ -2356,6 +2394,8 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
         detail_rows = drilldowns.get(detail_label) or []
         if not isinstance(detail_rows, list) or not detail_rows:
             return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
+        if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"}:
+            detail_rows = _compact_amount_drilldown(detail_label, detail_rows)
         display_detail = pd.DataFrame(detail_rows)
         if display_detail.empty:
             return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
