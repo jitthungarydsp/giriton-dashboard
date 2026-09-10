@@ -2242,6 +2242,7 @@ def save_devtest_finance_snapshot_version(
         return {"saved": False, "reason": str(exc)}
 
 
+@st.cache_data(show_spinner=False, ttl=60)
 def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) -> dict[str, object]:
     clean_courier_id = _courier_id_key(courier_id)
     if not clean_courier_id:
@@ -2268,6 +2269,14 @@ def load_latest_devtest_finance_snapshot(courier_id: str, period_start: date) ->
             .execute().data or []
         )
         snapshot["items"] = items
+        sources = (
+            get_db().schema("settlement").table("courier_finance_snapshot_source")
+            .select("source_key,source_table,payload,row_count")
+            .eq("snapshot_id", str(snapshot.get("id")))
+            .order("source_key")
+            .execute().data or []
+        )
+        snapshot["sources"] = sources
         return snapshot
     except BaseException:
         return {}
@@ -2302,11 +2311,20 @@ def _snapshot_amount(snapshot: dict[str, object], item_key: str, section: str = 
     return parse_huf_value((metadata or {}).get(item_key))
 
 
+def _snapshot_source_payload(snapshot: dict[str, object], source_key: str):
+    for source in snapshot.get("sources") or []:
+        if str(source.get("source_key") or "") == source_key:
+            return source.get("payload")
+    return {}
+
+
 def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     version = int(parse_huf_value(snapshot.get("version")))
     created_at = str(snapshot.get("created_at") or "")
     st.caption(f"Mentett devtest pénzügyi verzió: v{version} | {created_at}")
+    drilldowns = _snapshot_source_payload(snapshot, "card_drilldowns")
+    drilldowns = drilldowns if isinstance(drilldowns, dict) else {}
 
     kpi_items = [
         ("Rendelés", _snapshot_amount(snapshot, "orders"), "", ""),
@@ -2330,14 +2348,47 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
         ("Biztosítási díj", _snapshot_amount(snapshot, "insurance_fee"), "", ""),
     ]
 
+    def finance_detail_html(detail_label: str) -> str:
+        detail_rows = drilldowns.get(detail_label) or []
+        if not isinstance(detail_rows, list) or not detail_rows:
+            return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
+        display_detail = pd.DataFrame(detail_rows)
+        if display_detail.empty:
+            return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
+        for amount_column in ["Egységösszeg", "Összeg", "_amount", "amount_value"]:
+            if amount_column in display_detail.columns:
+                display_detail[amount_column] = display_detail[amount_column].map(format_huf)
+        headers = "".join(f"<th>{html.escape(str(column))}</th>" for column in display_detail.columns)
+        rows_html = []
+        for _, detail_row in display_detail.iterrows():
+            rows_html.append(
+                "<tr>"
+                + "".join(f"<td>{html.escape(str(detail_row.get(column, '')))}</td>" for column in display_detail.columns)
+                + "</tr>"
+            )
+        return (
+            '<div class="finance-kpi-detail-body">'
+            '<table class="finance-kpi-detail-table">'
+            f"<thead><tr>{headers}</tr></thead><tbody>{''.join(rows_html)}</tbody>"
+            "</table></div>"
+        )
+
     def render_card(label: str, value: float, css_class: str, note: str) -> str:
         value_text = f"{int(value):,}".replace(",", " ") if label in {"Rendelés", "Kör", "Normál túra", "Kiemelt túra"} else format_huf(value)
-        return (
+        card = (
             f'<div class="finance-kpi {css_class}">'
             f'<div class="finance-kpi-label">{html.escape(label)}</div>'
             f'<div class="finance-kpi-value">{html.escape(value_text)}</div>'
             f'<div class="finance-kpi-note">{html.escape(note or "Mentett verzió")}</div>'
             "</div>"
+        )
+        if label not in drilldowns:
+            return card
+        return (
+            f'<details class="finance-kpi-detail-card {css_class}">'
+            f"<summary>{card}</summary>"
+            f"{finance_detail_html(label)}"
+            "</details>"
         )
 
     st.markdown(
@@ -12962,6 +13013,25 @@ def render_courier_detail_page() -> None:
             )
 
     if selected_menu == "Pénzügy":
+        snapshot_rebuild_key = f"finance_snapshot_rebuild_{courier_id}_{period_start:%Y%m}_{active_calculation_mode}"
+        force_snapshot_rebuild = bool(st.session_state.pop(snapshot_rebuild_key, False))
+        if not force_snapshot_rebuild:
+            latest_snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+            if latest_snapshot:
+                action_cols = st.columns([1, 1])
+                with action_cols[0]:
+                    st.caption("A Pénzügy oldal mentett DB lenyomatból töltődik be.")
+                with action_cols[1]:
+                    if st.button(
+                        "Újraszámítás és mentés",
+                        use_container_width=True,
+                        key=f"finance_snapshot_recalculate_{courier_id}_{period_start:%Y%m}_{active_calculation_mode}",
+                    ):
+                        st.session_state[snapshot_rebuild_key] = True
+                        clear_devtest_finance_snapshot_cache()
+                        rerun_courier_profile("Pénzügy")
+                render_devtest_finance_snapshot_view(latest_snapshot)
+                return
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
         if route_detail.empty:
             route_detail = load_courier_route_detail(
