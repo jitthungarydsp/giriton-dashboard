@@ -236,6 +236,22 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-map-link { color: var(--green-dark); font-weight: 950; text-decoration: none; }
 .ops-muted { color: var(--muted); font-weight: 850; }
 .ops-worker-foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.schedule-day-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.schedule-day { display: grid; gap: 4px; min-height: 76px; padding: 9px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); text-align: left; }
+.schedule-day.active { border-color: var(--green-dark); background: #eff8ed; box-shadow: 0 0 0 3px #6f9d3d1f; }
+.schedule-day.attention { border-color: #e0a39e; }
+.schedule-day span { color: var(--green-dark); font-size: 11px; font-weight: 900; }
+.schedule-day strong { font-size: 18px; }
+.schedule-day small { color: var(--muted); font-size: 10px; font-weight: 800; line-height: 1.2; }
+.schedule-selected { display: grid; gap: 10px; }
+.schedule-worker { display: block; padding: 0; overflow: hidden; }
+.schedule-worker > .ops-card-head { padding: 16px; cursor: pointer; list-style: none; }
+.schedule-worker > .ops-card-head::-webkit-details-marker { display: none; }
+.schedule-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.schedule-chip { display: inline-flex; align-items: center; min-height: 30px; padding: 6px 10px; border-radius: 999px; background: #eef1eb; color: var(--muted); font-size: 12px; font-weight: 900; }
+.schedule-chip.ok { background: #e2f2df; color: var(--green-dark); }
+.schedule-chip.missing { background: #fff0ef; color: #b93c33; }
+.schedule-chip.unknown { background: #eef1eb; color: var(--muted); }
 .process-title { display: flex; align-items: flex-start; gap: 12px; }
 .process-title h3 { margin: 2px 0 4px; font-size: 20px; }
 .process-title p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -594,6 +610,7 @@ textarea { min-height: 96px; resize: vertical; }
   .ops-summary, .ops-route-row, .ops-detail-grid, .ops-worker-foot { grid-template-columns: 1fr; }
   .ops-card-head { display: grid; }
   .ops-card-head > span { justify-self: start; max-width: none; text-align: left; }
+  .schedule-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
   .tig-row.head { display: none; }

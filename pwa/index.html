@@ -618,6 +618,21 @@
         <section id="today-workers-panel" class="ops-panel"></section>
       </div>
 
+      <div id="coordinator-schedule-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">BEOSZTÁS</p>
+            <h2>Havi beosztás</h2>
+            <p class="muted">Napra bontva látszik, ki jön dolgozni, és mi a Giriton / MűszakPro állapot.</p>
+          </div>
+          <div class="workflow-controls">
+            <label class="month-picker">Hónap<input id="coordinator-schedule-month" type="month" /></label>
+            <button id="coordinator-schedule-refresh" class="secondary" type="button">Frissítés</button>
+          </div>
+        </section>
+        <section id="coordinator-schedule-panel" class="ops-panel"></section>
+      </div>
+
       <div id="registration-admin-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -647,11 +662,12 @@
         <button id="nav-game"><span>★</span>Játék</button>
         <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
         <button id="nav-today-workers" class="hidden"><span>☷</span>Ki jön ma?</button>
+        <button id="nav-coordinator-schedule" class="hidden"><span>15</span>Beosztás</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button id="nav-registration-admin" class="hidden"><span>✓</span>Futárok jóváhagyása</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=119" defer></script>
+    <script src="/app.js?v=120" defer></script>
   </body>
 </html>

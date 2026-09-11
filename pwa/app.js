@@ -10,6 +10,8 @@ const state = {
   coordinatorSetup: null,
   coordinatorLiveMap: null,
   coordinatorLeafletMap: null,
+  coordinatorSchedule: null,
+  coordinatorScheduleDay: localDate(),
   todayWorkers: null,
   couriers: [],
   deviceReports: [],
@@ -49,7 +51,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v119";
+const APP_VERSION = "v120";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -151,6 +153,7 @@ function currentSectionRefresh() {
   if (state.section === "registration-admin") return loadRegistrationRequests();
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "today-workers") return loadTodayWorkers();
+  if (state.section === "coordinator-schedule") return loadCoordinatorSchedule();
   if (state.section === "vehicle") return loadVehicleSection();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
@@ -345,6 +348,7 @@ function showApp() {
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);
   $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
+  $("#nav-coordinator-schedule").classList.toggle("hidden", !canCoordinate);
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   const coordinatorOnly = role === "coordinator";
@@ -387,6 +391,7 @@ function showSection(section) {
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
   $("#coordinator-live-content").classList.toggle("hidden", section !== "coordinator-live");
   $("#today-workers-content").classList.toggle("hidden", section !== "today-workers");
+  $("#coordinator-schedule-content").classList.toggle("hidden", section !== "coordinator-schedule");
   $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
 
   $("#nav-home").classList.toggle("active", section === "home");
@@ -406,6 +411,7 @@ function showSection(section) {
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
   $("#nav-coordinator-live").classList.toggle("active", section === "coordinator-live");
   $("#nav-today-workers").classList.toggle("active", section === "today-workers");
+  $("#nav-coordinator-schedule").classList.toggle("active", section === "coordinator-schedule");
   $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
@@ -435,6 +441,7 @@ function showSection(section) {
   if (section === "coordinator") loadCoordinatorAdjustments();
   if (section === "coordinator-live") loadCoordinatorLiveMap();
   if (section === "today-workers") loadTodayWorkers();
+  if (section === "coordinator-schedule") loadCoordinatorSchedule();
   if (section === "registration-admin") loadRegistrationRequests();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -4680,6 +4687,117 @@ async function loadTodayWorkers() {
   }
 }
 
+function scheduleStatusChip(label, tone) {
+  return `<span class="schedule-chip ${escapeHtml(tone || "unknown")}">${escapeHtml(label || "Nincs adat")}</span>`;
+}
+
+function selectedScheduleDay(payload) {
+  const days = payload?.days || [];
+  return days.find((day) => day.date === state.coordinatorScheduleDay)
+    || days.find((day) => day.total > 0)
+    || days[0]
+    || null;
+}
+
+function renderScheduleDayButton(day) {
+  const isSelected = day.date === state.coordinatorScheduleDay;
+  return `
+    <button class="schedule-day ${isSelected ? "active" : ""} ${day.missing ? "attention" : ""}" type="button" data-schedule-day="${escapeHtml(day.date)}">
+      <span>${escapeHtml(day.label || day.date)}</span>
+      <strong>${formatCount(day.total || 0)}</strong>
+      <small>G ${formatCount(day.giritonOk || 0)} · M ${formatCount(day.muszakproOk || 0)}</small>
+    </button>
+  `;
+}
+
+function renderScheduleWorker(worker) {
+  const vehicleText = opsVehicleText(worker.vehicle);
+  const end = worker.end ? `-${escapeHtml(worker.end)}` : "";
+  return `
+    <details class="ops-card schedule-worker">
+      <summary class="ops-card-head">
+        <div>
+          <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
+          <small>#${escapeHtml(worker.courierId || "-")} · ${escapeHtml(worker.warehouse || "-")} · ${escapeHtml(worker.start || "-")}${end}</small>
+        </div>
+        <span>${escapeHtml(worker.shiftName || worker.bookingCode || "Műszak")}</span>
+      </summary>
+      <div class="ops-live-body">
+        <div class="schedule-chip-row">
+          ${scheduleStatusChip(`Giriton: ${worker.giritonStatus || "Nincs adat"}`, worker.giritonTone)}
+          ${scheduleStatusChip(`MűszakPro: ${worker.muszakproStatus || "Nincs adat"}`, worker.muszakproTone)}
+          ${worker.hubStatus ? scheduleStatusChip(`Hub: ${worker.hubStatus}`, worker.hubTone) : ""}
+        </div>
+        <div class="ops-detail-grid">
+          <div><span>Műszak</span><strong>${escapeHtml(worker.shiftName || "-")}</strong><small>${escapeHtml(worker.bookingCode || "")}</small></div>
+          <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(worker.vehicle?.source || worker.vehicle?.shiftType || "")}</small></div>
+          <div><span>Eltérés</span><strong>${escapeHtml(worker.missingSource || "Nincs jelzett eltérés")}</strong><small>Giriton / MűszakPro összevetés</small></div>
+          <div><span>Forrás</span><strong>${escapeHtml(worker.source || "-")}</strong><small>${escapeHtml(worker.date || "")}</small></div>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function renderCoordinatorSchedule() {
+  const target = $("#coordinator-schedule-panel");
+  if (!target) return;
+  const payload = state.coordinatorSchedule;
+  if (!payload) {
+    target.innerHTML = `<div class="empty-card">Beosztás betöltése...</div>`;
+    return;
+  }
+  const monthInput = $("#coordinator-schedule-month");
+  if (monthInput && !monthInput.value) monthInput.value = payload.month || state.statisticsMonth;
+  const day = selectedScheduleDay(payload);
+  if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
+  const workers = day?.workers || [];
+  target.innerHTML = `
+    ${renderOpsSummary(payload.summary || {}, [
+      ["Műszak sor", payload.summary?.workers || 0],
+      ["Munkanapos nap", payload.summary?.daysWithWorkers || 0],
+      ["Giriton OK", payload.summary?.giritonOk || 0],
+      ["MűszakPro OK", payload.summary?.muszakproOk || 0],
+    ])}
+    <p class="updated-at">${escapeHtml(payload.month || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div class="schedule-day-grid">
+      ${(payload.days || []).map(renderScheduleDayButton).join("")}
+    </div>
+    <section class="schedule-selected">
+      <div class="device-history-head">
+        <strong>${day ? escapeHtml(dateLabel(day.date)) : "Nincs kiválasztott nap"}</strong>
+        <span>${formatCount(workers.length)} futár</span>
+      </div>
+      <div class="ops-card-list">
+        ${workers.length ? workers.map(renderScheduleWorker).join("") : `<div class="empty-card">Ezen a napon nincs beosztott futár.</div>`}
+      </div>
+    </section>
+  `;
+  target.querySelectorAll("[data-schedule-day]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.coordinatorScheduleDay = button.dataset.scheduleDay || state.coordinatorScheduleDay;
+      renderCoordinatorSchedule();
+    });
+  });
+}
+
+async function loadCoordinatorSchedule() {
+  const target = $("#coordinator-schedule-panel");
+  const monthInput = $("#coordinator-schedule-month");
+  if (monthInput && !monthInput.value) monthInput.value = new Date().toISOString().slice(0, 7);
+  const month = monthInput?.value || new Date().toISOString().slice(0, 7);
+  if (target && !state.coordinatorSchedule) target.innerHTML = `<div class="empty-card">Beosztás betöltése...</div>`;
+  try {
+    state.coordinatorSchedule = await api(`/api/coordinator/schedule?month=${encodeURIComponent(month)}`);
+    if (!state.coordinatorScheduleDay || !String(state.coordinatorScheduleDay).startsWith(month)) {
+      state.coordinatorScheduleDay = localDate().startsWith(month) ? localDate() : `${month}-01`;
+    }
+    renderCoordinatorSchedule();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function coordinatorItems(kind) {
   return state.coordinatorSetup?.items?.[kind] || [];
 }
@@ -5270,6 +5388,7 @@ $("#logout").addEventListener("click", async () => {
     state.coordinatorLeafletMap = null;
   }
   state.todayWorkers = null;
+  state.coordinatorSchedule = null;
   state.queueStatus = null;
   state.statistics = null;
   state.routeDetails = null;
@@ -5299,8 +5418,15 @@ $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
 $("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
 $("#nav-today-workers").addEventListener("click", () => showSection("today-workers"));
+$("#nav-coordinator-schedule").addEventListener("click", () => showSection("coordinator-schedule"));
 $("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
+$("#coordinator-schedule-refresh")?.addEventListener("click", loadCoordinatorSchedule);
+$("#coordinator-schedule-month")?.addEventListener("change", () => {
+  state.coordinatorSchedule = null;
+  state.coordinatorScheduleDay = "";
+  loadCoordinatorSchedule();
+});
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);

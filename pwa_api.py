@@ -3174,6 +3174,220 @@ def read_today_worker_shift_rows(target_date: date) -> list[dict[str, Any]]:
     )
 
 
+def read_schedule_comparison_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "vw_attendance_muszakpro_latest_comparison",
+        params={
+            "select": (
+                "work_date,courier_id,courier_name,warehouse,shift_start,shift_end,"
+                "attendance_status,muszakpro_status,missing_source,attendance_shift_id,"
+                "attendance_shift_name,muszakpro_shift_text,muszakpro_booking_code,collected_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,shift_start.asc,courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+
+
+def read_schedule_hub_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_shift_overview",
+        params={
+            "select": (
+                "work_date,courier_id,courier_name,warehouse_id,shift_id,shift_name,"
+                "shift_start,shift_end,planned_start_at,planned_end_at,actual_start_at,"
+                "evaluation,status,raw_shift"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,shift_start.asc,courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+
+
+def schedule_status_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "Nincs adat"
+    upper = text.upper()
+    if upper == "OK":
+        return "OK"
+    if upper in {"MISSING", "HIANYZIK", "NOK"}:
+        return "Hiányzik"
+    return text
+
+
+def schedule_status_tone(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    if text == "OK":
+        return "ok"
+    if text in {"", "NONE", "NINCS ADAT"}:
+        return "unknown"
+    return "missing"
+
+
+def schedule_row_key(work_date: str, courier_id: Any, courier_name: Any, start_time: Any) -> tuple[str, str, str]:
+    identity = str(courier_id or "").strip() or normalize_person_match_text(courier_name)
+    return (str(work_date or "")[:10], identity, normalize_time(start_time))
+
+
+def schedule_worker_from_comparison(row: dict[str, Any]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    return {
+        "date": work_date,
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or "Futár"),
+        "start": normalize_time(row.get("shift_start")),
+        "end": normalize_time(row.get("shift_end")),
+        "warehouse": str(row.get("warehouse") or ""),
+        "shiftName": str(row.get("attendance_shift_name") or row.get("muszakpro_shift_text") or ""),
+        "bookingCode": str(row.get("muszakpro_booking_code") or row.get("attendance_shift_id") or ""),
+        "giritonStatus": schedule_status_label(row.get("attendance_status")),
+        "giritonTone": schedule_status_tone(row.get("attendance_status")),
+        "muszakproStatus": schedule_status_label(row.get("muszakpro_status")),
+        "muszakproTone": schedule_status_tone(row.get("muszakpro_status")),
+        "missingSource": str(row.get("missing_source") or ""),
+        "hubStatus": "",
+        "hubTone": "unknown",
+        "vehicle": None,
+        "source": "attendance_muszakpro_comparison",
+    }
+
+
+def schedule_worker_from_hub(row: dict[str, Any]) -> dict[str, Any]:
+    raw_shift = row.get("raw_shift") if isinstance(row.get("raw_shift"), dict) else {}
+    work_date = str(row.get("work_date") or "")[:10]
+    start_value = row.get("shift_start") or row.get("planned_start_at") or raw_shift.get("plannedStart") or raw_shift.get("start")
+    end_value = row.get("shift_end") or row.get("planned_end_at") or raw_shift.get("plannedEnd") or raw_shift.get("end")
+    status, status_label = courier_hub_shift_status_label(
+        row.get("evaluation")
+        or row.get("status")
+        or raw_shift.get("evaluation")
+        or raw_shift.get("status")
+    )
+    warehouse_id = str(row.get("warehouse_id") or raw_shift.get("warehouseId") or "").strip()
+    warehouse = str(raw_shift.get("warehouseCode") or raw_shift.get("warehouseName") or "").strip()
+    if not warehouse and warehouse_id:
+        warehouse = f"BUD{warehouse_id}" if warehouse_id in {"1", "2"} else warehouse_id
+    return {
+        "date": work_date,
+        "courierId": str(row.get("courier_id") or raw_shift.get("courierId") or ""),
+        "courierName": str(row.get("courier_name") or raw_shift.get("courierName") or "Futár"),
+        "start": shift_time_from_overview(work_date, start_value),
+        "end": shift_time_from_overview(work_date, end_value),
+        "warehouse": warehouse,
+        "shiftName": str(row.get("shift_name") or raw_shift.get("shiftName") or ""),
+        "bookingCode": str(row.get("shift_id") or raw_shift.get("shiftId") or ""),
+        "giritonStatus": "Nincs adat",
+        "giritonTone": "unknown",
+        "muszakproStatus": "Nincs adat",
+        "muszakproTone": "unknown",
+        "missingSource": "",
+        "hubStatus": status_label,
+        "hubTone": "ok" if status == "confirmed" else "missing",
+        "vehicle": None,
+        "source": "courier_shift_overview",
+    }
+
+
+def attach_schedule_vehicles(workers: list[dict[str, Any]], start: date, end: date) -> None:
+    vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
+    live_rows = read_live_vehicle_assignment_rows(limit=1000)
+    all_vehicle_rows = live_rows + vehicle_rows
+    for worker in workers:
+        wanted_name = normalize_person_match_text(worker.get("courierName"))
+        matching_rows = [
+            row for row in all_vehicle_rows
+            if wanted_name and normalize_person_match_text(row.get("driver_name")) == wanted_name
+        ]
+        worker["vehicle"] = best_vehicle_assignment(
+            matching_rows,
+            worker.get("date"),
+            worker.get("start"),
+        )
+
+
+def read_coordinator_schedule(month: str) -> dict[str, Any]:
+    start = parse_month(month or datetime.now(LOCAL_TIMEZONE).date().isoformat()[:7])
+    end = month_end(start)
+    comparison_rows = read_schedule_comparison_rows(start, end)
+    hub_rows = read_schedule_hub_rows(start, end)
+    workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    for row in comparison_rows:
+        worker = schedule_worker_from_comparison(row)
+        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+        workers_by_key[key] = worker
+
+    for row in hub_rows:
+        worker = schedule_worker_from_hub(row)
+        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+        existing = workers_by_key.get(key)
+        if existing:
+            existing["hubStatus"] = worker.get("hubStatus") or existing.get("hubStatus") or ""
+            existing["hubTone"] = worker.get("hubTone") or existing.get("hubTone") or "unknown"
+            existing["warehouse"] = existing.get("warehouse") or worker.get("warehouse") or ""
+            existing["shiftName"] = existing.get("shiftName") or worker.get("shiftName") or ""
+            existing["bookingCode"] = existing.get("bookingCode") or worker.get("bookingCode") or ""
+        else:
+            workers_by_key[key] = worker
+
+    workers = sorted(
+        workers_by_key.values(),
+        key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
+    )
+    attach_schedule_vehicles(workers, start, end)
+
+    days = []
+    cursor = start
+    while cursor <= end:
+        day_key = cursor.isoformat()
+        day_workers = [worker for worker in workers if worker.get("date") == day_key]
+        days.append({
+            "date": day_key,
+            "label": cursor.strftime("%m.%d."),
+            "weekday": cursor.strftime("%a"),
+            "total": len(day_workers),
+            "giritonOk": len([worker for worker in day_workers if worker.get("giritonTone") == "ok"]),
+            "muszakproOk": len([worker for worker in day_workers if worker.get("muszakproTone") == "ok"]),
+            "missing": len([
+                worker for worker in day_workers
+                if worker.get("giritonTone") == "missing" or worker.get("muszakproTone") == "missing"
+            ]),
+            "workers": day_workers,
+        })
+        cursor += timedelta(days=1)
+
+    return {
+        "month": start.strftime("%Y-%m"),
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "workers": len(workers),
+            "daysWithWorkers": len([day for day in days if day["total"]]),
+            "giritonOk": len([worker for worker in workers if worker.get("giritonTone") == "ok"]),
+            "muszakproOk": len([worker for worker in workers if worker.get("muszakproTone") == "ok"]),
+            "missing": len([
+                worker for worker in workers
+                if worker.get("giritonTone") == "missing" or worker.get("muszakproTone") == "missing"
+            ]),
+        },
+        "days": days,
+    }
+
+
 def today_worker_payload(
     row: dict[str, Any],
     live_by_courier: dict[str, dict[str, Any]],
@@ -12408,6 +12622,15 @@ def coordinator_today_workers(
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
     return read_today_workers()
+
+
+@app.get("/api/coordinator/schedule")
+def coordinator_schedule(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    return read_coordinator_schedule(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
 
 
 @app.get("/api/muszakpro/open-shifts")
