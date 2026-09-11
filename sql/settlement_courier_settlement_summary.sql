@@ -46,38 +46,61 @@ insert into settlement.courier_settlement_summary (
     compliance_bonus_huf, other_route_bonus_huf, route_bonus_total_huf, payable_huf, calculated_at
 )
 select
-    source.session_id,
-    coalesce(source.courier_id, master.courier_id::text),
-    source.driver_name,
-    min(source.route_date),
-    max(source.route_date),
-    count(*) filter (where source.is_route_primary),
-    sum(case when source.is_route_primary then coalesce(source.orders, 0) else 0 end),
-    sum(source.company_base_rate_huf),
-    sum(source.courier_base_rate_huf),
-    sum(source.courier_tip_huf),
-    sum(source.courier_delay_bonus_huf),
-    sum(source.courier_compliance_bonus_huf),
-    sum(source.courier_other_bonus_huf),
-    sum(source.courier_bonus_total_huf),
-    sum(source.courier_base_rate_huf + source.courier_tip_huf + source.courier_bonus_total_huf),
+    grouped.session_id,
+    coalesce(grouped.courier_id, master.courier_id::text),
+    grouped.driver_name,
+    grouped.period_start,
+    grouped.period_end,
+    grouped.route_count,
+    grouped.order_count,
+    grouped.company_base_rate_huf,
+    grouped.courier_base_rate_huf,
+    grouped.tip_huf,
+    grouped.delay_bonus_huf,
+    grouped.compliance_bonus_huf,
+    grouped.other_route_bonus_huf,
+    grouped.route_bonus_total_huf,
+    grouped.payable_huf,
     now()
 from (
     select
-        j.session_id,
-        nullif(coalesce(j.normalized_data ->> 'Courier ID', j.normalized_data ->> 'courier_id'), '') as courier_id,
-        coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
-        j.route_date, j.is_route_primary, j.company_base_rate_huf, j.courier_base_rate_huf,
-        j.courier_tip_huf, j.courier_delay_bonus_huf, j.courier_compliance_bonus_huf,
-        j.courier_other_bonus_huf, j.courier_bonus_total_huf,
-        coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders
-    from settlement.jit_row j
-    where j.session_id = p_session_id
-) source
-left join public.courier_master master
-    on master.courier_id::text = source.courier_id
-    or lower(trim(master.courier_name)) = lower(trim(source.driver_name))
-group by source.session_id, source.courier_id, source.driver_name, master.courier_id;
+        source.session_id,
+        max(source.courier_id) filter (where source.courier_id is not null) as courier_id,
+        source.driver_name,
+        min(source.route_date) as period_start,
+        max(source.route_date) as period_end,
+        count(*) filter (where source.is_route_primary) as route_count,
+        sum(case when source.is_route_primary then coalesce(source.orders, 0) else 0 end) as order_count,
+        sum(source.company_base_rate_huf) as company_base_rate_huf,
+        sum(source.courier_base_rate_huf) as courier_base_rate_huf,
+        sum(source.courier_tip_huf) as tip_huf,
+        sum(source.courier_delay_bonus_huf) as delay_bonus_huf,
+        sum(source.courier_compliance_bonus_huf) as compliance_bonus_huf,
+        sum(source.courier_other_bonus_huf) as other_route_bonus_huf,
+        sum(source.courier_bonus_total_huf) as route_bonus_total_huf,
+        sum(source.courier_base_rate_huf + source.courier_tip_huf + source.courier_bonus_total_huf) as payable_huf
+    from (
+        select
+            j.session_id,
+            nullif(coalesce(j.normalized_data ->> 'Courier ID', j.normalized_data ->> 'courier_id'), '') as courier_id,
+            coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
+            j.route_date, j.is_route_primary, j.company_base_rate_huf, j.courier_base_rate_huf,
+            j.courier_tip_huf, j.courier_delay_bonus_huf, j.courier_compliance_bonus_huf,
+            j.courier_other_bonus_huf, j.courier_bonus_total_huf,
+            coalesce(nullif(replace(regexp_replace(coalesce(j.normalized_data ->> 'Orders', j.normalized_data ->> 'orders', '0'), '[^0-9,.-]', '', 'g'), ',', '.'), '')::numeric, 0) as orders
+        from settlement.jit_row j
+        where j.session_id = p_session_id
+    ) source
+    group by source.session_id, source.driver_name
+) grouped
+left join lateral (
+    select cm.courier_id
+    from public.courier_master cm
+    where cm.courier_id::text = grouped.courier_id
+       or lower(trim(cm.courier_name)) = lower(trim(grouped.driver_name))
+    order by case when cm.courier_id::text = grouped.courier_id then 0 else 1 end, cm.courier_id::text
+    limit 1
+) master on true;
 $$;
 
 grant select, insert, update, delete on settlement.courier_settlement_summary to service_role;
