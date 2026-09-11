@@ -13682,7 +13682,12 @@ def render_courier_detail_page() -> None:
 
                         def base_fee_label(item: pd.Series) -> str:
                             is_express = "express" in str(item.get("_route_type") or "")
+                            is_regional = "region" in str(item.get("_route_type") or "") or "regionális" in str(item.get("_route_type") or "")
                             is_highlighted = "kiemelt" in str(item.get("_day_type") or "")
+                            if is_regional and is_highlighted:
+                                return "Kiemelt regionális"
+                            if is_regional:
+                                return "Normál regionális"
                             if is_express and is_highlighted:
                                 return "Kiemelt express"
                             if is_express:
@@ -13706,8 +13711,10 @@ def render_courier_detail_page() -> None:
                         order_map = {
                             "Normál city": 1,
                             "Kiemelt city": 2,
-                            "Normál express": 3,
-                            "Kiemelt express": 4,
+                            "Normál regionális": 3,
+                            "Kiemelt regionális": 4,
+                            "Normál express": 5,
+                            "Kiemelt express": 6,
                         }
                         grouped["_order"] = grouped["Tétel"].map(order_map).fillna(99)
                         return grouped.sort_values(["_order", "Egységösszeg"])[
