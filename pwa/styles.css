@@ -215,11 +215,17 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-summary small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 750; }
 .ops-card-list { display: grid; gap: 12px; }
 .ops-card { display: grid; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.ops-live-details { display: block; padding: 0; overflow: hidden; }
 .ops-card.attention { border-color: #e0a39e; background: #fff8f7; }
 .ops-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.ops-live-details > .ops-card-head { padding: 16px; cursor: pointer; list-style: none; }
+.ops-card-head::-webkit-details-marker { display: none; }
 .ops-card-head strong { display: block; font-size: 18px; overflow-wrap: anywhere; }
 .ops-card-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.35; }
 .ops-card-head > span { flex: 0 0 auto; max-width: 122px; padding: 6px 9px; border-radius: 999px; background: #e2f2df; text-align: right; overflow-wrap: anywhere; }
+.ops-live-body { display: grid; gap: 13px; padding: 0 16px 16px; }
+.ops-live-map { min-height: 320px; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: #eef3ec; box-shadow: 0 7px 20px #3141340a; }
+.ops-live-map .empty-card, .ops-live-map .notice { height: 100%; min-height: 320px; display: grid; place-items: center; margin: 0; }
 .ops-route-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .ops-route-row div, .ops-detail-grid div { min-width: 0; padding: 11px; border: 1px solid #dfe7dc; border-radius: 14px; background: #f8fbf5; }
 .ops-route-row strong, .ops-detail-grid strong { display: block; margin-top: 6px; font-size: 15px; overflow-wrap: anywhere; }

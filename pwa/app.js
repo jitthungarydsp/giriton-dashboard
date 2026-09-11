@@ -9,6 +9,7 @@ const state = {
   currentRoute: null,
   coordinatorSetup: null,
   coordinatorLiveMap: null,
+  coordinatorLeafletMap: null,
   todayWorkers: null,
   couriers: [],
   deviceReports: [],
@@ -48,11 +49,13 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v117";
+const APP_VERSION = "v118";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
 const VEHICLE_LIVE_REFRESH_MS = 60 * 1000;
+const LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
 const PHONEBOOK_CONTACTS = [
   { label: "Diszpécser", phone: "+3612000391", note: "Kifli támogatás" },
   { label: "FC2 Diszpécser", phone: "+3612002763", note: "FC2 támogatás" },
@@ -4459,6 +4462,90 @@ function renderOpsSummary(summary = {}, cards = []) {
   </div>`;
 }
 
+function opsTemperatureText(item) {
+  const value = Number(item?.temperatureCelsius);
+  if (!Number.isFinite(value)) return "Hőm.: -";
+  return `Hőm.: ${formatAverage(value)} °C`;
+}
+
+function liveMapPoints(couriers = []) {
+  return couriers
+    .map((item) => ({
+      courierName: item.courierName || "Futár",
+      courierId: item.courierId || "",
+      warehouse: item.warehouse || "",
+      vehiclePlate: item.vehiclePlate || "",
+      temperature: opsTemperatureText(item),
+      status: item.status || item.shiftStatus || "Live",
+      lat: Number(item.lastLatitude),
+      lon: Number(item.lastLongitude),
+    }))
+    .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
+}
+
+function ensureLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (!document.querySelector(`link[href="${LEAFLET_CSS_URL}"]`)) {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = LEAFLET_CSS_URL;
+    document.head.appendChild(link);
+  }
+  return new Promise((resolve, reject) => {
+    const existingScript = document.querySelector(`script[src="${LEAFLET_JS_URL}"]`);
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(window.L), { once: true });
+      existingScript.addEventListener("error", reject, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = LEAFLET_JS_URL;
+    script.async = true;
+    script.onload = () => resolve(window.L);
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+}
+
+async function renderCoordinatorLeafletMap(couriers = []) {
+  const target = $("#coordinator-live-map");
+  if (!target) return;
+  const points = liveMapPoints(couriers);
+  if (!points.length) {
+    target.innerHTML = `<div class="empty-card">Nincs térképre rakható GPS pozíció.</div>`;
+    return;
+  }
+  try {
+    const L = await ensureLeaflet();
+    target.innerHTML = "";
+    if (state.coordinatorLeafletMap) {
+      state.coordinatorLeafletMap.remove();
+      state.coordinatorLeafletMap = null;
+    }
+    const map = L.map(target, { zoomControl: true });
+    state.coordinatorLeafletMap = map;
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap",
+    }).addTo(map);
+    const bounds = [];
+    points.forEach((point) => {
+      bounds.push([point.lat, point.lon]);
+      const marker = L.marker([point.lat, point.lon]).addTo(map);
+      marker.bindPopup(`
+        <strong>${escapeHtml(point.courierName)}</strong><br>
+        #${escapeHtml(point.courierId)} · ${escapeHtml(point.warehouse)}<br>
+        ${escapeHtml(point.vehiclePlate || "Autó nincs")}<br>
+        ${escapeHtml(point.temperature)}<br>
+        ${escapeHtml(point.status)}
+      `);
+    });
+    map.fitBounds(bounds, { padding: [24, 24], maxZoom: 13 });
+  } catch (error) {
+    target.innerHTML = `<div class="notice error">A térkép nem tölthető be: ${escapeHtml(error.message || "ismeretlen hiba")}</div>`;
+  }
+}
+
 function renderLiveCourierCard(item) {
   const progress = opsProgress(item);
   const current = item.currentStop || {};
@@ -4467,27 +4554,29 @@ function renderLiveCourierCard(item) {
     ? `<a class="ops-map-link" href="${escapeHtml(item.mapsUrl)}" target="_blank" rel="noopener">Pozíció térképen</a>`
     : `<span class="ops-muted">Nincs GPS pont</span>`;
   return `
-    <article class="ops-card ${item.lateOpenStops ? "attention" : ""}">
-      <div class="ops-card-head">
+    <details class="ops-card ops-live-details ${item.lateOpenStops ? "attention" : ""}">
+      <summary class="ops-card-head">
         <div>
           <strong>${escapeHtml(item.courierName || "Futár")}</strong>
-          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(item.vehiclePlate || "Autó nincs")}</small>
+          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(item.vehiclePlate || "Autó nincs")} · ${escapeHtml(opsTemperatureText(item))}</small>
         </div>
         <span>${escapeHtml(item.status || item.shiftStatus || "Live")}</span>
+      </summary>
+      <div class="ops-live-body">
+        <div class="ops-route-row">
+          <div><span>Route</span><strong>${escapeHtml(item.activeRouteId || "-")}</strong></div>
+          <div><span>Haladás</span><strong>${formatCount(progress.done)} / ${formatCount(progress.total)}</strong></div>
+          <div><span>Hátra</span><strong>${formatCount(item.remainingStops || 0)}</strong></div>
+        </div>
+        <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
+        <div class="ops-detail-grid">
+          <div><span>Aktuális cím</span><strong>${escapeHtml(current.address || "Nincs aktuális cím")}</strong><small>${current.position ? `#${escapeHtml(current.position)}` : ""}</small></div>
+          <div><span>Következő cím</span><strong>${escapeHtml(next.address || "Nincs következő cím")}</strong><small>${next.position ? `#${escapeHtml(next.position)}` : ""}</small></div>
+          <div><span>Sor / vissza</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
+          <div><span>GPS</span><strong>${mapsLink}</strong><small>${escapeHtml(shortDateTime(item.lastPositionAt || item.updatedAt || ""))}</small></div>
+        </div>
       </div>
-      <div class="ops-route-row">
-        <div><span>Route</span><strong>${escapeHtml(item.activeRouteId || "-")}</strong></div>
-        <div><span>Haladás</span><strong>${formatCount(progress.done)} / ${formatCount(progress.total)}</strong></div>
-        <div><span>Hátra</span><strong>${formatCount(item.remainingStops || 0)}</strong></div>
-      </div>
-      <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
-      <div class="ops-detail-grid">
-        <div><span>Aktuális cím</span><strong>${escapeHtml(current.address || "Nincs aktuális cím")}</strong><small>${current.position ? `#${escapeHtml(current.position)}` : ""}</small></div>
-        <div><span>Következő cím</span><strong>${escapeHtml(next.address || "Nincs következő cím")}</strong><small>${next.position ? `#${escapeHtml(next.position)}` : ""}</small></div>
-        <div><span>Sor / vissza</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
-        <div><span>GPS</span><strong>${mapsLink}</strong><small>${escapeHtml(shortDateTime(item.lastPositionAt || item.updatedAt || ""))}</small></div>
-      </div>
-    </article>
+    </details>
   `;
 }
 
@@ -4508,10 +4597,12 @@ function renderCoordinatorLiveMap() {
       ["Nyitott késés", payload.summary?.lateOpenStops || 0],
     ])}
     <p class="updated-at">Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div id="coordinator-live-map" class="ops-live-map"></div>
     <div class="ops-card-list">
       ${couriers.length ? couriers.map(renderLiveCourierCard).join("") : `<div class="empty-card">Most nincs mai live-map futár adat.</div>`}
     </div>
   `;
+  renderCoordinatorLeafletMap(couriers).catch(() => {});
 }
 
 async function loadCoordinatorLiveMap() {
@@ -5174,6 +5265,10 @@ $("#logout").addEventListener("click", async () => {
   state.expenseRequests = [];
   state.registrationRequests = [];
   state.coordinatorLiveMap = null;
+  if (state.coordinatorLeafletMap) {
+    state.coordinatorLeafletMap.remove();
+    state.coordinatorLeafletMap = null;
+  }
   state.todayWorkers = null;
   state.queueStatus = null;
   state.statistics = null;
