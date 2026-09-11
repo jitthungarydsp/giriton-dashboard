@@ -57,6 +57,8 @@ from resources.peopleforce_documents import (
 from resources.profile_route_metrics import resolve_profile_route_metrics
 from page.settlement_parameter_catalog import render_parameter_catalog
 
+APP_BUILD_MARKER = "2026-09-11-recursion-reset"
+
 try:
     from resources.dsp_route_explanations import (
         read_order_details_for_routes,
