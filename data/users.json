@@ -226,6 +226,24 @@
             "token": ""
         },
         {
+            "username": "BUD1Cordinator",
+            "trainer": "trainer_name",
+            "password": "Jli5NGaN",
+            "role": "coordinator",
+            "courierId": 7895,
+            "active": true,
+            "token": ""
+        },
+                {
+            "username": "BUD2Cordinator",
+            "trainer": "trainer_name",
+            "password": "Jli5NGaN",
+            "role": "coordinator",
+            "courierId": 7895,
+            "active": true,
+            "token": ""
+        },
+        {
             "username": "Cserna Levente Zoltán",
             "trainer": "trainer_name",
             "password": "d0SlWAc1",

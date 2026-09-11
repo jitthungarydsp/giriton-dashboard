@@ -594,6 +594,30 @@
         <section id="coordinator-entry-list" class="process-card"></section>
       </div>
 
+      <div id="coordinator-live-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">LIVE MAP</p>
+            <h2>Élő futár nézet</h2>
+            <p class="muted">Aktív futárok, túrahaladás, autó, következő cím és sorba állás egy helyen.</p>
+          </div>
+          <button id="coordinator-live-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="coordinator-live-panel" class="ops-panel"></section>
+      </div>
+
+      <div id="today-workers-content" class="hidden">
+        <section class="workflow-header">
+          <div>
+            <p class="eyebrow">MŰSZAK</p>
+            <h2>Ki jön ma dolgozni?</h2>
+            <p class="muted">Mai műszakok live státusszal, sorba állással és autó adatokkal.</p>
+          </div>
+          <button id="today-workers-refresh" class="secondary" type="button">Frissítés</button>
+        </section>
+        <section id="today-workers-panel" class="ops-panel"></section>
+      </div>
+
       <div id="registration-admin-content" class="hidden">
         <section class="workflow-header">
           <div>
@@ -621,11 +645,13 @@
         <button id="nav-tours"><span>🚚</span>Túráim</button>
         <button id="nav-route-details" class="hidden"><span>⇲</span>Túra részletező</button>
         <button id="nav-game"><span>★</span>Játék</button>
+        <button id="nav-coordinator-live" class="hidden"><span>◎</span>Live map</button>
+        <button id="nav-today-workers" class="hidden"><span>☷</span>Ki jön ma?</button>
         <button id="nav-coordinator" class="hidden"><span>±</span>Bónusz / Málusz</button>
         <button id="nav-registration-admin" class="hidden"><span>✓</span>Futárok jóváhagyása</button>
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=113" defer></script>
+    <script src="/app.js?v=116" defer></script>
   </body>
 </html>

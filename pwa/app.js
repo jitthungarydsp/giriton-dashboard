@@ -8,6 +8,8 @@ const state = {
   checkedInvoiceMonth: null,
   currentRoute: null,
   coordinatorSetup: null,
+  coordinatorLiveMap: null,
+  todayWorkers: null,
   couriers: [],
   deviceReports: [],
   vehicleReports: [],
@@ -46,7 +48,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v115";
+const APP_VERSION = "v116";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -143,6 +145,8 @@ function currentSectionRefresh() {
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
   if (state.section === "registration-admin") return loadRegistrationRequests();
+  if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
+  if (state.section === "today-workers") return loadTodayWorkers();
   if (state.section === "vehicle") return loadVehicleSection();
   if (state.section === "game") return loadGame();
   return Promise.resolve();
@@ -335,6 +339,8 @@ function showApp() {
   const role = String(state.user.role || "").toLowerCase();
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
+  $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);
+  $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
   $("#nav-registration-admin").classList.toggle("hidden", !state.user.canApproveRegistrations);
   $("#nav-route-details").classList.toggle("hidden", !state.user.canPreviewCouriers);
   const coordinatorOnly = role === "coordinator";
@@ -375,6 +381,8 @@ function showSection(section) {
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#game-content").classList.toggle("hidden", section !== "game");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
+  $("#coordinator-live-content").classList.toggle("hidden", section !== "coordinator-live");
+  $("#today-workers-content").classList.toggle("hidden", section !== "today-workers");
   $("#registration-admin-content").classList.toggle("hidden", section !== "registration-admin");
 
   $("#nav-home").classList.toggle("active", section === "home");
@@ -392,6 +400,8 @@ function showSection(section) {
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-game").classList.toggle("active", section === "game");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
+  $("#nav-coordinator-live").classList.toggle("active", section === "coordinator-live");
+  $("#nav-today-workers").classList.toggle("active", section === "today-workers");
   $("#nav-registration-admin").classList.toggle("active", section === "registration-admin");
 
   if (section === "settlement" && !state.workflow) loadWorkflow();
@@ -419,6 +429,8 @@ function showSection(section) {
   }
   if (section === "game") loadGame();
   if (section === "coordinator") loadCoordinatorAdjustments();
+  if (section === "coordinator-live") loadCoordinatorLiveMap();
+  if (section === "today-workers") loadTodayWorkers();
   if (section === "registration-admin") loadRegistrationRequests();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1910,9 +1922,27 @@ function routeVehicleBlock(vehicle) {
   `;
 }
 
-function routeProgressPercent(route) {
+function routeProgressCounts(route) {
   const total = Number(route?.totalOrders || route?.stops?.length || 0);
-  const delivered = Number(route?.deliveredOrders || 0);
+  const explicitDelivered = Number(route?.deliveredOrders || 0);
+  const completedStops = Array.isArray(route?.stops)
+    ? route.stops.filter((stop) => String(stop?.state || "").toUpperCase() === "COMPLETED").length
+    : 0;
+  const currentPosition = Number(route?.current?.position || 0);
+  let delivered = Math.max(explicitDelivered, completedStops);
+  if (!delivered && Number.isFinite(currentPosition) && currentPosition > 1) {
+    delivered = currentPosition - 1;
+  }
+  if (String(route?.current?.state || "").toUpperCase() === "COMPLETED" && currentPosition > delivered) {
+    delivered = currentPosition;
+  }
+  delivered = Math.max(0, Math.min(delivered, total || delivered));
+  const remaining = Math.max(0, total - delivered);
+  return { total, delivered, remaining };
+}
+
+function routeProgressPercent(route) {
+  const { total, delivered } = routeProgressCounts(route);
   if (!Number.isFinite(total) || total <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((delivered / total) * 100)));
 }
@@ -1936,9 +1966,7 @@ function routeLivePositionBlock(route) {
 }
 
 function routeProgressBlock(route) {
-  const total = Number(route?.totalOrders || route?.stops?.length || 0);
-  const delivered = Number(route?.deliveredOrders || 0);
-  const remaining = Math.max(0, total - delivered);
+  const { total, delivered, remaining } = routeProgressCounts(route);
   const percent = routeProgressPercent(route);
   const late = Number(route?.plannerStatus?.lateOrRiskyStops || 0);
   return `
@@ -2028,6 +2056,7 @@ function renderCurrentRoute() {
   const missingCheckpointText = route.source && route.source !== "live"
     ? "Ehhez a mentett túraadathoz nincs cím-szintű lista."
     : "A túra még nem indult el.";
+  const progressCounts = routeProgressCounts(route);
 
   container.innerHTML = `
     <div class="route-hero">
@@ -2041,7 +2070,7 @@ function renderCurrentRoute() {
 
     <div class="route-summary">
       <div><span>Címek</span><strong>${Number(route.totalOrders || 0)}</strong></div>
-      <div><span>Teljesítve</span><strong>${formatCount(route.deliveredOrders || 0)}</strong></div>
+      <div><span>Teljesítve</span><strong>${formatCount(progressCounts.delivered)}</strong></div>
       <div><span>Vissza</span><strong>${escapeHtml(returnTime || "-")}</strong></div>
     </div>
 
@@ -4382,6 +4411,183 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   }
 });
 
+function opsQueueLabel(eventType) {
+  return {
+    queued: "Sorban áll",
+    returned: "Visszaért",
+    shift_late: "Műszakból késik",
+  }[String(eventType || "").toLowerCase()] || "Nincs jelzés";
+}
+
+function opsProgress(item) {
+  const total = Number(item?.totalStops || item?.live?.totalStops || 0);
+  const done = Number(item?.deliveredStops || item?.live?.deliveredStops || 0);
+  const safeTotal = Math.max(0, total);
+  const safeDone = Math.min(Math.max(0, done), safeTotal || done);
+  const percent = safeTotal ? Math.round((safeDone / safeTotal) * 100) : 0;
+  return { total: safeTotal, done: safeDone, percent };
+}
+
+function opsTimeRange(start, end) {
+  const cleanStart = timeOnly(start) || start || "-";
+  const cleanEnd = timeOnly(end) || end || "";
+  return cleanEnd ? `${cleanStart}-${cleanEnd}` : cleanStart;
+}
+
+function opsVehicleText(vehicle) {
+  if (!vehicle) return "";
+  if (typeof vehicle === "string") return vehicle;
+  return [vehicle.licensePlate, vehicle.car].filter(Boolean).join(" · ");
+}
+
+function renderOpsSummary(summary = {}, cards = []) {
+  const items = cards.length ? cards : [
+    ["Futár", summary.couriers ?? summary.planned ?? 0],
+    ["Aktív", summary.activeCouriers ?? summary.active ?? 0],
+    ["Hátralévő cím", summary.remainingStops ?? 0],
+    ["Késéses cím", summary.lateOpenStops ?? 0],
+  ];
+  return `<div class="ops-summary">
+    ${items.map(([label, value, note]) => `
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(formatCount(value || 0))}</strong>
+        ${note ? `<small>${escapeHtml(note)}</small>` : ""}
+      </div>
+    `).join("")}
+  </div>`;
+}
+
+function renderLiveCourierCard(item) {
+  const progress = opsProgress(item);
+  const current = item.currentStop || {};
+  const next = item.nextStop || {};
+  const mapsLink = item.mapsUrl
+    ? `<a class="ops-map-link" href="${escapeHtml(item.mapsUrl)}" target="_blank" rel="noopener">Pozíció térképen</a>`
+    : `<span class="ops-muted">Nincs GPS pont</span>`;
+  return `
+    <article class="ops-card ${item.lateOpenStops ? "attention" : ""}">
+      <div class="ops-card-head">
+        <div>
+          <strong>${escapeHtml(item.courierName || "Futár")}</strong>
+          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(item.vehiclePlate || "Autó nincs")}</small>
+        </div>
+        <span>${escapeHtml(item.status || item.shiftStatus || "Live")}</span>
+      </div>
+      <div class="ops-route-row">
+        <div><span>Route</span><strong>${escapeHtml(item.activeRouteId || "-")}</strong></div>
+        <div><span>Haladás</span><strong>${formatCount(progress.done)} / ${formatCount(progress.total)}</strong></div>
+        <div><span>Hátra</span><strong>${formatCount(item.remainingStops || 0)}</strong></div>
+      </div>
+      <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
+      <div class="ops-detail-grid">
+        <div><span>Aktuális cím</span><strong>${escapeHtml(current.address || "Nincs aktuális cím")}</strong><small>${current.position ? `#${escapeHtml(current.position)}` : ""}</small></div>
+        <div><span>Következő cím</span><strong>${escapeHtml(next.address || "Nincs következő cím")}</strong><small>${next.position ? `#${escapeHtml(next.position)}` : ""}</small></div>
+        <div><span>Sor / vissza</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
+        <div><span>GPS</span><strong>${mapsLink}</strong><small>${escapeHtml(shortDateTime(item.lastPositionAt || item.updatedAt || ""))}</small></div>
+      </div>
+    </article>
+  `;
+}
+
+function renderCoordinatorLiveMap() {
+  const target = $("#coordinator-live-panel");
+  if (!target) return;
+  const payload = state.coordinatorLiveMap;
+  if (!payload) {
+    target.innerHTML = `<div class="empty-card">Live map betöltése...</div>`;
+    return;
+  }
+  const couriers = payload.couriers || [];
+  target.innerHTML = `
+    ${renderOpsSummary(payload.summary || {}, [
+      ["Live futár", payload.summary?.couriers || 0],
+      ["Aktív túra", payload.summary?.activeCouriers || 0],
+      ["Hátralévő cím", payload.summary?.remainingStops || 0],
+      ["Nyitott késés", payload.summary?.lateOpenStops || 0],
+    ])}
+    <p class="updated-at">Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div class="ops-card-list">
+      ${couriers.length ? couriers.map(renderLiveCourierCard).join("") : `<div class="empty-card">Most nincs mai live-map futár adat.</div>`}
+    </div>
+  `;
+}
+
+async function loadCoordinatorLiveMap() {
+  const target = $("#coordinator-live-panel");
+  if (target && !state.coordinatorLiveMap) target.innerHTML = `<div class="empty-card">Live map betöltése...</div>`;
+  try {
+    state.coordinatorLiveMap = await api("/api/coordinator/live-map");
+    renderCoordinatorLiveMap();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderWorkerCard(item) {
+  const progress = opsProgress(item);
+  const live = item.live || {};
+  const vehicleText = opsVehicleText(item.vehicle);
+  const mapsLink = live.mapsUrl
+    ? `<a class="ops-map-link" href="${escapeHtml(live.mapsUrl)}" target="_blank" rel="noopener">Térkép</a>`
+    : "-";
+  return `
+    <article class="ops-card">
+      <div class="ops-card-head">
+        <div>
+          <strong>${escapeHtml(item.courierName || "Futár")}</strong>
+          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(opsTimeRange(item.start, item.end))}</small>
+        </div>
+        <span>${escapeHtml(item.statusLabel || "-")}</span>
+      </div>
+      <div class="ops-detail-grid">
+        <div><span>Műszak</span><strong>${escapeHtml(item.shiftName || item.bookingCode || "-")}</strong><small>${escapeHtml(item.actualStartAt ? `Tényleges kezdés: ${shortDateTime(item.actualStartAt)}` : "")}</small></div>
+        <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
+        <div><span>Live túra</span><strong>${escapeHtml(live.routeId || "-")}</strong><small>${progress.total ? `${formatCount(progress.done)} / ${formatCount(progress.total)} cím` : "Nincs aktív live route"}</small></div>
+        <div><span>Jelzés</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
+      </div>
+      <div class="ops-worker-foot">
+        <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
+        <span>${mapsLink}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderTodayWorkers() {
+  const target = $("#today-workers-panel");
+  if (!target) return;
+  const payload = state.todayWorkers;
+  if (!payload) {
+    target.innerHTML = `<div class="empty-card">Mai műszakok betöltése...</div>`;
+    return;
+  }
+  const workers = payload.workers || [];
+  target.innerHTML = `
+    ${renderOpsSummary(payload.summary || {}, [
+      ["Tervezett", payload.summary?.planned || 0],
+      ["Aktív", payload.summary?.active || 0],
+      ["Sorban", payload.summary?.queued || 0],
+      ["Visszaért", payload.summary?.returned || 0],
+    ])}
+    <p class="updated-at">${escapeHtml(payload.date || "")} · Frissítve: ${escapeHtml(shortDateTime(payload.updatedAt || ""))}</p>
+    <div class="ops-card-list">
+      ${workers.length ? workers.map(renderWorkerCard).join("") : `<div class="empty-card">Nincs mai műszak adat.</div>`}
+    </div>
+  `;
+}
+
+async function loadTodayWorkers() {
+  const target = $("#today-workers-panel");
+  if (target && !state.todayWorkers) target.innerHTML = `<div class="empty-card">Mai műszakok betöltése...</div>`;
+  try {
+    state.todayWorkers = await api("/api/coordinator/today-workers");
+    renderTodayWorkers();
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function coordinatorItems(kind) {
   return state.coordinatorSetup?.items?.[kind] || [];
 }
@@ -4874,7 +5080,9 @@ $("#login-form").addEventListener("submit", async (event) => {
     state.queueStatus = queueStorageRead();
     renderQueueStatus();
     showApp();
-    if (String(state.user.role || "").toLowerCase() === "hr") {
+    if (String(state.user.role || "").toLowerCase() === "coordinator") {
+      showSection("coordinator-live");
+    } else if (String(state.user.role || "").toLowerCase() === "hr") {
       showSection("vehicle");
     } else {
       showSection("home");
@@ -4964,6 +5172,8 @@ $("#logout").addEventListener("click", async () => {
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.registrationRequests = [];
+  state.coordinatorLiveMap = null;
+  state.todayWorkers = null;
   state.queueStatus = null;
   state.statistics = null;
   state.routeDetails = null;
@@ -4991,6 +5201,10 @@ $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-route-details").addEventListener("click", () => showSection("route-details"));
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
+$("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
+$("#nav-today-workers").addEventListener("click", () => showSection("today-workers"));
+$("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
+$("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
 $("#nav-coordinator").addEventListener("click", () => showSection("coordinator"));
 $("#nav-registration-admin").addEventListener("click", () => showSection("registration-admin"));
 $("#route-details-load")?.addEventListener("click", loadRouteDetails);
@@ -5044,7 +5258,7 @@ async function start() {
     state.user = payload.user;
     showApp();
     if (String(state.user.role || "").toLowerCase() === "coordinator") {
-      showSection("coordinator");
+      showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
       showSection("vehicle");
     } else {
