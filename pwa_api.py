@@ -2578,7 +2578,7 @@ def read_latest_live_map_current_route(user: dict[str, Any]) -> dict[str, Any] |
                 "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status,"
                 "shift_status,deliveries_completed,stops_total,finished_route_count,"
                 "route_ids,vehicle_plate,fridge_config,active_from,active_to,"
-                "courier_json,fetched_at"
+                "last_latitude,last_longitude,last_position_time,courier_json,fetched_at"
             ),
             "courier_id": f"eq.{courier_id}",
             "order": "fetched_at.desc",
@@ -2676,6 +2676,11 @@ def read_latest_live_map_current_route(user: dict[str, Any]) -> dict[str, Any] |
         "stops": stops,
         "plannerStatus": route_planner_status(stops),
         "traffic": route_planner_traffic(current_stop, next_stop),
+        "livePosition": {
+            "latitude": courier_row.get("last_latitude"),
+            "longitude": courier_row.get("last_longitude"),
+            "lastSeenAt": courier_row.get("last_position_time") or courier_row.get("fetched_at"),
+        },
         "vehicle": {
             "licensePlate": str(courier_row.get("vehicle_plate") or "").strip(),
             "car": "",

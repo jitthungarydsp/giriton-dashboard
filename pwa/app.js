@@ -1910,6 +1910,71 @@ function routeVehicleBlock(vehicle) {
   `;
 }
 
+function routeProgressPercent(route) {
+  const total = Number(route?.totalOrders || route?.stops?.length || 0);
+  const delivered = Number(route?.deliveredOrders || 0);
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((delivered / total) * 100)));
+}
+
+function routeLivePositionBlock(route) {
+  const position = route?.livePosition || {};
+  const latitude = Number(position.latitude);
+  const longitude = Number(position.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return "";
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
+  return `
+    <section class="route-live-card">
+      <div>
+        <span>Élő pozíció</span>
+        <strong>${escapeHtml(latitude.toFixed(5))}, ${escapeHtml(longitude.toFixed(5))}</strong>
+        <small>Utolsó jel: ${escapeHtml(shortDateTime(position.lastSeenAt || route.updatedAt || ""))}</small>
+      </div>
+      <a class="route-map-button" href="${mapUrl}" target="_blank" rel="noopener">Térkép</a>
+    </section>
+  `;
+}
+
+function routeProgressBlock(route) {
+  const total = Number(route?.totalOrders || route?.stops?.length || 0);
+  const delivered = Number(route?.deliveredOrders || 0);
+  const remaining = Math.max(0, total - delivered);
+  const percent = routeProgressPercent(route);
+  const late = Number(route?.plannerStatus?.lateOrRiskyStops || 0);
+  return `
+    <section class="route-progress-card">
+      <div class="route-progress-head">
+        <div>
+          <span>Haladás</span>
+          <strong>${formatCount(delivered)} / ${formatCount(total)} cím</strong>
+        </div>
+        <em>${formatCount(remaining)} hátra</em>
+      </div>
+      <div class="route-progress-bar"><i style="width:${percent}%"></i></div>
+      <div class="route-progress-meta">
+        <span>Aktuális: #${escapeHtml(route?.current?.position || "-")}</span>
+        <span>Késéses: ${formatCount(late)}</span>
+      </div>
+    </section>
+  `;
+}
+
+function routeTimeDetailsBlock(route, departure, returnTime) {
+  const story = route?.routeStory || {};
+  return `
+    <section class="route-detail-card">
+      <h4>Idő részletek</h4>
+      <div class="stat-breakdown-list">
+        <div class="stat-row"><span>Sorba állt</span><strong>${escapeHtml(timeOnly(story.queueStartedAt || story.availableForShiftSince || ""))}</strong></div>
+        <div class="stat-row"><span>Túrát kapott</span><strong>${escapeHtml(timeOnly(story.assignedAt || route.routeAssignedAt || ""))}</strong></div>
+        <div class="stat-row"><span>Indulás</span><strong>${escapeHtml(departure || "-")}</strong></div>
+        <div class="stat-row"><span>Várható vissza</span><strong>${escapeHtml(returnTime || "-")}</strong></div>
+        <div class="stat-row"><span>Visszaérkezésig</span><strong>${escapeHtml(returnCountdownText(route.minutesUntilReturn))}</strong></div>
+      </div>
+    </section>
+  `;
+}
+
 async function logRouteAutoDelay(route) {
   const checkpoint = route?.current;
   if (!route?.routeId || !checkpoint?.isLate || isAdminPreviewMode()) return;
@@ -1957,9 +2022,9 @@ function renderCurrentRoute() {
   const returnTime = route.realReturn || route.plannedReturn || "";
   const current = route.current;
   const nextWaze = wazeUrl(current?.address);
+  const nextGoogle = googleMapsUrl(current?.address);
   const currentWindow = current ? routeTimeRange(current.windowFrom, current.windowTo) : "";
   const currentArrival = current?.estimatedArrival || current?.plannedArrival || "";
-  const hasCheckpointDetails = Boolean(route.previous || route.current || route.next);
   const missingCheckpointText = route.source && route.source !== "live"
     ? "Ehhez a mentett túraadathoz nincs cím-szintű lista."
     : "A túra még nem indult el.";
@@ -1976,34 +2041,34 @@ function renderCurrentRoute() {
 
     <div class="route-summary">
       <div><span>Címek</span><strong>${Number(route.totalOrders || 0)}</strong></div>
-      <div><span>Indulás</span><strong>${escapeHtml(departure || "-")}</strong></div>
+      <div><span>Teljesítve</span><strong>${formatCount(route.deliveredOrders || 0)}</strong></div>
       <div><span>Vissza</span><strong>${escapeHtml(returnTime || "-")}</strong></div>
     </div>
 
-    <div class="route-current">
-      <span>Visszaérkezésig</span>
-      <strong>${escapeHtml(returnCountdownText(route.minutesUntilReturn))}</strong>
-    </div>
+    <section class="route-next-card">
+      <span>Következő cím</span>
+      <div class="route-next-number">#${escapeHtml(current?.position || "-")}</div>
+      <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
+      <small>${current ? `Order: ${escapeHtml(current.orderId || "-")} · Időkapu: ${escapeHtml(currentWindow || "-")}` : escapeHtml(missingCheckpointText)}</small>
+      ${currentArrival ? `<small>${current?.estimatedArrival ? "Várható érkezés" : "Tervezett érkezés"}: ${escapeHtml(currentArrival)}</small>` : ""}
+      <div class="route-action-row">
+        ${nextWaze ? `<a class="waze-button" href="${nextWaze}" target="_blank" rel="noopener">Waze</a>` : ""}
+        ${nextGoogle ? `<a class="route-map-button" href="${nextGoogle}" target="_blank" rel="noopener">Google</a>` : ""}
+        ${current?.address ? `<button class="route-copy-button" id="route-copy-address" type="button">Cím másolása</button>` : ""}
+      </div>
+    </section>
+
+    ${routeLivePositionBlock(route)}
+
+    ${routeProgressBlock(route)}
+
+    ${renderRoutePlanner(route)}
+
+    ${routeTimeDetailsBlock(route, departure, returnTime)}
 
     ${routeVehicleBlock(route.vehicle)}
 
     ${renderCurrentRouteStory(route)}
-
-    ${renderRoutePlanner(route)}
-
-    <div class="route-current">
-      <span>Következő cím</span>
-      <strong>${escapeHtml(current?.address || "Nincs aktuális cím")}</strong>
-      <small>${current ? `#${escapeHtml(current.orderId || "-")} · Időkapu: ${escapeHtml(currentWindow || "-")}` : escapeHtml(missingCheckpointText)}</small>
-      ${currentArrival ? `<small>${current?.estimatedArrival ? "Várható érkezés" : "Tervezett érkezés"}: ${escapeHtml(currentArrival)}</small>` : ""}
-    </div>
-
-    <div class="route-stop-list ${hasCheckpointDetails ? "" : "hidden"}">
-      ${routeStopBlock("Előző", route.previous)}
-      ${routeStopBlock("Utána következő", route.next)}
-    </div>
-
-    ${nextWaze ? `<a class="waze-button" href="${nextWaze}" target="_blank" rel="noopener">Irány a cím felé</a>` : ""}
 
     <button id="delay-alert-button" class="route-problem-button" type="button">
       Problémám van
@@ -2014,6 +2079,14 @@ function renderCurrentRoute() {
     "click",
     openDelayAlertDialog
   );
+  $("#route-copy-address")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(current?.address || "");
+      $("#route-copy-address").textContent = "Másolva";
+    } catch (_error) {
+      $("#route-copy-address").textContent = "Nem sikerült";
+    }
+  });
   bindRoutePlannerInteractions();
   logRouteAutoDelay(route);
 }
