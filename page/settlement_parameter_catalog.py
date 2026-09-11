@@ -138,6 +138,7 @@ def _mark_parameters_changed(client: Any) -> None:
         "settlement_number_audit_report",
     ]:
         st.session_state.pop(key, None)
+    st.session_state["settlement_force_profile_refresh"] = True
     try:
         recalculate_excel_base_rates(
             client,

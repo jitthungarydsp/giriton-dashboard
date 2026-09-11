@@ -1315,7 +1315,7 @@ def load_active_bonus_level_rules(table_name: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=60)
-def load_active_base_rate_rules(period_start: date, period_end: date) -> pd.DataFrame:
+def load_active_base_rate_rules(period_start: date, period_end: date, parameter_revision: int = 0) -> pd.DataFrame:
     """Read active base-fee rules that overlap the selected settlement month."""
     try:
         rows = (
@@ -2751,6 +2751,7 @@ def enrich_mobile_settlement_row_for_snapshot(
             calculation_mode,
             period_start,
             warehouse_label,
+            int(st.session_state.get("settlement_parameter_revision", 0)),
         )
     except Exception:
         route_detail = pd.DataFrame()
@@ -6783,10 +6784,12 @@ def apply_api_base_rates_to_route_detail(
     period_start: date,
     period_end: date,
     warehouse_label: str | None = None,
+    parameter_revision: int = 0,
 ) -> pd.DataFrame:
     if route_detail.empty:
         return route_detail
-    rules = load_active_base_rate_rules(period_start, period_end)
+    parameter_revision = int(parameter_revision or st.session_state.get("settlement_parameter_revision", 0))
+    rules = load_active_base_rate_rules(period_start, period_end, parameter_revision)
     if rules.empty:
         return route_detail
     result = route_detail.copy()
@@ -7062,6 +7065,7 @@ def api_financial_routes_to_detail(
     courier_id: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
+    parameter_revision: int = 0,
 ) -> pd.DataFrame:
     columns = [
         "Route ID", "Excel dátum", "Hét napja", "Túratípus", "Naptípus",
@@ -7070,6 +7074,7 @@ def api_financial_routes_to_detail(
     ]
     if rows.empty:
         return pd.DataFrame(columns=columns)
+    parameter_revision = int(parameter_revision or st.session_state.get("settlement_parameter_revision", 0))
     if period_start is None or period_end is None:
         period_start = period_start or date.today().replace(day=1)
         _, period_end = month_bounds(period_start)
@@ -7135,7 +7140,7 @@ def api_financial_routes_to_detail(
     if not parsed:
         return pd.DataFrame(columns=columns)
     detail = pd.DataFrame(parsed)
-    detail = apply_api_base_rates_to_route_detail(detail, period_start, period_end)
+    detail = apply_api_base_rates_to_route_detail(detail, period_start, period_end, parameter_revision=parameter_revision)
     return detail.sort_values(["Excel dátum", "Route ID"])
 
 
@@ -10565,6 +10570,7 @@ def load_courier_route_detail(
     calculation_mode: str = "Excel",
     period_start: date | None = None,
     warehouse_label: str | None = None,
+    parameter_revision: int = 0,
 ) -> pd.DataFrame:
     """Return auditable, unique Route ID rows for one courier.
 
@@ -10590,7 +10596,13 @@ def load_courier_route_detail(
             api_rows = api_rows.loc[
                 pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
             ]
-        api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
+        api_detail = api_financial_routes_to_detail(
+            api_rows,
+            courier_id,
+            period_start,
+            api_period_end,
+            parameter_revision,
+        )
         if not api_detail.empty:
             return api_detail.drop(columns=["_courier_id"], errors="ignore")
         if not session_id:
@@ -10712,14 +10724,26 @@ def load_courier_route_detail(
                 api_rows = api_rows.loc[
                     pd.to_numeric(api_rows["warehouse_id"], errors="coerce").fillna(0).astype(int) == warehouse_id
                 ]
-            api_detail = api_financial_routes_to_detail(api_rows, courier_id, period_start, api_period_end)
+            api_detail = api_financial_routes_to_detail(
+                api_rows,
+                courier_id,
+                period_start,
+                api_period_end,
+                parameter_revision,
+            )
             if not api_detail.empty:
                 return api_detail.drop(columns=["_courier_id"], errors="ignore")
         return pd.DataFrame(columns=columns)
     detail = pd.DataFrame(parsed).sort_values(["Excel dátum", "Route ID"])
     if str(calculation_mode).casefold() == "api" and period_start is not None:
         _, api_period_end = month_bounds(period_start)
-        detail = apply_api_base_rates_to_route_detail(detail, period_start, api_period_end, warehouse_label)
+        detail = apply_api_base_rates_to_route_detail(
+            detail,
+            period_start,
+            api_period_end,
+            warehouse_label,
+            parameter_revision,
+        )
     return detail
 
 
@@ -13168,6 +13192,7 @@ def render_courier_detail_page() -> None:
                 active_calculation_mode,
                 period_start,
                 st.session_state.get("new_warehouse", "Összes"),
+                int(st.session_state.get("settlement_parameter_revision", 0)),
             )
         route_breakdown = summarize_courier_route_detail(route_detail)
         route_detail_base_total = (
@@ -15372,6 +15397,7 @@ def render_courier_detail_page() -> None:
                 active_calculation_mode,
                 period_start,
                 st.session_state.get("new_warehouse", "Összes"),
+                int(st.session_state.get("settlement_parameter_revision", 0)),
             )
             route_breakdown = summarize_courier_route_detail(route_detail)
         st.markdown("#### Problémás útvonalak és rendelések")
@@ -18752,6 +18778,8 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 
 def show_new_settlement_page() -> None:
     apply_design()
+    if st.session_state.pop("settlement_force_profile_refresh", False):
+        refresh_settlement_profile_data()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
     if requested_calculation_mode in {"API", "Excel"}:
         st.session_state["new_calculation_mode"] = requested_calculation_mode
