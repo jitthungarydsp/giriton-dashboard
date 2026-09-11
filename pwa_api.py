@@ -1105,12 +1105,124 @@ def read_live_vehicle_for_user(user: dict[str, Any]) -> dict[str, str] | None:
             timeout=10,
         )
     if not rows:
+        live_map_rows = []
+        if courier_id:
+            live_map_rows = optional_supabase_rows(
+                "courier_hub_live_map_courier_latest",
+                params={
+                    "select": "courier_id,courier_name,warehouse_code,warehouse_id,vehicle_plate,fridge_config,active_from,active_to,status,shift_status,fetched_at",
+                    "courier_id": f"eq.{courier_id}",
+                    "order": "fetched_at.desc",
+                    "limit": "5",
+                },
+                timeout=10,
+            )
+        for live_row in freshest_live_map_rows(live_map_rows, window_hours=8):
+            plate = str(live_row.get("vehicle_plate") or "").strip()
+            if not plate:
+                continue
+            status = str(live_row.get("status") or live_row.get("shift_status") or "").strip()
+            source_parts = ["Courier Hub live-map"]
+            if status:
+                source_parts.append(status)
+            return {
+                "car": "",
+                "licensePlate": plate,
+                "shiftStart": local_iso_time(live_row.get("active_from")),
+                "shiftEnd": local_iso_time(live_row.get("active_to")),
+                "shiftType": str(live_row.get("fridge_config") or live_row.get("warehouse_code") or f"BUD{live_row.get('warehouse_id') or ''}").strip(),
+                "source": " · ".join(source_parts),
+                "fetchedAt": str(live_row.get("fetched_at") or "").strip(),
+            }
         return None
     for row in rows:
         vehicle = live_vehicle_payload(row)
         if vehicle:
             return vehicle
     return None
+
+
+def live_vehicle_assignment_for_user(user: dict[str, Any]) -> dict[str, Any] | None:
+    vehicle = read_live_vehicle_for_user(user)
+    if not vehicle:
+        return None
+    courier_id, courier_name = courier_identity(user)
+    return {
+        "source_name": vehicle.get("source") or "Élő felvétel",
+        "work_date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+        "driver_name": courier_name or str(user.get("username") or ""),
+        "shift_start": vehicle.get("shiftStart") or "",
+        "shift_end": vehicle.get("shiftEnd") or "",
+        "car": vehicle.get("car") or vehicle.get("shiftType") or "",
+        "license_plate": vehicle.get("licensePlate") or "",
+        "shift_type": vehicle.get("source") or vehicle.get("shiftType") or "Élő autó",
+        "fetched_at": vehicle.get("fetchedAt") or datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def read_live_vehicle_assignment_rows(limit: int = 1000) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "dsp_drivers_live_raw",
+        params={
+            "select": "driver_id,courier_name,warehouse_name,license_plate,current_state,shift_name,shift_start,shift_end,fetched_at,response_json",
+            "order": "fetched_at.desc",
+            "limit": str(int(limit)),
+        },
+        timeout=20,
+    )
+    live_rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in freshest_live_map_rows(rows, window_hours=8):
+        courier_id = str(row.get("driver_id") or "").strip()
+        if courier_id and courier_id in seen:
+            continue
+        vehicle = live_vehicle_payload(row)
+        if not vehicle:
+            continue
+        seen.add(courier_id)
+        live_rows.append({
+            "source_name": vehicle.get("source") or "Élő felvétel",
+            "work_date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+            "driver_name": str(row.get("courier_name") or "").strip(),
+            "shift_start": vehicle.get("shiftStart") or "",
+            "shift_end": vehicle.get("shiftEnd") or "",
+            "car": vehicle.get("car") or vehicle.get("shiftType") or "",
+            "license_plate": vehicle.get("licensePlate") or "",
+            "shift_type": vehicle.get("source") or vehicle.get("shiftType") or "Élő autó",
+            "fetched_at": vehicle.get("fetchedAt") or row.get("fetched_at") or "",
+        })
+
+    hub_rows = optional_supabase_rows(
+        "courier_hub_live_map_courier_latest",
+        params={
+            "select": "courier_id,courier_name,warehouse_code,warehouse_id,vehicle_plate,fridge_config,active_from,active_to,status,shift_status,fetched_at",
+            "order": "fetched_at.desc",
+            "limit": str(int(limit)),
+        },
+        timeout=20,
+    )
+    for row in freshest_live_map_rows(hub_rows, window_hours=8):
+        courier_id = str(row.get("courier_id") or "").strip()
+        plate = str(row.get("vehicle_plate") or "").strip()
+        if not plate or (courier_id and courier_id in seen):
+            continue
+        seen.add(courier_id)
+        source_parts = ["Courier Hub live-map"]
+        status = str(row.get("status") or row.get("shift_status") or "").strip()
+        if status:
+            source_parts.append(status)
+        live_rows.append({
+            "source_name": " · ".join(source_parts),
+            "work_date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+            "driver_name": str(row.get("courier_name") or "").strip(),
+            "shift_start": local_iso_time(row.get("active_from")),
+            "shift_end": local_iso_time(row.get("active_to")),
+            "car": str(row.get("fridge_config") or row.get("warehouse_code") or f"BUD{row.get('warehouse_id') or ''}").strip(),
+            "license_plate": plate,
+            "shift_type": " · ".join(source_parts),
+            "fetched_at": str(row.get("fetched_at") or "").strip(),
+        })
+    return live_rows
 
 
 def read_vehicle_assignment_rows_for_user(
@@ -2578,6 +2690,7 @@ def read_latest_live_map_current_route(user: dict[str, Any]) -> dict[str, Any] |
                 "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status,"
                 "shift_status,deliveries_completed,stops_total,finished_route_count,"
                 "route_ids,vehicle_plate,fridge_config,active_from,active_to,"
+                "temperature_celsius,temperature_status,"
                 "last_latitude,last_longitude,last_position_time,courier_json,fetched_at"
             ),
             "courier_id": f"eq.{courier_id}",
@@ -2860,6 +2973,8 @@ def live_ops_courier_payload(
         "activeRouteId": route_ids[0] if route_ids else "",
         "vehiclePlate": str(row.get("vehicle_plate") or ""),
         "fridgeConfig": str(row.get("fridge_config") or ""),
+        "temperatureCelsius": safe_float_value(row.get("temperature_celsius")),
+        "temperatureStatus": str(row.get("temperature_status") or ""),
         "activeFrom": iso_local_text(row.get("active_from")),
         "activeTo": iso_local_text(row.get("active_to")),
         "totalStops": total_stops,
@@ -2950,6 +3065,8 @@ def read_dsp_live_ops_couriers(
             "activeRouteId": route_id,
             "vehiclePlate": str(row.get("license_plate") or vehicle.get("license_plate") or ""),
             "fridgeConfig": "",
+            "temperatureCelsius": safe_float_value(vehicle.get("temperature")),
+            "temperatureStatus": str(vehicle.get("temperature_status") or ""),
             "activeFrom": iso_local_text(row.get("shift_start")),
             "activeTo": iso_local_text(row.get("shift_end")),
             "totalStops": total_stops,
@@ -11971,6 +12088,23 @@ def list_vehicle_assignments(
     if not user_courier_id(view_user):
         return {"from": start.isoformat(), "to": today.isoformat(), "items": []}
     rows = read_vehicle_assignment_rows_for_user(view_user, start, today)
+    live_row = live_vehicle_assignment_for_user(view_user)
+    if live_row and live_row.get("license_plate"):
+        live_key = (
+            str(live_row.get("work_date") or "")[:10],
+            normalize_person_match_text(live_row.get("driver_name")),
+            str(live_row.get("license_plate") or "").strip().casefold(),
+        )
+        existing_keys = {
+            (
+                str(row.get("work_date") or "")[:10],
+                normalize_person_match_text(row.get("driver_name")),
+                str(row.get("license_plate") or "").strip().casefold(),
+            )
+            for row in rows
+        }
+        if live_key not in existing_keys:
+            rows.append(live_row)
     rows = sorted(
         rows,
         key=lambda row: (str(row.get("work_date") or ""), normalize_time(row.get("shift_start")), str(row.get("fetched_at") or "")),
@@ -12007,7 +12141,7 @@ def search_vehicle_assignments(
             pass
     person_searches = {value for value in person_searches if value}
     search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
-    rows = read_vehicle_assignment_rows(start, end, limit=10000)
+    rows = read_live_vehicle_assignment_rows(limit=1000) + read_vehicle_assignment_rows(start, end, limit=10000)
     matches = []
     seen: set[tuple[str, str, str, str, str]] = set()
     for row in rows:

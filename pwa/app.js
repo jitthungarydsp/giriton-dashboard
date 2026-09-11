@@ -48,10 +48,11 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v116";
+const APP_VERSION = "v117";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
+const VEHICLE_LIVE_REFRESH_MS = 60 * 1000;
 const PHONEBOOK_CONTACTS = [
   { label: "Diszpécser", phone: "+3612000391", note: "Kifli támogatás" },
   { label: "FC2 Diszpécser", phone: "+3612002763", note: "FC2 támogatás" },
@@ -5227,6 +5228,11 @@ setInterval(() => {
   if (!state.user || state.section !== "tours" || document.hidden) return;
   withSilentLoading(() => loadCurrentRoute()).catch(() => {});
 }, ROUTE_LIVE_REFRESH_MS);
+
+setInterval(() => {
+  if (!state.user || state.section !== "vehicle" || document.hidden) return;
+  withSilentLoading(() => loadVehicleAssignments()).catch(() => {});
+}, VEHICLE_LIVE_REFRESH_MS);
 
 startQueueTimer();
 
