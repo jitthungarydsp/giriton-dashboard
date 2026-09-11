@@ -2711,6 +2711,28 @@ def iso_local_text(value: Any) -> str:
     return str(value or "")
 
 
+def freshest_live_map_rows(
+    rows: list[dict[str, Any]],
+    *,
+    timestamp_key: str = "fetched_at",
+    window_hours: int = 8,
+) -> list[dict[str, Any]]:
+    dated_rows: list[tuple[datetime, dict[str, Any]]] = []
+    undated_rows: list[dict[str, Any]] = []
+    for row in rows:
+        parsed = local_datetime(row.get(timestamp_key))
+        if parsed:
+            dated_rows.append((parsed, row))
+        else:
+            undated_rows.append(row)
+    if not dated_rows:
+        return rows
+    latest_at = max(parsed for parsed, _row in dated_rows)
+    cutoff = latest_at - timedelta(hours=window_hours)
+    fresh_rows = [row for parsed, row in dated_rows if parsed >= cutoff]
+    return fresh_rows or [row for _parsed, row in dated_rows] or undated_rows
+
+
 def latest_today_live_map_courier_rows() -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
         "courier_hub_live_map_courier_latest",
@@ -2726,11 +2748,13 @@ def latest_today_live_map_courier_rows() -> list[dict[str, Any]]:
         },
         timeout=30,
     )
-    today = datetime.now(LOCAL_TIMEZONE).date()
-    return [
-        row for row in rows
-        if (local_datetime(row.get("fetched_at")) or datetime.min.replace(tzinfo=LOCAL_TIMEZONE)).date() == today
-    ]
+    if not rows:
+        rows = optional_supabase_rows(
+            "courier_hub_live_map_courier_latest",
+            params={"select": "*", "order": "fetched_at.desc", "limit": "1000"},
+            timeout=30,
+        )
+    return freshest_live_map_rows(rows, window_hours=8)
 
 
 def latest_today_live_map_stop_rows() -> list[dict[str, Any]]:
@@ -2747,12 +2771,13 @@ def latest_today_live_map_stop_rows() -> list[dict[str, Any]]:
         },
         timeout=30,
     )
-    today = datetime.now(LOCAL_TIMEZONE).date()
-    return [
-        row for row in rows
-        if not row.get("fetched_at")
-        or (local_datetime(row.get("fetched_at")) or datetime.min.replace(tzinfo=LOCAL_TIMEZONE)).date() == today
-    ]
+    if not rows:
+        rows = optional_supabase_rows(
+            "courier_hub_live_map_stop_latest",
+            params={"select": "*", "order": "fetched_at.desc", "limit": "10000"},
+            timeout=30,
+        )
+    return freshest_live_map_rows(rows, window_hours=8)
 
 
 def latest_today_shift_checkins() -> dict[str, dict[str, Any]]:
@@ -2854,6 +2879,102 @@ def live_ops_courier_payload(
     }
 
 
+def nested_dict_value(value: Any, key: str) -> dict[str, Any]:
+    if isinstance(value, dict) and isinstance(value.get(key), dict):
+        return value.get(key) or {}
+    return {}
+
+
+def read_dsp_live_ops_couriers(
+    checkins_by_courier: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "dsp_drivers_live_raw",
+        params={
+            "select": (
+                "driver_id,courier_name,warehouse_name,active,license_plate,current_state,"
+                "route_assigned_at,shift_name,shift_start,shift_end,available_for_shift_since,"
+                "queue_wait_minutes,fetched_at,response_json"
+            ),
+            "order": "fetched_at.desc",
+            "limit": "1000",
+        },
+        timeout=30,
+    )
+    rows = freshest_live_map_rows(rows, window_hours=8)
+    by_courier: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        courier_id = str(row.get("driver_id") or "").strip()
+        if courier_id and courier_id not in by_courier:
+            by_courier[courier_id] = row
+
+    couriers: list[dict[str, Any]] = []
+    for row in by_courier.values():
+        payload = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+        route = nested_dict_value(payload, "route")
+        position = nested_dict_value(route, "current_position")
+        status = nested_dict_value(payload, "status")
+        statistics = nested_dict_value(payload, "statistics")
+        vehicle = nested_dict_value(payload, "vehicle")
+        personal = nested_dict_value(payload, "personal_info")
+        courier_id = str(row.get("driver_id") or payload.get("driver_id") or "").strip()
+        checkin = checkins_by_courier.get(courier_id) or {}
+        latitude = safe_float_value(position.get("latitude"))
+        longitude = safe_float_value(position.get("longitude"))
+        total_stops = safe_int(
+            statistics.get("parcels_total")
+            or statistics.get("orders_total")
+            or status.get("stops_total")
+        )
+        delivered = safe_int(
+            statistics.get("parcels_delivered")
+            or statistics.get("orders_delivered")
+            or status.get("deliveries_completed")
+        )
+        maps_url = f"https://www.google.com/maps?q={latitude},{longitude}" if latitude is not None and longitude is not None else ""
+        next_stop = str(status.get("next_stop") or "").strip()
+        route_id = str(
+            route.get("route_id")
+            or route.get("routeId")
+            or status.get("route_id")
+            or ""
+        ).strip()
+        couriers.append({
+            "courierId": courier_id,
+            "courierName": str(row.get("courier_name") or personal.get("name") or "Futár"),
+            "warehouse": str(row.get("warehouse_name") or personal.get("warehouse_name") or ""),
+            "warehouseId": "",
+            "status": str(row.get("current_state") or status.get("current_state") or ""),
+            "shiftStatus": "fetch-drivers",
+            "routeIds": [route_id] if route_id else [],
+            "activeRouteId": route_id,
+            "vehiclePlate": str(row.get("license_plate") or vehicle.get("license_plate") or ""),
+            "fridgeConfig": "",
+            "activeFrom": iso_local_text(row.get("shift_start")),
+            "activeTo": iso_local_text(row.get("shift_end")),
+            "totalStops": total_stops,
+            "deliveredStops": delivered,
+            "remainingStops": max(0, total_stops - delivered),
+            "lateOpenStops": 1 if safe_int(status.get("delay_minutes")) > 0 else 0,
+            "currentStop": {
+                "position": "",
+                "address": next_stop,
+                "state": str(row.get("current_state") or status.get("current_state") or ""),
+                "delayMinutes": safe_int(status.get("delay_minutes")),
+            } if next_stop else None,
+            "nextStop": None,
+            "queueEvent": str(checkin.get("event_type") or ""),
+            "queueEventAt": iso_local_text(checkin.get("created_at")),
+            "queueWarehouse": str(checkin.get("warehouse") or ""),
+            "lastLatitude": latitude,
+            "lastLongitude": longitude,
+            "mapsUrl": maps_url,
+            "lastPositionAt": iso_local_text(row.get("fetched_at")),
+            "updatedAt": iso_local_text(row.get("fetched_at")),
+        })
+    return sorted(couriers, key=lambda item: (item.get("warehouse") or "", item.get("courierName") or ""))
+
+
 def read_coordinator_live_map() -> dict[str, Any]:
     courier_rows = latest_today_live_map_courier_rows()
     stop_rows = latest_today_live_map_stop_rows()
@@ -2867,7 +2988,14 @@ def read_coordinator_live_map() -> dict[str, Any]:
         live_ops_courier_payload(row, stop_rows_by_courier, checkins_by_courier)
         for row in courier_rows
     ]
-    active_couriers = [item for item in couriers if item["activeRouteId"] or item["totalStops"]]
+    source = "courier_hub_live_map"
+    if not couriers:
+        couriers = read_dsp_live_ops_couriers(checkins_by_courier)
+        source = "dsp_drivers_live_raw"
+    active_couriers = [
+        item for item in couriers
+        if item["activeRouteId"] or item["totalStops"] or item.get("mapsUrl")
+    ]
     summary = {
         "couriers": len(couriers),
         "activeCouriers": len(active_couriers),
@@ -2875,10 +3003,15 @@ def read_coordinator_live_map() -> dict[str, Any]:
         "lateOpenStops": sum(safe_int(item.get("lateOpenStops")) for item in active_couriers),
         "queuedCouriers": len([item for item in couriers if item.get("queueEvent") == "queued"]),
         "returnedCouriers": len([item for item in couriers if item.get("queueEvent") == "returned"]),
+        "latestFetchedAt": max(
+            [item.get("updatedAt") for item in couriers if item.get("updatedAt")],
+            default="",
+        ),
     }
     return {
         "date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
         "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "source": source,
         "summary": summary,
         "couriers": sorted(couriers, key=lambda item: (item.get("warehouse") or "", item.get("courierName") or "")),
     }
