@@ -4514,6 +4514,13 @@ def snapshot_item_map(snapshot: dict[str, Any], section: str) -> dict[str, dict[
     }
 
 
+def snapshot_source_payload(snapshot: dict[str, Any], source_key: str) -> Any:
+    for source in snapshot.get("sources") or []:
+        if str(source.get("source_key") or "") == source_key:
+            return source.get("payload")
+    return {}
+
+
 def snapshot_signed_item(item: dict[str, Any], *, source: str = "settlement.courier_finance_snapshot") -> dict[str, Any]:
     amount_kind = str(item.get("amount_kind") or "huf").strip() or "huf"
     result = signed_item(
@@ -4525,6 +4532,64 @@ def snapshot_signed_item(item: dict[str, Any], *, source: str = "settlement.cour
     )
     result["amountKind"] = amount_kind
     return result
+
+
+def amount_from_snapshot_detail_row(row: dict[str, Any]) -> int:
+    for key in ("Összeg", "Osszeg", "amountHuf", "amount_value", "_amount", "Egységösszeg", "Egysegosszeg"):
+        if key in row and row.get(key) not in (None, ""):
+            return money_int(row.get(key))
+    return 0
+
+
+def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict[str, Any]:
+    label = str(
+        row.get("Tétel")
+        or row.get("Tetel")
+        or row.get("Megnevezés")
+        or row.get("Megnevezes")
+        or row.get("item_label")
+        or f"Részlet {index}"
+    )
+    note_parts = [
+        str(row.get(key) or "").strip()
+        for key in ("Számítás", "Szamitas", "Megjegyzés", "Megjegyzes", "Forrás", "Forras")
+        if str(row.get(key) or "").strip()
+    ]
+    if row.get("Darab") not in (None, "") and row.get("Egységösszeg") not in (None, ""):
+        unit_note = f"{money_int(row.get('Darab'))} x {money_int(row.get('Egységösszeg'))} Ft"
+        if unit_note not in note_parts:
+            note_parts.insert(0, unit_note)
+    return {
+        "key": f"{card_key}_detail_{index}",
+        "label": label,
+        "amountHuf": amount_from_snapshot_detail_row(row),
+        "amountKind": "huf",
+        "source": "settlement.courier_finance_snapshot_source",
+        "note": " | ".join(dict.fromkeys(part for part in note_parts if part)),
+    }
+
+
+def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: str) -> list[dict[str, Any]]:
+    drilldowns = snapshot_source_payload(snapshot, "card_drilldowns")
+    if not isinstance(drilldowns, dict):
+        return []
+    candidates = [label]
+    mojibake_map = {
+        "Kiflis levonások / bónuszok": "Kiflis levonĂˇsok / bĂłnuszok",
+        "JITT bónusz / malus": "JITT bĂłnusz / malus",
+    }
+    if label in mojibake_map:
+        candidates.append(mojibake_map[label])
+    detail_rows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        rows = drilldowns.get(candidate)
+        if isinstance(rows, list) and rows:
+            detail_rows = [row for row in rows if isinstance(row, dict)]
+            break
+    return [
+        item for index, row in enumerate(detail_rows, start=1)
+        if (item := snapshot_detail_item(card_key, index, row)).get("amountHuf") or card_key in {"performance", "insurance"}
+    ]
 
 
 def build_financial_breakdown_from_snapshot(
@@ -4572,6 +4637,27 @@ def build_financial_breakdown_from_snapshot(
         "loyalty_advance_booking_days",
         "shift_count",
     ])
+    label_by_card_key = {
+        "base": "Alapdíj",
+        "tip": "Borravaló",
+        "delay_bonus": "Késedelmi díj",
+        "compliance_bonus": "Túramegfelelés",
+        "address_bonus_kifli": "Cím bónusz (Kifli)",
+        "loyalty_bonus": "Lojalitás",
+        "customer_rating": "Ügyfélértékelési bónusz",
+        "kiflis_bonus_malus": "Kiflis levonások / bónuszok",
+        "bonus_malus": "JITT bónusz / malus",
+        "corrections": "Korrekció",
+        "atm_effect": "ATM hatás",
+        "salary_advance": "Fizetés előleg",
+        "insurance": "Céltartalék 10%",
+        "performance": "Kör",
+    }
+
+    def detail_or_fallback(card_key: str, fallback_keys: list[str]) -> list[dict[str, Any]]:
+        detail = snapshot_card_detail_items(snapshot, label_by_card_key.get(card_key, ""), card_key)
+        return detail if detail else nonzero_items(fallback_keys)
+
     cards = [
         {
             "key": "payable",
@@ -4585,37 +4671,37 @@ def build_financial_breakdown_from_snapshot(
                 signed_item("payable_total", "Kifizetendő", payable, source="settlement.courier_finance_snapshot"),
             ],
         },
-        {"key": "base", "label": "Alapdíj", "amountHuf": amount("base"), "tone": "income", "items": items(["base"])},
+        {"key": "base", "label": "Alapdíj", "amountHuf": amount("base"), "tone": "income", "items": detail_or_fallback("base", ["base"])},
         {"key": "tip", "label": "Borravaló", "amountHuf": amount("tip"), "tone": "income", "items": items(["tip"])},
-        {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": amount("delay_bonus"), "tone": "income", "items": items(["delay_bonus"])},
-        {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": amount("compliance_bonus"), "tone": "income", "items": items(["compliance_bonus"])},
+        {"key": "delay_bonus", "label": "Késedelmi díj", "amountHuf": amount("delay_bonus"), "tone": "income", "items": detail_or_fallback("delay_bonus", ["delay_bonus"])},
+        {"key": "compliance_bonus", "label": "Túramegfelelés", "amountHuf": amount("compliance_bonus"), "tone": "income", "items": detail_or_fallback("compliance_bonus", ["compliance_bonus"])},
         {"key": "address_bonus_kifli", "label": "Cím bónusz (Kifli)", "amountHuf": amount("address_bonus_kifli"), "tone": "income", "items": items(["address_bonus_kifli"])},
-        {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": amount("loyalty_bonus"), "tone": "income", "items": items(["loyalty_bonus"])},
+        {"key": "loyalty_bonus", "label": "Lojalitási bónusz", "amountHuf": amount("loyalty_bonus"), "tone": "income", "items": detail_or_fallback("loyalty_bonus", ["loyalty_bonus"])},
         {"key": "customer_rating", "label": "Ügyfélértékelés", "amountHuf": amount("customer_rating"), "tone": "income", "items": items(["customer_rating"])},
         {
             "key": "kiflis_bonus_malus",
             "label": "Kiflis levonások / bónuszok",
             "amountHuf": amount("kiflis_bonus_malus"),
             "tone": "info",
-            "items": nonzero_items(["monthly_bonus", "monthly_malus", "kiflis_bonus_malus"]),
+            "items": detail_or_fallback("kiflis_bonus_malus", ["monthly_bonus", "monthly_malus", "kiflis_bonus_malus"]),
         },
         {
             "key": "bonus_malus",
             "label": "JITT bónusz / malus",
             "amountHuf": amount("bonus_malus"),
             "tone": "info",
-            "items": nonzero_items(["manual_bonus", "manual_malus", "bonus_malus"]),
+            "items": detail_or_fallback("bonus_malus", ["manual_bonus", "manual_malus", "bonus_malus"]),
         },
-        {"key": "atm_effect", "label": "ATM hatás", "amountHuf": amount("atm_effect"), "tone": "deduction", "items": items(["atm_effect"])},
+        {"key": "atm_effect", "label": "ATM hatás", "amountHuf": amount("atm_effect"), "tone": "deduction", "items": detail_or_fallback("atm_effect", ["atm_effect"])},
         {"key": "salary_advance", "label": "Fizetés előleg", "amountHuf": amount("salary_advance"), "tone": "deduction", "items": items(["salary_advance"])},
         {
             "key": "insurance",
             "label": "Biztosítás",
             "amountHuf": amount("reserve") + amount("insurance_fee"),
             "tone": "deduction",
-            "items": nonzero_items(["target_reserve_open", "reserve", "insurance_fee", "target_reserve_close"]),
+            "items": detail_or_fallback("insurance", ["target_reserve_open", "reserve", "insurance_fee", "target_reserve_close"]),
         },
-        {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": nonzero_items(["correction", "correction_income", "correction_deduction"])},
+        {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": detail_or_fallback("corrections", ["correction_income", "correction_deduction", "correction"])},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": amount("orders"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
     complaint_options = [
@@ -4647,56 +4733,72 @@ def build_tig_breakdown_from_snapshot(
     month: date,
     financial_breakdown: dict[str, Any],
 ) -> dict[str, Any] | None:
-    tig_items = {
-        str(item.get("item_key") or ""): item
-        for item in financial_breakdown.get("tigSnapshotRows") or []
-        if str(item.get("item_key") or "")
-    }
-    if not tig_items:
-        return None
     courier_id, courier_name = courier_identity(user)
-    rows: list[dict[str, Any]] = []
-    final_total = 0
-    for key, item in tig_items.items():
-        amount = money_int(item.get("amount_value"))
-        if key == "tig_final_total":
-            final_total = amount
-            continue
-        label = str(item.get("item_label") or key)
-        note = str(item.get("note") or "")
-        tax_mode = "tip" if key == "tip" else "vat"
-        net, vat, gross, vat_label = tig_split_amount(amount, tax_mode)
-        rows.append({
-            "key": key,
-            "label": label,
-            "netHuf": net,
-            "vatHuf": vat,
-            "vatLabel": vat_label,
-            "grossHuf": gross,
-            "note": note,
-        })
-    if not final_total:
-        final_total = money_int(financial_breakdown.get("totalPayableHuf"))
+    if not courier_id:
+        return None
+    profile_rows = optional_supabase_rows(
+        "courier_master",
+        params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
+        timeout=30,
+    )
+    profile = profile_rows[0] if profile_rows else {}
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in financial_breakdown.get("cards") or []
+        for item in card.get("items") or []
+    }
+    tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
+    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    payable = money_int(financial_breakdown.get("totalPayableHuf"))
+    tig = build_tig_breakdown(
+        {
+            "name": courier_name,
+            "company_name": profile.get("company_name") or courier_name,
+            "address": profile.get("company_address") or profile.get("address") or "",
+            "company_address": profile.get("company_address") or profile.get("address") or "",
+            "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+            "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+            "vat_status": profile.get("vat_status") or "",
+            "employment_type": profile.get("employment_type") or "",
+            "employment_status": profile.get("employment_status") or "",
+            "efo_status": profile.get("efo_status") or "",
+            "id": courier_id,
+            "document_month": month,
+        },
+        {"payable": payable, "cash": cash_amount, "tip": tip_amount},
+    )
     fallback_meta = tig_document_meta(month, courier_id)
+    document_meta = {**fallback_meta, **(tig.get("documentMeta") or {})}
+    seller_name = str(profile.get("company_name") or courier_name or "")
+    seller_address = str(profile.get("company_address") or profile.get("address") or "")
+    seller_tax = str(profile.get("tax_number") or profile.get("tax_id") or "")
     return {
         "available": True,
         "month": month.strftime("%Y-%m"),
         "courierId": courier_id,
         "courierName": courier_name,
-        "rows": rows,
-        "finalTotalHuf": final_total,
+        "rows": tig.get("rows") or [],
+        "finalTotalHuf": money_int(tig.get("finalTotalHuf")),
+        "taxMode": str(tig.get("taxMode") or ""),
+        "taxLabel": str(tig.get("taxLabel") or ""),
         "source": "settlement.courier_finance_snapshot",
         "snapshotId": str(financial_breakdown.get("snapshotId") or ""),
+        "seller": {
+            "label": "Eladó",
+            "name": seller_name,
+            "address": seller_address,
+            "taxNumber": seller_tax,
+        },
         "buyer": {
             "label": "Vevő",
             "name": "Just in Time Transport Hungary Kft.",
             "postalCity": "1201 Budapest",
             "address": "Atléta utca 44.",
             "taxNumber": "32649460-2-43",
-            "periodLabel": fallback_meta["periodLabel"],
-            "performanceDate": fallback_meta["performanceDate"],
-            "paymentDueDate": fallback_meta["paymentDueDate"],
-            "note": fallback_meta["note"],
+            "periodLabel": document_meta.get("periodLabel") or fallback_meta["periodLabel"],
+            "performanceDate": document_meta.get("performanceDate") or fallback_meta["performanceDate"],
+            "paymentDueDate": document_meta.get("paymentDueDate") or fallback_meta["paymentDueDate"],
+            "note": document_meta.get("note") or fallback_meta["note"],
         },
     }
 

@@ -3018,6 +3018,7 @@ function renderTigBreakdown() {
     </div>
   `;
   const buyer = tig.buyer || {};
+  const seller = tig.seller || {};
   const buyerBlock = buyer.name ? `
     <section class="tig-buyer-card">
       <span>${escapeHtml(buyer.label || "Vevő")}</span>
@@ -3031,13 +3032,21 @@ function renderTigBreakdown() {
       ${buyer.note ? `<small>Megjegyzés: ${escapeHtml(buyer.note)}</small>` : ""}
     </section>
   ` : "";
+  const sellerBlock = seller.name ? `
+    <section class="tig-buyer-card">
+      <span>${escapeHtml(seller.label || "Eladó")}</span>
+      <strong>${escapeHtml(seller.name || "")}</strong>
+      ${seller.address ? `<small>${escapeHtml(seller.address || "")}</small>` : ""}
+      ${seller.taxNumber ? `<small>Adószám: ${escapeHtml(seller.taxNumber || "")}</small>` : ""}
+    </section>
+  ` : "";
   return `
     <section class="tig-total-card">
       <span>TIG végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
       <small>${escapeHtml(tig.month || state.workflowMonth)}</small>
     </section>
-    ${buyerBlock}
+    <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
     ${renderTigRows(transferRows)}
     ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP nem levonásként jelenik meg, külön számlás tétel.</small></section>${renderTigRows(cashRows)}` : ""}
   `;
