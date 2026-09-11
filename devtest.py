@@ -13,6 +13,8 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit.elements.arrow import ArrowMixin
+from streamlit.elements.widgets.data_editor import DataEditorMixin
 from resources.settlement_excel_import import (
     delete_excel_import,
     get_import_preview,
@@ -58,6 +60,12 @@ from resources.profile_route_metrics import resolve_profile_route_metrics
 from page.settlement_parameter_catalog import render_parameter_catalog
 
 APP_BUILD_MARKER = "2026-09-11-recursion-reset"
+
+# Streamlit Cloud can keep the Python process alive between code reloads.
+# If an earlier version monkey-patched these functions, restore Streamlit's
+# original bound methods before rendering anything.
+st.dataframe = ArrowMixin.dataframe.__get__(st._main, type(st._main))
+st.data_editor = DataEditorMixin.data_editor.__get__(st._main, type(st._main))
 
 try:
     from resources.dsp_route_explanations import (
