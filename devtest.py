@@ -2335,17 +2335,18 @@ def _drilldown_rows_for_label(drilldowns: dict[str, object], detail_label: str) 
 
 def _snapshot_fallback_drilldown(snapshot: dict[str, object], detail_label: str) -> list[dict[str, object]]:
     key_map = {
-        "Korrekció": ["correction_income", "correction_deduction", "correction"],
-        "Kiflis levonások / bónuszok": ["monthly_bonus", "monthly_malus", "kiflis_bonus_malus"],
-        "JITT bónusz / malus": ["manual_bonus", "manual_malus", "bonus_malus"],
-        "ATM hatás": ["atm_effect"],
-        "Fizetés előleg": ["salary_advance"],
-        "Céltartalék 10%": ["target_reserve_open", "reserve", "target_reserve_close"],
+        "Korrekció": (["correction_income", "correction_deduction"], ["correction"]),
+        "Kiflis levonások / bónuszok": (["monthly_bonus", "monthly_malus"], ["kiflis_bonus_malus"]),
+        "JITT bónusz / malus": (["manual_bonus", "manual_malus"], ["bonus_malus"]),
+        "ATM hatás": (["atm_effect"], []),
+        "Fizetés előleg": (["salary_advance"], []),
+        "Céltartalék 10%": (["target_reserve_open", "reserve", "target_reserve_close"], []),
     }
-    wanted_keys = key_map.get(detail_label) or []
-    if not wanted_keys:
+    detail_keys, total_keys = key_map.get(detail_label) or ([], [])
+    wanted_keys = [*detail_keys, *total_keys]
+    if not detail_keys and not total_keys:
         return []
-    rows = []
+    rows_by_key = {}
     for item in snapshot.get("items") or []:
         if str(item.get("section") or "") != "finance":
             continue
@@ -2355,13 +2356,15 @@ def _snapshot_fallback_drilldown(snapshot: dict[str, object], detail_label: str)
         amount = parse_huf_value(item.get("amount_value"))
         if not amount and item_key not in {"target_reserve_open", "target_reserve_close"}:
             continue
-        rows.append({
+        rows_by_key[item_key] = {
             "Tétel": str(item.get("item_label") or item_key),
             "Összeg": amount,
-            "Forrás": "settlement.courier_finance_snapshot_item",
             "Megjegyzés": str(item.get("note") or ""),
-        })
-    return rows
+        }
+    detail_rows = [rows_by_key[key] for key in detail_keys if key in rows_by_key]
+    if detail_rows:
+        return detail_rows
+    return [rows_by_key[key] for key in total_keys if key in rows_by_key]
 
 
 def _compact_amount_drilldown(label: str, rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -13113,25 +13116,6 @@ def render_courier_detail_page() -> None:
             )
 
     if selected_menu == "Pénzügy":
-        snapshot_rebuild_key = f"finance_snapshot_rebuild_{courier_id}_{period_start:%Y%m}_{active_calculation_mode}"
-        force_snapshot_rebuild = bool(st.session_state.pop(snapshot_rebuild_key, False))
-        if not force_snapshot_rebuild:
-            latest_snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
-            if latest_snapshot:
-                action_cols = st.columns([1, 1])
-                with action_cols[0]:
-                    st.caption("A Pénzügy oldal mentett DB lenyomatból töltődik be.")
-                with action_cols[1]:
-                    if st.button(
-                        "Újraszámítás és mentés",
-                        use_container_width=True,
-                        key=f"finance_snapshot_recalculate_{courier_id}_{period_start:%Y%m}_{active_calculation_mode}",
-                    ):
-                        st.session_state[snapshot_rebuild_key] = True
-                        clear_devtest_finance_snapshot_cache()
-                        rerun_courier_profile("Pénzügy")
-                render_devtest_finance_snapshot_view(latest_snapshot)
-                return
         is_api_mode = str(active_calculation_mode or "").strip().casefold() == "api"
         if route_detail.empty:
             route_detail = load_courier_route_detail(
