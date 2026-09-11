@@ -19,6 +19,7 @@ const state = {
   expenseRequests: [],
   atmPayments: [],
   registrationRequests: [],
+  documentArchive: [],
   atmSubmitting: false,
   currentRouteLoading: false,
   game: null,
@@ -45,7 +46,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v113";
+const APP_VERSION = "v114";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2752,6 +2753,83 @@ function documentList(documents) {
     </div>`).join("")}</div>`;
 }
 
+function documentArchiveQuery() {
+  const params = new URLSearchParams();
+  if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+    params.set("courier", state.workflowPreviewCourierId);
+  }
+  params.set("_", String(Date.now()));
+  return params.toString();
+}
+
+function documentMonthKey(document) {
+  const month = String(document.document_month || document.documentMonth || "").slice(0, 7);
+  if (month) return month;
+  return String(document.uploaded_at || document.uploadedAt || document.created_at || "").slice(0, 7) || "ismeretlen";
+}
+
+function documentMonthLabel(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) return "Dátum nélküli dokumentumok";
+  const date = new Date(`${monthKey}-01T00:00:00`);
+  const label = new Intl.DateTimeFormat("hu-HU", { year: "numeric", month: "long" }).format(date);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function documentTypeLabel(documentType) {
+  const cleanType = String(documentType || "").toLowerCase();
+  const baseType = cleanType.split("__")[0];
+  const labels = {
+    settlement: "Elszámolás",
+    tig: "TIG",
+    invoice: "Számla",
+    invoice_submit: "Számla",
+    invoice_check: "Számla ellenőrzés",
+    invoice_payment: "Kifizetés",
+    complaint_response: "Admin válasz",
+  };
+  return labels[baseType] || "Egyéb dokumentum";
+}
+
+function groupedDocumentArchive(documents = []) {
+  const groups = new Map();
+  documents.forEach((document) => {
+    const key = documentMonthKey(document);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(document);
+  });
+  return [...groups.entries()]
+    .sort(([left], [right]) => right.localeCompare(left))
+    .map(([month, rows]) => ({
+      month,
+      label: documentMonthLabel(month),
+      rows: rows.sort((a, b) => {
+        const left = String(a.uploaded_at || a.uploadedAt || a.created_at || "");
+        const right = String(b.uploaded_at || b.uploadedAt || b.created_at || "");
+        return right.localeCompare(left);
+      }),
+    }));
+}
+
+function renderDocumentArchive(documents = []) {
+  const groups = groupedDocumentArchive(documents);
+  if (!groups.length) return `<div class="empty-card">Még nincs feltöltött dokumentum.</div>`;
+  return `<div class="document-month-list">${groups.map((group) => `
+    <section class="document-month-group">
+      <h3>${escapeHtml(group.label)}</h3>
+      <div class="document-list">${group.rows.map((document) => `
+        <div class="document-row archive">
+          <div>
+            <span class="document-badge">${escapeHtml(documentTypeLabel(document.document_type))}</span>
+            <strong>${escapeHtml(document.title || document.file_name || "Dokumentum")}</strong>
+            <small>${escapeHtml(document.file_name || "")} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt${document.uploaded_at ? ` · ${new Date(document.uploaded_at).toLocaleDateString("hu-HU")}` : ""}</small>
+          </div>
+          <a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl || "#"))}">Letöltés</a>
+        </div>
+      `).join("")}</div>
+    </section>
+  `).join("")}</div>`;
+}
+
 function latestDocumentList(documents) {
   const latestDocuments = [...documents].sort((a, b) => {
     const left = String(a.uploaded_at || a.uploadedAt || a.created_at || "");
@@ -2795,31 +2873,19 @@ function allWorkflowDocuments() {
 function renderDocumentsSection() {
   const target = $("#documents-list");
   if (!target) return;
-  const paymentDone = state.workflow?.states?.invoice_payment?.status === "done";
-  target.innerHTML = `
-    <div class="process-title">
-      <span class="step-code">${paymentDone ? "✓" : "…"}</span>
-      <div>
-        <h3>${paymentDone ? "A hónap lezárva" : "A hónap még nincs lezárva"}</h3>
-        <p>${paymentDone ? "A számlát admin oldalon elfogadták és a kifizetés megtörtént." : "A lezárás a számla admin elfogadása és kifizetése után történik meg."}</p>
-      </div>
-    </div>
-    ${documentList(allWorkflowDocuments())}
-  `;
+  target.innerHTML = renderDocumentArchive(state.documentArchive || []);
 }
 
 async function loadDocuments() {
-  if (!state.workflow) {
-    state.workflow = waitingWorkflow();
+  const target = $("#documents-list");
+  if (target) target.innerHTML = `<div class="empty-card">Dokumentumok betöltése...</div>`;
+  try {
+    const payload = await api(`/api/documents?${documentArchiveQuery()}`);
+    state.documentArchive = payload.documents || [];
     renderDocumentsSection();
-    try {
-      state.workflow = await api(`/api/workflow?${workflowQuery()}`);
-    } catch (error) {
-      $("#documents-list").innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
-      return;
-    }
+  } catch (error) {
+    if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
-  renderDocumentsSection();
 }
 
 function complaintList(complaints) {

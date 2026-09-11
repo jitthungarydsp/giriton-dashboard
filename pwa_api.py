@@ -9721,6 +9721,27 @@ def build_workflow(
     }
 
 
+def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id,document_type,document_month,title,file_name,mime_type,file_size,note,uploaded_by,uploaded_at",
+            "courier_id": f"eq.{courier_id}",
+            "order": "document_month.desc,uploaded_at.desc",
+            "limit": "500",
+        },
+    )
+    return [
+        {
+            **row,
+            "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
+        }
+        for row in rows
+    ]
+
+
 def list_workflow_processes(user: dict[str, Any], month: date) -> list[dict[str, str]]:
     documents, status_rows, complaints = read_workflow_rows(user, month)
     process_ids: set[str] = {""}
@@ -11776,6 +11797,16 @@ def create_workflow_complaint(
         "deletedTigCount": deleted_tig_count,
         "workflow": build_workflow(user, month, process_id),
     }
+
+
+@app.get("/api/documents")
+def courier_documents(
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    return {"documents": read_courier_document_archive(view_user)}
 
 
 @app.get("/api/documents/{document_id}")
