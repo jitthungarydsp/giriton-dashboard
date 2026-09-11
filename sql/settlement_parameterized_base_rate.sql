@@ -366,9 +366,14 @@ with raw as (
           and r.work_date between b.valid_from and coalesce(b.valid_to, 'infinity'::date)
           and b.day_type in (coalesce(day_rule.day_type, 'normal'), 'any')
           and b.route_type in (r.route_type, 'any')
+          and (
+              nullif(trim(b.warehouse_code), '') is null
+              or lower(trim(b.warehouse_code)) = lower(trim(r.warehouse_code))
+          )
         order by b.priority,
                  case when b.day_type = coalesce(day_rule.day_type, 'normal') then 0 else 1 end,
                  case when b.route_type = r.route_type then 0 else 1 end,
+                 case when nullif(trim(b.warehouse_code), '') is not null then 0 else 1 end,
                  b.id
         limit 1
     ) rate on true
