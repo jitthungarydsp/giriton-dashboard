@@ -19167,13 +19167,13 @@ def show_new_settlement_page() -> None:
                 st.error(f"Az ügyfélértékelés mentése sikertelen: {exc}")
 
         import_result = st.session_state.get("settlement_import_result")
-        if import_result:
+        if isinstance(import_result, dict):
             st.info(
-                f"Utolsó import: {import_result['sheet_count']} sheet, "
-                f"{import_result['inserted_rows']} sor. Session: "
-                f"{import_result['session_id']}"
+                f"Utolsó import: {import_result.get('sheet_count', 0)} sheet, "
+                f"{import_result.get('inserted_rows', 0)} sor. Session: "
+                f"{import_result.get('session_id', '-')}"
             )
-            for sheet_name, row_count in import_result["sheet_row_counts"].items():
+            for sheet_name, row_count in (import_result.get("sheet_row_counts") or {}).items():
                 st.write(f"- {sheet_name}: {row_count} sor")
 
         number_audit = st.session_state.get("settlement_number_audit_report")
@@ -19257,9 +19257,17 @@ def show_new_settlement_page() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
-            diagnostics = load_excel_base_rate_diagnostics(
-                import_result["session_id"],
-                int(st.session_state.get("settlement_parameter_revision", 0)),
+            diagnostics_session_id = (
+                str(import_result.get("session_id") or "")
+                if isinstance(import_result, dict)
+                else str(st.session_state.get("settlement_import_session_id") or import_session_id or "")
+            )
+            diagnostics = (
+                load_excel_base_rate_diagnostics(
+                    diagnostics_session_id,
+                    int(st.session_state.get("settlement_parameter_revision", 0)),
+                )
+                if diagnostics_session_id else pd.DataFrame()
             )
             if not diagnostics.empty and (diagnostics["DB státusz"] != "Alapdíj kiszámolva").any():
                 st.markdown("##### Alapdíj-egyezés ellenőrzése (DB)")
