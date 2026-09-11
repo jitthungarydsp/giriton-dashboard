@@ -2815,6 +2815,7 @@ def enrich_mobile_settlement_row_for_snapshot(
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
     except Exception:
         adjustments = pd.DataFrame()
+    adjustments = deduplicate_adjustments_for_calculation(adjustments)
     if not adjustments.empty and "adjustment_type" in adjustments.columns:
         adjustment_totals = adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
         enriched["JITT bónusz"] = float(adjustment_totals.get("bonus", 0.0))
@@ -2853,6 +2854,7 @@ def append_jitt_bonus_malus_mobile_rows(
     adjustment_malus = 0.0
     if courier_id and period_start and period_end:
         adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+        adjustments = deduplicate_adjustments_for_calculation(adjustments)
         if not adjustments.empty:
             detail_index = 1
             for _, adjustment in adjustments.reset_index(drop=True).iterrows():
@@ -4837,6 +4839,36 @@ def extract_transaction_id_from_note(note: object) -> str:
     text = str(note or "")
     match = re.search(r"Tranzakci[oó]\s*:\s*([^|;\n]+)", text, flags=re.IGNORECASE)
     return match.group(1).strip() if match else ""
+
+
+def deduplicate_adjustments_for_calculation(adjustments: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(adjustments, pd.DataFrame) or adjustments.empty:
+        return adjustments
+    required_columns = {"adjustment_type", "amount_huf", "note"}
+    if not required_columns.issubset(set(adjustments.columns)):
+        return adjustments
+
+    data = adjustments.copy()
+    notes = data["note"].fillna("").astype(str)
+    transactions = notes.map(extract_transaction_id_from_note)
+    amount_values = pd.to_numeric(data["amount_huf"], errors="coerce").fillna(0.0).round(2)
+    data["amount_huf"] = amount_values
+    type_values = data["adjustment_type"].fillna("").astype(str).str.strip().str.lower()
+    normalized_notes = (
+        notes.str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+        .str.lower()
+    )
+    fallback_keys = type_values + "|" + amount_values.astype(str) + "|" + normalized_notes
+    data["_dedupe_key"] = [
+        f"{adjustment_type}|transaction|{transaction.strip().lower()}" if str(transaction).strip() else fallback
+        for adjustment_type, transaction, fallback in zip(type_values, transactions, fallback_keys)
+    ]
+    if "created_at" in data.columns:
+        data["_created_at_sort"] = pd.to_datetime(data["created_at"], errors="coerce")
+        data = data.sort_values("_created_at_sort", kind="mergesort")
+    data = data.drop_duplicates("_dedupe_key", keep="last")
+    return data.drop(columns=[column for column in ["_dedupe_key", "_created_at_sort"] if column in data.columns])
 
 
 def copy_cards_html(items: list[tuple[str, str]]) -> None:
@@ -12611,6 +12643,7 @@ def render_courier_detail_page() -> None:
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
     profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
+    profile_adjustments = deduplicate_adjustments_for_calculation(profile_adjustments)
     profile_adjustment_totals = (
         profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
         if not profile_adjustments.empty else {}
@@ -13749,9 +13782,10 @@ def render_courier_detail_page() -> None:
                         jitt_items["Tranzakció"] = jitt_items["Megjegyzés"].map(extract_transaction_id_from_note)
                         jitt_items["_group_key"] = jitt_items["Tranzakció"].where(jitt_items["Tranzakció"].astype(str).ne(""), jitt_items.get("id", pd.Series("", index=jitt_items.index)).astype(str))
                         grouped = (
-                            jitt_items.groupby(["Tétel", "_group_key", "Tranzakció", "Időszak"], dropna=False)
+                            jitt_items.groupby(["Tétel", "_group_key", "Tranzakció"], dropna=False)
                             .agg(
-                                Összeg=("Összeg", "sum"),
+                                Összeg=("Összeg", "first"),
+                                Időszak=("Időszak", lambda values: " | ".join(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))),
                                 Megjegyzés=("Megjegyzés", lambda values: " | ".join(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))),
                             )
                             .reset_index()
