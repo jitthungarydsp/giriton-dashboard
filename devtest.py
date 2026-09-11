@@ -18396,6 +18396,7 @@ def reprocess_existing_excel_session(excel_import_session_id: str) -> dict[str, 
     st.session_state.pop("settlement_import_preview", None)
     st.session_state.pop("settlement_processing_report", None)
     st.session_state.pop("settlement_number_audit_report", None)
+    st.session_state.pop("current_filtered_data", None)
 
     processing_report = process_settlement_session(
         get_db(),
@@ -18496,6 +18497,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
             st.session_state.pop("settlement_import_preview", None)
             st.session_state.pop("settlement_processing_report", None)
             st.session_state.pop("settlement_number_audit_report", None)
+            st.session_state.pop("current_filtered_data", None)
 
             processing_report = process_settlement_session(
                 get_db(),

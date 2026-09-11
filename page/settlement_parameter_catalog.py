@@ -132,6 +132,12 @@ def _mark_parameters_changed(client: Any) -> None:
     st.session_state["settlement_parameter_revision"] = int(
         st.session_state.get("settlement_parameter_revision", 0)
     ) + 1
+    for key in [
+        "current_filtered_data",
+        "settlement_base_rate_summary",
+        "settlement_number_audit_report",
+    ]:
+        st.session_state.pop(key, None)
     try:
         recalculate_excel_base_rates(
             client,
