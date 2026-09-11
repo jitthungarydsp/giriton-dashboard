@@ -3179,6 +3179,12 @@ def publish_mobile_settlement_snapshot(
         )
         rows = recalculate_mobile_breakdown_totals(rows)
         profile_row = profile_by_id.get(courier_id, {})
+        tig_payable_total = parse_huf_value(item.get("Kifizetendő")) or _mobile_breakdown_amount(rows, "payable")
+        tig_tip_total = parse_huf_value(item.get("Borravaló")) or _mobile_breakdown_amount(rows, "tip")
+        tig_cash_total = (
+            abs(parse_huf_value(item.get("Importált ATM levonás")))
+            or abs(_mobile_breakdown_amount(rows, "atm_effect"))
+        )
         tig_breakdown = build_tig_breakdown(
             tig_payment_payload_from_profile(
                 profile_row,
@@ -3187,9 +3193,9 @@ def publish_mobile_settlement_snapshot(
                 period_start=period_start,
             ),
             {
-                "payable": _mobile_breakdown_amount(rows, "payable"),
-                "tip": _mobile_breakdown_amount(rows, "tip"),
-                "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
+                "payable": tig_payable_total,
+                "tip": tig_tip_total,
+                "cash": tig_cash_total,
             },
         )
         rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
@@ -3263,6 +3269,12 @@ def refresh_mobile_settlement_breakdown_snapshot(
         )
         rows = recalculate_mobile_breakdown_totals(rows)
         profile_row = profile_by_id.get(courier_id, {})
+        tig_payable_total = parse_huf_value(item.get("Kifizetendő")) or _mobile_breakdown_amount(rows, "payable")
+        tig_tip_total = parse_huf_value(item.get("Borravaló")) or _mobile_breakdown_amount(rows, "tip")
+        tig_cash_total = (
+            abs(parse_huf_value(item.get("Importált ATM levonás")))
+            or abs(_mobile_breakdown_amount(rows, "atm_effect"))
+        )
         tig_breakdown = build_tig_breakdown(
             tig_payment_payload_from_profile(
                 profile_row,
@@ -3271,9 +3283,9 @@ def refresh_mobile_settlement_breakdown_snapshot(
                 period_start=period_start,
             ),
             {
-                "payable": _mobile_breakdown_amount(rows, "payable"),
-                "tip": _mobile_breakdown_amount(rows, "tip"),
-                "cash": abs(_mobile_breakdown_amount(rows, "atm_effect")),
+                "payable": tig_payable_total,
+                "tip": tig_tip_total,
+                "cash": tig_cash_total,
             },
         )
         rows.extend(mobile_tig_rows_from_breakdown(tig_breakdown))
@@ -3351,6 +3363,12 @@ def save_devtest_finance_snapshots_for_rows(
             )
             finance_rows = recalculate_mobile_breakdown_totals(finance_rows)
             profile_row = profile_by_id.get(courier_id, {})
+            tig_payable_total = parse_huf_value(item.get("Kifizetendő")) or _mobile_breakdown_amount(finance_rows, "payable")
+            tig_tip_total = parse_huf_value(item.get("Borravaló")) or _mobile_breakdown_amount(finance_rows, "tip")
+            tig_cash_total = (
+                abs(parse_huf_value(item.get("Importált ATM levonás")))
+                or abs(_mobile_breakdown_amount(finance_rows, "atm_effect"))
+            )
             tig_breakdown = build_tig_breakdown(
                 tig_payment_payload_from_profile(
                     profile_row,
@@ -3359,9 +3377,9 @@ def save_devtest_finance_snapshots_for_rows(
                     period_start=period_start,
                 ),
                 {
-                    "payable": _mobile_breakdown_amount(finance_rows, "payable"),
-                    "tip": _mobile_breakdown_amount(finance_rows, "tip"),
-                    "cash": abs(_mobile_breakdown_amount(finance_rows, "atm_effect")),
+                    "payable": tig_payable_total,
+                    "tip": tig_tip_total,
+                    "cash": tig_cash_total,
                 },
             )
             tig_rows = tig_editor_rows_from_breakdown(tig_breakdown).to_dict("records")
@@ -3424,7 +3442,7 @@ def save_devtest_finance_snapshots_for_rows(
                     },
                 ],
                 metadata={
-                    "payable_total": _mobile_breakdown_amount(finance_rows, "payable"),
+                    "payable_total": tig_payable_total,
                     "tig_final_total": parse_huf_value(tig_breakdown.get("finalTotalHuf")),
                     "income_total": _mobile_breakdown_amount(finance_rows, "income"),
                     "deduction_total": _mobile_breakdown_amount(finance_rows, "deductions"),
