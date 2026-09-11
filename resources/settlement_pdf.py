@@ -522,6 +522,11 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
 
     document_month = courier.get("document_month")
     month_code = document_month.strftime("%Y-%m") if isinstance(document_month, date) else str(document_month or period)
+    document_reference = str(
+        courier.get("document_reference")
+        or (tig_breakdown or {}).get("documentReference")
+        or ""
+    ).strip()
     seller_name = str(courier.get("company_name") or courier.get("name") or "")
     seller_address = str(courier.get("address") or courier.get("company_address") or "-")
     seller_tax = str(courier.get("tax_number") or courier.get("tax_id") or "-")
@@ -590,7 +595,7 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
         [[
             rich("TIG VÉGÖSSZEG", "tig_hero_label"),
             rich(escape(_money(final_total)), "tig_hero_amount"),
-            rich(escape(month_code), "tig_hero_month"),
+            rich(escape(f"{month_code} | {document_reference}" if document_reference else month_code), "tig_hero_month"),
         ]],
         [166 * mm],
         [

@@ -322,6 +322,8 @@ textarea { min-height: 96px; resize: vertical; }
 .financial-complaint-options .checkbox-line { align-items: flex-start; }
 .financial-complaint-options span { display: grid; gap: 2px; }
 .financial-complaint-options strong { color: var(--ink); font-size: 12px; }
+.tig-toolbar { display: flex; justify-content: flex-end; margin-top: 12px; }
+.tig-download-link { background: #1aa34a; color: #fff; }
 .tig-total-card { display: grid; gap: 6px; margin-top: 18px; padding: 18px; border-radius: 18px; background: #20352a; color: #fff; text-align: center; box-shadow: 0 14px 32px #17231c20; }
 .tig-total-card span { color: #cfe88f; font-size: 11px; font-weight: 850; text-transform: uppercase; }
 .tig-total-card strong { font-size: 31px; line-height: 1; overflow-wrap: anywhere; }

@@ -4569,6 +4569,58 @@ def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict
     }
 
 
+def format_snapshot_unit_amount(amount: int) -> str:
+    return f"{money_int(amount):,}".replace(",", " ")
+
+
+def snapshot_detail_rows_are_compact(detail_rows: list[dict[str, Any]]) -> bool:
+    compact_keys = {"Darab", "Egységösszeg", "Egysegosszeg", "Számítás", "Szamitas"}
+    return any(any(key in row for key in compact_keys) for row in detail_rows)
+
+
+def compact_snapshot_detail_items(card_key: str, label: str, detail_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not detail_rows:
+        return []
+    if snapshot_detail_rows_are_compact(detail_rows):
+        return [
+            item for index, row in enumerate(detail_rows, start=1)
+            if (item := snapshot_detail_item(card_key, index, row)).get("amountHuf") or card_key in {"performance", "insurance"}
+        ]
+
+    grouped: dict[tuple[str, int], int] = {}
+    ordered_keys: list[tuple[str, int]] = []
+    for row in detail_rows:
+        amount = amount_from_snapshot_detail_row(row)
+        if not amount and card_key not in {"performance", "insurance"}:
+            continue
+        item_label = str(
+            row.get("Tétel")
+            or row.get("Tetel")
+            or row.get("Megnevezés")
+            or row.get("Megnevezes")
+            or row.get("item_label")
+            or label
+            or "Tétel"
+        )
+        key = (item_label, amount)
+        if key not in grouped:
+            ordered_keys.append(key)
+            grouped[key] = 0
+        grouped[key] += 1
+
+    return [
+        {
+            "key": f"{card_key}_detail_{index}",
+            "label": item_label,
+            "amountHuf": amount * count,
+            "amountKind": "huf",
+            "source": "settlement.courier_finance_snapshot_source",
+            "note": f"{count} x {format_snapshot_unit_amount(amount)} Ft" if count > 1 else "",
+        }
+        for index, ((item_label, amount), count) in enumerate(((key, grouped[key]) for key in ordered_keys), start=1)
+    ]
+
+
 def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: str) -> list[dict[str, Any]]:
     drilldowns = snapshot_source_payload(snapshot, "card_drilldowns")
     if not isinstance(drilldowns, dict):
@@ -4586,10 +4638,7 @@ def snapshot_card_detail_items(snapshot: dict[str, Any], label: str, card_key: s
         if isinstance(rows, list) and rows:
             detail_rows = [row for row in rows if isinstance(row, dict)]
             break
-    return [
-        item for index, row in enumerate(detail_rows, start=1)
-        if (item := snapshot_detail_item(card_key, index, row)).get("amountHuf") or card_key in {"performance", "insurance"}
-    ]
+    return compact_snapshot_detail_items(card_key, label, detail_rows)
 
 
 def build_financial_breakdown_from_snapshot(
@@ -4772,9 +4821,11 @@ def build_tig_breakdown_from_snapshot(
     seller_name = str(profile.get("company_name") or courier_name or "")
     seller_address = str(profile.get("company_address") or profile.get("address") or "")
     seller_tax = str(profile.get("tax_number") or profile.get("tax_id") or "")
+    document_reference = make_document_reference(courier_id, "tig", month)
     return {
         "available": True,
         "month": month.strftime("%Y-%m"),
+        "documentReference": document_reference,
         "courierId": courier_id,
         "courierName": courier_name,
         "rows": tig.get("rows") or [],
@@ -6054,6 +6105,8 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
     tig["courierName"] = courier_name
     fallback_meta = tig_document_meta(month, courier_id)
     document_meta = {**fallback_meta, **(tig.get("documentMeta") or {})}
+    document_reference = make_document_reference(courier_id, "tig", month)
+    tig["documentReference"] = document_reference
     tig["buyer"] = {
         "label": "Vevő",
         "name": "Just in Time Transport Hungary Kft.",
@@ -11481,6 +11534,69 @@ def workflow(
         preview_read_only=preview,
         allow_unpublished=preview or privileged_viewer,
         can_view_amounts=privileged_viewer,
+    )
+
+
+@app.get("/api/workflow/tig.pdf")
+def workflow_tig_pdf(
+    month: str = Query(default=""),
+    process: str = Query(default=""),
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, preview = workflow_view_user(user, courier)
+    privileged_viewer = can_view_financial_amounts(user)
+    month_value = parse_month(month)
+    financial_breakdown = build_financial_breakdown(
+        view_user,
+        month_value,
+        allow_unpublished=preview or privileged_viewer,
+    )
+    tig_breakdown = build_workflow_tig_breakdown(view_user, month_value, financial_breakdown)
+    if not tig_breakdown.get("available"):
+        raise HTTPException(status_code=404, detail="Ehhez a hónaphoz még nincs letölthető TIG.")
+
+    courier_id, courier_name = courier_identity(view_user)
+    profile_rows = optional_supabase_rows(
+        "courier_master",
+        params={"select": "*", "courier_id": f"eq.{courier_id}", "limit": "1"},
+        timeout=30,
+    )
+    profile = profile_rows[0] if profile_rows else {}
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in financial_breakdown.get("cards") or []
+        for item in card.get("items") or []
+    }
+    tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
+    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    payable = money_int(financial_breakdown.get("totalPayableHuf"))
+    reference = str(tig_breakdown.get("documentReference") or make_document_reference(courier_id, "tig", month_value))
+    pdf_bytes = build_tig_pdf(
+        {
+            "name": courier_name,
+            "company_name": profile.get("company_name") or courier_name,
+            "address": profile.get("company_address") or profile.get("address") or "",
+            "company_address": profile.get("company_address") or profile.get("address") or "",
+            "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+            "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+            "vat_status": profile.get("vat_status") or "",
+            "employment_type": profile.get("employment_type") or "",
+            "employment_status": profile.get("employment_status") or "",
+            "efo_status": profile.get("efo_status") or "",
+            "id": courier_id,
+            "document_month": month_value,
+            "document_reference": reference,
+        },
+        {"payable": payable, "cash": cash_amount, "tip": tip_amount},
+        tig_breakdown=tig_breakdown,
+    )
+    filename = f"jitt_tig_{courier_id}_{slugify_filename(courier_name)}_{month_value:%Y-%m}_{reference}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 

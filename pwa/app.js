@@ -3001,6 +3001,8 @@ function renderTigBreakdown() {
   if (!tig.available) {
     return `<div class="notice">${escapeHtml(tig.message || "A TIG bontas meg nincs kesz.")}</div>`;
   }
+  const tigDownloadUrl = `/api/workflow/tig.pdf?${workflowQuery()}`;
+  const tigIdentifier = tig.documentReference ? `${tig.month || state.workflowMonth} · ${tig.documentReference}` : (tig.month || state.workflowMonth);
   const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
   const transferRows = rows.filter((row) => row.key !== "cash_service");
   const cashRows = rows.filter((row) => row.key === "cash_service");
@@ -3041,10 +3043,13 @@ function renderTigBreakdown() {
     </section>
   ` : "";
   return `
+    <div class="tig-toolbar">
+      <a class="download-link tig-download-link" href="${escapeHtml(tigDownloadUrl)}">TIG letöltése PDF-ben</a>
+    </div>
     <section class="tig-total-card">
       <span>TIG végösszeg</span>
       <strong>${tigValue(tig.finalTotalHuf)}</strong>
-      <small>${escapeHtml(tig.month || state.workflowMonth)}</small>
+      <small>${escapeHtml(tigIdentifier)}</small>
     </section>
     <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
     ${renderTigRows(transferRows)}
