@@ -8181,6 +8181,78 @@ def hub_stat_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[str,
     }
 
 
+def hub_detail_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    work_date = str(row.get("date") or "")[:10]
+    route_id = str(row.get("routeId") or "")
+    note_row = route_notes.get((work_date, route_id), {})
+    assigned = str(row.get("routeAssignedAt") or "")
+    departed = str(row.get("departedAt") or "")
+    returned = str(row.get("warehouseArrivedAt") or row.get("lastOrderFinishedAt") or "")
+    planned_return = str(row.get("plannedReturnAt") or "")
+    route_type = str(row.get("routeType") or "").strip() or "normal"
+    mileage = safe_float_value(row.get("mileageKm")) or safe_float_value(row.get("plannedKm")) or 0
+    late_count = safe_int(row.get("routeDelayCount"))
+    late_minutes = safe_int(row.get("routeDelayMinutes"))
+    story = {
+        "shiftName": str(row.get("shiftName") or "").strip(),
+        "shiftStart": str(row.get("plannedStartAt") or ""),
+        "queueStartedAt": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
+        "availableForShiftSince": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
+        "assignedAt": assigned,
+        "realDeparture": departed,
+        "plannedReturn": planned_return,
+        "realReturn": returned,
+        "gpsDistanceKm": mileage,
+        "addressCount": safe_int(row.get("orders") or row.get("stops")),
+        "timeWindowLateCount": late_count,
+        "timeWindowLateMinutes": late_minutes,
+        "tipHuf": safe_float_value(row.get("tipHuf")) or 0,
+        "storyText": "",
+    }
+    return {
+        "date": work_date,
+        "routeId": route_id,
+        "warehouseId": safe_int(row.get("warehouseId")),
+        "orders": safe_int(row.get("orders")),
+        "stops": safe_int(row.get("stops") or row.get("orders")),
+        "plannedStartAt": str(row.get("plannedStartAt") or ""),
+        "actualStartAt": str(row.get("actualStartAt") or row.get("shiftAvailableAt") or ""),
+        "shiftAvailableAt": str(row.get("shiftAvailableAt") or row.get("actualStartAt") or ""),
+        "routeAssignedAt": assigned,
+        "plannedDepartureAt": str(row.get("plannedDepartureAt") or ""),
+        "departedAt": departed,
+        "lastOrderFinishedAt": str(row.get("lastOrderFinishedAt") or ""),
+        "warehouseArrivedAt": returned,
+        "plannedReturnAt": planned_return,
+        "plannedStartDelayMinutes": 0,
+        "departureDelayMinutes": 0,
+        "returnDelayMinutes": 0,
+        "apiShiftCount": 0,
+        "apiLateCount": 0,
+        "apiDidNotComeCount": 0,
+        "apiDelayedOrderCount": late_count,
+        "timeWindowLateCount": late_count,
+        "timeWindowLateMinutes": late_minutes,
+        "maxDelayMinutes": 0,
+        "cleanedDelayCount": 0,
+        "uncleanedDelayCount": late_count,
+        "cleanedDelayMinutes": 0,
+        "uncleanedDelayMinutes": late_minutes,
+        "hasDelayCleaning": False,
+        "cleanedReasons": [],
+        "routeType": route_type,
+        "routeNote": str(note_row.get("note") or ""),
+        "routeNoteUpdatedAt": str(note_row.get("updated_at") or ""),
+        "vehicleModel": str(row.get("vehicleModel") or ""),
+        "vehiclePlate": str(row.get("vehiclePlate") or ""),
+        "mileageKm": mileage,
+        "vehicleOwnership": str(row.get("vehicleOwnership") or ""),
+        "tipHuf": safe_float_value(row.get("tipHuf")) or 0,
+        "routeStory": story,
+        "courierHubRouteDetail": True,
+    }
+
+
 def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> list[dict[str, Any]]:
     cache_key = f"{courier_id}|{period_start.isoformat()}"
     cached = cached_financial_lookup("customer_rating_bonus_items", cache_key)
@@ -8244,6 +8316,7 @@ def build_monthly_courier_statistics(
         history_future = executor.submit(load_daily_route_history_for_courier, courier_id, period_start, period_end)
         story_future = executor.submit(load_route_story_rows_for_courier, courier_id, period_start, period_end)
         hub_stat_future = executor.submit(load_courier_hub_route_stat_rows_for_courier, courier_id, period_start)
+        hub_detail_future = executor.submit(load_courier_hub_route_detail_rows_for_courier, courier_id, period_start)
         attendance_future = executor.submit(load_attendance_shift_rows_for_courier, courier_id, period_start, period_end)
         shift_overview_quality_future = executor.submit(load_shift_overview_raw_quality_for_courier, courier_id, period_start)
         notes_future = executor.submit(load_route_notes_for_courier, courier_id, period_start, period_end)
@@ -8259,27 +8332,62 @@ def build_monthly_courier_statistics(
         history_rows = history_future.result()
         story_rows = story_future.result()
         hub_stat_rows = hub_stat_future.result()
+        hub_detail_rows = hub_detail_future.result()
         attendance_shift_rows = attendance_future.result()
         shift_overview_quality = shift_overview_quality_future.result()
         route_notes = notes_future.result()
         settlement_summary_row = settlement_future.result()
     can_show_amounts = can_view_financial_amounts(user)
-    if hub_stat_rows:
+    if hub_stat_rows or hub_detail_rows:
         daily_history_rows = [hub_stat_daily_history_row(row, route_notes) for row in hub_stat_rows]
+        detail_history_by_key = {
+            (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip()): hub_detail_daily_history_row(row, route_notes)
+            for row in hub_detail_rows
+            if str(row.get("routeId") or "").strip()
+        }
+        for index, history_row in enumerate(daily_history_rows):
+            detail_row = detail_history_by_key.get((
+                str(history_row.get("date") or "")[:10],
+                str(history_row.get("routeId") or "").strip(),
+            ))
+            if not detail_row:
+                continue
+            merged = dict(history_row)
+            for key, value in detail_row.items():
+                if value in (None, "", [], {}):
+                    continue
+                if key == "routeStory":
+                    story = dict(merged.get("routeStory") or {})
+                    story.update({story_key: story_value for story_key, story_value in value.items() if story_value not in (None, "", [], {})})
+                    merged[key] = story
+                else:
+                    merged[key] = value
+            daily_history_rows[index] = merged
+        known_hub_routes = {
+            (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip())
+            for row in daily_history_rows
+            if str(row.get("routeId") or "").strip()
+        }
+        for detail_row in hub_detail_rows:
+            detail_key = (str(detail_row.get("date") or "")[:10], str(detail_row.get("routeId") or "").strip())
+            if not detail_key[1] or detail_key in known_hub_routes:
+                continue
+            daily_history_rows.append(hub_detail_daily_history_row(detail_row, route_notes))
+            known_hub_routes.add(detail_key)
         total_routes = len({
-            (str(row.get("work_date") or "")[:10], str(row.get("route_id") or "").strip())
-            for row in hub_stat_rows
-            if str(row.get("route_id") or "").strip()
+            (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip())
+            for row in daily_history_rows
+            if str(row.get("routeId") or "").strip()
         })
-        total_orders = sum(safe_int(row.get("orders")) for row in hub_stat_rows)
-        route_tips = sum(safe_int(row.get("tip_huf")) for row in hub_stat_rows)
+        total_orders = sum(safe_int(row.get("orders")) for row in daily_history_rows)
+        route_tips = sum(safe_int(row.get("tipHuf")) for row in daily_history_rows)
         average_orders = round(total_orders / total_routes, 1) if total_routes else 0
         shift_keys = {
-            f"{str(row.get('work_date') or '')[:10]}|{str(row.get('shift_name') or '').strip()}"
-            for row in hub_stat_rows
-            if str(row.get("work_date") or "").strip() and str(row.get("shift_name") or "").strip()
+            f"{str(row.get('date') or '')[:10]}|{str((row.get('routeStory') or {}).get('shiftName') or row.get('plannedStartAt') or '').strip()}"
+            for row in daily_history_rows
+            if str(row.get("date") or "").strip() and str((row.get("routeStory") or {}).get("shiftName") or row.get("plannedStartAt") or "").strip()
         }
-        shift_count = len(shift_keys) or len({str(row.get("work_date") or "")[:10] for row in hub_stat_rows if row.get("work_date")})
+        shift_count = len(shift_keys) or len({str(row.get("date") or "")[:10] for row in daily_history_rows if row.get("date")})
         route_types = {"normal": 0, "express": 0, "regional": 0}
         highlighted_routes = 0
         normal_day_routes = 0
@@ -8289,12 +8397,14 @@ def build_monthly_courier_statistics(
         normal_city_routes = 0
         highlighted_express_routes = 0
         normal_express_routes = 0
-        for row in hub_stat_rows:
+        for row in daily_history_rows:
             route_type = str(row.get("route_type") or "").strip() or "normal"
+            if not row.get("route_type"):
+                route_type = str(row.get("routeType") or "").strip() or "normal"
             if route_type not in route_types:
                 route_type = "normal"
             route_types[route_type] = route_types.get(route_type, 0) + 1
-            is_highlighted = day_type_for_date(parse_date_value(row.get("work_date")), day_rules) == "highlighted"
+            is_highlighted = day_type_for_date(parse_date_value(row.get("date")), day_rules) == "highlighted"
             if route_type == "express":
                 express_routes += 1
                 express_orders += safe_int(row.get("orders"))
@@ -8355,7 +8465,13 @@ def build_monthly_courier_statistics(
             },
             "qualitySummary": route_quality_summary,
             "rawRouteOverview": {
-                "source": "courier_hub_route_statistics",
+                "source": (
+                    "courier_hub_route_statistics + courier_route_performance_detail_raw"
+                    if hub_stat_rows and hub_detail_rows
+                    else "courier_hub_route_statistics"
+                    if hub_stat_rows
+                    else "courier_route_performance_detail_raw"
+                ),
                 "routes": [],
             },
             "routeBreakdown": {
@@ -8372,10 +8488,16 @@ def build_monthly_courier_statistics(
             },
             "customerRating": load_customer_rating_stats(courier_id, period_start),
             "dataQuality": {
-                "dailyRows": len(hub_stat_rows),
-                "routeRows": len(hub_stat_rows),
+                "dailyRows": len(daily_history_rows),
+                "routeRows": len(daily_history_rows),
                 "routeStoryRows": 0,
-                "routeSource": "courier_hub_route_statistics",
+                "routeSource": (
+                    "courier_hub_route_statistics + courier_route_performance_detail_raw"
+                    if hub_stat_rows and hub_detail_rows
+                    else "courier_hub_route_statistics"
+                    if hub_stat_rows
+                    else "courier_route_performance_detail_raw"
+                ),
                 "settlementSummaryFallback": False,
                 "dayRuleSource": day_rule_source,
                 "dayRules": serialize_day_rules(day_rules),
