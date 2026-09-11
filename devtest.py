@@ -12543,11 +12543,32 @@ def render_fast_courier_profile(
 def render_courier_detail_page() -> None:
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     st.markdown('<div class="section-title">Futár részletei</div>', unsafe_allow_html=True)
-    back_col, refresh_col, action_spacer = st.columns([0.18, 0.18, 0.64], gap="small", vertical_alignment="top")
+    nav_data = st.session_state.get("current_filtered_data")
+    nav_ids: list[str] = []
+    if isinstance(nav_data, pd.DataFrame) and not nav_data.empty and "Courier ID" in nav_data.columns:
+        nav_ids = [
+            str(value).strip()
+            for value in nav_data["Courier ID"].tolist()
+            if str(value).strip()
+        ]
+    nav_index = nav_ids.index(courier_id) if courier_id in nav_ids else -1
+    previous_courier_id = nav_ids[nav_index - 1] if nav_index > 0 else ""
+    next_courier_id = nav_ids[nav_index + 1] if nav_index >= 0 and nav_index < len(nav_ids) - 1 else ""
+    back_col, prev_col, next_col, refresh_col, action_spacer = st.columns([0.18, 0.08, 0.08, 0.18, 0.48], gap="small", vertical_alignment="top")
     with back_col:
         if st.button("Vissza a listához", key=f"back_from_courier_detail_{courier_id}", use_container_width=True):
             st.session_state.pop("selected_courier_id", None)
             st.session_state.pop("reopen_courier_dialog", None)
+            st.rerun()
+    with prev_col:
+        if st.button("←", key=f"previous_courier_detail_{courier_id}", help="Előző futár", use_container_width=True, disabled=not previous_courier_id):
+            st.session_state["selected_courier_id"] = previous_courier_id
+            st.session_state[f"courier_menu_target_{previous_courier_id}"] = "Pénzügy"
+            st.rerun()
+    with next_col:
+        if st.button("→", key=f"next_courier_detail_{courier_id}", help="Következő futár", use_container_width=True, disabled=not next_courier_id):
+            st.session_state["selected_courier_id"] = next_courier_id
+            st.session_state[f"courier_menu_target_{next_courier_id}"] = "Pénzügy"
             st.rerun()
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
