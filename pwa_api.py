@@ -9733,13 +9733,80 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
             "limit": "500",
         },
     )
-    return [
+    archive_rows = [
         {
             **row,
             "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
         }
         for row in rows
     ]
+    existing_keys = {
+        (
+            str(row.get("document_month") or "")[:7],
+            base_action_key(str(row.get("document_type") or "")),
+        )
+        for row in archive_rows
+    }
+    snapshot_rows = optional_supabase_rows(
+        "courier_finance_snapshot",
+        schema="settlement",
+        params={
+            "select": "id,period_start,courier_id,courier_name,version,created_at",
+            "courier_id": f"eq.{courier_id}",
+            "order": "period_start.desc,version.desc",
+            "limit": "200",
+        },
+        timeout=30,
+    )
+    seen_months: set[str] = set()
+    for snapshot in snapshot_rows:
+        period_start = str(snapshot.get("period_start") or "")[:10]
+        if not period_start:
+            continue
+        month_key = period_start[:7]
+        if month_key in seen_months:
+            continue
+        seen_months.add(month_key)
+        version = money_int(snapshot.get("version"))
+        created_at = str(snapshot.get("created_at") or "")
+        if (month_key, "settlement") not in existing_keys:
+            archive_rows.append({
+                "id": f"snapshot-{snapshot.get('id')}",
+                "document_type": "settlement",
+                "document_month": period_start,
+                "title": f"Elszámolás - {month_key}",
+                "file_name": f"Mentett pénzügyi lenyomat v{version}" if version else "Mentett pénzügyi lenyomat",
+                "mime_type": "application/json",
+                "file_size": 0,
+                "note": "Mentett havi pénzügyi adatok.",
+                "uploaded_by": "rendszer",
+                "uploaded_at": created_at,
+                "virtual": True,
+            })
+        if (month_key, "tig") not in existing_keys:
+            archive_rows.append({
+                "id": f"tig-{courier_id}-{month_key}",
+                "document_type": "tig",
+                "document_month": period_start,
+                "title": f"TIG - {month_key}",
+                "file_name": "Generált TIG PDF",
+                "mime_type": "application/pdf",
+                "file_size": 0,
+                "note": "A mentett havi pénzügyi adatokból generált TIG.",
+                "uploaded_by": "rendszer",
+                "uploaded_at": created_at,
+                "virtual": True,
+                "downloadUrl": f"/api/workflow/tig.pdf?month={quote(month_key)}",
+            })
+    archive_rows.sort(
+        key=lambda row: (
+            str(row.get("document_month") or ""),
+            str(row.get("uploaded_at") or ""),
+            str(row.get("document_type") or ""),
+        ),
+        reverse=True,
+    )
+    return archive_rows
 
 
 def list_workflow_processes(user: dict[str, Any], month: date) -> list[dict[str, str]]:

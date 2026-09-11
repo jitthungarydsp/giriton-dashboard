@@ -46,7 +46,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v114";
+const APP_VERSION = "v115";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2821,9 +2821,9 @@ function renderDocumentArchive(documents = []) {
           <div>
             <span class="document-badge">${escapeHtml(documentTypeLabel(document.document_type))}</span>
             <strong>${escapeHtml(document.title || document.file_name || "Dokumentum")}</strong>
-            <small>${escapeHtml(document.file_name || "")} · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt${document.uploaded_at ? ` · ${new Date(document.uploaded_at).toLocaleDateString("hu-HU")}` : ""}</small>
+            <small>${escapeHtml(document.file_name || "")}${Number(document.file_size || 0) > 0 ? ` · ${Number(document.file_size || 0).toLocaleString("hu-HU")} bájt` : ""}${document.uploaded_at ? ` · ${new Date(document.uploaded_at).toLocaleDateString("hu-HU")}` : ""}</small>
           </div>
-          <a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl || "#"))}">Letöltés</a>
+          ${document.downloadUrl ? `<a class="download-link" href="${escapeHtml(withPreviewCourier(document.downloadUrl))}">Letöltés</a>` : ""}
         </div>
       `).join("")}</div>
     </section>
@@ -3485,7 +3485,7 @@ async function ensureServiceWorkerRegistration() {
     throw new Error("A service worker nem támogatott ezen az eszközön.");
   }
   if (!state.serviceWorkerRegistration) {
-    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=108");
+    state.serviceWorkerRegistration = await navigator.serviceWorker.register("/sw.js?v=115");
   }
   return navigator.serviceWorker.ready;
 }
