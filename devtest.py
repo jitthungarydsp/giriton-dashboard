@@ -13,6 +13,8 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit.elements.arrow import ArrowMixin
+from streamlit.elements.widgets.data_editor import DataEditorMixin
 
 ARROW_SAFE_TEXT_COLUMNS = {
     "courierId",
@@ -26,10 +28,8 @@ ARROW_SAFE_TEXT_COLUMNS = {
     "orderId",
     "order_id",
 }
-_ORIGINAL_ST_DATAFRAME = getattr(st, "_giriton_original_dataframe", st.dataframe)
-_ORIGINAL_ST_DATA_EDITOR = getattr(st, "_giriton_original_data_editor", st.data_editor)
-st._giriton_original_dataframe = _ORIGINAL_ST_DATAFRAME
-st._giriton_original_data_editor = _ORIGINAL_ST_DATA_EDITOR
+_ORIGINAL_ST_DATAFRAME = ArrowMixin.dataframe.__get__(st._main, type(st._main))
+_ORIGINAL_ST_DATA_EDITOR = DataEditorMixin.data_editor.__get__(st._main, type(st._main))
 
 
 def _arrow_safe_dataframe(data):
