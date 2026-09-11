@@ -1230,11 +1230,18 @@ def read_vehicle_assignment_rows_for_user(
     start: date,
     end: date,
 ) -> list[dict[str, Any]]:
-    _courier_id, courier_name = courier_identity(user)
+    courier_id, courier_name = courier_identity(user)
+    resolved_name = ""
+    if courier_id:
+        try:
+            _resolved_id, resolved_name = resolve_preview_courier(courier_id)
+        except HTTPException:
+            resolved_name = read_courier_display_name(courier_id)
     rows = read_vehicle_assignment_rows(start, end, limit=5000)
     wanted_names = {
         normalize_person_match_text(courier_name),
         normalize_person_match_text(user.get("username")),
+        normalize_person_match_text(resolved_name),
     }
     wanted_names = {name for name in wanted_names if name}
     return [

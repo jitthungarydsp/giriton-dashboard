@@ -49,7 +49,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v118";
+const APP_VERSION = "v119";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4092,7 +4092,7 @@ async function loadVehicleAssignments() {
   if (!target) return;
   target.innerHTML = `<div class="empty-card">Autó-hozzárendelések betöltése...</div>`;
   try {
-    const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=10"));
+    const payload = await api(withPreviewCourier("/api/vehicles/assignments?days=60"));
     state.vehicleAssignments = payload.items || [];
     renderVehicleAssignments();
   } catch (error) {
