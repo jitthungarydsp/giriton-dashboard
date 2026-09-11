@@ -26,8 +26,10 @@ ARROW_SAFE_TEXT_COLUMNS = {
     "orderId",
     "order_id",
 }
-_ORIGINAL_ST_DATAFRAME = st.dataframe
-_ORIGINAL_ST_DATA_EDITOR = st.data_editor
+_ORIGINAL_ST_DATAFRAME = getattr(st, "_giriton_original_dataframe", st.dataframe)
+_ORIGINAL_ST_DATA_EDITOR = getattr(st, "_giriton_original_data_editor", st.data_editor)
+st._giriton_original_dataframe = _ORIGINAL_ST_DATAFRAME
+st._giriton_original_data_editor = _ORIGINAL_ST_DATA_EDITOR
 
 
 def _arrow_safe_dataframe(data):
@@ -50,8 +52,12 @@ def _safe_streamlit_data_editor(data=None, *args, **kwargs):
     return _ORIGINAL_ST_DATA_EDITOR(_arrow_safe_dataframe(data), *args, **kwargs)
 
 
-st.dataframe = _safe_streamlit_dataframe
-st.data_editor = _safe_streamlit_data_editor
+if getattr(st.dataframe, "_giriton_arrow_safe_wrapper", False) is not True:
+    _safe_streamlit_dataframe._giriton_arrow_safe_wrapper = True
+    st.dataframe = _safe_streamlit_dataframe
+if getattr(st.data_editor, "_giriton_arrow_safe_wrapper", False) is not True:
+    _safe_streamlit_data_editor._giriton_arrow_safe_wrapper = True
+    st.data_editor = _safe_streamlit_data_editor
 from resources.settlement_excel_import import (
     delete_excel_import,
     get_import_preview,
