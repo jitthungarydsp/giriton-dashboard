@@ -2411,7 +2411,7 @@ function renderTabs() {
 
 function shiftCard(item, index = 0) {
   const end = item.end ? `–${escapeHtml(item.end)}` : "";
-  const actionDisabled = isAdminPreviewMode() ? " disabled" : "";
+  const actionDisabled = "";
   const delayButton = `<button class="shift-delay-button" type="button" data-shift-index="${index}"${actionDisabled}>Kések a műszakból</button>`;
   const queueButton = `<button class="shift-queue-button" type="button" data-shift-index="${index}" data-shift-event="queued"${actionDisabled}>Sorba álltam</button>`;
   const returnButton = `<button class="shift-return-button" type="button" data-shift-index="${index}" data-shift-event="returned"${actionDisabled}>Visszaérkeztem</button>`;
@@ -2592,13 +2592,13 @@ async function sendShiftDelayAlert(item, button) {
 }
 
 async function sendShiftQueueCheckin(item, button) {
-  if (!item || isAdminPreviewMode()) return;
+  if (!item) return;
   const originalText = button.textContent;
   const eventType = button.dataset.shiftEvent || "queued";
   button.disabled = true;
   button.textContent = "Mentés...";
   try {
-    const payload = await api("/api/shifts/queue-checkin", {
+    const payload = await api(withPreviewCourier("/api/shifts/queue-checkin"), {
       method: "POST",
       body: JSON.stringify({
         work_date: item.date || "",

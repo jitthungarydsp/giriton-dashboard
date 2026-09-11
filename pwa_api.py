@@ -7515,6 +7515,33 @@ def route_detail_narrative(item: dict[str, Any]) -> str:
     )
 
 
+def route_distance_check_values(item: dict[str, Any]) -> dict[str, Any]:
+    kifli_km = (
+        safe_float_value(item.get("hubPlannedKm"))
+        or safe_float_value(item.get("hubMileageKm"))
+        or safe_float_value(item.get("distanceKm"))
+    )
+    calculated_km = (
+        safe_float_value(item.get("actualKm"))
+        or safe_float_value(item.get("calculatedRouteKm"))
+        or safe_float_value(item.get("googleRouteKm"))
+    )
+    delta_km = safe_float_value(item.get("distanceDeltaKm"))
+    if delta_km is None and kifli_km is not None and calculated_km is not None:
+        delta_km = round(calculated_km - kifli_km, 1)
+    delta_percent = None
+    if delta_km is not None and kifli_km:
+        delta_percent = round((delta_km / kifli_km) * 100, 1)
+    stop_count = len(item.get("stopAddresses") or []) if isinstance(item.get("stopAddresses"), list) else 0
+    return {
+        "kifliKm": kifli_km,
+        "calculatedKm": calculated_km,
+        "deltaKm": delta_km,
+        "deltaPercent": delta_percent,
+        "stopAddressCount": stop_count,
+    }
+
+
 def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: str) -> dict[str, Any]:
     story = row.get("routeStory") if isinstance(row.get("routeStory"), dict) else {}
     vehicle = row.get("vehicle") if isinstance(row.get("vehicle"), dict) else None
@@ -8454,6 +8481,108 @@ def hub_detail_daily_history_row(row: dict[str, Any], route_notes: dict[tuple[st
     }
 
 
+def route_history_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("date") or row.get("work_date") or "")[:10],
+        str(row.get("routeId") or row.get("route_id") or "").strip(),
+    )
+
+
+def enrich_daily_history_with_hub_rows(
+    rows: list[dict[str, Any]],
+    hub_stat_rows: list[dict[str, Any]],
+    hub_detail_rows: list[dict[str, Any]],
+    route_notes: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    source_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for stat_row in hub_stat_rows or []:
+        compact = hub_stat_daily_history_row(stat_row, route_notes)
+        key = route_history_key(compact)
+        if key[0] and key[1]:
+            source_rows[key] = compact
+    for detail_row in hub_detail_rows or []:
+        compact = hub_detail_daily_history_row(detail_row, route_notes)
+        key = route_history_key(compact)
+        if key[0] and key[1]:
+            source_rows.setdefault(key, compact)
+
+    if not source_rows:
+        return rows
+
+    enriched_rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    fill_fields = (
+        "warehouseId",
+        "orders",
+        "stops",
+        "routeAssignedAt",
+        "plannedDepartureAt",
+        "departedAt",
+        "lastOrderFinishedAt",
+        "warehouseArrivedAt",
+        "plannedReturnAt",
+        "vehicleModel",
+        "vehiclePlate",
+        "mileageKm",
+        "vehicleOwnership",
+        "routeType",
+        "tipHuf",
+    )
+    for row in rows:
+        key = route_history_key(row)
+        seen_keys.add(key)
+        source = source_rows.get(key)
+        if not source:
+            enriched_rows.append(row)
+            continue
+
+        merged = dict(row)
+        for field in fill_fields:
+            current = merged.get(field)
+            source_value = source.get(field)
+            if current in (None, "", 0, 0.0) and source_value not in (None, "", 0, 0.0):
+                merged[field] = source_value
+
+        story = dict(merged.get("routeStory") or {})
+        source_story = source.get("routeStory") if isinstance(source.get("routeStory"), dict) else {}
+        story_field_pairs = {
+            "shiftName": "shiftName",
+            "shiftStart": "shiftStart",
+            "availableForShiftSince": "availableForShiftSince",
+            "queueStartedAt": "queueStartedAt",
+            "assignedAt": "assignedAt",
+            "realDeparture": "realDeparture",
+            "plannedReturn": "plannedReturn",
+            "realReturn": "realReturn",
+            "queueWaitMinutes": "queueWaitMinutes",
+            "realLoadingMinutes": "realLoadingMinutes",
+            "plannedRouteMinutes": "plannedRouteMinutes",
+            "realRouteMinutes": "realRouteMinutes",
+            "totalRouteMinutes": "totalRouteMinutes",
+            "assignedToReturnMinutes": "assignedToReturnMinutes",
+            "gpsDistanceKm": "gpsDistanceKm",
+            "addressCount": "addressCount",
+            "timeWindowLateCount": "timeWindowLateCount",
+            "timeWindowLateMinutes": "timeWindowLateMinutes",
+            "tipHuf": "tipHuf",
+            "storyText": "storyText",
+        }
+        for target_field, source_field in story_field_pairs.items():
+            current = story.get(target_field)
+            source_value = source_story.get(source_field)
+            if current in (None, "", 0, 0.0) and source_value not in (None, "", 0, 0.0):
+                story[target_field] = source_value
+        if story:
+            merged["routeStory"] = story
+        enriched_rows.append(merged)
+
+    for key, source in source_rows.items():
+        if key not in seen_keys:
+            enriched_rows.append(source)
+
+    return enriched_rows
+
+
 def read_customer_rating_bonus_items(courier_id: str, period_start: date) -> list[dict[str, Any]]:
     cache_key = f"{courier_id}|{period_start.isoformat()}"
     cached = cached_financial_lookup("customer_rating_bonus_items", cache_key)
@@ -9059,6 +9188,12 @@ def build_monthly_courier_statistics(
         [compact_history_row(row) for row in history_rows]
         or [compact_route_fallback_row(route) for route in route_rows]
         or [compact_route_story_history_row(row) for row in story_route_rows]
+    )
+    daily_history_rows = enrich_daily_history_with_hub_rows(
+        daily_history_rows,
+        hub_stat_rows,
+        hub_detail_rows,
+        route_notes,
     )
     route_quality_records = build_route_quality_records(
         courier_id=courier_id,
@@ -11703,11 +11838,13 @@ def create_shift_delay_alert(
 @app.post("/api/shifts/queue-checkin")
 def create_shift_queue_checkin(
     payload: ShiftQueueCheckinRequest,
+    courier: str = Query(default=""),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    save_shift_queue_checkin(user, payload)
-    return {"ok": True, "queue": latest_shift_queue_status(user)}
+    view_user, _preview = workflow_view_user(user, courier)
+    save_shift_queue_checkin(view_user, payload)
+    return {"ok": True, "queue": latest_shift_queue_status(view_user)}
 
 
 @app.get("/api/shifts/queue-status")
@@ -11795,6 +11932,7 @@ def route_details_excel(
         "Tényleges visszaérkezés",
         "Tényleges km",
         "Hub mileage km",
+        "Újraszámolt címek száma",
         "Következő műszak aznap",
         "Túra típusa",
         "Borravaló",
@@ -11802,7 +11940,8 @@ def route_details_excel(
         "Dátum",
         "Raktár cím",
         "Címek / stopok",
-        "Km eltérés",
+        "Km eltérés (Tényleges - Tervezett)",
+        "Km eltérés %",
         "Forrás",
         "Szöveges részletező",
     ]
@@ -11812,6 +11951,7 @@ def route_details_excel(
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = header_fill
     for item in payload.get("rows") or []:
+        distance_check = route_distance_check_values(item)
         sheet.append([
             item.get("warehouse"),
             item.get("courierId"),
@@ -11827,11 +11967,12 @@ def route_details_excel(
             item.get("routeDelayCount"),
             route_detail_duration_text(item.get("plannedRouteMinutes")),
             route_detail_time_text(item.get("plannedReturnAt")),
-            item.get("hubPlannedKm"),
+            distance_check.get("kifliKm"),
             route_detail_duration_text(item.get("routeMinutes")),
             route_detail_time_text(item.get("returnedAt")),
-            item.get("actualKm") or item.get("calculatedRouteKm"),
+            distance_check.get("calculatedKm"),
             item.get("hubMileageKm"),
+            distance_check.get("stopAddressCount"),
             item.get("nextShiftSameDay"),
             item.get("routeTypeLabel"),
             item.get("tipHuf"),
@@ -11839,7 +11980,8 @@ def route_details_excel(
             item.get("date"),
             item.get("warehouseAddress"),
             f"{item.get('orders') or 0} / {item.get('stops') or 0}",
-            item.get("distanceDeltaKm"),
+            distance_check.get("deltaKm"),
+            distance_check.get("deltaPercent"),
             item.get("dataSource"),
             item.get("narrative"),
         ])
