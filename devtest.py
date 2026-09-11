@@ -13,51 +13,6 @@ from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit.elements.arrow import ArrowMixin
-from streamlit.elements.widgets.data_editor import DataEditorMixin
-
-ARROW_SAFE_TEXT_COLUMNS = {
-    "courierId",
-    "courier_id",
-    "Courier ID",
-    "Futár ID",
-    "driver_id",
-    "driverId",
-    "routeId",
-    "route_id",
-    "orderId",
-    "order_id",
-}
-_ORIGINAL_ST_DATAFRAME = ArrowMixin.dataframe.__get__(st._main, type(st._main))
-_ORIGINAL_ST_DATA_EDITOR = DataEditorMixin.data_editor.__get__(st._main, type(st._main))
-
-
-def _arrow_safe_dataframe(data):
-    if not isinstance(data, pd.DataFrame):
-        return data
-    columns = [column for column in data.columns if str(column) in ARROW_SAFE_TEXT_COLUMNS]
-    if not columns:
-        return data
-    safe = data.copy()
-    for column in columns:
-        safe[column] = safe[column].map(lambda value: "" if pd.isna(value) else str(value))
-    return safe
-
-
-def _safe_streamlit_dataframe(data=None, *args, **kwargs):
-    return _ORIGINAL_ST_DATAFRAME(_arrow_safe_dataframe(data), *args, **kwargs)
-
-
-def _safe_streamlit_data_editor(data=None, *args, **kwargs):
-    return _ORIGINAL_ST_DATA_EDITOR(_arrow_safe_dataframe(data), *args, **kwargs)
-
-
-if getattr(st.dataframe, "_giriton_arrow_safe_wrapper", False) is not True:
-    _safe_streamlit_dataframe._giriton_arrow_safe_wrapper = True
-    st.dataframe = _safe_streamlit_dataframe
-if getattr(st.data_editor, "_giriton_arrow_safe_wrapper", False) is not True:
-    _safe_streamlit_data_editor._giriton_arrow_safe_wrapper = True
-    st.data_editor = _safe_streamlit_data_editor
 from resources.settlement_excel_import import (
     delete_excel_import,
     get_import_preview,
@@ -19681,3 +19636,5 @@ if __name__ == "__main__":
         show_accounting_invoice_archive_page()
     else:
         show_new_settlement_page()
+
+
