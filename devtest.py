@@ -11812,18 +11812,22 @@ def load_settlement_month(session_id: str | None) -> tuple[date, date]:
 
 @st.cache_data(show_spinner=False, ttl=60)
 def load_courier_adjustments(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    columns = ["id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note", "created_by", "created_at"]
     if not courier_id:
-        return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
+        return pd.DataFrame(columns=columns)
     try:
         rows = (get_db().schema("settlement").table("courier_settlement_adjustment")
                 .select("id,adjustment_type,amount_huf,effective_date,valid_from,valid_to,note,created_by,created_at")
                 .eq("courier_id", courier_id)
                 .eq("is_active", True).is_("deleted_at", "null").execute().data or [])
     except BaseException:
-        return pd.DataFrame(columns=["adjustment_type", "amount_huf", "effective_date", "note"])
+        return pd.DataFrame(columns=columns)
     data = pd.DataFrame(rows)
     if data.empty:
-        return data
+        return pd.DataFrame(columns=columns)
+    for column in columns:
+        if column not in data.columns:
+            data[column] = pd.NA
     try:
         from_values = data["valid_from"] if "valid_from" in data.columns else pd.Series(pd.NaT, index=data.index)
         effective_values = data["effective_date"] if "effective_date" in data.columns else pd.Series(pd.NaT, index=data.index)
@@ -11836,7 +11840,7 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
         data["valid_to"] = valid_to.loc[data.index].dt.date
         return data
     except (TypeError, ValueError, KeyError):
-        return pd.DataFrame(columns=["id", "adjustment_type", "amount_huf", "effective_date", "valid_from", "valid_to", "note"])
+        return pd.DataFrame(columns=columns)
 
 
 def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
