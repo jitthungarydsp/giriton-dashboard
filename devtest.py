@@ -4893,6 +4893,22 @@ def deduplicate_adjustments_for_calculation(adjustments: pd.DataFrame) -> pd.Dat
     return data.drop(columns=[column for column in ["_dedupe_key", "_created_at_sort"] if column in data.columns])
 
 
+def drop_duplicate_manual_atm_adjustments(adjustments: pd.DataFrame, imported_atm_value: float) -> pd.DataFrame:
+    """Ignore manual ATM rows that duplicate the imported ATM balance for the same month."""
+    if not isinstance(adjustments, pd.DataFrame) or adjustments.empty:
+        return adjustments
+    imported_amount = abs(float(imported_atm_value or 0.0))
+    if imported_amount == 0 or "adjustment_type" not in adjustments.columns or "amount_huf" not in adjustments.columns:
+        return adjustments
+    data = adjustments.copy()
+    type_values = data["adjustment_type"].fillna("").astype(str).str.strip().str.lower()
+    amount_values = pd.to_numeric(data["amount_huf"], errors="coerce").fillna(0.0).abs().round(2)
+    duplicate_mask = type_values.eq("atm_deduction") & amount_values.eq(round(imported_amount, 2))
+    if not duplicate_mask.any():
+        return adjustments
+    return data.loc[~duplicate_mask].copy()
+
+
 def copy_cards_html(items: list[tuple[str, str]]) -> None:
     payload = json.dumps([{"label": label, "value": value} for label, value in items])
     components.html(
@@ -12913,6 +12929,11 @@ def render_courier_detail_page() -> None:
         imported_bonus_total = 0.0
         imported_malus_total = 0.0
         imported_atm_total = 0.0
+    profile_adjustments = drop_duplicate_manual_atm_adjustments(profile_adjustments, imported_atm_total)
+    profile_adjustment_totals = (
+        profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
+        if not profile_adjustments.empty else {}
+    )
     manual_bonus_total = float(profile_adjustment_totals.get("bonus", 0.0))
     loyalty_total = parse_huf_value(row.get("Lojalitás"))
     if loyalty_total == 0 and summary_available:
