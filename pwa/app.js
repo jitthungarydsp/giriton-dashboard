@@ -617,9 +617,7 @@ function renderAtmPayments(balance = null) {
           </summary>
           ${item.receiptUrl ? `
             <a class="atm-receipt-preview" href="${escapeHtml(withPreviewCourier(item.receiptUrl))}" target="_blank" rel="noopener">
-              ${item.receiptIsImage
-                ? `<img src="${escapeHtml(withPreviewCourier(item.receiptUrl))}" alt="${escapeHtml(item.fileName || "ATM bizonylat")}" loading="lazy" />`
-                : `<span>Bizonylat megnyitása</span>`}
+              <span>Bizonylat megnyitása</span>
             </a>
           ` : ""}
           <div class="stat-breakdown-list">
