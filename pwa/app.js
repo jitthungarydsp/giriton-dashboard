@@ -615,6 +615,13 @@ function renderAtmPayments(balance = null) {
             <span>${escapeHtml(atmPaymentStatusLabel(item.status))}</span>
             <strong>${formatHuf(item.amountHuf)}</strong>
           </summary>
+          ${item.receiptUrl ? `
+            <a class="atm-receipt-preview" href="${escapeHtml(withPreviewCourier(item.receiptUrl))}" target="_blank" rel="noopener">
+              ${item.receiptIsImage
+                ? `<img src="${escapeHtml(withPreviewCourier(item.receiptUrl))}" alt="${escapeHtml(item.fileName || "ATM bizonylat")}" loading="lazy" />`
+                : `<span>Bizonylat megnyitása</span>`}
+            </a>
+          ` : ""}
           <div class="stat-breakdown-list">
             <div class="stat-row"><span>Dátum</span><strong>${escapeHtml(shortDateTime(item.paidAt || item.createdAt))}</strong></div>
             <div class="stat-row"><span>Bizonylat</span><strong>${escapeHtml(item.invoiceNumber || "-")}</strong></div>

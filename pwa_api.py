@@ -3514,20 +3514,24 @@ def normalize_expense_request(row: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_atm_payment(row: dict[str, Any]) -> dict[str, Any]:
     status = str(row.get("status") or "submitted").strip().casefold()
+    payment_id = str(row.get("id") or "")
+    mime_type = str(row.get("mime_type") or "")
     status_labels = {
         "submitted": "Beküldve",
         "reviewed": "Ellenőrizve",
         "rejected": "Elutasítva",
     }
     return {
-        "id": str(row.get("id") or ""),
+        "id": payment_id,
         "courierId": str(row.get("courier_id") or ""),
         "courierName": str(row.get("courier_name") or ""),
         "amountHuf": int(row.get("amount_huf") or 0),
         "invoiceNumber": str(row.get("invoice_number") or ""),
         "note": str(row.get("note") or ""),
         "fileName": str(row.get("file_name") or ""),
-        "mimeType": str(row.get("mime_type") or ""),
+        "mimeType": mime_type,
+        "receiptUrl": f"/api/atm-payments/{quote(payment_id)}/receipt" if payment_id else "",
+        "receiptIsImage": mime_type.casefold().startswith("image/"),
         "status": status,
         "statusLabel": status_labels.get(status, status or "-"),
         "paidAt": str(row.get("paid_at") or ""),
@@ -12546,6 +12550,41 @@ def atm_payments(
             "count": len(active_rows),
         },
     }
+
+
+@app.get("/api/atm-payments/{payment_id}/receipt")
+def atm_payment_receipt(
+    payment_id: str,
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    view_user, _preview = workflow_view_user(user, courier)
+    courier_id, _courier_name = courier_identity(view_user)
+    rows = supabase_rest(
+        "GET",
+        "pwa_atm_payment",
+        params={
+            "select": "id,courier_id,file_name,mime_type,file_content_base64",
+            "id": f"eq.{payment_id}",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+        timeout=60,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A bizonylat nem található.")
+    row = rows[0]
+    try:
+        content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="A bizonylat tartalma sérült.") from exc
+    file_name = str(row.get("file_name") or "atm_bizonylat").replace('"', "")
+    return Response(
+        content=content,
+        media_type=str(row.get("mime_type") or "application/octet-stream"),
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(file_name)}"},
+    )
 
 
 @app.post("/api/atm-payments")
