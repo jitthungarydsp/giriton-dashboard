@@ -2502,6 +2502,203 @@ def attach_next_shift_same_day(rows: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+def live_map_route_ids(value: Any) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = [value]
+    if not isinstance(value, list):
+        value = [value] if value else []
+    route_ids = []
+    for item in value:
+        route_id = str(item or "").strip()
+        if route_id and route_id not in route_ids:
+            route_ids.append(route_id)
+    return route_ids
+
+
+def checkpoint_from_live_map_stop_row(row: dict[str, Any], index: int) -> dict[str, Any]:
+    stop_json = row.get("stop_json") if isinstance(row.get("stop_json"), dict) else {}
+    state = str(row.get("state") or stop_json.get("state") or "").strip().upper()
+    delay_minutes = safe_int(row.get("delay_minutes") or stop_json.get("delayMinutes")) or 0
+    position = safe_int(row.get("sequence") or stop_json.get("sequence")) or index
+    return {
+        "orderId": str(row.get("order_id") or stop_json.get("orderId") or ""),
+        "position": position,
+        "sequence": position,
+        "state": state or "PENDING",
+        "stateLabel": {
+            "COMPLETED": "Teljesítve",
+            "CURRENT": "Aktuális",
+            "PENDING": "Hátra van",
+            "REJECTED": "Elutasítva",
+        }.get(state, state.title() if state else "Hátra van"),
+        "address": str(row.get("address") or stop_json.get("address") or "").strip(),
+        "windowFrom": local_iso_time(
+            stop_json.get("deliverSince")
+            or stop_json.get("customerSlotFrom")
+            or stop_json.get("windowFrom")
+        ),
+        "windowTo": local_iso_time(
+            stop_json.get("deliverTill")
+            or stop_json.get("customerSlotTo")
+            or stop_json.get("windowTo")
+        ),
+        "plannedArrival": local_iso_time(
+            row.get("planned_arrival_at")
+            or stop_json.get("plannedArrivalAt")
+            or stop_json.get("plannedArrivalTime")
+        ),
+        "estimatedArrival": local_iso_time(
+            stop_json.get("estimatedArrivalAt")
+            or stop_json.get("estimatedArrivalTime")
+            or stop_json.get("eta")
+        ),
+        "realArrival": local_iso_time(
+            row.get("actual_arrival_at")
+            or stop_json.get("actualArrivalAt")
+            or stop_json.get("realArrivalTime")
+        ),
+        "deltaMinutes": delay_minutes,
+        "delayMinutes": max(0, delay_minutes),
+        "isLate": delay_minutes > 0,
+        "slotMissProjected": bool(stop_json.get("slotMissProjected")),
+    }
+
+
+def read_latest_live_map_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
+    courier_id, courier_name = courier_identity(user)
+    if not courier_id:
+        return None
+    courier_rows = optional_supabase_rows(
+        "courier_hub_live_map_courier_latest",
+        params={
+            "select": (
+                "warehouse_id,warehouse_code,dsp_id,courier_id,courier_name,status,"
+                "shift_status,deliveries_completed,stops_total,finished_route_count,"
+                "route_ids,vehicle_plate,fridge_config,active_from,active_to,"
+                "courier_json,fetched_at"
+            ),
+            "courier_id": f"eq.{courier_id}",
+            "order": "fetched_at.desc",
+            "limit": "1",
+        },
+        timeout=20,
+    )
+    if not courier_rows:
+        return None
+
+    courier_row = courier_rows[0]
+    fetched_at = local_datetime(courier_row.get("fetched_at")) or datetime.now(LOCAL_TIMEZONE)
+    if fetched_at.date() != datetime.now(LOCAL_TIMEZONE).date():
+        return None
+
+    route_ids = live_map_route_ids(courier_row.get("route_ids"))
+    route_id = route_ids[0] if route_ids else ""
+    stop_params = {
+        "select": (
+            "warehouse_id,dsp_id,courier_id,route_id,order_id,sequence,latitude,"
+            "longitude,address,planned_arrival_at,actual_arrival_at,delay_minutes,"
+            "state,stop_json,fetched_at"
+        ),
+        "warehouse_id": f"eq.{courier_row.get('warehouse_id')}",
+        "dsp_id": f"eq.{courier_row.get('dsp_id') or COURIER_HUB_DSP_ID}",
+        "courier_id": f"eq.{courier_id}",
+        "order": "sequence.asc",
+        "limit": "300",
+    }
+    if route_ids:
+        stop_params["route_id"] = f"in.({','.join(route_ids)})"
+
+    stop_rows = optional_supabase_rows(
+        "courier_hub_live_map_stop_latest",
+        params=stop_params,
+        timeout=20,
+    )
+    if not route_id and stop_rows:
+        route_id = str(stop_rows[0].get("route_id") or "").strip()
+    if not route_id:
+        return None
+
+    stops = [
+        checkpoint_from_live_map_stop_row(row, index)
+        for index, row in enumerate(stop_rows or [], start=1)
+    ]
+    stops = sorted(stops, key=lambda item: safe_int(item.get("position")) or 999999)
+    checkpoints = {
+        "previous": None,
+        "current": None,
+        "next": None,
+    }
+    if stops:
+        current_index = next(
+            (
+                index for index, stop in enumerate(stops)
+                if str(stop.get("state") or "").upper() == "CURRENT"
+            ),
+            None,
+        )
+        if current_index is None:
+            current_index = next(
+                (
+                    index for index, stop in enumerate(stops)
+                    if str(stop.get("state") or "").upper() != "COMPLETED"
+                ),
+                len(stops) - 1,
+            )
+        checkpoints = {
+            "previous": stops[current_index - 1] if current_index > 0 else None,
+            "current": stops[current_index],
+            "next": stops[current_index + 1] if current_index + 1 < len(stops) else None,
+        }
+
+    current_stop, next_stop = route_planner_next_leg(stops)
+    planned_return = courier_row.get("active_to")
+    real_return = "" if str(courier_row.get("status") or "").lower() not in {"finished", "completed"} else courier_row.get("active_to")
+    story = read_current_route_story(courier_id, route_id, fetched_at.date())
+    route_payload = {
+        "routeId": route_id,
+        "warehouse": str(courier_row.get("warehouse_code") or f"BUD{courier_row.get('warehouse_id') or ''}"),
+        "status": str(courier_row.get("status") or courier_row.get("shift_status") or "Folyamatban"),
+        "totalOrders": safe_int(courier_row.get("stops_total")) or len(stops),
+        "deliveredOrders": safe_int(courier_row.get("deliveries_completed")),
+        "plannedDeparture": local_iso_time(courier_row.get("active_from")),
+        "realDeparture": local_iso_time(courier_row.get("active_from")),
+        "plannedReturn": local_iso_time(planned_return),
+        "realReturn": local_iso_time(real_return),
+        "minutesUntilReturn": minutes_until_route_return(
+            {"plannedReturn": planned_return, "realReturn": real_return}
+        ),
+        "previous": checkpoints.get("previous"),
+        "current": checkpoints.get("current"),
+        "next": checkpoints.get("next"),
+        "stops": stops,
+        "plannerStatus": route_planner_status(stops),
+        "traffic": route_planner_traffic(current_stop, next_stop),
+        "vehicle": {
+            "licensePlate": str(courier_row.get("vehicle_plate") or "").strip(),
+            "car": "",
+            "source": "Courier Hub live-map",
+            "shiftType": str(courier_row.get("fridge_config") or ""),
+            "shiftStart": local_iso_time(courier_row.get("active_from")),
+            "shiftEnd": local_iso_time(courier_row.get("active_to")),
+        } if str(courier_row.get("vehicle_plate") or "").strip() else read_live_vehicle_for_user(user),
+        "source": "courier_hub_live_map",
+        "updatedAt": courier_row.get("fetched_at"),
+    }
+    if story:
+        route_payload["routeStory"] = story
+    return {
+        "found": True,
+        "totalRoutes": max(len(route_ids), 1),
+        "route": route_payload,
+        "source": "courier_hub_live_map_courier_latest",
+        "updatedAt": courier_row.get("fetched_at") or datetime.now(timezone.utc).isoformat(),
+        "courierName": str(courier_row.get("courier_name") or courier_name),
+    }
+
+
 def read_latest_hub_current_route(user: dict[str, Any]) -> dict[str, Any] | None:
     courier_id, courier_name = courier_identity(user)
     rows = optional_supabase_rows(
@@ -2990,6 +3187,10 @@ def active_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
 def build_route_card(user: dict[str, Any]) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     today = datetime.now(LOCAL_TIMEZONE).date()
+    live_map_card = read_latest_live_map_current_route(user)
+    if live_map_card:
+        return live_map_card
+
     try:
         refresh_live_hub_detail_for_user(user)
     except Exception as exc:

@@ -7,6 +7,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import requests
@@ -46,6 +47,16 @@ PUSH_NOTIFICATION_TYPE = "route_assigned"
 ATTENDANCE_CACHE = {}
 COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 COURIER_HUB_DSP_ID = int(os.getenv("COURIER_HUB_DSP_ID") or "8")
+COURIER_HUB_LIVE_MAP_WAREHOUSE_IDS = [
+    int(value)
+    for value in str(os.getenv("COURIER_HUB_LIVE_MAP_WAREHOUSE_IDS") or "1,2")
+    .replace(";", ",")
+    .split(",")
+    if str(value).strip().isdigit()
+]
+COURIER_HUB_LIVE_MAP_TRACK_CHUNK_SIZE = int(
+    os.getenv("COURIER_HUB_LIVE_MAP_TRACK_CHUNK_SIZE") or "80"
+)
 COURIER_HUB_DETAIL_CACHE = {}
 COURIER_HUB_PERFORMANCE_SHIFT_CACHE = {}
 
@@ -318,6 +329,484 @@ def load_courier_hub_performance_shifts(courier_id, warehouse, date_from, date_t
     payload = response.json()
     COURIER_HUB_PERFORMANCE_SHIFT_CACHE[cache_key] = payload
     return payload
+
+
+def warehouse_code_for_id(warehouse_id):
+    if int(warehouse_id) == 1:
+        return "BUD1"
+    if int(warehouse_id) == 2:
+        return "BUD2"
+    return f"WH{int(warehouse_id)}"
+
+
+def safe_int(value):
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def safe_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def chunked(items, size):
+    size = max(int(size or 1), 1)
+    for index in range(0, len(items), size):
+        yield items[index:index + size]
+
+
+def courier_hub_get_json(url):
+    response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+    if response.status_code in {401, 403} and refresh_courier_hub_headers():
+        response = requests.get(url, headers=courier_hub_headers(), timeout=30)
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"_non_json_response": response.text[:5000]}
+
+    return response.status_code, payload
+
+
+def live_map_url(warehouse_id):
+    return (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/live-map?dspId={COURIER_HUB_DSP_ID}"
+    )
+
+
+def live_map_tracks_url(warehouse_id, courier_ids, include_geometry=False):
+    joined_ids = ",".join(str(courier_id) for courier_id in courier_ids)
+    return (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/live-map/tracks?dspId={COURIER_HUB_DSP_ID}"
+        f"&courierIds={quote(joined_ids)}"
+        f"&includeGeometry={'true' if include_geometry else 'false'}"
+    )
+
+
+def live_map_couriers(payload):
+    if not isinstance(payload, dict):
+        return []
+    couriers = payload.get("couriers")
+    return couriers if isinstance(couriers, list) else []
+
+
+def live_map_tracks(payload):
+    if not isinstance(payload, dict):
+        return []
+    tracks = payload.get("tracks")
+    return tracks if isinstance(tracks, list) else []
+
+
+def supabase_upsert_rows(table, rows, on_conflict, dry_run=False, batch_size=500):
+    if not rows:
+        return 0
+
+    if dry_run:
+        return len(rows)
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        return 0
+
+    written_count = 0
+    endpoint = f"{supabase_url}/rest/v1/{table}"
+    for batch in chunked(rows, batch_size):
+        response = requests.post(
+            endpoint,
+            headers=supabase_headers(
+                service_role_key,
+                "resolution=merge-duplicates,return=minimal",
+            ),
+            params={"on_conflict": on_conflict},
+            json=batch,
+            timeout=60,
+        )
+        if response.status_code in {404, 406}:
+            print(
+                f"Courier Hub live-map DB tabla nem talalhato: {table}",
+                flush=True,
+            )
+            return written_count
+        raise_for_supabase_error(response)
+        written_count += len(batch)
+
+    return written_count
+
+
+def build_live_map_raw_row(
+    warehouse_id,
+    request_url,
+    status_code,
+    payload,
+    fetched_at,
+):
+    snapshot_key = (
+        f"{fetched_at.strftime('%Y%m%d%H%M%S%f')}"
+        f"-wh{int(warehouse_id)}-dsp{COURIER_HUB_DSP_ID}-live-map"
+    )
+    return {
+        "snapshot_key": snapshot_key,
+        "warehouse_id": int(warehouse_id),
+        "warehouse_code": warehouse_code_for_id(warehouse_id),
+        "dsp_id": COURIER_HUB_DSP_ID,
+        "request_url": request_url,
+        "status_code": int(status_code or 0),
+        "response_json": payload if isinstance(payload, (dict, list)) else {},
+        "courier_count": len(live_map_couriers(payload)),
+        "fetched_at": fetched_at.isoformat(),
+        "updated_at": fetched_at.isoformat(),
+    }
+
+
+def build_live_map_courier_rows(warehouse_id, payload, fetched_at):
+    rows = []
+    for courier in live_map_couriers(payload):
+        if not isinstance(courier, dict):
+            continue
+
+        courier_id = safe_int(
+            courier.get("courierId")
+            or courier.get("courier_id")
+            or courier.get("id")
+        )
+        if courier_id is None:
+            continue
+
+        last_position = (
+            courier.get("lastPosition")
+            or courier.get("last_position")
+            or courier.get("position")
+            or {}
+        )
+        if not isinstance(last_position, dict):
+            last_position = {}
+
+        route_ids = (
+            courier.get("routeIds")
+            or courier.get("route_ids")
+            or courier.get("routes")
+            or []
+        )
+        if not isinstance(route_ids, list):
+            route_ids = [route_ids] if route_ids else []
+
+        rows.append(
+            {
+                "warehouse_id": int(warehouse_id),
+                "dsp_id": COURIER_HUB_DSP_ID,
+                "courier_id": courier_id,
+                "courier_name": str(
+                    courier.get("name")
+                    or courier.get("courierName")
+                    or courier.get("courier_name")
+                    or ""
+                ).strip(),
+                "dsp_name": str(
+                    courier.get("dspName")
+                    or courier.get("dsp_name")
+                    or ""
+                ).strip(),
+                "status": str(courier.get("status") or "").strip(),
+                "shift_status": str(
+                    courier.get("shiftStatus")
+                    or courier.get("shift_status")
+                    or ""
+                ).strip(),
+                "delay_minutes": safe_int(
+                    courier.get("delayMinutes")
+                    or courier.get("delay_minutes")
+                ),
+                "deliveries_completed": safe_int(
+                    courier.get("deliveriesCompleted")
+                    or courier.get("deliveries_completed")
+                ),
+                "stops_total": safe_int(
+                    courier.get("stopsTotal")
+                    or courier.get("stops_total")
+                ),
+                "finished_route_count": safe_int(
+                    courier.get("finishedRouteCount")
+                    or courier.get("finished_route_count")
+                ),
+                "route_ids": route_ids,
+                "vehicle_plate": str(
+                    courier.get("vehiclePlate")
+                    or courier.get("vehicle_plate")
+                    or ""
+                ).strip(),
+                "fridge_config": courier.get("fridgeConfig")
+                or courier.get("fridge_config"),
+                "temperature_celsius": safe_float(
+                    courier.get("temperatureCelsius")
+                    or courier.get("temperature_celsius")
+                ),
+                "temperature_status": courier.get("temperatureStatus")
+                or courier.get("temperature_status"),
+                "last_latitude": safe_float(
+                    last_position.get("latitude")
+                    or last_position.get("lat")
+                ),
+                "last_longitude": safe_float(
+                    last_position.get("longitude")
+                    or last_position.get("lng")
+                    or last_position.get("lon")
+                ),
+                "last_position_time": timestamp_or_none(
+                    last_position.get("time")
+                    or last_position.get("timestamp")
+                    or last_position.get("createdAt")
+                    or last_position.get("created_at")
+                ),
+                "active_from": timestamp_or_none(
+                    courier.get("activeFrom")
+                    or courier.get("active_from")
+                ),
+                "active_to": timestamp_or_none(
+                    courier.get("activeTo")
+                    or courier.get("active_to")
+                ),
+                "courier_json": courier,
+                "fetched_at": fetched_at.isoformat(),
+                "updated_at": fetched_at.isoformat(),
+            }
+        )
+
+    return rows
+
+
+def build_live_map_track_raw_row(
+    warehouse_id,
+    courier_ids,
+    include_geometry,
+    request_url,
+    status_code,
+    payload,
+    fetched_at,
+):
+    tracks = live_map_tracks(payload)
+    stop_count = sum(
+        len(track.get("stops") or [])
+        for track in tracks
+        if isinstance(track, dict)
+    )
+    point_count = sum(
+        len(track.get("points") or [])
+        for track in tracks
+        if isinstance(track, dict)
+    )
+    courier_part = "-".join(str(courier_id) for courier_id in courier_ids[:5])
+    if len(courier_ids) > 5:
+        courier_part = f"{courier_part}-plus{len(courier_ids) - 5}"
+    snapshot_key = (
+        f"{fetched_at.strftime('%Y%m%d%H%M%S%f')}"
+        f"-wh{int(warehouse_id)}-dsp{COURIER_HUB_DSP_ID}"
+        f"-tracks-{courier_part or 'empty'}"
+    )
+    return {
+        "snapshot_key": snapshot_key,
+        "warehouse_id": int(warehouse_id),
+        "warehouse_code": warehouse_code_for_id(warehouse_id),
+        "dsp_id": COURIER_HUB_DSP_ID,
+        "courier_ids": ",".join(str(courier_id) for courier_id in courier_ids),
+        "include_geometry": bool(include_geometry),
+        "request_url": request_url,
+        "status_code": int(status_code or 0),
+        "response_json": payload if isinstance(payload, (dict, list)) else {},
+        "track_count": len(tracks),
+        "stop_count": stop_count,
+        "point_count": point_count,
+        "fetched_at": fetched_at.isoformat(),
+        "updated_at": fetched_at.isoformat(),
+    }
+
+
+def build_live_map_stop_rows(warehouse_id, payload, fetched_at):
+    rows = []
+    for track in live_map_tracks(payload):
+        if not isinstance(track, dict):
+            continue
+
+        courier_id = safe_int(
+            track.get("courierId")
+            or track.get("courier_id")
+            or track.get("courier")
+        )
+        route_id = safe_int(
+            track.get("routeId")
+            or track.get("route_id")
+            or track.get("route")
+        )
+        stops = track.get("stops") or []
+        if not isinstance(stops, list):
+            continue
+
+        for stop in stops:
+            if not isinstance(stop, dict):
+                continue
+
+            stop_route_id = safe_int(
+                stop.get("routeId")
+                or stop.get("route_id")
+                or route_id
+            )
+            order_id = safe_int(
+                stop.get("orderId")
+                or stop.get("order_id")
+                or stop.get("id")
+            )
+            if courier_id is None or stop_route_id is None or order_id is None:
+                continue
+
+            rows.append(
+                {
+                    "warehouse_id": int(warehouse_id),
+                    "dsp_id": COURIER_HUB_DSP_ID,
+                    "courier_id": courier_id,
+                    "route_id": stop_route_id,
+                    "order_id": order_id,
+                    "sequence": safe_int(stop.get("sequence")) or 0,
+                    "latitude": safe_float(stop.get("latitude") or stop.get("lat")),
+                    "longitude": safe_float(
+                        stop.get("longitude") or stop.get("lng") or stop.get("lon")
+                    ),
+                    "address": str(stop.get("address") or "").strip(),
+                    "planned_arrival_at": timestamp_or_none(
+                        stop.get("plannedArrivalAt")
+                        or stop.get("planned_arrival_at")
+                        or stop.get("plannedArrivalTime")
+                    ),
+                    "actual_arrival_at": timestamp_or_none(
+                        stop.get("actualArrivalAt")
+                        or stop.get("actual_arrival_at")
+                        or stop.get("realArrivalTime")
+                    ),
+                    "delay_minutes": safe_int(
+                        stop.get("delayMinutes")
+                        or stop.get("delay_minutes")
+                    ),
+                    "state": str(stop.get("state") or stop.get("status") or "").strip(),
+                    "stop_json": stop,
+                    "fetched_at": fetched_at.isoformat(),
+                    "updated_at": fetched_at.isoformat(),
+                }
+            )
+
+    return rows
+
+
+def sync_courier_hub_live_map_data(dry_run=False):
+    counters = Counter()
+
+    for warehouse_id in COURIER_HUB_LIVE_MAP_WAREHOUSE_IDS:
+        fetched_at = datetime.now(LOCAL_TIMEZONE)
+        url = live_map_url(warehouse_id)
+        status_code, payload = courier_hub_get_json(url)
+
+        try:
+            counters["live_map_raw_rows"] += supabase_upsert_rows(
+                "courier_hub_live_map_raw",
+                [
+                    build_live_map_raw_row(
+                        warehouse_id,
+                        url,
+                        status_code,
+                        payload,
+                        fetched_at,
+                    )
+                ],
+                "snapshot_key",
+                dry_run=dry_run,
+            )
+            courier_rows = build_live_map_courier_rows(
+                warehouse_id,
+                payload,
+                fetched_at,
+            )
+            counters["live_map_courier_rows"] += supabase_upsert_rows(
+                "courier_hub_live_map_courier_latest",
+                courier_rows,
+                "warehouse_id,dsp_id,courier_id",
+                dry_run=dry_run,
+            )
+        except Exception as exc:
+            counters["live_map_db_error"] += 1
+            print(
+                f"Courier Hub live-map DB mentes hiba warehouse={warehouse_id}: {exc}",
+                flush=True,
+            )
+
+        if int(status_code or 0) >= 400:
+            counters["live_map_http_error"] += 1
+            continue
+
+        courier_ids = [
+            row["courier_id"]
+            for row in build_live_map_courier_rows(warehouse_id, payload, fetched_at)
+        ]
+        if not courier_ids:
+            counters["live_map_no_couriers"] += 1
+            continue
+
+        for courier_id_chunk in chunked(
+            sorted(set(courier_ids)),
+            COURIER_HUB_LIVE_MAP_TRACK_CHUNK_SIZE,
+        ):
+            track_fetched_at = datetime.now(LOCAL_TIMEZONE)
+            track_url = live_map_tracks_url(
+                warehouse_id,
+                courier_id_chunk,
+                include_geometry=False,
+            )
+            track_status_code, track_payload = courier_hub_get_json(track_url)
+            try:
+                counters["live_map_track_raw_rows"] += supabase_upsert_rows(
+                    "courier_hub_live_map_track_raw",
+                    [
+                        build_live_map_track_raw_row(
+                            warehouse_id,
+                            courier_id_chunk,
+                            False,
+                            track_url,
+                            track_status_code,
+                            track_payload,
+                            track_fetched_at,
+                        )
+                    ],
+                    "snapshot_key",
+                    dry_run=dry_run,
+                )
+                counters["live_map_stop_rows"] += supabase_upsert_rows(
+                    "courier_hub_live_map_stop_latest",
+                    build_live_map_stop_rows(
+                        warehouse_id,
+                        track_payload,
+                        track_fetched_at,
+                    ),
+                    "warehouse_id,dsp_id,courier_id,route_id,order_id",
+                    dry_run=dry_run,
+                )
+            except Exception as exc:
+                counters["live_map_track_db_error"] += 1
+                print(
+                    "Courier Hub live-map tracks DB mentes hiba "
+                    f"warehouse={warehouse_id}: {exc}",
+                    flush=True,
+                )
+
+            if int(track_status_code or 0) >= 400:
+                counters["live_map_track_http_error"] += 1
+
+    return counters
 
 
 def format_performance_shift_time(value):
@@ -1723,6 +2212,20 @@ def run_once(max_age_minutes, dry_run=False):
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
+
+    try:
+        live_map_counters = sync_courier_hub_live_map_data(dry_run=dry_run)
+        counters.update(live_map_counters)
+        print(
+            f"Courier Hub live-map mentes: {dict(live_map_counters)}",
+            flush=True,
+        )
+    except Exception as exc:
+        counters["live_map_sync_error"] += 1
+        print(
+            f"Courier Hub live-map sync hiba: {exc}",
+            flush=True,
+        )
 
     try:
         dashboard_routes = load_courier_hub_departure_routes()
