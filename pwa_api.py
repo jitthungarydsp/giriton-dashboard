@@ -2973,6 +2973,118 @@ def live_map_stop_summary(stop_rows: list[dict[str, Any]], route_ids: list[str])
     }
 
 
+def stop_push_alert_kind(stop: dict[str, Any] | None) -> str:
+    if not stop:
+        return ""
+    if bool(stop.get("slotMissProjected")):
+        return "risk"
+    if safe_int(stop.get("delayMinutes") or stop.get("deltaMinutes")) > 0 or bool(stop.get("isLate")):
+        return "late"
+    return ""
+
+
+def stop_push_alert_text(stop: dict[str, Any], alert_kind: str) -> str:
+    delay_minutes = safe_int(stop.get("delayMinutes") or stop.get("deltaMinutes"))
+    if alert_kind == "risk":
+        return "kockázatos"
+    if delay_minutes > 0:
+        return f"{delay_minutes} perc késés"
+    return "késés"
+
+
+def coordinator_push_recipient_ids(target_courier_id: str) -> list[str]:
+    recipients: list[str] = []
+    clean_target = str(target_courier_id or "").strip()
+    if clean_target:
+        recipients.append(clean_target)
+    for user in load_users():
+        role = str(user.get("role") or "").strip().lower()
+        if role not in {"admin", "coordinator", "superadmin"}:
+            continue
+        user_id = str(user.get("courierId") or user.get("courier_id") or "").strip()
+        if user_id and user_id not in recipients:
+            recipients.append(user_id)
+    return recipients
+
+
+def send_route_stop_push_once(
+    *,
+    courier_id: str,
+    courier_name: str,
+    route_id: Any,
+    stop: dict[str, Any],
+    alert_kind: str,
+    source: str,
+) -> None:
+    clean_courier_id = str(courier_id or "").strip()
+    if not clean_courier_id:
+        return
+    route_text = str(route_id or "").strip() or "route"
+    position = str(stop.get("position") or stop.get("sequence") or stop.get("orderId") or "stop")
+    notification_type = f"route_stop_{alert_kind}_{clean_courier_id}_{route_text}_{position}"
+    work_date = datetime.now(LOCAL_TIMEZONE).date()
+    status_text = stop_push_alert_text(stop, alert_kind)
+    address = str(stop.get("address") or "Cím nincs megadva").strip()
+    title = "Késéses cím" if alert_kind == "late" else "Kockázatos cím"
+    body = f"{courier_name or 'Futár'} · #{position}: {address} · {status_text}"
+    tag = notification_type
+    data = {
+        "section": "tours",
+        "courierId": clean_courier_id,
+        "routeId": route_text,
+        "position": position,
+        "alertKind": alert_kind,
+        "source": source,
+    }
+    try:
+        from resources.pwa_push_notifications import load_latest_delivery_message, send_push_to_courier
+    except Exception as exc:
+        print(f"Route stop push import hiba: {exc}")
+        return
+    for recipient_id in coordinator_push_recipient_ids(clean_courier_id):
+        try:
+            latest_message = load_latest_delivery_message(
+                courier_id=recipient_id,
+                notification_type=notification_type,
+            )
+            if latest_message.startswith("sent:"):
+                continue
+            send_push_to_courier(
+                courier_id=recipient_id,
+                title=title,
+                body=body,
+                tag=tag,
+                url="/",
+                notification_type=notification_type,
+                work_date=work_date,
+                data=data,
+            )
+        except Exception as exc:
+            print(f"Route stop push hiba: recipient={recipient_id}; {exc}")
+
+
+def notify_route_stop_alerts(
+    *,
+    courier_id: str,
+    courier_name: str,
+    route_id: Any,
+    stops: list[dict[str, Any]],
+    source: str,
+) -> None:
+    for stop in stops:
+        alert_kind = stop_push_alert_kind(stop)
+        if not alert_kind:
+            continue
+        send_route_stop_push_once(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            route_id=route_id,
+            stop=stop,
+            alert_kind=alert_kind,
+            source=source,
+        )
+
+
 def live_ops_courier_payload(
     row: dict[str, Any],
     stop_rows_by_courier: dict[str, list[dict[str, Any]]],
@@ -2992,6 +3104,19 @@ def live_ops_courier_payload(
     maps_url = ""
     if latitude is not None and longitude is not None:
         maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
+    notify_route_stop_alerts(
+        courier_id=courier_id,
+        courier_name=str(row.get("courier_name") or "Futár"),
+        route_id=route_ids[0] if route_ids else "",
+        stops=[
+            stop for stop in [
+                stop_summary.get("current"),
+                stop_summary.get("next"),
+            ]
+            if isinstance(stop, dict)
+        ],
+        source="coordinator_live_map",
+    )
     return {
         "courierId": courier_id,
         "courierName": str(row.get("courier_name") or "Futár"),
@@ -12991,7 +13116,24 @@ def current_route(
 ):
     user = require_user(giriton_pwa_session)
     view_user, _preview = workflow_view_user(user, courier)
-    return attach_route_map_config(build_route_card(view_user))
+    card = build_route_card(view_user)
+    route = card.get("route") if isinstance(card.get("route"), dict) else {}
+    courier_id, courier_name = courier_identity(view_user)
+    notify_route_stop_alerts(
+        courier_id=courier_id,
+        courier_name=courier_name or card.get("courierName") or "",
+        route_id=route.get("routeId") or "",
+        stops=[
+            stop for stop in [
+                route.get("current"),
+                route.get("next"),
+                *(route.get("stops") if isinstance(route.get("stops"), list) else []),
+            ]
+            if isinstance(stop, dict)
+        ],
+        source="routes_current",
+    )
+    return attach_route_map_config(card)
 
 
 @app.get("/api/routes/details")
