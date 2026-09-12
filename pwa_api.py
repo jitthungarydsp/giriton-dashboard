@@ -3606,49 +3606,73 @@ def today_worker_payload(
 
 def read_today_workers() -> dict[str, Any]:
     target_date = datetime.now(LOCAL_TIMEZONE).date()
+    target_key = target_date.isoformat()
     live_map = read_coordinator_live_map()
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
     checkins_by_courier = latest_today_shift_checkins()
-    vehicle_rows = read_vehicle_assignment_rows(target_date, target_date, limit=5000)
-    shift_rows = read_today_worker_shift_rows(target_date)
-    workers = [
-        today_worker_payload(row, live_by_courier, checkins_by_courier, vehicle_rows)
-        for row in shift_rows
-    ]
-    seen = {str(item.get("courierId") or "") for item in workers if item.get("courierId")}
-    for courier_id, live in live_by_courier.items():
-        if courier_id and courier_id not in seen:
-            workers.append({
-                "date": target_date.isoformat(),
-                "courierId": courier_id,
-                "courierName": live.get("courierName") or "Futár",
-                "start": local_iso_time(live.get("activeFrom")),
-                "end": local_iso_time(live.get("activeTo")),
-                "warehouse": live.get("warehouse") or "",
-                "shiftName": "Live map aktív futár",
-                "bookingCode": "",
-                "status": "confirmed",
-                "statusLabel": "Live map alapján aktív",
-                "actualStartAt": live.get("activeFrom") or "",
-                "queueEvent": live.get("queueEvent") or "",
-                "queueEventAt": live.get("queueEventAt") or "",
-                "vehicle": live.get("vehiclePlate") or "",
-                "live": {
-                    "routeId": live.get("activeRouteId") or "",
-                    "deliveredStops": live.get("deliveredStops") or 0,
-                    "totalStops": live.get("totalStops") or 0,
-                    "remainingStops": live.get("remainingStops") or 0,
-                    "status": live.get("status") or live.get("shiftStatus") or "",
-                    "mapsUrl": live.get("mapsUrl") or "",
-                },
-            })
+    schedule = read_coordinator_schedule(target_key[:7])
+    today_schedule = next(
+        (day for day in schedule.get("days", []) if day.get("date") == target_key),
+        {"workers": []},
+    )
+    workers = []
+    for schedule_worker in today_schedule.get("workers", []):
+        courier_id = str(schedule_worker.get("courierId") or "").strip()
+        live = live_by_courier.get(courier_id) or {}
+        checkin = checkins_by_courier.get(courier_id) or {}
+        live_route_id = live.get("activeRouteId") or ""
+        live_total_stops = safe_int(live.get("totalStops"))
+        status_label = "Beosztva"
+        if live_route_id or live_total_stops or live.get("mapsUrl"):
+            status_label = "Live map alapján aktív"
+        elif schedule_worker.get("giritonTone") == "ok" and schedule_worker.get("muszakproTone") == "ok":
+            status_label = "Giriton + MűszakPro OK"
+        elif schedule_worker.get("missingSource"):
+            status_label = str(schedule_worker.get("missingSource") or "")
+        workers.append({
+            "date": target_key,
+            "courierId": courier_id,
+            "courierName": schedule_worker.get("courierName") or live.get("courierName") or "Futár",
+            "start": schedule_worker.get("start") or local_iso_time(live.get("activeFrom")),
+            "end": schedule_worker.get("end") or local_iso_time(live.get("activeTo")),
+            "warehouse": schedule_worker.get("warehouse") or live.get("warehouse") or "",
+            "shiftName": schedule_worker.get("shiftName") or schedule_worker.get("bookingCode") or "",
+            "bookingCode": schedule_worker.get("bookingCode") or "",
+            "status": "confirmed",
+            "statusLabel": status_label,
+            "giritonStatus": schedule_worker.get("giritonStatus") or "Nincs adat",
+            "giritonTone": schedule_worker.get("giritonTone") or "unknown",
+            "muszakproStatus": schedule_worker.get("muszakproStatus") or "Nincs adat",
+            "muszakproTone": schedule_worker.get("muszakproTone") or "unknown",
+            "hubStatus": schedule_worker.get("hubStatus") or "",
+            "hubTone": schedule_worker.get("hubTone") or "unknown",
+            "missingSource": schedule_worker.get("missingSource") or "",
+            "source": schedule_worker.get("source") or "",
+            "actualStartAt": live.get("activeFrom") or "",
+            "queueEvent": str(checkin.get("event_type") or live.get("queueEvent") or ""),
+            "queueEventAt": iso_local_text(checkin.get("created_at")) or live.get("queueEventAt") or "",
+            "vehicle": schedule_worker.get("vehicle") or live.get("vehiclePlate") or "",
+            "live": {
+                "routeId": live_route_id,
+                "deliveredStops": live.get("deliveredStops") or 0,
+                "totalStops": live_total_stops,
+                "remainingStops": live.get("remainingStops") or 0,
+                "status": live.get("status") or live.get("shiftStatus") or "",
+                "mapsUrl": live.get("mapsUrl") or "",
+            },
+        })
     workers = sorted(workers, key=lambda item: (item.get("start") or "99:99", item.get("warehouse") or "", item.get("courierName") or ""))
     return {
-        "date": target_date.isoformat(),
+        "date": target_key,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "summary": {
             "planned": len(workers),
-            "active": len([item for item in workers if (item.get("live") or {}).get("routeId")]),
+            "active": len([
+                item for item in workers
+                if (item.get("live") or {}).get("routeId")
+                or safe_int((item.get("live") or {}).get("totalStops"))
+                or (item.get("live") or {}).get("mapsUrl")
+            ]),
             "queued": len([item for item in workers if item.get("queueEvent") == "queued"]),
             "returned": len([item for item in workers if item.get("queueEvent") == "returned"]),
         },

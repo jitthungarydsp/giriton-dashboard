@@ -51,7 +51,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v120";
+const APP_VERSION = "v121";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4626,29 +4626,36 @@ async function loadCoordinatorLiveMap() {
 function renderWorkerCard(item) {
   const progress = opsProgress(item);
   const live = item.live || {};
+  const hasLive = Boolean(live.routeId || live.mapsUrl || Number(live.totalStops || 0));
   const vehicleText = opsVehicleText(item.vehicle);
   const mapsLink = live.mapsUrl
     ? `<a class="ops-map-link" href="${escapeHtml(live.mapsUrl)}" target="_blank" rel="noopener">Térkép</a>`
-    : "-";
+    : "";
+  const end = item.end ? `-${escapeHtml(item.end)}` : "";
   return `
     <article class="ops-card">
       <div class="ops-card-head">
         <div>
           <strong>${escapeHtml(item.courierName || "Futár")}</strong>
-          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(opsTimeRange(item.start, item.end))}</small>
+          <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(item.start || "-")}${end}</small>
         </div>
         <span>${escapeHtml(item.statusLabel || "-")}</span>
       </div>
-      <div class="ops-detail-grid">
-        <div><span>Műszak</span><strong>${escapeHtml(item.shiftName || item.bookingCode || "-")}</strong><small>${escapeHtml(item.actualStartAt ? `Tényleges kezdés: ${shortDateTime(item.actualStartAt)}` : "")}</small></div>
-        <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
-        <div><span>Live túra</span><strong>${escapeHtml(live.routeId || "-")}</strong><small>${progress.total ? `${formatCount(progress.done)} / ${formatCount(progress.total)} cím` : "Nincs aktív live route"}</small></div>
-        <div><span>Jelzés</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
+      <div class="schedule-chip-row">
+        ${scheduleStatusChip(`Giriton: ${item.giritonStatus || "Nincs adat"}`, item.giritonTone)}
+        ${scheduleStatusChip(`MűszakPro: ${item.muszakproStatus || "Nincs adat"}`, item.muszakproTone)}
+        ${item.hubStatus ? scheduleStatusChip(`Hub: ${item.hubStatus}`, item.hubTone) : ""}
       </div>
-      <div class="ops-worker-foot">
+      <div class="ops-detail-grid">
+        <div><span>Műszak</span><strong>${escapeHtml(item.shiftName || item.bookingCode || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
+        <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
+        <div><span>Live túra</span><strong>${escapeHtml(hasLive ? (live.routeId || "Aktív") : "Nincs live adat")}</strong><small>${hasLive && progress.total ? `${formatCount(progress.done)} / ${formatCount(progress.total)} cím` : "Csak beosztás alapján"}</small></div>
+        <div><span>Jelzés</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(item.queueEventAt ? shortDateTime(item.queueEventAt) : (item.actualStartAt ? `Live: ${shortDateTime(item.actualStartAt)}` : ""))}</small></div>
+      </div>
+      ${hasLive ? `<div class="ops-worker-foot">
         <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
         <span>${mapsLink}</span>
-      </div>
+      </div>` : ""}
     </article>
   `;
 }
