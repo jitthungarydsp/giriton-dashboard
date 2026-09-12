@@ -12033,6 +12033,9 @@ def save_push_subscription(
         )
 
     now = datetime.now(timezone.utc).isoformat()
+    courier_id_int = safe_int(courier_id)
+    if courier_id_int <= 0:
+        raise HTTPException(status_code=422, detail="A push feliratkozáshoz érvényes futár ID szükséges.")
 
     try:
         supabase_rest(
@@ -12052,7 +12055,7 @@ def save_push_subscription(
         )
 
     full_payload = {
-            "courier_id": int(courier_id),
+            "courier_id": courier_id_int,
             "courier_name": courier_name,
             "endpoint": endpoint,
             "p256dh": p256dh,
@@ -12062,27 +12065,60 @@ def save_push_subscription(
             "last_seen_at": now,
             "updated_at": now,
     }
-    try:
-        supabase_rest(
-            "POST",
-            "pwa_push_subscriptions",
-            params={"on_conflict": "endpoint"},
-            payload=full_payload,
-            prefer="resolution=merge-duplicates,return=minimal",
-        )
-    except HTTPException:
-        minimal_payload = {
-            key: value
-            for key, value in full_payload.items()
-            if key not in {"user_agent", "last_seen_at", "updated_at"}
-        }
-        supabase_rest(
-            "POST",
-            "pwa_push_subscriptions",
-            params={"on_conflict": "endpoint"},
-            payload=minimal_payload,
-            prefer="resolution=merge-duplicates,return=minimal",
-        )
+    payload_variants = [
+        full_payload,
+        {key: value for key, value in full_payload.items() if key not in {"user_agent", "last_seen_at", "updated_at"}},
+        {key: value for key, value in full_payload.items() if key not in {"courier_name", "user_agent", "last_seen_at", "updated_at"}},
+    ]
+    errors: list[str] = []
+    for item in payload_variants:
+        try:
+            supabase_rest(
+                "POST",
+                "pwa_push_subscriptions",
+                params={"on_conflict": "endpoint"},
+                payload=item,
+                prefer="resolution=merge-duplicates,return=minimal",
+            )
+            return
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+
+    for item in payload_variants:
+        try:
+            supabase_rest(
+                "PATCH",
+                "pwa_push_subscriptions",
+                params={"endpoint": f"eq.{endpoint}"},
+                payload=item,
+                prefer="return=minimal",
+            )
+            existing = supabase_rest(
+                "GET",
+                "pwa_push_subscriptions",
+                params={"select": "id", "endpoint": f"eq.{endpoint}", "limit": "1"},
+            )
+            if existing:
+                return
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+
+    for item in payload_variants:
+        try:
+            supabase_rest(
+                "POST",
+                "pwa_push_subscriptions",
+                payload=item,
+                prefer="return=minimal",
+            )
+            return
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+
+    raise HTTPException(
+        status_code=502,
+        detail="A push feliratkozás mentése nem sikerült. Futtasd le a PWA push adatbázis migrációt.",
+    )
 
 
 def active_push_subscription_count(user: dict[str, Any]) -> int:
