@@ -51,7 +51,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v122";
+const APP_VERSION = "v123";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -117,7 +117,7 @@ async function api(path, options = {}) {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const detail = payload.detail;
-      throw new Error(typeof detail === "string" ? detail : detail?.message || "A kérés nem sikerült.");
+      throw new Error(typeof detail === "string" ? detail : detail?.message || `A kérés nem sikerült. (${response.status})`);
     }
     return payload;
   } finally {

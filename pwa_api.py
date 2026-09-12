@@ -3426,6 +3426,30 @@ def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def schedule_worker_from_vehicle(row: dict[str, Any]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    source_name = str(row.get("source_name") or "").strip()
+    return {
+        "date": work_date,
+        "courierId": "",
+        "courierName": str(row.get("driver_name") or "Futár"),
+        "start": normalize_time(row.get("shift_start")),
+        "end": normalize_time(row.get("shift_end")),
+        "warehouse": "",
+        "shiftName": str(row.get("shift_type") or source_name or "Beosztás"),
+        "bookingCode": "",
+        "giritonStatus": "Nincs adat",
+        "giritonTone": "unknown",
+        "muszakproStatus": "Nincs adat",
+        "muszakproTone": "unknown",
+        "missingSource": "",
+        "hubStatus": source_name or "Autóbeosztás",
+        "hubTone": "ok" if source_name else "unknown",
+        "vehicle": vehicle_assignment_payload(row),
+        "source": "dsp_vehicle_assignments",
+    }
+
+
 def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     for key in ("courierId", "courierName", "warehouse", "start", "end", "shiftName", "bookingCode"):
         if not existing.get(key) and incoming.get(key):
@@ -3468,6 +3492,7 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
     hub_rows = read_schedule_hub_rows(start, end)
     giriton_rows = read_schedule_giriton_rows(start, end)
     muszakpro_rows = read_schedule_muszakpro_rows(start, end)
+    vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
     workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for row in comparison_rows:
@@ -3498,6 +3523,17 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
         key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
         existing = workers_by_key.get(key)
         if existing:
+            merge_schedule_worker(existing, worker)
+        else:
+            workers_by_key[key] = worker
+
+    for row in vehicle_rows:
+        worker = schedule_worker_from_vehicle(row)
+        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+        existing = workers_by_key.get(key)
+        if existing:
+            if not existing.get("vehicle"):
+                existing["vehicle"] = worker.get("vehicle")
             merge_schedule_worker(existing, worker)
         else:
             workers_by_key[key] = worker
@@ -12804,7 +12840,11 @@ def coordinator_today_workers(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
-    return read_today_workers()
+    try:
+        return read_today_workers()
+    except Exception as exc:
+        print("Coordinator today workers failed:", exc)
+        raise HTTPException(status_code=500, detail=f"A mai beosztás nem tölthető be: {exc}") from exc
 
 
 @app.get("/api/coordinator/schedule")
@@ -12813,7 +12853,11 @@ def coordinator_schedule(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
-    return read_coordinator_schedule(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    try:
+        return read_coordinator_schedule(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+    except Exception as exc:
+        print("Coordinator schedule failed:", exc)
+        raise HTTPException(status_code=500, detail=f"A beosztás nem tölthető be: {exc}") from exc
 
 
 @app.get("/api/muszakpro/open-shifts")
