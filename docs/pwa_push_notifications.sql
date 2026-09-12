@@ -14,6 +14,24 @@ create table if not exists public.pwa_push_subscriptions (
 create index if not exists idx_pwa_push_subscriptions_courier_active
     on public.pwa_push_subscriptions (courier_id, active, updated_at desc);
 
+do $$
+declare
+    constraint_record record;
+begin
+    for constraint_record in
+        select c.conname
+        from pg_constraint c
+        join pg_class t on t.oid = c.conrelid
+        join pg_namespace n on n.oid = t.relnamespace
+        where n.nspname = 'public'
+          and t.relname = 'pwa_push_subscriptions'
+          and c.contype in ('f', 'c')
+          and pg_get_constraintdef(c.oid) ilike '%courier_id%'
+    loop
+        execute format('alter table public.pwa_push_subscriptions drop constraint if exists %I', constraint_record.conname);
+    end loop;
+end $$;
+
 create table if not exists public.pwa_push_delivery_log (
     id bigserial primary key,
     courier_id integer not null,

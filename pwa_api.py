@@ -298,6 +298,27 @@ def can_approve_pwa_registrations(user: dict[str, Any]) -> bool:
     return role in {"admin", "superadmin"} or username_key == normalize_text("admin")
 
 
+def is_admin_push_user(user: dict[str, Any]) -> bool:
+    role = str(user.get("role") or "").strip().lower()
+    return role in {"admin", "coordinator", "superadmin"} or can_preview_couriers(user)
+
+
+def admin_push_recipient_id(user: dict[str, Any]) -> int:
+    username = str(user.get("username") or user.get("email") or user.get("role") or "admin").strip().casefold()
+    digest = hashlib.sha1(username.encode("utf-8")).hexdigest()
+    return -1 * (100000 + (int(digest[:8], 16) % 900000))
+
+
+def push_subscription_identity(user: dict[str, Any]) -> tuple[int, str]:
+    courier_id = safe_int(user.get("courierId") or user.get("courier_id"))
+    name = str(user.get("username") or "Felhasználó").strip()
+    if courier_id > 0:
+        return courier_id, name
+    if is_admin_push_user(user):
+        return admin_push_recipient_id(user), name
+    raise HTTPException(status_code=422, detail="A push feliratkozáshoz futár vagy admin felhasználó szükséges.")
+
+
 def require_vehicle_history_manager(user: dict[str, Any]) -> dict[str, Any]:
     if not can_manage_vehicle_history(user):
         raise HTTPException(status_code=403, detail="Ehhez HR vagy admin jogosultság szükséges.")
@@ -3001,7 +3022,19 @@ def coordinator_push_recipient_ids(target_courier_id: str) -> list[str]:
         role = str(user.get("role") or "").strip().lower()
         if role not in {"admin", "coordinator", "superadmin"}:
             continue
-        user_id = str(user.get("courierId") or user.get("courier_id") or "").strip()
+        user_id = str(safe_int(user.get("courierId") or user.get("courier_id")) or admin_push_recipient_id(user))
+        if user_id and user_id not in recipients:
+            recipients.append(user_id)
+    for row in optional_supabase_rows(
+        "pwa_push_subscriptions",
+        params={
+            "select": "courier_id",
+            "active": "eq.true",
+            "courier_id": "lt.0",
+            "limit": "500",
+        },
+    ):
+        user_id = str(row.get("courier_id") or "").strip()
         if user_id and user_id not in recipients:
             recipients.append(user_id)
     return recipients
@@ -12066,7 +12099,8 @@ def save_push_subscription(
     user: dict[str, Any],
     payload: PushSubscriptionRequest,
 ) -> None:
-    courier_id, courier_name = courier_identity(user)
+    push_recipient_id, courier_name = push_subscription_identity(user)
+    courier_id = str(push_recipient_id)
     endpoint = payload.endpoint.strip()
     p256dh = payload.keys.p256dh.strip()
     auth = payload.keys.auth.strip()
@@ -12078,9 +12112,7 @@ def save_push_subscription(
         )
 
     now = datetime.now(timezone.utc).isoformat()
-    courier_id_int = safe_int(courier_id)
-    if courier_id_int <= 0:
-        raise HTTPException(status_code=422, detail="A push feliratkozáshoz érvényes futár ID szükséges.")
+    courier_id_int = push_recipient_id
 
     for deactivate_payload in (
         {"active": False, "updated_at": now},
@@ -12184,14 +12216,14 @@ def save_push_subscription(
 
 
 def active_push_subscription_count(user: dict[str, Any]) -> int:
-    courier_id, _courier_name = courier_identity(user)
+    push_recipient_id, _courier_name = push_subscription_identity(user)
     try:
         rows = supabase_rest(
             "GET",
             "pwa_push_subscriptions",
             params={
                 "select": "id",
-                "courier_id": f"eq.{courier_id}",
+                "courier_id": f"eq.{push_recipient_id}",
                 "active": "eq.true",
                 "limit": "100",
             },
@@ -12205,7 +12237,7 @@ def disable_push_subscription(
     user: dict[str, Any],
     endpoint: str,
 ) -> None:
-    courier_id, _courier_name = courier_identity(user)
+    push_recipient_id, _courier_name = push_subscription_identity(user)
     clean_endpoint = endpoint.strip()
     if not clean_endpoint:
         return
@@ -12214,7 +12246,7 @@ def disable_push_subscription(
         "PATCH",
         "pwa_push_subscriptions",
         params={
-            "courier_id": f"eq.{courier_id}",
+            "courier_id": f"eq.{push_recipient_id}",
             "endpoint": f"eq.{clean_endpoint}",
         },
         payload={
