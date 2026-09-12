@@ -3356,11 +3356,12 @@ def schedule_row_key(work_date: str, courier_id: Any, courier_name: Any, start_t
 
 def schedule_worker_from_comparison(row: dict[str, Any]) -> dict[str, Any]:
     work_date = str(row.get("work_date") or "")[:10]
+    shift_start_time = normalize_time(row.get("shift_start"))
     return {
         "date": work_date,
         "courierId": str(row.get("courier_id") or ""),
         "courierName": str(row.get("courier_name") or "Futár"),
-        "start": normalize_time(row.get("shift_start")),
+        "start": shift_start_time,
         "end": normalize_time(row.get("shift_end")),
         "warehouse": str(row.get("warehouse") or ""),
         "shiftName": str(row.get("attendance_shift_name") or row.get("muszakpro_shift_text") or ""),
@@ -3369,6 +3370,9 @@ def schedule_worker_from_comparison(row: dict[str, Any]) -> dict[str, Any]:
         "giritonTone": schedule_status_tone(row.get("attendance_status")),
         "muszakproStatus": schedule_status_label(row.get("muszakpro_status")),
         "muszakproTone": schedule_status_tone(row.get("muszakpro_status")),
+        "muszakproTime": shift_start_time if schedule_status_tone(row.get("muszakpro_status")) == "ok" else "",
+        "giritonBookingTime": shift_start_time if schedule_status_tone(row.get("attendance_status")) == "ok" else "",
+        "giritonOfferTime": "",
         "missingSource": str(row.get("missing_source") or ""),
         "hubStatus": "",
         "hubTone": "unknown",
@@ -3405,6 +3409,9 @@ def schedule_worker_from_hub(row: dict[str, Any]) -> dict[str, Any]:
         "giritonTone": "unknown",
         "muszakproStatus": "Nincs adat",
         "muszakproTone": "unknown",
+        "muszakproTime": "",
+        "giritonBookingTime": "",
+        "giritonOfferTime": "",
         "missingSource": "",
         "hubStatus": status_label,
         "hubTone": "ok" if status == "confirmed" else "missing",
@@ -3428,6 +3435,9 @@ def schedule_worker_from_giriton(row: dict[str, Any]) -> dict[str, Any]:
         "giritonTone": "ok",
         "muszakproStatus": "Hiányzik",
         "muszakproTone": "missing",
+        "muszakproTime": "",
+        "giritonBookingTime": normalize_time(row.get("start_time")),
+        "giritonOfferTime": "",
         "missingSource": "MűszakPro egyezés még nincs párosítva",
         "hubStatus": "",
         "hubTone": "unknown",
@@ -3459,6 +3469,9 @@ def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
         "giritonTone": "missing",
         "muszakproStatus": "OK",
         "muszakproTone": "ok",
+        "muszakproTime": shift_start(row.get("shift_text")),
+        "giritonBookingTime": "",
+        "giritonOfferTime": "",
         "missingSource": "Giriton egyezés még nincs párosítva",
         "hubStatus": "",
         "hubTone": "unknown",
@@ -3483,6 +3496,9 @@ def schedule_worker_from_vehicle(row: dict[str, Any]) -> dict[str, Any]:
         "giritonTone": "unknown",
         "muszakproStatus": "Nincs adat",
         "muszakproTone": "unknown",
+        "muszakproTime": "",
+        "giritonBookingTime": "",
+        "giritonOfferTime": "",
         "missingSource": "",
         "hubStatus": source_name or "Autóbeosztás",
         "hubTone": "ok" if source_name else "unknown",
@@ -3687,13 +3703,19 @@ def read_today_workers() -> dict[str, Any]:
     live_map = read_coordinator_live_map()
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
     checkins_by_courier = latest_today_shift_checkins()
-    schedule = read_coordinator_schedule(target_key[:7])
-    today_schedule = next(
-        (day for day in schedule.get("days", []) if day.get("date") == target_key),
-        {"workers": []},
-    )
+    comparison_rows = read_schedule_comparison_rows(target_date, target_date)
+    if comparison_rows:
+        scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
+        attach_schedule_vehicles(scheduled_workers, target_date, target_date)
+    else:
+        schedule = read_coordinator_schedule(target_key[:7])
+        today_schedule = next(
+            (day for day in schedule.get("days", []) if day.get("date") == target_key),
+            {"workers": []},
+        )
+        scheduled_workers = today_schedule.get("workers", [])
     workers = []
-    for schedule_worker in today_schedule.get("workers", []):
+    for schedule_worker in scheduled_workers:
         courier_id = str(schedule_worker.get("courierId") or "").strip()
         live = live_by_courier.get(courier_id) or {}
         checkin = checkins_by_courier.get(courier_id) or {}
