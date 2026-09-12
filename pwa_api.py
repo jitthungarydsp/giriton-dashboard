@@ -10645,6 +10645,10 @@ def workflow_open(states: dict[str, dict], action: str) -> bool:
     return workflow_status(states, action) == "open"
 
 
+def workflow_action_visible(states: dict[str, dict], action: str) -> bool:
+    return workflow_status(states, action) in {"open", "done"}
+
+
 def complaints_ignored_for_billing(states: dict[str, dict]) -> bool:
     return workflow_done(states, "ignore_complaints_for_billing")
 
@@ -11414,6 +11418,26 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
         )
         for row in archive_rows
     }
+    status_rows = optional_supabase_rows(
+        "peopleforce_card_statuses",
+        params={
+            "select": "action_key,document_month,status,updated_at",
+            "courier_id": f"eq.{courier_id}",
+            "action_key": "in.(individual_monthly_billing,settlement,tig,invoice_submit,invoice_check,invoice_payment)",
+            "order": "document_month.desc,updated_at.desc",
+            "limit": "500",
+        },
+        timeout=30,
+    )
+    status_by_month: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in status_rows:
+        month_key = str(row.get("document_month") or "")[:7]
+        action_key = base_action_key(str(row.get("action_key") or ""))
+        if not month_key or not action_key:
+            continue
+        month_states = status_by_month.setdefault(month_key, {})
+        if action_key not in month_states:
+            month_states[action_key] = row
     snapshot_rows = optional_supabase_rows(
         "courier_finance_snapshot",
         schema="settlement",
@@ -11436,6 +11460,10 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
         seen_months.add(month_key)
         version = money_int(snapshot.get("version"))
         created_at = str(snapshot.get("created_at") or "")
+        month_states = status_by_month.get(month_key, {})
+        monthly_workflow_visible = workflow_action_visible(month_states, "individual_monthly_billing")
+        if not monthly_workflow_visible:
+            continue
         if (month_key, "settlement") not in existing_keys:
             archive_rows.append({
                 "id": f"snapshot-{snapshot.get('id')}",
