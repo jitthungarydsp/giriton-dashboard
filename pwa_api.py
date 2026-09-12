@@ -542,6 +542,17 @@ def shift_start(value: Any) -> str:
     return normalize_time(text)
 
 
+def shift_end(value: Any) -> str:
+    text = str(value or "").strip()
+    for separator in ("-", "–", "—"):
+        if separator in text:
+            text = text.split(separator, 1)[1]
+            break
+    else:
+        return ""
+    return normalize_time(text)
+
+
 def extract_shift_time(value: Any) -> str:
     text = str(value or "").strip()
     match = re.search(r"(?<!\d)([0-2]?\d)[:.](\d{2})(?!\d)", text)
@@ -3279,11 +3290,33 @@ def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]
     )
     if not rows:
         rows = optional_supabase_rows(
+            "raw_muszakpro_bookings",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,status,fetched_at",
+                "work_date": f"gte.{start.isoformat()}",
+                "order": "work_date.asc,shift_text.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
+    if not rows:
+        rows = optional_supabase_rows(
             "foglalasok_raw",
             params={
                 "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
                 "work_date": f"gte.{start.isoformat()}",
                 "order": "work_date.asc,shift_text.asc,courier_name.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
+    if not rows:
+        rows = optional_supabase_rows(
+            "foglalasok_raw",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_id,email,fetched_at",
+                "work_date": f"gte.{start.isoformat()}",
+                "order": "work_date.asc,shift_text.asc",
                 "limit": "10000",
             },
             timeout=40,
@@ -3405,10 +3438,18 @@ def schedule_worker_from_giriton(row: dict[str, Any]) -> dict[str, Any]:
 
 def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
     work_date = str(row.get("work_date") or "")[:10]
+    courier_name = str(
+        row.get("courier_name")
+        or row.get("driver_name")
+        or row.get("email")
+        or row.get("booking_code")
+        or row.get("courier_id")
+        or "Futár"
+    )
     return {
         "date": work_date,
         "courierId": str(row.get("courier_id") or ""),
-        "courierName": str(row.get("courier_name") or "Futár"),
+        "courierName": courier_name,
         "start": shift_start(row.get("shift_text")),
         "end": shift_end(row.get("shift_text")),
         "warehouse": str(row.get("warehouse") or ""),
