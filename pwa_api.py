@@ -12082,22 +12082,21 @@ def save_push_subscription(
     if courier_id_int <= 0:
         raise HTTPException(status_code=422, detail="A push feliratkozáshoz érvényes futár ID szükséges.")
 
-    try:
-        supabase_rest(
-            "PATCH",
-            "pwa_push_subscriptions",
-            params={"courier_id": f"eq.{courier_id}"},
-            payload={"active": False, "updated_at": now},
-            prefer="return=minimal",
-        )
-    except HTTPException:
-        supabase_rest(
-            "PATCH",
-            "pwa_push_subscriptions",
-            params={"courier_id": f"eq.{courier_id}"},
-            payload={"active": False},
-            prefer="return=minimal",
-        )
+    for deactivate_payload in (
+        {"active": False, "updated_at": now},
+        {"active": False},
+    ):
+        try:
+            supabase_rest(
+                "PATCH",
+                "pwa_push_subscriptions",
+                params={"courier_id": f"eq.{courier_id}"},
+                payload=deactivate_payload,
+                prefer="return=minimal",
+            )
+            break
+        except HTTPException as exc:
+            print(f"Push subscription deactivate skipped: {exc.detail}")
 
     full_payload = {
             "courier_id": courier_id_int,
@@ -12110,10 +12109,28 @@ def save_push_subscription(
             "last_seen_at": now,
             "updated_at": now,
     }
+    string_id_payload = {**full_payload, "courier_id": courier_id}
     payload_variants = [
         full_payload,
+        string_id_payload,
         {key: value for key, value in full_payload.items() if key not in {"user_agent", "last_seen_at", "updated_at"}},
+        {key: value for key, value in string_id_payload.items() if key not in {"user_agent", "last_seen_at", "updated_at"}},
         {key: value for key, value in full_payload.items() if key not in {"courier_name", "user_agent", "last_seen_at", "updated_at"}},
+        {key: value for key, value in string_id_payload.items() if key not in {"courier_name", "user_agent", "last_seen_at", "updated_at"}},
+        {
+            "courier_id": courier_id_int,
+            "endpoint": endpoint,
+            "p256dh": p256dh,
+            "auth": auth,
+            "active": True,
+        },
+        {
+            "courier_id": courier_id,
+            "endpoint": endpoint,
+            "p256dh": p256dh,
+            "auth": auth,
+            "active": True,
+        },
     ]
     errors: list[str] = []
     for item in payload_variants:

@@ -1,5 +1,5 @@
-const CACHE = "giriton-pwa-v115";
-const APP_SHELL = ["/", "/styles.css?v=115", "/app.js?v=115", "/sw.js?v=115", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "jitt-pwa-v126";
+const APP_SHELL = ["/", "/styles.css?v=126", "/app.js?v=126", "/sw.js?v=126", "/manifest.webmanifest?v=126", "/icon.svg?v=126"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -41,9 +41,9 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || "Kifli Futár", {
       body: payload.body || "Új értesítés érkezett.",
-      icon: payload.icon || "/icon.svg",
-      badge: payload.badge || "/icon.svg",
-      tag: payload.tag || "giriton-notification",
+      icon: payload.icon || "/icon.svg?v=126",
+      badge: payload.badge || "/icon.svg?v=126",
+      tag: payload.tag || "jitt-notification",
       data: { url: payload.url || "/", ...(payload.data || {}) }
     })
   );
