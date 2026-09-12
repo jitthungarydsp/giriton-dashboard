@@ -3154,6 +3154,98 @@ def notify_route_assigned(
     )
 
 
+def push_baseline_notification_rows() -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+
+    courier_rows = latest_today_live_map_courier_rows()
+    stop_rows = latest_today_live_map_stop_rows()
+    stop_rows_by_courier: dict[str, list[dict[str, Any]]] = {}
+    for row in stop_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id:
+            stop_rows_by_courier.setdefault(courier_id, []).append(row)
+
+    for row in courier_rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        route_ids = live_map_route_ids(row.get("route_ids"))
+        route_id = route_ids[0] if route_ids else ""
+        if courier_id and route_id:
+            rows.append({
+                "type": f"route_assigned_{courier_id}_{route_id}",
+                "message": "baseline: route already visible at subscription time",
+            })
+        stop_summary = live_map_stop_summary(stop_rows_by_courier.get(courier_id, []), route_ids)
+        for stop in stop_summary.get("stops", []):
+            if not isinstance(stop, dict):
+                continue
+            alert_kind = stop_push_alert_kind(stop)
+            if not alert_kind:
+                continue
+            position = str(stop.get("position") or stop.get("sequence") or stop.get("orderId") or "stop")
+            route_text = str(route_id or stop.get("routeId") or "route").strip()
+            rows.append({
+                "type": f"route_stop_{alert_kind}_{courier_id}_{route_text}_{position}",
+                "message": "baseline: stop alert already visible at subscription time",
+            })
+
+    checkins = optional_supabase_rows(
+        "courier_shift_checkins",
+        params={
+            "select": "courier_id,work_date,start_time,event_type",
+            "work_date": f"eq.{today}",
+            "event_type": "eq.shift_late",
+            "limit": "1000",
+        },
+        timeout=20,
+    )
+    for row in checkins:
+        courier_id = str(row.get("courier_id") or "").strip()
+        work_date = str(row.get("work_date") or today).strip()[:10] or today
+        start = str(row.get("start_time") or "shift").strip() or "shift"
+        if courier_id:
+            rows.append({
+                "type": f"shift_late_{courier_id}_{work_date}_{start}",
+                "message": "baseline: shift late alert already visible at subscription time",
+            })
+    return rows
+
+
+def seed_push_subscription_baseline(recipient_id: int) -> None:
+    try:
+        baseline_rows = push_baseline_notification_rows()
+    except Exception as exc:
+        print(f"Push baseline read skipped: {exc}")
+        return
+    if not baseline_rows:
+        return
+    today = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    payload = [
+        {
+            "courier_id": int(recipient_id),
+            "work_date": today,
+            "notification_type": row["type"],
+            "status": "sent",
+            "message": row["message"],
+            "sent_at": now,
+        }
+        for row in baseline_rows
+        if row.get("type")
+    ]
+    if not payload:
+        return
+    try:
+        supabase_rest(
+            "POST",
+            "pwa_push_delivery_log",
+            payload=payload,
+            prefer="return=minimal",
+        )
+    except HTTPException as exc:
+        print(f"Push baseline log skipped: {exc.detail}")
+
+
 def send_route_stop_push_once(
     *,
     courier_id: str,
@@ -12281,6 +12373,10 @@ def save_push_subscription(
         },
     ]
     errors: list[str] = []
+
+    def finish_push_subscription() -> None:
+        seed_push_subscription_baseline(courier_id_int)
+
     for item in payload_variants:
         try:
             supabase_rest(
@@ -12290,6 +12386,7 @@ def save_push_subscription(
                 payload=item,
                 prefer="resolution=merge-duplicates,return=minimal",
             )
+            finish_push_subscription()
             return
         except HTTPException as exc:
             errors.append(str(exc.detail))
@@ -12309,6 +12406,7 @@ def save_push_subscription(
                 params={"select": "id", "endpoint": f"eq.{endpoint}", "limit": "1"},
             )
             if existing:
+                finish_push_subscription()
                 return
         except HTTPException as exc:
             errors.append(str(exc.detail))
@@ -12321,6 +12419,7 @@ def save_push_subscription(
                 payload=item,
                 prefer="return=minimal",
             )
+            finish_push_subscription()
             return
         except HTTPException as exc:
             errors.append(str(exc.detail))
