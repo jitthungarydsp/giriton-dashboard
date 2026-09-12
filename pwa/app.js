@@ -51,10 +51,11 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v123";
+const APP_VERSION = "v124";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
+const COORDINATOR_LIVE_REFRESH_MS = 60 * 1000;
 const VEHICLE_LIVE_REFRESH_MS = 60 * 1000;
 const LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
@@ -4499,6 +4500,29 @@ function liveMapPoints(couriers = []) {
     .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lon));
 }
 
+function liveCourierPriority(item) {
+  const current = item?.currentStop || {};
+  const isLate = Boolean(item?.lateOpenStops || current.isLate || Number(current.delayMinutes || 0) > 0);
+  const isOnRoute = Boolean(item?.activeRouteId || Number(item?.totalStops || 0) || Number(item?.remainingStops || 0));
+  return {
+    late: isLate ? 0 : 1,
+    route: isOnRoute ? 0 : 1,
+    remaining: -Number(item?.remainingStops || 0),
+    name: String(item?.courierName || ""),
+  };
+}
+
+function sortLiveCouriers(couriers = []) {
+  return [...couriers].sort((left, right) => {
+    const a = liveCourierPriority(left);
+    const b = liveCourierPriority(right);
+    return a.late - b.late
+      || a.route - b.route
+      || a.remaining - b.remaining
+      || a.name.localeCompare(b.name, "hu");
+  });
+}
+
 function ensureLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (!document.querySelector(`link[href="${LEAFLET_CSS_URL}"]`)) {
@@ -4527,6 +4551,10 @@ async function renderCoordinatorLeafletMap(couriers = []) {
   const target = $("#coordinator-live-map");
   if (!target) return;
   const points = liveMapPoints(couriers);
+  if (state.coordinatorLeafletMap) {
+    state.coordinatorLeafletMap.remove();
+    state.coordinatorLeafletMap = null;
+  }
   if (!points.length) {
     target.innerHTML = `<div class="empty-card">Nincs térképre rakható GPS pozíció.</div>`;
     return;
@@ -4534,10 +4562,6 @@ async function renderCoordinatorLeafletMap(couriers = []) {
   try {
     const L = await ensureLeaflet();
     target.innerHTML = "";
-    if (state.coordinatorLeafletMap) {
-      state.coordinatorLeafletMap.remove();
-      state.coordinatorLeafletMap = null;
-    }
     const map = L.map(target, { zoomControl: true });
     state.coordinatorLeafletMap = map;
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -4557,6 +4581,7 @@ async function renderCoordinatorLeafletMap(couriers = []) {
       `);
     });
     map.fitBounds(bounds, { padding: [24, 24], maxZoom: 13 });
+    setTimeout(() => map.invalidateSize(), 0);
   } catch (error) {
     target.innerHTML = `<div class="notice error">A térkép nem tölthető be: ${escapeHtml(error.message || "ismeretlen hiba")}</div>`;
   }
@@ -4610,7 +4635,7 @@ function renderCoordinatorLiveMap() {
     target.innerHTML = `<div class="empty-card">Live map betöltése...</div>`;
     return;
   }
-  const couriers = payload.couriers || [];
+  const couriers = sortLiveCouriers(payload.couriers || []);
   target.innerHTML = `
     ${renderOpsSummary(payload.summary || {}, [
       ["Live futár", payload.summary?.couriers || 0],
@@ -5487,6 +5512,11 @@ setInterval(() => {
   if (!state.user || state.section !== "tours" || document.hidden) return;
   withSilentLoading(() => loadCurrentRoute()).catch(() => {});
 }, ROUTE_LIVE_REFRESH_MS);
+
+setInterval(() => {
+  if (!state.user || state.section !== "coordinator-live" || document.hidden) return;
+  withSilentLoading(() => loadCoordinatorLiveMap()).catch(() => {});
+}, COORDINATOR_LIVE_REFRESH_MS);
 
 setInterval(() => {
   if (!state.user || state.section !== "vehicle" || document.hidden) return;
