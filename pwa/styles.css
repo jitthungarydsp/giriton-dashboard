@@ -217,6 +217,7 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-card { display: grid; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
 .ops-live-details { display: block; padding: 0; overflow: hidden; }
 .ops-card.attention { border-color: #e0a39e; background: #fff8f7; }
+.ops-late-box { border-color: #dc4b44 !important; background: #fff1ef !important; box-shadow: inset 3px 0 0 #dc4b44; }
 .ops-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .ops-live-details > .ops-card-head { padding: 16px; cursor: pointer; list-style: none; }
 .ops-card-head::-webkit-details-marker { display: none; }

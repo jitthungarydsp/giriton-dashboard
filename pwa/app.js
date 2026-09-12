@@ -51,7 +51,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v121";
+const APP_VERSION = "v122";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -1756,6 +1756,15 @@ function stopDeltaText(stop) {
   if (!Number.isFinite(delta) || delta === 0) return "időben";
   if (delta < 0) return `${formatCount(Math.abs(delta))} p előny`;
   return `${formatCount(delta)} p késés`;
+}
+
+function stopWindowStatusText(stop) {
+  if (!stop || (!stop.address && !stop.position && !stop.windowFrom && !stop.windowTo)) return "Nincs címadat";
+  const delta = Number(stop.deltaMinutes || 0);
+  if (stop.slotMissProjected) return "Időkapu kockázat";
+  if (!Number.isFinite(delta) || delta === 0) return "Időben";
+  if (delta < 0) return `${formatCount(Math.abs(delta))} perc előny`;
+  return `${formatCount(delta)} perc késés`;
 }
 
 function nextBreakText(current, next) {
@@ -4557,12 +4566,18 @@ function renderLiveCourierCard(item) {
   const progress = opsProgress(item);
   const current = item.currentStop || {};
   const next = item.nextStop || {};
+  const currentIsLate = Boolean(current.isLate || Number(current.delayMinutes || 0) > 0);
+  const hasLateOpenStops = Boolean(item.lateOpenStops || currentIsLate);
+  const currentWindow = routeTimeRange(current.windowFrom, current.windowTo);
+  const nextWindow = routeTimeRange(next.windowFrom, next.windowTo);
+  const currentTiming = current.estimatedArrival || current.plannedArrival || current.realArrival || "";
+  const nextTiming = next.estimatedArrival || next.plannedArrival || next.realArrival || "";
   const mapsLink = item.mapsUrl
     ? `<a class="ops-map-link" href="${escapeHtml(item.mapsUrl)}" target="_blank" rel="noopener">Pozíció térképen</a>`
     : `<span class="ops-muted">Nincs GPS pont</span>`;
   return `
-    <details class="ops-card ops-live-details ${item.lateOpenStops ? "attention" : ""}">
-      <summary class="ops-card-head">
+    <details class="ops-card ops-live-details ${hasLateOpenStops ? "attention" : ""}" open data-courier-tours="${escapeHtml(item.courierId || "")}">
+      <summary class="ops-card-head" data-courier-tours="${escapeHtml(item.courierId || "")}" title="Túráim megnyitása ennél a futárnál">
         <div>
           <strong>${escapeHtml(item.courierName || "Futár")}</strong>
           <small>#${escapeHtml(item.courierId || "-")} · ${escapeHtml(item.warehouse || "-")} · ${escapeHtml(item.vehiclePlate || "Autó nincs")} · ${escapeHtml(opsTemperatureText(item))}</small>
@@ -4577,8 +4592,8 @@ function renderLiveCourierCard(item) {
         </div>
         <div class="ops-progress-bar"><i style="width:${progress.percent}%"></i></div>
         <div class="ops-detail-grid">
-          <div><span>Aktuális cím</span><strong>${escapeHtml(current.address || "Nincs aktuális cím")}</strong><small>${current.position ? `#${escapeHtml(current.position)}` : ""}</small></div>
-          <div><span>Következő cím</span><strong>${escapeHtml(next.address || "Nincs következő cím")}</strong><small>${next.position ? `#${escapeHtml(next.position)}` : ""}</small></div>
+          <div class="${currentIsLate ? "ops-late-box" : ""}"><span>Aktuális cím</span><strong>${escapeHtml(current.address || "Nincs aktuális cím")}</strong><small>${current.position ? `#${escapeHtml(current.position)} · ` : ""}Időkapu: ${currentWindow}</small><small>${escapeHtml(currentTiming ? `Érkezés: ${currentTiming} · ${stopWindowStatusText(current)}` : stopWindowStatusText(current))}</small></div>
+          <div><span>Következő cím</span><strong>${escapeHtml(next.address || "Nincs következő cím")}</strong><small>${next.position ? `#${escapeHtml(next.position)} · ` : ""}Időkapu: ${nextWindow}</small><small>${escapeHtml(nextTiming ? `Érkezés: ${nextTiming} · ${stopWindowStatusText(next)}` : stopWindowStatusText(next))}</small></div>
           <div><span>Sor / vissza</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(shortDateTime(item.queueEventAt || ""))}</small></div>
           <div><span>GPS</span><strong>${mapsLink}</strong><small>${escapeHtml(shortDateTime(item.lastPositionAt || item.updatedAt || ""))}</small></div>
         </div>
@@ -4611,6 +4626,22 @@ function renderCoordinatorLiveMap() {
   `;
   renderCoordinatorLeafletMap(couriers).catch(() => {});
 }
+
+function openCourierTours(courierId) {
+  const cleanId = String(courierId || "").trim();
+  if (!cleanId) return;
+  updatePreviewCourier(cleanId);
+  showSection("tours");
+}
+
+$("#coordinator-live-panel")?.addEventListener("click", (event) => {
+  const link = event.target.closest("a");
+  if (link) return;
+  const target = event.target.closest("[data-courier-tours]");
+  if (!target) return;
+  event.preventDefault();
+  openCourierTours(target.dataset.courierTours);
+});
 
 async function loadCoordinatorLiveMap() {
   const target = $("#coordinator-live-panel");
