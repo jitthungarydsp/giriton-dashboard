@@ -60,6 +60,7 @@ MAX_DEVICE_PHOTOS = 8
 DEVICE_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 FINANCIAL_LOOKUP_CACHE_SECONDS = 0
 _FINANCIAL_LOOKUP_CACHE: dict[tuple[str, str, str], tuple[float, Any]] = {}
+PWA_BACKGROUND_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 COURIER_DETAIL_API_BASE = (
     "https://uftplslamjbbhlozsygo.supabase.co/functions/v1"
@@ -317,6 +318,19 @@ def push_subscription_identity(user: dict[str, Any]) -> tuple[int, str]:
     if is_admin_push_user(user):
         return admin_push_recipient_id(user), name
     raise HTTPException(status_code=422, detail="A push feliratkozáshoz futár vagy admin felhasználó szükséges.")
+
+
+def run_pwa_background(label: str, func: Any, *args: Any, **kwargs: Any) -> None:
+    def wrapper() -> None:
+        try:
+            func(*args, **kwargs)
+        except Exception as exc:
+            print(f"{label} háttérfeladat hiba: {exc}")
+
+    try:
+        PWA_BACKGROUND_EXECUTOR.submit(wrapper)
+    except Exception as exc:
+        print(f"{label} háttérfeladat indítása sikertelen: {exc}")
 
 
 def require_vehicle_history_manager(user: dict[str, Any]) -> dict[str, Any]:
@@ -3327,7 +3341,9 @@ def live_ops_courier_payload(
     maps_url = ""
     if latitude is not None and longitude is not None:
         maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
-    notify_route_assigned(
+    run_pwa_background(
+        "route assigned push",
+        notify_route_assigned,
         courier_id=courier_id,
         courier_name=str(row.get("courier_name") or "Futár"),
         route_id=route_ids[0] if route_ids else "",
@@ -3335,7 +3351,9 @@ def live_ops_courier_payload(
         warehouse=str(row.get("warehouse_code") or f"BUD{row.get('warehouse_id') or ''}"),
         source="coordinator_live_map",
     )
-    notify_route_stop_alerts(
+    run_pwa_background(
+        "route stop push",
+        notify_route_stop_alerts,
         courier_id=courier_id,
         courier_name=str(row.get("courier_name") or "Futár"),
         route_id=route_ids[0] if route_ids else "",
@@ -3440,7 +3458,9 @@ def read_dsp_live_ops_couriers(
             "state": str(row.get("current_state") or status.get("current_state") or ""),
             "delayMinutes": safe_int(status.get("delay_minutes")),
         } if next_stop else None
-        notify_route_assigned(
+        run_pwa_background(
+            "dsp route assigned push",
+            notify_route_assigned,
             courier_id=courier_id,
             courier_name=str(row.get("courier_name") or personal.get("name") or "Futár"),
             route_id=route_id,
@@ -3448,7 +3468,9 @@ def read_dsp_live_ops_couriers(
             warehouse=str(row.get("warehouse_name") or personal.get("warehouse_name") or ""),
             source="dsp_live_ops",
         )
-        notify_route_stop_alerts(
+        run_pwa_background(
+            "dsp route stop push",
+            notify_route_stop_alerts,
             courier_id=courier_id,
             courier_name=str(row.get("courier_name") or personal.get("name") or "Futár"),
             route_id=route_id,
@@ -12375,7 +12397,7 @@ def save_push_subscription(
     errors: list[str] = []
 
     def finish_push_subscription() -> None:
-        seed_push_subscription_baseline(courier_id_int)
+        run_pwa_background("push baseline", seed_push_subscription_baseline, courier_id_int)
 
     for item in payload_variants:
         try:
