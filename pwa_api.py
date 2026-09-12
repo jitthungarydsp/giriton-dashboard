@@ -11404,26 +11404,11 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
             "limit": "500",
         },
     )
-    archive_rows = [
-        {
-            **row,
-            "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
-        }
-        for row in rows
-    ]
-    existing_keys = {
-        (
-            str(row.get("document_month") or "")[:7],
-            base_action_key(str(row.get("document_type") or "")),
-        )
-        for row in archive_rows
-    }
     status_rows = optional_supabase_rows(
         "peopleforce_card_statuses",
         params={
             "select": "action_key,document_month,status,updated_at",
             "courier_id": f"eq.{courier_id}",
-            "action_key": "in.(individual_monthly_billing,settlement,tig,invoice_submit,invoice_check,invoice_payment)",
             "order": "document_month.desc,updated_at.desc",
             "limit": "500",
         },
@@ -11438,6 +11423,38 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
         month_states = status_by_month.setdefault(month_key, {})
         if action_key not in month_states:
             month_states[action_key] = row
+
+    def monthly_billing_visible(month_key: str) -> bool:
+        return workflow_action_visible(status_by_month.get(month_key, {}), "individual_monthly_billing")
+
+    archive_rows: list[dict[str, Any]] = []
+    for row in rows:
+        month_key = str(row.get("document_month") or "")[:7]
+        document_type = base_action_key(str(row.get("document_type") or ""))
+        uploaded_by = str(row.get("uploaded_by") or "").strip().lower()
+        note = str(row.get("note") or "").strip().lower()
+        is_generated_monthly_doc = (
+            document_type in {"settlement", "tig"}
+            and (
+                uploaded_by in {"rendszer", "system"}
+                or "egyedi havi számlázás" in note
+                or "mentett havi pénzügyi" in note
+                or "generált tig" in note
+            )
+        )
+        if is_generated_monthly_doc and not monthly_billing_visible(month_key):
+            continue
+        archive_rows.append({
+            **row,
+            "downloadUrl": f"/api/documents/{quote(str(row.get('id') or ''))}",
+        })
+    existing_keys = {
+        (
+            str(row.get("document_month") or "")[:7],
+            base_action_key(str(row.get("document_type") or "")),
+        )
+        for row in archive_rows
+    }
     snapshot_rows = optional_supabase_rows(
         "courier_finance_snapshot",
         schema="settlement",
