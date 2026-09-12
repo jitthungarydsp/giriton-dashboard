@@ -28,7 +28,7 @@ from resources.settlement_processor import (
 from resources.settlement_parameters import recalculate_excel_base_rates
 from resources.settlement_pdf import build_settlement_pdf, build_tig_breakdown, build_tig_pdf
 from resources.courier_master_db import update_courier_master_profile
-from resources.email_sender import app_login_url, render_template_text, send_custom_email, validate_email
+from resources.email_sender import app_login_url, render_template_text, send_custom_email, send_login_credentials, validate_email
 from resources.email_templates_db import (
     build_template_variables,
     log_email_event,
@@ -36,6 +36,8 @@ from resources.email_templates_db import (
     send_courier_template_email,
 )
 from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
+from resources.pwa_users_db import upsert_pwa_user_with_password
+from resources.users import normalize_courier_id
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -122,12 +124,222 @@ def can_view_accounting_invoice_archive(current_user: dict[str, object]) -> bool
     }
 
 
+def can_approve_pwa_registrations(current_user: dict[str, object]) -> bool:
+    role = str(current_user.get("role") or "").strip().casefold()
+    username = str(current_user.get("username") or "").strip().casefold()
+    return role in {"admin", "superadmin"} or username == "admin"
+
+
+def clean_admin_note(value: object, limit: int = 500) -> str:
+    return str(value or "").strip()[:limit]
+
+
+@st.cache_data(show_spinner=False, ttl=15)
+def load_pwa_registration_requests(status: str = "new") -> list[dict[str, object]]:
+    query = (
+        get_db()
+        .schema("public")
+        .table("pwa_registration_requests")
+        .select("id,courier_id,courier_name,phone_number,email,status,admin_note,created_at,updated_at")
+        .order("updated_at", desc=True)
+        .order("created_at", desc=True)
+        .limit(300)
+    )
+    clean_status = str(status or "new").strip().lower()
+    if clean_status and clean_status != "all":
+        query = query.eq("status", clean_status)
+    response = query.execute()
+    return response.data or []
+
+
+def read_pwa_registration_request(request_id: int) -> dict[str, object]:
+    response = (
+        get_db()
+        .schema("public")
+        .table("pwa_registration_requests")
+        .select("id,courier_id,courier_name,phone_number,email,status,admin_note,created_at,updated_at")
+        .eq("id", request_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise ValueError("A regisztrációs kérelem nem található.")
+    return rows[0]
+
+
+def update_pwa_registration_request_status(request_id: int, status: str, note: str) -> None:
+    get_db().schema("public").table("pwa_registration_requests").update({
+        "status": status,
+        "admin_note": clean_admin_note(note),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", request_id).execute()
+    load_pwa_registration_requests.clear()
+
+
+def approve_pwa_registration_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
+    request_row = read_pwa_registration_request(request_id)
+    status = str(request_row.get("status") or "new").strip().lower()
+    if status == "approved":
+        raise ValueError("Ez a kérelem már jóvá lett hagyva.")
+    if status == "rejected":
+        raise ValueError("Elutasított kérelmet nem lehet jóváhagyni.")
+
+    courier_id = normalize_courier_id(request_row.get("courier_id"))
+    courier_name = str(request_row.get("courier_name") or "").strip()
+    phone_number = str(request_row.get("phone_number") or "").strip()
+    email = validate_email(str(request_row.get("email") or "").strip())
+    if not courier_id or not courier_name:
+        raise ValueError("Hiányzik a futár ID vagy a futár neve.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    get_db().schema("public").table("courier_master").upsert({
+        "courier_id": int(courier_id),
+        "courier_name": courier_name,
+        "phone_number": phone_number,
+        "email": email,
+        "billing_email": email,
+        "source_name": "pwa_registration",
+        "organization_id": "f24ea2a1-4ff6-49e0-9f3b-4ef0b6cb3bbc",
+        "dsp_id": "JIT",
+        "active": True,
+        "response_json": {
+            "imported_from": "pwa_registration_approval",
+            "registration_request_id": request_row.get("id"),
+            "approved_by": str(actor.get("username") or ""),
+        },
+        "fetched_at": now,
+        "updated_at": now,
+        "billing_data_updated_at": now,
+    }, on_conflict="courier_id").execute()
+
+    auth_result = upsert_pwa_user_with_password(
+        courier_id=courier_id,
+        username=courier_name,
+        recipient_email=email,
+        role="user",
+    )
+    send_login_credentials(email, auth_result["username"], auth_result["password"])
+    update_pwa_registration_request_status(request_id, "approved", note)
+    try:
+        load_courier_master.clear()
+    except Exception:
+        pass
+    return {"courier_id": courier_id, "courier_name": courier_name, "email": email}
+
+
+def reject_pwa_registration_request(request_id: int, note: str) -> None:
+    read_pwa_registration_request(request_id)
+    update_pwa_registration_request_status(request_id, "rejected", note)
+
+
+def show_pwa_registration_approval_page() -> None:
+    if not can_approve_pwa_registrations(user):
+        st.error("Ez a menüpont csak admin jogosultsággal érhető el.")
+        return
+
+    st.markdown("### Futárok jóváhagyása")
+    st.caption("Ide érkeznek a PWA regisztrációs kérelmek. Jóváhagyáskor a futár bekerül a futártörzsbe, létrejön a mobil belépése, és e-mailben megkapja a jelszót.")
+
+    status_label = st.radio(
+        "Státusz",
+        ["Új", "Jóváhagyott", "Elutasított", "Összes"],
+        horizontal=True,
+        key="pwa_registration_status_filter",
+    )
+    status_map = {
+        "Új": "new",
+        "Jóváhagyott": "approved",
+        "Elutasított": "rejected",
+        "Összes": "all",
+    }
+    rows = load_pwa_registration_requests(status_map[status_label])
+
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("Megjelenített", len(rows))
+    col_b.metric("Új", len([row for row in rows if str(row.get("status") or "") == "new"]))
+    col_c.metric("Jóváhagyott", len([row for row in rows if str(row.get("status") or "") == "approved"]))
+    col_d.metric("Elutasított", len([row for row in rows if str(row.get("status") or "") == "rejected"]))
+
+    if st.button("Frissítés", key="pwa_registration_refresh", use_container_width=True):
+        load_pwa_registration_requests.clear()
+        st.rerun()
+
+    if not rows:
+        st.info("Nincs megjeleníthető kérelem.")
+        return
+
+    table_rows = [
+        {
+            "ID": row.get("id"),
+            "Futár ID": row.get("courier_id"),
+            "Név": row.get("courier_name"),
+            "Telefon": row.get("phone_number"),
+            "E-mail": row.get("email"),
+            "Státusz": row.get("status"),
+            "Létrehozva": row.get("created_at"),
+            "Frissítve": row.get("updated_at"),
+            "Admin megjegyzés": row.get("admin_note"),
+        }
+        for row in rows
+    ]
+    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Kérelmek kezelése")
+    for row in rows:
+        request_id = int(row.get("id") or 0)
+        status = str(row.get("status") or "new").strip().lower()
+        title = f"#{row.get('courier_id')} · {row.get('courier_name') or 'Névtelen futár'}"
+        with st.expander(title, expanded=status == "new"):
+            details = st.columns(4)
+            details[0].metric("Futár ID", str(row.get("courier_id") or "-"))
+            details[1].metric("Státusz", status)
+            details[2].write(f"**Telefon:** {row.get('phone_number') or '-'}")
+            details[3].write(f"**E-mail:** {row.get('email') or '-'}")
+            note = st.text_area(
+                "Admin megjegyzés",
+                value=str(row.get("admin_note") or ""),
+                key=f"pwa_registration_note_{request_id}",
+                height=80,
+            )
+            action_cols = st.columns(2)
+            approve_disabled = status != "new"
+            reject_disabled = status != "new"
+            if action_cols[0].button(
+                "Jóváhagyás és belépés küldése",
+                key=f"pwa_registration_approve_{request_id}",
+                type="primary",
+                disabled=approve_disabled,
+                use_container_width=True,
+            ):
+                try:
+                    result = approve_pwa_registration_request(request_id, note, user)
+                    st.success(f"Jóváhagyva: {result['courier_name']} ({result['email']}).")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A jóváhagyás sikertelen: {exc}")
+            if action_cols[1].button(
+                "Elutasítás",
+                key=f"pwa_registration_reject_{request_id}",
+                disabled=reject_disabled,
+                use_container_width=True,
+            ):
+                try:
+                    reject_pwa_registration_request(request_id, note)
+                    st.success("A kérelem elutasítva.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Az elutasítás sikertelen: {exc}")
+
+
 st.sidebar.success(f"Felhasználó: {user['username']}")
 st.sidebar.info(f"Jogosultság: {user['role']}")
 logout_button()
 devtest_page_options = ["Elszamolas"]
 if can_view_accounting_invoice_archive(user):
     devtest_page_options.append("Számla archívum")
+if can_approve_pwa_registrations(user):
+    devtest_page_options.append("Futárok jóváhagyása")
 devtest_page_options.append("PDF minta")
 devtest_page = st.sidebar.radio(
     "Devtest oldal",
@@ -19790,6 +20002,8 @@ if __name__ == "__main__":
         show_settlement_pdf_sample_page()
     elif devtest_page == "Számla archívum":
         show_accounting_invoice_archive_page()
+    elif devtest_page == "Futárok jóváhagyása":
+        show_pwa_registration_approval_page()
     else:
         show_new_settlement_page()
 
