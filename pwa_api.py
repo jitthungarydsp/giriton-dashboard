@@ -650,6 +650,42 @@ def send_shift_delay_discord_alert(user: dict[str, Any], payload: ShiftDelayAler
         )
 
 
+def notify_shift_delay_push(user: dict[str, Any], payload: ShiftDelayAlertRequest) -> None:
+    courier_id, courier_name = courier_identity(user)
+    work_date = payload.work_date.strip() or datetime.now(LOCAL_TIMEZONE).date().isoformat()
+    warehouse = normalize_warehouse(payload.warehouse) or payload.warehouse.strip()
+    shift_time = payload.start.strip() or "?"
+    if payload.end.strip():
+        shift_time = f"{shift_time}-{payload.end.strip()}"
+    shift_name = payload.shift_name.strip() or payload.booking_code.strip() or "Műszak"
+    notification_type = f"shift_late_{courier_id}_{work_date}_{payload.start.strip() or 'shift'}"
+    body_parts = [
+        f"{courier_name} késik a műszakból",
+        work_date,
+        shift_time,
+        warehouse,
+    ]
+    message = payload.message.strip()
+    if message:
+        body_parts.append(message)
+    send_push_once_to_recipients(
+        recipient_ids=coordinator_push_recipient_ids(courier_id),
+        notification_type=notification_type,
+        title="Késik a műszakból",
+        body=" · ".join(part for part in body_parts if part),
+        tag=notification_type,
+        work_date=work_date,
+        data={
+            "section": "today-workers",
+            "courierId": courier_id,
+            "workDate": work_date,
+            "warehouse": warehouse,
+            "shiftName": shift_name,
+            "eventType": "shift_late",
+        },
+    )
+
+
 def supabase_rows(table: str, select: str, start: date, end: date) -> list[dict]:
     url = load_setting("SUPABASE_URL").rstrip("/")
     key = load_setting("SUPABASE_SERVICE_ROLE_KEY").strip()
@@ -3040,6 +3076,84 @@ def coordinator_push_recipient_ids(target_courier_id: str) -> list[str]:
     return recipients
 
 
+def send_push_once_to_recipients(
+    *,
+    recipient_ids: list[str],
+    notification_type: str,
+    title: str,
+    body: str,
+    tag: str,
+    work_date: date | str | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    try:
+        from resources.pwa_push_notifications import load_latest_delivery_message, send_push_to_courier
+    except Exception as exc:
+        print(f"PWA push import hiba: {exc}")
+        return
+
+    seen: set[str] = set()
+    for recipient_id in recipient_ids:
+        clean_id = str(recipient_id or "").strip()
+        if not clean_id or clean_id in seen:
+            continue
+        seen.add(clean_id)
+        try:
+            latest_message = load_latest_delivery_message(
+                courier_id=clean_id,
+                notification_type=notification_type,
+            )
+            if latest_message.startswith("sent:"):
+                continue
+            send_push_to_courier(
+                courier_id=clean_id,
+                title=title,
+                body=body,
+                tag=tag,
+                url="/",
+                notification_type=notification_type,
+                work_date=work_date,
+                data=data or {},
+            )
+        except Exception as exc:
+            print(f"PWA push hiba: recipient={clean_id}; {exc}")
+
+
+def notify_route_assigned(
+    *,
+    courier_id: str,
+    courier_name: str,
+    route_id: Any,
+    vehicle_plate: str = "",
+    warehouse: str = "",
+    source: str,
+) -> None:
+    clean_courier_id = str(courier_id or "").strip()
+    route_text = str(route_id or "").strip()
+    if not clean_courier_id or not route_text:
+        return
+    work_date = datetime.now(LOCAL_TIMEZONE).date()
+    notification_type = f"route_assigned_{clean_courier_id}_{route_text}"
+    details = " · ".join(part for part in [warehouse, vehicle_plate] if str(part or "").strip())
+    body = f"{courier_name or 'Futár'} túrát kapott: {route_text}"
+    if details:
+        body = f"{body} · {details}"
+    send_push_once_to_recipients(
+        recipient_ids=coordinator_push_recipient_ids(clean_courier_id),
+        notification_type=notification_type,
+        title="Túrát kapott",
+        body=body,
+        tag=notification_type,
+        work_date=work_date,
+        data={
+            "section": "coordinator-live",
+            "courierId": clean_courier_id,
+            "routeId": route_text,
+            "source": source,
+        },
+    )
+
+
 def send_route_stop_push_once(
     *,
     courier_id: str,
@@ -3069,31 +3183,15 @@ def send_route_stop_push_once(
         "alertKind": alert_kind,
         "source": source,
     }
-    try:
-        from resources.pwa_push_notifications import load_latest_delivery_message, send_push_to_courier
-    except Exception as exc:
-        print(f"Route stop push import hiba: {exc}")
-        return
-    for recipient_id in coordinator_push_recipient_ids(clean_courier_id):
-        try:
-            latest_message = load_latest_delivery_message(
-                courier_id=recipient_id,
-                notification_type=notification_type,
-            )
-            if latest_message.startswith("sent:"):
-                continue
-            send_push_to_courier(
-                courier_id=recipient_id,
-                title=title,
-                body=body,
-                tag=tag,
-                url="/",
-                notification_type=notification_type,
-                work_date=work_date,
-                data=data,
-            )
-        except Exception as exc:
-            print(f"Route stop push hiba: recipient={recipient_id}; {exc}")
+    send_push_once_to_recipients(
+        recipient_ids=coordinator_push_recipient_ids(clean_courier_id),
+        notification_type=notification_type,
+        title=title,
+        body=body,
+        tag=tag,
+        work_date=work_date,
+        data=data,
+    )
 
 
 def notify_route_stop_alerts(
@@ -3137,17 +3235,19 @@ def live_ops_courier_payload(
     maps_url = ""
     if latitude is not None and longitude is not None:
         maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
+    notify_route_assigned(
+        courier_id=courier_id,
+        courier_name=str(row.get("courier_name") or "Futár"),
+        route_id=route_ids[0] if route_ids else "",
+        vehicle_plate=str(row.get("vehicle_plate") or ""),
+        warehouse=str(row.get("warehouse_code") or f"BUD{row.get('warehouse_id') or ''}"),
+        source="coordinator_live_map",
+    )
     notify_route_stop_alerts(
         courier_id=courier_id,
         courier_name=str(row.get("courier_name") or "Futár"),
         route_id=route_ids[0] if route_ids else "",
-        stops=[
-            stop for stop in [
-                stop_summary.get("current"),
-                stop_summary.get("next"),
-            ]
-            if isinstance(stop, dict)
-        ],
+        stops=[stop for stop in stop_summary.get("stops", []) if isinstance(stop, dict)],
         source="coordinator_live_map",
     )
     return {
@@ -3242,6 +3342,27 @@ def read_dsp_live_ops_couriers(
             or status.get("route_id")
             or ""
         ).strip()
+        current_stop = {
+            "position": "",
+            "address": next_stop,
+            "state": str(row.get("current_state") or status.get("current_state") or ""),
+            "delayMinutes": safe_int(status.get("delay_minutes")),
+        } if next_stop else None
+        notify_route_assigned(
+            courier_id=courier_id,
+            courier_name=str(row.get("courier_name") or personal.get("name") or "Futár"),
+            route_id=route_id,
+            vehicle_plate=str(row.get("license_plate") or vehicle.get("license_plate") or ""),
+            warehouse=str(row.get("warehouse_name") or personal.get("warehouse_name") or ""),
+            source="dsp_live_ops",
+        )
+        notify_route_stop_alerts(
+            courier_id=courier_id,
+            courier_name=str(row.get("courier_name") or personal.get("name") or "Futár"),
+            route_id=route_id,
+            stops=[current_stop] if isinstance(current_stop, dict) else [],
+            source="dsp_live_ops",
+        )
         couriers.append({
             "courierId": courier_id,
             "courierName": str(row.get("courier_name") or personal.get("name") or "Futár"),
@@ -3261,12 +3382,7 @@ def read_dsp_live_ops_couriers(
             "deliveredStops": delivered,
             "remainingStops": max(0, total_stops - delivered),
             "lateOpenStops": 1 if safe_int(status.get("delay_minutes")) > 0 else 0,
-            "currentStop": {
-                "position": "",
-                "address": next_stop,
-                "state": str(row.get("current_state") or status.get("current_state") or ""),
-                "delayMinutes": safe_int(status.get("delay_minutes")),
-            } if next_stop else None,
+            "currentStop": current_stop,
             "nextStop": None,
             "queueEvent": str(checkin.get("event_type") or ""),
             "queueEventAt": iso_local_text(checkin.get("created_at")),
@@ -13216,6 +13332,10 @@ def create_shift_delay_alert(
         )
     except Exception as exc:
         print("Shift late DB log error:", exc)
+    try:
+        notify_shift_delay_push(user, payload)
+    except Exception as exc:
+        print("Shift late push error:", exc)
     send_shift_delay_discord_alert(user, payload)
     return {"ok": True}
 
