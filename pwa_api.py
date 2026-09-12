@@ -2853,6 +2853,18 @@ def freshest_live_map_rows(
     return fresh_rows or [row for _parsed, row in dated_rows] or undated_rows
 
 
+def current_local_day_rows(
+    rows: list[dict[str, Any]],
+    *,
+    timestamp_key: str = "fetched_at",
+) -> list[dict[str, Any]]:
+    today = datetime.now(LOCAL_TIMEZONE).date()
+    return [
+        row for row in rows
+        if (local_datetime(row.get(timestamp_key)) or datetime.min.replace(tzinfo=LOCAL_TIMEZONE)).date() == today
+    ]
+
+
 def latest_today_live_map_courier_rows() -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
         "courier_hub_live_map_courier_latest",
@@ -2874,7 +2886,7 @@ def latest_today_live_map_courier_rows() -> list[dict[str, Any]]:
             params={"select": "*", "order": "fetched_at.desc", "limit": "1000"},
             timeout=30,
         )
-    return freshest_live_map_rows(rows, window_hours=8)
+    return current_local_day_rows(rows)
 
 
 def latest_today_live_map_stop_rows() -> list[dict[str, Any]]:
@@ -2897,7 +2909,7 @@ def latest_today_live_map_stop_rows() -> list[dict[str, Any]]:
             params={"select": "*", "order": "fetched_at.desc", "limit": "10000"},
             timeout=30,
         )
-    return freshest_live_map_rows(rows, window_hours=8)
+    return current_local_day_rows(rows)
 
 
 def latest_today_shift_checkins() -> dict[str, dict[str, Any]]:
@@ -3023,7 +3035,7 @@ def read_dsp_live_ops_couriers(
         },
         timeout=30,
     )
-    rows = freshest_live_map_rows(rows, window_hours=8)
+    rows = current_local_day_rows(rows)
     by_courier: dict[str, dict[str, Any]] = {}
     for row in rows:
         courier_id = str(row.get("driver_id") or "").strip()
@@ -3216,6 +3228,73 @@ def read_schedule_hub_rows(start: date, end: date) -> list[dict[str, Any]]:
     ]
 
 
+def read_schedule_giriton_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "giriton_future_shifts_latest",
+        params={
+            "select": (
+                "work_date,courier_id,courier_name,warehouse_name,"
+                "shift_id,shift_name,shift_start,shift_end,fetched_at"
+            ),
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "shift_start.asc,courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        shift_start_text = str(row.get("shift_start") or "").strip()
+        shift_end_text = str(row.get("shift_end") or "").strip()
+        local_start = local_datetime(shift_start_text)
+        local_end = local_datetime(shift_end_text)
+        work_date = (local_start.date().isoformat() if local_start else str(row.get("work_date") or "")[:10])
+        if not work_date or work_date < start.isoformat() or work_date > end.isoformat():
+            continue
+        result.append({
+            "work_date": work_date,
+            "courier_id": str(row.get("courier_id") or ""),
+            "courier_name": str(row.get("courier_name") or ""),
+            "warehouse": str(row.get("warehouse_name") or ""),
+            "start_time": local_start.strftime("%H:%M") if local_start else normalize_time(row.get("shift_start")),
+            "end_time": local_end.strftime("%H:%M") if local_end else normalize_time(row.get("shift_end")),
+            "shift_id": str(row.get("shift_id") or ""),
+            "shift_name": str(row.get("shift_name") or ""),
+            "status": "ACTIVE",
+            "fetched_at": row.get("fetched_at"),
+        })
+    return result
+
+
+def read_schedule_muszakpro_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "raw_muszakpro_bookings",
+        params={
+            "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,status,fetched_at",
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,shift_text.asc,courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=40,
+    )
+    if not rows:
+        rows = optional_supabase_rows(
+            "foglalasok_raw",
+            params={
+                "select": "work_date,shift_text,warehouse,booking_code,courier_name,courier_id,fetched_at",
+                "work_date": f"gte.{start.isoformat()}",
+                "order": "work_date.asc,shift_text.asc,courier_name.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+        and str(row.get("status") or "ACTIVE").upper() != "CANCELLED"
+    ]
+
+
 def schedule_status_label(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
@@ -3301,6 +3380,70 @@ def schedule_worker_from_hub(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def schedule_worker_from_giriton(row: dict[str, Any]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    return {
+        "date": work_date,
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or "Futár"),
+        "start": normalize_time(row.get("start_time")),
+        "end": normalize_time(row.get("end_time")),
+        "warehouse": str(row.get("warehouse") or ""),
+        "shiftName": str(row.get("shift_name") or ""),
+        "bookingCode": str(row.get("shift_id") or ""),
+        "giritonStatus": "OK",
+        "giritonTone": "ok",
+        "muszakproStatus": "Hiányzik",
+        "muszakproTone": "missing",
+        "missingSource": "MűszakPro egyezés még nincs párosítva",
+        "hubStatus": "",
+        "hubTone": "unknown",
+        "vehicle": None,
+        "source": "giriton_future_shifts_latest",
+    }
+
+
+def schedule_worker_from_muszakpro(row: dict[str, Any]) -> dict[str, Any]:
+    work_date = str(row.get("work_date") or "")[:10]
+    return {
+        "date": work_date,
+        "courierId": str(row.get("courier_id") or ""),
+        "courierName": str(row.get("courier_name") or "Futár"),
+        "start": shift_start(row.get("shift_text")),
+        "end": shift_end(row.get("shift_text")),
+        "warehouse": str(row.get("warehouse") or ""),
+        "shiftName": str(row.get("shift_text") or ""),
+        "bookingCode": str(row.get("booking_code") or ""),
+        "giritonStatus": "Hiányzik",
+        "giritonTone": "missing",
+        "muszakproStatus": "OK",
+        "muszakproTone": "ok",
+        "missingSource": "Giriton egyezés még nincs párosítva",
+        "hubStatus": "",
+        "hubTone": "unknown",
+        "vehicle": None,
+        "source": "raw_muszakpro_bookings",
+    }
+
+
+def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    for key in ("courierId", "courierName", "warehouse", "start", "end", "shiftName", "bookingCode"):
+        if not existing.get(key) and incoming.get(key):
+            existing[key] = incoming[key]
+    for status_key, tone_key in (("giritonStatus", "giritonTone"), ("muszakproStatus", "muszakproTone"), ("hubStatus", "hubTone")):
+        if incoming.get(tone_key) == "ok" or not existing.get(status_key) or existing.get(tone_key) == "unknown":
+            existing[status_key] = incoming.get(status_key) or existing.get(status_key) or ""
+            existing[tone_key] = incoming.get(tone_key) or existing.get(tone_key) or "unknown"
+    if incoming.get("source") and incoming.get("source") not in str(existing.get("source") or ""):
+        existing["source"] = " + ".join(part for part in [existing.get("source"), incoming.get("source")] if part)
+    existing["missingSource"] = ""
+    if existing.get("giritonTone") != "ok":
+        existing["missingSource"] = "Giriton hiányzik"
+    if existing.get("muszakproTone") != "ok":
+        existing["missingSource"] = (existing.get("missingSource") + " / " if existing.get("missingSource") else "") + "MűszakPro hiányzik"
+    return existing
+
+
 def attach_schedule_vehicles(workers: list[dict[str, Any]], start: date, end: date) -> None:
     vehicle_rows = read_vehicle_assignment_rows(start, end, limit=10000)
     live_rows = read_live_vehicle_assignment_rows(limit=1000)
@@ -3323,6 +3466,8 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
     end = month_end(start)
     comparison_rows = read_schedule_comparison_rows(start, end)
     hub_rows = read_schedule_hub_rows(start, end)
+    giriton_rows = read_schedule_giriton_rows(start, end)
+    muszakpro_rows = read_schedule_muszakpro_rows(start, end)
     workers_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for row in comparison_rows:
@@ -3335,11 +3480,25 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
         key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
         existing = workers_by_key.get(key)
         if existing:
-            existing["hubStatus"] = worker.get("hubStatus") or existing.get("hubStatus") or ""
-            existing["hubTone"] = worker.get("hubTone") or existing.get("hubTone") or "unknown"
-            existing["warehouse"] = existing.get("warehouse") or worker.get("warehouse") or ""
-            existing["shiftName"] = existing.get("shiftName") or worker.get("shiftName") or ""
-            existing["bookingCode"] = existing.get("bookingCode") or worker.get("bookingCode") or ""
+            merge_schedule_worker(existing, worker)
+        else:
+            workers_by_key[key] = worker
+
+    for row in giriton_rows:
+        worker = schedule_worker_from_giriton(row)
+        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+        existing = workers_by_key.get(key)
+        if existing:
+            merge_schedule_worker(existing, worker)
+        else:
+            workers_by_key[key] = worker
+
+    for row in muszakpro_rows:
+        worker = schedule_worker_from_muszakpro(row)
+        key = schedule_row_key(worker["date"], worker.get("courierId"), worker.get("courierName"), worker.get("start"))
+        existing = workers_by_key.get(key)
+        if existing:
+            merge_schedule_worker(existing, worker)
         else:
             workers_by_key[key] = worker
 
