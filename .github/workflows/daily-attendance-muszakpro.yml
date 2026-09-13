@@ -35,6 +35,7 @@ jobs:
       VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
       VAPID_PRIVATE_KEY_B64: ${{ secrets.VAPID_PRIVATE_KEY_B64 }}
       VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL: ${{ secrets.DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL }}
 
     steps:
       - name: Checkout
@@ -60,6 +61,11 @@ jobs:
           if [ "$DRY_RUN" != "true" ]; then
             test -n "$VAPID_PRIVATE_KEY$VAPID_PRIVATE_KEY_B64" || (echo "Missing VAPID_PRIVATE_KEY or VAPID_PRIVATE_KEY_B64 secret" && exit 1)
             test -n "$VAPID_SUBJECT" || (echo "Missing VAPID_SUBJECT secret" && exit 1)
+          fi
+          if [ -n "$DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL" ]; then
+            echo "Failed shift request Discord webhook configured."
+          else
+            echo "DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL is not configured; mismatch notification step will be skipped."
           fi
 
       - name: Refresh next day attendance MuszakPro comparison
@@ -101,6 +107,29 @@ jobs:
 
           if [ "$DRY_RUN" = "true" ]; then
             CMD+=(--dry-run)
+          fi
+
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
+
+      - name: Notify missing MuszakPro-Giriton matches
+        if: ${{ inputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          if [ -z "$DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL" ]; then
+            echo "Missing DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL secret, skipping mismatch notifications."
+            exit 0
+          fi
+
+          DAYS="${{ inputs.days }}"
+          START_DATE="${{ inputs.start_date }}"
+
+          DAYS="${DAYS:-5}"
+
+          CMD=(python scripts/notify_failed_shift_requests.py --days "$DAYS")
+
+          if [ -n "$START_DATE" ]; then
+            CMD+=(--start-date "$START_DATE")
           fi
 
           echo "Running: ${CMD[*]}"

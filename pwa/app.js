@@ -4684,6 +4684,8 @@ function renderWorkerCard(item) {
   const live = item.live || {};
   const hasLive = Boolean(live.routeId || live.mapsUrl || Number(live.totalStops || 0));
   const vehicleText = opsVehicleText(item.vehicle);
+  const giritonLabel = String(item.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
+  const muszakproLabel = String(item.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const mapsLink = live.mapsUrl
     ? `<a class="ops-map-link" href="${escapeHtml(live.mapsUrl)}" target="_blank" rel="noopener">Térkép</a>`
     : "";
@@ -4698,8 +4700,8 @@ function renderWorkerCard(item) {
         <span>${escapeHtml(item.statusLabel || "-")}</span>
       </div>
       <div class="schedule-chip-row">
-        ${scheduleStatusChip(`Giriton: ${item.giritonStatus || "Nincs adat"}`, item.giritonTone)}
-        ${scheduleStatusChip(`MűszakPro: ${item.muszakproStatus || "Nincs adat"}`, item.muszakproTone)}
+        ${scheduleStatusChip(`GIRITON: ${giritonLabel}`, item.giritonTone)}
+        ${scheduleStatusChip(`MŰSZAKPRO: ${muszakproLabel}`, item.muszakproTone)}
         ${item.hubStatus ? scheduleStatusChip(`Hub: ${item.hubStatus}`, item.hubTone) : ""}
       </div>
       <div class="ops-detail-grid">
@@ -4776,6 +4778,8 @@ function renderScheduleDayButton(day) {
 function renderScheduleWorker(worker) {
   const vehicleText = opsVehicleText(worker.vehicle);
   const end = worker.end ? `-${escapeHtml(worker.end)}` : "";
+  const giritonLabel = String(worker.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
+  const muszakproLabel = String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   return `
     <details class="ops-card schedule-worker">
       <summary class="ops-card-head">
@@ -4787,8 +4791,8 @@ function renderScheduleWorker(worker) {
       </summary>
       <div class="ops-live-body">
         <div class="schedule-chip-row">
-          ${scheduleStatusChip(`Giriton: ${worker.giritonStatus || "Nincs adat"}`, worker.giritonTone)}
-          ${scheduleStatusChip(`MűszakPro: ${worker.muszakproStatus || "Nincs adat"}`, worker.muszakproTone)}
+          ${scheduleStatusChip(`GIRITON: ${giritonLabel}`, worker.giritonTone)}
+          ${scheduleStatusChip(`MŰSZAKPRO: ${muszakproLabel}`, worker.muszakproTone)}
           ${worker.hubStatus ? scheduleStatusChip(`Hub: ${worker.hubStatus}`, worker.hubTone) : ""}
         </div>
         <div class="ops-detail-grid">

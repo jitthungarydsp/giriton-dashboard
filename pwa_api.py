@@ -3554,6 +3554,22 @@ def read_coordinator_live_map() -> dict[str, Any]:
 
 def read_today_worker_shift_rows(target_date: date) -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
+        "ops_shift_comparison",
+        params={
+            "select": (
+                "comparison_key,work_date,courier_id,courier_name,email,warehouse,"
+                "shift_start,shift_end,giriton_status,muszakpro_status,missing_source,"
+                "giriton_check,muszakpro_booking_code,updated_at"
+            ),
+            "work_date": f"eq.{target_date.isoformat()}",
+            "order": "warehouse.asc,shift_start.asc,courier_name.asc",
+            "limit": "2000",
+        },
+        timeout=30,
+    )
+    if rows:
+        return rows
+    return optional_supabase_rows(
         "courier_shift_overview",
         params={
             "select": (
@@ -3567,39 +3583,38 @@ def read_today_worker_shift_rows(target_date: date) -> list[dict[str, Any]]:
         },
         timeout=30,
     )
-    if rows:
-        return rows
-    return optional_supabase_rows(
-        "vw_attendance_muszakpro_next_5_days",
-        params={
-            "select": (
-                "work_date,courier_id,courier_name,warehouse,shift_start,shift_end,"
-                "attendance_status,muszakpro_status,missing_source,attendance_shift_id,"
-                "attendance_shift_name,muszakpro_shift_text,muszakpro_booking_code,collected_at"
-            ),
-            "work_date": f"eq.{target_date.isoformat()}",
-            "order": "shift_start.asc,courier_name.asc",
-            "limit": "2000",
-        },
-        timeout=30,
-    )
 
 
 def read_schedule_comparison_rows(start: date, end: date) -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
-        "vw_attendance_muszakpro_latest_comparison",
+        "ops_shift_comparison",
         params={
             "select": (
-                "work_date,courier_id,courier_name,warehouse,shift_start,shift_end,"
-                "attendance_status,muszakpro_status,missing_source,attendance_shift_id,"
-                "attendance_shift_name,muszakpro_shift_text,muszakpro_booking_code,collected_at"
+                "comparison_key,work_date,courier_id,courier_name,email,warehouse,"
+                "shift_start,shift_end,giriton_status,muszakpro_status,missing_source,"
+                "giriton_check,muszakpro_booking_code,updated_at"
             ),
             "work_date": f"gte.{start.isoformat()}",
-            "order": "work_date.asc,shift_start.asc,courier_name.asc",
+            "order": "work_date.asc,warehouse.asc,shift_start.asc,courier_name.asc",
             "limit": "10000",
         },
         timeout=40,
     )
+    if not rows:
+        rows = optional_supabase_rows(
+            "vw_attendance_muszakpro_latest_comparison",
+            params={
+                "select": (
+                    "work_date,courier_id,courier_name,warehouse,shift_start,shift_end,"
+                    "attendance_status,muszakpro_status,missing_source,attendance_shift_id,"
+                    "attendance_shift_name,muszakpro_shift_text,muszakpro_booking_code,collected_at"
+                ),
+                "work_date": f"gte.{start.isoformat()}",
+                "order": "work_date.asc,shift_start.asc,courier_name.asc",
+                "limit": "10000",
+            },
+            timeout=40,
+        )
     return [
         row for row in rows
         if str(row.get("work_date") or "")[:10] <= end.isoformat()
@@ -3723,7 +3738,7 @@ def schedule_status_label(value: Any) -> str:
     upper = text.upper()
     if upper == "OK":
         return "OK"
-    if upper in {"MISSING", "HIANYZIK", "NOK"}:
+    if upper in {"-", "MISSING", "HIANYZIK", "HIÁNYZIK", "NOK"}:
         return "Hiányzik"
     return text
 
@@ -3745,27 +3760,41 @@ def schedule_row_key(work_date: str, courier_id: Any, courier_name: Any, start_t
 def schedule_worker_from_comparison(row: dict[str, Any]) -> dict[str, Any]:
     work_date = str(row.get("work_date") or "")[:10]
     shift_start_time = normalize_time(row.get("shift_start"))
+    warehouse = str(row.get("warehouse") or "").strip()
+    giriton_status = row.get("giriton_status", row.get("attendance_status"))
+    muszakpro_status = row.get("muszakpro_status")
+    shift_name = str(
+        row.get("muszakpro_shift_text")
+        or row.get("attendance_shift_name")
+        or (f"{warehouse}_{shift_start_time}" if warehouse and shift_start_time else "")
+    )
+    booking_code = str(
+        row.get("muszakpro_booking_code")
+        or row.get("giriton_check")
+        or row.get("attendance_shift_id")
+        or ""
+    )
     return {
         "date": work_date,
         "courierId": str(row.get("courier_id") or ""),
         "courierName": str(row.get("courier_name") or "Futár"),
         "start": shift_start_time,
         "end": normalize_time(row.get("shift_end")),
-        "warehouse": str(row.get("warehouse") or ""),
-        "shiftName": str(row.get("attendance_shift_name") or row.get("muszakpro_shift_text") or ""),
-        "bookingCode": str(row.get("muszakpro_booking_code") or row.get("attendance_shift_id") or ""),
-        "giritonStatus": schedule_status_label(row.get("attendance_status")),
-        "giritonTone": schedule_status_tone(row.get("attendance_status")),
-        "muszakproStatus": schedule_status_label(row.get("muszakpro_status")),
-        "muszakproTone": schedule_status_tone(row.get("muszakpro_status")),
-        "muszakproTime": shift_start_time if schedule_status_tone(row.get("muszakpro_status")) == "ok" else "",
-        "giritonBookingTime": shift_start_time if schedule_status_tone(row.get("attendance_status")) == "ok" else "",
+        "warehouse": warehouse,
+        "shiftName": shift_name,
+        "bookingCode": booking_code,
+        "giritonStatus": schedule_status_label(giriton_status),
+        "giritonTone": schedule_status_tone(giriton_status),
+        "muszakproStatus": schedule_status_label(muszakpro_status),
+        "muszakproTone": schedule_status_tone(muszakpro_status),
+        "muszakproTime": shift_start_time if schedule_status_tone(muszakpro_status) == "ok" else "",
+        "giritonBookingTime": shift_start_time if schedule_status_tone(giriton_status) == "ok" else "",
         "giritonOfferTime": "",
         "missingSource": str(row.get("missing_source") or ""),
         "hubStatus": "",
         "hubTone": "unknown",
         "vehicle": None,
-        "source": "attendance_muszakpro_comparison",
+        "source": "ops_shift_comparison" if "giriton_status" in row else "attendance_muszakpro_comparison",
     }
 
 
@@ -3899,11 +3928,20 @@ def merge_schedule_worker(existing: dict[str, Any], incoming: dict[str, Any]) ->
     for key in ("courierId", "courierName", "warehouse", "start", "end", "shiftName", "bookingCode"):
         if not existing.get(key) and incoming.get(key):
             existing[key] = incoming[key]
+    existing_source = str(existing.get("source") or "")
+    incoming_source = str(incoming.get("source") or "")
+    comparison_is_authoritative = "ops_shift_comparison" in existing_source
     for status_key, tone_key in (("giritonStatus", "giritonTone"), ("muszakproStatus", "muszakproTone"), ("hubStatus", "hubTone")):
+        if (
+            comparison_is_authoritative
+            and status_key in {"giritonStatus", "muszakproStatus"}
+            and incoming_source in {"giriton_future_shifts_latest", "raw_muszakpro_bookings"}
+        ):
+            continue
         if incoming.get(tone_key) == "ok" or not existing.get(status_key) or existing.get(tone_key) == "unknown":
             existing[status_key] = incoming.get(status_key) or existing.get(status_key) or ""
             existing[tone_key] = incoming.get(tone_key) or existing.get(tone_key) or "unknown"
-    if incoming.get("source") and incoming.get("source") not in str(existing.get("source") or ""):
+    if incoming.get("source") and incoming.get("source") not in existing_source:
         existing["source"] = " + ".join(part for part in [existing.get("source"), incoming.get("source")] if part)
     existing["missingSource"] = ""
     if existing.get("giritonTone") != "ok":
