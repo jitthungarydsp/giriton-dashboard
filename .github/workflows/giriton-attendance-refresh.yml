@@ -7,8 +7,12 @@ on:
         description: "Opcionális dátum YYYY-MM-DD formátumban. Üresen a mai nap."
         required: false
         default: ""
+  repository_dispatch:
+    types:
+      - giriton-attendance-refresh
   schedule:
-    # GitHub cron UTC-ben fut. Az Attendance frissítés 15 percenként fut.
+    # GitHub cron UTC-ben fut es keshet. Pontos 15 perces inditashoz
+    # cron-job.org repository_dispatch is hasznalhato: giriton-attendance-refresh.
     - cron: "*/15 * * * *"
 
 concurrency:
@@ -21,6 +25,7 @@ jobs:
     timeout-minutes: 25
 
     env:
+      TZ: Europe/Budapest
       GIRITON_USER: ${{ secrets.GIRITON_USER }}
       GIRITON_PASSWORD: ${{ secrets.GIRITON_PASSWORD }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -51,7 +56,7 @@ jobs:
       - name: Run attendance refresh
         shell: bash
         run: |
-          START_DATE="${{ inputs.start_date }}"
+          START_DATE="${{ github.event.inputs.start_date }}"
           START_DATE="${START_DATE:-}"
 
           CMD=(robot --outputdir results/giriton-attendance)
