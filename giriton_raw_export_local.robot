@@ -230,6 +230,8 @@ Giriton Raw Export Local
     Log To Console
     ...    ATTENDANCE_DATUM=${attendance_datum_giriton}
 
+    giriton_attendance_scraper.Install Vaadin Response Capture
+
     Execute Javascript
     ...    const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el => el.offsetWidth > 0 && el.offsetHeight > 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
     ...    ARGUMENTS

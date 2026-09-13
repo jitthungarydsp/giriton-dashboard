@@ -3,6 +3,17 @@ import time
 
 from robot.libraries.BuiltIn import BuiltIn
 
+try:
+    from resources.giriton_attendance_uidl import (
+        parse_attendance_uidl_rows,
+        split_courier_text,
+    )
+except ModuleNotFoundError:
+    from giriton_attendance_uidl import (
+        parse_attendance_uidl_rows,
+        split_courier_text,
+    )
+
 
 def _selenium():
     return BuiltIn().get_library_instance("SeleniumLibrary")
@@ -120,6 +131,11 @@ def _looks_not_worked(value):
         or ("didn" in text and "come" in text)
         or text in {"did not come", "empty"}
     )
+
+
+def _courier_name_from_grid_text(value):
+    parsed = split_courier_text(value)
+    return _clean(parsed.get("courier_name")) or _clean(value)
 
 
 def _main_grid_rows():
@@ -253,6 +269,105 @@ return false;
     return bool(_driver().execute_script(script, name))
 
 
+def _install_vaadin_response_capture():
+    script = r"""
+window.__giritonAttendanceResponses = window.__giritonAttendanceResponses || [];
+
+function patchResponses(root) {
+  const nodes = [root, ...root.querySelectorAll('*')];
+
+  for (const node of nodes) {
+    if (!node || node.__giritonAttendancePatched || typeof node.setResponse !== 'function') {
+      continue;
+    }
+
+    const original = node.setResponse;
+    node.setResponse = function(response) {
+      try {
+        window.__giritonAttendanceResponses.push(response);
+      } catch (error) {
+      }
+      return original.apply(this, arguments);
+    };
+    node.__giritonAttendancePatched = true;
+  }
+}
+
+patchResponses(document);
+
+if (!window.__giritonAttendancePatchInterval) {
+  window.__giritonAttendancePatchInterval = window.setInterval(() => patchResponses(document), 500);
+}
+
+return true;
+"""
+    return bool(_driver().execute_script(script))
+
+
+def install_vaadin_response_capture():
+    return _install_vaadin_response_capture()
+
+
+def _captured_vaadin_responses():
+    script = r"""
+const responses = window.__giritonAttendanceResponses || [];
+window.__giritonAttendanceResponses = [];
+return responses;
+"""
+    return _driver().execute_script(script) or []
+
+
+def _merge_uidl_rows(rows, uidl_rows, work_date):
+    by_key = {
+        (_clean(row[0]), _clean(row[1])): row
+        for row in rows
+        if isinstance(row, list) and len(row) >= 2
+    }
+
+    for uidl_row in uidl_rows or []:
+        if _clean(uidl_row.get("work_date")) != _clean(work_date):
+            continue
+
+        name = _clean(uidl_row.get("courier_name"))
+        if not name:
+            continue
+
+        key = (_clean(work_date), name)
+        raw_details = _clean(uidl_row.get("raw_details"))
+        activity = _clean(uidl_row.get("activity_status"))
+        start_time = _clean(uidl_row.get("checkin_start"))
+        end_time = _clean(uidl_row.get("checkin_end"))
+        shift_text = _clean(uidl_row.get("shift_text"))
+
+        if key not in by_key:
+            row = [
+                work_date,
+                name,
+                shift_text,
+                activity,
+                start_time,
+                end_time,
+                raw_details,
+            ]
+            rows.append(row)
+            by_key[key] = row
+            continue
+
+        row = by_key[key]
+        if shift_text and (not _clean(row[2]) or _clean(row[2]).upper() == "EMPTY"):
+            row[2] = shift_text
+        if activity and (_looks_not_worked(row[3]) or activity != _clean(row[3])):
+            row[3] = activity
+        if start_time:
+            row[4] = start_time
+        if end_time:
+            row[5] = end_time
+        if raw_details:
+            row[6] = raw_details
+
+    return rows
+
+
 def _detail_entries_for_name(name):
     script = r"""
 const wanted = arguments[0] || '';
@@ -336,10 +451,13 @@ function addEntriesFromText(text, source, out) {
 }
 
 function addEntriesFromRows(root, source, out) {
-  const rows = [...root.querySelectorAll('tr')];
+  const rows = [
+    ...root.querySelectorAll('tr'),
+    ...root.querySelectorAll('.v-grid-row, [role="row"]'),
+  ];
 
   for (const row of rows) {
-    const cells = [...row.querySelectorAll('td, th')]
+    const cells = [...row.querySelectorAll('td, th, .v-grid-cell, [role="cell"], [role="gridcell"]')]
       .map(cell => clean(cell.innerText || cell.textContent || ''))
       .filter(Boolean);
 
@@ -354,6 +472,41 @@ function addEntriesFromRows(root, source, out) {
       });
     }
   }
+}
+
+function addCurrentDetailEntries(out, rawParts) {
+  const roots = [...document.querySelectorAll('body *')]
+    .filter(isVisible)
+    .map(el => {
+      const text = el.innerText || el.textContent || '';
+      return {
+        el,
+        text,
+        cleanText: clean(text),
+        length: text.length,
+      };
+    })
+    .filter(item => {
+      const text = item.cleanText;
+      return text.includes('Activity')
+        && text.includes('Time')
+        && text.includes('Details')
+        && item.length < 6000;
+    })
+    .sort((a, b) => a.length - b.length);
+
+  for (const item of roots) {
+    const before = out.length;
+    addEntriesFromRows(item.el, 'current-detail-rows', out);
+    addEntriesFromText(item.text, 'current-detail-text', out);
+
+    if (out.length > before) {
+      rawParts.push(item.text);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function findNameNodes() {
@@ -379,6 +532,9 @@ const entries = [];
 const rawParts = [];
 const roots = [];
 
+const usedCurrentDetail = addCurrentDetailEntries(entries, rawParts);
+
+if (!usedCurrentDetail) {
 for (const node of findNameNodes()) {
   let divAncestor = node;
   let divHops = 0;
@@ -412,6 +568,7 @@ for (const node of findNameNodes()) {
 
     parent = parent.parentElement;
   }
+}
 }
 
 for (const root of roots) {
@@ -504,6 +661,7 @@ def scrape_attendance_rows(work_date):
     seen = set()
     stable_pages = 0
 
+    _install_vaadin_response_capture()
     _scroll_main_grid_to_top()
     time.sleep(1.0)
 
@@ -511,11 +669,12 @@ def scrape_attendance_rows(work_date):
         before_count = len(seen)
 
         for base_row in _main_grid_rows():
-            name = _clean(base_row.get("name"))
-            if not name or name in seen:
+            display_name = _clean(base_row.get("name"))
+            name = _courier_name_from_grid_text(display_name)
+            if not display_name or display_name in seen:
                 continue
 
-            seen.add(name)
+            seen.add(display_name)
             shift = _clean(base_row.get("shift"))
             activity = _clean(base_row.get("activity"))
             original_activity = activity
@@ -523,27 +682,13 @@ def scrape_attendance_rows(work_date):
             if not shift or shift.upper() == "EMPTY":
                 continue
 
-            if _click_main_row_by_name(name):
+            if _click_main_row_by_name(display_name):
                 time.sleep(0.8)
 
-            grid_start_time, grid_end_time = _parse_grid_time_cells(
-                base_row.get("cells", [])
-            )
             detail = ""
             start_time, end_time, detail_raw, detail_activity = _parse_detail_entries(
                 detail
             )
-
-            if grid_start_time:
-                start_time = grid_start_time
-
-            if grid_end_time:
-                end_time = grid_end_time
-
-            if not start_time and not end_time:
-                start_time, end_time = _parse_grid_time_cells(
-                    base_row.get("cells", [])
-                )
 
             if (start_time or end_time) and (
                 not activity or activity in {"Didn't come", "Didn’t come", "Did not come"}
@@ -553,7 +698,7 @@ def scrape_attendance_rows(work_date):
             if (start_time or end_time) and _looks_not_worked(activity):
                 activity = detail_activity or ("Left" if end_time else "Work")
 
-            name_detail = _detail_entries_for_name(name)
+            name_detail = _detail_entries_for_name(display_name)
             (
                 name_start_time,
                 name_end_time,
@@ -561,7 +706,12 @@ def scrape_attendance_rows(work_date):
                 name_detail_activity,
             ) = _parse_detail_entry_rows(name_detail)
 
-            if name_start_time or name_end_time:
+            detail_is_too_broad = (
+                name_detail_raw.count("Just in Time Kft") > 1
+                or name_detail_raw.startswith("Shift Project Activity")
+            )
+
+            if (name_start_time or name_end_time) and not detail_is_too_broad:
                 start_time = name_start_time
                 end_time = name_end_time
                 detail_raw = name_detail_raw
@@ -572,7 +722,7 @@ def scrape_attendance_rows(work_date):
             else:
                 start_time = ""
                 end_time = ""
-                detail_raw = name_detail_raw
+                detail_raw = "" if detail_is_too_broad else name_detail_raw
                 activity = original_activity
 
             rows.append([
@@ -598,5 +748,21 @@ def scrape_attendance_rows(work_date):
             or scroll_state.get("top", 0) >= scroll_state.get("maxTop", 0) - 3
         ) and stable_pages >= 2:
             break
+
+    uidl_rows = []
+    for response in _captured_vaadin_responses():
+        uidl_rows.extend(
+            parse_attendance_uidl_rows(
+                response,
+                default_work_date=work_date,
+            )
+        )
+
+    if uidl_rows:
+        rows = _merge_uidl_rows(
+            rows,
+            uidl_rows,
+            work_date,
+        )
 
     return rows

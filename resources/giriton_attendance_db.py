@@ -6,11 +6,18 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from resources.supabase_raw import (
-    format_date_filter,
-    get_supabase_config,
-    raise_for_supabase_error,
-)
+try:
+    from resources.supabase_raw import (
+        format_date_filter,
+        get_supabase_config,
+        raise_for_supabase_error,
+    )
+except ModuleNotFoundError:
+    from supabase_raw import (
+        format_date_filter,
+        get_supabase_config,
+        raise_for_supabase_error,
+    )
 
 
 SOURCE_NAME = "giriton-attendance-robot"
@@ -50,9 +57,47 @@ def _build_db_rows(rows):
     db_rows = []
 
     for row in rows or []:
-        values = list(row) + [""] * 7
-        work_date = _clean(values[0])
-        courier_name = _clean(values[1])
+        if isinstance(row, dict):
+            row_json = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+            work_date = _clean(row.get("work_date"))
+            courier_name = _clean(row.get("courier_name"))
+            shift_text = _clean(row.get("shift_text"))
+            activity_status = _clean(row.get("activity_status"))
+            checkin_start = _clean(row.get("checkin_start"))
+            checkin_end = _clean(row.get("checkin_end"))
+            raw_details = _clean(row.get("raw_details"))
+            response_json = {
+                **row_json,
+                "work_date": work_date,
+                "courier_name": courier_name,
+                "shift": shift_text,
+                "activity": activity_status,
+                "checkin_start": checkin_start,
+                "checkin_end": checkin_end,
+                "raw_details": raw_details,
+            }
+            if row.get("courier_code"):
+                response_json["courier_code"] = _clean(row.get("courier_code"))
+            if row.get("courier_id"):
+                response_json["courier_id"] = _clean(row.get("courier_id"))
+        else:
+            values = list(row) + [""] * 7
+            work_date = _clean(values[0])
+            courier_name = _clean(values[1])
+            shift_text = _clean(values[2])
+            activity_status = _clean(values[3])
+            checkin_start = _clean(values[4])
+            checkin_end = _clean(values[5])
+            raw_details = _clean(values[6])
+            response_json = {
+                "work_date": work_date,
+                "courier_name": courier_name,
+                "shift": shift_text,
+                "activity": activity_status,
+                "checkin_start": checkin_start,
+                "checkin_end": checkin_end,
+                "raw_details": raw_details,
+            }
 
         if not work_date or not courier_name:
             continue
@@ -61,20 +106,12 @@ def _build_db_rows(rows):
             "source_name": SOURCE_NAME,
             "work_date": work_date,
             "courier_name": courier_name,
-            "shift_text": _clean(values[2]),
-            "activity_status": _clean(values[3]),
-            "checkin_start": _normalize_time(values[4]),
-            "checkin_end": _normalize_time(values[5]),
-            "raw_details": _clean(values[6]),
-            "response_json": {
-                "work_date": work_date,
-                "courier_name": courier_name,
-                "shift": _clean(values[2]),
-                "activity": _clean(values[3]),
-                "checkin_start": _clean(values[4]),
-                "checkin_end": _clean(values[5]),
-                "raw_details": _clean(values[6]),
-            },
+            "shift_text": shift_text,
+            "activity_status": activity_status,
+            "checkin_start": _normalize_time(checkin_start),
+            "checkin_end": _normalize_time(checkin_end),
+            "raw_details": raw_details,
+            "response_json": response_json,
             "fetched_at": fetched_at,
             "updated_at": fetched_at,
         })
@@ -220,7 +257,7 @@ def read_giriton_attendance_raw(start_date=None, end_date=None, limit=5000):
     filters = [
         (
             "select=work_date,courier_name,shift_text,activity_status,"
-            "checkin_start,checkin_end,raw_details,fetched_at,updated_at"
+            "checkin_start,checkin_end,raw_details,response_json,fetched_at,updated_at"
         ),
         "order=work_date.desc,courier_name.asc",
         f"limit={int(limit)}",
