@@ -375,11 +375,12 @@ def _split_subscribed_names(value, driver_lookup=None):
 
     text = re.sub(r"^\s*Subscribed users\s*:\s*", "", text, flags=re.IGNORECASE)
 
-    return [
+    parts = [
         name.strip()
         for name in re.split(r"\s*(?:,|;|\||\r?\n)+\s*", text)
         if name.strip()
     ]
+
     if len(parts) == 1:
         lookup_parts = _split_subscribed_names_by_lookup(parts[0], driver_lookup)
         if lookup_parts:
@@ -390,6 +391,7 @@ def _split_subscribed_names(value, driver_lookup=None):
                 f"names={'; '.join(lookup_parts)}"
             )
             return lookup_parts
+
     return parts
 
 
