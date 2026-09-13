@@ -2490,15 +2490,7 @@ def run_once(max_age_minutes, dry_run=False):
                 or dashboard_route.get("raw_courier_hub_departure_dashboard")
             )
             else None,
-            use_attendance=not (
-                dashboard_route.get("raw_live_monitoring")
-                or dashboard_route.get("raw_courier_hub_departure_dashboard")
-            ),
-        )
-        performance_shift_note = build_performance_shift_note(
-            courier_id,
-            route_warehouse,
-            route,
+            use_attendance=True,
         )
         planned_departure_text = format_time(
             coalesce(
@@ -2556,8 +2548,7 @@ def run_once(max_age_minutes, dry_run=False):
                 f"next_shift={shift_notes.get('next_shift_note') or '-'} "
                 f"next_shift_delay={shift_notes.get('next_shift_delay_note') or '-'} "
                 f"queue_since={shift_notes.get('queue_since_note') or '-'} "
-                f"queue_wait={shift_notes.get('queue_wait_note') or '-'} "
-                f"hub_performance={performance_shift_note or '-'}",
+                f"queue_wait={shift_notes.get('queue_wait_note') or '-'}",
                 flush=True,
             )
             continue
@@ -2620,7 +2611,6 @@ def run_once(max_age_minutes, dry_run=False):
                 next_shift_delay_note=shift_notes.get("next_shift_delay_note", ""),
                 queue_since_note=shift_notes.get("queue_since_note", ""),
                 queue_wait_note=shift_notes.get("queue_wait_note", ""),
-                performance_shift_note=performance_shift_note,
             )
 
             if result == "sent":
