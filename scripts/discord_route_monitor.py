@@ -331,6 +331,216 @@ def load_courier_hub_performance_shifts(courier_id, warehouse, date_from, date_t
     return payload
 
 
+def parse_hub_shift_datetime(value, work_date):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = parse_datetime(text)
+    if parsed:
+        return parsed
+    time_text = text[:5].replace(".", ":")
+    if ":" not in time_text:
+        return None
+    try:
+        return datetime.fromisoformat(f"{work_date}T{time_text}:00").replace(
+            tzinfo=LOCAL_TIMEZONE
+        )
+    except ValueError:
+        return None
+
+
+def load_courier_shift_overview_rows(courier_id, work_date):
+    supabase_url, service_role_key = get_supabase_config()
+    normalized_courier_id = normalize_id(courier_id)
+    if not supabase_url or not service_role_key or not normalized_courier_id:
+        return []
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/courier_shift_overview",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+        },
+        params={
+            "select": (
+                "work_date,courier_id,courier_name,warehouse_id,shift_id,shift_name,"
+                "shift_start,shift_end,planned_start_at,planned_end_at,actual_start_at,"
+                "evaluation,status,raw_shift"
+            ),
+            "courier_id": f"eq.{normalized_courier_id}",
+            "work_date": f"eq.{work_date}",
+            "order": "shift_start.asc",
+            "limit": "50",
+        },
+        timeout=20,
+    )
+    if response.status_code in {404, 406}:
+        return []
+    raise_for_supabase_error(response)
+    return response.json() or []
+
+
+def shift_from_overview_row(row):
+    work_date = str(row.get("work_date") or "")[:10]
+    raw_shift = row.get("raw_shift") if isinstance(row.get("raw_shift"), dict) else {}
+    start_at = parse_hub_shift_datetime(
+        coalesce(
+            row.get("shift_start"),
+            row.get("planned_start_at"),
+            raw_shift.get("plannedStart"),
+            raw_shift.get("plannedStartAt"),
+            raw_shift.get("shiftStart"),
+            raw_shift.get("start"),
+        ),
+        work_date,
+    )
+    end_at = parse_hub_shift_datetime(
+        coalesce(
+            row.get("shift_end"),
+            row.get("planned_end_at"),
+            raw_shift.get("plannedEnd"),
+            raw_shift.get("plannedEndAt"),
+            raw_shift.get("shiftEnd"),
+            raw_shift.get("end"),
+        ),
+        work_date,
+    )
+    if not start_at:
+        return {}
+    return {
+        "shift_id": row.get("shift_id") or raw_shift.get("shiftId"),
+        "shift_name": str(row.get("shift_name") or raw_shift.get("shiftName") or "").strip(),
+        "shift_start": start_at,
+        "shift_end": end_at,
+        "available_for_shift_since": parse_hub_shift_datetime(
+            coalesce(
+                row.get("actual_start_at"),
+                raw_shift.get("availableForShiftSince"),
+                raw_shift.get("checkedInAt"),
+                raw_shift.get("queuedAt"),
+                raw_shift.get("actualStart"),
+            ),
+            work_date,
+        ),
+    }
+
+
+def shifts_from_performance_payload(payload, work_date):
+    rows = payload.get("shifts") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        return []
+    shifts = []
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("date") or "")[:10] != work_date:
+            continue
+        start_at = parse_hub_shift_datetime(
+            coalesce(row.get("plannedStart"), row.get("shiftStart"), row.get("start")),
+            work_date,
+        )
+        if not start_at:
+            continue
+        shifts.append({
+            "shift_id": row.get("shiftId") or row.get("id"),
+            "shift_name": str(row.get("shiftName") or row.get("name") or "").strip(),
+            "shift_start": start_at,
+            "shift_end": parse_hub_shift_datetime(
+                coalesce(row.get("plannedEnd"), row.get("shiftEnd"), row.get("end")),
+                work_date,
+            ),
+            "available_for_shift_since": parse_hub_shift_datetime(
+                coalesce(row.get("actualStart"), row.get("availableForShiftSince")),
+                work_date,
+            ),
+        })
+    return sorted(shifts, key=lambda item: item["shift_start"])
+
+
+def build_shift_notes_from_shifts(shifts, route):
+    shifts = sorted(
+        [shift for shift in shifts if shift.get("shift_start")],
+        key=lambda item: item["shift_start"],
+    )
+    if not shifts:
+        return {}
+
+    assigned_at = (
+        parse_datetime(route.get("assignedAt"))
+        or parse_datetime(route.get("courierRegisteredAt"))
+        or parse_datetime(route.get("plannedDeparture"))
+        or datetime.now(LOCAL_TIMEZONE)
+    )
+    route_return_at = parse_datetime(route.get("realReturn") or route.get("plannedReturn"))
+    current_shift = choose_current_shift(shifts, assigned_at, route_return_at)
+    next_shift = None
+    if current_shift:
+        for shift in shifts:
+            if shift["shift_start"] > current_shift["shift_start"]:
+                next_shift = shift
+                break
+    else:
+        future_shifts = [shift for shift in shifts if shift["shift_start"] > assigned_at]
+        next_shift = future_shifts[0] if future_shifts else None
+
+    next_shift_delay_note = ""
+    if next_shift and route_return_at:
+        delay_minutes = int((route_return_at - next_shift["shift_start"]).total_seconds() // 60)
+        if delay_minutes > 0:
+            next_shift_delay_note = f"{delay_minutes} perc"
+
+    queue_since = (
+        (current_shift or {}).get("available_for_shift_since")
+        or parse_datetime(
+            coalesce(
+                route.get("queuedAt"),
+                route.get("checkedInAt"),
+                route.get("availableForShiftSince"),
+                route.get("noShowAutoFlaggedAt"),
+            )
+        )
+    )
+
+    notes = {}
+    if current_shift:
+        notes["current_shift_note"] = format_shift_label(current_shift)
+    if next_shift:
+        notes["next_shift_note"] = format_shift_label(next_shift, include_times=False)
+    if next_shift_delay_note:
+        notes["next_shift_delay_note"] = next_shift_delay_note
+    if queue_since:
+        notes["queue_since_note"] = format_datetime_time(queue_since)
+        notes["queue_wait_note"] = format_wait_duration(queue_since, assigned_at)
+    return notes
+
+
+def build_stored_hub_shift_notification_notes(courier_id, warehouse, route):
+    work_date = route_work_date(route)
+    try:
+        overview_rows = load_courier_shift_overview_rows(courier_id, work_date)
+    except Exception as exc:
+        print(
+            f"Mentett Hub muszak lekeres hiba: #{courier_id} {work_date} | {exc}",
+            flush=True,
+        )
+        overview_rows = []
+    shifts = [shift_from_overview_row(row) for row in overview_rows]
+    shifts = [shift for shift in shifts if shift]
+    if not shifts:
+        try:
+            payload = load_courier_hub_performance_shifts(
+                courier_id,
+                warehouse,
+                work_date,
+                work_date,
+            )
+            shifts = shifts_from_performance_payload(payload, work_date)
+        except Exception as exc:
+            print(
+                f"Hub muszak fallback hiba: #{courier_id} {work_date} | {exc}",
+                flush=True,
+            )
+    return build_shift_notes_from_shifts(shifts, route)
+
+
 def warehouse_code_for_id(warehouse_id):
     if int(warehouse_id) == 1:
         return "BUD1"
@@ -1640,25 +1850,15 @@ def build_shift_notification_notes(courier_id, route, courier_hub_detail=None, u
     try:
         attendance_data = load_attendance_for_date(work_date)
     except Exception as exc:
-        error_note = f"nem ellenorizheto (fetch-attendance hiba: {exc})"
-        return merge_shift_notes({
-            "current_shift_note": error_note,
-            "next_shift_note": error_note,
-            "next_shift_delay_note": "",
-            "queue_since_note": "",
-            "queue_wait_note": "",
-        }, courier_hub_notes)
+        print(
+            f"Attendance fallback hiba: #{courier_id} {work_date} | {exc}",
+            flush=True,
+        )
+        return courier_hub_notes
 
     courier = find_attendance_courier(attendance_data, courier_id)
     if not courier:
-        error_note = "nem ellenorizheto (nincs attendance adat)"
-        return merge_shift_notes({
-            "current_shift_note": error_note,
-            "next_shift_note": error_note,
-            "next_shift_delay_note": "",
-            "queue_since_note": "",
-            "queue_wait_note": "",
-        }, courier_hub_notes)
+        return courier_hub_notes
 
     shifts = parse_shift_times(courier)
     now = datetime.now(LOCAL_TIMEZONE)
@@ -2492,6 +2692,12 @@ def run_once(max_age_minutes, dry_run=False):
             else None,
             use_attendance=True,
         )
+        stored_hub_shift_notes = build_stored_hub_shift_notification_notes(
+            courier_id,
+            route_warehouse,
+            route,
+        )
+        shift_notes = merge_shift_notes(shift_notes, stored_hub_shift_notes)
         planned_departure_text = format_time(
             coalesce(
                 route.get("plannedDeparture"),
