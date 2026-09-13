@@ -43,6 +43,8 @@ const state = {
   statisticsQualityTopic: "",
   statisticsRequestSeq: 0,
   loadingCount: 0,
+  loadingTimer: null,
+  loadingVisible: false,
   silentLoading: false,
   routeDetails: null,
   routeDetailsSelectedIndex: 0,
@@ -51,7 +53,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v125";
+const APP_VERSION = "v128";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -87,12 +89,26 @@ function setLoadingPanel(visible, message = "Adatok betöltése...") {
 
 function beginLoading(message = "") {
   state.loadingCount += 1;
-  setLoadingPanel(true, message);
+  if (state.loadingTimer) return;
+  state.loadingTimer = window.setTimeout(() => {
+    state.loadingTimer = null;
+    if (state.loadingCount > 0) {
+      state.loadingVisible = true;
+      setLoadingPanel(true, message);
+    }
+  }, 450);
 }
 
 function endLoading() {
   state.loadingCount = Math.max(0, state.loadingCount - 1);
-  if (state.loadingCount <= 0) setLoadingPanel(false);
+  if (state.loadingCount <= 0) {
+    if (state.loadingTimer) {
+      window.clearTimeout(state.loadingTimer);
+      state.loadingTimer = null;
+    }
+    state.loadingVisible = false;
+    setLoadingPanel(false);
+  }
 }
 
 async function withSilentLoading(callback) {
@@ -107,7 +123,8 @@ async function withSilentLoading(callback) {
 
 async function api(path, options = {}) {
   const { silentLoading = false, loadingMessage = "", ...fetchOptions } = options;
-  const shouldShowLoading = !silentLoading && !state.silentLoading;
+  const method = String(fetchOptions.method || "GET").toUpperCase();
+  const shouldShowLoading = method !== "GET" && !silentLoading && !state.silentLoading;
   if (shouldShowLoading) beginLoading(loadingMessage);
   const headers = { ...(fetchOptions.headers || {}) };
   if (fetchOptions.body && !(fetchOptions.body instanceof FormData) && !headers["Content-Type"]) {
