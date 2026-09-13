@@ -3757,6 +3757,77 @@ def schedule_row_key(work_date: str, courier_id: Any, courier_name: Any, start_t
     return (str(work_date or "")[:10], identity, normalize_time(start_time))
 
 
+def schedule_start_datetime(work_date: Any, start_time: Any) -> datetime | None:
+    day = str(work_date or "")[:10]
+    start = normalize_time(start_time)
+    if not day or not start:
+        return None
+    try:
+        return datetime.fromisoformat(f"{day}T{start}:00").replace(tzinfo=LOCAL_TIMEZONE)
+    except ValueError:
+        return None
+
+
+def read_giriton_attendance_login_rows(start: date, end: date) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "giriton_attendance_raw",
+        params={
+            "select": "work_date,courier_name,shift_text,activity_status,checkin_start,checkin_end,updated_at",
+            "work_date": f"gte.{start.isoformat()}",
+            "order": "work_date.asc,courier_name.asc",
+            "limit": "10000",
+        },
+        timeout=30,
+    )
+    return [
+        row for row in rows
+        if str(row.get("work_date") or "")[:10] <= end.isoformat()
+    ]
+
+
+def attach_giriton_attendance_logins(workers: list[dict[str, Any]], start: date, end: date) -> None:
+    attendance_rows = read_giriton_attendance_login_rows(start, end)
+    logins_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in attendance_rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        name_key = normalize_person_match_text(row.get("courier_name"))
+        if not work_date or not name_key:
+            continue
+        key = (work_date, name_key)
+        previous = logins_by_key.get(key)
+        if not previous or str(row.get("updated_at") or "") >= str(previous.get("updated_at") or ""):
+            logins_by_key[key] = row
+
+    first_shift_by_worker: dict[tuple[str, str], dict[str, Any]] = {}
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        identity = str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
+        if not day or not identity:
+            continue
+        key = (day, identity)
+        previous = first_shift_by_worker.get(key)
+        if not previous or (worker.get("start") or "99:99") < (previous.get("start") or "99:99"):
+            first_shift_by_worker[key] = worker
+
+    now = datetime.now(LOCAL_TIMEZONE)
+    for worker in workers:
+        day = str(worker.get("date") or "")[:10]
+        name_key = normalize_person_match_text(worker.get("courierName"))
+        attendance = logins_by_key.get((day, name_key), {})
+        login_time = normalize_time(attendance.get("checkin_start"))
+        login_end = normalize_time(attendance.get("checkin_end"))
+        worker["giritonLoginTime"] = login_time
+        worker["giritonLoginEnd"] = login_end
+        worker["giritonLoginStatus"] = str(attendance.get("activity_status") or "")
+
+        identity = str(worker.get("courierId") or "").strip() or name_key
+        is_first_shift = first_shift_by_worker.get((day, identity)) is worker
+        start_dt = schedule_start_datetime(day, worker.get("start"))
+        threshold_passed = bool(start_dt and now >= start_dt - timedelta(minutes=15))
+        worker["isFirstShift"] = is_first_shift
+        worker["giritonLoginMissingAlert"] = bool(is_first_shift and threshold_passed and not login_time)
+
+
 def schedule_worker_from_comparison(row: dict[str, Any]) -> dict[str, Any]:
     work_date = str(row.get("work_date") or "")[:10]
     shift_start_time = normalize_time(row.get("shift_start"))
@@ -4026,6 +4097,7 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
         key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
     )
     attach_schedule_vehicles(workers, start, end)
+    attach_giriton_attendance_logins(workers, start, end)
 
     days = []
     cursor = start
@@ -4133,6 +4205,7 @@ def read_today_workers() -> dict[str, Any]:
     if comparison_rows:
         scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
         attach_schedule_vehicles(scheduled_workers, target_date, target_date)
+        attach_giriton_attendance_logins(scheduled_workers, target_date, target_date)
     else:
         schedule = read_coordinator_schedule(target_key[:7])
         today_schedule = next(
@@ -4173,6 +4246,11 @@ def read_today_workers() -> dict[str, Any]:
             "hubTone": schedule_worker.get("hubTone") or "unknown",
             "missingSource": schedule_worker.get("missingSource") or "",
             "source": schedule_worker.get("source") or "",
+            "giritonLoginTime": schedule_worker.get("giritonLoginTime") or "",
+            "giritonLoginEnd": schedule_worker.get("giritonLoginEnd") or "",
+            "giritonLoginStatus": schedule_worker.get("giritonLoginStatus") or "",
+            "isFirstShift": bool(schedule_worker.get("isFirstShift")),
+            "giritonLoginMissingAlert": bool(schedule_worker.get("giritonLoginMissingAlert")),
             "actualStartAt": live.get("activeFrom") or "",
             "queueEvent": str(checkin.get("event_type") or live.get("queueEvent") or ""),
             "queueEventAt": iso_local_text(checkin.get("created_at")) or live.get("queueEventAt") or "",
@@ -4202,6 +4280,56 @@ def read_today_workers() -> dict[str, Any]:
             "returned": len([item for item in workers if item.get("queueEvent") == "returned"]),
         },
         "workers": workers,
+    }
+
+
+def empty_today_workers_payload(error: Any = "") -> dict[str, Any]:
+    target_key = datetime.now(LOCAL_TIMEZONE).date().isoformat()
+    return {
+        "date": target_key,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "planned": 0,
+            "active": 0,
+            "queued": 0,
+            "returned": 0,
+        },
+        "workers": [],
+        "error": str(error or ""),
+    }
+
+
+def empty_coordinator_schedule_payload(month: str, error: Any = "") -> dict[str, Any]:
+    start = parse_month(month or datetime.now(LOCAL_TIMEZONE).date().isoformat()[:7])
+    end = month_end(start)
+    days = []
+    cursor = start
+    while cursor <= end:
+        days.append({
+            "date": cursor.isoformat(),
+            "label": cursor.strftime("%m.%d."),
+            "weekday": cursor.strftime("%a"),
+            "total": 0,
+            "giritonOk": 0,
+            "muszakproOk": 0,
+            "missing": 0,
+            "workers": [],
+        })
+        cursor += timedelta(days=1)
+    return {
+        "month": start.strftime("%Y-%m"),
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "workers": 0,
+            "daysWithWorkers": 0,
+            "giritonOk": 0,
+            "muszakproOk": 0,
+            "missing": 0,
+        },
+        "days": days,
+        "error": str(error or ""),
     }
 
 
@@ -13437,7 +13565,7 @@ def coordinator_today_workers(
         return read_today_workers()
     except Exception as exc:
         print("Coordinator today workers failed:", exc)
-        raise HTTPException(status_code=500, detail=f"A mai beosztás nem tölthető be: {exc}") from exc
+        return empty_today_workers_payload(exc)
 
 
 @app.get("/api/coordinator/schedule")
@@ -13446,11 +13574,12 @@ def coordinator_schedule(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
+    selected_month = month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     try:
-        return read_coordinator_schedule(month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m"))
+        return read_coordinator_schedule(selected_month)
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
-        raise HTTPException(status_code=500, detail=f"A beosztás nem tölthető be: {exc}") from exc
+        return empty_coordinator_schedule_payload(selected_month, exc)
 
 
 @app.get("/api/muszakpro/open-shifts")

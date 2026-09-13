@@ -4686,12 +4686,15 @@ function renderWorkerCard(item) {
   const vehicleText = opsVehicleText(item.vehicle);
   const giritonLabel = String(item.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const muszakproLabel = String(item.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
+  const loginAlert = Boolean(item.giritonLoginMissingAlert);
+  const loginText = item.giritonLoginTime || (loginAlert ? "Nincs bejelentkezés" : "Nincs adat");
+  const loginSubtext = item.giritonLoginStatus || (item.isFirstShift ? "Első műszak" : "");
   const mapsLink = live.mapsUrl
     ? `<a class="ops-map-link" href="${escapeHtml(live.mapsUrl)}" target="_blank" rel="noopener">Térkép</a>`
     : "";
   const end = item.end ? `-${escapeHtml(item.end)}` : "";
   return `
-    <article class="ops-card">
+    <article class="ops-card ${loginAlert ? "attention" : ""}">
       <div class="ops-card-head">
         <div>
           <strong>${escapeHtml(item.courierName || "Futár")}</strong>
@@ -4708,6 +4711,7 @@ function renderWorkerCard(item) {
         <div><span>Műszak</span><strong>${escapeHtml(item.shiftName || item.bookingCode || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
         <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
         <div><span>Live túra</span><strong>${escapeHtml(hasLive ? (live.routeId || "Aktív") : "Nincs live adat")}</strong><small>${hasLive && progress.total ? `${formatCount(progress.done)} / ${formatCount(progress.total)} cím` : "Csak beosztás alapján"}</small></div>
+        <div class="${loginAlert ? "ops-late-box" : ""}"><span>Giriton bejelentkezés</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></div>
         <div><span>Jelzés</span><strong>${escapeHtml(opsQueueLabel(item.queueEvent))}</strong><small>${escapeHtml(item.queueEventAt ? shortDateTime(item.queueEventAt) : (item.actualStartAt ? `Live: ${shortDateTime(item.actualStartAt)}` : ""))}</small></div>
       </div>
       ${hasLive ? `<div class="ops-worker-foot">
@@ -4728,6 +4732,7 @@ function renderTodayWorkers() {
   }
   const workers = payload.workers || [];
   target.innerHTML = `
+    ${payload.error ? `<div class="notice error">A mai beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     ${renderOpsSummary(payload.summary || {}, [
       ["Tervezett", payload.summary?.planned || 0],
       ["Aktív", payload.summary?.active || 0],
@@ -4780,8 +4785,11 @@ function renderScheduleWorker(worker) {
   const end = worker.end ? `-${escapeHtml(worker.end)}` : "";
   const giritonLabel = String(worker.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const muszakproLabel = String(worker.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
+  const loginAlert = Boolean(worker.giritonLoginMissingAlert);
+  const loginText = worker.giritonLoginTime || (loginAlert ? "Nincs bejelentkezés" : "Nincs adat");
+  const loginSubtext = worker.giritonLoginStatus || (worker.isFirstShift ? "Első műszak" : "");
   return `
-    <details class="ops-card schedule-worker">
+    <details class="ops-card schedule-worker ${loginAlert ? "attention" : ""}">
       <summary class="ops-card-head">
         <div>
           <strong>${escapeHtml(worker.courierName || "Futár")}</strong>
@@ -4798,6 +4806,7 @@ function renderScheduleWorker(worker) {
         <div class="ops-detail-grid">
           <div><span>Műszak</span><strong>${escapeHtml(worker.shiftName || "-")}</strong><small>${escapeHtml(worker.bookingCode || "")}</small></div>
           <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(worker.vehicle?.source || worker.vehicle?.shiftType || "")}</small></div>
+          <div class="${loginAlert ? "ops-late-box" : ""}"><span>Giriton bejelentkezés</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></div>
           <div><span>Eltérés</span><strong>${escapeHtml(worker.missingSource || "Nincs jelzett eltérés")}</strong><small>Giriton / MűszakPro összevetés</small></div>
           <div><span>Forrás</span><strong>${escapeHtml(worker.source || "-")}</strong><small>${escapeHtml(worker.date || "")}</small></div>
         </div>
@@ -4820,6 +4829,7 @@ function renderCoordinatorSchedule() {
   if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
   const workers = day?.workers || [];
   target.innerHTML = `
+    ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     ${renderOpsSummary(payload.summary || {}, [
       ["Műszak sor", payload.summary?.workers || 0],
       ["Munkanapos nap", payload.summary?.daysWithWorkers || 0],
