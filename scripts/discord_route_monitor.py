@@ -902,6 +902,30 @@ def coalesce(*values):
     return ""
 
 
+def first_value_by_names(value, names):
+    normalized_names = {
+        str(name).lower().replace("_", "").replace("-", "")
+        for name in names
+    }
+
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key).lower().replace("_", "").replace("-", "")
+            if key_text in normalized_names and child not in (None, "", [], {}):
+                return child
+        for child in value.values():
+            found = first_value_by_names(child, names)
+            if found not in (None, "", [], {}):
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = first_value_by_names(item, names)
+            if found not in (None, "", [], {}):
+                return found
+
+    return ""
+
+
 def normalize_live_monitoring_route(row, warehouse_id):
     route_id = live_route_id(row)
     courier_id = normalize_id(row.get("courierId") or row.get("courier_id"))
@@ -914,13 +938,40 @@ def normalize_live_monitoring_route(row, warehouse_id):
         "courier_name": str(row.get("name") or row.get("courierName") or "").strip(),
         "warehouse": warehouse,
         "warehouseCode": warehouse,
-        "licence_plate": str(row.get("vehiclePlate") or "").strip(),
+        "licence_plate": str(
+            coalesce(
+                row.get("vehiclePlate"),
+                row.get("licensePlate"),
+                row.get("licencePlate"),
+                first_value_by_names(row, {"vehiclePlate", "licensePlate", "licencePlate"}),
+            )
+        ).strip(),
         "orders_in_route": str(row.get("stopsTotal") or row.get("stopProgress") or "").strip(),
-        "plannedDeparture": row.get("plannedDepartureAt"),
+        "plannedDeparture": coalesce(
+            row.get("plannedDepartureAt"),
+            row.get("plannedDeparture"),
+            first_value_by_names(row, {"plannedDepartureAt", "plannedDeparture"}),
+        ),
+        "plannedReturn": coalesce(
+            row.get("plannedReturnAt"),
+            row.get("plannedReturn"),
+            row.get("expectedReturn"),
+            row.get("expectedReturnAt"),
+            first_value_by_names(
+                row,
+                {"plannedReturnAt", "plannedReturn", "expectedReturn", "expectedReturnAt"},
+            ),
+        ),
         "realDeparture": row.get("departedAt"),
         "assignedAt": row.get("actualStartAt") or row.get("plannedDepartureAt") or row.get("plannedStartAt"),
         "plannedStartAt": row.get("plannedStartAt"),
         "actualStartAt": row.get("actualStartAt"),
+        "queuedAt": coalesce(
+            row.get("queuedAt"),
+            row.get("checkedInAt"),
+            row.get("availableForShiftSince"),
+            first_value_by_names(row, {"queuedAt", "checkedInAt", "availableForShiftSince"}),
+        ),
         "raw_live_monitoring": row,
     }
 
@@ -967,6 +1018,16 @@ def normalize_courier_hub_departure_route(row, warehouse_id):
             )
         ).strip(),
         "plannedDeparture": coalesce(row.get("plannedDeparture"), row.get("plannedDepartureAt")),
+        "plannedReturn": coalesce(
+            row.get("plannedReturn"),
+            row.get("plannedReturnAt"),
+            row.get("expectedReturn"),
+            row.get("expectedReturnAt"),
+            first_value_by_names(
+                row,
+                {"plannedReturn", "plannedReturnAt", "expectedReturn", "expectedReturnAt"},
+            ),
+        ),
         "realDeparture": coalesce(row.get("realDeparture"), row.get("departedAt")),
         "assignedAt": coalesce(
             row.get("assignedAt"),
@@ -974,6 +1035,12 @@ def normalize_courier_hub_departure_route(row, warehouse_id):
             row.get("plannedDepartureAt"),
             row.get("plannedDeparture"),
             row.get("plannedStartAt"),
+        ),
+        "queuedAt": coalesce(
+            row.get("queuedAt"),
+            row.get("checkedInAt"),
+            row.get("availableForShiftSince"),
+            first_value_by_names(row, {"queuedAt", "checkedInAt", "availableForShiftSince"}),
         ),
         "raw_courier_hub_departure_dashboard": row,
     }
@@ -1077,6 +1144,14 @@ def normalize_courier_hub_detail_route(detail_route, detail_payload, fallback_ro
                 source.get("vehiclePlate"),
                 source.get("licensePlate"),
                 source.get("licencePlate"),
+                first_value_by_names(
+                    source,
+                    {"vehiclePlate", "licensePlate", "licencePlate"},
+                ),
+                first_value_by_names(
+                    payload,
+                    {"vehiclePlate", "licensePlate", "licencePlate"},
+                ),
                 fallback.get("licence_plate"),
                 fallback.get("vehiclePlate"),
             )
@@ -1092,6 +1167,8 @@ def normalize_courier_hub_detail_route(detail_route, detail_payload, fallback_ro
         "plannedDeparture": coalesce(
             source.get("plannedDeparture"),
             source.get("plannedDepartureAt"),
+            first_value_by_names(source, {"plannedDeparture", "plannedDepartureAt"}),
+            first_value_by_names(payload, {"plannedDeparture", "plannedDepartureAt"}),
             fallback.get("plannedDeparture"),
             fallback.get("plannedDepartureAt"),
         ),
@@ -1099,24 +1176,71 @@ def normalize_courier_hub_detail_route(detail_route, detail_payload, fallback_ro
             source.get("plannedReturn"),
             source.get("plannedReturnAt"),
             source.get("expectedReturn"),
+            source.get("expectedReturnAt"),
+            first_value_by_names(
+                source,
+                {"plannedReturn", "plannedReturnAt", "expectedReturn", "expectedReturnAt"},
+            ),
+            first_value_by_names(
+                payload,
+                {"plannedReturn", "plannedReturnAt", "expectedReturn", "expectedReturnAt"},
+            ),
             fallback.get("plannedReturn"),
             fallback.get("plannedReturnAt"),
             fallback.get("expectedReturn"),
+            fallback.get("expectedReturnAt"),
         ),
         "realReturn": coalesce(
             source.get("realReturn"),
             source.get("actualReturnAt"),
+            source.get("warehouseArrivedAt"),
+            source.get("returnedAt"),
             source.get("finishedAt"),
+            first_value_by_names(
+                source,
+                {"realReturn", "actualReturnAt", "warehouseArrivedAt", "returnedAt", "finishedAt"},
+            ),
+            first_value_by_names(
+                payload,
+                {"realReturn", "actualReturnAt", "warehouseArrivedAt", "returnedAt", "finishedAt"},
+            ),
             fallback.get("realReturn"),
             fallback.get("actualReturnAt"),
+            fallback.get("warehouseArrivedAt"),
+            fallback.get("returnedAt"),
             fallback.get("finishedAt"),
         ),
         "assignedAt": coalesce(
             source.get("assignedAt"),
             source.get("actualStartAt"),
+            source.get("routeAssignedAt"),
             source.get("plannedDepartureAt"),
             source.get("plannedStartAt"),
+            first_value_by_names(
+                source,
+                {"assignedAt", "actualStartAt", "routeAssignedAt"},
+            ),
+            first_value_by_names(
+                payload,
+                {"assignedAt", "actualStartAt", "routeAssignedAt"},
+            ),
             fallback.get("assignedAt"),
+        ),
+        "queuedAt": coalesce(
+            source.get("queuedAt"),
+            source.get("checkedInAt"),
+            source.get("availableForShiftSince"),
+            first_value_by_names(
+                source,
+                {"queuedAt", "checkedInAt", "availableForShiftSince"},
+            ),
+            first_value_by_names(
+                payload,
+                {"queuedAt", "checkedInAt", "availableForShiftSince"},
+            ),
+            fallback.get("queuedAt"),
+            fallback.get("checkedInAt"),
+            fallback.get("availableForShiftSince"),
         ),
         "raw_live_monitoring": fallback.get("raw_live_monitoring") or source,
         "raw_courier_hub_detail": detail_payload,
@@ -2323,14 +2447,31 @@ def run_once(max_age_minutes, dry_run=False):
         checkpoint = find_first_checkpoint(route)
         order_id = normalize_id(checkpoint.get("orderId"))
         address = str(checkpoint.get("address") or "").strip()
-        licence_plate = ( 
-            str(dashboard_route.get("licence_plate") or dashboard_route.get("vehiclePlate") or "").strip()
+        licence_plate = (
+            str(
+                coalesce(
+                    route.get("licence_plate"),
+                    dashboard_route.get("licence_plate"),
+                    route.get("vehiclePlate"),
+                    dashboard_route.get("vehiclePlate"),
+                    first_value_by_names(
+                        route,
+                        {"vehiclePlate", "licensePlate", "licencePlate"},
+                    ),
+                    first_value_by_names(
+                        driver_detail,
+                        {"vehiclePlate", "licensePlate", "licencePlate"},
+                    ),
+                )
+            ).strip()
         )
         orders_in_route = (
             str(
-                dashboard_route.get("orders_in_route")
+                route.get("orders_in_route")
+                or dashboard_route.get("orders_in_route")
                 or dashboard_route.get("stopsTotal")
                 or route.get("numTotalOrders")
+                or route.get("stopsTotal")
                 or len(route.get("checkpoints", []) or [])
                 or ""
             ).strip()
@@ -2359,6 +2500,47 @@ def run_once(max_age_minutes, dry_run=False):
             route_warehouse,
             route,
         )
+        planned_departure_text = format_time(
+            coalesce(
+                route.get("plannedDeparture"),
+                route.get("plannedDepartureAt"),
+                first_value_by_names(route, {"plannedDeparture", "plannedDepartureAt"}),
+                first_value_by_names(driver_detail, {"plannedDeparture", "plannedDepartureAt"}),
+            )
+        )
+        planned_return_text = format_time(
+            coalesce(
+                route.get("realReturn"),
+                route.get("plannedReturn"),
+                route.get("actualReturnAt"),
+                route.get("warehouseArrivedAt"),
+                route.get("returnedAt"),
+                first_value_by_names(
+                    route,
+                    {
+                        "realReturn",
+                        "plannedReturn",
+                        "actualReturnAt",
+                        "warehouseArrivedAt",
+                        "returnedAt",
+                        "expectedReturn",
+                        "expectedReturnAt",
+                    },
+                ),
+                first_value_by_names(
+                    driver_detail,
+                    {
+                        "realReturn",
+                        "plannedReturn",
+                        "actualReturnAt",
+                        "warehouseArrivedAt",
+                        "returnedAt",
+                        "expectedReturn",
+                        "expectedReturnAt",
+                    },
+                ),
+            )
+        )
 
         if dry_run:
             counters["dry_run_would_send"] += 1
@@ -2368,8 +2550,8 @@ def run_once(max_age_minutes, dry_run=False):
                 f"#{courier_id} {courier_name} route {route_id} "
                 f"warehouse={route_warehouse or '-'} "
                 f"order {order_id or '-'} "
-                f"planned_departure={format_time(route.get('plannedDeparture')) or '-'} "
-                f"return_time={format_time(route.get('realReturn') or route.get('plannedReturn')) or '-'} "
+                f"planned_departure={planned_departure_text or '-'} "
+                f"return_time={planned_return_text or '-'} "
                 f"current_shift={shift_notes.get('current_shift_note') or '-'} "
                 f"next_shift={shift_notes.get('next_shift_note') or '-'} "
                 f"next_shift_delay={shift_notes.get('next_shift_delay_note') or '-'} "
@@ -2427,10 +2609,8 @@ def run_once(max_age_minutes, dry_run=False):
                 route_id,
                 order_id="",
                 address=address,
-                planned_departure=format_time(route.get("plannedDeparture")),
-                planned_return=format_time(
-                    route.get("realReturn") or route.get("plannedReturn")
-                ),
+                planned_departure=planned_departure_text,
+                planned_return=planned_return_text,
                 ignore_courier_filter=True,
                 licence_plate=licence_plate,
                 orders_in_route=orders_in_route,
@@ -2462,10 +2642,8 @@ def run_once(max_age_minutes, dry_run=False):
             courier_name,
             route_id,
             address=address,
-            planned_departure=format_time(route.get("plannedDeparture")),
-            planned_return=format_time(
-                route.get("realReturn") or route.get("plannedReturn")
-            ),
+            planned_departure=planned_departure_text,
+            planned_return=planned_return_text,
             licence_plate=licence_plate,
             orders_in_route=orders_in_route,
         )
