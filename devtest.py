@@ -2282,6 +2282,10 @@ def build_finance_snapshot_drilldown_payload(
     }
     if isinstance(route_detail, pd.DataFrame) and not route_detail.empty:
         payload["Körök / túrák"] = route_detail.to_dict("records")
+        level_rule_tables = {
+            "Késedelmi díj": "cfg_jitt_delay_bonus_rules",
+            "Túramegfelelés": "cfg_jitt_compliance_bonus_rules",
+        }
         for label, column in [
             ("Alapdíj", "Alapdíj"),
             ("Késedelmi díj", "Késedelmi díj"),
@@ -2290,6 +2294,15 @@ def build_finance_snapshot_drilldown_payload(
             ("Borravaló", "Borravaló"),
         ]:
             if column not in route_detail.columns:
+                continue
+            if label in level_rule_tables:
+                detail = build_amount_drilldown(
+                    route_detail,
+                    column,
+                    load_active_bonus_level_rules(level_rule_tables[label]),
+                )
+                if not detail.empty:
+                    payload[label] = detail.to_dict("records")
                 continue
             detail = route_detail.copy()
             detail["_amount"] = detail[column].map(parse_huf_value)
@@ -2628,7 +2641,11 @@ def render_devtest_finance_snapshot_view(snapshot: dict[str, object]) -> None:
             detail_rows = _snapshot_fallback_drilldown(snapshot, detail_label)
         if not detail_rows:
             return '<div class="finance-kpi-detail-empty">Nincs bontott adat ehhez a mentett verzióhoz.</div>'
-        if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"}:
+        has_route_breakdown = any(
+            isinstance(row, dict) and "Túratípus" in row and "Naptípus" in row
+            for row in detail_rows
+        )
+        if detail_label in {"Alapdíj", "Késedelmi díj", "Túramegfelelés"} and not has_route_breakdown:
             detail_rows = _compact_amount_drilldown(detail_label, detail_rows)
         display_detail = pd.DataFrame(detail_rows)
         if display_detail.empty:
@@ -10924,8 +10941,10 @@ def load_courier_route_detail(
             continue
         if source.get("is_route_primary") is not True:
             continue
-        route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
-        route_type_key = {"NORMAL": "normal", "CITY": "normal", "EXPRESS": "express", "REGIONAL": "regional"}.get(route_value, "normal")
+        route_value = normalized.get("Route Type") or normalized.get("route_type") or "NORMAL"
+        route_type_key = _performance_key_from_label(route_value, "route")
+        if route_type_key == "any":
+            route_type_key = "normal"
         route_type = {"normal": "Normál", "express": "Expressz", "regional": "Regionális"}[route_type_key]
         day_type_key = str(source.get("calculated_day_type") or "").casefold()
         day_type = {"highlighted": "Kiemelt nap", "normal": "Normál nap"}.get(day_type_key, "Nincs besorolás")
@@ -11287,8 +11306,10 @@ def load_periodic_fee_correction_totals(
                  if key in {"driver", "drivername", "courier", "couriername", "futar", "futarnev"}),
                 None,
             )
-            route_value = str(normalized.get("Route Type") or normalized.get("route_type") or "NORMAL").strip().upper()
-            route_type_key = {"NORMAL": "normal", "CITY": "normal", "EXPRESS": "express", "REGIONAL": "regional"}.get(route_value, "normal")
+            route_value = normalized.get("Route Type") or normalized.get("route_type") or "NORMAL"
+            route_type_key = _performance_key_from_label(route_value, "route")
+            if route_type_key == "any":
+                route_type_key = "normal"
             day_type_key = str(source.get("calculated_day_type") or "").casefold()
             parsed.append({
                 "_courier_id_lookup": _courier_id_key(source_id),

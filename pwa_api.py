@@ -6381,12 +6381,21 @@ def amount_from_snapshot_detail_row(row: dict[str, Any]) -> int:
 
 
 def snapshot_detail_item(card_key: str, index: int, row: dict[str, Any]) -> dict[str, Any]:
+    route_breakdown_label = " · ".join(
+        part for part in (
+            str(row.get("Túratípus") or row.get("Turatipus") or "").strip(),
+            str(row.get("Naptípus") or row.get("Naptipus") or "").strip(),
+            str(row.get("Szint") or "").strip(),
+        )
+        if part
+    )
     label = str(
         row.get("Tétel")
         or row.get("Tetel")
         or row.get("Megnevezés")
         or row.get("Megnevezes")
         or row.get("item_label")
+        or route_breakdown_label
         or f"Részlet {index}"
     )
     note_parts = [
