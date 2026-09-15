@@ -11784,6 +11784,11 @@ def build_workflow(
         }
         for step in steps:
             step.update(manual_step_updates.get(str(step.get("key") or ""), {}))
+    if tig_hidden_by_admin:
+        steps = [
+            step for step in steps
+            if str(step.get("key") or "") in {"settlement_document", "settlement"}
+        ]
     safe_documents: dict[str, list[dict[str, Any]]] = {}
     for document_type, rows in document_groups.items():
         safe_documents[document_type] = [

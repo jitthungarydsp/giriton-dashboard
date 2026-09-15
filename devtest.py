@@ -13868,6 +13868,35 @@ def render_courier_detail_page() -> None:
         individual_monthly_billing_open = str(
             (individual_status_by_action.get("individual_monthly_billing") or {}).get("status") or ""
         ).casefold() in {"open", "done"}
+        individual_mobile_config = load_mobile_settlement_period_config(period_start)
+        individual_visibility_mode = normalize_mobile_visibility_mode(individual_mobile_config.get("visibility_mode"))
+        individual_visibility_label = open_month_col.selectbox(
+            "PWA láthatóság",
+            options=list(MOBILE_VISIBILITY_MODE_LABELS.values()),
+            index=list(MOBILE_VISIBILITY_MODE_LABELS).index(individual_visibility_mode),
+            key=f"finance_individual_visibility_{courier_id}_{period_start:%Y%m}",
+            label_visibility="collapsed",
+        )
+        individual_visibility_mode = normalize_mobile_visibility_mode(individual_visibility_label)
+        if open_month_col.button(
+            "PWA láthatóság mentése",
+            use_container_width=True,
+            disabled=closure_done or active_calculation_mode not in {"API", "Excel"},
+            key=f"finance_save_individual_visibility_{courier_id}_{period_start:%Y%m}",
+        ):
+            saved = save_mobile_settlement_period_config(
+                period_start,
+                active_calculation_mode,
+                st.session_state.get("new_warehouse", "Összes"),
+                session_id,
+                str(st.session_state.get("user", {}).get("username") or "unknown"),
+                individual_visibility_mode,
+            )
+            if saved:
+                st.success(f"PWA láthatóság mentve: {MOBILE_VISIBILITY_MODE_LABELS[individual_visibility_mode]}.")
+                rerun_courier_profile("Pénzügy")
+            else:
+                st.error("A PWA láthatóság mentése nem sikerült.")
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
@@ -13935,6 +13964,7 @@ def render_courier_detail_page() -> None:
                         st.session_state.get("new_warehouse", "Összes"),
                         session_id,
                         actor,
+                        individual_visibility_mode,
                     )
                     if courier_count:
                         st.success(
@@ -15903,6 +15933,35 @@ def render_courier_detail_page() -> None:
             (status_by_action.get("individual_monthly_billing") or {}).get("status") or ""
         ).casefold() in {"open", "done"}
         skip_col, reset_skip_col, open_billing_col = st.columns(3)
+        status_mobile_config = load_mobile_settlement_period_config(workflow_month)
+        status_visibility_mode = normalize_mobile_visibility_mode(status_mobile_config.get("visibility_mode"))
+        status_visibility_label = open_billing_col.selectbox(
+            "PWA láthatóság",
+            options=list(MOBILE_VISIBILITY_MODE_LABELS.values()),
+            index=list(MOBILE_VISIBILITY_MODE_LABELS).index(status_visibility_mode),
+            key=f"docs_individual_visibility_{courier_id}_{workflow_month:%Y%m}",
+            label_visibility="collapsed",
+        )
+        status_visibility_mode = normalize_mobile_visibility_mode(status_visibility_label)
+        if open_billing_col.button(
+            "PWA láthatóság mentése",
+            use_container_width=True,
+            disabled=closure_done,
+            key=f"docs_save_individual_visibility_{courier_id}_{workflow_month:%Y%m}",
+        ):
+            saved = save_mobile_settlement_period_config(
+                workflow_month,
+                active_calculation_mode,
+                st.session_state.get("new_warehouse", "Összes"),
+                session_id,
+                actor,
+                status_visibility_mode,
+            )
+            if saved:
+                st.success(f"PWA láthatóság mentve: {MOBILE_VISIBILITY_MODE_LABELS[status_visibility_mode]}.")
+                st.rerun()
+            else:
+                st.error("A PWA láthatóság mentése nem sikerült.")
         if skip_col.button(
             "Számlázás kihagyása kézzel",
             type="primary",
@@ -16006,6 +16065,7 @@ def render_courier_detail_page() -> None:
                         st.session_state.get("new_warehouse", "Összes"),
                         session_id,
                         actor,
+                        status_visibility_mode,
                     )
                     if courier_count:
                         st.success(
@@ -18240,6 +18300,31 @@ def monthly_period_start_already_clicked(period_start: date) -> bool:
         return False
 
 
+def load_mobile_settlement_period_config(period_start: date) -> dict[str, object]:
+    try:
+        rows = (
+            get_db().schema("settlement").table("mobile_settlement_period_config")
+            .select("period_start,calculation_mode,warehouse_label,session_id,visibility_mode,source_note,updated_by,updated_at")
+            .eq("period_start", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute().data or []
+        )
+    except BaseException as exc:
+        if "visibility_mode" not in str(exc).casefold():
+            return {}
+        try:
+            rows = (
+                get_db().schema("settlement").table("mobile_settlement_period_config")
+                .select("period_start,calculation_mode,warehouse_label,session_id,source_note,updated_by,updated_at")
+                .eq("period_start", period_start.replace(day=1).isoformat())
+                .limit(1)
+                .execute().data or []
+            )
+        except BaseException:
+            return {}
+    return dict(rows[0]) if rows else {}
+
+
 def build_monthly_period_documents(data: pd.DataFrame, period_start: date, period_end: date) -> list[dict[str, object]]:
     documents: list[dict[str, object]] = []
     for plan in build_monthly_period_document_plan(data, period_start, period_end):
@@ -18375,6 +18460,7 @@ def open_individual_monthly_billing(
     warehouse_label: str,
     session_id: str | None,
     actor: str,
+    visibility_mode: str = "original",
 ) -> tuple[int, int, int]:
     row = normalize_individual_monthly_billing_row(row)
     courier_id = _courier_id_key(row.get("Courier ID"))
@@ -18392,6 +18478,7 @@ def open_individual_monthly_billing(
         warehouse_label,
         effective_session_id,
         actor,
+        visibility_mode,
     )
     if not courier_count:
         return deleted, 0, 0
@@ -18400,6 +18487,8 @@ def open_individual_monthly_billing(
     uploaded = 0
     for document in documents:
         document_type = str(document.get("document_type") or "").strip()
+        if normalize_mobile_visibility_mode(visibility_mode) == "settlement_only" and document_type == "tig":
+            continue
         title = (
             f"Elszámolás - {period_start:%Y-%m}"
             if document_type == "settlement"
@@ -18441,15 +18530,16 @@ def open_individual_monthly_billing(
         status_note="Egyedi havi számlázás megnyitva teszteléshez.",
         updated_by=actor,
     )
-    upsert_peopleforce_card_status(
-        courier_id=courier_id,
-        courier_name=courier_name,
-        action_key="tig",
-        document_month=period_start.replace(day=1),
-        status="open",
-        status_note="Admin előnézeti TIG elkészült; futárnak elszámolás elfogadása után aktív.",
-        updated_by=actor,
-    )
+    if normalize_mobile_visibility_mode(visibility_mode) != "settlement_only":
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key="tig",
+            document_month=period_start.replace(day=1),
+            status="open",
+            status_note="Admin előnézeti TIG elkészült; futárnak elszámolás elfogadása után aktív.",
+            updated_by=actor,
+        )
     return deleted, uploaded, courier_count
 
 
@@ -19741,10 +19831,14 @@ def show_new_settlement_page() -> None:
     )
     monthly_document_plan = build_monthly_period_document_plan(filtered, balance_period_start, balance_period_end)
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
+    mobile_period_config = load_mobile_settlement_period_config(balance_period_start)
+    current_visibility_mode = normalize_mobile_visibility_mode(mobile_period_config.get("visibility_mode"))
+    visibility_options = list(MOBILE_VISIBILITY_MODE_LABELS.values())
+    visibility_default_index = list(MOBILE_VISIBILITY_MODE_LABELS).index(current_visibility_mode)
     visibility_mode_label = st.selectbox(
         "Futár PWA láthatóság",
-        options=list(MOBILE_VISIBILITY_MODE_LABELS.values()),
-        index=0,
+        options=visibility_options,
+        index=visibility_default_index,
         key=f"mobile_visibility_mode_{balance_period_start:%Y%m}",
         help=(
             "Eredeti: a TIG csak elszámolás elfogadása után aktív. "
@@ -19753,6 +19847,35 @@ def show_new_settlement_page() -> None:
         ),
     )
     visibility_mode = normalize_mobile_visibility_mode(visibility_mode_label)
+    if st.button(
+        "PWA láthatóság mentése",
+        use_container_width=True,
+        disabled=selected_calculation_mode not in {"API", "Excel"},
+        key=f"save_mobile_visibility_mode_{balance_period_start:%Y%m}",
+        help="Már megnyitott hónapnál is átállítja, hogy a futár csak elszámolást, TIG-et is, vagy az eredeti folyamatot lássa.",
+    ):
+        snapshot_session_id = (
+            import_session_id
+            or str(mobile_period_config.get("session_id") or "")
+            or settlement_mobile_session_for_mode(
+                selected_calculation_mode,
+                balance_period_start,
+                selected_warehouse_label,
+            )
+        )
+        saved = save_mobile_settlement_period_config(
+            balance_period_start,
+            selected_calculation_mode,
+            selected_warehouse_label,
+            snapshot_session_id,
+            str(st.session_state.get("user", {}).get("username") or "unknown"),
+            visibility_mode,
+        )
+        if saved:
+            st.success(f"PWA láthatóság mentve: {MOBILE_VISIBILITY_MODE_LABELS[visibility_mode]}.")
+            st.rerun()
+        else:
+            st.error("A PWA láthatóság mentése nem sikerült. Futtasd le a láthatósági SQL migrációt, majd próbáld újra.")
     start_label = (
         f"Havi elszámolási időszak indítása - {selected_month} "
         f"({len(filtered)} futár)"
