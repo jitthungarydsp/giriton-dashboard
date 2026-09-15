@@ -2092,32 +2092,66 @@ def settlement_mobile_session_for_mode(calculation_mode: str, period_start: date
     return None
 
 
+MOBILE_VISIBILITY_MODE_LABELS = {
+    "original": "Eredeti folyamat: elszámolás után TIG",
+    "settlement_only": "Csak elszámolás látszik",
+    "settlement_and_tig": "Elszámolás és TIG is látszik",
+}
+
+
+def normalize_mobile_visibility_mode(value: object) -> str:
+    mode = str(value or "original").strip()
+    if mode in MOBILE_VISIBILITY_MODE_LABELS:
+        return mode
+    reverse = {label: key for key, label in MOBILE_VISIBILITY_MODE_LABELS.items()}
+    return reverse.get(mode, "original")
+
+
 def save_mobile_settlement_period_config(
     period_start: date,
     calculation_mode: str,
     warehouse_label: str | None,
     session_id: str | None,
     updated_by: str,
+    visibility_mode: str = "original",
 ) -> bool:
     normalized_mode = "Excel" if str(calculation_mode or "").strip().casefold() == "excel" else "API"
     if str(calculation_mode or "").strip() not in {"API", "Excel"}:
         return False
+    normalized_visibility = normalize_mobile_visibility_mode(visibility_mode)
+    payload = {
+        "period_start": period_start.replace(day=1).isoformat(),
+        "calculation_mode": normalized_mode,
+        "warehouse_label": str(warehouse_label or "Összes"),
+        "session_id": str(session_id or ""),
+        "visibility_mode": normalized_visibility,
+        "source_note": (
+            f"{normalized_mode} elszámolási forrás publikálva mobilra. "
+            f"Láthatóság: {MOBILE_VISIBILITY_MODE_LABELS[normalized_visibility]}"
+        ),
+        "updated_by": updated_by,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     try:
         get_db().schema("settlement").table("mobile_settlement_period_config").upsert(
-            {
-                "period_start": period_start.replace(day=1).isoformat(),
-                "calculation_mode": normalized_mode,
-                "warehouse_label": str(warehouse_label or "Összes"),
-                "session_id": str(session_id or ""),
-                "source_note": f"{normalized_mode} elszámolási forrás publikálva mobilra.",
-                "updated_by": updated_by,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
+            payload,
             on_conflict="period_start",
         ).execute()
         return True
-    except BaseException:
-        return False
+    except BaseException as exc:
+        message = str(exc).casefold()
+        if "visibility_mode" not in message:
+            return False
+        payload.pop("visibility_mode", None)
+        payload["source_note"] = f"{normalized_mode} elszámolási forrás publikálva mobilra."
+        try:
+            get_db().schema("settlement").table("mobile_settlement_period_config").upsert(
+                payload,
+                on_conflict="period_start",
+            ).execute()
+            return True
+        except BaseException:
+            return False
 
 
 def clear_mobile_settlement_period_config(period_start: date) -> bool:
@@ -3346,6 +3380,7 @@ def publish_mobile_settlement_snapshot(
     warehouse_label: str | None,
     session_id: str | None,
     updated_by: str,
+    visibility_mode: str = "original",
 ) -> tuple[int, int]:
     if str(calculation_mode or "") not in {"API", "Excel"}:
         return 0, 0
@@ -3355,6 +3390,7 @@ def publish_mobile_settlement_snapshot(
         warehouse_label,
         session_id,
         updated_by,
+        visibility_mode,
     )
     if not config_saved:
         return 0, 0
@@ -18424,6 +18460,7 @@ def open_monthly_billing_visibility(
     warehouse_label: str,
     session_id: str | None,
     actor: str,
+    visibility_mode: str = "original",
 ) -> int:
     if data is None or data.empty:
         return 0
@@ -18439,6 +18476,7 @@ def open_monthly_billing_visibility(
         warehouse_label,
         session_id,
         actor,
+        visibility_mode,
     )
 
     for _, row in data.iterrows():
@@ -19703,6 +19741,18 @@ def show_new_settlement_page() -> None:
     )
     monthly_document_plan = build_monthly_period_document_plan(filtered, balance_period_start, balance_period_end)
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
+    visibility_mode_label = st.selectbox(
+        "Futár PWA láthatóság",
+        options=list(MOBILE_VISIBILITY_MODE_LABELS.values()),
+        index=0,
+        key=f"mobile_visibility_mode_{balance_period_start:%Y%m}",
+        help=(
+            "Eredeti: a TIG csak elszámolás elfogadása után aktív. "
+            "Csak elszámolás: TIG nem látszik. "
+            "Elszámolás és TIG: mindkettő azonnal látszik."
+        ),
+    )
+    visibility_mode = normalize_mobile_visibility_mode(visibility_mode_label)
     start_label = (
         f"Havi elszámolási időszak indítása - {selected_month} "
         f"({len(filtered)} futár)"
@@ -19727,6 +19777,7 @@ def show_new_settlement_page() -> None:
                 selected_warehouse_label,
                 snapshot_session_id,
                 str(st.session_state.get("user", {}).get("username") or "unknown"),
+                visibility_mode,
             )
         if courier_count:
             st.session_state[f"monthly_period_start_clicked_{balance_period_start:%Y%m}"] = True

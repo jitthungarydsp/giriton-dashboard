@@ -27,16 +27,7 @@ period as (
         v_driver_name
     from params
 ),
-latest_session as (
-    select j.session_id
-    from settlement.jit_row j
-    join period p on true
-    where j.route_date between p.v_period_start and p.v_period_end
-      and coalesce(j.source_sheet, '') not ilike 'API financial overview%'
-    order by j.created_at desc nulls last, j.id desc
-    limit 1
-),
-raw as (
+raw_all as (
     select
         j.id,
         j.session_id,
@@ -44,7 +35,15 @@ raw as (
         coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), 'Ismeretlen futár') as driver_name,
         coalesce(nullif(j.normalized_data ->> 'Route Unique ID', ''), nullif(j.normalized_data ->> 'route_unique_id', ''), j.route_unique_id, j.id::text) as route_unique_id,
         coalesce(nullif(j.normalized_data ->> 'Location', ''), nullif(j.normalized_data ->> 'warehouse_code', ''), '') as warehouse_code,
-        j.route_date as work_date,
+        coalesce(
+            j.route_date,
+            case
+                when date_value.date_text ~ '^\d{4}-\d{2}-\d{2}' then left(date_value.date_text, 10)::date
+                when date_value.date_text ~ '^\d{4}/\d{2}/\d{2}' then to_date(left(date_value.date_text, 10), 'YYYY/MM/DD')
+                when date_value.date_text ~ '^\d{1,2}[./-]\d{1,2}[./-]\d{4}$' then to_date(replace(replace(date_value.date_text, '.', '/'), '-', '/'), 'DD/MM/YYYY')
+                when date_value.date_text ~ '^\d+(\.0+)?$' then date '1899-12-30' + date_value.date_text::numeric::integer
+            end
+        ) as work_date,
         coalesce(j.calculated_day_type, 'normal') as day_type,
         case
             when lower(coalesce(j.normalized_data ->> 'Route Type', j.normalized_data ->> 'route_type', '')) like '%express%' then 'express'
@@ -56,17 +55,40 @@ raw as (
         j.courier_compliance_bonus_huf as saved_courier_compliance_huf,
         j.normalized_data
     from settlement.jit_row j
+    cross join lateral (
+        select coalesce(
+            nullif(j.normalized_data ->> 'Date', ''),
+            nullif(j.normalized_data ->> 'date', ''),
+            nullif(j.normalized_data ->> 'Dátum', ''),
+            nullif(j.normalized_data ->> 'Datum', ''),
+            nullif(j.normalized_data ->> 'work_date', ''),
+            ''
+        ) as date_text
+    ) date_value
+    where coalesce(j.source_sheet, '') not ilike 'API financial overview%'
+),
+latest_session as (
+    select r.session_id
+    from raw_all r
     join period p on true
-    join latest_session s on s.session_id = j.session_id
-    where j.route_date between p.v_period_start and p.v_period_end
-      and j.is_route_primary is true
+    where r.work_date between p.v_period_start and p.v_period_end
+    order by r.id desc
+    limit 1
+),
+raw as (
+    select r.*
+    from raw_all r
+    join period p on true
+    join latest_session s on s.session_id = r.session_id
+    where r.work_date between p.v_period_start and p.v_period_end
+      and r.is_route_primary is true
       and (
           coalesce(p.v_courier_id, '') = ''
-          or nullif(coalesce(j.normalized_data ->> 'Courier ID', j.normalized_data ->> 'courier_id'), '') = p.v_courier_id
+          or r.courier_id = p.v_courier_id
       )
       and (
           p.v_driver_name is null
-          or lower(coalesce(nullif(j.normalized_data ->> 'Driver', ''), nullif(j.normalized_data ->> 'driver_name', ''), '')) like '%' || lower(p.v_driver_name) || '%'
+          or lower(r.driver_name) like '%' || lower(p.v_driver_name) || '%'
       )
 ),
 rules as (

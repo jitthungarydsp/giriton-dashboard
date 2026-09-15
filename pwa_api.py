@@ -5212,6 +5212,12 @@ WORKFLOW_PREREQUISITES = {
 }
 WORKFLOW_DOCUMENT_TYPES = {"settlement", "tig", "invoice"}
 PROCESS_NOTE_PREFIX = "Folyamat azonosító:"
+MOBILE_VISIBILITY_MODES = {"original", "settlement_only", "settlement_and_tig"}
+
+
+def normalize_mobile_visibility_mode(value: Any) -> str:
+    mode = str(value or "original").strip()
+    return mode if mode in MOBILE_VISIBILITY_MODES else "original"
 
 
 def normalize_process_id(value: str | None) -> str:
@@ -6133,13 +6139,27 @@ def read_mobile_settlement_period_config(month: date) -> dict[str, Any]:
         "mobile_settlement_period_config",
         schema="settlement",
         params={
-            "select": "period_start,calculation_mode,warehouse_label,session_id,source_note,updated_by,updated_at",
+            "select": "period_start,calculation_mode,warehouse_label,session_id,visibility_mode,source_note,updated_by,updated_at",
             "period_start": f"eq.{month.isoformat()}",
             "limit": "1",
         },
         timeout=30,
     )
-    return dict(rows[0]) if rows else {}
+    if not rows:
+        rows = optional_supabase_rows(
+            "mobile_settlement_period_config",
+            schema="settlement",
+            params={
+                "select": "period_start,calculation_mode,warehouse_label,session_id,source_note,updated_by,updated_at",
+                "period_start": f"eq.{month.isoformat()}",
+                "limit": "1",
+            },
+            timeout=30,
+        )
+    config = dict(rows[0]) if rows else {}
+    if config:
+        config["visibility_mode"] = normalize_mobile_visibility_mode(config.get("visibility_mode"))
+    return config
 
 
 def mobile_settlement_period_is_open(month: date) -> bool:
@@ -11566,6 +11586,10 @@ def build_workflow(
     process_id = normalize_process_id(process)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
+    mobile_config = read_mobile_settlement_period_config(month) if not process_id else {}
+    visibility_mode = normalize_mobile_visibility_mode(mobile_config.get("visibility_mode"))
+    tig_hidden_by_admin = not process_id and visibility_mode == "settlement_only"
+    tig_open_by_admin = not process_id and visibility_mode == "settlement_and_tig"
     legacy_unrestricted_month = is_unrestricted_legacy_settlement_month(month)
     individual_monthly_billing_open = (
         not process_id
@@ -11600,10 +11624,10 @@ def build_workflow(
     }
     if not process_id and not amount_access:
         financial_breakdown = hidden_financial_breakdown(month)
-    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown) if not process_id else {
+    tig_breakdown = build_workflow_tig_breakdown(user, month, financial_breakdown) if not process_id and not tig_hidden_by_admin else {
         "available": False,
         "month": month.strftime("%Y-%m"),
-        "message": "Egyedi folyamatnĂˇl nincs havi TIG bontĂˇs.",
+        "message": "Admin beállítás szerint a TIG most nem látható." if tig_hidden_by_admin else "Egyedi folyamatnĂˇl nincs havi TIG bontĂˇs.",
         "rows": [],
     }
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
@@ -11615,6 +11639,8 @@ def build_workflow(
         document_type: [row for row in documents if base_action_key(str(row.get("document_type") or "")) == document_type]
         for document_type in WORKFLOW_DOCUMENT_TYPES
     }
+    if tig_hidden_by_admin:
+        document_groups["tig"] = []
     response_documents = [
         row for row in documents
         if row.get("document_type") == "complaint_response"
@@ -11638,7 +11664,7 @@ def build_workflow(
     efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
     invoice_skip = manual_invoice_skip or efo_invoice_skip
-    tig_ready = bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
+    tig_ready = False if tig_hidden_by_admin else bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
     tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (invoice_skip and settlement_done)
     invoice_submit_open = workflow_open(states, "invoice_submit") and not invoice_skip
     invoice_submit_done = False if invoice_submit_open else (workflow_done(states, "invoice_submit") or (invoice_skip and tig_done))
@@ -11663,19 +11689,19 @@ def build_workflow(
         },
         {
             "key": "tig_document",
-            "title": "TIG nem szükséges ehhez a folyamathoz" if process_id else (
+            "title": "TIG admin beállítás szerint rejtve" if tig_hidden_by_admin else "TIG azonnal látható" if tig_open_by_admin else "TIG nem szükséges ehhez a folyamathoz" if process_id else (
                 "TIG elkészült"
                 if tig_ready
                 else "Várakozás a TIG elkészítésére"
             ),
             "done": tig_ready or process_invoice_flow_ready,
-            "locked": not settlement_done,
+            "locked": False if tig_open_by_admin and tig_ready else not settlement_done,
         },
         {
             "key": "tig",
-            "title": "TIG elfogadása",
+            "title": "TIG elfogadása" if not tig_hidden_by_admin else "TIG rejtve",
             "done": tig_done,
-            "locked": not settlement_done or (not process_id and not tig_ready),
+            "locked": False if tig_open_by_admin and tig_ready else not settlement_done or (not process_id and not tig_ready),
         },
         {
             "key": "invoice_submit",
@@ -11826,6 +11852,7 @@ def build_workflow(
         "invoiceValidationOverride": invoice_validation_override_enabled(states),
         "efoInvoiceSkip": efo_invoice_skip,
         "manualInvoiceSkip": manual_invoice_skip,
+        "visibilityMode": visibility_mode,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -11865,6 +11892,20 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
     def monthly_billing_visible(month_key: str) -> bool:
         return workflow_action_visible(status_by_month.get(month_key, {}), "individual_monthly_billing")
 
+    visibility_by_month: dict[str, str] = {}
+
+    def archive_visibility_mode(month_key: str) -> str:
+        if month_key not in visibility_by_month:
+            try:
+                month_date = date.fromisoformat(f"{month_key}-01")
+            except ValueError:
+                visibility_by_month[month_key] = "original"
+            else:
+                visibility_by_month[month_key] = normalize_mobile_visibility_mode(
+                    read_mobile_settlement_period_config(month_date).get("visibility_mode")
+                )
+        return visibility_by_month[month_key]
+
     archive_rows: list[dict[str, Any]] = []
     for row in rows:
         month_key = str(row.get("document_month") or "")[:7]
@@ -11881,6 +11922,8 @@ def read_courier_document_archive(user: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
         if is_generated_monthly_doc and not monthly_billing_visible(month_key):
+            continue
+        if is_generated_monthly_doc and document_type == "tig" and archive_visibility_mode(month_key) == "settlement_only":
             continue
         archive_rows.append({
             **row,
@@ -13924,6 +13967,11 @@ def workflow_tig_pdf(
     view_user, preview = workflow_view_user(user, courier)
     privileged_viewer = can_view_financial_amounts(user)
     month_value = parse_month(month)
+    visibility_mode = normalize_mobile_visibility_mode(
+        read_mobile_settlement_period_config(month_value).get("visibility_mode")
+    )
+    if not normalize_process_id(process) and visibility_mode == "settlement_only" and not privileged_viewer:
+        raise HTTPException(status_code=404, detail="A TIG admin beállítás szerint most nem látható.")
     financial_breakdown = build_financial_breakdown(
         view_user,
         month_value,
@@ -13998,8 +14046,14 @@ def accept_workflow_document(
     user = require_user(giriton_pwa_session)
     month = parse_month(payload.month)
     process_id = normalize_process_id(payload.process)
+    visibility_mode = normalize_mobile_visibility_mode(
+        read_mobile_settlement_period_config(month).get("visibility_mode")
+    )
+    if not process_id and action == "tig" and visibility_mode == "settlement_only":
+        raise HTTPException(status_code=409, detail="A TIG admin beállítás szerint most nem látható.")
     if action == "tig":
-        require_prerequisite(user, month, "tig", process_id)
+        if process_id or visibility_mode != "settlement_and_tig":
+            require_prerequisite(user, month, "tig", process_id)
     documents, status_rows, complaints = read_workflow_rows(user, month)
     states = status_map(status_rows, process_id)
     documents = [row for row in documents if document_belongs_to_process(row, process_id)]
@@ -14071,7 +14125,7 @@ def accept_workflow_document(
             f"{skip_note_prefix}: elszámolás elfogadva, admin kifizetésre vár.",
             process_id,
         )
-    elif action == "settlement":
+    elif action == "settlement" and visibility_mode != "settlement_only":
         generate_tig_after_settlement_accept(user, month, process_id)
     if action == "tig" and not process_id and manual_invoice_skip_enabled(states):
         upsert_workflow_status(
@@ -14177,7 +14231,7 @@ def download_document(
         "GET",
         "peopleforce_documents",
         params={
-            "select": "id,courier_id,file_name,mime_type,file_content_base64",
+            "select": "id,courier_id,document_type,document_month,file_name,mime_type,file_content_base64",
             "id": f"eq.{document_id}",
             "courier_id": f"eq.{courier_id}",
             "limit": "1",
@@ -14187,6 +14241,17 @@ def download_document(
     if not rows:
         raise HTTPException(status_code=404, detail="A dokumentum nem található.")
     row = rows[0]
+    document_type = base_action_key(str(row.get("document_type") or ""))
+    document_month = str(row.get("document_month") or "")[:10]
+    if document_type == "tig" and document_month:
+        try:
+            document_month_date = date.fromisoformat(document_month)
+        except ValueError:
+            document_month_date = None
+        if document_month_date and normalize_mobile_visibility_mode(
+            read_mobile_settlement_period_config(document_month_date).get("visibility_mode")
+        ) == "settlement_only" and not can_view_financial_amounts(user):
+            raise HTTPException(status_code=404, detail="A TIG admin beállítás szerint most nem látható.")
     try:
         content = base64.b64decode(row.get("file_content_base64") or "", validate=True)
     except Exception as exc:
