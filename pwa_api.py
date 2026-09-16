@@ -6378,8 +6378,46 @@ def read_dsp_monthly_quality_for_financial_cards(courier_id: str, month: date) -
     return dict(rows[0]) if rows else {}
 
 
+def read_hub_raw_quality_for_financial_cards(courier_id: str, month: date) -> dict[str, Any]:
+    clean_id = str(courier_id or "").strip().removesuffix(".0")
+    if not clean_id.isdigit():
+        return {}
+    shift_quality = load_shift_overview_raw_quality_for_courier(clean_id, month)
+    routes, _source_tables = load_api_financial_routes_for_courier(clean_id, month)
+    total_shifts = safe_int(shift_quality.get("totalShifts"))
+    late_shift_count = safe_int(shift_quality.get("lateLoginShifts"))
+    no_show_count = safe_int(shift_quality.get("noShowShifts"))
+    route_count = len(routes)
+    order_count = sum(safe_int(route.get("orders")) for route in routes)
+    delayed_order_count = sum(safe_int(route.get("uncleaned_delay_count")) for route in routes)
+    cleaned_delay_count = sum(safe_int(route.get("cleaned_delay_count")) for route in routes)
+    if not shift_quality.get("hasData") and not routes:
+        return {}
+    late_percent = safe_percent_value(late_shift_count, total_shifts)
+    no_show_percent = safe_percent_value(no_show_count, total_shifts)
+    route_quality_bad_percent = round((0.7 * no_show_percent) + (0.3 * late_percent), 2)
+    delay_percent = safe_percent_value(delayed_order_count, order_count)
+    return {
+        "source": "courier_hub_raw",
+        "shift_count": total_shifts,
+        "no_show_count": no_show_count,
+        "late_shift_count": late_shift_count,
+        "route_count": route_count,
+        "order_count": order_count,
+        "delayed_order_count": delayed_order_count,
+        "cleaned_delay_count": cleaned_delay_count,
+        "delay_percent": delay_percent,
+        "late_percent": late_percent,
+        "no_show_percent": no_show_percent,
+        "route_quality_bad_percent": route_quality_bad_percent,
+        "compliance_score_percent": round(100.0 - route_quality_bad_percent, 2),
+        "delay_level": delay_level_from_delay_percent(delay_percent),
+        "route_quality_level": quality_level_from_bad_percent(route_quality_bad_percent),
+    }
+
+
 def financial_quality_card_notes(courier_id: str, month: date) -> dict[str, str]:
-    quality = read_dsp_monthly_quality_for_financial_cards(courier_id, month)
+    quality = read_hub_raw_quality_for_financial_cards(courier_id, month)
     if not quality:
         return {}
     delayed_orders = safe_int(quality.get("delayed_order_count"))
