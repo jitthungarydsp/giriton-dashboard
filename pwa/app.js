@@ -2238,6 +2238,38 @@ function routeDetailDistance(value) {
   return Number.isFinite(numeric) ? `${formatAverage(numeric)} km` : "-";
 }
 
+function routeDetailCalculatedKm(row = {}) {
+  return row.calculatedRouteKm ?? row.routeDistance?.distanceKm ?? "";
+}
+
+function renderRouteLegs(row = {}) {
+  const legs = Array.isArray(row.routeLegs)
+    ? row.routeLegs
+    : Array.isArray(row.routeDistance?.legs)
+      ? row.routeDistance.legs
+      : [];
+  if (!legs.length) {
+    return `
+      <section class="route-leg-list">
+        <h4>Km bontás</h4>
+        <p>Nincs címek közötti km bontás ehhez a route-hoz.</p>
+      </section>
+    `;
+  }
+  return `
+    <section class="route-leg-list">
+      <h4>Km bontás</h4>
+      ${legs.map((leg) => `
+        <div class="route-leg-row">
+          <span>${escapeHtml(leg.from || "-")} → ${escapeHtml(leg.to || "-")}</span>
+          <strong>${escapeHtml(routeDetailDistance(leg.distanceKm))}</strong>
+          <small>${escapeHtml(leg.toAddress || "")}</small>
+        </div>
+      `).join("")}
+    </section>
+  `;
+}
+
 function routeDetailsExcelUrl() {
   const month = $("#route-details-month")?.value || state.statisticsMonth;
   const courier = $("#route-details-courier")?.value || "";
@@ -2309,7 +2341,7 @@ function renderRouteDetails() {
             <th>Tervezett km</th>
             <th>Tényleges túraidő</th>
             <th>Tényleges visszaérkezés</th>
-            <th>Tényleges km</th>
+            <th>Címekből számolt km</th>
             <th>Hub mileage km</th>
             <th>Következő műszak aznap</th>
             <th>Túra típusa</th>
@@ -2336,7 +2368,7 @@ function renderRouteDetails() {
               <td>${escapeHtml(routeDetailDistance(row.hubPlannedKm))}</td>
               <td>${escapeHtml(routeDetailClock(row.routeMinutes))}</td>
               <td>${escapeHtml(timeOnly(row.returnedAt))}</td>
-              <td>${escapeHtml(routeDetailDistance(row.actualKm || row.calculatedRouteKm))}</td>
+              <td>${escapeHtml(routeDetailDistance(routeDetailCalculatedKm(row)))}</td>
               <td>${escapeHtml(routeDetailDistance(row.hubMileageKm))}</td>
               <td>${escapeHtml(routeDetailValue(row.nextShiftSameDay))}</td>
               <td>${escapeHtml(routeDetailValue(row.routeTypeLabel))}</td>
@@ -2371,7 +2403,8 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Tényleges túraidő</span><strong>${escapeHtml(routeDetailClock(selected.routeMinutes))}</strong></div>
         <div class="stat-row"><span>Túra bepakolással</span><strong>${escapeHtml(routeDetailMinutes(selected.totalMinutes))}</strong></div>
         <div class="stat-row"><span>Tervezett km</span><strong>${escapeHtml(routeDetailDistance(selected.hubPlannedKm))}</strong></div>
-        <div class="stat-row"><span>Tényleges km</span><strong>${escapeHtml(routeDetailDistance(selected.actualKm || selected.calculatedRouteKm))}</strong></div>
+        <div class="stat-row"><span>Hub tényleges km</span><strong>${escapeHtml(routeDetailDistance(selected.actualKm))}</strong></div>
+        <div class="stat-row"><span>Címekből számolt km</span><strong>${escapeHtml(routeDetailDistance(routeDetailCalculatedKm(selected)))}</strong></div>
         <div class="stat-row"><span>Hub mileage km</span><strong>${escapeHtml(routeDetailDistance(selected.hubMileageKm))}</strong></div>
         <div class="stat-row"><span>Km eltérés</span><strong>${escapeHtml(routeDetailDistance(selected.distanceDeltaKm))}</strong></div>
         <div class="stat-row"><span>Km forrás</span><strong>${escapeHtml(selected.distanceSource || selected.distanceStatus || "Nincs adat")}</strong></div>
@@ -2381,6 +2414,7 @@ function renderRouteDetails() {
         <div class="stat-row"><span>Kiflis autó</span><strong>${escapeHtml(selected.kifliVehicle || "Nincs adat")}</strong></div>
         <div class="stat-row"><span>Forrás</span><strong>${escapeHtml(selected.dataSource || "-")}</strong></div>
       </div>
+      ${renderRouteLegs(selected)}
     </article>
   `;
   panel.querySelectorAll("[data-route-detail-index]").forEach((row) => {

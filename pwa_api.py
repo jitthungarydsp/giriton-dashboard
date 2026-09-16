@@ -2549,6 +2549,8 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
     total_static_seconds = 0
     has_duration = False
     has_static_duration = False
+    legs: list[dict[str, Any]] = []
+    point_offset = 0
     for segment in segments:
         if len(segment) < 2:
             continue
@@ -2568,7 +2570,7 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
                 headers={
                     "Content-Type": "application/json",
                     "X-Goog-Api-Key": api_key,
-                    "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
+                    "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters,routes.legs.distanceMeters,routes.legs.duration,routes.legs.staticDuration",
                 },
                 json=request_body,
                 timeout=12,
@@ -2610,6 +2612,74 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
         if static_seconds is not None:
             has_static_duration = True
             total_static_seconds += static_seconds
+        route_legs = route.get("legs") if isinstance(route.get("legs"), list) else []
+        for leg_index, leg in enumerate(route_legs):
+            if not isinstance(leg, dict):
+                continue
+            from_index = point_offset + leg_index
+            to_index = from_index + 1
+            from_address = route_points[from_index] if from_index < len(route_points) else ""
+            to_address = route_points[to_index] if to_index < len(route_points) else ""
+            leg_distance = leg.get("distanceMeters")
+            leg_duration = parse_google_duration_seconds(leg.get("duration"))
+            leg_static = parse_google_duration_seconds(leg.get("staticDuration"))
+            legs.append({
+                "index": len(legs) + 1,
+                "from": "Raktár" if from_index == 0 else f"{from_index}. cím",
+                "to": "Raktár" if to_index == len(route_points) - 1 else f"{to_index}. cím",
+                "fromAddress": from_address,
+                "toAddress": to_address,
+                "distanceKm": round(float(leg_distance) / 1000, 1) if leg_distance is not None else None,
+                "durationMinutes": max(0, round(leg_duration / 60)) if leg_duration is not None else None,
+                "staticDurationMinutes": max(0, round(leg_static / 60)) if leg_static is not None else None,
+            })
+        point_offset += max(0, len(segment) - 1)
+
+    if len(legs) < len(route_points) - 1:
+        fallback_legs: list[dict[str, Any]] = []
+        for index in range(len(route_points) - 1):
+            origin = route_points[index]
+            destination = route_points[index + 1]
+            try:
+                response = requests.post(
+                    "https://routes.googleapis.com/directions/v2:computeRoutes",
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Goog-Api-Key": api_key,
+                        "X-Goog-FieldMask": "routes.duration,routes.staticDuration,routes.distanceMeters",
+                    },
+                    json={
+                        "origin": {"address": origin},
+                        "destination": {"address": destination},
+                        "travelMode": "DRIVE",
+                        "routingPreference": "TRAFFIC_AWARE",
+                        "languageCode": "hu-HU",
+                        "units": "METRIC",
+                    },
+                    timeout=8,
+                )
+                if response.status_code >= 400:
+                    fallback_legs = []
+                    break
+                fallback_route = (response.json().get("routes") or [{}])[0]
+            except Exception:
+                fallback_legs = []
+                break
+            leg_distance = fallback_route.get("distanceMeters")
+            leg_duration = parse_google_duration_seconds(fallback_route.get("duration"))
+            leg_static = parse_google_duration_seconds(fallback_route.get("staticDuration"))
+            fallback_legs.append({
+                "index": index + 1,
+                "from": "Raktár" if index == 0 else f"{index}. cím",
+                "to": "Raktár" if index + 1 == len(route_points) - 1 else f"{index + 1}. cím",
+                "fromAddress": origin,
+                "toAddress": destination,
+                "distanceKm": round(float(leg_distance) / 1000, 1) if leg_distance is not None else None,
+                "durationMinutes": max(0, round(leg_duration / 60)) if leg_duration is not None else None,
+                "staticDurationMinutes": max(0, round(leg_static / 60)) if leg_static is not None else None,
+            })
+        if fallback_legs:
+            legs = fallback_legs
 
     if total_distance_meters <= 0:
         return {
@@ -2630,6 +2700,8 @@ def route_detail_full_distance(warehouse_id: int, stop_addresses: list[str]) -> 
         "warehouseAddress": warehouse_address,
         "stopCount": len(stops),
         "distanceKm": round(total_distance_meters / 1000, 1),
+        "legs": legs,
+        "routePoints": route_points,
         "durationMinutes": max(0, round(total_duration_seconds / 60)) if has_duration else None,
         "trafficDeltaMinutes": round(traffic_delta_seconds / 60) if traffic_delta_seconds is not None else None,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -2660,7 +2732,7 @@ def enrich_route_detail_distances(rows: list[dict[str, Any]]) -> list[dict[str, 
         row["routeDistance"] = result
         if result.get("available"):
             row["calculatedRouteKm"] = result.get("distanceKm")
-            row["actualKm"] = result.get("distanceKm")
+            row["routeLegs"] = result.get("legs") if isinstance(result.get("legs"), list) else []
             row["distanceSource"] = "Google Routes"
             hub_km = safe_float_value(row.get("hubPlannedKm"))
             calculated_km = safe_float_value(result.get("distanceKm"))
@@ -9373,9 +9445,9 @@ def route_distance_check_values(item: dict[str, Any]) -> dict[str, Any]:
         or safe_float_value(item.get("distanceKm"))
     )
     calculated_km = (
-        safe_float_value(item.get("actualKm"))
-        or safe_float_value(item.get("calculatedRouteKm"))
+        safe_float_value(item.get("calculatedRouteKm"))
         or safe_float_value(item.get("googleRouteKm"))
+        or safe_float_value(item.get("actualKm"))
     )
     delta_km = safe_float_value(item.get("distanceDeltaKm"))
     if delta_km is None and kifli_km is not None and calculated_km is not None:
@@ -9391,6 +9463,24 @@ def route_distance_check_values(item: dict[str, Any]) -> dict[str, Any]:
         "deltaPercent": delta_percent,
         "stopAddressCount": stop_count,
     }
+
+
+def route_detail_leg_summary(item: dict[str, Any]) -> str:
+    legs = item.get("routeLegs")
+    if not isinstance(legs, list):
+        route_distance = item.get("routeDistance") if isinstance(item.get("routeDistance"), dict) else {}
+        legs = route_distance.get("legs") if isinstance(route_distance.get("legs"), list) else []
+    parts: list[str] = []
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        distance = safe_float_value(leg.get("distanceKm"))
+        if distance is None:
+            continue
+        from_label = str(leg.get("from") or "").strip() or "-"
+        to_label = str(leg.get("to") or "").strip() or "-"
+        parts.append(f"{from_label} -> {to_label}: {distance:.1f} km")
+    return "; ".join(parts)
 
 
 def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: str) -> dict[str, Any]:
@@ -9466,6 +9556,7 @@ def build_route_detail_item(row: dict[str, Any], courier_id: str, courier_name: 
         "hubPlannedKm": hub_planned_km,
         "calculatedRouteKm": None,
         "actualKm": None,
+        "routeLegs": [],
         "distanceSource": "Courier Hub plannedKm" if hub_planned_km is not None else "Nincs adat",
         "stopAddresses": row.get("stopAddresses") if isinstance(row.get("stopAddresses"), list) else [],
         "orders": safe_int(row.get("orders") or story.get("addressCount")),
@@ -9523,6 +9614,7 @@ def build_route_detail_item_from_hub_stat(row: dict[str, Any]) -> dict[str, Any]
         "googleRouteKm": google_km,
         "calculatedRouteKm": google_km,
         "actualKm": actual_km,
+        "routeLegs": [],
         "distanceDeltaKm": safe_float_value(row.get("distance_delta_km")),
         "distanceSource": str(row.get("distance_source") or "").strip() or "Nincs adat",
         "distanceStatus": str(row.get("google_route_status") or "").strip(),
@@ -9818,9 +9910,24 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
         if not courier_name:
             courier_name = courier_name_lookup().get(courier_id, "")
         rows = [build_route_detail_item_from_hub_stat(row) for row in stat_rows]
+        raw_detail_rows = load_courier_hub_route_detail_rows_for_courier(courier_id, month_value)
+        raw_by_route = {
+            str(row.get("routeId") or "").strip(): row
+            for row in raw_detail_rows
+            if str(row.get("routeId") or "").strip()
+        }
         for row in rows:
             if not row.get("courierName"):
                 row["courierName"] = courier_name
+            raw = raw_by_route.get(str(row.get("routeId") or "").strip()) or {}
+            if raw:
+                row["stopAddresses"] = raw.get("stopAddresses") if isinstance(raw.get("stopAddresses"), list) else []
+                if not row.get("warehouseAddress"):
+                    row["warehouseAddress"] = route_detail_warehouse_address(row.get("warehouseId"))
+                if not row.get("vehiclePlate"):
+                    row["vehiclePlate"] = raw.get("vehiclePlate") or ""
+                    row["vehicleLabel"] = row["vehiclePlate"]
+        rows = enrich_route_detail_distances(attach_next_shift_same_day(rows))
         rows.sort(key=lambda item: (item.get("date") or "", item.get("routeAssignedAt") or "", item.get("routeId") or ""), reverse=True)
         return {
             "month": month_value.replace(day=1).strftime("%Y-%m"),
@@ -14119,7 +14226,9 @@ def route_details_excel(
         "Tervezett km",
         "Tényleges túraidő",
         "Tényleges visszaérkezés",
-        "Tényleges km",
+        "Hub tényleges km",
+        "Címekből számolt km",
+        "Km bontás raktár-cím-cím-raktár",
         "Hub mileage km",
         "Újraszámolt címek száma",
         "Következő műszak aznap",
@@ -14159,7 +14268,9 @@ def route_details_excel(
             distance_check.get("kifliKm"),
             route_detail_duration_text(item.get("routeMinutes")),
             route_detail_time_text(item.get("returnedAt")),
-            distance_check.get("calculatedKm"),
+            item.get("actualKm"),
+            item.get("calculatedRouteKm") or distance_check.get("calculatedKm"),
+            route_detail_leg_summary(item),
             item.get("hubMileageKm"),
             distance_check.get("stopAddressCount"),
             item.get("nextShiftSameDay"),
