@@ -8636,6 +8636,7 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
         correction_deduction = (
             pivot.get("correction_deduction", zero_adjustments)
             + pivot.get("manual_correction_deduction", zero_adjustments)
+            + pivot.get("other_expense", zero_adjustments)
         )
         result["Bónusz"] = (
             _numeric_series(result, "Bónusz")
@@ -8648,7 +8649,6 @@ def apply_manual_balance_adjustments(data: pd.DataFrame, period_start: date, per
         deductions = (
             pivot.get("malus", zero_adjustments)
             + pivot.get("atm_deduction", zero_adjustments)
-            + pivot.get("other_expense", zero_adjustments)
         )
         result["Levonás"] = _numeric_series(result, "Levonás") + courier_ids.map(deductions).fillna(0.0)
         result["Bónusz"] += courier_ids.map(pivot.get("customer_rating", zero_adjustments)).fillna(0.0)
@@ -13512,6 +13512,8 @@ def render_courier_detail_page() -> None:
     if is_api_mode:
         manual_atm_total = 0.0
     other_expense_total = float(profile_adjustment_totals.get("other_expense", 0.0))
+    correction_deduction_total += other_expense_total
+    other_expense_total = 0.0
     malus_total = imported_malus_total + manual_malus_total
     atm_deduction_total = imported_atm_total + manual_atm_total
     correction_total = correction_income_total - correction_deduction_total
@@ -13921,6 +13923,8 @@ def render_courier_detail_page() -> None:
             float(adjustment_totals.get("correction_deduction", 0))
             + float(adjustment_totals.get("manual_correction_deduction", 0))
         )
+        correction_deduction_total += other_expense_total
+        other_expense_total = 0.0
         periodic_correction_total, periodic_correction_detail = calculate_periodic_fee_corrections(
             route_detail,
             period_start,
@@ -14023,7 +14027,7 @@ def render_courier_detail_page() -> None:
         advance_remaining_shift_count = int(parse_huf_value(loyalty_values.get("remaining_shift_count")))
         advance_booking_summary = {"source": str(loyalty_values.get("advance_booking_source") or "-")}
         atm_deduction_total = imported_atm_total + manual_atm_total
-        other_expense_total = manual_other_total
+        other_expense_total = 0.0
         salary_advance_total = parse_huf_value(row.get("Fizetés előleg"))
         route_other_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
         display_base_total = base_total
@@ -14518,6 +14522,7 @@ def render_courier_detail_page() -> None:
                     "correction_income": "Korrekció +",
                     "correction_deduction": "Korrekció -",
                     "manual_correction_deduction": "Kézi korrekció -",
+                    "other_expense": "Egyéb kiadás",
                 }
                 if not adjustments.empty:
                     manual_corrections = adjustments[
@@ -14525,7 +14530,7 @@ def render_courier_detail_page() -> None:
                     ].copy()
                     if not manual_corrections.empty:
                         manual_corrections["Összeg"] = pd.to_numeric(manual_corrections["amount_huf"], errors="coerce").fillna(0.0)
-                        deduction_mask = manual_corrections["adjustment_type"].isin({"correction_deduction", "manual_correction_deduction"})
+                        deduction_mask = manual_corrections["adjustment_type"].isin({"correction_deduction", "manual_correction_deduction", "other_expense"})
                         manual_corrections.loc[deduction_mask, "Összeg"] = -manual_corrections.loc[deduction_mask, "Összeg"].abs()
                         manual_corrections["Tétel"] = manual_corrections["adjustment_type"].map(correction_labels).fillna("Korrekció")
                         manual_corrections["Számítás"] = manual_corrections.get("note", pd.Series("", index=manual_corrections.index)).fillna("")
