@@ -8497,6 +8497,57 @@ def safe_money_amount(value: Any) -> int:
     return safe_int(value)
 
 
+def summarize_api_route_delay_orders(route: dict[str, Any]) -> dict[str, Any]:
+    delay_orders = route.get("delayOrders") if isinstance(route.get("delayOrders"), list) else []
+    cleaned_count = 0
+    uncleaned_count = 0
+    cleaned_minutes = 0
+    uncleaned_minutes = 0
+    max_minutes = 0
+    cleaned_reasons: list[str] = []
+    cleaned_details: list[dict[str, Any]] = []
+    uncleaned_details: list[dict[str, Any]] = []
+    route_id = str(route.get("routeId") or route.get("id") or "").strip()
+    delivery_date = str(route.get("deliveryDate") or route.get("date") or "")[:10]
+    for order in delay_orders:
+        if not isinstance(order, dict):
+            continue
+        minutes = safe_int(order.get("delayMinutes") or order.get("delay_minutes"))
+        reason = str(order.get("cleanedReason") or order.get("cleaned_reason") or "").strip()
+        is_cleaned = bool(order.get("cleaned")) or bool(reason)
+        max_minutes = max(max_minutes, minutes)
+        detail = {
+            "date": delivery_date,
+            "routeId": route_id,
+            "orderId": str(order.get("orderId") or order.get("order_id") or "").strip(),
+            "delayMinutes": minutes,
+            "reason": reason,
+        }
+        if is_cleaned:
+            cleaned_count += 1
+            cleaned_minutes += minutes
+            if reason and reason not in cleaned_reasons:
+                cleaned_reasons.append(reason)
+            cleaned_details.append(detail)
+        else:
+            uncleaned_count += 1
+            uncleaned_minutes += minutes
+            uncleaned_details.append(detail)
+    return {
+        "cleanedDelayCount": cleaned_count,
+        "uncleanedDelayCount": uncleaned_count,
+        "cleanedDelayMinutes": cleaned_minutes,
+        "uncleanedDelayMinutes": uncleaned_minutes,
+        "delayedStops": cleaned_count + uncleaned_count,
+        "delayMinutes": cleaned_minutes + uncleaned_minutes,
+        "maxDelayMinutes": max_minutes,
+        "hasDelayCleaning": bool(delay_orders),
+        "cleanedReasons": cleaned_reasons,
+        "cleanedDelayDetails": cleaned_details,
+        "uncleanedDelayDetails": uncleaned_details,
+    }
+
+
 def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     routes: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -8519,6 +8570,7 @@ def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             seen.add(key)
             work_date = parse_date_value(route.get("deliveryDate") or route.get("date"))
             route_layer = str(route.get("routeLayer") or route.get("routeType") or "normal").strip().lower()
+            delay_summary = summarize_api_route_delay_orders(route)
             routes.append(
                 {
                     "route_id": route_id,
@@ -8533,6 +8585,17 @@ def parse_api_routes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "final_delay_minutes": safe_int(route.get("finalDelayMinutes") or route.get("final_delay_minutes")),
                     "warehouse_departure_actual": str(route.get("warehouseDepartureActual") or route.get("warehouse_departure_actual") or ""),
                     "warehouse_arrival_actual": str(route.get("warehouseArrivalActual") or route.get("warehouse_arrival_actual") or ""),
+                    "cleaned_delay_count": delay_summary["cleanedDelayCount"],
+                    "uncleaned_delay_count": delay_summary["uncleanedDelayCount"],
+                    "cleaned_delay_minutes": delay_summary["cleanedDelayMinutes"],
+                    "uncleaned_delay_minutes": delay_summary["uncleanedDelayMinutes"],
+                    "delayed_stops_count": delay_summary["delayedStops"],
+                    "total_delay_minutes": delay_summary["delayMinutes"],
+                    "max_delay_minutes": delay_summary["maxDelayMinutes"],
+                    "has_delay_cleaning": delay_summary["hasDelayCleaning"],
+                    "cleaned_reasons": delay_summary["cleanedReasons"],
+                    "cleaned_delay_details": delay_summary["cleanedDelayDetails"],
+                    "uncleaned_delay_details": delay_summary["uncleanedDelayDetails"],
                 }
             )
     return routes
@@ -8601,6 +8664,10 @@ def load_shift_overview_raw_quality_for_courier(
     total_shifts = 0
     no_show_shifts = 0
     late_login_shifts = 0
+    no_show_details: list[dict[str, Any]] = []
+    late_shift_details: list[dict[str, Any]] = []
+    seen_no_show: set[str] = set()
+    seen_late: set[str] = set()
     for row in rows:
         payload = row.get("response_json") or {}
         if isinstance(payload, str):
@@ -8613,11 +8680,44 @@ def load_shift_overview_raw_quality_for_courier(
         total_shifts += safe_int(payload.get("totalShifts") or payload.get("total_shifts"))
         no_show_shifts += safe_int(payload.get("noShowShifts") or payload.get("no_show_shifts"))
         late_login_shifts += safe_int(payload.get("lateLoginShifts") or payload.get("late_login_shifts"))
+        shifts = payload.get("shifts") if isinstance(payload.get("shifts"), list) else []
+        for shift in shifts:
+            if not isinstance(shift, dict):
+                continue
+            work_date = str(shift.get("date") or shift.get("shiftDate") or "")[:10]
+            planned_start = str(shift.get("plannedStart") or shift.get("plannedStartAt") or "").strip()
+            planned_end = str(shift.get("plannedEnd") or shift.get("plannedEndAt") or "").strip()
+            actual_start = str(shift.get("actualStart") or shift.get("actualStartAt") or "").strip()
+            evaluation = normalize_text(shift.get("evaluation") or shift.get("status") or "")
+            shift_label = "Műszak"
+            if planned_start and planned_end:
+                shift_label = f"{planned_start[:5]}-{planned_end[:5]}"
+            elif planned_start:
+                shift_label = planned_start[:5]
+            detail_key = f"{work_date}|{planned_start}|{planned_end}|{evaluation}"
+            if evaluation in {"no_show", "no show", "did_not_come", "did not come", "nem jelent meg"}:
+                if detail_key not in seen_no_show:
+                    seen_no_show.add(detail_key)
+                    no_show_details.append({
+                        "date": work_date,
+                        "label": shift_label,
+                        "note": "Nem jelent meg a műszakban",
+                    })
+            elif evaluation in {"late", "kesett", "késett"}:
+                if detail_key not in seen_late:
+                    seen_late.add(detail_key)
+                    late_shift_details.append({
+                        "date": work_date,
+                        "label": shift_label,
+                        "note": f"Késői bejelentkezés: {actual_start[:5] or '-'}",
+                    })
     return {
         "hasData": bool(rows),
         "totalShifts": total_shifts,
         "noShowShifts": no_show_shifts,
         "lateLoginShifts": late_login_shifts,
+        "noShowDetails": no_show_details,
+        "lateShiftDetails": late_shift_details,
     }
 
 
@@ -9763,6 +9863,7 @@ def build_route_quality_records(
         route_late_stop_minutes = safe_int(row.get("timeWindowLateMinutes"))
         cleaned_delay_count = safe_int(row.get("cleanedDelayCount"))
         uncleaned_delay_count = safe_int(row.get("uncleanedDelayCount"))
+        cleaned_delay_minutes = safe_int(row.get("cleanedDelayMinutes"))
         uncleaned_delay_minutes = safe_int(row.get("uncleanedDelayMinutes"))
         has_cleaning_data = (
             bool(row.get("hasDelayCleaning"))
@@ -9794,6 +9895,11 @@ def build_route_quality_records(
             "late_start_minutes": late_start_minutes,
             "late_stop_count": late_stop_count,
             "late_stop_minutes": late_stop_minutes,
+            "cleaned_stop_count": cleaned_delay_count,
+            "cleaned_stop_minutes": cleaned_delay_minutes,
+            "cleaned_reasons": row.get("cleanedReasons") if isinstance(row.get("cleanedReasons"), list) else [],
+            "cleaned_delay_details": row.get("cleanedDelayDetails") if isinstance(row.get("cleanedDelayDetails"), list) else [],
+            "uncleaned_delay_details": row.get("uncleanedDelayDetails") if isinstance(row.get("uncleanedDelayDetails"), list) else [],
             "same_checkin_group": bool(same_checkin_by_shift.get(shift_key)),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
@@ -9803,12 +9909,41 @@ def build_route_quality_records(
 def persist_route_quality_records(records: list[dict[str, Any]]) -> None:
     if not records:
         return
+    persisted_fields = {
+        "courier_id",
+        "courier_name",
+        "period_start",
+        "work_date",
+        "route_id",
+        "warehouse_id",
+        "shift_key",
+        "shift_start_at",
+        "route_type",
+        "route_assigned_at",
+        "shift_available_at",
+        "queue_started_at",
+        "departed_at",
+        "planned_return_at",
+        "real_return_at",
+        "queued_on_time",
+        "no_late_stops",
+        "quality_ok",
+        "late_start_minutes",
+        "late_stop_count",
+        "late_stop_minutes",
+        "same_checkin_group",
+        "updated_at",
+    }
+    payload = [
+        {key: value for key, value in record.items() if key in persisted_fields}
+        for record in records
+    ]
     try:
         supabase_rest(
             "POST",
             "pwa_courier_route_quality_report",
             params={"on_conflict": "courier_id,work_date,route_id"},
-            payload=records,
+            payload=payload,
             prefer="resolution=merge-duplicates,return=minimal",
             timeout=60,
         )
@@ -9919,12 +10054,24 @@ def build_route_quality_summary(
     no_show_count = max(daily_no_show_count, len(no_show_details))
     late_shift_count = len(route_late_shift_keys)
     if shift_overview_quality.get("hasData"):
-        no_show_count = max(no_show_count, safe_int(shift_overview_quality.get("noShowShifts")))
-        late_shift_count = max(safe_int(shift_overview_quality.get("lateLoginShifts")), len(late_shift_details))
+        no_show_count = safe_int(shift_overview_quality.get("noShowShifts"))
+        late_shift_count = safe_int(shift_overview_quality.get("lateLoginShifts"))
+        no_show_details = (
+            shift_overview_quality.get("noShowDetails")
+            if isinstance(shift_overview_quality.get("noShowDetails"), list)
+            else []
+        )
+        late_shift_details = (
+            shift_overview_quality.get("lateShiftDetails")
+            if isinstance(shift_overview_quality.get("lateShiftDetails"), list)
+            else []
+        )
     else:
         late_shift_details = route_late_shift_details
     uncleaned_late_count = sum(safe_int(row.get("late_stop_count")) for row in route_quality_records)
     uncleaned_late_minutes = sum(safe_int(row.get("late_stop_minutes")) for row in route_quality_records)
+    cleaned_late_count = sum(safe_int(row.get("cleaned_stop_count")) for row in route_quality_records)
+    cleaned_late_minutes = sum(safe_int(row.get("cleaned_stop_minutes")) for row in route_quality_records)
     time_window_details = [
         {
             "date": str(row.get("work_date") or "")[:10],
@@ -9935,17 +10082,45 @@ def build_route_quality_summary(
         for row in route_quality_records
         if safe_int(row.get("late_stop_count")) > 0
     ]
+    cleaned_time_window_details = []
+    for row in route_quality_records:
+        if safe_int(row.get("cleaned_stop_count")) <= 0:
+            continue
+        details = row.get("cleaned_delay_details") if isinstance(row.get("cleaned_delay_details"), list) else []
+        if details:
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                reason = str(detail.get("reason") or "").strip()
+                cleaned_time_window_details.append({
+                    "date": str(detail.get("date") or row.get("work_date") or "")[:10],
+                    "label": f"Route {detail.get('routeId') or row.get('route_id') or '-'}",
+                    "note": f"{safe_int(detail.get('delayMinutes'))} perc · mentesítés: {reason or '-'}",
+                    "routeId": str(detail.get("routeId") or row.get("route_id") or ""),
+                })
+            continue
+        reasons = row.get("cleaned_reasons") if isinstance(row.get("cleaned_reasons"), list) else []
+        reason_text = ", ".join(str(reason) for reason in reasons if str(reason).strip()) or "-"
+        cleaned_time_window_details.append({
+            "date": str(row.get("work_date") or "")[:10],
+            "label": f"Route {row.get('route_id') or '-'}",
+            "note": f"{safe_int(row.get('cleaned_stop_count'))} cím · {safe_int(row.get('cleaned_stop_minutes'))} perc · mentesítés: {reason_text}",
+            "routeId": str(row.get("route_id") or ""),
+        })
     total_problems = no_show_count + late_shift_count + uncleaned_late_count
     return {
         "noShowCount": no_show_count,
         "lateShiftCount": late_shift_count,
         "uncleanedTimeWindowLateCount": uncleaned_late_count,
         "uncleanedTimeWindowLateMinutes": uncleaned_late_minutes,
+        "cleanedTimeWindowLateCount": cleaned_late_count,
+        "cleanedTimeWindowLateMinutes": cleaned_late_minutes,
         "totalProblems": total_problems,
         "ok": total_problems <= 0,
         "details": {
             "lateShift": late_shift_details or route_late_shift_details[:late_shift_count],
             "uncleanedTimeWindowLate": time_window_details,
+            "cleanedTimeWindowLate": cleaned_time_window_details,
             "noShow": no_show_details,
         },
     }
@@ -10149,6 +10324,56 @@ def route_history_key(row: dict[str, Any]) -> tuple[str, str]:
         str(row.get("date") or row.get("work_date") or "")[:10],
         str(row.get("routeId") or row.get("route_id") or "").strip(),
     )
+
+
+def enrich_daily_history_with_financial_route_delays(
+    rows: list[dict[str, Any]],
+    route_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    delay_by_route = {
+        route_history_key(row): row
+        for row in route_rows or []
+        if route_history_key(row)[0] and route_history_key(row)[1]
+    }
+    if not delay_by_route:
+        return rows
+
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        key = route_history_key(row)
+        delay_row = delay_by_route.get(key)
+        if not delay_row:
+            enriched.append(row)
+            continue
+
+        cleaned_count = safe_int(delay_row.get("cleaned_delay_count"))
+        uncleaned_count = safe_int(delay_row.get("uncleaned_delay_count"))
+        cleaned_minutes = safe_int(delay_row.get("cleaned_delay_minutes"))
+        uncleaned_minutes = safe_int(delay_row.get("uncleaned_delay_minutes"))
+        total_count = cleaned_count + uncleaned_count
+        total_minutes = cleaned_minutes + uncleaned_minutes
+        merged = dict(row)
+        merged.update({
+            "apiDelayedOrderCount": total_count,
+            "timeWindowLateCount": total_count,
+            "timeWindowLateMinutes": total_minutes,
+            "maxDelayMinutes": safe_int(delay_row.get("max_delay_minutes")),
+            "cleanedDelayCount": cleaned_count,
+            "uncleanedDelayCount": uncleaned_count,
+            "cleanedDelayMinutes": cleaned_minutes,
+            "uncleanedDelayMinutes": uncleaned_minutes,
+            "hasDelayCleaning": bool(delay_row.get("has_delay_cleaning")) or total_count > 0,
+            "cleanedReasons": delay_row.get("cleaned_reasons") if isinstance(delay_row.get("cleaned_reasons"), list) else [],
+            "cleanedDelayDetails": delay_row.get("cleaned_delay_details") if isinstance(delay_row.get("cleaned_delay_details"), list) else [],
+            "uncleanedDelayDetails": delay_row.get("uncleaned_delay_details") if isinstance(delay_row.get("uncleaned_delay_details"), list) else [],
+        })
+        story = dict(merged.get("routeStory") or {})
+        if story:
+            story["timeWindowLateCount"] = total_count
+            story["timeWindowLateMinutes"] = total_minutes
+            merged["routeStory"] = story
+        enriched.append(merged)
+    return enriched
 
 
 def enrich_daily_history_with_hub_rows(
@@ -10367,6 +10592,7 @@ def build_monthly_courier_statistics(
                 continue
             daily_history_rows.append(hub_detail_daily_history_row(detail_row, route_notes))
             known_hub_routes.add(detail_key)
+        daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
         total_routes = len({
             (str(row.get("date") or "")[:10], str(row.get("routeId") or "").strip())
             for row in daily_history_rows
@@ -10858,6 +11084,7 @@ def build_monthly_courier_statistics(
         hub_detail_rows,
         route_notes,
     )
+    daily_history_rows = enrich_daily_history_with_financial_route_delays(daily_history_rows, route_rows)
     route_quality_records = build_route_quality_records(
         courier_id=courier_id,
         courier_name=courier_name,

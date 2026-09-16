@@ -1078,6 +1078,12 @@ function renderQualitySummaryChart(payload = {}) {
       note: `${formatCount(summary.uncleanedTimeWindowLateMinutes || 0)} perc összesen`,
     },
     {
+      key: "cleanedTimeWindowLate",
+      label: "Mentesített címkésés",
+      value: Number(summary.cleanedTimeWindowLateCount || 0),
+      note: `${formatCount(summary.cleanedTimeWindowLateMinutes || 0)} perc összesen`,
+    },
+    {
       key: "noShow",
       label: "No-show",
       value: Number(summary.noShowCount || 0),
@@ -1092,7 +1098,7 @@ function renderQualitySummaryChart(payload = {}) {
         ${renderStatusBadge(statusOk)}
         <div>
           <h3>${statusOk ? "Szép munka, tiszta hónap" : "Erre érdemes ránézni"}</h3>
-          <p>${statusOk ? "Nincs no-show, műszak késés vagy nem mentesített időablak-késés." : "A három fő minőségi jelzés havi összesítése."}</p>
+          <p>${statusOk ? "Nincs no-show, műszak késés vagy nem mentesített időablak-késés." : "A fő minőségi jelzések havi összesítése."}</p>
         </div>
       </div>
       <div class="quality-bars">
@@ -1120,6 +1126,7 @@ function renderQualitySummaryDetails(topic, details = {}) {
   const labels = {
     lateShift: "Vizsgálandó műszak késések",
     uncleanedTimeWindowLate: "Vizsgálandó időkapun túli késések",
+    cleanedTimeWindowLate: "Mentesített időkapun túli késések",
     noShow: "Vizsgálandó no-show műszakok",
   };
   const rows = Array.isArray(details[topic]) ? details[topic] : [];
