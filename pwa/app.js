@@ -3132,7 +3132,7 @@ function financialDetailRows(items = []) {
   if (!items.length) return `<div class="empty-card">Nincs bontott adat ehhez a kártyához.</div>`;
   return `<div class="financial-detail-list">${items.map((item) => `
     <div class="financial-detail-row">
-      <div>
+      <div class="financial-detail-text">
         <strong>${escapeHtml(item.label)}</strong>
         <small>${escapeHtml(item.note || "")}</small>
       </div>
@@ -3193,7 +3193,10 @@ function renderFinancialBreakdown(locked, accepted, blocksAcceptance) {
       ${displayCards.map((card) => `
         <details class="financial-card ${escapeHtml(card.tone || "")}" ${["payable", "bonus_malus"].includes(card.key) ? "open" : ""}>
           <summary>
-            <span>${escapeHtml(card.label)}</span>
+            <div class="financial-card-title">
+              <span>${escapeHtml(card.label)}</span>
+              ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ""}
+            </div>
             <strong>${formatFinancialValue(card)}</strong>
           </summary>
           ${financialDetailRows(card.items || [])}

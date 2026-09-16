@@ -6346,6 +6346,96 @@ def count_item(key: str, label: str, count: int) -> dict[str, Any]:
     return item
 
 
+def financial_percent_value(value: Any) -> float:
+    try:
+        return round(float(str(value or "0").replace(",", ".")), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def format_financial_percent(value: Any) -> str:
+    return f"{financial_percent_value(value):.2f}%".replace(".", ",")
+
+
+def read_dsp_monthly_quality_for_financial_cards(courier_id: str, month: date) -> dict[str, Any]:
+    clean_id = str(courier_id or "").strip().removesuffix(".0")
+    if not clean_id.isdigit():
+        return {}
+    rows = optional_supabase_rows(
+        "dsp_courier_quality_monthly",
+        params={
+            "select": (
+                "courier_id,period_month,shift_count,no_show_count,late_shift_count,"
+                "order_count,delayed_order_count,delay_percent,route_quality_bad_percent,"
+                "compliance_score_percent,delay_level,route_quality_level"
+            ),
+            "courier_id": f"eq.{clean_id}",
+            "period_month": f"eq.{month.replace(day=1).isoformat()}",
+            "limit": "1",
+        },
+        timeout=30,
+    )
+    return dict(rows[0]) if rows else {}
+
+
+def financial_quality_card_notes(courier_id: str, month: date) -> dict[str, str]:
+    quality = read_dsp_monthly_quality_for_financial_cards(courier_id, month)
+    if not quality:
+        return {}
+    delayed_orders = safe_int(quality.get("delayed_order_count"))
+    total_orders = safe_int(quality.get("order_count"))
+    delay_level = safe_int(quality.get("delay_level")) or delay_level_from_delay_percent(
+        financial_percent_value(quality.get("delay_percent"))
+    )
+    route_quality_bad_percent = financial_percent_value(quality.get("route_quality_bad_percent"))
+    compliance_level = safe_int(quality.get("route_quality_level")) or quality_level_from_bad_percent(
+        route_quality_bad_percent
+    )
+    notes: dict[str, str] = {}
+    if total_orders or delayed_orders or quality.get("delay_percent") is not None:
+        notes["delay_bonus"] = (
+            f"{format_financial_percent(quality.get('delay_percent'))} | "
+            f"{delayed_orders}/{total_orders} késéses cím | {delay_level}. szint"
+        )
+    if quality.get("compliance_score_percent") is not None or quality.get("route_quality_bad_percent") is not None:
+        notes["compliance_bonus"] = (
+            f"{format_financial_percent(quality.get('compliance_score_percent'))} | "
+            f"hibamutató: {format_financial_percent(route_quality_bad_percent)} | {compliance_level}. szint"
+        )
+    return notes
+
+
+def append_financial_note(existing: Any, extra: str) -> str:
+    current = clean_note_part(existing)
+    extra = clean_note_part(extra)
+    if not current:
+        return extra
+    if not extra or extra in current:
+        return current
+    return f"{current} | {extra}"
+
+
+def annotate_quality_financial_cards(cards: list[dict[str, Any]], quality_notes: dict[str, str]) -> list[dict[str, Any]]:
+    if not quality_notes:
+        return cards
+    for card in cards:
+        card_key = str(card.get("key") or "")
+        note = quality_notes.get(card_key)
+        if not note:
+            continue
+        card["note"] = append_financial_note(card.get("note"), note)
+        updated_item = False
+        for item in card.get("items") or []:
+            if str(item.get("key") or "") == card_key:
+                item["note"] = append_financial_note(item.get("note"), note)
+                updated_item = True
+                break
+        if not updated_item and card.get("items"):
+            first_item = card["items"][0]
+            first_item["note"] = append_financial_note(first_item.get("note"), note)
+    return cards
+
+
 def read_mobile_settlement_period_config(month: date) -> dict[str, Any]:
     rows = optional_supabase_rows(
         "mobile_settlement_period_config",
@@ -6726,9 +6816,11 @@ def build_financial_breakdown_from_snapshot(
     month: date,
     snapshot: dict[str, Any],
 ) -> dict[str, Any] | None:
+    courier_id, _courier_name = courier_identity(user)
     finance_items = snapshot_item_map(snapshot, "finance")
     if not finance_items:
         return None
+    quality_notes = financial_quality_card_notes(courier_id, month)
 
     def amount(key: str) -> int:
         return money_int((finance_items.get(key) or {}).get("amount_value"))
@@ -6833,6 +6925,7 @@ def build_financial_breakdown_from_snapshot(
         {"key": "corrections", "label": "Korrekciók", "amountHuf": correction_total, "tone": "info", "items": detail_or_fallback("corrections", ["correction_income", "correction_deduction", "correction"])},
         {"key": "performance", "label": "Teljesítmény", "amountHuf": amount("orders"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
+    cards = annotate_quality_financial_cards(cards, quality_notes)
     complaint_options = [
         {"key": current["key"], "label": current["label"], "amountHuf": current["amountHuf"], "amountKind": current.get("amountKind", "huf")}
         for card in cards
@@ -7006,6 +7099,7 @@ def build_financial_breakdown_from_mobile_rows(
         or fallback_courier_id
         or ""
     ).strip()
+    quality_notes = financial_quality_card_notes(selected_courier_id, month)
 
     def item(key: str, *, fallback_label: str = "") -> dict[str, Any] | None:
         row_item = overrides.get(key)
@@ -7230,6 +7324,7 @@ def build_financial_breakdown_from_mobile_rows(
         {"key": "performance", "label": "Teljes\u00edtm\u00e9ny", "amountHuf": mobile_override_amount(overrides, "performance"), "amountKind": "count", "tone": "info", "items": performance_items},
     ]
 
+    cards = annotate_quality_financial_cards(cards, quality_notes)
     complaint_excluded_keys = {"income_total", "deduction_total", "correction_total", "payable_total"}
     complaint_options = [
         {
@@ -8218,6 +8313,7 @@ def hidden_financial_breakdown(month: date) -> dict[str, Any]:
 def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpublished: bool = False) -> dict[str, Any]:
     courier_id, _courier_name = courier_identity(user)
     allow_unpublished = allow_unpublished or is_unrestricted_legacy_settlement_month(month)
+    quality_notes = financial_quality_card_notes(courier_id, month)
     snapshot = read_latest_courier_finance_snapshot(courier_id, month)
     snapshot_breakdown = build_financial_breakdown_from_snapshot(user, month, snapshot) if snapshot else None
     if snapshot_breakdown:
@@ -8526,6 +8622,7 @@ def build_financial_breakdown(user: dict[str, Any], month: date, *, allow_unpubl
         {"key": "performance", "label": "Teljesítmény", "amountHuf": money_from(row, "orders", "order_count"), "amountKind": "count", "tone": "info", "items": route_items},
     ]
     cards = apply_mobile_overrides(cards, overrides)
+    cards = annotate_quality_financial_cards(cards, quality_notes)
     for card in cards:
         if card.get("key") != "deductions":
             continue
