@@ -14475,8 +14475,24 @@ def render_courier_detail_page() -> None:
             ("Express kiemelt", str(express_highlighted_total), "", ""),
             ("Alapdíj", format_huf(display_base_total), "", ""),
             ("Borravaló", format_huf(tip_total), "", ""),
-            ("Késedelmi díj", format_huf(delay_total), "", finance_level_note("Késedelmi díj")),
-            ("Túramegfelelés", format_huf(compliance_total), "", finance_level_note("Túramegfelelés")),
+            (
+                "Késedelmi díj",
+                format_huf(delay_total),
+                "",
+                (
+                    f"{delay_percent_label} | {quality_delayed_order_count}/{quality_order_count} késéses cím"
+                    + (f" | {quality_delay_level}. szint" if quality_delay_level else "")
+                ) if dsp_quality else finance_level_note("Késedelmi díj"),
+            ),
+            (
+                "Túramegfelelés",
+                format_huf(compliance_total),
+                "",
+                (
+                    f"{compliance_percent_label} | hibamutató: {route_quality_bad_label}"
+                    + (f" | {quality_route_level}. szint" if quality_route_level else "")
+                ) if dsp_quality else finance_level_note("Túramegfelelés"),
+            ),
             ("Cím bónusz (Kifli)", format_huf(other_route_bonus_total), "", "Stop-count Bonus"),
             ("Lojalitás", format_huf(loyalty_total), "", loyalty_status or ""),
             ("Ügyfélértékelési bónusz", format_huf(customer_rating_total), "", ""),
@@ -14548,6 +14564,89 @@ def render_courier_detail_page() -> None:
             + "</div></div>",
             unsafe_allow_html=True,
         )
+        if dsp_quality:
+            st.markdown("#### Minőségi magyarázat")
+            quality_cols = st.columns(4)
+            quality_cols[0].metric(
+                "Késési bónusz %",
+                delay_percent_label,
+                help=f"{quality_delayed_order_count} késéses cím / {quality_order_count} cím. Szint: {quality_delay_level}. szint.",
+            )
+            quality_cols[1].metric(
+                "Túramegfelelés %",
+                compliance_percent_label,
+                help=f"Hibamutató: {route_quality_bad_label}. Szint: {quality_route_level}. szint.",
+            )
+            quality_cols[2].metric(
+                "Késői bejelentkezés",
+                f"{quality_late_shift_count} / {quality_shift_count}",
+                help="A hibamutatóban 30%-os súllyal számít.",
+            )
+            quality_cols[3].metric(
+                "No-show",
+                f"{quality_no_show_count} / {quality_shift_count}",
+                help="A hibamutatóban 70%-os súllyal számít.",
+            )
+
+            shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
+            route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
+            with st.expander("Hol volt műszakból késés vagy no-show?", expanded=False):
+                if shift_quality_issues.empty:
+                    st.success("Ehhez a hónaphoz nincs műszakból késés vagy no-show sor.")
+                else:
+                    shift_view = shift_quality_issues.copy()
+                    no_show_series = shift_view.get("no_show", pd.Series(False, index=shift_view.index)).astype(str).str.casefold().isin(["true", "1", "igen", "yes"])
+                    shift_view["Dátum"] = shift_view.get("work_date", pd.Series("", index=shift_view.index)).astype(str).str[:10]
+                    shift_view["Probléma"] = no_show_series.map({True: "No-show", False: "Késői bejelentkezés"})
+                    shift_view["Műszak"] = shift_view.get("shift_name", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    missing_shift_name = shift_view["Műszak"].str.strip().eq("")
+                    if missing_shift_name.any():
+                        shift_view.loc[missing_shift_name, "Műszak"] = (
+                            shift_view.get("shift_start_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                            + "-"
+                            + shift_view.get("shift_end_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                        )
+                    shift_view["Raktár"] = shift_view.get("warehouse", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    shift_view["Giriton bejelentkezés"] = shift_view.get("available_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                    shift_view["Sorba állt"] = shift_view.get("queue_started_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                    shift_view["Megjegyzés"] = shift_view.get("no_show_reason", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    st.dataframe(
+                        shift_view[["Dátum", "Probléma", "Műszak", "Raktár", "Giriton bejelentkezés", "Sorba állt", "Megjegyzés"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=260,
+                    )
+
+            with st.expander("Hol volt címről vagy következő műszakról késés?", expanded=False):
+                if route_quality_issues.empty:
+                    st.success("Ehhez a hónaphoz nincs cím/időablak késéses route sor.")
+                else:
+                    route_issue_view = route_quality_issues.copy()
+                    route_issue_view["Dátum"] = route_issue_view.get("work_date", pd.Series("", index=route_issue_view.index)).astype(str).str[:10]
+                    route_issue_view["Route ID"] = route_issue_view.get("route_id", pd.Series("", index=route_issue_view.index)).astype(str)
+                    route_issue_view["Műszak"] = route_issue_view.get("shift_name", pd.Series("", index=route_issue_view.index)).fillna("").astype(str)
+                    route_issue_view["Késéses cím"] = pd.to_numeric(route_issue_view.get("time_window_late_count", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Összes cím"] = pd.to_numeric(route_issue_view.get("address_count", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Következő műszak késés"] = pd.to_numeric(route_issue_view.get("next_shift_delay_minutes", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Indulás"] = (
+                        route_issue_view.get("planned_departure", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                        + " / "
+                        + route_issue_view.get("real_departure", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                    )
+                    route_issue_view["Vissza"] = (
+                        route_issue_view.get("planned_return", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                        + " / "
+                        + route_issue_view.get("real_return", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                    )
+                    route_issue_view["Story"] = route_issue_view.get("story_text", pd.Series("", index=route_issue_view.index)).fillna("").astype(str).str.slice(0, 180)
+                    st.dataframe(
+                        route_issue_view[["Dátum", "Route ID", "Műszak", "Késéses cím", "Összes cím", "Következő műszak késés", "Indulás", "Vissza", "Story"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=320,
+                    )
+        else:
+            st.info("Ehhez a futárhoz és hónaphoz még nincs dsp_courier_quality_monthly minőségi sor, ezért a százalékos magyarázat nem jeleníthető meg.")
         kiflis_bonus_malus_effect = imported_bonus_total - imported_malus_total
         jitt_bonus_malus_effect = manual_bonus_total - manual_malus_total
         mobile_monthly_bonus = imported_bonus_total + manual_bonus_total
