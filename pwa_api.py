@@ -8497,6 +8497,59 @@ def safe_money_amount(value: Any) -> int:
     return safe_int(value)
 
 
+def safe_percent_value(part: object, total: object) -> float:
+    total_value = safe_int(total)
+    if total_value <= 0:
+        return 0.0
+    return round(safe_int(part) / total_value * 100.0, 2)
+
+
+def quality_level_from_bad_percent(value: float) -> int:
+    if value <= 2.0:
+        return 1
+    if value <= 4.0:
+        return 2
+    if value <= 10.0:
+        return 3
+    return 4
+
+
+def delay_level_from_delay_percent(value: float) -> int:
+    if value <= 1.5:
+        return 1
+    if value <= 3.0:
+        return 2
+    if value <= 5.0:
+        return 3
+    return 4
+
+
+def build_expected_quality_payload(quality_summary: dict[str, Any], total_orders: int) -> dict[str, Any]:
+    total_shifts = safe_int(quality_summary.get("totalShifts"))
+    late_shift_count = safe_int(quality_summary.get("lateShiftCount"))
+    no_show_count = safe_int(quality_summary.get("noShowCount"))
+    uncleaned_delay_count = safe_int(quality_summary.get("uncleanedTimeWindowLateCount"))
+    late_percent = safe_percent_value(late_shift_count, total_shifts)
+    no_show_percent = safe_percent_value(no_show_count, total_shifts)
+    route_quality_bad_percent = round((0.7 * no_show_percent) + (0.3 * late_percent), 2)
+    delay_percent = safe_percent_value(uncleaned_delay_count, total_orders)
+    return {
+        "shiftCount": total_shifts,
+        "orderCount": safe_int(total_orders),
+        "lateShiftCount": late_shift_count,
+        "noShowCount": no_show_count,
+        "uncleanedDelayCount": uncleaned_delay_count,
+        "cleanedDelayCount": safe_int(quality_summary.get("cleanedTimeWindowLateCount")),
+        "delayPercent": delay_percent,
+        "latePercent": late_percent,
+        "noShowPercent": no_show_percent,
+        "routeQualityBadPercent": route_quality_bad_percent,
+        "complianceScorePercent": round(100.0 - route_quality_bad_percent, 2),
+        "delayLevel": delay_level_from_delay_percent(delay_percent),
+        "routeQualityLevel": quality_level_from_bad_percent(route_quality_bad_percent),
+    }
+
+
 def summarize_api_route_delay_orders(route: dict[str, Any]) -> dict[str, Any]:
     delay_orders = route.get("delayOrders") if isinstance(route.get("delayOrders"), list) else []
     cleaned_count = 0
@@ -9542,11 +9595,9 @@ def compact_courier_hub_route_detail_raw(row: dict[str, Any]) -> dict[str, Any] 
         "routeDelayCount": compact_hub_route_delay_count(stops),
         "routeDelayMinutes": compact_hub_route_delay_minutes(stops),
         "tipHuf": safe_float_value(
-            response_json.get("customerTipsTotal")
-            or response_json.get("tipsHuf")
+            response_json.get("tipsHuf")
             or response_json.get("tipHuf")
-            or shift.get("customerTipsTotal")
-        ),
+        ) or safe_money_amount(response_json.get("customerTipsTotal") or shift.get("customerTipsTotal")),
         "routeType": courier_hub_route_type(
             response_json.get("routeLayer")
             or response_json.get("routeType")
@@ -10111,6 +10162,7 @@ def build_route_quality_summary(
     return {
         "noShowCount": no_show_count,
         "lateShiftCount": late_shift_count,
+        "totalShifts": safe_int(shift_overview_quality.get("totalShifts")) or sum(safe_int(row.get("shift_count")) for row in daily_rows),
         "uncleanedTimeWindowLateCount": uncleaned_late_count,
         "uncleanedTimeWindowLateMinutes": uncleaned_late_minutes,
         "cleanedTimeWindowLateCount": cleaned_late_count,
@@ -10600,6 +10652,8 @@ def build_monthly_courier_statistics(
         })
         total_orders = sum(safe_int(row.get("orders")) for row in daily_history_rows)
         route_tips = sum(safe_int(row.get("tipHuf")) for row in daily_history_rows)
+        if not route_tips:
+            route_tips = sum(safe_int(row.get("tips_huf")) for row in route_rows)
         average_orders = round(total_orders / total_routes, 1) if total_routes else 0
         shift_keys = {
             f"{str(row.get('date') or '')[:10]}|{str((row.get('routeStory') or {}).get('shiftName') or row.get('plannedStartAt') or '').strip()}"
@@ -10654,6 +10708,7 @@ def build_monthly_courier_statistics(
             shift_rows=attendance_shift_rows,
             shift_overview_quality=shift_overview_quality,
         )
+        expected_quality = build_expected_quality_payload(route_quality_summary, total_orders)
         return {
             "month": period_start.strftime("%Y-%m"),
             "courier": {"id": courier_id, "name": courier_name},
@@ -10683,6 +10738,7 @@ def build_monthly_courier_statistics(
                 "problemRows": sum(1 for row in route_quality_records if not row.get("quality_ok")),
             },
             "qualitySummary": route_quality_summary,
+            "expectedQuality": expected_quality,
             "rawRouteOverview": {
                 "source": (
                     "courier_hub_route_statistics + courier_route_performance_detail_raw"
@@ -11098,6 +11154,7 @@ def build_monthly_courier_statistics(
         shift_rows=attendance_shift_rows,
         shift_overview_quality=shift_overview_quality,
     )
+    expected_quality = build_expected_quality_payload(route_quality_summary, total_orders)
 
     return {
         "month": period_start.strftime("%Y-%m"),
@@ -11128,6 +11185,7 @@ def build_monthly_courier_statistics(
             "problemRows": sum(1 for row in route_quality_records if not row.get("quality_ok")),
         },
         "qualitySummary": route_quality_summary,
+        "expectedQuality": expected_quality,
         "rawRouteOverview": {
             "source": route_source or "",
             "routes": route_rows,

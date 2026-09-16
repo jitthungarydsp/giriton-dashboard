@@ -473,6 +473,10 @@ function formatAverage(value) {
   return new Intl.NumberFormat("hu-HU", { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Number(value || 0));
 }
 
+function formatPercent(value) {
+  return `${new Intl.NumberFormat("hu-HU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))}%`;
+}
+
 function formatHuf(value) {
   return `${formatCount(value)} Ft`;
 }
@@ -1538,9 +1542,12 @@ function renderStatistics() {
   const average = Number(summary.averageOrdersPerRoute || 0);
   const amountsHidden = Boolean(payload.amountsHidden);
   const rating = payload.customerRating || {};
+  const expectedQuality = payload.expectedQuality || {};
   const ratingValue = rating.available && rating.averageRating !== null
     ? formatAverage(rating.averageRating)
     : "Előkészítve";
+  const delayLevel = Number(expectedQuality.delayLevel || 0);
+  const routeQualityLevel = Number(expectedQuality.routeQualityLevel || 0);
 
   const viewedUser = payload.viewingAs || payload.courier || state.workflow?.viewingAs || {};
   const previewNotice = state.user?.canPreviewCouriers && state.workflowPreviewCourierId
@@ -1559,6 +1566,16 @@ function renderStatistics() {
     statisticCard("Cím", formatCount(orders), "rendelések"),
     statisticCard("Átlag", formatAverage(average), "cím / kör"),
     statisticCard("Borravaló", formatHuf(summary.tipsTotalHuf), "összesen"),
+    statisticCard(
+      "Késési mutató",
+      delayLevel ? `${formatCount(delayLevel)}. szint` : "-",
+      `${formatPercent(expectedQuality.delayPercent)} | ${formatCount(expectedQuality.uncleanedDelayCount)} / ${formatCount(expectedQuality.orderCount)} cím`
+    ),
+    statisticCard(
+      "Túramegfelelés",
+      routeQualityLevel ? `${formatCount(routeQualityLevel)}. szint` : "-",
+      `${formatPercent(expectedQuality.complianceScorePercent)} | ${formatCount(expectedQuality.noShowCount)} no-show, ${formatCount(expectedQuality.lateShiftCount)} késői`
+    ),
     statisticCard("Futár bevétele", "Rejtve", "mobil nézetben"),
     statisticCard("Ügyfélértékelés", ratingValue, rating.available ? `${formatCount(rating.ratingCount)} értékelés` : "későbbi kimutatáshoz"),
   ].join("");
