@@ -1119,6 +1119,111 @@ def read_vehicle_assignment_rows(
     ]
 
 
+def month_starts_between(start: date, end: date) -> list[date]:
+    months: list[date] = []
+    cursor = start.replace(day=1)
+    last = end.replace(day=1)
+    while cursor <= last:
+        months.append(cursor)
+        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return months
+
+
+def read_route_vehicle_assignment_rows(
+    start: date,
+    end: date,
+    *,
+    limit: int = 10000,
+) -> list[dict[str, Any]]:
+    select_columns = (
+        "courier_id,courier_name,work_date,shift_name,route_id,warehouse_code,"
+        "vehicle_plate,route_type_label,route_assigned_at,updated_at"
+    )
+    stat_rows = optional_supabase_rows_paged(
+        "courier_hub_route_statistics",
+        params={
+            "select": select_columns,
+            "work_date": f"gte.{start.isoformat()}",
+            "and": f"(work_date.lte.{end.isoformat()})",
+            "order": "work_date.desc,route_assigned_at.desc.nullslast,updated_at.desc.nullslast",
+        },
+        timeout=45,
+        page_size=1000,
+        max_rows=limit,
+    )
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for row in stat_rows:
+        plate = str(row.get("vehicle_plate") or "").strip()
+        if not plate:
+            continue
+        work_date = str(row.get("work_date") or "")[:10]
+        if not (start.isoformat() <= work_date <= end.isoformat()):
+            continue
+        key = (work_date, str(row.get("courier_id") or ""), str(row.get("route_id") or ""), plate.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "source_name": "Courier Hub route statisztika",
+            "work_date": work_date,
+            "driver_name": str(row.get("courier_name") or "").strip() or f"Futár {row.get('courier_id') or ''}".strip(),
+            "shift_start": normalize_time(row.get("shift_name")),
+            "shift_end": "",
+            "car": str(row.get("warehouse_code") or "").strip(),
+            "license_plate": plate,
+            "shift_type": str(row.get("route_type_label") or row.get("route_id") or "").strip(),
+            "fetched_at": str(row.get("updated_at") or row.get("route_assigned_at") or "").strip(),
+        })
+
+    if len(rows) >= limit:
+        return rows[:limit]
+
+    names = courier_name_lookup()
+    for month_value in month_starts_between(start, end):
+        raw_rows = optional_supabase_rows_paged(
+            "courier_route_performance_detail_raw",
+            params={
+                "select": "courier_id,route_id,warehouse_id,response_json,status_code,updated_at",
+                "year": f"eq.{month_value.year}",
+                "month": f"eq.{month_value.month}",
+                "status_code": "eq.200",
+                "order": "courier_id.asc,route_id.asc",
+            },
+            timeout=45,
+            page_size=1000,
+            max_rows=max(1000, limit),
+        )
+        for raw in raw_rows:
+            compact = compact_courier_hub_route_detail_raw(raw)
+            if not compact:
+                continue
+            plate = str(compact.get("vehiclePlate") or "").strip()
+            work_date = str(compact.get("date") or "")[:10]
+            if not plate or not (start.isoformat() <= work_date <= end.isoformat()):
+                continue
+            courier_id = str(raw.get("courier_id") or "").strip()
+            route_id = str(compact.get("routeId") or raw.get("route_id") or "").strip()
+            key = (work_date, courier_id, route_id, plate.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "source_name": "Courier Hub route detail",
+                "work_date": work_date,
+                "driver_name": names.get(courier_id) or f"Futár {courier_id}".strip(),
+                "shift_start": normalize_time(compact.get("shiftName")),
+                "shift_end": "",
+                "car": str(compact.get("vehicleModel") or f"BUD{compact.get('warehouseId') or ''}").strip(),
+                "license_plate": plate,
+                "shift_type": route_id,
+                "fetched_at": str(raw.get("updated_at") or compact.get("routeAssignedAt") or "").strip(),
+            })
+            if len(rows) >= limit:
+                return rows[:limit]
+    return rows[:limit]
+
+
 def live_vehicle_payload(row: dict[str, Any] | None) -> dict[str, str] | None:
     if not row:
         return None
@@ -13788,7 +13893,20 @@ def search_vehicle_assignments(
             pass
     person_searches = {value for value in person_searches if value}
     search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
-    rows = read_live_vehicle_assignment_rows(limit=1000) + read_vehicle_assignment_rows(start, end, limit=10000)
+    rows = (
+        read_live_vehicle_assignment_rows(limit=1000)
+        + read_route_vehicle_assignment_rows(start, end, limit=10000)
+        + read_vehicle_assignment_rows(start, end, limit=10000)
+    )
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("work_date") or "")[:10],
+            normalize_time(row.get("shift_start")),
+            str(row.get("fetched_at") or ""),
+        ),
+        reverse=True,
+    )
     matches = []
     seen: set[tuple[str, str, str, str, str]] = set()
     for row in rows:
