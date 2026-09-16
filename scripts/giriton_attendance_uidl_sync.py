@@ -37,9 +37,80 @@ def env_first(*names: str) -> str:
     return ""
 
 
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8-sig").strip()
+
+
+def parse_json_or_curl(text: str) -> Any:
+    value = clean(text)
+    if not value:
+        return None
+    if value[0] in "[{":
+        return json.loads(value)
+    return parse_curl_command(value)
+
+
+def parse_curl_command(command: str) -> dict[str, Any]:
+    text = command.replace("`", "\\")
+    text = re.sub(r"\\\s*\r?\n", " ", text)
+    text = re.sub(r"\^\s*\r?\n", " ", text)
+
+    plain_text = text.replace("^", "")
+    url = ""
+    for match in re.finditer(r"https://kiflihu\.giriton\.com/[^\s\]\)\"]+", plain_text):
+        candidate = match.group(0).replace("\\&", "&")
+        if "v-r=uidl" in candidate:
+            url = candidate
+            break
+
+    cookie = ""
+    cookie_match = re.search(
+        r"(?:-b|--cookie)\s+\^?\"(?P<cookie>.*?)\^?\"",
+        text,
+        flags=re.I | re.S,
+    )
+    if cookie_match:
+        cookie = cookie_match.group("cookie").replace("^", "").strip()
+    else:
+        header_cookie_match = re.search(
+            r"(?:-H|--header)\s+\^?\"cookie:\s*(?P<cookie>.*?)\^?\"",
+            text,
+            flags=re.I | re.S,
+        )
+        if header_cookie_match:
+            cookie = header_cookie_match.group("cookie").replace("^", "").strip()
+
+    data_match = re.search(
+        r"(?:--data-raw|--data-binary|--data|-d)\s+\^?\"(?P<data>.*)\^?\"",
+        text,
+        flags=re.I | re.S,
+    )
+    if not data_match:
+        raise RuntimeError("A cURL-ben nem talaltam UIDL JSON bodyt (--data-raw vagy -d).")
+
+    data = data_match.group("data").strip().replace("^", "")
+    try:
+        request_json = json.loads(data)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"A cURL body nem ervenyes JSON: {error}") from error
+
+    return {
+        "url": url or uidl_url(),
+        "cookie": cookie,
+        "request_json": request_json,
+    }
+
+
 def read_request_source(cli_request_file: str = "") -> Any:
     if cli_request_file:
-        return json.loads(Path(cli_request_file).read_text(encoding="utf-8-sig"))
+        return parse_json_or_curl(read_text(Path(cli_request_file)))
+
+    curl_inline = env_first(
+        "GIRITON_ATTENDANCE_UIDL_CURL",
+        "GIRITON_UIDL_CURL",
+    )
+    if curl_inline:
+        return parse_curl_command(curl_inline)
 
     sequence_inline = env_first(
         "GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON",
@@ -53,14 +124,14 @@ def read_request_source(cli_request_file: str = "") -> Any:
         "GIRITON_UIDL_REQUEST_JSON",
     )
     if inline:
-        return json.loads(inline)
+        return parse_json_or_curl(inline)
 
     path = env_first(
         "GIRITON_ATTENDANCE_UIDL_REQUEST_FILE",
         "GIRITON_UIDL_REQUEST_FILE",
     )
     if path:
-        return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return parse_json_or_curl(read_text(Path(path)))
 
     return None
 
@@ -103,6 +174,7 @@ def normalize_request_templates(source: Any) -> list[dict[str, Any]]:
                 templates.append(
                     {
                         "url": clean(item.get("url")) or uidl_url(),
+                        "cookie": clean(item.get("cookie")),
                         "request_json": request_json,
                     }
                 )
@@ -234,7 +306,8 @@ def fetch_attendance_uidl_payloads(
     timeout: int = 60,
 ) -> list[Any] | None:
     templates = normalize_request_templates(read_request_source(request_file))
-    cookie = uidl_cookie()
+    template_cookie = next((clean(template.get("cookie")) for template in templates if clean(template.get("cookie"))), "")
+    cookie = uidl_cookie() or template_cookie
     if not templates or not cookie:
         return None
 
