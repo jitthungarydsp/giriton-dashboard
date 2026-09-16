@@ -1,61 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<robot generator="Robot 6.1.1 (Python 3.11.5 on win32)" generated="20260913 19:16:52.134" rpa="false" schemaversion="4">
+<robot generator="Robot 6.1.1 (Python 3.11.5 on win32)" generated="20260916 05:23:40.456" rpa="false" schemaversion="4">
 <suite id="s1" name="Giriton Attendance Github" source="C:\Giriton\giriton-dashboard\giriton_attendance_github.robot">
 <test id="s1-t1" name="Giriton Attendance Github" line="16">
 <kw name="Bejelentkezes" library="keywords_github">
 <kw name="Create Github Chrome Options" library="chrome_options">
 <var>${options}</var>
-<msg timestamp="20260913 19:16:59.517" level="INFO">${options} = &lt;selenium.webdriver.chrome.options.Options object at 0x00000258C4BA2E50&gt;</msg>
-<status status="PASS" starttime="20260913 19:16:59.510" endtime="20260913 19:16:59.518"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.699" endtime="20260916 05:23:53.699"/>
 </kw>
 <kw name="Open Browser" library="SeleniumLibrary">
 <arg>https://kiflihu.giriton.com/</arg>
 <arg>chrome</arg>
 <arg>options=${options}</arg>
 <doc>Opens a new browser instance to the optional ``url``.</doc>
-<msg timestamp="20260913 19:16:59.519" level="INFO">Opening browser 'chrome' to base url 'https://kiflihu.giriton.com/'.</msg>
-<status status="PASS" starttime="20260913 19:16:59.518" endtime="20260913 19:17:02.095"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.699" endtime="20260916 05:23:53.701"/>
 </kw>
 <kw name="Set Window Size" library="SeleniumLibrary">
 <arg>1920</arg>
 <arg>1080</arg>
 <doc>Sets current windows size to given ``width`` and ``height``.</doc>
-<status status="PASS" starttime="20260913 19:17:02.095" endtime="20260913 19:17:02.104"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.701" endtime="20260916 05:23:53.702"/>
 </kw>
 <kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
 <arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
 <arg>timeout=30s</arg>
 <doc>Waits until the element ``locator`` is visible.</doc>
-<status status="PASS" starttime="20260913 19:17:02.104" endtime="20260913 19:17:03.040"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.702" endtime="20260916 05:23:53.706"/>
 </kw>
 <kw name="Input Text" library="SeleniumLibrary">
 <arg>locator=//*[@id="CompanyLoginPanel-tfUserLogin"]</arg>
 <arg>text=%{GIRITON_USER}</arg>
 <doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
-<msg timestamp="20260913 19:17:03.042" level="INFO">Typing text 'jitthungary@gmail.com' into text field '//*[@id="CompanyLoginPanel-tfUserLogin"]'.</msg>
-<status status="PASS" starttime="20260913 19:17:03.041" endtime="20260913 19:17:03.175"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.706" endtime="20260916 05:23:53.710"/>
 </kw>
 <kw name="Input Text" library="SeleniumLibrary">
 <arg>locator=//*[@id="CompanyLoginPanel-pfUserPassword"]</arg>
 <arg>text=%{GIRITON_PASSWORD}</arg>
 <doc>Types the given ``text`` into the text field identified by ``locator``.</doc>
-<msg timestamp="20260913 19:17:03.176" level="INFO">Typing text 'password0707..' into text field '//*[@id="CompanyLoginPanel-pfUserPassword"]'.</msg>
-<status status="PASS" starttime="20260913 19:17:03.175" endtime="20260913 19:17:03.240"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.710" endtime="20260916 05:23:53.712"/>
 </kw>
 <kw name="Press Keys" library="SeleniumLibrary">
 <arg>//*[@id="CompanyLoginPanel-pfUserPassword"]</arg>
 <arg>ENTER</arg>
 <doc>Simulates the user pressing key(s) to an element or on the active browser.</doc>
-<msg timestamp="20260913 19:17:03.241" level="INFO">Sending key(s) ('ENTER',) to //*[@id="CompanyLoginPanel-pfUserPassword"] element.</msg>
-<msg timestamp="20260913 19:17:03.523" level="INFO">Pressing special key ENTER to element.</msg>
-<msg timestamp="20260913 19:17:03.523" level="INFO">Releasing special key ENTER.</msg>
-<status status="PASS" starttime="20260913 19:17:03.241" endtime="20260913 19:17:03.541"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.713" endtime="20260916 05:23:53.714"/>
 </kw>
 <kw name="Sleep" library="BuiltIn">
 <arg>2s</arg>
 <doc>Pauses the test executed for the given time.</doc>
-<msg timestamp="20260913 19:17:05.542" level="INFO">Slept 2 seconds</msg>
-<status status="PASS" starttime="20260913 19:17:03.542" endtime="20260913 19:17:05.542"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.714" endtime="20260916 05:23:53.715"/>
 </kw>
 <kw name="Run Keyword And Return Status" library="BuiltIn">
 <var>${logged_in}</var>
@@ -67,64 +59,104 @@
 <arg>locator=//*[@id="layMenuItems"]</arg>
 <arg>timeout=8s</arg>
 <doc>Waits until the element ``locator`` appears on the current page.</doc>
-<status status="PASS" starttime="20260913 19:17:05.543" endtime="20260913 19:17:05.572"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.716" endtime="20260916 05:23:53.718"/>
 </kw>
-<msg timestamp="20260913 19:17:05.573" level="INFO">${logged_in} = True</msg>
-<status status="PASS" starttime="20260913 19:17:05.543" endtime="20260913 19:17:05.573"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.715" endtime="20260916 05:23:53.718"/>
 </kw>
 <if>
 <branch type="IF" condition="not ${logged_in}">
 <kw name="Execute Javascript" library="SeleniumLibrary">
 <arg>const visible = el =&gt; !!el &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0; const buttons = [...document.querySelectorAll('.v-button, [role="button"], button, input[type="submit"]')].filter(visible); const loginButton = buttons.find(el =&gt; /login|log in|sign in|bejelentkez/i.test((el.innerText || el.value || '').trim())) || buttons[buttons.length - 1]; if (!loginButton) { throw new Error('Visible login button not found'); } loginButton.click();</arg>
 <doc>Executes the given JavaScript code with possible arguments.</doc>
-<status status="NOT RUN" starttime="20260913 19:17:05.573" endtime="20260913 19:17:05.573"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.719" endtime="20260916 05:23:53.719"/>
 </kw>
-<status status="NOT RUN" starttime="20260913 19:17:05.573" endtime="20260913 19:17:05.573"/>
+<status status="PASS" starttime="20260916 05:23:53.718" endtime="20260916 05:23:53.719"/>
 </branch>
-<status status="PASS" starttime="20260913 19:17:05.573" endtime="20260913 19:17:05.573"/>
+<status status="PASS" starttime="20260916 05:23:53.718" endtime="20260916 05:23:53.719"/>
 </if>
 <kw name="Wait Until Page Contains Element" library="SeleniumLibrary">
 <arg>locator=//*[@id="layMenuItems"]</arg>
 <arg>timeout=30s</arg>
 <doc>Waits until the element ``locator`` appears on the current page.</doc>
-<status status="PASS" starttime="20260913 19:17:05.573" endtime="20260913 19:17:05.583"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.719" endtime="20260916 05:23:53.721"/>
 </kw>
-<status status="PASS" starttime="20260913 19:16:59.510" endtime="20260913 19:17:05.584"/>
+<status status="PASS" starttime="20260916 05:23:53.698" endtime="20260916 05:23:53.722"/>
 </kw>
 <kw name="Click Attendance" library="keywords_github">
 <kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
 <arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
 <arg>timeout=30s</arg>
 <doc>Waits until the element ``locator`` is visible.</doc>
-<status status="PASS" starttime="20260913 19:17:05.584" endtime="20260913 19:17:05.606"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.722" endtime="20260916 05:23:53.724"/>
 </kw>
 <kw name="Click Element" library="SeleniumLibrary">
 <arg>xpath=//*[@id="layMenuItems"]/div[2]/div/span</arg>
 <doc>Click the element identified by ``locator``.</doc>
-<msg timestamp="20260913 19:17:05.606" level="INFO">Clicking element 'xpath=//*[@id="layMenuItems"]/div[2]/div/span'.</msg>
-<status status="PASS" starttime="20260913 19:17:05.606" endtime="20260913 19:17:05.657"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.725" endtime="20260916 05:23:53.726"/>
 </kw>
-<status status="PASS" starttime="20260913 19:17:05.584" endtime="20260913 19:17:05.657"/>
+<status status="PASS" starttime="20260916 05:23:53.722" endtime="20260916 05:23:53.726"/>
+</kw>
+<kw name="Run Keyword And Ignore Error" library="BuiltIn">
+<arg>keywords_github.Select All Departments</arg>
+<doc>Runs the given keyword with the given arguments and ignores possible error.</doc>
+<kw name="Select All Departments" library="keywords_github">
+<kw name="Wait Until Element Is Visible" library="SeleniumLibrary">
+<arg>xpath=//span[contains(@class,'v-button-caption') and (contains(normalize-space(.),'Just in Time Kft') or contains(normalize-space(.),'multiple departm') or contains(normalize-space(.),'all departments'))]</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until the element ``locator`` is visible.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.727" endtime="20260916 05:23:53.729"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const departmentButton=[...document.querySelectorAll('.v-button')].find(el =&gt; { const text=(el.innerText || '').trim(); return (text.includes('Just in Time Kft') || text.includes('multiple departm') || text.includes('all departments')) &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0; }); if(departmentButton){departmentButton.click();} else {throw new Error('Visible department button not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.729" endtime="20260916 05:23:53.730"/>
+</kw>
+<kw name="Wait Until Page Contains" library="SeleniumLibrary">
+<arg>Departments</arg>
+<arg>timeout=30s</arg>
+<doc>Waits until ``text`` appears on the current page.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.730" endtime="20260916 05:23:53.731"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const label=[...document.querySelectorAll('label')].find(el =&gt; (el.innerText || '').includes('all departments') &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(label){label.click();} else {throw new Error('Visible all departments label not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.732" endtime="20260916 05:23:53.732"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>1s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.732" endtime="20260916 05:23:53.732"/>
+</kw>
+<kw name="Execute Javascript" library="SeleniumLibrary">
+<arg>const button=[...document.querySelectorAll('.v-button')].find(el =&gt; (el.innerText || '').trim() === 'Choose' &amp;&amp; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(button){button.click();} else {throw new Error('Visible Choose button not found');}</arg>
+<doc>Executes the given JavaScript code with possible arguments.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.732" endtime="20260916 05:23:53.733"/>
+</kw>
+<kw name="Sleep" library="BuiltIn">
+<arg>3s</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="NOT RUN" starttime="20260916 05:23:53.733" endtime="20260916 05:23:53.733"/>
+</kw>
+<status status="PASS" starttime="20260916 05:23:53.727" endtime="20260916 05:23:53.733"/>
+</kw>
+<status status="NOT RUN" starttime="20260916 05:23:53.726" endtime="20260916 05:23:53.733"/>
 </kw>
 <kw name="Sleep" library="BuiltIn">
 <arg>5s</arg>
 <doc>Pauses the test executed for the given time.</doc>
-<msg timestamp="20260913 19:17:10.659" level="INFO">Slept 5 seconds</msg>
-<status status="PASS" starttime="20260913 19:17:05.658" endtime="20260913 19:17:10.659"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.733" endtime="20260916 05:23:53.733"/>
 </kw>
 <kw name="Get Current Date" library="DateTime">
 <var>${today}</var>
 <arg>result_format=%Y-%m-%d</arg>
 <doc>Returns current local or UTC time with an optional increment.</doc>
-<msg timestamp="20260913 19:17:10.660" level="INFO">${today} = 2026-09-13</msg>
-<status status="PASS" starttime="20260913 19:17:10.659" endtime="20260913 19:17:10.660"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.735" endtime="20260916 05:23:53.735"/>
 </kw>
 <kw name="Set Variable" library="BuiltIn">
 <var>${base_date}</var>
 <arg>${today}</arg>
 <doc>Returns the given values which can then be assigned to a variables.</doc>
-<msg timestamp="20260913 19:17:10.660" level="INFO">${base_date} = 2026-09-13</msg>
-<status status="PASS" starttime="20260913 19:17:10.660" endtime="20260913 19:17:10.660"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.735" endtime="20260916 05:23:53.735"/>
 </kw>
 <if>
 <branch type="IF" condition="'${RUN_START_DATE}' != ''">
@@ -132,12 +164,11 @@
 <var>${base_date}</var>
 <arg>${RUN_START_DATE}</arg>
 <doc>Returns the given values which can then be assigned to a variables.</doc>
-<msg timestamp="20260913 19:17:10.662" level="INFO">${base_date} = 2026-09-13</msg>
-<status status="PASS" starttime="20260913 19:17:10.662" endtime="20260913 19:17:10.662"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.736" endtime="20260916 05:23:53.736"/>
 </kw>
-<status status="PASS" starttime="20260913 19:17:10.661" endtime="20260913 19:17:10.662"/>
+<status status="PASS" starttime="20260916 05:23:53.735" endtime="20260916 05:23:53.736"/>
 </branch>
-<status status="PASS" starttime="20260913 19:17:10.661" endtime="20260913 19:17:10.662"/>
+<status status="PASS" starttime="20260916 05:23:53.735" endtime="20260916 05:23:53.736"/>
 </if>
 <kw name="Add Time To Date" library="DateTime">
 <var>${attendance_datum_giriton}</var>
@@ -145,8 +176,7 @@
 <arg>0 days</arg>
 <arg>result_format=%d/%m/%Y</arg>
 <doc>Adds time to date and returns the resulting date.</doc>
-<msg timestamp="20260913 19:17:10.664" level="INFO">${attendance_datum_giriton} = 13/09/2026</msg>
-<status status="PASS" starttime="20260913 19:17:10.663" endtime="20260913 19:17:10.664"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.736" endtime="20260916 05:23:53.736"/>
 </kw>
 <kw name="Add Time To Date" library="DateTime">
 <var>${attendance_datum_sheet}</var>
@@ -154,68 +184,57 @@
 <arg>0 days</arg>
 <arg>result_format=%Y-%m-%d</arg>
 <doc>Adds time to date and returns the resulting date.</doc>
-<msg timestamp="20260913 19:17:10.665" level="INFO">${attendance_datum_sheet} = 2026-09-13</msg>
-<status status="PASS" starttime="20260913 19:17:10.665" endtime="20260913 19:17:10.665"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.736" endtime="20260916 05:23:53.736"/>
 </kw>
 <kw name="Log To Console" library="BuiltIn">
 <arg>ATTENDANCE_DATUM=${attendance_datum_giriton}</arg>
 <doc>Logs the given message to the console.</doc>
-<status status="PASS" starttime="20260913 19:17:10.666" endtime="20260913 19:17:10.666"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.736" endtime="20260916 05:23:53.736"/>
 </kw>
 <kw name="Install Vaadin Response Capture" library="giriton_attendance_scraper">
-<status status="PASS" starttime="20260913 19:17:10.668" endtime="20260913 19:17:10.702"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.736" endtime="20260916 05:23:53.736"/>
 </kw>
 <kw name="Execute Javascript" library="SeleniumLibrary">
 <arg>const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el =&gt; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));</arg>
 <arg>ARGUMENTS</arg>
 <arg>${attendance_datum_giriton}</arg>
 <doc>Executes the given JavaScript code with possible arguments.</doc>
-<msg timestamp="20260913 19:17:10.703" level="INFO">Executing JavaScript:
-const input=[...document.querySelectorAll('input.v-datefield-textfield')].find(el =&gt; el.offsetWidth &gt; 0 &amp;&amp; el.offsetHeight &gt; 0); if(!input){throw new Error('Visible date input not found');} input.focus(); input.value=arguments[0]; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true})); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true})); input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));
-By using argument:
-'13/09/2026'</msg>
-<status status="PASS" starttime="20260913 19:17:10.703" endtime="20260913 19:17:10.718"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.738" endtime="20260916 05:23:53.738"/>
 </kw>
 <kw name="Sleep" library="BuiltIn">
 <arg>5s</arg>
 <doc>Pauses the test executed for the given time.</doc>
-<msg timestamp="20260913 19:17:15.719" level="INFO">Slept 5 seconds</msg>
-<status status="PASS" starttime="20260913 19:17:10.719" endtime="20260913 19:17:15.719"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.738" endtime="20260916 05:23:53.738"/>
 </kw>
 <kw name="Scrape Attendance Rows" library="giriton_attendance_scraper">
 <var>${attendance_rows}</var>
 <arg>${attendance_datum_sheet}</arg>
-<msg timestamp="20260913 19:17:38.196" level="INFO">${attendance_rows} = [['2026-09-13', 'Árva Tamás', '9:15:1k, 14:00:1k', 'Work', '09:09:32', '', 'Activity Start/End Time Details Project Work \uf04b 09:09:32 \uf10a\uf02b'], ['2026-09-13', 'Bárándi Bendegúz', 'BUD2_15:45:...</msg>
-<status status="PASS" starttime="20260913 19:17:15.720" endtime="20260913 19:17:38.196"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.738" endtime="20260916 05:23:53.738"/>
 </kw>
 <kw name="Get Length" library="BuiltIn">
 <var>${attendance_count}</var>
 <arg>${attendance_rows}</arg>
 <doc>Returns and logs the length of the given item as an integer.</doc>
-<msg timestamp="20260913 19:17:38.198" level="INFO">Length is 21</msg>
-<msg timestamp="20260913 19:17:38.198" level="INFO">${attendance_count} = 21</msg>
-<status status="PASS" starttime="20260913 19:17:38.197" endtime="20260913 19:17:38.198"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.739" endtime="20260916 05:23:53.739"/>
 </kw>
 <kw name="Log To Console" library="BuiltIn">
 <arg>ATTENDANCE_SOROK_SZAMA=${attendance_count}</arg>
 <doc>Logs the given message to the console.</doc>
-<status status="PASS" starttime="20260913 19:17:38.198" endtime="20260913 19:17:38.200"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.739" endtime="20260916 05:23:53.739"/>
 </kw>
 <kw name="Write Giriton Attendance Db" library="giriton_attendance_db">
 <var>${attendance_result}</var>
 <arg>${attendance_rows}</arg>
-<msg timestamp="20260913 19:17:39.717" level="INFO">OK | Giriton_Attendance DB status=ok rows=21 host=ohhjfjevwfgxyvljovuw.supabase.co dates=2026-09-13 returned_rows=21 stored_rows=21</msg>
-<msg timestamp="20260913 19:17:39.717" level="INFO">${attendance_result} = OK | Giriton_Attendance DB status=ok rows=21 host=ohhjfjevwfgxyvljovuw.supabase.co dates=2026-09-13 returned_rows=21 stored_rows=21</msg>
-<status status="PASS" starttime="20260913 19:17:38.200" endtime="20260913 19:17:39.717"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.739" endtime="20260916 05:23:53.739"/>
 </kw>
 <kw name="Log To Console" library="BuiltIn">
 <arg>ATTENDANCE_DB=${attendance_result}</arg>
 <doc>Logs the given message to the console.</doc>
-<status status="PASS" starttime="20260913 19:17:39.717" endtime="20260913 19:17:39.719"/>
+<status status="NOT RUN" starttime="20260916 05:23:53.739" endtime="20260916 05:23:53.740"/>
 </kw>
-<status status="PASS" starttime="20260913 19:16:59.509" endtime="20260913 19:17:39.719"/>
+<status status="PASS" starttime="20260916 05:23:53.695" endtime="20260916 05:23:53.740"/>
 </test>
-<status status="PASS" starttime="20260913 19:16:52.137" endtime="20260913 19:17:39.721"/>
+<status status="PASS" starttime="20260916 05:23:40.460" endtime="20260916 05:23:53.740"/>
 </suite>
 <statistics>
 <total>

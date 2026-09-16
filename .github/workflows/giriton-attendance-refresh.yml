@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: giriton-attendance-refresh
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   run:

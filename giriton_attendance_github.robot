@@ -16,6 +16,7 @@ ${RUN_START_DATE}
 Giriton Attendance Github
     keywords_github.Bejelentkezes
     keywords_github.Click Attendance
+    Run Keyword And Ignore Error    keywords_github.Select All Departments
     Sleep    5s
 
     ${today}=    Get Current Date
