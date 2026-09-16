@@ -299,6 +299,18 @@ def raise_for_uidl_problem(payload: Any) -> None:
             raise RuntimeError(f"Giriton UIDL app error: {message}")
 
 
+def attendance_uidl_missing_reason(request_file: str = "") -> str:
+    templates = normalize_request_templates(read_request_source(request_file))
+    if not templates:
+        return "missing_uidl_request_sequence"
+
+    template_cookie = next((clean(template.get("cookie")) for template in templates if clean(template.get("cookie"))), "")
+    if not (uidl_cookie() or template_cookie):
+        return "missing_uidl_cookie"
+
+    return "missing_uidl_cookie_or_attendance_request_sequence"
+
+
 def fetch_attendance_uidl_payloads(
     work_date: date,
     *,
@@ -376,7 +388,7 @@ def sync_giriton_attendance_uidl_direct(
     if payloads is None:
         return {
             "status": "skipped",
-            "reason": "missing_uidl_cookie_or_attendance_request_sequence",
+            "reason": attendance_uidl_missing_reason(request_file),
             "work_date": target_date.isoformat(),
             "rows": 0,
         }
@@ -421,6 +433,11 @@ def main() -> None:
     parser.add_argument("--date", default="", help="Nap YYYY-MM-DD. Üresen ma.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--require-rows",
+        action="store_true",
+        help="Hibaval alljon meg, ha nem sikerult sort menteni.",
+    )
+    parser.add_argument(
         "--request-file",
         default="",
         help="DevToolsból mentett UIDL request vagy request-sorozat JSON.",
@@ -435,6 +452,11 @@ def main() -> None:
         timeout=args.timeout,
     )
     print("GIRITON_ATTENDANCE_UIDL_SYNC=" + json.dumps(result, ensure_ascii=False, sort_keys=True))
+    if args.require_rows and (
+        result.get("status") in {"skipped", "empty"}
+        or int(result.get("rows") or 0) <= 0
+    ):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
