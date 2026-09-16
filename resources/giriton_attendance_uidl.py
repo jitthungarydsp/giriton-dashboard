@@ -100,6 +100,28 @@ def extract_grid_row_dicts(value: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def merged_state(value: Any) -> dict[str, dict[str, Any]]:
+    state: dict[str, dict[str, Any]] = {}
+    for payload in walk_payloads(value):
+        if not isinstance(payload, dict) or not isinstance(payload.get("state"), dict):
+            continue
+        for key, item in payload["state"].items():
+            if isinstance(item, dict):
+                state[str(key)] = item
+    return state
+
+
+def state_text(item: Any) -> str:
+    if not isinstance(item, dict):
+        return strip_html(item)
+    return strip_html(
+        item.get("text")
+        or item.get("caption")
+        or item.get("description")
+        or ""
+    )
+
+
 def split_courier_text(value: Any) -> dict[str, str]:
     text = strip_html(value)
     match = re.search(r"\bD(\d{3,6})\b", text)
@@ -111,6 +133,49 @@ def split_courier_text(value: Any) -> dict[str, str]:
         "courier_code": f"D{match.group(1)}",
         "courier_id": match.group(1),
     }
+
+
+def looks_like_person_name(value: Any) -> bool:
+    text = state_text(value)
+    if not text or "<" in str(value):
+        return False
+    lowered = text.casefold()
+    if any(part in lowered for part in ("just in time", "work", "shift", "user number")):
+        return False
+    if re.search(r"\bD\d{3,6}\b", text):
+        return False
+    words = [word for word in text.split(" ") if word]
+    return len(words) >= 2 and any(re.search(r"[A-Za-zÁÉÍÓÖŐÚÜŰáéíóöőúüű]", word) for word in words)
+
+
+def selected_courier_from_state(state: dict[str, dict[str, Any]]) -> dict[str, str]:
+    code_candidates = []
+    for key, item in state.items():
+        text = state_text(item)
+        match = re.fullmatch(r"D(\d{3,6})", text)
+        if match:
+            try:
+                code_candidates.append((int(key), match.group(1)))
+            except ValueError:
+                code_candidates.append((0, match.group(1)))
+
+    for numeric_key, courier_id in sorted(code_candidates):
+        for offset in range(-5, 1):
+            candidate = state.get(str(numeric_key + offset))
+            if looks_like_person_name(candidate):
+                name = state_text(candidate)
+                return {
+                    "courier_name": name,
+                    "courier_code": f"D{courier_id}",
+                    "courier_id": courier_id,
+                }
+
+    for item in state.values():
+        courier = split_courier_text(state_text(item))
+        if courier.get("courier_id"):
+            return courier
+
+    return {"courier_name": "", "courier_code": "", "courier_id": ""}
 
 
 def find_courier_text(data: dict[str, Any]) -> str:
@@ -148,6 +213,71 @@ def find_activity_status(data: dict[str, Any], detail: dict[str, Any]) -> str:
         if text.lower() in activity_words:
             return "Didn't come" if text.lower() == "didnt come" else text
     return detail.get("activity_status") or "Didn't come"
+
+
+def extract_selected_entry_rows(value: Any) -> list[dict[str, str]]:
+    state = merged_state(value)
+    entries: list[dict[str, str]] = []
+
+    def resolved_cell_text(cell_value: Any) -> str:
+        state_item = state.get(str(cell_value))
+        return state_text(state_item) or strip_html(cell_value)
+
+    for payload in walk_payloads(value):
+        if not isinstance(payload, dict) or not isinstance(payload.get("rpc"), list):
+            continue
+        for rpc in payload["rpc"]:
+            if not isinstance(rpc, list) or len(rpc) < 4:
+                continue
+            if clean(rpc[1]) != "com.vaadin.shared.data.DataCommunicatorClientRpc":
+                continue
+            if clean(rpc[2]) not in {"setData", "updateData"}:
+                continue
+            for item in extract_rows_from_rpc_args(rpc[3]):
+                data = item.get("d") if isinstance(item.get("d"), dict) else {}
+                if not data or isinstance(item.get("cd"), dict):
+                    continue
+                values = [resolved_cell_text(value) for value in data.values()]
+                activity = next(
+                    (
+                        value
+                        for value in values
+                        if value.casefold() in {"work", "left", "didn't come", "didnt come"}
+                    ),
+                    "",
+                )
+                time_value = next((normalize_time(value) for value in values if normalize_time(value)), "")
+                if not activity or not time_value:
+                    continue
+                entries.append(
+                    {
+                        "activity": "Didn't come" if activity.casefold() == "didnt come" else activity,
+                        "start": time_value,
+                        "end": "",
+                        "duration": "",
+                        "raw_start": time_value,
+                        "raw_end": "",
+                    }
+                )
+
+    return entries
+
+
+def extract_rows_from_rpc_args(value: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    def walk(child: Any) -> None:
+        if isinstance(child, dict):
+            if isinstance(child.get("d"), dict):
+                rows.append(child)
+            for nested in child.values():
+                walk(nested)
+        elif isinstance(child, list):
+            for nested in child:
+                walk(nested)
+
+    walk(value)
+    return rows
 
 
 def parse_detail_html(value: Any) -> dict[str, Any]:
@@ -264,5 +394,39 @@ def parse_attendance_uidl_rows(payload: Any, default_work_date: str = "") -> lis
                 },
             }
         )
+
+    if not parsed_rows:
+        state = merged_state(payload)
+        courier = selected_courier_from_state(state)
+        entries = extract_selected_entry_rows(payload)
+        if courier.get("courier_name") and entries:
+            starts = [entry["start"] for entry in entries if entry.get("start")]
+            ends = [entry["end"] for entry in entries if entry.get("end")]
+            activity_values = [entry["activity"] for entry in entries if clean(entry.get("activity"))]
+            parsed_rows.append(
+                {
+                    "work_date": default_work_date,
+                    "courier_name": courier.get("courier_name", ""),
+                    "courier_code": courier.get("courier_code", ""),
+                    "courier_id": courier.get("courier_id", ""),
+                    "shift_text": "",
+                    "activity_status": activity_values[-1] if activity_values else "Work",
+                    "checkin_start": starts[0] if starts else "",
+                    "checkin_end": ends[-1] if ends else "",
+                    "raw_details": "; ".join(
+                        clean(
+                            f"{entry.get('start') or ''}"
+                            + (f" - {entry.get('end')}" if entry.get("end") else "")
+                            + f" : {entry.get('activity') or ''}"
+                        )
+                        for entry in entries
+                    ),
+                    "response_json": {
+                        "source": "giriton_attendance_uidl_selected_entries",
+                        "courier": courier,
+                        "activity_entries": entries,
+                    },
+                }
+            )
 
     return parsed_rows
