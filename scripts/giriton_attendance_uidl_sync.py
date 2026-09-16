@@ -8,17 +8,30 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from resources.giriton_attendance_db import upsert_giriton_attendance_rows  # noqa: E402
-from resources.giriton_attendance_uidl import parse_attendance_uidl_rows  # noqa: E402
+from resources.giriton_attendance_uidl import (  # noqa: E402
+    parse_attendance_uidl_rows,
+    walk_payloads,
+)
+from scripts.live_giriton_shift_list import (  # noqa: E402
+    create_driver,
+    login,
+    select_all_departments,
+    set_giriton_date,
+)
 
 
 DEFAULT_UIDL_URL = "https://kiflihu.giriton.com/?v-r=uidl&v-uiId=0"
@@ -351,6 +364,147 @@ def fetch_attendance_uidl_payloads(
     return payloads
 
 
+def giriton_login_credentials() -> tuple[str, str]:
+    return (
+        env_first("GIRITON_USER", "GIRITON_USERNAME"),
+        env_first("GIRITON_PASSWORD"),
+    )
+
+
+def has_giriton_login_credentials() -> bool:
+    user, password = giriton_login_credentials()
+    return bool(user and password)
+
+
+def open_attendance(driver, timeout: int) -> None:
+    wait = WebDriverWait(driver, timeout)
+    wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="layMenuItems"]/div[2]/div/span')))
+    driver.find_element(By.XPATH, '//*[@id="layMenuItems"]/div[2]/div/span').click()
+    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".v-grid, .v-datefield")))
+
+
+def install_vaadin_response_capture(driver) -> None:
+    driver.execute_script(
+        r"""
+window.__giritonAttendanceResponses = window.__giritonAttendanceResponses || [];
+
+function patchResponses(root) {
+  const nodes = [root, ...root.querySelectorAll('*')];
+  for (const node of nodes) {
+    if (!node || node.__giritonAttendancePatched || typeof node.setResponse !== 'function') {
+      continue;
+    }
+    const original = node.setResponse;
+    node.setResponse = function(response) {
+      try {
+        window.__giritonAttendanceResponses.push(response);
+      } catch (error) {
+      }
+      return original.apply(this, arguments);
+    };
+    node.__giritonAttendancePatched = true;
+  }
+}
+
+patchResponses(document);
+if (!window.__giritonAttendancePatchInterval) {
+  window.__giritonAttendancePatchInterval = window.setInterval(() => patchResponses(document), 500);
+}
+return true;
+"""
+    )
+
+
+def captured_vaadin_responses(driver) -> list[Any]:
+    return driver.execute_script(
+        r"""
+const responses = window.__giritonAttendanceResponses || [];
+window.__giritonAttendanceResponses = [];
+return responses;
+"""
+    ) or []
+
+
+def fetch_attendance_browser_payloads(work_date: date, *, timeout: int = 60) -> list[Any] | None:
+    user, password = giriton_login_credentials()
+    if not user or not password:
+        return None
+
+    driver = create_driver(False, "")
+    try:
+        login(driver, user, password, timeout)
+        install_vaadin_response_capture(driver)
+        open_attendance(driver, timeout)
+        time.sleep(1)
+        try:
+            select_all_departments(driver, timeout)
+        except Exception as error:
+            print(f"GIRITON_ATTENDANCE_SELECT_ALL_SKIPPED={type(error).__name__}: {error}", flush=True)
+        install_vaadin_response_capture(driver)
+        set_giriton_date(driver, work_date)
+        time.sleep(3)
+        responses = captured_vaadin_responses(driver)
+        if not responses:
+            time.sleep(2)
+            responses = captured_vaadin_responses(driver)
+        return responses
+    finally:
+        driver.quit()
+
+
+def payload_debug_summary(payloads: list[Any]) -> list[dict[str, Any]]:
+    summaries = []
+    for index, payload in enumerate(payloads or []):
+        payloads_seen = list(walk_payloads(payload))
+        dicts = [item for item in payloads_seen if isinstance(item, dict)]
+        rpc_count = sum(
+            len(item.get("rpc") or [])
+            for item in dicts
+            if isinstance(item.get("rpc"), list)
+        )
+        state_count = sum(
+            len(item.get("state") or {})
+            for item in dicts
+            if isinstance(item.get("state"), dict)
+        )
+        execute_count = sum(
+            len(item.get("execute") or [])
+            for item in dicts
+            if isinstance(item.get("execute"), list)
+        )
+        meta_values = [
+            item.get("meta")
+            for item in dicts
+            if isinstance(item.get("meta"), dict) and item.get("meta")
+        ]
+        summaries.append(
+            {
+                "index": index,
+                "top_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+                "syncId": payload.get("syncId") if isinstance(payload, dict) else None,
+                "clientId": payload.get("clientId") if isinstance(payload, dict) else None,
+                "rpc_count": rpc_count,
+                "state_count": state_count,
+                "execute_count": execute_count,
+                "meta": meta_values[:3],
+            }
+        )
+    return summaries
+
+
+def write_debug_payloads(payloads: list[Any], debug_dir: str, work_date: date) -> str:
+    if not clean(debug_dir):
+        return ""
+    path = Path(debug_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    output_path = path / f"giriton_attendance_uidl_{work_date.isoformat()}.json"
+    output_path.write_text(
+        json.dumps(payloads, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return str(output_path)
+
+
 def dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     unique = []
     seen = set()
@@ -372,19 +526,38 @@ def dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return unique
 
 
+def parse_payload_rows(payloads: list[Any], target_date: date) -> list[dict[str, Any]]:
+    return dedupe_rows(
+        [
+            row
+            for payload in payloads or []
+            for row in parse_attendance_uidl_rows(
+                payload,
+                default_work_date=target_date.isoformat(),
+            )
+        ]
+    )
+
+
 def sync_giriton_attendance_uidl_direct(
     work_date: date | None = None,
     *,
     dry_run: bool = False,
+    debug_dir: str = "",
     request_file: str = "",
     timeout: int = 60,
 ) -> dict[str, Any]:
     target_date = work_date or datetime.now(BUDAPEST_TZ).date()
+    payload_source = "uidl_request"
     payloads = fetch_attendance_uidl_payloads(
         target_date,
         request_file=request_file,
         timeout=timeout,
     )
+    if payloads is None:
+        payload_source = "browser_login_uidl_capture"
+        payloads = fetch_attendance_browser_payloads(target_date, timeout=timeout)
+
     if payloads is None:
         return {
             "status": "skipped",
@@ -393,32 +566,45 @@ def sync_giriton_attendance_uidl_direct(
             "rows": 0,
         }
 
-    rows = dedupe_rows(
-        [
-            row
-            for payload in payloads
-            for row in parse_attendance_uidl_rows(
-                payload,
-                default_work_date=target_date.isoformat(),
-            )
-        ]
-    )
+    rows = parse_payload_rows(payloads, target_date)
+    if not rows and payload_source != "browser_login_uidl_capture" and has_giriton_login_credentials():
+        fallback_payloads = fetch_attendance_browser_payloads(target_date, timeout=timeout)
+        fallback_rows = parse_payload_rows(fallback_payloads or [], target_date)
+        if fallback_payloads:
+            payloads = fallback_payloads
+            payload_source = "browser_login_uidl_capture"
+            rows = fallback_rows
+
     if dry_run:
-        return {
+        result = {
             "status": "dry_run",
             "work_date": target_date.isoformat(),
+            "source": payload_source,
             "payloads": len(payloads),
             "rows": len(rows),
         }
+        if not rows:
+            result["payload_summary"] = payload_debug_summary(payloads)
+        debug_path = write_debug_payloads(payloads, debug_dir, target_date)
+        if debug_path:
+            result["debug_payloads"] = debug_path
+        return result
 
     result = upsert_giriton_attendance_rows(rows)
-    return {
+    sync_result = {
         "status": result.get("status", "ok"),
         "work_date": target_date.isoformat(),
+        "source": payload_source,
         "payloads": len(payloads),
         "rows": result.get("rows", len(rows)),
         "stored_rows": result.get("stored_rows"),
     }
+    if not rows:
+        sync_result["payload_summary"] = payload_debug_summary(payloads)
+    debug_path = write_debug_payloads(payloads, debug_dir, target_date)
+    if debug_path:
+        sync_result["debug_payloads"] = debug_path
+    return sync_result
 
 
 def parse_date(value: str) -> date:
@@ -442,12 +628,14 @@ def main() -> None:
         default="",
         help="DevToolsból mentett UIDL request vagy request-sorozat JSON.",
     )
+    parser.add_argument("--debug-dir", default="", help="UIDL válasz mentése ide hibakereséshez.")
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
 
     result = sync_giriton_attendance_uidl_direct(
         parse_date(args.date),
         dry_run=args.dry_run,
+        debug_dir=args.debug_dir,
         request_file=args.request_file,
         timeout=args.timeout,
     )
