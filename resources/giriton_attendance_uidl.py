@@ -113,6 +113,43 @@ def split_courier_text(value: Any) -> dict[str, str]:
     }
 
 
+def find_courier_text(data: dict[str, Any]) -> str:
+    for value in data.values():
+        text = strip_html(value)
+        if re.search(r"\bD\d{3,6}\b", text):
+            return text
+    return strip_html(data.get("1229", ""))
+
+
+def find_detail_html(component_data: dict[str, Any]) -> str:
+    for value in component_data.values():
+        text = str(value or "")
+        if "<h3>" in text and ("<ul" in text or "Shift" in text or "Calculated activity" in text):
+            return text
+    for value in component_data.values():
+        text = str(value or "")
+        if re.search(r"\d{1,2}\.\d{1,2}\.\d{4}", text):
+            return text
+    return str(component_data.get("1235", "") or "")
+
+
+def find_activity_status(data: dict[str, Any], detail: dict[str, Any]) -> str:
+    activity_words = {
+        "work",
+        "left",
+        "didn't come",
+        "didnt come",
+        "absent",
+        "holiday",
+        "sick",
+    }
+    for value in data.values():
+        text = strip_html(value)
+        if text.lower() in activity_words:
+            return "Didn't come" if text.lower() == "didnt come" else text
+    return detail.get("activity_status") or "Didn't come"
+
+
 def parse_detail_html(value: Any) -> dict[str, Any]:
     raw_html = str(value or "")
     text = html.unescape(raw_html)
@@ -191,9 +228,9 @@ def parse_attendance_uidl_rows(payload: Any, default_work_date: str = "") -> lis
     for item in extract_grid_row_dicts(payload):
         data = item.get("d") if isinstance(item.get("d"), dict) else {}
         component_data = item.get("cd") if isinstance(item.get("cd"), dict) else {}
-        courier = split_courier_text(data.get("1229", ""))
-        detail = parse_detail_html(component_data.get("1235", ""))
-        activity = strip_html(data.get("1406", "")) or detail.get("activity_status") or "Didn't come"
+        courier = split_courier_text(find_courier_text(data))
+        detail = parse_detail_html(find_detail_html(component_data))
+        activity = find_activity_status(data, detail)
         planned_shifts = detail.get("planned_shifts") or []
         shift_text = ", ".join(
             clean(shift.get("label"))

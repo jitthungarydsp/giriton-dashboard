@@ -368,6 +368,33 @@ def _merge_uidl_rows(rows, uidl_rows, work_date):
     return rows
 
 
+def _uidl_attendance_rows_from_captured(work_date):
+    uidl_rows = []
+    for response in _captured_vaadin_responses():
+        uidl_rows.extend(
+            parse_attendance_uidl_rows(
+                response,
+                default_work_date=work_date,
+            )
+        )
+
+    by_key = {}
+    for row in uidl_rows:
+        name = _clean(row.get("courier_name")) if isinstance(row, dict) else ""
+        row_date = _clean(row.get("work_date")) if isinstance(row, dict) else ""
+        if row_date != _clean(work_date) or not name:
+            continue
+        by_key[(row_date, name)] = row
+
+    return list(by_key.values())
+
+
+def scrape_attendance_rows_fast(work_date, wait_seconds=2.0):
+    _install_vaadin_response_capture()
+    time.sleep(float(wait_seconds or 0))
+    return _uidl_attendance_rows_from_captured(work_date)
+
+
 def _detail_entries_for_name(name):
     script = r"""
 const wanted = arguments[0] || '';

@@ -32,6 +32,10 @@ from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
 )
+try:
+    from scripts.giriton_attendance_uidl_sync import sync_giriton_attendance_uidl_direct
+except ModuleNotFoundError:
+    from giriton_attendance_uidl_sync import sync_giriton_attendance_uidl_direct
 
 from sync_courier_financial_overview import (
     courier_hub_headers,
@@ -45,6 +49,7 @@ PUSH_SUBSCRIPTION_TABLE = "pwa_push_subscriptions"
 PUSH_DELIVERY_TABLE = "pwa_push_delivery_log"
 PUSH_NOTIFICATION_TYPE = "route_assigned"
 ATTENDANCE_CACHE = {}
+GIRITON_ATTENDANCE_RAW_CACHE = {}
 COURIER_HUB_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 COURIER_HUB_DSP_ID = int(os.getenv("COURIER_HUB_DSP_ID") or "8")
 COURIER_HUB_LIVE_MAP_WAREHOUSE_IDS = [
@@ -158,6 +163,27 @@ def parse_datetime(value):
         return None
 
     return parsed.astimezone(LOCAL_TIMEZONE)
+
+
+def parse_local_time_on_date(work_date, value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$", text)
+    if not match:
+        return parse_datetime(text)
+    try:
+        return datetime(
+            int(str(work_date)[:4]),
+            int(str(work_date)[5:7]),
+            int(str(work_date)[8:10]),
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3) or 0),
+            tzinfo=LOCAL_TIMEZONE,
+        )
+    except ValueError:
+        return None
 
 
 def format_time(value):
@@ -1561,6 +1587,74 @@ def find_attendance_courier(attendance_data, courier_id):
     return {}
 
 
+def load_giriton_attendance_raw_for_date(work_date):
+    if work_date in GIRITON_ATTENDANCE_RAW_CACHE:
+        return GIRITON_ATTENDANCE_RAW_CACHE[work_date]
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        GIRITON_ATTENDANCE_RAW_CACHE[work_date] = []
+        return []
+
+    endpoint = (
+        f"{supabase_url}/rest/v1/giriton_attendance_raw"
+        "?select=work_date,courier_name,shift_text,activity_status,checkin_start,checkin_end,response_json,fetched_at,updated_at"
+        f"&work_date=eq.{work_date}"
+        "&source_name=eq.giriton-attendance-robot"
+        "&order=updated_at.desc"
+        "&limit=1000"
+    )
+    response = requests.get(
+        endpoint,
+        headers=supabase_headers(service_role_key),
+        timeout=20,
+    )
+    if response.status_code in [404, 406]:
+        GIRITON_ATTENDANCE_RAW_CACHE[work_date] = []
+        return []
+    raise_for_supabase_error(response)
+    rows = response.json()
+    GIRITON_ATTENDANCE_RAW_CACHE[work_date] = rows
+    return rows
+
+
+def find_giriton_attendance_raw_row(work_date, courier_id):
+    normalized_courier_id = normalize_id(courier_id)
+    for row in load_giriton_attendance_raw_for_date(work_date):
+        response_json = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+        row_courier_id = normalize_id(
+            response_json.get("courier_id")
+            or (response_json.get("courier") or {}).get("courier_id")
+            or (response_json.get("courier") or {}).get("courierId")
+        )
+        if row_courier_id and row_courier_id == normalized_courier_id:
+            return row
+    return {}
+
+
+def build_giriton_attendance_raw_shift_notes(courier_id, route, work_date):
+    row = find_giriton_attendance_raw_row(work_date, courier_id)
+    if not row:
+        return {}
+
+    shift_text = str(row.get("shift_text") or "").strip()
+    checkin_start = parse_local_time_on_date(work_date, row.get("checkin_start"))
+    checkin_end = parse_local_time_on_date(work_date, row.get("checkin_end"))
+    assigned_at = parse_datetime(route.get("assignedAt")) or datetime.now(LOCAL_TIMEZONE)
+    activity = str(row.get("activity_status") or "").strip()
+    notes = {}
+    if shift_text:
+        notes["current_shift_note"] = shift_text
+    elif activity:
+        notes["current_shift_note"] = activity
+    if checkin_start:
+        notes["queue_since_note"] = format_datetime_time(checkin_start)
+        notes["queue_wait_note"] = format_wait_duration(checkin_start, assigned_at)
+    if checkin_end and not checkin_start:
+        notes["queue_since_note"] = format_datetime_time(checkin_end)
+    return notes
+
+
 def parse_shift_times(courier):
     shifts = []
 
@@ -1846,6 +1940,12 @@ def build_shift_notification_notes(courier_id, route, courier_hub_detail=None, u
         return courier_hub_notes
 
     work_date = route_work_date(route)
+    giriton_raw_notes = build_giriton_attendance_raw_shift_notes(
+        courier_id,
+        route,
+        work_date,
+    )
+    base_notes = merge_shift_notes(courier_hub_notes, giriton_raw_notes)
 
     try:
         attendance_data = load_attendance_for_date(work_date)
@@ -1854,11 +1954,11 @@ def build_shift_notification_notes(courier_id, route, courier_hub_detail=None, u
             f"Attendance fallback hiba: #{courier_id} {work_date} | {exc}",
             flush=True,
         )
-        return courier_hub_notes
+        return base_notes
 
     courier = find_attendance_courier(attendance_data, courier_id)
     if not courier:
-        return courier_hub_notes
+        return base_notes
 
     shifts = parse_shift_times(courier)
     now = datetime.now(LOCAL_TIMEZONE)
@@ -1925,7 +2025,7 @@ def build_shift_notification_notes(courier_id, route, courier_hub_detail=None, u
         "next_shift_delay_note": next_shift_delay_note,
         "queue_since_note": queue_since_note or "nincs adat",
         "queue_wait_note": queue_wait_note or "nincs adat",
-    }, courier_hub_notes)
+    }, base_notes)
 
 
 def build_next_shift_note(courier_id, route):
@@ -2524,6 +2624,8 @@ def send_route_push(
 
 def run_once(max_age_minutes, dry_run=False):
     COURIER_HUB_DETAIL_CACHE.clear()
+    ATTENDANCE_CACHE.clear()
+    GIRITON_ATTENDANCE_RAW_CACHE.clear()
     discord_status = read_discord_status()
     counters = Counter()
     sent_count = 0
@@ -2536,6 +2638,23 @@ def run_once(max_age_minutes, dry_run=False):
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
+
+    try:
+        attendance_sync = sync_giriton_attendance_uidl_direct(dry_run=dry_run, timeout=45)
+        if attendance_sync.get("status") == "skipped":
+            counters["giriton_attendance_uidl_skipped"] += 1
+        else:
+            counters["giriton_attendance_uidl_rows"] += int(attendance_sync.get("rows") or 0)
+        print(
+            f"Giriton Attendance UIDL sync: {attendance_sync}",
+            flush=True,
+        )
+    except Exception as exc:
+        counters["giriton_attendance_uidl_error"] += 1
+        print(
+            f"Giriton Attendance UIDL sync hiba: {exc}",
+            flush=True,
+        )
 
     try:
         live_map_counters = sync_courier_hub_live_map_data(dry_run=dry_run)

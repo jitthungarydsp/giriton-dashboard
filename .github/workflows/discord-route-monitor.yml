@@ -51,6 +51,10 @@ jobs:
       KIFLI_COURIER_HUB_API_KEY: ${{ secrets.COURIER_HUB_API_KEY }}
       KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/courier-hub-auth.json
       KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --debug-dir results/courier-hub-auth --cache-file /tmp/courier-hub-auth.json
+      GIRITON_ATTENDANCE_UIDL_URL: ${{ secrets.GIRITON_ATTENDANCE_UIDL_URL }}
+      GIRITON_ATTENDANCE_UIDL_COOKIE: ${{ secrets.GIRITON_ATTENDANCE_UIDL_COOKIE }}
+      GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON }}
+      GIRITON_ATTENDANCE_UIDL_REQUEST_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_REQUEST_JSON }}
 
     steps:
       - name: Checkout

@@ -50,10 +50,18 @@ Giriton Attendance Github
 
     Sleep    5s
 
-    ${attendance_rows}=    giriton_attendance_scraper.Scrape Attendance Rows
+    ${attendance_rows}=    giriton_attendance_scraper.Scrape Attendance Rows Fast
     ...    ${attendance_datum_sheet}
 
     ${attendance_count}=    Get Length    ${attendance_rows}
+
+    IF    ${attendance_count} == 0
+        Log To Console
+        ...    ATTENDANCE_FAST_EMPTY_FALLBACK=slow_ui
+        ${attendance_rows}=    giriton_attendance_scraper.Scrape Attendance Rows
+        ...    ${attendance_datum_sheet}
+        ${attendance_count}=    Get Length    ${attendance_rows}
+    END
 
     Log To Console
     ...    ATTENDANCE_SOROK_SZAMA=${attendance_count}
