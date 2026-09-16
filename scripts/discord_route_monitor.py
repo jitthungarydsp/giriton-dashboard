@@ -32,11 +32,6 @@ from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
 )
-try:
-    from scripts.giriton_attendance_uidl_sync import sync_giriton_attendance_uidl_direct
-except ModuleNotFoundError:
-    from giriton_attendance_uidl_sync import sync_giriton_attendance_uidl_direct
-
 from sync_courier_financial_overview import (
     courier_hub_headers,
     refresh_courier_hub_headers,
@@ -2638,23 +2633,6 @@ def run_once(max_age_minutes, dry_run=False):
         f"max_age_minutes={max_age_minutes}",
         flush=True,
     )
-
-    try:
-        attendance_sync = sync_giriton_attendance_uidl_direct(dry_run=dry_run, timeout=45)
-        if attendance_sync.get("status") == "skipped":
-            counters["giriton_attendance_uidl_skipped"] += 1
-        else:
-            counters["giriton_attendance_uidl_rows"] += int(attendance_sync.get("rows") or 0)
-        print(
-            f"Giriton Attendance UIDL sync: {attendance_sync}",
-            flush=True,
-        )
-    except Exception as exc:
-        counters["giriton_attendance_uidl_error"] += 1
-        print(
-            f"Giriton Attendance UIDL sync hiba: {exc}",
-            flush=True,
-        )
 
     try:
         live_map_counters = sync_courier_hub_live_map_data(dry_run=dry_run)

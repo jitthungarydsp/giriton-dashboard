@@ -102,6 +102,12 @@ jobs:
             --dsp-id 8 \
             --detail-scope all
 
+      - name: Sync Giriton Attendance UIDL
+        continue-on-error: true
+        shell: bash
+        run: |
+          python scripts/giriton_attendance_uidl_sync.py
+
       - name: Run Discord route monitor
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
