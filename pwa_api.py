@@ -6035,6 +6035,41 @@ def optional_supabase_rows(
         return []
 
 
+def optional_supabase_rows_paged(
+    table: str,
+    *,
+    params: dict[str, str],
+    schema: str = "public",
+    timeout: int = 30,
+    page_size: int = 1000,
+    max_rows: int = 100000,
+) -> list[dict[str, Any]]:
+    all_rows: list[dict[str, Any]] = []
+    clean_page_size = max(1, min(int(page_size or 1000), 1000))
+    clean_max_rows = max(clean_page_size, int(max_rows or clean_page_size))
+    base_params = dict(params or {})
+    base_params.pop("offset", None)
+    base_params["limit"] = str(clean_page_size)
+
+    offset = 0
+    while offset < clean_max_rows:
+        page_params = dict(base_params)
+        page_params["offset"] = str(offset)
+        page = optional_supabase_rows(
+            table,
+            params=page_params,
+            schema=schema,
+            timeout=timeout,
+        )
+        if not page:
+            break
+        all_rows.extend(page)
+        if len(page) < clean_page_size:
+            break
+        offset += clean_page_size
+    return all_rows
+
+
 def money_int(value: Any) -> int:
     if isinstance(value, str):
         text = value.replace("\xa0", " ").replace("Ft", "").replace("HUF", "").strip()
@@ -9655,7 +9690,7 @@ def load_courier_hub_route_stat_rows_for_courier(courier_id: str, month_value: d
 
 
 def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict[str, Any]]:
-    rows = optional_supabase_rows(
+    rows = optional_supabase_rows_paged(
         "courier_route_performance_detail_raw",
         params={
             "select": "courier_id,route_id,warehouse_id,response_json,status_code",
@@ -9663,9 +9698,10 @@ def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict
             "month": f"eq.{month_value.month}",
             "status_code": "eq.200",
             "order": "courier_id.asc,route_id.asc",
-            "limit": "10000",
         },
         timeout=60,
+        page_size=1000,
+        max_rows=100000,
     )
     result: list[dict[str, Any]] = []
     for row in rows:
@@ -9680,7 +9716,7 @@ def load_courier_hub_route_detail_rows_for_month(month_value: date) -> list[dict
 def load_courier_hub_route_stat_rows_for_month(month_value: date) -> list[dict[str, Any]]:
     month_start = month_value.replace(day=1)
     month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-    return optional_supabase_rows(
+    return optional_supabase_rows_paged(
         "courier_hub_route_statistics",
         params={
             "select": (
@@ -9695,9 +9731,10 @@ def load_courier_hub_route_stat_rows_for_month(month_value: date) -> list[dict[s
             "work_date": f"gte.{month_start.isoformat()}",
             "and": f"(work_date.lte.{month_end.isoformat()})",
             "order": "courier_name.asc,work_date.desc,route_assigned_at.desc,route_id.desc",
-            "limit": "10000",
         },
         timeout=60,
+        page_size=1000,
+        max_rows=100000,
     )
 
 
