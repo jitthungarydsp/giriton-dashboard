@@ -1622,6 +1622,179 @@ def load_dsp_monthly_courier_quality(courier_id: str, period_start: date) -> dic
     return rows[0] if rows else {}
 
 
+def quality_level_from_bad_percent(value: float) -> int:
+    if value <= 2.0:
+        return 1
+    if value <= 4.0:
+        return 2
+    if value <= 10.0:
+        return 3
+    return 4
+
+
+def delay_level_from_delay_percent(value: float) -> int:
+    if value <= 1.5:
+        return 1
+    if value <= 3.0:
+        return 2
+    if value <= 5.0:
+        return 3
+    return 4
+
+
+def safe_percent(part: object, total: object) -> float:
+    total_value = parse_huf_value(total)
+    if not total_value:
+        return 0.0
+    return round(parse_huf_value(part) / total_value * 100.0, 2)
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_hub_quality_from_raw(courier_id: str, period_start: date) -> dict[str, object]:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return {}
+
+    try:
+        shift_rows = (
+            get_db().schema("public").table("courier_shift_overview_raw")
+            .select("warehouse_id,response_json")
+            .eq("courier_id", int(clean_id))
+            .eq("year", int(period_start.year))
+            .eq("month", int(period_start.month))
+            .eq("status_code", 200)
+            .execute().data or []
+        )
+    except BaseException:
+        shift_rows = []
+
+    shift_count = 0
+    late_shift_count = 0
+    no_show_count = 0
+    shift_issue_rows: list[dict[str, object]] = []
+    for raw_row in shift_rows:
+        payload = raw_row.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        shift_count += int(parse_huf_value(payload.get("totalShifts")))
+        late_shift_count += int(parse_huf_value(payload.get("lateLoginShifts")))
+        no_show_count += int(parse_huf_value(payload.get("noShowShifts")))
+        for shift in payload.get("shifts") or []:
+            if not isinstance(shift, dict):
+                continue
+            evaluation = str(shift.get("evaluation") or "").strip().upper()
+            if evaluation not in {"LATE", "NO_SHOW", "DID_NOT_COME", "DIDNT_COME", "DID_NOT_SHOW"}:
+                continue
+            is_no_show = evaluation in {"NO_SHOW", "DID_NOT_COME", "DIDNT_COME", "DID_NOT_SHOW"}
+            shift_issue_rows.append({
+                "work_date": str(shift.get("date") or "")[:10],
+                "shift_name": f"{str(shift.get('plannedStart') or '')[:5]}-{str(shift.get('plannedEnd') or '')[:5]}",
+                "warehouse": "BUD2" if int(parse_huf_value(raw_row.get("warehouse_id"))) == 2 else "BUD1",
+                "available_at": shift.get("actualStart"),
+                "queue_started_at": shift.get("actualStart"),
+                "no_show": is_no_show,
+                "queued_on_time": False,
+                "no_show_reason": "Courier Hub shifts API",
+                "Dátum": str(shift.get("date") or "")[:10],
+                "Probléma": "No-show" if is_no_show else "Késői bejelentkezés",
+                "Műszak": f"{str(shift.get('plannedStart') or '')[:5]}-{str(shift.get('plannedEnd') or '')[:5]}",
+                "Raktár": "BUD2" if int(parse_huf_value(raw_row.get("warehouse_id"))) == 2 else "BUD1",
+                "Giriton bejelentkezés": format_short_time(shift.get("actualStart")),
+                "Értékelés": evaluation,
+            })
+
+    route_rows = load_api_financial_overview_rows_for_courier(period_start.year, period_start.month, clean_id)
+    route_count = 0
+    order_count = 0
+    delayed_order_count = 0
+    cleaned_delay_count = 0
+    route_issue_rows: list[dict[str, object]] = []
+    for source in route_rows.to_dict("records") if not route_rows.empty else []:
+        payload = source.get("response_json") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            continue
+        route_count += int(parse_huf_value(payload.get("totalRoutes")))
+        order_count += int(parse_huf_value(payload.get("totalOrders")))
+        for route in payload.get("routes") or []:
+            if not isinstance(route, dict):
+                continue
+            if not parse_huf_value(payload.get("totalRoutes")):
+                route_count += 1
+            if not parse_huf_value(payload.get("totalOrders")):
+                order_count += int(parse_huf_value(route.get("orderCount")))
+            raw_delay_orders = route.get("delayOrders") or []
+            if not isinstance(raw_delay_orders, list):
+                raw_delay_orders = []
+            uncleaned_orders = []
+            cleaned_orders = []
+            for delay_order in raw_delay_orders:
+                if not isinstance(delay_order, dict):
+                    continue
+                is_cleaned = bool(delay_order.get("cleaned")) or bool(str(delay_order.get("cleanedReason") or "").strip())
+                if is_cleaned:
+                    cleaned_orders.append(delay_order)
+                else:
+                    uncleaned_orders.append(delay_order)
+            delayed_order_count += len(uncleaned_orders)
+            cleaned_delay_count += len(cleaned_orders)
+            if uncleaned_orders:
+                route_issue_rows.append({
+                    "work_date": str(route.get("deliveryDate") or "")[:10],
+                    "route_id": str(route.get("routeId") or ""),
+                    "shift_name": "",
+                    "time_window_late_count": len(uncleaned_orders),
+                    "address_count": int(parse_huf_value(route.get("orderCount"))),
+                    "next_shift_delay_minutes": 0,
+                    "planned_departure": "",
+                    "real_departure": "",
+                    "planned_return": "",
+                    "real_return": "",
+                    "story_text": "Courier Hub routes API delayOrders: csak a nem tisztított késések számítanak.",
+                    "Dátum": str(route.get("deliveryDate") or "")[:10],
+                    "Route ID": str(route.get("routeId") or ""),
+                    "Réteg": str(route.get("routeLayer") or ""),
+                    "Késéses cím": len(uncleaned_orders),
+                    "Tisztított késés": len(cleaned_orders),
+                    "Összes cím": int(parse_huf_value(route.get("orderCount"))),
+                    "Késés perc": sum(int(parse_huf_value(item.get("delayMinutes"))) for item in uncleaned_orders),
+                    "Order ID-k": ", ".join(str(item.get("orderId") or "") for item in uncleaned_orders[:8]),
+                })
+
+    late_percent = safe_percent(late_shift_count, shift_count)
+    no_show_percent = safe_percent(no_show_count, shift_count)
+    route_quality_bad_percent = round((0.7 * no_show_percent) + (0.3 * late_percent), 2)
+    delay_percent = safe_percent(delayed_order_count, order_count)
+    return {
+        "source": "courier_hub_raw",
+        "shift_count": shift_count,
+        "no_show_count": no_show_count,
+        "late_shift_count": late_shift_count,
+        "route_count": route_count,
+        "order_count": order_count,
+        "delayed_order_count": delayed_order_count,
+        "cleaned_delay_count": cleaned_delay_count,
+        "delay_percent": delay_percent,
+        "late_percent": late_percent,
+        "no_show_percent": no_show_percent,
+        "route_quality_bad_percent": route_quality_bad_percent,
+        "compliance_score_percent": round(100.0 - route_quality_bad_percent, 2),
+        "delay_level": delay_level_from_delay_percent(delay_percent),
+        "route_quality_level": quality_level_from_bad_percent(route_quality_bad_percent),
+        "shift_issue_rows": shift_issue_rows,
+        "route_issue_rows": route_issue_rows,
+    }
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_dsp_shift_quality_issues(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
     clean_id = _courier_id_key(courier_id)
@@ -13285,7 +13458,7 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    dsp_quality = load_dsp_monthly_courier_quality(courier_id, period_start)
+    dsp_quality = load_hub_quality_from_raw(courier_id, period_start) or load_dsp_monthly_courier_quality(courier_id, period_start)
     delay_percent_label = format_percent_value(dsp_quality.get("delay_percent")) if dsp_quality else "-"
     compliance_percent_label = format_percent_value(dsp_quality.get("compliance_score_percent")) if dsp_quality else "-"
     route_quality_bad_label = format_percent_value(dsp_quality.get("route_quality_bad_percent")) if dsp_quality else "-"
@@ -13581,8 +13754,12 @@ def render_courier_detail_page() -> None:
                 help="A hibamutatóban 70%-os súllyal számít.",
             )
 
-            shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
-            route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
+            if str(dsp_quality.get("source") or "") == "courier_hub_raw":
+                shift_quality_issues = pd.DataFrame(dsp_quality.get("shift_issue_rows") or [])
+                route_quality_issues = pd.DataFrame(dsp_quality.get("route_issue_rows") or [])
+            else:
+                shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
+                route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
             with st.expander("Hol volt műszakból késés vagy no-show?", expanded=False):
                 if shift_quality_issues.empty:
                     st.success("Ehhez a hónaphoz nincs műszakból késés vagy no-show sor.")
@@ -14588,8 +14765,12 @@ def render_courier_detail_page() -> None:
                 help="A hibamutatóban 70%-os súllyal számít.",
             )
 
-            shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
-            route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
+            if str(dsp_quality.get("source") or "") == "courier_hub_raw":
+                shift_quality_issues = pd.DataFrame(dsp_quality.get("shift_issue_rows") or [])
+                route_quality_issues = pd.DataFrame(dsp_quality.get("route_issue_rows") or [])
+            else:
+                shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
+                route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
             with st.expander("Hol volt műszakból késés vagy no-show?", expanded=False):
                 if shift_quality_issues.empty:
                     st.success("Ehhez a hónaphoz nincs műszakból késés vagy no-show sor.")
