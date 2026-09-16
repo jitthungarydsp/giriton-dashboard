@@ -2109,10 +2109,7 @@ def load_latest_excel_jit_period_start() -> date | None:
 
 
 def default_settlement_month_label() -> str:
-    latest_excel_month = load_latest_excel_jit_period_start()
-    if latest_excel_month:
-        return month_option_label(latest_excel_month)
-    return month_options()[0]
+    return "2026. augusztus"
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -17117,7 +17114,7 @@ def render_courier_detail_page() -> None:
             except Exception as exc:
                 st.error(f"Megjegyzes mentese sikertelen: {exc}")
 
-        complaint_list, complaint_editor = st.columns([1.35, 0.65])
+        complaint_list, complaint_editor = st.columns([1.75, 0.55])
 
         with complaint_list:
             if invoice_upload_waiting:
@@ -17200,11 +17197,12 @@ def render_courier_detail_page() -> None:
                     complaint_view[["Bejelentések", "Válasz", "Státusz", "Típus"]],
                     use_container_width=True,
                     hide_index=True,
+                    height=260,
                     column_config={
-                        "Bejelentések": st.column_config.TextColumn("Bejelentések", width="large"),
-                        "Válasz": st.column_config.TextColumn("Válasz", width="large"),
-                        "Státusz": st.column_config.TextColumn("Státusz", width="small"),
-                        "Típus": st.column_config.TextColumn("Típus", width="medium"),
+                        "Bejelentések": st.column_config.TextColumn("Bejelentések", width=720),
+                        "Válasz": st.column_config.TextColumn("Válasz", width=420),
+                        "Státusz": st.column_config.TextColumn("Státusz", width=110),
+                        "Típus": st.column_config.TextColumn("Típus", width=150),
                     },
                 )
 
@@ -19697,11 +19695,16 @@ def show_new_settlement_page() -> None:
     pending_status_label = st.session_state.pop("new_status_pending", None)
     if pending_status_label:
         st.session_state["new_status"] = pending_status_label
-    selected_calculation_mode = st.session_state.get("new_calculation_mode", "API")
+    if "new_calculation_mode" not in st.session_state:
+        st.session_state["new_calculation_mode"] = "Excel"
+    selected_calculation_mode = st.session_state.get("new_calculation_mode", "Excel")
     latest_default_month_label = default_settlement_month_label()
     previous_auto_default = st.session_state.get("new_month_auto_default")
     current_month_label = st.session_state.get("new_month")
     if not current_month_label:
+        st.session_state["new_month"] = latest_default_month_label
+        st.session_state["new_month_auto_default"] = latest_default_month_label
+    elif previous_auto_default and current_month_label == previous_auto_default and previous_auto_default != latest_default_month_label:
         st.session_state["new_month"] = latest_default_month_label
         st.session_state["new_month_auto_default"] = latest_default_month_label
     elif previous_auto_default is None:
