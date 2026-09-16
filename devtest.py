@@ -18618,11 +18618,31 @@ def close_individual_monthly_billing(
     actor: str,
 ) -> int:
     deleted = delete_generated_monthly_billing_documents(courier_id, period_start)
+    month_text = period_start.replace(day=1).isoformat()
+    courier_id_text = str(courier_id or "").strip()
     get_db().schema("public").table("peopleforce_card_statuses").delete() \
-        .eq("courier_id", str(courier_id or "").strip()) \
-        .eq("document_month", period_start.replace(day=1).isoformat()) \
-        .eq("action_key", "individual_monthly_billing") \
+        .eq("courier_id", courier_id_text) \
+        .eq("document_month", month_text) \
+        .in_("action_key", [
+            "individual_monthly_billing",
+            "settlement",
+            "tig",
+            "invoice_submit",
+            "invoice_check",
+            "invoice_payment",
+            "manual_invoice_skip",
+            "ignore_complaints_for_billing",
+            "invoice_validation_override",
+        ]) \
         .execute()
+    try:
+        get_db().schema("settlement").table("pwa_workflow_acceptance_snapshots").delete() \
+            .eq("courier_id", courier_id_text) \
+            .eq("period_start", month_text) \
+            .in_("action_key", ["settlement", "tig"]) \
+            .execute()
+    except BaseException:
+        pass
     read_peopleforce_card_statuses.clear()
     read_peopleforce_card_statuses_for_month.clear()
     return deleted
