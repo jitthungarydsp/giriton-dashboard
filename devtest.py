@@ -982,6 +982,17 @@ div[data-testid="stMetricValue"] {
 .settlement-ledger-row strong {
     font-variant-numeric:tabular-nums;
 }
+.settlement-ledger-row em {
+    display:inline-flex;
+    margin-left:6px;
+    padding:2px 7px;
+    border-radius:999px;
+    background:#e9f4e6;
+    color:var(--sp-green);
+    font-style:normal;
+    font-size:10px;
+    font-weight:900;
+}
 .settlement-ledger-row.total {
     font-weight:900;
     color:var(--sp-ink);
@@ -1585,6 +1596,93 @@ def load_dsp_monthly_company_quality_bonus(courier_id: str, period_start: date) 
     except BaseException:
         return {}
     return rows[0] if rows else {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_monthly_courier_quality(courier_id: str, period_start: date) -> dict[str, object]:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return {}
+    try:
+        rows = (
+            get_db().schema("public").table("dsp_courier_quality_monthly")
+            .select(
+                "courier_id,courier_name,period_month,shift_count,show_count,no_show_count,"
+                "late_shift_count,route_count,order_count,delayed_order_count,delay_percent,"
+                "late_percent,no_show_percent,route_quality_bad_percent,compliance_score_percent,"
+                "courier_delay_bonus_huf,courier_compliance_bonus_huf,delay_level,route_quality_level"
+            )
+            .eq("courier_id", int(clean_id))
+            .eq("period_month", period_start.replace(day=1).isoformat())
+            .limit(1)
+            .execute().data or []
+        )
+    except BaseException:
+        return {}
+    return rows[0] if rows else {}
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_shift_quality_issues(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("dsp_courier_shift_quality_report")
+            .select(
+                "work_date,shift_name,shift_start_at,shift_end_at,warehouse,route_id,"
+                "address_count,time_window_late_count,available_at,queue_started_at,"
+                "queued_on_time,no_show,no_show_reason,quality_ok,route_type"
+            )
+            .eq("courier_id", int(clean_id))
+            .gte("work_date", period_start.isoformat())
+            .lte("work_date", period_end.isoformat())
+            .order("work_date")
+            .order("shift_start_at")
+            .limit(500)
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    no_show = data.get("no_show", pd.Series(False, index=data.index)).astype(str).str.casefold().isin(["true", "1", "igen", "yes"])
+    queued_on_time = data.get("queued_on_time", pd.Series(False, index=data.index)).astype(str).str.casefold().isin(["true", "1", "igen", "yes"])
+    return data.loc[no_show | ~queued_on_time].copy()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def load_dsp_route_quality_issues(courier_id: str, period_start: date, period_end: date) -> pd.DataFrame:
+    clean_id = _courier_id_key(courier_id)
+    if not clean_id:
+        return pd.DataFrame()
+    try:
+        rows = (
+            get_db().schema("public").table("mart_dsp_route_stories")
+            .select(
+                "work_date,route_id,warehouse_name,shift_name,shift_start,shift_end,"
+                "planned_departure,real_departure,planned_return,real_return,address_count,"
+                "time_window_late_count,next_shift_delay_minutes,queue_started_at,story_text"
+            )
+            .eq("courier_id", int(clean_id))
+            .gte("work_date", period_start.isoformat())
+            .lte("work_date", period_end.isoformat())
+            .order("work_date")
+            .order("shift_start")
+            .order("route_id")
+            .limit(1000)
+            .execute().data or []
+        )
+    except BaseException:
+        return pd.DataFrame()
+    data = pd.DataFrame(rows)
+    if data.empty:
+        return data
+    late_count = pd.to_numeric(data.get("time_window_late_count", pd.Series(0, index=data.index)), errors="coerce").fillna(0)
+    next_shift_delay = pd.to_numeric(data.get("next_shift_delay_minutes", pd.Series(0, index=data.index)), errors="coerce").fillna(0)
+    return data.loc[(late_count > 0) | (next_shift_delay > 0)].copy()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -9355,6 +9453,21 @@ def format_huf(value: float | int) -> str:
     return f"{value:,.0f} Ft".replace(",", " ")
 
 
+def format_percent_value(value: object) -> str:
+    try:
+        number = float(str(value or "0").replace(",", "."))
+    except (TypeError, ValueError):
+        number = 0.0
+    return f"{number:.2f}%".replace(".", ",")
+
+
+def format_short_time(value: object) -> str:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%H:%M")
+
+
 def parse_huf_value(value: object) -> float:
     """Accept numeric DB values and formatted Hungarian money strings."""
     if value is None or value == "":
@@ -13172,6 +13285,17 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
+    dsp_quality = load_dsp_monthly_courier_quality(courier_id, period_start)
+    delay_percent_label = format_percent_value(dsp_quality.get("delay_percent")) if dsp_quality else "-"
+    compliance_percent_label = format_percent_value(dsp_quality.get("compliance_score_percent")) if dsp_quality else "-"
+    route_quality_bad_label = format_percent_value(dsp_quality.get("route_quality_bad_percent")) if dsp_quality else "-"
+    quality_shift_count = int(parse_huf_value(dsp_quality.get("shift_count"))) if dsp_quality else 0
+    quality_order_count = int(parse_huf_value(dsp_quality.get("order_count"))) if dsp_quality else 0
+    quality_no_show_count = int(parse_huf_value(dsp_quality.get("no_show_count"))) if dsp_quality else 0
+    quality_late_shift_count = int(parse_huf_value(dsp_quality.get("late_shift_count"))) if dsp_quality else 0
+    quality_delayed_order_count = int(parse_huf_value(dsp_quality.get("delayed_order_count"))) if dsp_quality else 0
+    quality_delay_level = int(parse_huf_value(dsp_quality.get("delay_level"))) if dsp_quality else 0
+    quality_route_level = int(parse_huf_value(dsp_quality.get("route_quality_level"))) if dsp_quality else 0
     other_route_bonus_total = parse_huf_value(row.get("Cím bónusz (Kifli)"))
     if is_api_mode and not route_detail.empty:
         parameterized_detail = route_detail.loc[
@@ -13384,8 +13508,8 @@ def render_courier_detail_page() -> None:
                     <div class="settlement-ledger-head">↗ Bevételek</div>
                     <div class="settlement-ledger-row"><span>Alapdíj</span><strong>{format_huf(display_base_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Borravaló</span><strong>{format_huf(tip_total)}</strong></div>
-                    <div class="settlement-ledger-row"><span>Késedelmi bónusz</span><strong>{format_huf(delay_total)}</strong></div>
-                    <div class="settlement-ledger-row"><span>Túramegfelelés</span><strong>{format_huf(compliance_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Késedelmi bónusz <em>{html.escape(delay_percent_label)}</em></span><strong>{format_huf(delay_total)}</strong></div>
+                    <div class="settlement-ledger-row"><span>Túramegfelelés <em>{html.escape(compliance_percent_label)}</em></span><strong>{format_huf(compliance_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Kiflis bónusz</span><strong>{format_huf(imported_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>JITT bónusz</span><strong>{format_huf(manual_bonus_total)}</strong></div>
                     <div class="settlement-ledger-row"><span>Lojalitás</span><strong>{format_huf(loyalty_total)}</strong></div>
@@ -13433,6 +13557,89 @@ def render_courier_detail_page() -> None:
             """,
             unsafe_allow_html=True,
         )
+        if dsp_quality:
+            st.markdown("#### Minőségi magyarázat")
+            quality_cols = st.columns(4)
+            quality_cols[0].metric(
+                "Késési bónusz %",
+                delay_percent_label,
+                help=f"{quality_delayed_order_count} késéses cím / {quality_order_count} cím. Szint: {quality_delay_level}. szint.",
+            )
+            quality_cols[1].metric(
+                "Túramegfelelés %",
+                compliance_percent_label,
+                help=f"Hibamutató: {route_quality_bad_label}. Szint: {quality_route_level}. szint.",
+            )
+            quality_cols[2].metric(
+                "Késői bejelentkezés",
+                f"{quality_late_shift_count} / {quality_shift_count}",
+                help="A hibamutatóban 30%-os súllyal számít.",
+            )
+            quality_cols[3].metric(
+                "No-show",
+                f"{quality_no_show_count} / {quality_shift_count}",
+                help="A hibamutatóban 70%-os súllyal számít.",
+            )
+
+            shift_quality_issues = load_dsp_shift_quality_issues(courier_id, period_start, period_end)
+            route_quality_issues = load_dsp_route_quality_issues(courier_id, period_start, period_end)
+            with st.expander("Hol volt műszakból késés vagy no-show?", expanded=False):
+                if shift_quality_issues.empty:
+                    st.success("Ehhez a hónaphoz nincs műszakból késés vagy no-show sor.")
+                else:
+                    shift_view = shift_quality_issues.copy()
+                    no_show_series = shift_view.get("no_show", pd.Series(False, index=shift_view.index)).astype(str).str.casefold().isin(["true", "1", "igen", "yes"])
+                    shift_view["Dátum"] = shift_view.get("work_date", pd.Series("", index=shift_view.index)).astype(str).str[:10]
+                    shift_view["Probléma"] = no_show_series.map({True: "No-show", False: "Késői bejelentkezés"})
+                    shift_view["Műszak"] = shift_view.get("shift_name", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    missing_shift_name = shift_view["Műszak"].str.strip().eq("")
+                    if missing_shift_name.any():
+                        shift_view.loc[missing_shift_name, "Műszak"] = (
+                            shift_view.get("shift_start_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                            + "-"
+                            + shift_view.get("shift_end_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                        )
+                    shift_view["Raktár"] = shift_view.get("warehouse", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    shift_view["Giriton bejelentkezés"] = shift_view.get("available_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                    shift_view["Sorba állt"] = shift_view.get("queue_started_at", pd.Series("", index=shift_view.index)).map(format_short_time)
+                    shift_view["Megjegyzés"] = shift_view.get("no_show_reason", pd.Series("", index=shift_view.index)).fillna("").astype(str)
+                    st.dataframe(
+                        shift_view[["Dátum", "Probléma", "Műszak", "Raktár", "Giriton bejelentkezés", "Sorba állt", "Megjegyzés"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=260,
+                    )
+
+            with st.expander("Hol volt címről vagy következő műszakról késés?", expanded=False):
+                if route_quality_issues.empty:
+                    st.success("Ehhez a hónaphoz nincs cím/időablak késéses route sor.")
+                else:
+                    route_issue_view = route_quality_issues.copy()
+                    route_issue_view["Dátum"] = route_issue_view.get("work_date", pd.Series("", index=route_issue_view.index)).astype(str).str[:10]
+                    route_issue_view["Route ID"] = route_issue_view.get("route_id", pd.Series("", index=route_issue_view.index)).astype(str)
+                    route_issue_view["Műszak"] = route_issue_view.get("shift_name", pd.Series("", index=route_issue_view.index)).fillna("").astype(str)
+                    route_issue_view["Késéses cím"] = pd.to_numeric(route_issue_view.get("time_window_late_count", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Összes cím"] = pd.to_numeric(route_issue_view.get("address_count", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Következő műszak késés"] = pd.to_numeric(route_issue_view.get("next_shift_delay_minutes", pd.Series(0, index=route_issue_view.index)), errors="coerce").fillna(0).astype(int)
+                    route_issue_view["Indulás"] = (
+                        route_issue_view.get("planned_departure", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                        + " / "
+                        + route_issue_view.get("real_departure", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                    )
+                    route_issue_view["Vissza"] = (
+                        route_issue_view.get("planned_return", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                        + " / "
+                        + route_issue_view.get("real_return", pd.Series("", index=route_issue_view.index)).map(format_short_time)
+                    )
+                    route_issue_view["Story"] = route_issue_view.get("story_text", pd.Series("", index=route_issue_view.index)).fillna("").astype(str).str.slice(0, 180)
+                    st.dataframe(
+                        route_issue_view[["Dátum", "Route ID", "Műszak", "Késéses cím", "Összes cím", "Következő műszak késés", "Indulás", "Vissza", "Story"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        height=320,
+                    )
+        else:
+            st.info("Ehhez a futárhoz és hónaphoz még nincs dsp_courier_quality_monthly minőségi sor, ezért a százalékos magyarázat nem jeleníthető meg.")
         source_options = ["API", "Excel"]
         current_source = "Excel" if str(active_calculation_mode or "").strip().casefold() == "excel" else "API"
         source_choice = st.radio(
