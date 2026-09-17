@@ -98,6 +98,17 @@ def _normalize_header(value):
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
+def _header_index(header, *names):
+    normalized_names = {
+        _normalize_header(name)
+        for name in names
+    }
+    for index, column in enumerate(header):
+        if _normalize_header(column) in normalized_names:
+            return index
+    return None
+
+
 def _normalize_time(value):
     text = str(value or "").strip()
 
@@ -675,11 +686,15 @@ def _enrich_foglalasok_values(values, driver_lookup):
         "kezdes",
         "foglalasi_kod",
     ]]
-    date_index = 1
-    email_index = 2
-    shift_index = 3
-    warehouse_index = 4
-    booking_code_index = 5
+    def index_or_default(default_index, *names):
+        index = _header_index(header, *names)
+        return default_index if index is None else index
+
+    date_index = index_or_default(1, "Dátum", "Datum", "Date", "Work date")
+    email_index = index_or_default(2, "Email", "E-mail", "Email cím", "E-mail cím")
+    shift_index = index_or_default(3, "Műszak", "Muszak", "Shift", "Shift text")
+    warehouse_index = index_or_default(4, "Raktár", "Raktar", "Warehouse", "Depó", "Depo")
+    booking_code_index = index_or_default(5, "Foglalási kód", "Foglalasi kod", "Booking code", "Code", "Kód", "Kod")
 
     for row in values[1:]:
         work_date = _cell(row, date_index)

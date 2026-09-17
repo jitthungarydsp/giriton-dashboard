@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import unicodedata
 
 from resources.google_auth import get_client
 
@@ -35,6 +36,29 @@ def normalize_name(value):
     return " ".join(
         str(value or "").strip().casefold().split()
     )
+
+
+def normalize_header(value):
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value or "").strip().casefold(),
+    )
+    text = "".join(
+        char for char in text
+        if not unicodedata.combining(char)
+    )
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def header_index(header, *names):
+    normalized_names = {
+        normalize_header(name)
+        for name in names
+    }
+    for index, column in enumerate(header):
+        if normalize_header(column) in normalized_names:
+            return index
+    return None
 
 
 def normalize_time(value):
@@ -109,20 +133,27 @@ def is_valid_giriton_record(record):
     ).strip().upper() == "GIRITON_OK"
 
 
-def foglalas_row_to_record(row):
-    shift = row_value(row, 3)
-    warehouse = row_value(row, 4)
+def foglalas_row_to_record(row, header=None):
+    def value(default_index, *names):
+        index = header_index(header or [], *names) if header else None
+        if index is None:
+            index = default_index
+        return row_value(row, index)
+
+    shift = value(3, "Műszak", "Muszak", "Shift", "Shift text")
+    warehouse = value(4, "Raktár", "Raktar", "Warehouse", "Depó", "Depo")
     match = re.search(r"(\d{1,2}:\d{2})", str(shift or ""))
     start = match.group(1) if match else ""
 
     return {
-        "created_at": row_value(row, 0),
-        "work_date": row_value(row, 1),
-        "email": row_value(row, 2),
+        "created_at": value(0, "Időbélyeg", "Idobelyeg", "Timestamp", "Created at"),
+        "work_date": value(1, "Dátum", "Datum", "Date", "Work date"),
+        "email": value(2, "Email", "E-mail", "Email cím", "E-mail cím"),
         "shift": shift,
         "warehouse": warehouse,
         "start": normalize_time(start),
-        "code": row_value(row, 5),
+        "code": value(5, "Foglalási kód", "Foglalasi kod", "Booking code", "Code", "Kód", "Kod"),
+        "serial": value(10, "Shift_ID", "Shift ID", "ShiftID", "Sorszám", "Sorszam", "Serial"),
     }
 
 
@@ -254,8 +285,10 @@ def read_foglalasok_records(work_date):
     rows = worksheet.get_all_values()
     records = []
 
-    for row in rows:
-        record = foglalas_row_to_record(row)
+    header = rows[0] if rows else []
+
+    for row in rows[1:] if header else rows:
+        record = foglalas_row_to_record(row, header)
 
         if record["work_date"] == work_date and record["email"]:
             records.append(record)

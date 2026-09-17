@@ -600,7 +600,7 @@ def build_db_rows(values, courier_lookup=None):
         "kod", "code", "foglalasikod", "adminrecorder", "admin", "rogzito",
         "giritonuploaded", "rendszerellenorzes", "systemcheck", "legacykey",
         "kulcs", "key", "courierid", "nev", "name", "couriername", "futar",
-        "sorszam", "serial",
+        "sorszam", "serial", "shiftid",
     }
     has_header = bool(set(header) & known_headers)
     compact_email_headerless = (
@@ -683,7 +683,7 @@ def build_db_rows(values, courier_lookup=None):
     courier_name_index = header_index("nev", "név", "name", "courier_name", "futar", "futár")
     if courier_name_index is None:
         courier_name_index = default_indexes["courier_name"]
-    serial_index = header_index("sorszam", "serial")
+    serial_index = header_index("sorszam", "serial", "shift_id", "shift id", "shiftid")
     if serial_index is None:
         serial_index = default_indexes["serial"]
 
