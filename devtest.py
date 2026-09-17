@@ -17263,17 +17263,30 @@ def render_courier_detail_page() -> None:
                     f"{complaint_type_label(selected_complaint.get('document_type'))} · "
                     f"{selected_status_label}"
                 )
-                st.text_area(
-                    "Reklamáció szövege",
-                    value=selected_message,
-                    height=220,
-                    disabled=True,
-                    key=f"ui_complaint_message_preview_{courier_id}_{selected_complaint_id}",
+                st.markdown("**Reklamáció szövege**")
+                complaint_message_html = html.escape(selected_message or "Nincs megadott reklamációs szöveg.").replace("\n", "<br>")
+                st.markdown(
+                    f"""
+                    <div style="
+                        min-height: 220px;
+                        max-height: 420px;
+                        overflow-y: auto;
+                        padding: 16px 18px;
+                        border: 1px solid #d6dde6;
+                        border-radius: 10px;
+                        background: #ffffff;
+                        color: #111827;
+                        font-size: 15px;
+                        line-height: 1.6;
+                        white-space: normal;
+                    ">{complaint_message_html}</div>
+                    """,
+                    unsafe_allow_html=True,
                 )
                 response_message = st.text_area(
                     "Válasz a futárnak",
                     value=str(selected_complaint.get("admin_response") or ""),
-                    height=140,
+                    height=180,
                     placeholder="Ide írd a kollégának küldendő választ. Lezáráskor ezt is látni fogja.",
                     key=f"ui_complaint_response_{courier_id}_{selected_complaint_id}",
                 )
