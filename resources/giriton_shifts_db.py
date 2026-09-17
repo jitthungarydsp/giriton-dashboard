@@ -454,6 +454,47 @@ def validate_complete_shift_export(db_rows):
     )
 
 
+def dedupe_db_rows(db_rows):
+    deduped = {}
+    duplicate_count = 0
+    key_fields = [
+        "source_name",
+        "work_date",
+        "warehouse",
+        "start_time",
+        "courier_name",
+    ]
+    merge_fields = [
+        "end_time",
+        "occupancy",
+        "booked",
+        "maximum",
+        "email",
+        "courier_id",
+        "serial",
+        "status",
+        "response_json",
+        "fetched_at",
+        "updated_at",
+    ]
+
+    for row in db_rows:
+        key = tuple(clean(row.get(field)) for field in key_fields)
+        if key not in deduped:
+            deduped[key] = dict(row)
+            continue
+
+        duplicate_count += 1
+        existing = deduped[key]
+        for field in merge_fields:
+            if existing.get(field) in [None, ""] and row.get(field) not in [None, ""]:
+                existing[field] = row.get(field)
+
+    if duplicate_count:
+        print(f"GIRITON_RAW_EXPORT_DEDUPE duplicates={duplicate_count} rows={len(deduped)}")
+    return list(deduped.values())
+
+
 def upsert_giriton_shift_rows(rows):
     db_rows = build_db_rows(rows)
 
@@ -464,6 +505,7 @@ def upsert_giriton_shift_rows(rows):
         }
 
     validate_complete_shift_export(db_rows)
+    db_rows = dedupe_db_rows(db_rows)
 
     supabase_url, headers = get_headers()
     delete_result = delete_existing_shift_dates(db_rows)
