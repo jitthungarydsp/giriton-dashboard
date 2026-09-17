@@ -14841,6 +14841,15 @@ def accept_workflow_document(
             "Számlaellenőrzés kézzel kihagyva.",
             process_id,
         )
+    elif action == "tig" and not invoice_skip:
+        upsert_workflow_status(
+            user,
+            month,
+            "invoice_submit",
+            "open",
+            "TIG elfogadva, számlafeltöltésre vár.",
+            process_id,
+        )
     return {"ok": True, "workflow": build_workflow(user, month, process_id)}
 
 
