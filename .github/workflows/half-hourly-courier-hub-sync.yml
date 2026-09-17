@@ -102,6 +102,18 @@ jobs:
             echo "Courier Hub login secrets not set, using static auth secrets."
           fi
 
+      - name: Sync Courier Hub master roster
+        shell: bash
+        run: |
+          ROSTER_DATE="$(TZ=Europe/Budapest date +%F)"
+          CMD=(python scripts/sync_courier_hub_master.py --warehouse-ids "1,2" --dsp-id 8 --date "$ROSTER_DATE")
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
       - name: Sync Courier Hub live monitoring
         shell: bash
         run: |
