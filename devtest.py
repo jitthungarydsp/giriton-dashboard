@@ -11088,6 +11088,25 @@ def status_meta(status: str) -> tuple[str,str]:
     return mapping.get(status,("status-yellow","led-yellow"))
 
 
+def courier_detail_menu_for_status(status: object) -> str:
+    normalized = str(status or "").strip().casefold()
+    if not normalized:
+        return "Pénzügy"
+    if "fizetés előleg" in normalized:
+        return "Fizetés előleg"
+    if normalized in {"kifizetésre vár", "kifizetve"}:
+        return "Kifizetés"
+    if "bejelentés" in normalized or "reklam" in normalized:
+        return "Reklamációk"
+    if (
+        "elszámolás" in normalized
+        or "tig" in normalized
+        or "számla" in normalized
+    ):
+        return "Dokumentumok"
+    return "Pénzügy"
+
+
 def complaint_status_meta(status: str) -> tuple[str, str, str]:
     normalized = str(status or "").strip().casefold()
     mapping = {
@@ -12867,6 +12886,7 @@ def render_table(df: pd.DataFrame) -> None:
                 help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
+                st.session_state[f"courier_menu_target_{row['Courier ID']}"] = courier_detail_menu_for_status(row.get("Státusz"))
                 st.rerun()
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
@@ -17207,35 +17227,7 @@ def render_courier_detail_page() -> None:
                 )
 
         with complaint_editor:
-            st.markdown("##### Új reklamáció")
-            new_complaint_type_label = st.selectbox(
-                "Típus",
-                ["Elszámolás", "TIG", "Számlaellenőrzés", "Számlafeltöltés", "Számla", "Egyéb"],
-                key=f"ui_complaint_type_{courier_id}",
-            )
-            new_complaint_subject = st.text_input("Tárgy", key=f"ui_complaint_subject_{courier_id}")
-            new_complaint_text = st.text_area("Leírás", key=f"ui_complaint_text_{courier_id}")
-            if st.button("Reklamáció mentése", type="primary", use_container_width=True, key=f"ui_complaint_save_{courier_id}"):
-                message_parts = [new_complaint_subject.strip(), new_complaint_text.strip()]
-                message = "\n\n".join([part for part in message_parts if part])
-                if not message:
-                    st.error("A reklamációhoz adj meg tárgyat vagy leírást.")
-                else:
-                    try:
-                        create_peopleforce_complaint(
-                            courier_id=courier_id,
-                            courier_name=str(row["Futár"]),
-                            document_type=reverse_complaint_type_labels.get(new_complaint_type_label, "other"),
-                            document_month=period_start.replace(day=1),
-                            message=message,
-                            created_by=actor,
-                        )
-                        st.success("Reklamáció mentve. A mobilos felületen is megjelenik.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"A reklamáció mentése sikertelen: {exc}")
-
-            st.markdown("##### Válasz / státusz")
+            st.markdown("##### Reklamáció kezelése")
             if complaints.empty:
                 st.caption("Nincs kiválasztható reklamáció.")
             else:
@@ -17262,47 +17254,32 @@ def render_courier_detail_page() -> None:
                     key=f"ui_complaint_select_{courier_id}",
                 )
                 selected_complaint = complaint_rows_by_id.get(selected_complaint_id, {})
-                current_status_label = complaint_status_labels.get(
-                    str(selected_complaint.get("status") or "new"),
+                selected_message = str(selected_complaint.get("message") or "").strip()
+                selected_status_label = complaint_status_labels.get(
+                    str(selected_complaint.get("status") or "").strip(),
                     str(selected_complaint.get("status") or "Új"),
                 )
-                response_status_label = st.selectbox(
-                    "Státusz",
-                    list(complaint_status_labels.values()),
-                    index=list(complaint_status_labels.values()).index(current_status_label)
-                    if current_status_label in complaint_status_labels.values() else 0,
-                    key=f"ui_complaint_status_{courier_id}_{selected_complaint_id}",
+                st.caption(
+                    f"{complaint_type_label(selected_complaint.get('document_type'))} · "
+                    f"{selected_status_label}"
+                )
+                st.text_area(
+                    "Reklamáció szövege",
+                    value=selected_message,
+                    height=220,
+                    disabled=True,
+                    key=f"ui_complaint_message_preview_{courier_id}_{selected_complaint_id}",
                 )
                 response_message = st.text_area(
-                    "Admin válasz",
+                    "Válasz a futárnak",
                     value=str(selected_complaint.get("admin_response") or ""),
+                    height=140,
+                    placeholder="Ide írd a kollégának küldendő választ. Lezáráskor ezt is látni fogja.",
                     key=f"ui_complaint_response_{courier_id}_{selected_complaint_id}",
                 )
-                response_actions = st.columns(3)
-                if response_actions[2].button("Lezaras", type="primary", use_container_width=True, key=f"ui_complaint_close_top_{courier_id}_{selected_complaint_id}"):
+                if st.button("Lezárom", type="primary", use_container_width=True, key=f"ui_complaint_close_{courier_id}_{selected_complaint_id}"):
                     try:
-                        update_peopleforce_complaints_status_for_process(
-                            courier_id,
-                            period_start.replace(day=1),
-                            str(selected_complaint.get("document_type") or ""),
-                            "closed",
-                        )
-                        st.success("Reklamacio lezarva.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"A reklamacio lezarasa sikertelen: {exc}")
-                if st.button("Reklamáció elrejtése", use_container_width=True, key=f"ui_complaint_delete_{courier_id}_{selected_complaint_id}"):
-                    try:
-                        delete_peopleforce_complaint(selected_complaint_id)
-                        st.success("Reklamáció elrejtve. DB-ből visszanyitható.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"A reklamáció elrejtése sikertelen: {exc}")
-                if response_actions[0].button("Válasz küldése", type="primary", use_container_width=True, key=f"ui_complaint_response_save_{courier_id}"):
-                    if not response_message.strip():
-                        st.error("A válasz szövege nem lehet üres.")
-                    else:
-                        try:
+                        if response_message.strip():
                             respond_to_peopleforce_complaint(
                                 selected_complaint_id,
                                 response_message,
@@ -17312,38 +17289,13 @@ def render_courier_detail_page() -> None:
                                 document_type=str(selected_complaint.get("document_type") or "other"),
                                 document_month=period_start.replace(day=1),
                             )
-                            st.success("Válasz elküldve. A futár mobilon is látni fogja.")
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"A válasz mentése sikertelen: {exc}")
-                if response_actions[1].button("Státusz mentése", use_container_width=True, key=f"ui_complaint_status_save_{courier_id}"):
-                    try:
-                        next_status = reverse_complaint_status_labels.get(response_status_label, "open")
-                        if next_status == "closed":
-                            update_peopleforce_complaints_status_for_process(
-                                courier_id,
-                                period_start.replace(day=1),
-                                str(selected_complaint.get("document_type") or ""),
-                                "closed",
-                            )
-                        else:
-                            update_peopleforce_complaint_status(
-                                selected_complaint_id,
-                                next_status,
-                            )
-                        st.success("Reklamáció státusz frissítve.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"A státusz mentése sikertelen: {exc}")
-                if st.button("Reklamáció lezárása", type="primary", use_container_width=True, key=f"ui_complaint_close_{courier_id}_{selected_complaint_id}"):
-                    try:
                         update_peopleforce_complaints_status_for_process(
                             courier_id,
                             period_start.replace(day=1),
                             str(selected_complaint.get("document_type") or ""),
                             "closed",
                         )
-                        st.success("Reklamáció lezárva.")
+                        st.success("Reklamáció lezárva. A válasz mentve lett.")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A reklamáció lezárása sikertelen: {exc}")
