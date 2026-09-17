@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -93,10 +94,29 @@ def build_courier_url(base_url: str, warehouse_id: int, courier_id: int, dsp_id:
     )
 
 
+def courier_hub_get_with_retries(url: str, *, attempts: int = 4, timeout: int = 60) -> requests.Response:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(url, headers=courier_hub_headers(), timeout=timeout)
+            if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers():
+                response = requests.get(url, headers=courier_hub_headers(), timeout=timeout)
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < attempts:
+                time.sleep(min(2 ** attempt, 10))
+                continue
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(min(2 ** attempt, 10))
+    if last_error:
+        raise last_error
+    raise RuntimeError("Courier Hub request failed without response.")
+
+
 def request_courier_hub_json(url: str) -> tuple[int, Any]:
-    response = requests.get(url, headers=courier_hub_headers(), timeout=60)
-    if response.status_code in AUTH_REFRESH_STATUS_CODES and refresh_courier_hub_headers():
-        response = requests.get(url, headers=courier_hub_headers(), timeout=60)
+    response = courier_hub_get_with_retries(url)
 
     status_code = response.status_code
     try:
@@ -398,7 +418,14 @@ def main() -> int:
         for courier in couriers:
             courier_id = int(normalize_id(courier.get("courierId")))
             detail_url = build_courier_url(args.base_url, warehouse_id, courier_id, args.dsp_id)
-            detail_status, detail_payload = request_courier_hub_json(detail_url)
+            try:
+                detail_status, detail_payload = request_courier_hub_json(detail_url)
+            except requests.RequestException as exc:
+                detail_status = 599
+                detail_payload = {
+                    "error": "request_exception",
+                    "message": str(exc)[:1000],
+                }
             if detail_status >= 400:
                 failures += 1
             detail_rows.append(
@@ -418,6 +445,7 @@ def main() -> int:
                 f"route={live_route_id(courier) or '-'} status={detail_status}",
                 flush=True,
             )
+            time.sleep(0.2)
 
     if args.dry_run:
         print(
