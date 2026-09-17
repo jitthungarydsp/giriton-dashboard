@@ -90,6 +90,11 @@ jobs:
         if: ${{ always() }}
         shell: bash
         run: |
+          if [ -z "$DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL" ]; then
+            echo "::warning::DISCORD_FAILED_SHIFT_REQUEST_WEBHOOK_URL nincs beallitva, a kezi megkeres ertesites kihagyva."
+            exit 0
+          fi
+
           LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
@@ -108,4 +113,6 @@ jobs:
           fi
 
           echo "Running: ${CMD[*]}"
-          "${CMD[@]}"
+          if ! "${CMD[@]}"; then
+            echo "::warning::A kezi megkeres Discord ertesites sikertelen volt, de ez nem allitja meg a foglalasi jobot."
+          fi

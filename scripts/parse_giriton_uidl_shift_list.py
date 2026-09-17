@@ -236,6 +236,23 @@ def normalize_time(value: str) -> str:
     return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
 
 
+def parse_occupancy(text: str) -> tuple[str, int | None, int | None]:
+    value = strip_html(text)
+    patterns = [
+        r"Status\s*\n([0-9]+\s*/\s*[0-9]+)",
+        r"\b([0-9]+\s*/\s*[0-9]+)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, value, flags=re.IGNORECASE)
+        if not match:
+            continue
+        occupancy = re.sub(r"\s+", " ", match.group(1)).strip()
+        numbers = re.findall(r"\d+", occupancy)
+        if len(numbers) >= 2:
+            return occupancy, int(numbers[0]), int(numbers[1])
+    return "", None, None
+
+
 def parse_description(description: str) -> dict[str, Any]:
     text = strip_html(description)
     warehouse = ""
@@ -252,13 +269,7 @@ def parse_description(description: str) -> dict[str, Any]:
         if warehouse_match:
             warehouse = warehouse_match.group(1)
 
-    status_match = re.search(r"Status\s*\n([0-9]+\s*/\s*[0-9]+)", text, flags=re.IGNORECASE)
-    if status_match:
-        occupancy = re.sub(r"\s+", " ", status_match.group(1)).strip()
-        numbers = re.findall(r"\d+", occupancy)
-        if len(numbers) >= 2:
-            booked = int(numbers[0])
-            maximum = int(numbers[1])
+    occupancy, booked, maximum = parse_occupancy(text)
 
     users_match = re.search(r"Subscribed users\s*\n?(.+)$", text, flags=re.IGNORECASE | re.DOTALL)
     if users_match:
@@ -297,6 +308,13 @@ def shift_cards_from_uidl(payload: Any) -> list[dict[str, Any]]:
 
         parsed_title = parse_title(title)
         parsed_description = parse_description(description)
+        if parsed_description["free_slots"] is None:
+            title_occupancy, title_booked, title_maximum = parse_occupancy(title)
+            if title_booked is not None and title_maximum is not None:
+                parsed_description["occupancy"] = title_occupancy
+                parsed_description["booked"] = title_booked
+                parsed_description["maximum"] = title_maximum
+                parsed_description["free_slots"] = max(title_maximum - title_booked, 0)
         cards.append(
             {
                 "node_id": node_id,

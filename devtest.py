@@ -12886,7 +12886,13 @@ def render_table(df: pd.DataFrame) -> None:
                 help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
-                st.session_state[f"courier_menu_target_{row['Courier ID']}"] = courier_detail_menu_for_status(row.get("Státusz"))
+                active_status_filter = str(st.session_state.get("dashboard_status_filter") or "").strip()
+                target_menu = (
+                    "Reklamációk"
+                    if active_status_filter == "Bejelentések"
+                    else courier_detail_menu_for_status(row.get("Státusz"))
+                )
+                st.session_state[f"courier_menu_target_{row['Courier ID']}"] = target_menu
                 st.rerun()
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
