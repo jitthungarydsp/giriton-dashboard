@@ -8067,6 +8067,77 @@ def build_settlement_working_data(calculation_mode: str, session_id: str | None,
     return apply_api_base_rates(load_courier_master("API"), period_start, warehouse_label, session_id)
 
 
+def settlement_loyalty_cache_token(session_id: str | None, period_start: date, calculation_mode: str) -> str:
+    cache_key = settlement_loyalty_cache_key(session_id, period_start, calculation_mode)
+    cache_rows = st.session_state.get(cache_key) or {}
+    if not cache_rows:
+        return ""
+    try:
+        payload = json.dumps(cache_rows, sort_keys=True, default=str, ensure_ascii=False)
+    except TypeError:
+        payload = str(cache_rows)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def build_settlement_overview_data(
+    calculation_mode: str,
+    session_id: str | None,
+    period_start: date,
+    period_end: date,
+    warehouse_label: str | None,
+    loyalty_cache_token: str = "",
+) -> pd.DataFrame:
+    data = build_settlement_working_data(calculation_mode, session_id, period_start, warehouse_label)
+    data = apply_received_amounts(
+        data,
+        calculation_mode,
+        period_start,
+        warehouse_label,
+        session_id,
+    )
+    data = apply_imported_balance_components(
+        data,
+        balance_component_session_id(calculation_mode, period_start, session_id),
+    )
+    data = apply_cached_loyalty_values(
+        data,
+        period_start=period_start,
+        session_id=session_id,
+        calculation_mode=calculation_mode,
+    )
+    data = apply_customer_rating_bonus(data, period_start, period_end)
+    data = apply_manual_balance_adjustments(data, period_start, period_end)
+    data = apply_periodic_fee_corrections(
+        data,
+        session_id,
+        calculation_mode,
+        period_start,
+        period_end,
+        warehouse_label,
+    )
+    data = apply_salary_advance_deduction(data, period_start, period_end)
+    data = recompute_payable_total(data)
+    data = apply_target_reserve_deductions(
+        data,
+        period_start,
+        period_end,
+        session_id,
+    )
+    data = apply_peopleforce_workflow_status(data, period_start)
+    data = apply_monthly_closure_status(data, period_start, period_end)
+    data = apply_salary_advance_request_status(data, period_start, period_end)
+    data = apply_expense_request_status(data, period_start)
+    data = apply_effective_payment_total_column(data, period_start)
+    return data
+
+
+def clear_settlement_overview_data_cache() -> None:
+    clear = getattr(build_settlement_overview_data, "clear", None)
+    if clear:
+        clear()
+
+
 def payable_bonus_total(data: pd.DataFrame) -> pd.Series:
     itemized_columns = [
         "Késedelmi díj",
@@ -12454,6 +12525,7 @@ def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
+    clear_settlement_overview_data_cache()
 
 
 def update_courier_adjustment(
@@ -12489,6 +12561,7 @@ def update_courier_adjustment(
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
+    clear_settlement_overview_data_cache()
 
 
 def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustment_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
@@ -12507,6 +12580,7 @@ def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustmen
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
+    clear_settlement_overview_data_cache()
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -12537,10 +12611,12 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
+    clear_settlement_overview_data_cache()
 
 
 def refresh_settlement_profile_data() -> None:
     st.session_state.pop("current_filtered_data", None)
+    clear_settlement_overview_data_cache()
     for key in list(st.session_state.keys()):
         if str(key).startswith("finance_payment_sync_"):
             st.session_state.pop(key, None)
@@ -19709,47 +19785,18 @@ def show_new_settlement_page() -> None:
             import_session_id = api_session_id
     if str(selected_calculation_mode or "").strip() in {"API", "Excel"} and import_session_id:
         st.session_state["settlement_import_session_id"] = import_session_id
-    data = build_settlement_working_data(selected_calculation_mode, import_session_id, balance_period_start, selected_warehouse_label)
-    data = apply_received_amounts(
-        data,
+    data = build_settlement_overview_data(
         selected_calculation_mode,
-        balance_period_start,
-        selected_warehouse_label,
         import_session_id,
-    )
-    data = apply_imported_balance_components(
-        data,
-        balance_component_session_id(selected_calculation_mode, balance_period_start, import_session_id),
-    )
-    data = apply_cached_loyalty_values(
-        data,
-        period_start=balance_period_start,
-        session_id=import_session_id,
-        calculation_mode=selected_calculation_mode,
-    )
-    data = apply_customer_rating_bonus(data, balance_period_start, balance_period_end)
-    data = apply_manual_balance_adjustments(data, balance_period_start, balance_period_end)
-    data = apply_periodic_fee_corrections(
-        data,
-        import_session_id,
-        selected_calculation_mode,
         balance_period_start,
         balance_period_end,
         selected_warehouse_label,
+        settlement_loyalty_cache_token(
+            import_session_id,
+            balance_period_start,
+            selected_calculation_mode,
+        ),
     )
-    data = apply_salary_advance_deduction(data, balance_period_start, balance_period_end)
-    data = recompute_payable_total(data)
-    data = apply_target_reserve_deductions(
-        data,
-        balance_period_start,
-        balance_period_end,
-        import_session_id,
-    )
-    data = apply_peopleforce_workflow_status(data, balance_period_start)
-    data = apply_monthly_closure_status(data, balance_period_start, balance_period_end)
-    data = apply_salary_advance_request_status(data, balance_period_start, balance_period_end)
-    data = apply_expense_request_status(data, balance_period_start)
-    data = apply_effective_payment_total_column(data, balance_period_start)
     route_audit_enabled = (
         str(selected_calculation_mode or "").strip().casefold() == "excel"
         and st.session_state.get("settlement_show_route_audit_for") == f"{import_session_id or ''}:{balance_period_start.isoformat()}"
