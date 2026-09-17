@@ -271,6 +271,25 @@ def find_target_shift(initial_payloads: list[Any], warehouse: str, shift_start: 
     return matches[0], hierarchy
 
 
+def require_open_capacity(shift: dict[str, Any]) -> None:
+    occupancy = clean(shift.get("occupancy")) or "-"
+    free_slots = shift.get("free_slots")
+    booked = shift.get("booked")
+    maximum = shift.get("maximum")
+    title = clean(shift.get("title")) or "-"
+
+    if free_slots is None:
+        raise RuntimeError(
+            "A Giriton muszak kapacitasa nem olvashato biztosan, ezert nem foglalok "
+            f"vakon. occupancy={occupancy} title={title}"
+        )
+    if int(free_slots) <= 0:
+        raise RuntimeError(
+            "A Giriton muszak betelt, ezert nem foglalok ra. "
+            f"occupancy={occupancy} booked={booked} maximum={maximum} title={title}"
+        )
+
+
 def find_subscribed_tab(payload: Any) -> str:
     state, _ = merged_uidl_state(payload)
     candidates = []
@@ -480,6 +499,7 @@ def main() -> int:
             f"node={target_shift.get('node_id')} occupancy={target_shift.get('occupancy') or '-'} "
             f"free_slots={target_shift.get('free_slots')} title={target_shift.get('title') or '-'}"
         )
+        require_open_capacity(target_shift)
 
         templates = request_templates(initial_events)
         if not templates:
