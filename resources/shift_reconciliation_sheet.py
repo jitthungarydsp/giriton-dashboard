@@ -138,10 +138,22 @@ def row_column(row, index):
 
 
 def read_worksheet_values(spreadsheet, sheet_name):
+    cache = getattr(spreadsheet, "_jit_values_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(spreadsheet, "_jit_values_cache", cache)
+        except Exception:
+            cache = {}
+    if sheet_name in cache:
+        return cache[sheet_name]
+
     try:
-        return spreadsheet.worksheet(sheet_name).get_all_values()
+        values = spreadsheet.worksheet(sheet_name).get_all_values()
     except gspread.WorksheetNotFound:
-        return []
+        values = []
+    cache[sheet_name] = values
+    return values
 
 
 def read_giriton_keyed_records(spreadsheet, work_date):
@@ -451,11 +463,11 @@ def comparison_db_row_to_record(row):
     }
 
 
-def build_records_for_date(work_date):
+def build_records_for_date(work_date, spreadsheet=None):
     updated_at = datetime.now(
         LOCAL_TIMEZONE
     ).strftime("%Y-%m-%d %H:%M:%S")
-    spreadsheet = open_sheet()
+    spreadsheet = spreadsheet or open_sheet()
     giriton_records = {
         record_match_key(record): record
         for record in read_giriton_keyed_records(

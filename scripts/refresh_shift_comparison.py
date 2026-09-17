@@ -19,6 +19,7 @@ from resources.shift_comparison_db import (
 from resources.shift_reconciliation_sheet import (
     LOCAL_TIMEZONE,
     build_records_for_date,
+    open_sheet,
 )
 
 
@@ -31,13 +32,15 @@ def parse_start_date(value):
 
 def collect_records(start_date, days):
     records = []
+    spreadsheet = open_sheet()
 
     for offset in range(days):
         work_date = (
             start_date + timedelta(days=offset)
         ).isoformat()
         daily_records = build_records_for_date(
-            work_date
+            work_date,
+            spreadsheet=spreadsheet,
         )
         records.extend(
             daily_records
