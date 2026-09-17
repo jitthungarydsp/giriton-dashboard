@@ -98,7 +98,7 @@ def _normalize_header(value):
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
-def _header_index(header, *names):
+def _header_index_any(header, *names):
     normalized_names = {
         _normalize_header(name)
         for name in names
@@ -687,7 +687,7 @@ def _enrich_foglalasok_values(values, driver_lookup):
         "foglalasi_kod",
     ]]
     def index_or_default(default_index, *names):
-        index = _header_index(header, *names)
+        index = _header_index_any(header, *names)
         return default_index if index is None else index
 
     date_index = index_or_default(1, "Dátum", "Datum", "Date", "Work date")
