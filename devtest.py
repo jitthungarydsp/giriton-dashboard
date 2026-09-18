@@ -5825,6 +5825,8 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
     result = data.copy()
     if result.empty or "Courier ID" not in result.columns:
         return result
+    if "Fizetés előleg státusz" not in result.columns:
+        result["Fizetés előleg státusz"] = ""
     requests = load_salary_advance_requests_for_month(period_start, period_end)
     if requests.empty:
         return result
@@ -5902,11 +5904,7 @@ def apply_salary_advance_request_status(data: pd.DataFrame, period_start: date, 
     courier_ids = result["Courier ID"].map(_courier_id_key)
     mapped_status = courier_ids.map(status_by_courier)
     advance_mask = mapped_status.notna()
-    if "Státusz" in result.columns:
-        current_status = result["Státusz"].astype(str)
-        paid_advance_mask = mapped_status.astype(str).eq("Kifizetve (Fizetés előleg)")
-        advance_mask = advance_mask & (~current_status.isin({"Kifizetve"}) | paid_advance_mask)
-    result.loc[advance_mask, "Státusz"] = mapped_status[advance_mask]
+    result.loc[advance_mask, "Fizetés előleg státusz"] = mapped_status[advance_mask]
     return result
 
 
@@ -12966,6 +12964,8 @@ def render_table(df: pd.DataFrame) -> None:
                 target_menu = (
                     "Reklamációk"
                     if active_status_filter == "Bejelentések"
+                    else "Fizetés előleg"
+                    if active_status_filter in {"Új fizetés előleg", "Kifizetésre vár (Fizetés előleg)", "Kifizetve (Fizetés előleg)"}
                     else courier_detail_menu_for_status(row.get("Státusz"))
                 )
                 st.session_state[f"courier_menu_target_{row['Courier ID']}"] = target_menu
@@ -13000,6 +13000,14 @@ def render_table(df: pd.DataFrame) -> None:
             cols[2].markdown(f"**{format_huf(excel_payable_total)}**")
 
             badge, led = status_meta(str(row["Státusz"]))
+            advance_status = str(row.get("Fizetés előleg státusz") or "").strip()
+            advance_badge_html = ""
+            if advance_status:
+                advance_badge, advance_led = status_meta(advance_status)
+                advance_badge_html = (
+                    f'<span class="status-badge {advance_badge}">'
+                    f'<span class="led {advance_led}"></span>{html.escape(advance_status)}</span>'
+                )
             complaint_label = str(row.get("Bejelentés státusz") or "Nincs bejelentés")
             complaint_note = str(row.get("Bejelentés megjegyzés") or "Nincs megjegyzés.")
             complaint_badge = str(row.get("_bejelentes_badge") or "complaint-status-none")
@@ -13014,6 +13022,7 @@ def render_table(df: pd.DataFrame) -> None:
                 (
                     '<div class="complaint-status-wrap">'
                     f'<span class="status-badge {badge}"><span class="led {led}"></span>{html.escape(str(row["Státusz"]))}</span>'
+                    f'{advance_badge_html}'
                     f'{complaint_status_html}'
                     '</div>'
                 ),
@@ -20325,15 +20334,29 @@ def show_new_settlement_page() -> None:
         base_filtered=base_filtered[base_filtered["Számítás módja"]==calculation_mode]
     if warehouse!="Összes":
         base_filtered=base_filtered[base_filtered["Raktár"]==warehouse]
+    advance_statuses = {
+        "Új fizetés előleg",
+        "Kifizetésre vár (Fizetés előleg)",
+        "Kifizetve (Fizetés előleg)",
+    }
     if status!="Összes":
-        base_filtered=base_filtered[base_filtered["Státusz"]==status]
+        if status in advance_statuses:
+            base_filtered=base_filtered[base_filtered.get("Fizetés előleg státusz", pd.Series("", index=base_filtered.index)).astype(str)==status]
+        else:
+            base_filtered=base_filtered[base_filtered["Státusz"]==status]
     if search.strip():
         base_filtered = filter_couriers_by_search(base_filtered, search)
 
     active_workflow_filter = st.session_state.get("dashboard_status_filter")
     filtered = base_filtered.copy()
     if active_workflow_filter:
-        filtered = filtered[filtered["Státusz"] == active_workflow_filter]
+        if active_workflow_filter in advance_statuses:
+            filtered = filtered[
+                filtered.get("Fizetés előleg státusz", pd.Series("", index=filtered.index)).astype(str)
+                == active_workflow_filter
+            ]
+        else:
+            filtered = filtered[filtered["Státusz"] == active_workflow_filter]
     if not filtered.empty and "Kifizetendő" in filtered.columns:
         filtered = filtered.copy()
         filtered["_payable_sort"] = _numeric_series(filtered, "Kifizetendő")
@@ -20502,7 +20525,7 @@ def show_new_settlement_page() -> None:
         if metric_key == "couriers":
             return int(len(source))
         if metric_key == "salary_advance_requests":
-            return int((source.get("Státusz", pd.Series(dtype=str)).astype(str) == "Új fizetés előleg").sum())
+            return int((source.get("Fizetés előleg státusz", pd.Series(dtype=str)).astype(str) == "Új fizetés előleg").sum())
         column = str(metric.get("column") or "")
         return int(_numeric_series(source, column).sum()) if column else 0
 
@@ -20569,11 +20592,23 @@ def show_new_settlement_page() -> None:
         if warehouse != "Összes":
             previous_filtered = previous_filtered[previous_filtered["Raktár"] == warehouse]
         if status != "Összes":
-            previous_filtered = previous_filtered[previous_filtered["Státusz"] == status]
+            if status in advance_statuses:
+                previous_filtered = previous_filtered[
+                    previous_filtered.get("Fizetés előleg státusz", pd.Series("", index=previous_filtered.index)).astype(str)
+                    == status
+                ]
+            else:
+                previous_filtered = previous_filtered[previous_filtered["Státusz"] == status]
         if search.strip():
             previous_filtered = filter_couriers_by_search(previous_filtered, search)
         if active_workflow_filter:
-            previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
+            if active_workflow_filter in advance_statuses:
+                previous_filtered = previous_filtered[
+                    previous_filtered.get("Fizetés előleg státusz", pd.Series("", index=previous_filtered.index)).astype(str)
+                    == active_workflow_filter
+                ]
+            else:
+                previous_filtered = previous_filtered[previous_filtered["Státusz"] == active_workflow_filter]
         return previous_filtered
 
     st.markdown('<div class="section-title">Mutatók</div>', unsafe_allow_html=True)
@@ -20661,7 +20696,15 @@ def show_new_settlement_page() -> None:
             card_columns,
             workflow_cards[workflow_row_start:workflow_row_start + 5],
         ):
-            card_count = int((base_filtered["Státusz"] == card_status).sum())
+            if card_status in advance_statuses:
+                card_count = int(
+                    (
+                        base_filtered.get("Fizetés előleg státusz", pd.Series("", index=base_filtered.index)).astype(str)
+                        == card_status
+                    ).sum()
+                )
+            else:
+                card_count = int((base_filtered["Státusz"] == card_status).sum())
             is_active = active_workflow_filter == card_status
             checkmark = "  ✅" if is_active else ""
             button_label = f"{card_icon} {card_status}\n\n{card_count} db{checkmark}\n\n{card_note}"
