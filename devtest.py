@@ -5092,7 +5092,9 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             status = str(item.get("status") or "").strip().casefold()
             has_admin_answer = bool(str(item.get("admin_response") or "").strip() or str(item.get("responded_at") or "").strip())
             courier_key = _courier_id_key(item.get("courier_id"))
-            if courier_key and courier_key not in complaint_details_by_courier:
+            document_type = item.get("document_type")
+            invoice_check_complaint = base_action_key(document_type) == "invoice_check"
+            if courier_key and not invoice_check_complaint and courier_key not in complaint_details_by_courier:
                 status_label, badge_class, led_class = complaint_status_meta(status)
                 note = str(
                     item.get("message")
@@ -5108,8 +5110,7 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             if status in {"resolved", "closed"} or has_admin_answer:
                 continue
             if courier_key:
-                document_type = item.get("document_type")
-                if base_action_key(document_type) == "invoice_check":
+                if invoice_check_complaint:
                     invoice_attention_couriers.add(courier_key)
                     continue
                 complaint_couriers.add(courier_key)
@@ -17311,6 +17312,13 @@ def render_courier_detail_page() -> None:
                 complaints = complaints[
                     complaints.get("courier_id", pd.Series("", index=complaints.index))
                     .astype(str).map(_courier_id_key).eq(_courier_id_key(courier_id))
+                ].copy()
+                complaint_document_types = complaints.get(
+                    "document_type",
+                    pd.Series("", index=complaints.index),
+                )
+                complaints = complaints[
+                    ~complaint_document_types.map(lambda value: base_action_key(value) == "invoice_check")
                 ].copy()
         except Exception as exc:
             st.error(f"A reklamációk nem tölthetők be: {exc}")
