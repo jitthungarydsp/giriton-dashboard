@@ -519,7 +519,7 @@ def apply_design() -> None:
             --shadow:0 10px 30px rgba(20,40,80,.07);
         }
         .stApp { background:var(--bg); }
-        .block-container { max-width:1540px; padding-top:1.1rem; padding-right:500px; padding-bottom:3rem; }
+        .block-container { max-width:1760px; padding-top:1.1rem; padding-right:300px; padding-bottom:3rem; }
         [data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--border); }
         .premium-hero {
             display:flex; justify-content:space-between; align-items:center; gap:24px;
@@ -615,7 +615,7 @@ def apply_design() -> None:
         .side-note { color:var(--muted); font-size:12px; line-height:1.45; }
         .right-empty-menu {
             position:fixed; top:88px; right:24px; z-index:999;
-            width:456px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px;
+            width:260px; display:grid; grid-template-columns:1fr; gap:12px;
         }
         .right-empty-menu-card {
             min-height:116px; padding:16px;
@@ -635,6 +635,10 @@ def apply_design() -> None:
         .right-route-stat { padding:9px 8px; border:1px solid #edf1f6; border-radius:12px; background:#fbfcfe; }
         .right-route-stat span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
         .right-route-stat strong { display:block; margin-top:3px; color:var(--text); font-size:15px; font-weight:900; line-height:1.15; }
+        @media (min-width:1750px) {
+            .block-container { padding-right:500px; }
+            .right-empty-menu { width:456px; grid-template-columns:repeat(2,minmax(0,1fr)); }
+        }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
             .right-empty-menu { position:static; width:auto; grid-template-columns:1fr; margin-bottom:14px; }
