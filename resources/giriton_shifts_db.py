@@ -423,10 +423,10 @@ def min_rows_per_work_date():
         return MIN_ROWS_PER_WORK_DATE
 
 
-def validate_complete_shift_export(db_rows):
+def filter_complete_shift_export(db_rows):
     minimum_rows = min_rows_per_work_date()
     if minimum_rows <= 0:
-        return
+        return db_rows
 
     counts = {}
     for row in db_rows:
@@ -440,18 +440,32 @@ def validate_complete_shift_export(db_rows):
         if count < minimum_rows
     }
     if not incomplete:
-        return
+        return db_rows
 
     details = ", ".join(
         f"{work_date}: {count} sor"
         for work_date, count in sorted(incomplete.items())
     )
-    raise RuntimeError(
+    print(
         "GIRITON_RAW_EXPORT_INCOMPLETE_DAY "
         f"minimum={minimum_rows} "
         f"found={details}. "
-        "A DB frissítés leállt, hogy a részleges Giriton lista ne írja felül a jó adatokat."
+        "A hiányos napok kimaradnak a DB frissítésből.",
+        flush=True,
     )
+    complete_rows = [
+        row
+        for row in db_rows
+        if clean(row.get("work_date")) not in incomplete
+    ]
+    if not complete_rows:
+        raise RuntimeError(
+            "GIRITON_RAW_EXPORT_INCOMPLETE_DAY "
+            f"minimum={minimum_rows} "
+            f"found={details}. "
+            "Nincs egyetlen teljes nap sem, ezért a DB frissítés leállt."
+        )
+    return complete_rows
 
 
 def dedupe_db_rows(db_rows):
@@ -504,7 +518,7 @@ def upsert_giriton_shift_rows(rows):
             "status": "empty",
         }
 
-    validate_complete_shift_export(db_rows)
+    db_rows = filter_complete_shift_export(db_rows)
     db_rows = dedupe_db_rows(db_rows)
 
     supabase_url, headers = get_headers()

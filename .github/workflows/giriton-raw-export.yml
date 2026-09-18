@@ -79,6 +79,7 @@ jobs:
               --fast-uidl \
               --uidl-dir results/giriton-raw-export/uidl-trace \
               --csv results/giriton-raw-export/giriton-live-shifts.csv \
+              --continue-on-day-error \
               --write-raw-export
           else
             robot \

@@ -505,21 +505,43 @@ def set_giriton_date(driver, work_date: date) -> None:
 
 
 def wait_until_loaded(driver, timeout: int) -> None:
-    wait = WebDriverWait(driver, timeout)
-    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".panel-title")))
-    for _ in range(timeout):
-        loading = driver.execute_script(
+    last_state: dict[str, Any] = {}
+    for second in range(max(int(timeout), 1)):
+        state = driver.execute_script(
             """
-            return [...document.querySelectorAll('.v-loading-indicator, .v-loading-indicator-delay, .v-loading-indicator-wait')]
+            const visible = el => !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+            const loading = [...document.querySelectorAll('.v-loading-indicator, .v-loading-indicator-delay, .v-loading-indicator-wait')]
               .some(el => {
                 const style = window.getComputedStyle(el);
                 return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
               });
+            return {
+              ready: document.readyState,
+              loading,
+              panelTitles: [...document.querySelectorAll('.panel-title')].filter(visible).length,
+              shiftPanels: [...document.querySelectorAll('.shift-subscription-preview-panel')].filter(visible).length,
+              bodyLength: (document.body?.innerText || '').length
+            };
             """
         )
-        if not loading:
+        last_state = state if isinstance(state, dict) else {}
+        if int(last_state.get("panelTitles") or 0) > 0:
+            return
+        if second >= 5 and last_state.get("ready") == "complete" and not last_state.get("loading"):
+            print(
+                "GIRITON_WAIT_NO_PANEL_CONTINUE "
+                f"panel_titles={last_state.get('panelTitles', 0)} "
+                f"shift_panels={last_state.get('shiftPanels', 0)} "
+                f"body_length={last_state.get('bodyLength', 0)}",
+                file=sys.stderr,
+            )
             return
         time.sleep(1)
+    print(
+        "GIRITON_WAIT_TIMEOUT_CONTINUE "
+        f"state={json.dumps(last_state, ensure_ascii=False)}",
+        file=sys.stderr,
+    )
 
 
 def scroll_all_shifts(driver) -> None:

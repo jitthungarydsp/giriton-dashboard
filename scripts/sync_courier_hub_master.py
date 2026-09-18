@@ -33,7 +33,9 @@ RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def clean_text(value: Any) -> str:
-    return str(value or "").strip()
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def text_or_none(value: Any) -> str | None:

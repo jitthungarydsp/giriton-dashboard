@@ -1,6 +1,11 @@
 begin;
 
-create table if not exists public.courier_hub_master (
+drop function if exists public.courier_hub_master_between(date, date, integer, integer);
+drop view if exists public.couer_hub_master;
+drop view if exists public.courier_hub_master_latest;
+drop table if exists public.courier_hub_master;
+
+create table public.courier_hub_master (
     courier_id integer not null,
     warehouse_id integer not null,
     warehouse_code text not null,
@@ -30,38 +35,38 @@ create table if not exists public.courier_hub_master (
     primary key (courier_id, warehouse_id, dsp_id, roster_date)
 );
 
-create index if not exists courier_hub_master_name_idx
+create index courier_hub_master_name_idx
     on public.courier_hub_master (courier_name);
 
-create index if not exists courier_hub_master_user_number_idx
+create index courier_hub_master_user_number_idx
     on public.courier_hub_master (user_number);
 
-create index if not exists courier_hub_master_giriton_person_idx
+create index courier_hub_master_giriton_person_idx
     on public.courier_hub_master (giriton_person_id);
 
-create index if not exists courier_hub_master_vehicle_plate_idx
+create index courier_hub_master_vehicle_plate_idx
     on public.courier_hub_master (vehicle_registration_number);
 
-create index if not exists courier_hub_master_last_seen_idx
+create index courier_hub_master_last_seen_idx
     on public.courier_hub_master (last_seen_at desc);
 
-create index if not exists courier_hub_master_roster_date_idx
+create index courier_hub_master_roster_date_idx
     on public.courier_hub_master (roster_date, warehouse_id, dsp_id);
 
-create index if not exists courier_hub_master_json_idx
+create index courier_hub_master_json_idx
     on public.courier_hub_master using gin (response_json);
 
-create or replace view public.couer_hub_master as
+create view public.couer_hub_master as
 select *
 from public.courier_hub_master;
 
-create or replace view public.courier_hub_master_latest as
+create view public.courier_hub_master_latest as
 select distinct on (courier_id, warehouse_id, dsp_id)
     *
 from public.courier_hub_master
 order by courier_id, warehouse_id, dsp_id, roster_date desc, last_seen_at desc;
 
-create or replace function public.courier_hub_master_between(
+create function public.courier_hub_master_between(
     p_start_date date,
     p_end_date date,
     p_warehouse_id integer default null,
