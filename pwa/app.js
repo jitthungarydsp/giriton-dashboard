@@ -56,7 +56,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v130";
+const APP_VERSION = "v131";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -3146,10 +3146,22 @@ async function loadDocuments() {
   }
 }
 
+function complaintCanWithdraw(complaint) {
+  const status = String(complaint?.status || "").trim().toLowerCase();
+  const hasAdminAnswer = Boolean(
+    String(complaint?.admin_response || "").trim()
+    || String(complaint?.responded_at || "").trim()
+  );
+  return !state.workflow?.viewerReadOnly
+    && Boolean(complaint?.id)
+    && !["resolved", "closed", "deleted"].includes(status)
+    && !hasAdminAnswer;
+}
+
 function complaintList(complaints) {
   if (!complaints.length) return "";
   return `<div class="complaint-list">${complaints.map((complaint) => `
-    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}${complaint.responded_by || complaint.responded_at ? `<small>${escapeHtml(complaint.responded_by || "admin")} · ${complaint.responded_at ? new Date(complaint.responded_at).toLocaleString("hu-HU") : ""}</small>` : ""}</div>` : ""}</div></div>
+    <div class="complaint-row"><div><strong>${escapeHtml(complaint.message)}</strong><small>${escapeHtml(complaint.status)} · ${new Date(complaint.created_at).toLocaleString("hu-HU")}</small>${complaint.admin_response ? `<div class="notice">Admin válasza: ${escapeHtml(complaint.admin_response)}${complaint.responded_by || complaint.responded_at ? `<small>${escapeHtml(complaint.responded_by || "admin")} · ${complaint.responded_at ? new Date(complaint.responded_at).toLocaleString("hu-HU") : ""}</small>` : ""}</div>` : ""}</div>${complaintCanWithdraw(complaint) ? `<button class="secondary complaint-withdraw" type="button" data-complaint-id="${escapeHtml(complaint.id)}">Visszavonás</button>` : ""}</div>
   `).join("")}</div>`;
 }
 
@@ -3582,6 +3594,7 @@ function renderWorkflow() {
     ? `<div class="complaint-box"><strong>Korábban feltöltött számlák</strong>${documentList(state.workflow.documents.invoice)}</div>`
     : "";
   renderDocumentsSection();
+  attachComplaintWithdrawHandlers();
   $("#workflow-updated-at").textContent = `Frissítve: ${new Date(state.workflow.updatedAt).toLocaleString("hu-HU")} · ${APP_VERSION}`;
 }
 
@@ -3690,6 +3703,29 @@ async function submitComplaint(event, action) {
     state.workflow = payload.workflow;
     renderWorkflow();
     showWorkflowMessage("A reklamáció megérkezett az admin elszámolási felületére.");
+  } catch (error) {
+    showWorkflowMessage(error.message, true);
+  }
+}
+
+function attachComplaintWithdrawHandlers() {
+  document.querySelectorAll(".complaint-withdraw").forEach((button) => {
+    if (button.dataset.bound === "1") return;
+    button.dataset.bound = "1";
+    button.addEventListener("click", () => withdrawComplaint(button.dataset.complaintId));
+  });
+}
+
+async function withdrawComplaint(complaintId) {
+  if (!complaintId) return;
+  showWorkflowMessage("Reklamáció visszavonása…");
+  try {
+    const payload = await api(`/api/workflow/complaints/${encodeURIComponent(complaintId)}/withdraw`, {
+      method: "POST",
+    });
+    state.workflow = payload.workflow;
+    renderWorkflow();
+    showWorkflowMessage("A reklamációt visszavontad.");
   } catch (error) {
     showWorkflowMessage(error.message, true);
   }

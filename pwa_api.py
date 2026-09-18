@@ -15063,6 +15063,63 @@ def create_workflow_complaint(
     }
 
 
+@app.post("/api/workflow/complaints/{complaint_id}/withdraw")
+def withdraw_workflow_complaint(
+    complaint_id: str,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    courier_id, _courier_name = courier_identity(user)
+    rows = supabase_rest(
+        "GET",
+        "peopleforce_complaints",
+        params={
+            "select": "id,courier_id,document_type,document_month,status",
+            "id": f"eq.{complaint_id}",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="A reklamáció nem található.")
+    row = rows[0]
+    status = str(row.get("status") or "").strip().lower()
+    if status in {"deleted", "resolved", "closed"}:
+        raise HTTPException(status_code=409, detail="Ez a reklamáció már nem vonható vissza.")
+    try:
+        month = date.fromisoformat(str(row.get("document_month") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="A reklamáció hónapja nem értelmezhető.") from exc
+    require_workflow_month_allowed(user, month)
+    document_type = str(row.get("document_type") or "")
+    process_id = process_id_from_action_key(document_type)
+    response_documents = supabase_rest(
+        "GET",
+        "peopleforce_documents",
+        params={
+            "select": "id",
+            "courier_id": f"eq.{courier_id}",
+            "document_month": f"eq.{month.isoformat()}",
+            "document_type": "eq.complaint_response",
+            "title": f"ilike.*{complaint_id}*",
+            "limit": "1",
+        },
+    )
+    if response_documents:
+        raise HTTPException(status_code=409, detail="Erre a reklamációra már érkezett válasz, nem vonható vissza.")
+    supabase_rest(
+        "PATCH",
+        "peopleforce_complaints",
+        params={
+            "id": f"eq.{complaint_id}",
+            "courier_id": f"eq.{courier_id}",
+        },
+        payload={"status": "deleted"},
+        prefer="return=minimal",
+    )
+    return {"ok": True, "workflow": build_workflow(user, month, process_id)}
+
+
 @app.get("/api/documents")
 def courier_documents(
     courier: str = Query(default=""),
