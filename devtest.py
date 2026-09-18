@@ -1548,9 +1548,12 @@ def render_empty_right_menu(
     if not status_text:
         status_text = "-"
         process_caption = "Futár kiválasztása után jelenik meg."
-    correction_total = parse_huf_value(row.get("Korrekció") or row.get("Korrekciók"))
-    correction_income = max(correction_total, 0)
-    correction_deduction = abs(min(correction_total, 0))
+    correction_income = parse_huf_value(row.get("Korrekció +") or row.get("Korrekció plusz"))
+    correction_deduction = abs(parse_huf_value(row.get("Korrekció -") or row.get("Korrekció levonás")))
+    if not correction_income and not correction_deduction:
+        correction_total = parse_huf_value(row.get("Korrekció") or row.get("Korrekciók"))
+        correction_income = max(correction_total, 0)
+        correction_deduction = abs(min(correction_total, 0))
     payable_rows = [
         ("+", "Alapdíj", parse_huf_value(row.get("Alapdíj") or row.get("Nettó bevétel"))),
         ("+", "Borravaló", parse_huf_value(row.get("Borravaló"))),
@@ -14171,13 +14174,6 @@ def render_courier_detail_page() -> None:
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
-    render_empty_right_menu(
-        row,
-        profile=profile,
-        monthly_closure=monthly_closure,
-        period_start=period_start,
-        courier_id=courier_id,
-    )
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
     profile_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
     order_total = profile_metrics["order_total"]
@@ -14208,6 +14204,32 @@ def render_courier_detail_page() -> None:
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
     process_status_label = "Kifizetve" if closure_done else str(row.get("Státusz") or "Elszámolásra vár")
+    right_menu_row = row.copy()
+    right_menu_row["Kifizetendő"] = displayed_payable_total
+    right_menu_row["Alapdíj"] = base_total
+    right_menu_row["Borravaló"] = tip_total
+    right_menu_row["Késedelmi díj"] = delay_total
+    right_menu_row["Túramegfelelés"] = compliance_total
+    right_menu_row["Importált bónusz"] = imported_bonus_total
+    right_menu_row["JITT bónusz"] = manual_bonus_total
+    right_menu_row["Ügyfélértékelés"] = customer_rating_total
+    right_menu_row["Korrekció +"] = correction_income_total
+    right_menu_row["Korrekció -"] = correction_deduction_total
+    right_menu_row["Importált málusz"] = malus_total
+    right_menu_row["Importált ATM levonás"] = atm_deduction_total
+    right_menu_row["Fizetés előleg"] = salary_advance_total
+    right_menu_row["Rendelések"] = order_total
+    right_menu_row["Útvonalak"] = route_total
+    right_menu_row["Számolt túrák"] = route_total
+    right_menu_row["Kiemelt túrák"] = highlighted_route_total
+    right_menu_row["Normál túrák"] = normal_route_total
+    render_empty_right_menu(
+        right_menu_row,
+        profile=profile,
+        monthly_closure=monthly_closure,
+        period_start=period_start,
+        courier_id=courier_id,
+    )
 
     profile_header_slot = st.empty()
 
