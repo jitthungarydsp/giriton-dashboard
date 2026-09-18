@@ -11180,6 +11180,107 @@ def render_bulk_mobile_sync_panel(
                 st.error(f"A tömeges mobil frissítés sikertelen: {exc}")
 
 
+def render_bulk_invoice_validation_panel(
+    filtered: pd.DataFrame,
+    active_status: str,
+    period_start: date,
+) -> None:
+    if filtered.empty or str(active_status or "").strip() != "Számlaellenőrzésre vár":
+        return
+    invoice_rows = filtered[
+        filtered.get("Státusz", pd.Series("", index=filtered.index))
+        .astype(str)
+        .str.strip()
+        .eq("Számlaellenőrzésre vár")
+    ].copy()
+    if invoice_rows.empty:
+        return
+
+    st.markdown("#### Tömeges számlaellenőrzés")
+    with st.expander(f"Számlaellenőrzés újrafuttatása ({len(invoice_rows)} futár)", expanded=False):
+        st.caption("Csak az aktuális szűrésben lévő, számlaellenőrzésen elakadt futárok feltöltött számláját ellenőrzi újra.")
+        summary_key = f"bulk_invoice_validation_summary_{period_start:%Y%m}"
+        last_summary = st.session_state.get(summary_key) or {}
+        if last_summary:
+            st.info(
+                "Utolsó tömeges számlaellenőrzés: "
+                f"sikeres {len(last_summary.get('success', []))} db, "
+                f"hibás {len(last_summary.get('failed', []))} db, "
+                f"nem futott le {len(last_summary.get('errors', []))} db."
+            )
+            if last_summary.get("failed"):
+                with st.popover("Hibás számlák"):
+                    st.write("\n".join(last_summary.get("failed", [])[:300]))
+            if last_summary.get("errors"):
+                with st.popover("Nem futott le"):
+                    st.write("\n".join(last_summary.get("errors", [])[:300]))
+        confirm = st.checkbox(
+            "Megerősítem, hogy az aktuálisan szűrt futároknál újrafuttatjuk a számlaellenőrzést.",
+            key=f"bulk_invoice_validation_confirm_{period_start:%Y%m}",
+        )
+        if st.button(
+            "Tömeges számlaellenőrzés újrafuttatása",
+            type="primary",
+            use_container_width=True,
+            disabled=not confirm,
+            key=f"bulk_invoice_validation_run_{period_start:%Y%m}",
+        ):
+            actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+            success_rows: list[str] = []
+            failed_check_rows: list[str] = []
+            error_rows: list[str] = []
+            progress = st.progress(0, text="Számlaellenőrzés indítása...")
+            total = len(invoice_rows)
+            for position, (_, courier_row) in enumerate(invoice_rows.iterrows(), start=1):
+                courier_id = str(courier_row.get("Courier ID") or courier_row.get("courier_id") or "").strip()
+                courier_name = str(
+                    courier_row.get("Futár")
+                    or courier_row.get("courier_name")
+                    or courier_row.get("name")
+                    or ""
+                ).strip()
+                label = f"{courier_name or 'Ismeretlen'} ({courier_id or '-'})"
+                progress.progress(
+                    min(position / max(total, 1), 1.0),
+                    text=f"Számlaellenőrzés: {label}",
+                )
+                if not courier_id:
+                    error_rows.append(f"{label}: hiányzó futár azonosító")
+                    continue
+                try:
+                    result = rerun_courier_invoice_validation(
+                        courier_id=courier_id,
+                        courier_name=courier_name,
+                        period_start=period_start,
+                        expected_amount_huf=parse_huf_value(courier_row.get("Kifizetendő")),
+                        updated_by=actor,
+                    )
+                    if result.get("ok"):
+                        success_rows.append(label)
+                    else:
+                        failed_check_rows.append(f"{label}: {invoice_validation_failure_note(result)}")
+                except Exception as exc:
+                    error_rows.append(f"{label}: {exc}")
+            progress.empty()
+            if success_rows:
+                st.success(f"Sikeres számlaellenőrzés: {len(success_rows)} futár.")
+            if failed_check_rows:
+                with st.expander(f"Hibás számlák / továbbra is elakadt ({len(failed_check_rows)} futár)", expanded=True):
+                    st.write("\n".join(failed_check_rows[:300]))
+            if error_rows:
+                with st.expander(f"Nem futott le ({len(error_rows)} futár)", expanded=True):
+                    st.write("\n".join(error_rows[:300]))
+            st.session_state[summary_key] = {
+                "success": success_rows,
+                "failed": failed_check_rows,
+                "errors": error_rows,
+            }
+            read_peopleforce_card_statuses.clear()
+            read_peopleforce_card_statuses_for_month.clear()
+            if success_rows or failed_check_rows:
+                st.rerun()
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def load_excel_route_coverage_audit(session_id: str | None) -> pd.DataFrame:
     columns = [
@@ -20899,6 +21000,7 @@ def show_new_settlement_page() -> None:
             selected_warehouse_label,
             import_session_id,
         )
+        render_bulk_invoice_validation_panel(filtered, active_workflow_filter, balance_period_start)
         render_bulk_status_email_panel(filtered, active_workflow_filter, balance_period_start)
 
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
