@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 import re
 import unicodedata
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -428,6 +429,9 @@ def filter_complete_shift_export(db_rows):
     if minimum_rows <= 0:
         return db_rows
 
+    today = datetime.now(
+        ZoneInfo("Europe/Budapest")
+    ).date().isoformat()
     counts = {}
     for row in db_rows:
         work_date = clean(row.get("work_date"))
@@ -437,7 +441,7 @@ def filter_complete_shift_export(db_rows):
     incomplete = {
         work_date: count
         for work_date, count in counts.items()
-        if count < minimum_rows
+        if count < minimum_rows and work_date != today
     }
     if not incomplete:
         return db_rows

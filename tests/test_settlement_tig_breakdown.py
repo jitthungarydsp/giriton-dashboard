@@ -44,6 +44,20 @@ class SettlementTigBreakdownTest(unittest.TestCase):
         self.assertEqual(transfer_row["vatHuf"], 99895)
         self.assertEqual(tip_row["grossHuf"], 131216)
 
+    def test_cash_service_is_netted_for_vat_payer(self):
+        result = build_tig_breakdown(
+            {"tig_type": "VAT"},
+            {"payable": 100000, "tip": 0, "cash": 152218},
+        )
+
+        cash_row = next(row for row in result["rows"] if row["key"] == "cash_service")
+        self.assertEqual(cash_row["label"], "KP számla - készpénzes teljesítés")
+        self.assertEqual(cash_row["netHuf"], 119857)
+        self.assertEqual(cash_row["vatHuf"], 32361)
+        self.assertEqual(cash_row["grossHuf"], 152218)
+        self.assertEqual(cash_row["vatLabel"], "27%")
+        self.assertIn("aznapi teljesítés", cash_row["note"])
+
 
 if __name__ == "__main__":
     unittest.main()

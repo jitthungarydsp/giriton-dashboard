@@ -8225,9 +8225,16 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             row["grossHuf"] = sign * gross_abs
             continue
         if row.get("key") == "cash_service":
-            row["netHuf"] = sign * gross_abs
-            row["vatHuf"] = 0
-            row["vatLabel"] = "TAM"
+            if breakdown.get("taxMode") == "vat":
+                net = int(round(gross_abs / 1.27))
+                vat = gross_abs - net
+                row["netHuf"] = sign * net
+                row["vatHuf"] = sign * vat
+                row["vatLabel"] = "27%" if sign > 0 else "Levonás"
+            else:
+                row["netHuf"] = sign * gross_abs
+                row["vatHuf"] = 0
+                row["vatLabel"] = "TAM"
             row["grossHuf"] = sign * gross_abs
             row["label"] = "KP számla - készpénzes teljesítés"
             row["note"] = str(override.get("note") or "Külön KP sor: aznapi teljesítés, aznapi kifizetés.")
@@ -8269,10 +8276,17 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             clean_row["note"] = str(clean_row.get("note") or "Kifizetendő összeg borravaló nélkül.")
         elif key == "cash_service":
             clean_row["label"] = "KP számla - készpénzes teljesítés"
-            clean_row["netHuf"] = abs(money_int(clean_row.get("grossHuf") or clean_row.get("netHuf")))
-            clean_row["vatHuf"] = 0
-            clean_row["grossHuf"] = abs(money_int(clean_row.get("grossHuf") or clean_row.get("netHuf")))
-            clean_row["vatLabel"] = "TAM"
+            gross = abs(money_int(clean_row.get("grossHuf") or clean_row.get("netHuf")))
+            if breakdown.get("taxMode") == "vat":
+                net = int(round(gross / 1.27))
+                clean_row["netHuf"] = net
+                clean_row["vatHuf"] = gross - net
+                clean_row["vatLabel"] = "27%"
+            else:
+                clean_row["netHuf"] = gross
+                clean_row["vatHuf"] = 0
+                clean_row["vatLabel"] = "TAM"
+            clean_row["grossHuf"] = gross
             clean_row["note"] = str(clean_row.get("note") or "Külön KP sor: aznapi teljesítés, aznapi kifizetés.")
         elif key == "tip":
             clean_row["label"] = "Borravaló"
