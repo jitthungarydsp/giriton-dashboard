@@ -1523,6 +1523,7 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
 
 def render_empty_right_menu(courier_row: object | None = None) -> None:
     row = courier_row if isinstance(courier_row, (pd.Series, dict)) else {}
+    has_courier_row = bool(isinstance(row, pd.Series) or (isinstance(row, dict) and row))
     payable_value = parse_huf_value(row.get("Kifizetendő")) if row is not None else 0
     payable_text = format_huf(payable_value) if payable_value else "-"
     status_text = str(row.get("Státusz") or "").strip() if row is not None else ""
@@ -1575,7 +1576,7 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
     if not counted_routes:
         counted_routes = route_count
 
-    route_caption = "Futár kiválasztása után jelenik meg." if not row else "Kivitt túrák és körök az elszámolásban."
+    route_caption = "Kivitt túrák és körök az elszámolásban." if has_courier_row else "Futár kiválasztása után jelenik meg."
     route_stat_rows = [
         ("Körök", route_count),
         ("Túrák", counted_routes),
