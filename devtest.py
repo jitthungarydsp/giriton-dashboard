@@ -626,6 +626,11 @@ def apply_design() -> None:
         .right-empty-menu-caption { margin:0; color:var(--muted); font-size:12px; line-height:1.45; }
         .right-empty-menu-value { margin-top:10px; color:var(--text); font-size:24px; font-weight:900; line-height:1.05; overflow-wrap:anywhere; }
         .right-empty-menu-status { display:inline-flex; align-items:center; max-width:100%; margin-top:10px; padding:6px 10px; border-radius:999px; background:#fff8e7; color:#9a6700; font-size:12px; font-weight:850; overflow-wrap:anywhere; }
+        .right-payable-table { width:100%; margin-top:10px; border-collapse:collapse; overflow:hidden; border-radius:12px; font-size:11px; }
+        .right-payable-table th { padding:7px 6px; background:#f8fafc; color:#6b7280; text-align:left; border-bottom:1px solid var(--border); font-weight:850; }
+        .right-payable-table td { padding:7px 6px; border-bottom:1px solid #edf1f6; color:var(--text); vertical-align:top; }
+        .right-payable-table tr:last-child td { border-bottom:0; font-weight:900; }
+        .right-payable-table td:last-child { text-align:right; white-space:nowrap; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
             .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
@@ -1520,6 +1525,37 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
     if not status_text:
         status_text = "-"
         process_caption = "Futár kiválasztása után jelenik meg."
+    correction_total = parse_huf_value(row.get("Korrekció") or row.get("Korrekciók"))
+    correction_income = max(correction_total, 0)
+    correction_deduction = abs(min(correction_total, 0))
+    payable_rows = [
+        ("+", "Alapdíj", parse_huf_value(row.get("Alapdíj") or row.get("Nettó bevétel"))),
+        ("+", "Borravaló", parse_huf_value(row.get("Borravaló"))),
+        ("+", "Késedelmi díj", parse_huf_value(row.get("Késedelmi díj"))),
+        ("+", "Túramegfelelés", parse_huf_value(row.get("Túramegfelelés"))),
+        ("+", "Kiflis bónusz", parse_huf_value(row.get("Importált bónusz"))),
+        ("+", "JITT bónusz", parse_huf_value(row.get("JITT bónusz"))),
+        ("+", "Lojalitás", parse_huf_value(row.get("Lojalitás"))),
+        ("+", "Ügyfélértékelés", parse_huf_value(row.get("Ügyfélértékelés"))),
+        ("+", "Korrekció +", correction_income),
+        ("-", "Kiflis malus", abs(parse_huf_value(row.get("Importált málusz")))),
+        ("-", "JITT malus", abs(parse_huf_value(row.get("JITT malus")))),
+        ("-", "ATM levonás", abs(parse_huf_value(row.get("Importált ATM levonás")))),
+        ("-", "Korrekció -", correction_deduction),
+        ("-", "Fizetés előleg", abs(parse_huf_value(row.get("Fizetés előleg")))),
+        ("=", "Kifizetendő", payable_value),
+    ]
+    payable_row_html = "".join(
+        (
+            "<tr>"
+            f"<td>{html.escape(operation)}</td>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{html.escape(format_huf(amount))}</td>"
+            "</tr>"
+        )
+        for operation, label, amount in payable_rows
+        if amount or operation == "="
+    )
     st.markdown(
         f"""
         <div class="right-empty-menu">
@@ -1534,8 +1570,11 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
                 <div class="right-empty-menu-status">{html.escape(status_text)}</div>
             </div>
             <div class="right-empty-menu-card">
-                <div class="right-empty-menu-title">Menü 3</div>
-                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+                <div class="right-empty-menu-title">Kifizetendő levezetése</div>
+                <table class="right-payable-table">
+                    <thead><tr><th>Műv.</th><th>Tétel</th><th>Összeg</th></tr></thead>
+                    <tbody>{payable_row_html}</tbody>
+                </table>
             </div>
         </div>
         """,
