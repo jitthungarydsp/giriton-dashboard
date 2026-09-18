@@ -308,7 +308,7 @@ def reject_pwa_password_reset_request(request_id: int, note: str) -> None:
     update_pwa_password_reset_request_status(request_id, "rejected", note)
 
 
-def render_pwa_password_reset_panel() -> None:
+def render_pwa_password_reset_panel(expanded: bool = False) -> None:
     if not can_approve_pwa_registrations(user):
         return
     status_options = {
@@ -317,7 +317,7 @@ def render_pwa_password_reset_panel() -> None:
         "Elutasítva": "rejected",
         "Összes": "all",
     }
-    with st.expander("PWA jelszó-visszaállítási kérelmek", expanded=False):
+    with st.expander("PWA jelszó-visszaállítási kérelmek", expanded=expanded):
         selected_status_label = st.selectbox(
             "Állapot",
             list(status_options.keys()),
@@ -482,6 +482,16 @@ def show_pwa_registration_approval_page() -> None:
                     st.error(f"Az elutasítás sikertelen: {exc}")
 
 
+def show_pwa_requests_page() -> None:
+    if not can_approve_pwa_registrations(user):
+        st.error("Ez a menüpont csak admin jogosultsággal érhető el.")
+        return
+    st.title("PWA kérelmek")
+    render_pwa_password_reset_panel(expanded=True)
+    st.divider()
+    show_pwa_registration_approval_page()
+
+
 st.sidebar.success(f"Felhasználó: {user['username']}")
 st.sidebar.info(f"Jogosultság: {user['role']}")
 logout_button()
@@ -489,6 +499,7 @@ devtest_page_options = ["Elszamolas"]
 if can_view_accounting_invoice_archive(user):
     devtest_page_options.append("Számla archívum")
 if can_approve_pwa_registrations(user):
+    devtest_page_options.append("PWA kérelmek")
     devtest_page_options.append("Futárok jóváhagyása")
 devtest_page_options.append("PDF minta")
 devtest_page = st.sidebar.radio(
@@ -21038,6 +21049,8 @@ if __name__ == "__main__":
         show_settlement_pdf_sample_page()
     elif devtest_page == "Számla archívum":
         show_accounting_invoice_archive_page()
+    elif devtest_page == "PWA kérelmek":
+        show_pwa_requests_page()
     elif devtest_page == "Futárok jóváhagyása":
         show_pwa_registration_approval_page()
     else:
