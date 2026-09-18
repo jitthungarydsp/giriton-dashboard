@@ -3278,12 +3278,17 @@ function renderTigBreakdown() {
   const rows = (tig.rows || []).filter((row) => row.key !== "cash_deduction" && row.key !== "tig_cash_deduction");
   const transferRows = rows.filter((row) => row.key !== "cash_service");
   const cashRows = rows.filter((row) => row.key === "cash_service");
+  const tigRowNote = (row) => [
+    row.note || "",
+    row.performanceDate ? `Teljesítés: ${row.performanceDate}` : "",
+    row.paymentDueDate ? `Kifizetés: ${row.paymentDueDate}` : "",
+  ].filter(Boolean).join(" · ");
   const renderTigRows = (items) => `
     <div class="tig-table">
       <div class="tig-row head"><span>Tétel</span><span>Netto</span><span>ÁFA</span><span>Brutto</span></div>
       ${items.map((row) => `
         <div class="tig-row ${Number(row.grossHuf || 0) < 0 ? "deduction" : ""}">
-          <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(row.note || "")}</small></span>
+          <span><strong>${escapeHtml(row.label || "")}</strong><small>${escapeHtml(tigRowNote(row))}</small></span>
           <span>${tigValue(row.netHuf)}</span>
           <span>${row.vatLabel ? escapeHtml(row.vatLabel) : tigValue(row.vatHuf)}</span>
           <span>${tigValue(row.grossHuf)}</span>
@@ -3325,7 +3330,7 @@ function renderTigBreakdown() {
     </section>
     <div class="tig-party-grid">${buyerBlock}${sellerBlock}</div>
     ${renderTigRows(transferRows)}
-    ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP nem levonásként jelenik meg, külön számlás tétel.</small></section>${renderTigRows(cashRows)}` : ""}
+    ${cashRows.length ? `<section class="tig-buyer-card"><span>KP külön számla</span><strong>Készpénzes teljesítés</strong><small>A KP külön számlás tétel: aznapi teljesítés, aznapi kifizetés, TAM.</small></section>${renderTigRows(cashRows)}` : ""}
   `;
 }
 

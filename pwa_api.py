@@ -8224,6 +8224,14 @@ def apply_tig_overrides(breakdown: dict[str, Any], overrides: dict[str, dict[str
             row["vatLabel"] = "TAM"
             row["grossHuf"] = sign * gross_abs
             continue
+        if row.get("key") == "cash_service":
+            row["netHuf"] = sign * gross_abs
+            row["vatHuf"] = 0
+            row["vatLabel"] = "TAM"
+            row["grossHuf"] = sign * gross_abs
+            row["label"] = "KP számla - készpénzes teljesítés"
+            row["note"] = str(override.get("note") or "Külön KP sor: aznapi teljesítés, aznapi kifizetés.")
+            continue
         if breakdown.get("taxMode") == "vat":
             net = int(round(gross_abs / 1.27))
             vat = gross_abs - net
@@ -8260,8 +8268,12 @@ def align_tig_breakdown_with_financial_cards(breakdown: dict[str, Any], financia
             clean_row["label"] = "Szállítási díj (494107) - átutalás"
             clean_row["note"] = str(clean_row.get("note") or "Kifizetendő összeg borravaló nélkül.")
         elif key == "cash_service":
-            clean_row["label"] = "Szállítási díj (494107) - készpénz"
-            clean_row["note"] = str(clean_row.get("note") or "Külön KP sor, nem növeli az átutalásos végösszeget.")
+            clean_row["label"] = "KP számla - készpénzes teljesítés"
+            clean_row["netHuf"] = abs(money_int(clean_row.get("grossHuf") or clean_row.get("netHuf")))
+            clean_row["vatHuf"] = 0
+            clean_row["grossHuf"] = abs(money_int(clean_row.get("grossHuf") or clean_row.get("netHuf")))
+            clean_row["vatLabel"] = "TAM"
+            clean_row["note"] = str(clean_row.get("note") or "Külön KP sor: aznapi teljesítés, aznapi kifizetés.")
         elif key == "tip":
             clean_row["label"] = "Borravaló"
             clean_row["note"] = str(clean_row.get("note") or "Külön tétel.")

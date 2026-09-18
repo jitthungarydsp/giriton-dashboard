@@ -3594,7 +3594,7 @@ def tig_editor_rows_from_breakdown(tig_breakdown: dict[str, object], overrides: 
         if item_key == "tig_transfer_service":
             item_label = "Szállítási díj (494107) - átutalás"
         elif item_key == "tig_cash_service":
-            item_label = "Szállítási díj (494107) - készpénz"
+            item_label = "KP számla - készpénzes teljesítés"
         rows.append({
             "Kulcs": item_key,
             "MegnevezĂ©s": item_label,
@@ -3623,7 +3623,7 @@ def mobile_tig_rows_from_breakdown(tig_breakdown: dict[str, object]) -> list[dic
         if item_key == "tig_transfer_service":
             item_label = "Szállítási díj (494107) - átutalás"
         elif item_key == "tig_cash_service":
-            item_label = "Szállítási díj (494107) - készpénz"
+            item_label = "KP számla - készpénzes teljesítés"
         rows.append({
             "item_key": item_key,
             "item_label": item_label,

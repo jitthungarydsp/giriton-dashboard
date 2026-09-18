@@ -2676,6 +2676,51 @@ def _render_source_tables(muszakpro_df: pd.DataFrame, giriton_df: pd.DataFrame) 
         )
 
 
+def _date_range_text(df: pd.DataFrame, column: str) -> str:
+    if df.empty or column not in df.columns:
+        return "-"
+
+    values = pd.to_datetime(df[column], errors="coerce").dropna()
+    if values.empty:
+        return "-"
+
+    start = values.min().date().isoformat()
+    end = values.max().date().isoformat()
+    return start if start == end else f"{start} - {end}"
+
+
+def _render_source_health(
+    muszakpro_df: pd.DataFrame,
+    giriton_df: pd.DataFrame,
+    comparison_df: pd.DataFrame,
+    latest_giriton_df: pd.DataFrame,
+) -> None:
+    health_rows = [
+        {
+            "Forrás": "MűszakPro foglalások",
+            "Sor": len(muszakpro_df),
+            "Dátum": _date_range_text(muszakpro_df, "work_date"),
+            "Frissítés": _latest(muszakpro_df, "fetched_at"),
+        },
+        {
+            "Forrás": "Giriton műszakok",
+            "Sor": len(giriton_df),
+            "Dátum": _date_range_text(giriton_df, "work_date"),
+            "Frissítés": _latest(
+                giriton_df if not giriton_df.empty else latest_giriton_df,
+                "fetched_at",
+            ),
+        },
+        {
+            "Forrás": "DB egyeztetés",
+            "Sor": len(comparison_df),
+            "Dátum": _date_range_text(comparison_df, "work_date"),
+            "Frissítés": _latest(comparison_df, "updated_at"),
+        },
+    ]
+    st.dataframe(pd.DataFrame(health_rows), width="stretch", hide_index=True)
+
+
 def _booking_candidate_label(row: dict) -> str:
     return (
         f"{_clean(row.get('Dátum'))} | {_clean(row.get('Raktár'))} | "
@@ -3415,7 +3460,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 <h3>DB alap</h3>
                 <div class="summary-row"><span>raw_muszakpro_bookings</span><strong>MP</strong></div>
                 <div class="summary-row"><span>giriton_shifts_raw</span><strong>G</strong></div>
-                <div class="summary-row"><span>vw_courier_next_5_day_shifts</span><strong>5 nap</strong></div>
+                <div class="summary-row"><span>ops_shift_comparison</span><strong>DB</strong></div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -3669,9 +3714,9 @@ def show_foglalas_streamlit_page() -> None:
     st.markdown(
         f"""
         <div class="source-status">
-            <div class="source-chip"><strong>MűszakPro</strong> utolsó frissítés: {_latest(muszakpro_df, "fetched_at")}</div>
-            <div class="source-chip"><strong>Giriton</strong> utolsó frissítés: {_latest(giriton_df if not giriton_df.empty else latest_giriton_df, "fetched_at")}</div>
-            <div class="source-chip"><strong>Egyeztetés</strong> frissítve: {_latest(comparison_df, "updated_at")}</div>
+            <div class="source-chip"><strong>MűszakPro</strong> {len(muszakpro_df)} sor · utolsó frissítés: {_latest(muszakpro_df, "fetched_at")}</div>
+            <div class="source-chip"><strong>Giriton</strong> {len(giriton_df)} sor · utolsó frissítés: {_latest(giriton_df if not giriton_df.empty else latest_giriton_df, "fetched_at")}</div>
+            <div class="source-chip"><strong>Egyeztetés</strong> {len(comparison_df)} sor · frissítve: {_latest(comparison_df, "updated_at")}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3724,8 +3769,25 @@ def show_foglalas_streamlit_page() -> None:
         _render_kpi("MűszakPro / Giriton", muszakpro_giriton_ratio, "green", "%")
 
     st.write("")
+    source_problem = giriton_df.empty or comparison_df.empty
+    with st.expander("Forrás állapot", expanded=source_problem):
+        _render_source_health(
+            muszakpro_df,
+            giriton_df,
+            comparison_df,
+            latest_giriton_df,
+        )
+        if giriton_df.empty:
+            st.warning(
+                "A kiválasztott dátum/idő szűrésre az oldal nem kapott Giriton sort a giriton_shifts_raw táblából."
+            )
+        if comparison_df.empty:
+            st.warning(
+                "A kiválasztott dátumtartományra az oldal nem kapott DB egyeztetés sort az ops_shift_comparison táblából."
+            )
+
     if view == "Összes":
-        with st.expander("DB egyeztetés eltérések", expanded=False):
+        with st.expander("DB egyeztetés eltérések", expanded=source_problem):
             _render_differences(comparison_df)
         _render_mass_view(summary_df)
     elif view == "Dolgozónként":
