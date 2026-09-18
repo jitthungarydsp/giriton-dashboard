@@ -7008,7 +7008,7 @@ def build_tig_breakdown_from_snapshot(
         for item in card.get("items") or []
     }
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
-    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     payable = money_int(financial_breakdown.get("totalPayableHuf"))
     tig = build_tig_breakdown(
         {
@@ -8164,6 +8164,26 @@ def tig_document_meta(month: date, courier_id: str) -> dict[str, str]:
     }
 
 
+def workflow_cash_amount_from_financial_breakdown(financial_breakdown: dict[str, Any]) -> int:
+    cards = financial_breakdown.get("cards") or []
+    breakdown_items = {
+        str(item.get("key") or ""): item
+        for card in cards
+        for item in card.get("items") or []
+    }
+    item_amount = money_int(
+        (breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")
+    )
+    if item_amount:
+        return abs(item_amount)
+    for card in cards:
+        if str(card.get("key") or "") in {"atm_effect", "cash_missing"}:
+            card_amount = money_int(card.get("amountHuf"))
+            if card_amount:
+                return abs(card_amount)
+    return 0
+
+
 def has_financial_detail_override_rows(overrides: dict[str, dict[str, Any]]) -> bool:
     financial_detail_keys = {
         "base",
@@ -8321,7 +8341,7 @@ def build_workflow_tig_breakdown(user: dict[str, Any], month: date, financial_br
         for item in card.get("items") or []
     }
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
-    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     payable = money_int(financial_breakdown.get("totalPayableHuf"))
     tig = build_tig_breakdown(
         {
@@ -12838,7 +12858,7 @@ def generate_tig_after_settlement_accept(user: dict[str, Any], month: date, proc
         for item in card.get("items") or []
     }
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
-    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    cash_amount = workflow_cash_amount_from_financial_breakdown(breakdown)
     reference = make_document_reference(courier_id, "tig", month)
     tig_breakdown = build_workflow_tig_breakdown(user, month, breakdown)
     pdf_bytes = build_tig_pdf(
@@ -14711,7 +14731,7 @@ def workflow_tig_pdf(
         for item in card.get("items") or []
     }
     tip_amount = money_int((breakdown_items.get("tip") or {}).get("amountHuf"))
-    cash_amount = abs(money_int((breakdown_items.get("atm_effect") or breakdown_items.get("cash_missing") or {}).get("amountHuf")))
+    cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
     payable = money_int(financial_breakdown.get("totalPayableHuf"))
     reference = str(tig_breakdown.get("documentReference") or make_document_reference(courier_id, "tig", month_value))
     pdf_bytes = build_tig_pdf(
