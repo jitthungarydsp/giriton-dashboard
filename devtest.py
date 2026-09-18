@@ -519,7 +519,7 @@ def apply_design() -> None:
             --shadow:0 10px 30px rgba(20,40,80,.07);
         }
         .stApp { background:var(--bg); }
-        .block-container { max-width:1540px; padding-top:1.1rem; padding-right:260px; padding-bottom:3rem; }
+        .block-container { max-width:1540px; padding-top:1.1rem; padding-right:500px; padding-bottom:3rem; }
         [data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--border); }
         .premium-hero {
             display:flex; justify-content:space-between; align-items:center; gap:24px;
@@ -615,7 +615,7 @@ def apply_design() -> None:
         .side-note { color:var(--muted); font-size:12px; line-height:1.45; }
         .right-empty-menu {
             position:fixed; top:88px; right:24px; z-index:999;
-            width:220px; display:grid; gap:12px;
+            width:456px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px;
         }
         .right-empty-menu-card {
             min-height:116px; padding:16px;
@@ -637,7 +637,7 @@ def apply_design() -> None:
         .right-route-stat strong { display:block; margin-top:3px; color:var(--text); font-size:15px; font-weight:900; line-height:1.15; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
-            .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
+            .right-empty-menu { position:static; width:auto; grid-template-columns:1fr; margin-bottom:14px; }
             .kpi-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
             .premium-hero { align-items:flex-start; flex-direction:column; }
             .month-pill { width:100%; }
@@ -16002,6 +16002,94 @@ def render_courier_detail_page() -> None:
         synced_monthly_amount = parse_huf_value(finance_payment_sync.get("payable_huf"))
         closed_monthly_amount = parse_huf_value(monthly_closure.get("payable_huf")) if closure_done else 0.0
         monthly_payment_amount = synced_monthly_amount or closed_monthly_amount or displayed_payable_total
+        quick_invoice_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
+        quick_recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
+        quick_bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
+
+        st.markdown("##### Gyors havi kifizetés lezárás")
+        if closure_done:
+            st.success("A havi folyamat már le van zárva.")
+        quick_col_name, quick_col_amount = st.columns(2)
+        quick_col_name.text_input(
+            "Név",
+            value=quick_recipient_name,
+            disabled=True,
+            key=f"quick_monthly_close_name_{courier_id}_{payment_month:%Y%m}",
+        )
+        quick_col_amount.text_input(
+            "Végösszeg",
+            value=format_huf(monthly_payment_amount),
+            disabled=True,
+            key=f"quick_monthly_close_amount_{courier_id}_{payment_month:%Y%m}",
+        )
+        quick_invoice_number = st.text_input(
+            "Számlaszám",
+            value=quick_invoice_default,
+            key=f"quick_monthly_close_invoice_{courier_id}_{payment_month:%Y%m}",
+        )
+        quick_close_note = st.text_area(
+            "Megjegyzés",
+            value=str(monthly_closure.get("close_note") or f"Kifizetve: {format_huf(monthly_payment_amount)}"),
+            key=f"quick_monthly_close_note_{courier_id}_{payment_month:%Y%m}",
+            help="Kötelező. Az összegnek is szerepelnie kell benne.",
+        )
+        if st.button(
+            "Havi folyamat lezárása",
+            type="primary",
+            use_container_width=True,
+            disabled=closure_done,
+            key=f"quick_monthly_close_save_{courier_id}_{payment_month:%Y%m}",
+        ):
+            try:
+                note_error = payment_close_note_error(quick_close_note, monthly_payment_amount)
+                if note_error:
+                    st.error(note_error)
+                    st.stop()
+                close_target_reserve_month(session_id, courier_id, period_start, period_end, reserve_month)
+                close_salary_advance_installments(courier_id, period_start, period_end)
+                quick_payment_note = f"{courier_id}-{quick_invoice_number}".strip("-")
+                save_courier_monthly_closure(
+                    session_id,
+                    courier_id,
+                    str(row["Futár"]),
+                    period_start,
+                    period_end,
+                    {
+                        "bank_account_number": quick_bank_account,
+                        "recipient_name": quick_recipient_name,
+                        "payment_note": quick_payment_note,
+                        "invoice_number": quick_invoice_number,
+                        "payable_huf": monthly_payment_amount,
+                        "close_note": quick_close_note,
+                    },
+                    {
+                        "base_huf": base_total,
+                        "tip_huf": tip_total,
+                        "bonus_huf": imported_bonus_total + manual_bonus_total + loyalty_total + customer_rating_total,
+                        "malus_huf": malus_total,
+                        "atm_deduction_huf": atm_deduction_total,
+                        "other_expense_huf": other_expense_total,
+                        "salary_advance_huf": salary_advance_total,
+                        "reserve_addition_huf": reserve_addition_total,
+                        "insurance_fee_huf": insurance_fee_total,
+                        "payable_huf": monthly_payment_amount,
+                        "close_note": quick_close_note,
+                    },
+                )
+                upsert_peopleforce_card_status(
+                    courier_id=courier_id,
+                    courier_name=str(row["Futár"]),
+                    action_key="invoice_payment",
+                    document_month=payment_month,
+                    status="done",
+                    status_note=quick_close_note,
+                    updated_by=actor,
+                )
+                st.success("A havi folyamat lezárva.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A havi folyamat lezárása sikertelen: {exc}")
+        st.divider()
 
         process_ids = {""}
         if not workflow_statuses.empty:
