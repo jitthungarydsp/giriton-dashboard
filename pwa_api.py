@@ -11942,8 +11942,28 @@ def manual_invoice_skip_enabled(states: dict[str, dict]) -> bool:
     return workflow_done(states, "manual_invoice_skip")
 
 
+def courier_profile_marks_efo(user: dict[str, Any]) -> bool:
+    courier_id, _courier_name = courier_identity(user)
+    if not courier_id:
+        return False
+    rows = optional_supabase_rows(
+        "courier_master",
+        params={
+            "select": "employment_type",
+            "courier_id": f"eq.{courier_id}",
+            "limit": "1",
+        },
+    )
+    if not rows:
+        return False
+    employment_type = normalize_text(rows[0].get("employment_type"))
+    return employment_type == "efo" or "efo" in employment_type.split()
+
+
 def courier_has_efo_assignment(user: dict[str, Any], month: date) -> bool:
     courier_id, _courier_name = courier_identity(user)
+    if courier_profile_marks_efo(user):
+        return True
     period_start = month.replace(day=1)
     period_end = month_end(period_start)
     rows = optional_supabase_rows(
@@ -11975,6 +11995,29 @@ def open_payment_waiting_status(user: dict[str, Any], month: date, note: str, pr
         note,
         process_id,
     )
+
+
+def sync_invoice_skip_progress(
+    user: dict[str, Any],
+    month: date,
+    states: dict[str, dict],
+    process_id: str | None,
+    note_prefix: str,
+) -> None:
+    if process_id or not workflow_done(states, "tig"):
+        return
+    updates = {
+        "invoice_submit": f"{note_prefix}: számlafeltöltés nem szükséges.",
+        "invoice_check": f"{note_prefix}: számlaellenőrzés nem szükséges.",
+    }
+    for action, note in updates.items():
+        if not workflow_done(states, action):
+            upsert_workflow_status(user, month, action, "done", note, process_id)
+            states[action] = {"status": "done", "status_note": note}
+    if not workflow_action_visible(states, "invoice_payment"):
+        note = f"{note_prefix}: TIG elfogadva, admin kifizetésre vár."
+        open_payment_waiting_status(user, month, note, process_id)
+        states["invoice_payment"] = {"status": "open", "status_note": note}
 
 
 def apply_invoice_validation_override(result: dict[str, Any], enabled: bool) -> dict[str, Any]:
@@ -12487,8 +12530,16 @@ def build_workflow(
     efo_invoice_skip = not process_id and courier_has_efo_assignment(user, month)
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
     invoice_skip = manual_invoice_skip or efo_invoice_skip
+    if invoice_skip:
+        sync_invoice_skip_progress(
+            user,
+            month,
+            states,
+            process_id,
+            "EFO folyamat" if efo_invoice_skip else "Admin kézi továbbengedés",
+        )
     tig_ready = False if tig_hidden_by_admin else bool(document_groups["tig"]) or bool(tig_breakdown.get("available"))
-    tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (invoice_skip and settlement_done)
+    tig_done = workflow_done(states, "tig") or process_invoice_flow_ready or (manual_invoice_skip and settlement_done)
     invoice_submit_open = workflow_open(states, "invoice_submit") and not invoice_skip
     invoice_submit_done = False if invoice_submit_open else (workflow_done(states, "invoice_submit") or (invoice_skip and tig_done))
     invoice_check_done = False if invoice_submit_open else (workflow_done(states, "invoice_check") or (invoice_skip and tig_done))
@@ -12553,15 +12604,15 @@ def build_workflow(
         steps[0]["title"] = "Havi pénzügyi adatok elkészültek"
     if efo_invoice_skip:
         efo_tig_done = workflow_done(states, "tig")
-        efo_billing_done = efo_tig_done or settlement_done
+        efo_billing_done = efo_tig_done
         efo_step_updates = {
             "tig_document": {
-                "title": "TIG elfogadva EFO folyamatnál" if efo_tig_done else "TIG nem szükséges EFO folyamatnál",
-                "done": efo_billing_done,
+                "title": "TIG elfogadva EFO folyamatnál" if efo_tig_done else "TIG elkészült",
+                "done": tig_ready or efo_tig_done,
                 "locked": not settlement_done,
             },
             "tig": {
-                "title": "TIG elfogadása" if tig_ready and not efo_tig_done else "TIG nem szükséges EFO folyamatnál",
+                "title": "TIG elfogadása" if not efo_tig_done else "TIG elfogadva EFO folyamatnál",
                 "done": efo_billing_done,
                 "locked": not tig_ready or efo_tig_done,
             },
@@ -14939,7 +14990,7 @@ def accept_workflow_document(
     manual_invoice_skip = not process_id and manual_invoice_skip_enabled(states)
     invoice_skip = efo_invoice_skip or manual_invoice_skip
     skip_note_prefix = "EFO folyamat" if efo_invoice_skip else "Admin kézi továbbengedés"
-    if action == "settlement" and invoice_skip:
+    if action == "settlement" and manual_invoice_skip:
         upsert_workflow_status(
             user,
             month,
