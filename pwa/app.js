@@ -33,6 +33,9 @@ const state = {
   openMuszakproShifts: null,
   serviceWorkerRegistration: null,
   workflowMonth: new Date().toISOString().slice(0, 7),
+  workflowMonths: [],
+  workflowMonthsLoadedFor: "",
+  workflowMonthLocked: false,
   workflowProcess: "",
   workflowProcesses: [{ id: "", label: "Havi folyamat" }],
   workflowPreviewCourierId: "",
@@ -53,7 +56,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v129";
+const APP_VERSION = "v130";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2924,6 +2927,58 @@ function workflowProcessQuery() {
   return params.toString();
 }
 
+function workflowMonthsQuery() {
+  const params = new URLSearchParams();
+  if (state.user?.canPreviewCouriers && state.workflowPreviewCourierId) {
+    params.set("courier", state.workflowPreviewCourierId);
+  }
+  params.set("_", String(Date.now()));
+  return params.toString();
+}
+
+function updateWorkflowMonthControl() {
+  const input = $("#workflow-month");
+  if (!input) return;
+  const months = state.workflowMonths.map((item) => item.month).filter(Boolean);
+  input.value = state.workflowMonth;
+  if (months.length) {
+    input.min = months[months.length - 1];
+    input.max = months[0];
+  } else {
+    input.removeAttribute("min");
+    input.removeAttribute("max");
+  }
+  input.disabled = Boolean(state.workflowMonthLocked && months.length <= 1 && !isAdminPreviewMode());
+  input.title = input.disabled
+    ? "A hónapot az admin által publikált elszámolás rögzíti."
+    : "";
+}
+
+async function ensureWorkflowMonths(options = {}) {
+  const previewKey = previewCourierValue();
+  if (!options.force && state.workflowMonthsLoadedFor === previewKey && state.workflowMonths.length) {
+    updateWorkflowMonthControl();
+    return;
+  }
+  const payload = await api(`/api/workflow/months?${workflowMonthsQuery()}`, { silentLoading: true });
+  state.workflowMonths = payload.months || [];
+  state.workflowMonthLocked = Boolean(payload.locked);
+  state.workflowMonthsLoadedFor = previewKey;
+  const visibleMonths = state.workflowMonths.map((item) => item.month).filter(Boolean);
+  if (visibleMonths.length) {
+    if (!visibleMonths.includes(state.workflowMonth)) {
+      state.workflowMonth = payload.defaultMonth || visibleMonths[0];
+      state.workflowProcess = "";
+      state.workflow = null;
+      state.checkedInvoiceFile = null;
+      state.checkedInvoiceMonth = null;
+    }
+  } else if (payload.defaultMonth) {
+    state.workflowMonth = payload.defaultMonth;
+  }
+  updateWorkflowMonthControl();
+}
+
 function renderWorkflowProcessPicker() {
   const picker = $("#workflow-process");
   if (!picker) return;
@@ -3572,6 +3627,7 @@ async function loadWorkflow(options = {}) {
     showWorkflowMessage("Folyamat betöltése…");
   }
   try {
+    await ensureWorkflowMonths();
     const processPayload = await api(`/api/workflow/processes?${workflowProcessQuery()}`);
     state.workflowProcesses = processPayload.processes || [{ id: "", label: "Havi folyamat" }];
     if (!state.workflowProcesses.some((process) => process.id === state.workflowProcess)) {
@@ -5167,7 +5223,12 @@ renderWorkflowProcessPicker();
 $("#statistics-month").value = state.statisticsMonth;
 $("#coordinator-date").value = localDate();
 $("#workflow-month").addEventListener("change", (event) => {
-  state.workflowMonth = event.target.value || new Date().toISOString().slice(0, 7);
+  const requestedMonth = event.target.value || state.workflowMonth;
+  const visibleMonths = state.workflowMonths.map((item) => item.month).filter(Boolean);
+  state.workflowMonth = visibleMonths.length && !visibleMonths.includes(requestedMonth)
+    ? visibleMonths[0]
+    : requestedMonth;
+  updateWorkflowMonthControl();
   state.workflow = null;
   state.checkedInvoiceFile = null;
   state.checkedInvoiceMonth = null;
@@ -5188,6 +5249,8 @@ function updatePreviewCourier(value) {
   if (statisticsPreviewCourierInput) statisticsPreviewCourierInput.value = state.workflowPreviewCourierId;
   if (adminPreviewCourierInput) adminPreviewCourierInput.value = state.workflowPreviewCourierId;
   state.workflowProcess = "";
+  state.workflowMonthsLoadedFor = "";
+  state.workflowMonths = [];
   state.workflow = null;
   state.statistics = null;
   state.data = null;

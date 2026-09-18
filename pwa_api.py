@@ -6509,6 +6509,62 @@ def mobile_settlement_period_is_open(month: date) -> bool:
     return config_mode in {"API", "Excel"} or bool(session_id)
 
 
+def list_mobile_settlement_period_configs(limit: int = 24) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "mobile_settlement_period_config",
+        schema="settlement",
+        params={
+            "select": "period_start,calculation_mode,warehouse_label,session_id,visibility_mode,source_note,updated_by,updated_at",
+            "order": "updated_at.desc,period_start.desc",
+            "limit": str(limit),
+        },
+        timeout=30,
+    )
+    if not rows:
+        rows = optional_supabase_rows(
+            "mobile_settlement_period_config",
+            schema="settlement",
+            params={
+                "select": "period_start,calculation_mode,warehouse_label,session_id,source_note,updated_by,updated_at",
+                "order": "updated_at.desc,period_start.desc",
+                "limit": str(limit),
+            },
+            timeout=30,
+        )
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        config = dict(row)
+        config["visibility_mode"] = normalize_mobile_visibility_mode(config.get("visibility_mode"))
+        config_mode = str(config.get("calculation_mode") or "").strip()
+        session_id = str(config.get("session_id") or "").strip()
+        if config_mode in {"API", "Excel"} or session_id:
+            result.append(config)
+    return result
+
+
+def visible_mobile_settlement_month_keys() -> list[str]:
+    keys: list[str] = []
+    for config in list_mobile_settlement_period_configs():
+        month_key = str(config.get("period_start") or "")[:7]
+        if month_key and month_key not in keys:
+            keys.append(month_key)
+    return keys[:1]
+
+
+def workflow_month_allowed_for_user(user: dict[str, Any], month: date, *, preview: bool = False) -> bool:
+    if preview or can_view_financial_amounts(user) or is_unrestricted_legacy_settlement_month(month):
+        return True
+    return month.strftime("%Y-%m") in visible_mobile_settlement_month_keys()
+
+
+def require_workflow_month_allowed(user: dict[str, Any], month: date, *, preview: bool = False) -> None:
+    if not workflow_month_allowed_for_user(user, month, preview=preview):
+        raise HTTPException(
+            status_code=404,
+            detail="Ez az elszámolási hónap nincs publikálva a PWA felületre.",
+        )
+
+
 def latest_settlement_session_for_month(
     courier_id: str,
     month: date,
@@ -14690,14 +14746,50 @@ def workflow(
     user = require_user(giriton_pwa_session)
     view_user, preview = workflow_view_user(user, courier)
     privileged_viewer = can_view_financial_amounts(user)
+    month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value, preview=preview)
     return build_workflow(
         view_user,
-        parse_month(month),
+        month_value,
         process,
         preview_read_only=preview,
         allow_unpublished=preview or privileged_viewer,
         can_view_amounts=privileged_viewer,
     )
+
+
+@app.get("/api/workflow/months")
+def workflow_months(
+    courier: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    _view_user, preview = workflow_view_user(user, courier)
+    privileged_viewer = can_view_financial_amounts(user)
+    configs = list_mobile_settlement_period_configs()
+    months = [
+        {
+            "month": str(config.get("period_start") or "")[:7],
+            "calculationMode": str(config.get("calculation_mode") or ""),
+            "warehouseLabel": str(config.get("warehouse_label") or ""),
+            "sessionId": str(config.get("session_id") or ""),
+            "visibilityMode": normalize_mobile_visibility_mode(config.get("visibility_mode")),
+            "updatedAt": config.get("updated_at"),
+        }
+        for config in configs
+        if str(config.get("period_start") or "")[:7]
+    ]
+    if not (preview or privileged_viewer):
+        months = months[:1]
+    if not months and (preview or privileged_viewer):
+        current_month = datetime.now(LOCAL_TIMEZONE).date().replace(day=1).strftime("%Y-%m")
+        months = [{"month": current_month, "calculationMode": "", "warehouseLabel": "", "sessionId": "", "visibilityMode": "original", "updatedAt": ""}]
+    default_month = months[0]["month"] if months else ""
+    return {
+        "defaultMonth": default_month,
+        "months": months,
+        "locked": not (preview or privileged_viewer),
+    }
 
 
 @app.get("/api/workflow/tig.pdf")
@@ -14711,6 +14803,7 @@ def workflow_tig_pdf(
     view_user, preview = workflow_view_user(user, courier)
     privileged_viewer = can_view_financial_amounts(user)
     month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value, preview=preview)
     visibility_mode = normalize_mobile_visibility_mode(
         read_mobile_settlement_period_config(month_value).get("visibility_mode")
     )
@@ -14778,8 +14871,10 @@ def workflow_processes(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_user(giriton_pwa_session)
-    view_user, _preview = workflow_view_user(user, courier)
-    return {"processes": list_workflow_processes(view_user, parse_month(month))}
+    view_user, preview = workflow_view_user(user, courier)
+    month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value, preview=preview)
+    return {"processes": list_workflow_processes(view_user, month_value)}
 
 
 @app.post("/api/workflow/{action}/accept")
@@ -14792,6 +14887,7 @@ def accept_workflow_document(
         raise HTTPException(status_code=404, detail="Ismeretlen elfogadási lépés.")
     user = require_user(giriton_pwa_session)
     month = parse_month(payload.month)
+    require_workflow_month_allowed(user, month)
     process_id = normalize_process_id(payload.process)
     visibility_mode = normalize_mobile_visibility_mode(
         read_mobile_settlement_period_config(month).get("visibility_mode")
@@ -14921,6 +15017,7 @@ def create_workflow_complaint(
         raise HTTPException(status_code=422, detail="Írd le röviden a reklamációt.")
     user = require_user(giriton_pwa_session)
     month = parse_month(payload.month)
+    require_workflow_month_allowed(user, month)
     process_id = normalize_process_id(payload.process)
     courier_id, courier_name = courier_identity(user)
     _documents, _status_rows, complaints = read_workflow_rows(user, month)
@@ -15029,6 +15126,7 @@ async def check_invoice(
 ):
     user = require_user(giriton_pwa_session)
     month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value)
     process_id = normalize_process_id(process)
     require_prerequisite(user, month_value, "invoice_check", process_id)
     content = await invoice_file.read(MAX_INVOICE_BYTES + 1)
@@ -15092,6 +15190,7 @@ async def submit_invoice(
 ):
     user = require_user(giriton_pwa_session)
     month_value = parse_month(month)
+    require_workflow_month_allowed(user, month_value)
     process_id = normalize_process_id(process)
     require_prerequisite(user, month_value, "invoice_submit", process_id)
     courier_id, courier_name = courier_identity(user)
