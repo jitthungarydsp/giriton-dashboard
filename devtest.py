@@ -631,6 +631,10 @@ def apply_design() -> None:
         .right-payable-table td { padding:7px 6px; border-bottom:1px solid #edf1f6; color:var(--text); vertical-align:top; }
         .right-payable-table tr:last-child td { border-bottom:0; font-weight:900; }
         .right-payable-table td:last-child { text-align:right; white-space:nowrap; }
+        .right-route-stat-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+        .right-route-stat { padding:9px 8px; border:1px solid #edf1f6; border-radius:12px; background:#fbfcfe; }
+        .right-route-stat span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
+        .right-route-stat strong { display:block; margin-top:3px; color:var(--text); font-size:15px; font-weight:900; line-height:1.15; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
             .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
@@ -1556,6 +1560,38 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
         for operation, label, amount in payable_rows
         if amount or operation == "="
     )
+    route_count = int(parse_huf_value(row.get("Útvonalak") or row.get("Kör") or row.get("Túrák")))
+    counted_routes = int(parse_huf_value(row.get("Számolt túrák") or route_count))
+    uncounted_routes = int(parse_huf_value(row.get("Nem számolt túrák")))
+    highlighted_routes = int(parse_huf_value(row.get("Kiemelt túrák") or row.get("Kiemelt kör")))
+    normal_routes = int(parse_huf_value(row.get("Normál túrák") or row.get("Normál kör")))
+    order_count = int(parse_huf_value(row.get("Rendelések")))
+    if not route_count and counted_routes:
+        route_count = counted_routes
+    if not route_count and (highlighted_routes or normal_routes):
+        route_count = highlighted_routes + normal_routes
+    if not counted_routes:
+        counted_routes = route_count
+
+    route_caption = "Futár kiválasztása után jelenik meg." if not row else "Kivitt túrák és körök az elszámolásban."
+    route_stat_rows = [
+        ("Körök", route_count),
+        ("Túrák", counted_routes),
+        ("Nem számolt", uncounted_routes),
+        ("Kiemelt", highlighted_routes),
+        ("Normál", normal_routes),
+        ("Rendelés", order_count),
+    ]
+    route_stat_html = "".join(
+        (
+            '<div class="right-route-stat">'
+            f"<span>{html.escape(label)}</span>"
+            f"<strong>{html.escape(str(value))} db</strong>"
+            "</div>"
+        )
+        for label, value in route_stat_rows
+        if value or label in {"Körök", "Túrák"}
+    )
     st.markdown(
         f"""
         <div class="right-empty-menu">
@@ -1575,6 +1611,11 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
                     <thead><tr><th>Műv.</th><th>Tétel</th><th>Összeg</th></tr></thead>
                     <tbody>{payable_row_html}</tbody>
                 </table>
+            </div>
+            <div class="right-empty-menu-card">
+                <div class="right-empty-menu-title">Túrák / körök</div>
+                <p class="right-empty-menu-caption">{html.escape(route_caption)}</p>
+                <div class="right-route-stat-grid">{route_stat_html}</div>
             </div>
         </div>
         """,
