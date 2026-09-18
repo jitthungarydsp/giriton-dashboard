@@ -635,6 +635,11 @@ def apply_design() -> None:
         .right-route-stat { padding:9px 8px; border:1px solid #edf1f6; border-radius:12px; background:#fbfcfe; }
         .right-route-stat span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
         .right-route-stat strong { display:block; margin-top:3px; color:var(--text); font-size:15px; font-weight:900; line-height:1.15; }
+        .right-payment-list { display:grid; gap:8px; margin-top:10px; }
+        .right-payment-row { padding:8px 9px; border:1px solid #edf1f6; border-radius:12px; background:#fbfcfe; }
+        .right-payment-row span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
+        .right-payment-row strong { display:block; margin-top:3px; color:var(--text); font-size:12px; font-weight:900; line-height:1.25; overflow-wrap:anywhere; }
+        .right-payment-action { margin-top:10px; padding:9px 10px; border-radius:12px; background:#16a34a; color:white; text-align:center; font-size:12px; font-weight:900; }
         @media (min-width:1750px) {
             .block-container { padding-right:500px; }
             .right-empty-menu { width:456px; grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -1523,8 +1528,17 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     )
 
 
-def render_empty_right_menu(courier_row: object | None = None) -> None:
+def render_empty_right_menu(
+    courier_row: object | None = None,
+    *,
+    profile: dict[str, object] | None = None,
+    monthly_closure: dict[str, object] | None = None,
+    period_start: date | None = None,
+    courier_id: str = "",
+) -> None:
     row = courier_row if isinstance(courier_row, (pd.Series, dict)) else {}
+    profile = profile or {}
+    monthly_closure = monthly_closure or {}
     has_courier_row = bool(isinstance(row, pd.Series) or (isinstance(row, dict) and row))
     payable_value = parse_huf_value(row.get("Kifizetendő")) if row is not None else 0
     payable_text = format_huf(payable_value) if payable_value else "-"
@@ -1597,6 +1611,44 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
         for label, value in route_stat_rows
         if value or label in {"Körök", "Túrák"}
     )
+    payment_courier_name = str(
+        monthly_closure.get("recipient_name")
+        or profile.get("company_name")
+        or row.get("Futár")
+        or row.get("courier_name")
+        or ""
+    ).strip()
+    payment_invoice_number = str(monthly_closure.get("invoice_number") or "").strip()
+    if not payment_invoice_number and courier_id and period_start:
+        payment_invoice_number = str(load_latest_invoice_number(courier_id, period_start) or "").strip()
+    payment_account = format_bank_account_4(
+        monthly_closure.get("bank_account_number")
+        or profile.get("bank_account_number")
+        or row.get("Bankszámlaszám")
+        or row.get("bank_account_number")
+        or ""
+    )
+    payment_note = str(
+        monthly_closure.get("payment_note")
+        or (f"{courier_id}-{payment_invoice_number}".strip("-") if courier_id or payment_invoice_number else "")
+    ).strip()
+    payment_card_caption = "Gyors havi záráshoz szükséges adatok." if has_courier_row else "Futár kiválasztása után jelenik meg."
+    payment_rows = [
+        ("Név", payment_courier_name or "-"),
+        ("Végösszeg", payable_text),
+        ("Megjegyzés", payment_note or "-"),
+        ("Számlaszám", payment_account or "-"),
+    ]
+    payment_rows_html = "".join(
+        (
+            '<div class="right-payment-row">'
+            f"<span>{html.escape(label)}</span>"
+            f"<strong>{html.escape(value)}</strong>"
+            "</div>"
+        )
+        for label, value in payment_rows
+    )
+    payment_action_text = "Lezárás a Kifizetés fülön"
     st.markdown(
         f"""
         <div class="right-empty-menu">
@@ -1621,6 +1673,12 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
                 <div class="right-empty-menu-title">Túrák / körök</div>
                 <p class="right-empty-menu-caption">{html.escape(route_caption)}</p>
                 <div class="right-route-stat-grid">{route_stat_html}</div>
+            </div>
+            <div class="right-empty-menu-card">
+                <div class="right-empty-menu-title">Kifizetés</div>
+                <p class="right-empty-menu-caption">{html.escape(payment_card_caption)}</p>
+                <div class="right-payment-list">{payment_rows_html}</div>
+                <div class="right-payment-action">{html.escape(payment_action_text)}</div>
             </div>
         </div>
         """,
@@ -13787,7 +13845,6 @@ def render_courier_detail_page() -> None:
     if "Futár" not in row or not str(row.get("Futár") or "").strip():
         row = row.copy()
         row["Futár"] = courier_name
-    render_empty_right_menu(row)
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
     active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
@@ -14114,6 +14171,13 @@ def render_courier_detail_page() -> None:
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
+    render_empty_right_menu(
+        row,
+        profile=profile,
+        monthly_closure=monthly_closure,
+        period_start=period_start,
+        courier_id=courier_id,
+    )
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
     profile_metrics = resolve_profile_route_metrics(route_detail, summary_row, row)
     order_total = profile_metrics["order_total"]
