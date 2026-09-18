@@ -13647,18 +13647,16 @@ def render_courier_detail_page() -> None:
         )
         if itemized_deduction_total:
             total_deduction = itemized_deduction_total
-    displayed_payable_total = payable_total
+    persisted_payable_total = (
+        parse_huf_value(summary_row.get("payable_huf"))
+        or parse_huf_value(summary_row.get("payable_total_huf"))
+        or parse_huf_value(summary_row.get("calculated_total"))
+        if summary_available
+        else 0.0
+    )
+    displayed_payable_total = persisted_payable_total
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
-    saved_finance_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
-    saved_payable_total = parse_huf_value(saved_finance_sync.get("payable_huf"))
-    if saved_payable_total:
-        displayed_payable_total = saved_payable_total
-        overview_payable_total = saved_payable_total
-        overview_tig_payable_total = saved_payable_total
-        saved_total_deduction = parse_huf_value(saved_finance_sync.get("total_deduction"))
-        if saved_total_deduction:
-            total_deduction = saved_total_deduction
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
     closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
     paid_badge = '<span class="settlement-chip">✓ Kifizetve</span>' if closure_done else ''
@@ -15547,7 +15545,8 @@ def render_courier_detail_page() -> None:
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
         expense_requests = load_courier_expense_requests(courier_id, payment_month)
-        monthly_payment_amount = payable_total
+        closed_monthly_amount = parse_huf_value(monthly_closure.get("payable_huf")) if closure_done else 0.0
+        monthly_payment_amount = closed_monthly_amount or displayed_payable_total
 
         process_ids = {""}
         if not workflow_statuses.empty:
