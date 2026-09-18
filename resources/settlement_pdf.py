@@ -496,10 +496,13 @@ def _tig_pdf_rows_from_breakdown(tig_breakdown: dict[str, Any] | None) -> tuple[
 
 
 def _tig_pdf_vat_cell(row: dict[str, Any]) -> str:
+    vat_label = str(row.get("vatLabel") or "").strip()
+    if vat_label:
+        return vat_label
     vat_huf = _int_money(row.get("vatHuf"))
     if vat_huf:
         return _money(vat_huf)
-    return str(row.get("vatLabel") or "")
+    return ""
 
 
 def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakdown: dict[str, Any] | None = None) -> bytes:
@@ -606,22 +609,46 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     if not cash_breakdown_rows and cash_gross:
         cash_breakdown_rows = [cash_service_row]
 
-    story.append(rich("<b>TIG és elfogadás</b>", "tig_title"))
-    story.append(p("A TIG tételes bontása itt jelenik meg, külön KP sorral.", "tig_small"))
+    story.append(_table(
+        [[
+            rich("<b>3</b>", "tig_cell_bold"),
+            rich("<b><font size='15'>TIG és elfogadás</font></b><br/><font size='8' color='#6b7a70'>A TIG tételes bontása itt jelenik meg, külön KP sorral.</font>", "tig_body"),
+        ]],
+        [11 * mm, 151 * mm],
+        [
+            ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#eef4ed")),
+            ("TEXTCOLOR", (0, 0), (0, 0), colors.HexColor("#50655a")),
+            ("BOX", (0, 0), (0, 0), 0.5, colors.HexColor("#eef4ed")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ALIGN", (0, 0), (0, 0), "CENTER"),
+            ("TOPPADDING", (0, 0), (0, 0), 5),
+            ("BOTTOMPADDING", (0, 0), (0, 0), 5),
+            ("LEFTPADDING", (0, 0), (0, 0), 4),
+            ("RIGHTPADDING", (0, 0), (0, 0), 4),
+            ("TOPPADDING", (1, 0), (1, 0), 0),
+            ("BOTTOMPADDING", (1, 0), (1, 0), 0),
+            ("LEFTPADDING", (1, 0), (1, 0), 6),
+            ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ],
+    ))
     story.append(Spacer(1, 5 * mm))
 
     story.append(_table(
-        [[
-            rich("TIG VÉGÖSSZEG", "tig_hero_label"),
-            rich(escape(_money(final_total)), "tig_hero_amount"),
-            rich(escape(f"{month_code} | {document_reference}" if document_reference else month_code), "tig_hero_month"),
-        ]],
+        [
+            [rich("TIG VÉGÖSSZEG", "tig_hero_label")],
+            [rich(escape(_money(final_total)), "tig_hero_amount")],
+            [rich(escape(f"{month_code} - {document_reference}" if document_reference else month_code), "tig_hero_month")],
+        ],
         [166 * mm],
         [
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#163326")),
             ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#163326")),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, 0), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 0),
+            ("TOPPADDING", (0, 1), (-1, 1), 0),
+            ("BOTTOMPADDING", (0, 1), (-1, 1), 0),
+            ("TOPPADDING", (0, 2), (-1, 2), 0),
+            ("BOTTOMPADDING", (0, 2), (-1, 2), 10),
             ("LEFTPADDING", (0, 0), (-1, -1), 10),
             ("RIGHTPADDING", (0, 0), (-1, -1), 10),
         ],
@@ -636,36 +663,27 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
                     "Just in Time Transport Hungary Kft.<br/>"
                     "1201 Budapest<br/>"
                     "Atléta utca 44.<br/>"
-                    "Adószám: 32649460-2-43",
+                    "Adószám: 32649460-2-43<br/>"
+                    f"<b>Teljesítési időszak:</b> {escape(str(document_meta['periodLabel']))}<br/>"
+                    f"<b>Teljesítés:</b> {escape(str(document_meta['performanceDate']))}<br/>"
+                    f"<b>Fizetési határidő:</b> {escape(str(document_meta['paymentDueDate']))}<br/>"
+                    f"<b>Megjegyzés:</b> {escape(str(document_meta['note']))}",
                     "tig_body",
                 ),
                 rich(
                     "<b>ELADÓ</b><br/>"
                     f"{escape(seller_name)}<br/>"
-                    f"Cím: {escape(seller_address)}<br/>"
-                    f"Adószám: {escape(seller_tax)}<br/>"
-                    f"Futár ID: {escape(courier_id or '-')}",
-                    "tig_body",
-                ),
-            ],
-            [
-                rich(
-                    f"<b>Teljesítési időszak:</b> {escape(str(document_meta['periodLabel']))}<br/>"
-                    f"<b>Teljesítés:</b> {escape(str(document_meta['performanceDate']))}",
-                    "tig_body",
-                ),
-                rich(
-                    f"<b>Fizetési határidő:</b> {escape(str(document_meta['paymentDueDate']))}<br/>"
-                    f"<b>Megjegyzés:</b> {escape(str(document_meta['note']))}",
+                    f"{escape(seller_address)}<br/><br/>"
+                    f"<b>Adószám:</b> {escape(seller_tax)}",
                     "tig_body",
                 ),
             ],
         ],
         [81 * mm, 81 * mm],
         [
-            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f9faf8")),
             ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
-            ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e2ebe3")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c9ddcd")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 9),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
@@ -710,9 +728,29 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
     story.append(Spacer(1, 5 * mm))
 
     if cash_breakdown_rows:
-        cash_amount_rows: list[list[Any]] = [["KÜLÖN KP TÉTELEK", "NETTÓ", "ÁFA", "BRUTTÓ"]]
+        story.append(_table(
+            [[
+                rich("<b>KP KÜLÖN SZÁMLA</b><br/><b>Készpénzes teljesítés</b><br/>A KP külön számlás tétel: aznapi teljesítés, aznapi kifizetés, TAM.", "tig_body"),
+            ]],
+            [162 * mm],
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f9faf8")),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
+                ("TOPPADDING", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ],
+        ))
+        story.append(Spacer(1, 5 * mm))
+        cash_amount_rows: list[list[Any]] = [["TÉTEL", "NETTÓ", "ÁFA", "BRUTTÓ"]]
         for row in cash_breakdown_rows:
-            note = str(row.get("note") or "")
+            note_parts = [
+                str(row.get("note") or ""),
+                f"Teljesítés: {row.get('performanceDate')}" if row.get("performanceDate") else "",
+                f"Kifizetés: {row.get('paymentDueDate')}" if row.get("paymentDueDate") else "",
+            ]
+            note = " - ".join(part.rstrip(" .") for part in note_parts if part)
             label = escape(str(row.get("label") or "Szállítási díj (494107) - készpénz"))
             label_cell = f"<b>{label}</b>"
             if note:
@@ -727,11 +765,12 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
             cash_amount_rows,
             [76 * mm, 30 * mm, 24 * mm, 32 * mm],
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f7e4")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#183b22")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#163326")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("FONTNAME", (0, 0), (-1, 0), bold),
                 ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor("#c9ddcd")),
                 ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#dfe8df")),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
                 ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("TOPPADDING", (0, 0), (-1, -1), 8),
@@ -755,12 +794,20 @@ def build_tig_pdf(courier: dict[str, Any], amounts: dict[str, float], tig_breakd
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
         ],
     ))
-    story.append(Spacer(1, 8 * mm))
-    tax_label = "27%-os ÁFA" if vat_payer else "AAM"
-    story.append(rich(
-        "Számlázási megjegyzés: a futár ID szerepeljen a számlán. "
-        f"Adózási mód: <b>{escape(tax_label)}</b>. A borravaló külön TAM tétel.",
-        "tig_note",
+    story.append(Spacer(1, 5 * mm))
+    story.append(rich("<b>Reklamáció</b>", "tig_title"))
+    story.append(Spacer(1, 3 * mm))
+    story.append(_table(
+        [[rich("<b>Előnézeti módban reklamáció nem küldhető.</b>", "tig_body")]],
+        [166 * mm],
+        [
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#e8f7e4")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e8f7e4")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ],
     ))
     doc.build(story)
     return buffer.getvalue()
