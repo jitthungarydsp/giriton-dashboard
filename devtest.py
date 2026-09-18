@@ -13585,6 +13585,7 @@ def render_fast_courier_profile(
 
 
 def render_courier_detail_page() -> None:
+    render_empty_right_menu()
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     st.markdown('<div class="section-title">Futár részletei</div>', unsafe_allow_html=True)
     nav_data = st.session_state.get("current_filtered_data")
@@ -20084,6 +20085,7 @@ def render_excel_import_sidebar_tools(selected_month: str) -> None:
 
 def show_new_settlement_page() -> None:
     apply_design()
+    render_empty_right_menu()
     if st.session_state.pop("settlement_force_profile_refresh", False):
         refresh_settlement_profile_data()
     requested_calculation_mode = st.session_state.pop("courier_requested_calculation_mode", None)
@@ -20735,7 +20737,6 @@ def show_new_settlement_page() -> None:
         """,
         unsafe_allow_html=True,
     )
-    render_empty_right_menu()
     monthly_document_plan = build_monthly_period_document_plan(filtered, balance_period_start, balance_period_end)
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
     mobile_period_config = load_mobile_settlement_period_config(balance_period_start)
