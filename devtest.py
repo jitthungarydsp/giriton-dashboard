@@ -635,8 +635,6 @@ def apply_design() -> None:
         .right-route-stat { padding:9px 8px; border:1px solid #edf1f6; border-radius:12px; background:#fbfcfe; }
         .right-route-stat span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
         .right-route-stat strong { display:block; margin-top:3px; color:var(--text); font-size:15px; font-weight:900; line-height:1.15; }
-        .right-backstep-target { margin-top:10px; padding:10px; border-radius:12px; background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; font-size:12px; font-weight:850; line-height:1.35; }
-        .right-backstep-hint { margin:8px 0 0; color:var(--muted); font-size:11px; line-height:1.4; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
             .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
@@ -1595,14 +1593,6 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
         for label, value in route_stat_rows
         if value or label in {"Körök", "Túrák"}
     )
-    courier_name = str(row.get("Futár") or row.get("courier_name") or "").strip()
-    backstep_caption = (
-        f"{courier_name} folyamatának visszaléptetése."
-        if courier_name
-        else "Futár kiválasztása után használható."
-    )
-    backstep_target_label = WORKFLOW_BACKSTEP_TARGETS.get("tig", {}).get("label", "TIG elfogadasara")
-    backstep_current = status_text if status_text and status_text != "-" else "Nincs kiválasztott futár"
     st.markdown(
         f"""
         <div class="right-empty-menu">
@@ -1627,12 +1617,6 @@ def render_empty_right_menu(courier_row: object | None = None) -> None:
                 <div class="right-empty-menu-title">Túrák / körök</div>
                 <p class="right-empty-menu-caption">{html.escape(route_caption)}</p>
                 <div class="right-route-stat-grid">{route_stat_html}</div>
-            </div>
-            <div class="right-empty-menu-card">
-                <div class="right-empty-menu-title">Futár visszaléptetése</div>
-                <p class="right-empty-menu-caption">{html.escape(backstep_caption)}</p>
-                <div class="right-backstep-target">Cél: {html.escape(backstep_target_label)}</div>
-                <p class="right-backstep-hint">Most: {html.escape(backstep_current)}. A mentés a lenti Folyamat visszaléptetése blokkban érhető el.</p>
             </div>
         </div>
         """,
