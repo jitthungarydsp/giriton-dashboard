@@ -28,7 +28,7 @@ from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.discord_notifier import send_discord_text_message_to_setting
-from resources.shift_comparison_db import read_next_5_day_shift_comparison
+from resources.shift_comparison_db import read_shift_comparison_records
 from resources.shift_start_parameters_db import read_shift_start_parameters
 
 try:
@@ -2441,8 +2441,14 @@ def _render_kpi(label: str, value: int | str, tone: str = "blue", icon: str = ""
 
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
-def _load_next_5_days():
-    return pd.DataFrame(read_next_5_day_shift_comparison(limit=1))
+def _load_shift_comparison_data(start_date: date, end_date: date):
+    return pd.DataFrame(
+        read_shift_comparison_records(
+            start_date=start_date,
+            end_date=end_date,
+            limit=20000,
+        )
+    )
 
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
@@ -3462,13 +3468,17 @@ def _render_worker_view(
 
 def _render_differences(comparison_df: pd.DataFrame) -> None:
     if comparison_df.empty or "missing_source" not in comparison_df.columns:
-        st.info("Nincs egyeztetési adat a következő 5 napra.")
+        st.info("Nincs DB egyeztetési adat a kiválasztott időszakra.")
         return
 
     has_missing = comparison_df["missing_source"].fillna("").astype(str).str.strip() != ""
     differences = comparison_df[has_missing]
+    st.caption(
+        f"DB egyeztetés sorok: {len(comparison_df)} | eltérés: {len(differences)} | "
+        f"utolsó frissítés: {_latest(comparison_df, 'updated_at')}"
+    )
     if differences.empty:
-        st.success("A következő 5 nap egyeztetésében nincs eltérés.")
+        st.success("A kiválasztott időszak DB egyeztetésében nincs eltérés.")
         return
 
     _display_table(
@@ -3590,7 +3600,12 @@ def show_foglalas_streamlit_page() -> None:
         st.error("A záró dátum nem lehet korábbi, mint a kezdő dátum.")
         return
 
-    comparison_df, comparison_error = _safe_load("Egyeztetés", _load_next_5_days)
+    comparison_df, comparison_error = _safe_load(
+        "Egyeztetés",
+        _load_shift_comparison_data,
+        start_date,
+        end_date,
+    )
     muszakpro_df, muszakpro_error = _safe_load(
         "MűszakPro",
         _load_muszakpro_data,
@@ -3710,6 +3725,8 @@ def show_foglalas_streamlit_page() -> None:
 
     st.write("")
     if view == "Összes":
+        with st.expander("DB egyeztetés eltérések", expanded=False):
+            _render_differences(comparison_df)
         _render_mass_view(summary_df)
     elif view == "Dolgozónként":
         _render_worker_view(summary_df, muszakpro_df, giriton_df)
