@@ -624,6 +624,8 @@ def apply_design() -> None:
         }
         .right-empty-menu-title { margin:0 0 6px; color:var(--text); font-size:16px; font-weight:850; }
         .right-empty-menu-caption { margin:0; color:var(--muted); font-size:12px; line-height:1.45; }
+        .right-empty-menu-value { margin-top:10px; color:var(--text); font-size:24px; font-weight:900; line-height:1.05; overflow-wrap:anywhere; }
+        .right-empty-menu-status { display:inline-flex; align-items:center; max-width:100%; margin-top:10px; padding:6px 10px; border-radius:999px; background:#fff8e7; color:#9a6700; font-size:12px; font-weight:850; overflow-wrap:anywhere; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
             .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
@@ -1508,17 +1510,28 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     )
 
 
-def render_empty_right_menu() -> None:
+def render_empty_right_menu(courier_row: object | None = None) -> None:
+    row = courier_row if isinstance(courier_row, (pd.Series, dict)) else {}
+    payable_value = parse_huf_value(row.get("Kifizetendő")) if row is not None else 0
+    payable_text = format_huf(payable_value) if payable_value else "-"
+    status_text = str(row.get("Státusz") or "").strip() if row is not None else ""
+    status_note = str(row.get("Bejelentés megjegyzés") or row.get("Fizetés előleg státusz") or "").strip()
+    process_caption = status_note if status_note and status_note != "Nincs megjegyzés." else "Aktuális folyamat állapota."
+    if not status_text:
+        status_text = "-"
+        process_caption = "Futár kiválasztása után jelenik meg."
     st.markdown(
-        """
+        f"""
         <div class="right-empty-menu">
             <div class="right-empty-menu-card">
-                <div class="right-empty-menu-title">Menü 1</div>
-                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+                <div class="right-empty-menu-title">Kifizetendő</div>
+                <p class="right-empty-menu-caption">Aktuális futár havi összege.</p>
+                <div class="right-empty-menu-value">{html.escape(payable_text)}</div>
             </div>
             <div class="right-empty-menu-card">
-                <div class="right-empty-menu-title">Menü 2</div>
-                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+                <div class="right-empty-menu-title">Aktuális folyamat</div>
+                <p class="right-empty-menu-caption">{html.escape(process_caption)}</p>
+                <div class="right-empty-menu-status">{html.escape(status_text)}</div>
             </div>
             <div class="right-empty-menu-card">
                 <div class="right-empty-menu-title">Menü 3</div>
@@ -13598,7 +13611,6 @@ def render_fast_courier_profile(
 
 
 def render_courier_detail_page() -> None:
-    render_empty_right_menu()
     courier_id = str(st.session_state.get("selected_courier_id") or "")
     st.markdown('<div class="section-title">Futár részletei</div>', unsafe_allow_html=True)
     nav_data = st.session_state.get("current_filtered_data")
@@ -13690,6 +13702,7 @@ def render_courier_detail_page() -> None:
     if "Futár" not in row or not str(row.get("Futár") or "").strip():
         row = row.copy()
         row["Futár"] = courier_name
+    render_empty_right_menu(row)
     initials = "".join(part[:1].upper() for part in courier_name.split()[:2]) or "F"
     active_calculation_mode = st.session_state.get("new_calculation_mode", "API")
     period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
