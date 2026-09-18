@@ -15545,8 +15545,12 @@ def render_courier_detail_page() -> None:
         invoice_documents = load_courier_payment_documents(courier_id, payment_month)
         advance_requests = load_courier_salary_advance_requests(courier_id)
         expense_requests = load_courier_expense_requests(courier_id, payment_month)
+        finance_payment_sync = st.session_state.get(
+            f"finance_payment_sync_{courier_id}_{period_start:%Y%m}"
+        ) or {}
+        synced_monthly_amount = parse_huf_value(finance_payment_sync.get("payable_huf"))
         closed_monthly_amount = parse_huf_value(monthly_closure.get("payable_huf")) if closure_done else 0.0
-        monthly_payment_amount = closed_monthly_amount or displayed_payable_total
+        monthly_payment_amount = synced_monthly_amount or closed_monthly_amount or displayed_payable_total
 
         process_ids = {""}
         if not workflow_statuses.empty:
