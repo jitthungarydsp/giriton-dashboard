@@ -519,7 +519,7 @@ def apply_design() -> None:
             --shadow:0 10px 30px rgba(20,40,80,.07);
         }
         .stApp { background:var(--bg); }
-        .block-container { max-width:1540px; padding-top:1.1rem; padding-bottom:3rem; }
+        .block-container { max-width:1540px; padding-top:1.1rem; padding-right:260px; padding-bottom:3rem; }
         [data-testid="stSidebar"] { background:#fff; border-right:1px solid var(--border); }
         .premium-hero {
             display:flex; justify-content:space-between; align-items:center; gap:24px;
@@ -613,7 +613,17 @@ def apply_design() -> None:
         .stButton > button[kind="primary"] { background:var(--primary); border-color:var(--primary); }
         div[data-baseweb="select"] > div, div[data-testid="stTextInputRootElement"] { border-radius:11px; }
         .side-note { color:var(--muted); font-size:12px; line-height:1.45; }
+        .right-empty-menu {
+            position:fixed; top:88px; right:24px; z-index:999;
+            width:220px; min-height:240px; padding:16px;
+            background:#fff; border:1px solid var(--border); border-radius:18px;
+            box-shadow:0 16px 38px rgba(20,40,80,.13);
+        }
+        .right-empty-menu-title { margin:0 0 6px; color:var(--text); font-size:18px; font-weight:850; }
+        .right-empty-menu-caption { margin:0; color:var(--muted); font-size:12px; line-height:1.45; }
         @media (max-width:1000px) {
+            .block-container { padding-right:1rem; }
+            .right-empty-menu { position:static; width:auto; min-height:120px; margin-bottom:14px; }
             .kpi-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
             .premium-hero { align-items:flex-start; flex-direction:column; }
             .month-pill { width:100%; }
@@ -1490,6 +1500,18 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
 }
 
 </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_empty_right_menu() -> None:
+    st.markdown(
+        """
+        <div class="right-empty-menu">
+            <div class="right-empty-menu-title">Menü</div>
+            <p class="right-empty-menu-caption">Jobb oldali menü helye.</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -20713,6 +20735,7 @@ def show_new_settlement_page() -> None:
         """,
         unsafe_allow_html=True,
     )
+    render_empty_right_menu()
     monthly_document_plan = build_monthly_period_document_plan(filtered, balance_period_start, balance_period_end)
     period_start_clicked = monthly_period_start_already_clicked(balance_period_start)
     mobile_period_config = load_mobile_settlement_period_config(balance_period_start)
@@ -21071,13 +21094,7 @@ def show_new_settlement_page() -> None:
 
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
 
-    list_col, right_menu_col = st.columns([5.4, 1], gap="large")
-    with list_col:
-        render_table(filtered)
-    with right_menu_col:
-        with st.container(border=True):
-            st.markdown("#### Menü")
-            st.caption("Jobb oldali gyorsmenü helye.")
+    render_table(filtered)
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d,e,f=st.columns(6)
