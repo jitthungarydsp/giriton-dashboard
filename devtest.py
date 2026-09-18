@@ -615,15 +615,18 @@ def apply_design() -> None:
         .side-note { color:var(--muted); font-size:12px; line-height:1.45; }
         .right-empty-menu {
             position:fixed; top:88px; right:24px; z-index:999;
-            width:220px; min-height:240px; padding:16px;
+            width:220px; display:grid; gap:12px;
+        }
+        .right-empty-menu-card {
+            min-height:116px; padding:16px;
             background:#fff; border:1px solid var(--border); border-radius:18px;
             box-shadow:0 16px 38px rgba(20,40,80,.13);
         }
-        .right-empty-menu-title { margin:0 0 6px; color:var(--text); font-size:18px; font-weight:850; }
+        .right-empty-menu-title { margin:0 0 6px; color:var(--text); font-size:16px; font-weight:850; }
         .right-empty-menu-caption { margin:0; color:var(--muted); font-size:12px; line-height:1.45; }
         @media (max-width:1000px) {
             .block-container { padding-right:1rem; }
-            .right-empty-menu { position:static; width:auto; min-height:120px; margin-bottom:14px; }
+            .right-empty-menu { position:static; width:auto; margin-bottom:14px; }
             .kpi-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
             .premium-hero { align-items:flex-start; flex-direction:column; }
             .month-pill { width:100%; }
@@ -1509,8 +1512,18 @@ def render_empty_right_menu() -> None:
     st.markdown(
         """
         <div class="right-empty-menu">
-            <div class="right-empty-menu-title">Menü</div>
-            <p class="right-empty-menu-caption">Jobb oldali menü helye.</p>
+            <div class="right-empty-menu-card">
+                <div class="right-empty-menu-title">Menü 1</div>
+                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+            </div>
+            <div class="right-empty-menu-card">
+                <div class="right-empty-menu-title">Menü 2</div>
+                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+            </div>
+            <div class="right-empty-menu-card">
+                <div class="right-empty-menu-title">Menü 3</div>
+                <p class="right-empty-menu-caption">Üres menükártya helye.</p>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
