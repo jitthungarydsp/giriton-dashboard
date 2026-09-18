@@ -21071,7 +21071,13 @@ def show_new_settlement_page() -> None:
 
     render_courier_delay_analysis_panel(filtered, balance_period_start, balance_period_end)
 
-    render_table(filtered)
+    list_col, right_menu_col = st.columns([5.4, 1], gap="large")
+    with list_col:
+        render_table(filtered)
+    with right_menu_col:
+        with st.container(border=True):
+            st.markdown("#### Menü")
+            st.caption("Jobb oldali gyorsmenü helye.")
 
     st.markdown('<div class="section-title" style="margin-top:18px">Gyors műveletek</div>',unsafe_allow_html=True)
     a,b,c,d,e,f=st.columns(6)
