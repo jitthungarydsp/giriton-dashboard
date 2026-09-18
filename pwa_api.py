@@ -12552,29 +12552,31 @@ def build_workflow(
     if financial_breakdown.get("available") and not document_groups["settlement"]:
         steps[0]["title"] = "Havi pénzügyi adatok elkészültek"
     if efo_invoice_skip:
+        efo_tig_done = workflow_done(states, "tig")
+        efo_billing_done = efo_tig_done or settlement_done
         efo_step_updates = {
             "tig_document": {
-                "title": "TIG nem szükséges EFO folyamatnál",
-                "done": settlement_done,
+                "title": "TIG elfogadva EFO folyamatnál" if efo_tig_done else "TIG nem szükséges EFO folyamatnál",
+                "done": efo_billing_done,
                 "locked": not settlement_done,
             },
             "tig": {
-                "title": "TIG nem szükséges EFO folyamatnál",
-                "done": settlement_done,
-                "locked": True,
+                "title": "TIG elfogadása" if tig_ready and not efo_tig_done else "TIG nem szükséges EFO folyamatnál",
+                "done": efo_billing_done,
+                "locked": not tig_ready or efo_tig_done,
             },
             "invoice_submit": {
                 "title": "Számlafeltöltés nem szükséges EFO folyamatnál",
-                "done": settlement_done,
+                "done": efo_billing_done,
                 "locked": True,
             },
             "invoice_check": {
                 "title": "Számlaellenőrzés nem szükséges EFO folyamatnál",
-                "done": settlement_done,
+                "done": efo_billing_done,
                 "locked": True,
             },
             "invoice_payment": {
-                "locked": not settlement_done,
+                "locked": not efo_billing_done,
             },
         }
         for step in steps:
@@ -14970,19 +14972,13 @@ def accept_workflow_document(
         )
     elif action == "settlement" and visibility_mode != "settlement_only":
         generate_tig_after_settlement_accept(user, month, process_id)
-    if action == "tig" and not process_id and manual_invoice_skip_enabled(states):
+    if action == "tig" and not process_id and invoice_skip:
         upsert_workflow_status(
             user,
             month,
             "invoice_submit",
             "done",
-            "Számlafeltöltés kézzel kihagyva.",
-            process_id,
-        )
-        open_payment_waiting_status(
-            user,
-            month,
-            "Számlázás kézzel kihagyva, admin kifizetésre vár.",
+            f"{skip_note_prefix}: számlafeltöltés nem szükséges.",
             process_id,
         )
         upsert_workflow_status(
@@ -14990,7 +14986,13 @@ def accept_workflow_document(
             month,
             "invoice_check",
             "done",
-            "Számlaellenőrzés kézzel kihagyva.",
+            f"{skip_note_prefix}: számlaellenőrzés nem szükséges.",
+            process_id,
+        )
+        open_payment_waiting_status(
+            user,
+            month,
+            f"{skip_note_prefix}: TIG elfogadva, admin kifizetésre vár.",
             process_id,
         )
     elif action == "tig" and not invoice_skip:
