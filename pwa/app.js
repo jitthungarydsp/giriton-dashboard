@@ -5519,8 +5519,8 @@ $("#password-reset-form")?.addEventListener("submit", async (event) => {
     setAuthMessage(
       "#password-reset-message",
       response.emailUpdated
-        ? "E-mail cím frissítve, az új jelszót elküldtük."
-        : response.message || "Az új jelszót elküldtük."
+        ? "E-mail cím frissítve, a kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót."
+        : response.message || "A kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót."
     );
   } catch (error) {
     setAuthMessage("#password-reset-message", error.message, true);

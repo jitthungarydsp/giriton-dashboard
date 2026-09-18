@@ -11691,6 +11691,58 @@ def normalize_registration_request_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def save_password_reset_request(payload: PasswordResetRequest) -> dict[str, Any]:
+    courier_id = normalize_profile_courier_id(payload.courier_id)
+    email = normalize_email_address(payload.email)
+    pwa_user = find_pwa_user_by_courier_id(courier_id)
+    master_row = read_master_auth_row(courier_id)
+    if not master_row and not pwa_user:
+        raise HTTPException(status_code=404, detail="Ehhez a futár ID-hoz nincs aktív mobil felhasználó.")
+
+    pwa_email = str((pwa_user or {}).get("email") or "").strip()
+    existing_email = pwa_email or master_email(master_row)
+    email_updated = False
+    if existing_email and existing_email.casefold() != email.casefold():
+        raise HTTPException(
+            status_code=403,
+            detail="A megadott e-mail cím nem egyezik a rögzített e-mail címmel.",
+        )
+    if not existing_email:
+        if master_row:
+            email_updated = update_master_email_if_missing(master_row, email)
+        if pwa_user:
+            email_updated = update_pwa_user_email_if_missing(courier_id, email) or email_updated
+
+    courier_name = str(
+        (pwa_user or {}).get("username")
+        or (master_row or {}).get("courier_name")
+        or ""
+    ).strip()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        rows = supabase_rest(
+            "POST",
+            "pwa_password_reset_requests",
+            payload={
+                "courier_id": int(courier_id),
+                "courier_name": courier_name,
+                "email": email,
+                "status": "new",
+                "admin_note": "",
+                "updated_at": now,
+            },
+            prefer="return=representation",
+        )
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="A jelszó-visszaállítási kérelem mentése sikertelen. Futtasd a pwa_password_reset_requests DB migrációt.",
+        ) from exc
+    result = rows[0] if rows else {}
+    result["email_updated"] = email_updated
+    return result
+
+
 def read_registration_request_by_id(request_id: int) -> dict[str, Any]:
     rows = supabase_rest(
         "GET",
@@ -13572,57 +13624,12 @@ def admin_reject_registration_request(
 
 @app.post("/api/password-reset")
 def password_reset(payload: PasswordResetRequest):
-    courier_id = normalize_profile_courier_id(payload.courier_id)
-    email = normalize_email_address(payload.email)
-    try:
-        smtp_config()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Az e-mail küldés nincs beállítva, ezért a jelszó nem lett módosítva: {exc}",
-        ) from exc
-    pwa_user = find_pwa_user_by_courier_id(courier_id)
-    master_row = read_master_auth_row(courier_id)
-    if not master_row and not pwa_user:
-        raise HTTPException(status_code=404, detail="Ehhez a futár ID-hoz nincs aktív mobil felhasználó.")
-
-    pwa_email = str((pwa_user or {}).get("email") or "").strip()
-    existing_email = pwa_email or master_email(master_row)
-    email_updated = False
-    if existing_email and existing_email.casefold() != email.casefold():
-        raise HTTPException(
-            status_code=403,
-            detail="A megadott e-mail cím nem egyezik a rögzített e-mail címmel.",
-        )
-    if not existing_email:
-        if master_row:
-            email_updated = update_master_email_if_missing(master_row, email)
-        if pwa_user:
-            email_updated = update_pwa_user_email_if_missing(courier_id, email) or email_updated
-
-    reset_user = None
-    try:
-        reset_user = reset_pwa_user_password(courier_id)
-    except Exception:
-        reset_user = None
-    if not reset_user:
-        reset_user = reset_legacy_user_password_for_courier(courier_id)
-    if not reset_user:
-        raise HTTPException(
-            status_code=404,
-            detail="Ehhez a futár ID-hoz nincs aktív mobil felhasználó. Kérj admin segítséget.",
-        )
-
-    try:
-        result = send_login_credentials(email, reset_user["username"], reset_user["password"])
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Az e-mail küldése sikertelen: {exc}") from exc
-
+    request_row = save_password_reset_request(payload)
     return {
         "ok": True,
-        "message": "Új jelszót küldtünk a megadott e-mail címre.",
-        "emailUpdated": email_updated,
-        "recipient": result.get("recipient"),
+        "message": "A jelszó-visszaállítási kérésed beérkezett. Admin jóváhagyás után küldjük az új jelszót.",
+        "emailUpdated": bool(request_row.get("email_updated")),
+        "status": str(request_row.get("status") or "new"),
     }
 
 
@@ -14717,6 +14724,8 @@ def workflow_tig_pdf(
     tig_breakdown = build_workflow_tig_breakdown(view_user, month_value, financial_breakdown)
     if not tig_breakdown.get("available"):
         raise HTTPException(status_code=404, detail="Ehhez a hónaphoz még nincs letölthető TIG.")
+    _documents, status_rows, _complaints = read_workflow_rows(view_user, month_value)
+    states = status_map(status_rows, process)
 
     courier_id, courier_name = courier_identity(view_user)
     profile_rows = optional_supabase_rows(
@@ -14749,6 +14758,7 @@ def workflow_tig_pdf(
             "id": courier_id,
             "document_month": month_value,
             "document_reference": reference,
+            "tig_accepted": workflow_done(states, "tig"),
         },
         {"payable": payable, "cash": cash_amount, "tip": tip_amount},
         tig_breakdown=tig_breakdown,

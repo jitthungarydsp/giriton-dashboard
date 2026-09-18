@@ -36,7 +36,7 @@ from resources.email_templates_db import (
     send_courier_template_email,
 )
 from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
-from resources.pwa_users_db import upsert_pwa_user_with_password
+from resources.pwa_users_db import reset_pwa_user_password, upsert_pwa_user_with_password
 from resources.users import normalize_courier_id
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
@@ -231,6 +231,156 @@ def approve_pwa_registration_request(request_id: int, note: str, actor: dict[str
 def reject_pwa_registration_request(request_id: int, note: str) -> None:
     read_pwa_registration_request(request_id)
     update_pwa_registration_request_status(request_id, "rejected", note)
+
+
+@st.cache_data(show_spinner=False, ttl=15)
+def load_pwa_password_reset_requests(status: str = "new") -> list[dict[str, object]]:
+    query = (
+        get_db()
+        .schema("public")
+        .table("pwa_password_reset_requests")
+        .select("id,courier_id,courier_name,email,status,admin_note,sent_at,sent_by,created_at,updated_at")
+        .order("updated_at", desc=True)
+        .order("created_at", desc=True)
+        .limit(300)
+    )
+    clean_status = str(status or "new").strip().lower()
+    if clean_status and clean_status != "all":
+        query = query.eq("status", clean_status)
+    response = query.execute()
+    return response.data or []
+
+
+def read_pwa_password_reset_request(request_id: int) -> dict[str, object]:
+    response = (
+        get_db()
+        .schema("public")
+        .table("pwa_password_reset_requests")
+        .select("id,courier_id,courier_name,email,status,admin_note,sent_at,sent_by,created_at,updated_at")
+        .eq("id", request_id)
+        .limit(1)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
+        raise ValueError("A jelszó-visszaállítási kérelem nem található.")
+    return rows[0]
+
+
+def update_pwa_password_reset_request_status(request_id: int, status: str, note: str, actor: str = "") -> None:
+    payload = {
+        "status": status,
+        "admin_note": clean_admin_note(note),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if status == "sent":
+        payload["sent_at"] = datetime.now(timezone.utc).isoformat()
+        payload["sent_by"] = actor
+    get_db().schema("public").table("pwa_password_reset_requests").update(payload).eq("id", request_id).execute()
+    load_pwa_password_reset_requests.clear()
+
+
+def send_pwa_password_reset_request(request_id: int, note: str, actor: dict[str, object]) -> dict[str, object]:
+    request_row = read_pwa_password_reset_request(request_id)
+    status = str(request_row.get("status") or "new").strip().lower()
+    if status == "sent":
+        raise ValueError("Ehhez a kéréshez már lett új jelszó kiküldve.")
+    if status == "rejected":
+        raise ValueError("Elutasított kérést nem lehet kiküldeni.")
+
+    courier_id = normalize_courier_id(request_row.get("courier_id"))
+    email = validate_email(str(request_row.get("email") or "").strip())
+    reset_user = reset_pwa_user_password(courier_id)
+    if not reset_user:
+        raise ValueError("Ehhez a futár ID-hoz nincs aktív PWA felhasználó.")
+    send_login_credentials(email, reset_user["username"], reset_user["password"])
+    actor_name = str(actor.get("username") or "unknown")
+    update_pwa_password_reset_request_status(request_id, "sent", note, actor_name)
+    return {
+        "courier_id": courier_id,
+        "username": reset_user["username"],
+        "email": email,
+    }
+
+
+def reject_pwa_password_reset_request(request_id: int, note: str) -> None:
+    read_pwa_password_reset_request(request_id)
+    update_pwa_password_reset_request_status(request_id, "rejected", note)
+
+
+def render_pwa_password_reset_panel() -> None:
+    if not can_approve_pwa_registrations(user):
+        return
+    status_options = {
+        "Új": "new",
+        "Kiküldve": "sent",
+        "Elutasítva": "rejected",
+        "Összes": "all",
+    }
+    with st.expander("PWA jelszó-visszaállítási kérelmek", expanded=False):
+        selected_status_label = st.selectbox(
+            "Állapot",
+            list(status_options.keys()),
+            key="pwa_password_reset_status_filter",
+        )
+        try:
+            rows = load_pwa_password_reset_requests(status_options[selected_status_label])
+        except Exception as exc:
+            st.error(f"A jelszó-visszaállítási kérelmek nem olvashatók: {exc}")
+            st.caption("Ha még nincs tábla, futtasd a docs/pwa_password_reset_requests.sql migrációt.")
+            return
+        if st.button("Jelszó kérelmek frissítése", key="pwa_password_reset_refresh", use_container_width=True):
+            load_pwa_password_reset_requests.clear()
+            st.rerun()
+        if not rows:
+            st.info("Nincs ilyen jelszó-visszaállítási kérelem.")
+            return
+        for item in rows:
+            request_id = int(item.get("id") or 0)
+            courier_id = str(item.get("courier_id") or "")
+            courier_name = str(item.get("courier_name") or "")
+            email = str(item.get("email") or "")
+            status = str(item.get("status") or "new")
+            created_at = str(item.get("created_at") or "")
+            st.markdown(
+                (
+                    f"**{html.escape(courier_name or '-') }** · `{html.escape(courier_id)}`  \n"
+                    f"E-mail: `{html.escape(email)}` · állapot: **{html.escape(status)}** · kérve: {html.escape(created_at[:19])}"
+                )
+            )
+            note = st.text_input(
+                "Admin megjegyzés",
+                value=str(item.get("admin_note") or ""),
+                key=f"pwa_password_reset_note_{request_id}",
+            )
+            action_cols = st.columns(2)
+            send_disabled = status == "sent"
+            if action_cols[0].button(
+                "Új jelszó kiküldése",
+                type="primary",
+                disabled=send_disabled,
+                key=f"pwa_password_reset_send_{request_id}",
+                use_container_width=True,
+            ):
+                try:
+                    result = send_pwa_password_reset_request(request_id, note, user)
+                    st.success(f"Új jelszó kiküldve: {result['username']} · {result['email']}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A jelszó kiküldése sikertelen: {exc}")
+            if action_cols[1].button(
+                "Elutasítás",
+                disabled=status in {"sent", "rejected"},
+                key=f"pwa_password_reset_reject_{request_id}",
+                use_container_width=True,
+            ):
+                try:
+                    reject_pwa_password_reset_request(request_id, note)
+                    st.success("Kérelem elutasítva.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Az elutasítás sikertelen: {exc}")
+            st.divider()
 
 
 def show_pwa_registration_approval_page() -> None:
@@ -20671,6 +20821,8 @@ def show_new_settlement_page() -> None:
                 "percent": percent,
             }
             st.rerun()
+
+    render_pwa_password_reset_panel()
 
     st.markdown('<div class="section-title">Áttekintés</div>', unsafe_allow_html=True)
 
