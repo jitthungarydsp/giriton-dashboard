@@ -56,7 +56,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v131";
+const APP_VERSION = "v132";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -482,6 +482,15 @@ function formatPercent(value) {
 
 function formatHuf(value) {
   return `${formatCount(value)} Ft`;
+}
+
+function formatMonthLabel(month) {
+  const [year, monthNumber] = String(month || "").split("-").map((part) => Number(part));
+  if (!year || !monthNumber) return String(month || "");
+  return new Date(year, monthNumber - 1, 1).toLocaleDateString("hu-HU", {
+    year: "numeric",
+    month: "long",
+  });
 }
 
 function parseHufInput(value) {
@@ -2939,15 +2948,24 @@ function workflowMonthsQuery() {
 function updateWorkflowMonthControl() {
   const input = $("#workflow-month");
   if (!input) return;
-  const months = state.workflowMonths.map((item) => item.month).filter(Boolean);
-  input.value = state.workflowMonth;
-  if (months.length) {
-    input.min = months[months.length - 1];
-    input.max = months[0];
+  const months = [...new Set(state.workflowMonths.map((item) => item.month).filter(Boolean))];
+  const optionMonths = months.length ? months : [state.workflowMonth].filter(Boolean);
+  if (input.tagName === "SELECT") {
+    const currentValue = state.workflowMonth || optionMonths[0] || "";
+    input.innerHTML = optionMonths.map((month) => (
+      `<option value="${escapeHtml(month)}" ${month === currentValue ? "selected" : ""}>${escapeHtml(formatMonthLabel(month))}</option>`
+    )).join("");
   } else {
-    input.removeAttribute("min");
-    input.removeAttribute("max");
+    input.value = state.workflowMonth;
+    if (months.length) {
+      input.min = months[months.length - 1];
+      input.max = months[0];
+    } else {
+      input.removeAttribute("min");
+      input.removeAttribute("max");
+    }
   }
+  input.value = state.workflowMonth;
   input.disabled = Boolean(state.workflowMonthLocked && months.length <= 1 && !isAdminPreviewMode());
   input.title = input.disabled
     ? "A hónapot az admin által publikált elszámolás rögzíti."

@@ -11465,6 +11465,33 @@ def render_complaint_status_badge(label: str, note: str, css_class: str, led_cla
     )
 
 
+def close_open_courier_complaints_without_response(courier_id: str, document_month: date) -> int:
+    complaints = read_peopleforce_complaints_for_month(document_month.replace(day=1))
+    if complaints.empty:
+        return 0
+    courier_key = _courier_id_key(courier_id)
+    closed_count = 0
+    for item in complaints.to_dict("records"):
+        if _courier_id_key(item.get("courier_id")) != courier_key:
+            continue
+        document_type = str(item.get("document_type") or "")
+        if base_action_key(document_type) == "invoice_check":
+            continue
+        status = str(item.get("status") or "").strip().casefold()
+        has_admin_answer = bool(
+            str(item.get("admin_response") or "").strip()
+            or str(item.get("responded_at") or "").strip()
+        )
+        if status in {"resolved", "closed", "deleted"} or has_admin_answer:
+            continue
+        complaint_id = item.get("id")
+        if not complaint_id:
+            continue
+        update_peopleforce_complaint_status(complaint_id, "closed")
+        closed_count += 1
+    return closed_count
+
+
 def get_demo_documents() -> pd.DataFrame:
     return pd.DataFrame([
         {"Courier ID":"7486","Típus":"Elszámolás","Fájl":"elszamolas_2026_06.pdf","Feltöltve":"2026-07-03 09:12"},
@@ -13124,6 +13151,7 @@ def render_table(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("Nincs találat a megadott szűrőkkel.")
         return
+    active_status_filter = str(st.session_state.get("dashboard_status_filter") or "").strip()
     try:
         list_period_start = parse_month_option(st.session_state.get("new_month") or month_options()[0])
     except BaseException:
@@ -13223,7 +13251,6 @@ def render_table(df: pd.DataFrame) -> None:
                 help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
-                active_status_filter = str(st.session_state.get("dashboard_status_filter") or "").strip()
                 target_menu = (
                     "Reklamációk"
                     if active_status_filter == "Bejelentések"
@@ -13291,6 +13318,28 @@ def render_table(df: pd.DataFrame) -> None:
                 ),
                 unsafe_allow_html=True,
             )
+            if active_status_filter == "Bejelentések":
+                close_disabled = not list_period_start or not complaint_label or complaint_label == "Nincs bejelentés"
+                if cols[3].button(
+                    "Lezárás",
+                    key=f"quick_close_complaints_{courier_key}_{i}",
+                    use_container_width=True,
+                    disabled=close_disabled,
+                    help="Nyitott bejelentések lezárása válasz küldése nélkül.",
+                ):
+                    try:
+                        closed_count = close_open_courier_complaints_without_response(
+                            courier_key,
+                            list_period_start,
+                        )
+                        clear_settlement_overview_data_cache()
+                        if closed_count:
+                            st.toast(f"Bejelentés lezárva: {closed_count} db", icon="✅")
+                        else:
+                            st.toast("Nem volt nyitott, válasz nélküli bejelentés ennél a futárnál.", icon="ℹ️")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"A bejelentés lezárása sikertelen: {exc}")
 
     st.markdown(
         f'<div class="courier-list-footer">{len(df)} megjelenített futár</div>',
@@ -20067,6 +20116,11 @@ def show_new_settlement_page() -> None:
             import_session_id = api_session_id
     if str(selected_calculation_mode or "").strip() in {"API", "Excel"} and import_session_id:
         st.session_state["settlement_import_session_id"] = import_session_id
+    loading_panel = st.empty()
+    with loading_panel.container(border=True):
+        st.markdown("#### Elszámolási adatok betöltése")
+        st.caption("A futárok, státuszok és mentett pénzügyi adatok összerakása folyamatban van.")
+        st.progress(35)
     data = build_settlement_overview_data(
         selected_calculation_mode,
         import_session_id,
@@ -20091,6 +20145,7 @@ def show_new_settlement_page() -> None:
         data = apply_dsp_route_delay_audit(data, balance_period_start, balance_period_end)
     if attendance_audit_enabled:
         data = apply_dsp_shift_attendance_audit(data, balance_period_start, balance_period_end)
+    loading_panel.empty()
 
     with st.sidebar:
         st.markdown("## Elszámolás")
