@@ -641,6 +641,11 @@ def apply_design() -> None:
         .right-payment-row span { display:block; color:var(--muted); font-size:10px; font-weight:800; line-height:1.2; }
         .right-payment-row strong { display:block; margin-top:3px; color:var(--text); font-size:12px; font-weight:900; line-height:1.25; overflow-wrap:anywhere; }
         .right-payment-action { margin-top:10px; padding:9px 10px; border-radius:12px; background:#16a34a; color:white; text-align:center; font-size:12px; font-weight:900; }
+        .right-invoice-card.is-bad { border-color:#ef4444; box-shadow:0 0 0 2px rgba(239,68,68,.12), 0 16px 38px rgba(20,40,80,.13); }
+        .right-invoice-row { display:flex; justify-content:space-between; gap:8px; padding:7px 0; border-top:1px solid #edf1f6; color:var(--muted); font-size:11px; font-weight:800; }
+        .right-invoice-row strong { color:var(--text); text-align:right; overflow-wrap:anywhere; }
+        .right-invoice-status { margin-top:10px; padding:9px 10px; border-radius:12px; background:#dcfce7; color:#166534; font-size:12px; font-weight:900; }
+        .right-invoice-card.is-bad .right-invoice-status { background:#fee2e2; color:#991b1b; }
         @media (min-width:1750px) {
             .block-container { padding-right:500px; }
             .right-empty-menu { width:456px; grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -1673,6 +1678,68 @@ def render_empty_right_menu(
         for label, value in payment_rows
     )
     payment_action_text = "Lezárás a Kifizetés fülön"
+    invoice_compare_bad = False
+    invoice_compare_rows_html = (
+        '<div class="right-invoice-row"><span>Átutalásos</span><strong>-</strong></div>'
+        '<div class="right-invoice-row"><span>KP</span><strong>-</strong></div>'
+    )
+    invoice_compare_status = "Futár kiválasztása után jelenik meg."
+    if has_courier_row and courier_id and period_start:
+        try:
+            invoice_documents = load_courier_payment_documents(courier_id, period_start.replace(day=1))
+            invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
+            transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
+            cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
+            panel_tig_breakdown = build_tig_breakdown(
+                {
+                    "name": str(row.get("Futár") or row.get("courier_name") or ""),
+                    "company_name": profile.get("company_name") or str(row.get("Futár") or ""),
+                    "address": profile.get("address") or profile.get("company_address") or "",
+                    "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                    "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                    "vat_status": profile.get("vat_status") or "",
+                    "employment_type": profile.get("employment_type") or "",
+                    "employment_status": profile.get("employment_status") or "",
+                    "efo_status": profile.get("efo_status") or "",
+                    "id": courier_id,
+                    "document_month": period_start,
+                },
+                {
+                    "payable": payable_value,
+                    "cash": abs(parse_huf_value(row.get("Importált ATM levonás") or row.get("ATM hatás"))),
+                    "tip": parse_huf_value(row.get("Borravaló")),
+                },
+            )
+            transfer_expected = parse_huf_value(panel_tig_breakdown.get("finalTotalHuf"))
+            cash_expected = parse_huf_value(panel_tig_breakdown.get("cashGrossHuf"))
+            transfer_uploaded = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
+            cash_uploaded = invoice_amount_from_document(cash_invoice) if cash_invoice else 0.0
+
+            def invoice_short_status(uploaded: float, expected: float, document: dict[str, object]) -> tuple[str, bool]:
+                if expected and not document:
+                    return "hiányzik", True
+                if document and abs(round(uploaded - expected)) > 1:
+                    return format_huf(round(uploaded - expected)), True
+                return "OK", False
+
+            transfer_status, transfer_bad = invoice_short_status(transfer_uploaded, transfer_expected, transfer_invoice)
+            cash_status, cash_bad = invoice_short_status(cash_uploaded, cash_expected, cash_invoice)
+            invoice_compare_bad = transfer_bad or cash_bad
+            invoice_compare_status = "Eltérés vagy hiányzó számla." if invoice_compare_bad else "Számlák egyeznek."
+            invoice_compare_rows_html = (
+                '<div class="right-invoice-row"><span>Átutalásos</span>'
+                f"<strong>{html.escape(transfer_status)}</strong></div>"
+                '<div class="right-invoice-row"><span>KP</span>'
+                f"<strong>{html.escape(cash_status)}</strong></div>"
+            )
+        except Exception:
+            invoice_compare_bad = True
+            invoice_compare_status = "Összevetés nem tölthető be."
+            invoice_compare_rows_html = (
+                '<div class="right-invoice-row"><span>Átutalásos</span><strong>hiba</strong></div>'
+                '<div class="right-invoice-row"><span>KP</span><strong>hiba</strong></div>'
+            )
+    invoice_compare_class = "is-bad" if invoice_compare_bad else "is-ok"
     st.markdown(
         f"""
         <div class="right-empty-menu">
@@ -1703,6 +1770,12 @@ def render_empty_right_menu(
                 <p class="right-empty-menu-caption">{html.escape(payment_card_caption)}</p>
                 <div class="right-payment-list">{payment_rows_html}</div>
                 <div class="right-payment-action">{html.escape(payment_action_text)}</div>
+            </div>
+            <div class="right-empty-menu-card right-invoice-card {invoice_compare_class}">
+                <div class="right-empty-menu-title">Számla kontroll</div>
+                <p class="right-empty-menu-caption">TIG kontra feltöltött számlák.</p>
+                {invoice_compare_rows_html}
+                <div class="right-invoice-status">{html.escape(invoice_compare_status)}</div>
             </div>
         </div>
         """,
