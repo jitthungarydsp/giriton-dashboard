@@ -14896,33 +14896,42 @@ def render_courier_detail_page() -> None:
         ).casefold() in {"open", "done"}
         individual_mobile_config = load_mobile_settlement_period_config(period_start)
         individual_visibility_mode = normalize_mobile_visibility_mode(individual_mobile_config.get("visibility_mode"))
-        individual_visibility_label = open_month_col.selectbox(
-            "PWA láthatóság",
-            options=list(MOBILE_VISIBILITY_MODE_LABELS.values()),
-            index=list(MOBILE_VISIBILITY_MODE_LABELS).index(individual_visibility_mode),
-            key=f"finance_individual_visibility_{courier_id}_{period_start:%Y%m}",
+        workflow_target_options = list(WORKFLOW_BACKSTEP_TARGETS.keys())
+        current_workflow_target = "tig"
+        for workflow_action in ["settlement", "tig", "invoice_submit", "invoice_check", "invoice_payment"]:
+            if str((individual_status_by_action.get(workflow_action) or {}).get("status") or "").casefold() == "open":
+                current_workflow_target = workflow_action
+                break
+        if current_workflow_target not in workflow_target_options:
+            current_workflow_target = "tig"
+        selected_workflow_target = open_month_col.selectbox(
+            "Folyamat",
+            options=workflow_target_options,
+            format_func=lambda key: WORKFLOW_BACKSTEP_TARGETS[key]["label"],
+            index=workflow_target_options.index(current_workflow_target),
+            key=f"finance_workflow_target_{courier_id}_{period_start:%Y%m}",
             label_visibility="collapsed",
         )
-        individual_visibility_mode = normalize_mobile_visibility_mode(individual_visibility_label)
         if open_month_col.button(
-            "PWA láthatóság mentése",
+            "Folyamat beállítása",
             use_container_width=True,
             disabled=closure_done or active_calculation_mode not in {"API", "Excel"},
-            key=f"finance_save_individual_visibility_{courier_id}_{period_start:%Y%m}",
+            key=f"finance_save_workflow_target_{courier_id}_{period_start:%Y%m}",
         ):
-            saved = save_mobile_settlement_period_config(
-                period_start,
-                active_calculation_mode,
-                st.session_state.get("new_warehouse", "Összes"),
-                session_id,
-                str(st.session_state.get("user", {}).get("username") or "unknown"),
-                individual_visibility_mode,
-            )
-            if saved:
-                st.success(f"PWA láthatóság mentve: {MOBILE_VISIBILITY_MODE_LABELS[individual_visibility_mode]}.")
+            try:
+                actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+                saved_count = backstep_peopleforce_workflow(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    document_month=period_start.replace(day=1),
+                    target_action=selected_workflow_target,
+                    updated_by=actor,
+                    note=f"Admin folyamatra rakta: {WORKFLOW_BACKSTEP_TARGETS[selected_workflow_target]['label']}.",
+                )
+                st.success(f"Folyamat beállítva: {WORKFLOW_BACKSTEP_TARGETS[selected_workflow_target]['label']}. Módosított státuszok: {saved_count}.")
                 rerun_courier_profile("Pénzügy")
-            else:
-                st.error("A PWA láthatóság mentése nem sikerült.")
+            except Exception as exc:
+                st.error(f"A folyamat beállítása sikertelen: {exc}")
         if upload_a.button("Elszámolás feltöltése profilba", use_container_width=True, disabled=closure_done, key=f"finance_upload_settlement_pdf_{courier_id}"):
             try:
                 upload_peopleforce_document_bytes(
