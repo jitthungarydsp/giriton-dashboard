@@ -13636,6 +13636,7 @@ def render_table(df: pd.DataFrame) -> None:
                 help=f"Raktár: {row['Raktár'] or 'BUD1'}",
             ):
                 st.session_state["selected_courier_id"] = str(row["Courier ID"])
+                courier_id_value = str(row["Courier ID"])
                 target_menu = (
                     "Reklamációk"
                     if active_status_filter == "Bejelentések"
@@ -13643,7 +13644,11 @@ def render_table(df: pd.DataFrame) -> None:
                     if active_status_filter in {"Új fizetés előleg", "Kifizetésre vár (Fizetés előleg)", "Kifizetve (Fizetés előleg)"}
                     else courier_detail_menu_for_status(row.get("Státusz"))
                 )
-                st.session_state[f"courier_menu_target_{row['Courier ID']}"] = target_menu
+                month_key = list_period_start.strftime("%Y%m") if list_period_start else "current"
+                st.session_state[f"courier_after_finance_menu_{courier_id_value}_{month_key}"] = target_menu
+                st.session_state[f"courier_finance_preflight_{courier_id_value}_{month_key}"] = True
+                st.session_state[f"courier_menu_{courier_id_value}"] = "Pénzügy"
+                st.session_state[f"courier_menu_target_{courier_id_value}"] = "Pénzügy"
                 st.rerun()
             audit_text = str(row.get("Route audit text") or "").strip()
             if audit_text:
@@ -14075,9 +14080,18 @@ def render_courier_detail_page() -> None:
 
     menu_key = f"courier_menu_{courier_id}"
     menu_target_key = f"courier_menu_target_{courier_id}"
+    preflight_month_key = period_start.strftime("%Y%m") if period_start else "current"
+    finance_preflight_key = f"courier_finance_preflight_{courier_id}_{preflight_month_key}"
+    finance_preflight_target_key = f"courier_after_finance_menu_{courier_id}_{preflight_month_key}"
+    finance_preflight_active = bool(st.session_state.get(finance_preflight_key))
+    finance_preflight_target = str(st.session_state.get(finance_preflight_target_key) or "Pénzügy")
+    if finance_preflight_active:
+        st.session_state[menu_key] = "Pénzügy"
     menu_target = st.session_state.pop(menu_target_key, None)
     if menu_target:
         st.session_state[menu_key] = menu_target
+    if finance_preflight_active:
+        st.session_state[menu_key] = "Pénzügy"
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     selected_menu_hint = str(st.session_state.get(menu_key) or "Pénzügy")
@@ -14495,6 +14509,16 @@ def render_courier_detail_page() -> None:
         "Futármenü", courier_menu_items,
         horizontal=True, label_visibility="collapsed", key=menu_key,
     )
+    if finance_preflight_active:
+        st.markdown(
+            """
+            <div style="border:1px solid #bbf7d0;background:#ecfdf3;color:#14532d;border-radius:12px;padding:14px 16px;margin:12px 0;">
+                <strong>Adatok frissítése folyamatban...</strong><br>
+                A rendszer először a Pénzügy oldalon újraszámolja és elmenti a futár aktuális havi adatait, utána visszaugrik a kiválasztott menüre.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     if selected_menu != "Pénzügy":
         render_courier_right_menu(
             payable_value=displayed_payable_total,
@@ -16059,6 +16083,18 @@ def render_courier_detail_page() -> None:
         )
         if snapshot_result.get("reason"):
             st.caption("Pénzügyi verzió mentése még nincs aktív. Futtasd a courier_finance_snapshot SQL-t.")
+        if finance_preflight_active:
+            target_menu_after_finance = (
+                finance_preflight_target
+                if finance_preflight_target in courier_menu_items
+                else "Pénzügy"
+            )
+            st.session_state.pop(finance_preflight_key, None)
+            st.session_state.pop(finance_preflight_target_key, None)
+            st.session_state[menu_key] = target_menu_after_finance
+            st.session_state[menu_target_key] = target_menu_after_finance
+            st.session_state["selected_courier_id"] = courier_id
+            st.rerun()
 
         mobile_editor = mobile_default_rows.rename(columns={
             "item_key": "Kulcs",
