@@ -1751,10 +1751,12 @@ def render_empty_right_menu(
 
             def invoice_short_status(uploaded: float, expected: float, document: dict[str, object]) -> tuple[str, bool]:
                 if expected and not document:
-                    return "hiányzik", True
+                    return f"hiányzik: {format_huf(expected)}", True
                 if document and abs(round(uploaded - expected)) > 1:
                     return f"Eltérés összege: {format_huf(round(uploaded - expected))}", True
-                return "OK", False
+                if document:
+                    return f"OK: {format_huf(expected)}", False
+                return "-", False
 
             transfer_status, transfer_bad = invoice_short_status(transfer_uploaded, transfer_expected, transfer_invoice)
             cash_status, cash_bad = invoice_short_status(cash_uploaded, cash_expected, cash_invoice)
