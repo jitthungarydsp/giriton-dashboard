@@ -1368,9 +1368,12 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
 }
 .finance-kpi-detail-body {
     padding:0 14px 14px;
+    overflow-x:auto;
+    max-width:100%;
 }
 .finance-kpi-detail-table {
     width:100%;
+    min-width:680px;
     border-collapse:collapse;
     font-size:12px;
 }
@@ -1379,15 +1382,28 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     text-align:left;
     font-weight:850;
     border-bottom:1px solid var(--sp-border);
-    padding:8px 4px;
+    padding:8px 6px;
+    white-space:nowrap;
 }
 .finance-kpi-detail-table td {
     border-bottom:1px solid #eef3ef;
-    padding:8px 4px;
+    padding:8px 6px;
     color:var(--sp-ink);
     vertical-align:top;
-    overflow-wrap:anywhere;
+    overflow-wrap:normal;
     word-break:normal;
+}
+.finance-kpi-detail-table th:first-child,
+.finance-kpi-detail-table td:first-child {
+    min-width:120px;
+}
+.finance-kpi-detail-table th:nth-child(4),
+.finance-kpi-detail-table td:nth-child(4),
+.finance-kpi-detail-table th:last-child,
+.finance-kpi-detail-table td:last-child {
+    min-width:180px;
+    white-space:normal;
+    overflow-wrap:anywhere;
 }
 .finance-kpi-detail-empty {
     color:var(--sp-muted);
@@ -1530,6 +1546,18 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     }
     .finance-kpi-grid {
         grid-template-columns:repeat(2,minmax(0,1fr));
+    }
+    details.finance-kpi-detail-card[open],
+    details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
+        grid-column:1 / -1;
+    }
+    .finance-kpi-detail-table {
+        min-width:760px;
+    }
+}
+@media (max-width:700px) {
+    .finance-kpi-grid {
+        grid-template-columns:1fr;
     }
 }
 @media (max-width:1100px) {
@@ -12304,9 +12332,11 @@ def calculate_periodic_fee_corrections(
             "Egységösszeg": unit_amount,
             "Összeg": amount,
             "Számítás": f"{int(payable_units) if float(payable_units).is_integer() else payable_units} x {format_huf(unit_amount)}",
+            "Megjegyzés": condition_label,
         })
 
-    detail_rows = pd.DataFrame(rows, columns=columns)
+    detail_columns = columns + ["Megjegyzés"]
+    detail_rows = pd.DataFrame(rows, columns=detail_columns)
     total = float(detail_rows["Összeg"].sum()) if not detail_rows.empty else 0.0
     return total, detail_rows
 
