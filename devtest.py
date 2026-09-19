@@ -1614,6 +1614,7 @@ def render_empty_right_menu(
         ("+", "Borravaló", parse_huf_value(row.get("Borravaló"))),
         ("+", "Késedelmi díj", parse_huf_value(row.get("Késedelmi díj"))),
         ("+", "Túramegfelelés", parse_huf_value(row.get("Túramegfelelés"))),
+        ("+", "Cím bónusz (Kifli)", parse_huf_value(row.get("Cím bónusz (Kifli)") or row.get("Címbónusz") or row.get("address_bonus_kifli"))),
         ("+", "Kiflis bónusz", parse_huf_value(row.get("Importált bónusz"))),
         ("+", "JITT bónusz", parse_huf_value(row.get("JITT bónusz"))),
         ("+", "Lojalitás", parse_huf_value(row.get("Lojalitás"))),
@@ -14468,6 +14469,7 @@ def render_courier_detail_page() -> None:
         tip_value: float,
         delay_value: float,
         compliance_value: float,
+        address_bonus_value: float,
         imported_bonus_value: float,
         manual_bonus_value: float,
         customer_rating_value: float,
@@ -14487,6 +14489,7 @@ def render_courier_detail_page() -> None:
         right_menu_row["Borravaló"] = tip_value
         right_menu_row["Késedelmi díj"] = delay_value
         right_menu_row["Túramegfelelés"] = compliance_value
+        right_menu_row["Cím bónusz (Kifli)"] = address_bonus_value
         right_menu_row["Importált bónusz"] = imported_bonus_value
         right_menu_row["JITT bónusz"] = manual_bonus_value
         right_menu_row["Ügyfélértékelés"] = customer_rating_value
@@ -14568,6 +14571,7 @@ def render_courier_detail_page() -> None:
             tip_value=tip_total,
             delay_value=delay_total,
             compliance_value=compliance_total,
+            address_bonus_value=other_route_bonus_total,
             imported_bonus_value=imported_bonus_total,
             manual_bonus_value=manual_bonus_total,
             customer_rating_value=customer_rating_total,
@@ -15124,6 +15128,7 @@ def render_courier_detail_page() -> None:
             tip_value=tip_total,
             delay_value=delay_total,
             compliance_value=compliance_total,
+            address_bonus_value=other_route_bonus_total,
             imported_bonus_value=imported_bonus_total,
             manual_bonus_value=manual_bonus_total,
             customer_rating_value=customer_rating_total,
