@@ -14204,32 +14204,52 @@ def render_courier_detail_page() -> None:
     insurance_label = "Aktív" if reserve_status.get("insurance_active") else "Nincs"
     vat_status_label = str(profile.get("vat_status") or "Nincs megadva")
     process_status_label = "Kifizetve" if closure_done else str(row.get("Státusz") or "Elszámolásra vár")
-    right_menu_row = row.copy()
-    right_menu_row["Kifizetendő"] = displayed_payable_total
-    right_menu_row["Alapdíj"] = base_total
-    right_menu_row["Borravaló"] = tip_total
-    right_menu_row["Késedelmi díj"] = delay_total
-    right_menu_row["Túramegfelelés"] = compliance_total
-    right_menu_row["Importált bónusz"] = imported_bonus_total
-    right_menu_row["JITT bónusz"] = manual_bonus_total
-    right_menu_row["Ügyfélértékelés"] = customer_rating_total
-    right_menu_row["Korrekció +"] = correction_income_total
-    right_menu_row["Korrekció -"] = correction_deduction_total
-    right_menu_row["Importált málusz"] = malus_total
-    right_menu_row["Importált ATM levonás"] = atm_deduction_total
-    right_menu_row["Fizetés előleg"] = salary_advance_total
-    right_menu_row["Rendelések"] = order_total
-    right_menu_row["Útvonalak"] = route_total
-    right_menu_row["Számolt túrák"] = route_total
-    right_menu_row["Kiemelt túrák"] = highlighted_route_total
-    right_menu_row["Normál túrák"] = normal_route_total
-    render_empty_right_menu(
-        right_menu_row,
-        profile=profile,
-        monthly_closure=monthly_closure,
-        period_start=period_start,
-        courier_id=courier_id,
-    )
+    def render_courier_right_menu(
+        *,
+        payable_value: float,
+        base_value: float,
+        tip_value: float,
+        delay_value: float,
+        compliance_value: float,
+        imported_bonus_value: float,
+        manual_bonus_value: float,
+        customer_rating_value: float,
+        correction_income_value: float,
+        correction_deduction_value: float,
+        malus_value: float,
+        atm_value: float,
+        salary_advance_value: float,
+        order_value: int,
+        route_value: int,
+        highlighted_value: int,
+        normal_value: int,
+    ) -> None:
+        right_menu_row = row.copy()
+        right_menu_row["Kifizetendő"] = payable_value
+        right_menu_row["Alapdíj"] = base_value
+        right_menu_row["Borravaló"] = tip_value
+        right_menu_row["Késedelmi díj"] = delay_value
+        right_menu_row["Túramegfelelés"] = compliance_value
+        right_menu_row["Importált bónusz"] = imported_bonus_value
+        right_menu_row["JITT bónusz"] = manual_bonus_value
+        right_menu_row["Ügyfélértékelés"] = customer_rating_value
+        right_menu_row["Korrekció +"] = correction_income_value
+        right_menu_row["Korrekció -"] = correction_deduction_value
+        right_menu_row["Importált málusz"] = malus_value
+        right_menu_row["Importált ATM levonás"] = atm_value
+        right_menu_row["Fizetés előleg"] = salary_advance_value
+        right_menu_row["Rendelések"] = order_value
+        right_menu_row["Útvonalak"] = route_value
+        right_menu_row["Számolt túrák"] = route_value
+        right_menu_row["Kiemelt túrák"] = highlighted_value
+        right_menu_row["Normál túrák"] = normal_value
+        render_empty_right_menu(
+            right_menu_row,
+            profile=profile,
+            monthly_closure=monthly_closure,
+            period_start=period_start,
+            courier_id=courier_id,
+        )
 
     profile_header_slot = st.empty()
 
@@ -14274,6 +14294,26 @@ def render_courier_detail_page() -> None:
         "Futármenü", courier_menu_items,
         horizontal=True, label_visibility="collapsed", key=menu_key,
     )
+    if selected_menu != "Pénzügy":
+        render_courier_right_menu(
+            payable_value=displayed_payable_total,
+            base_value=base_total,
+            tip_value=tip_total,
+            delay_value=delay_total,
+            compliance_value=compliance_total,
+            imported_bonus_value=imported_bonus_total,
+            manual_bonus_value=manual_bonus_total,
+            customer_rating_value=customer_rating_total,
+            correction_income_value=correction_income_total,
+            correction_deduction_value=correction_deduction_total,
+            malus_value=malus_total,
+            atm_value=atm_deduction_total,
+            salary_advance_value=salary_advance_total,
+            order_value=order_total,
+            route_value=route_total,
+            highlighted_value=highlighted_route_total,
+            normal_value=normal_route_total,
+        )
 
     def keep_courier_menu(menu_name: str) -> None:
         st.session_state[menu_target_key] = menu_name
@@ -14760,6 +14800,25 @@ def render_courier_detail_page() -> None:
                 current_filtered_data.loc[courier_mask, "Kifizetendő"] = payable_total
                 st.session_state["current_filtered_data"] = current_filtered_data
         render_profile_header(payable_total, contractor_received_total, final_total_deduction)
+        render_courier_right_menu(
+            payable_value=payable_total,
+            base_value=display_base_total,
+            tip_value=tip_total,
+            delay_value=delay_total,
+            compliance_value=compliance_total,
+            imported_bonus_value=imported_bonus_total,
+            manual_bonus_value=manual_bonus_total,
+            customer_rating_value=customer_rating_total,
+            correction_income_value=correction_income_total,
+            correction_deduction_value=correction_deduction_total,
+            malus_value=malus_total,
+            atm_value=atm_deduction_total,
+            salary_advance_value=salary_advance_total,
+            order_value=order_total,
+            route_value=route_total,
+            highlighted_value=highlighted_route_total,
+            normal_value=normal_route_total,
+        )
         monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
         closure_done = str(monthly_closure.get("status") or "").casefold() == "done"
         monthly_bonus_malus_effect = (
