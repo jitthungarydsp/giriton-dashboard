@@ -16095,7 +16095,6 @@ def render_courier_detail_page() -> None:
             )
             st.session_state.pop(finance_preflight_key, None)
             st.session_state.pop(finance_preflight_target_key, None)
-            st.session_state[menu_key] = target_menu_after_finance
             st.session_state[menu_target_key] = target_menu_after_finance
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
