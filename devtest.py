@@ -1691,26 +1691,30 @@ def render_empty_right_menu(
             invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
             transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
             cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
-            panel_tig_breakdown = build_tig_breakdown(
-                {
-                    "name": str(row.get("Futár") or row.get("courier_name") or ""),
-                    "company_name": profile.get("company_name") or str(row.get("Futár") or ""),
-                    "address": profile.get("address") or profile.get("company_address") or "",
-                    "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
-                    "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
-                    "vat_status": profile.get("vat_status") or "",
-                    "employment_type": profile.get("employment_type") or "",
-                    "employment_status": profile.get("employment_status") or "",
-                    "efo_status": profile.get("efo_status") or "",
-                    "id": courier_id,
-                    "document_month": period_start,
-                },
-                {
-                    "payable": payable_value,
-                    "cash": abs(parse_huf_value(row.get("Importált ATM levonás") or row.get("ATM hatás"))),
-                    "tip": parse_huf_value(row.get("Borravaló")),
-                },
-            )
+            panel_tig_breakdown = (
+                st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+            ).get("tig_breakdown") or {}
+            if not panel_tig_breakdown:
+                panel_tig_breakdown = build_tig_breakdown(
+                    {
+                        "name": str(row.get("Futár") or row.get("courier_name") or ""),
+                        "company_name": profile.get("company_name") or str(row.get("Futár") or ""),
+                        "address": profile.get("address") or profile.get("company_address") or "",
+                        "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                        "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                        "vat_status": profile.get("vat_status") or "",
+                        "employment_type": profile.get("employment_type") or "",
+                        "employment_status": profile.get("employment_status") or "",
+                        "efo_status": profile.get("efo_status") or "",
+                        "id": courier_id,
+                        "document_month": period_start,
+                    },
+                    {
+                        "payable": payable_value,
+                        "cash": abs(parse_huf_value(row.get("Importált ATM levonás") or row.get("ATM hatás"))),
+                        "tip": parse_huf_value(row.get("Borravaló")),
+                    },
+                )
             transfer_expected = parse_huf_value(panel_tig_breakdown.get("finalTotalHuf"))
             cash_expected = parse_huf_value(panel_tig_breakdown.get("cashGrossHuf"))
             transfer_uploaded = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
