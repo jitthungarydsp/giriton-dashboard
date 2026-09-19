@@ -14387,8 +14387,16 @@ def render_courier_detail_page() -> None:
         if summary_available
         else 0.0
     )
+    synced_finance_payable_total = parse_huf_value(
+        (st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}).get("payable_huf")
+    )
     current_table_payable_total = parse_huf_value(current_table_row.get("Kifizetendő"))
-    displayed_payable_total = current_table_payable_total or persisted_payable_total or payable_total
+    displayed_payable_total = (
+        synced_finance_payable_total
+        or persisted_payable_total
+        or current_table_payable_total
+        or payable_total
+    )
     overview_payable_total = displayed_payable_total
     overview_tig_payable_total = displayed_payable_total
     monthly_closure = load_courier_monthly_closure(courier_id, period_start, period_end)
@@ -16446,8 +16454,17 @@ def render_courier_detail_page() -> None:
         advance_requests = load_courier_salary_advance_requests(courier_id)
         expense_requests = load_courier_expense_requests(courier_id, payment_month)
         closed_monthly_amount = parse_huf_value(monthly_closure.get("payable_huf")) if closure_done else 0.0
-        current_table_monthly_amount = parse_huf_value(current_table_row.get("Kifizetendő")) or displayed_payable_total
-        monthly_payment_amount = closed_monthly_amount or current_table_monthly_amount
+        synced_monthly_amount = parse_huf_value(
+            (st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}).get("payable_huf")
+        )
+        current_table_monthly_amount = parse_huf_value(current_table_row.get("Kifizetendő"))
+        monthly_payment_amount = (
+            closed_monthly_amount
+            or synced_monthly_amount
+            or persisted_payable_total
+            or current_table_monthly_amount
+            or displayed_payable_total
+        )
         quick_invoice_default = str(monthly_closure.get("invoice_number") or load_latest_invoice_number(courier_id, period_start) or "")
         quick_recipient_name = str(monthly_closure.get("recipient_name") or profile.get("company_name") or row["Futár"] or "")
         quick_bank_account = format_bank_account_4(monthly_closure.get("bank_account_number") or profile.get("bank_account_number") or "")
