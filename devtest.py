@@ -1413,6 +1413,26 @@ details.finance-kpi-detail-card.finance-kpi-detail-wide[open] {
     font-weight:800;
 }
 .finance-kpi.payable .finance-kpi-note { color:rgba(255,255,255,.8); }
+.invoice-compare-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:14px;
+    margin:12px 0 18px;
+}
+.invoice-compare-card {
+    padding:16px;
+    border:1px solid var(--sp-border);
+    border-radius:10px;
+    background:#fff;
+    box-shadow:0 7px 18px rgba(23,37,29,.035);
+}
+.invoice-compare-card.is-ok { border-color:#9adbb0; background:#f7fff9; }
+.invoice-compare-card.is-bad { border-color:#ef4444; background:#fff7f7; box-shadow:0 0 0 2px rgba(239,68,68,.12); }
+.invoice-compare-title { color:var(--sp-ink); font-size:15px; font-weight:950; margin-bottom:10px; }
+.invoice-compare-row { display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-top:1px solid #edf1f6; color:var(--sp-muted); font-size:12px; font-weight:800; }
+.invoice-compare-row strong { color:var(--sp-ink); font-size:13px; text-align:right; overflow-wrap:anywhere; }
+.invoice-compare-alert { margin-top:10px; padding:9px 10px; border-radius:8px; background:#fee2e2; color:#991b1b; font-size:12px; font-weight:900; }
+.invoice-compare-ok { margin-top:10px; padding:9px 10px; border-radius:8px; background:#dcfce7; color:#166534; font-size:12px; font-weight:900; }
 .finance-work-grid {
     display:grid;
     grid-template-columns:minmax(360px,.55fr) minmax(560px,1fr);
@@ -5517,7 +5537,7 @@ def preferred_invoice_document(invoice_rows: list[dict[str, object]]) -> dict[st
 
 
 def invoice_amount_from_document(document: dict[str, object]) -> float:
-    if document.get("id") and not is_cash_invoice_document(document):
+    if document.get("id"):
         try:
             content_row = read_peopleforce_document_content(str(document.get("id")))
             amount = extract_expected_amount(decode_document_content(content_row.get("file_content_base64")))
@@ -14287,7 +14307,7 @@ def render_courier_detail_page() -> None:
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
     courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg"]
-    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Reklamációk", "E-mail küldése", "Profil"])
+    courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Számla összevetés", "Reklamációk", "E-mail küldése", "Profil"])
     if st.session_state.get(menu_key) not in courier_menu_items:
         st.session_state[menu_key] = "Pénzügy"
     selected_menu = st.radio(
@@ -16757,6 +16777,95 @@ def render_courier_detail_page() -> None:
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A kifizetés elutasítása sikertelen: {exc}")
+
+    if selected_menu == "Számla összevetés":
+        st.markdown("#### Számla összevetés")
+        st.caption("A feltöltött aktuális havi utalásos és KP számlát hasonlítja össze a TIG generált bontásával.")
+        invoice_documents = load_courier_payment_documents(courier_id, period_start.replace(day=1))
+        invoice_records = invoice_documents.to_dict("records") if not invoice_documents.empty else []
+        transfer_invoice = next((item for item in invoice_records if not is_cash_invoice_document(item)), {})
+        cash_invoice = next((item for item in invoice_records if is_cash_invoice_document(item)), {})
+
+        synced_tig_breakdown = (
+            st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+        ).get("tig_breakdown") or {}
+        if not synced_tig_breakdown:
+            synced_tig_breakdown = build_tig_breakdown(
+                {
+                    "name": courier_name,
+                    "company_name": profile.get("company_name") or courier_name,
+                    "address": profile.get("address") or profile.get("company_address") or "",
+                    "tax_number": profile.get("tax_number") or profile.get("tax_id") or "",
+                    "tig_type": profile.get("tig_type") or profile.get("tig_mode") or profile.get("invoice_type") or profile.get("invoice_vat_type") or profile.get("vat_status") or "",
+                    "vat_status": profile.get("vat_status") or "",
+                    "employment_type": profile.get("employment_type") or "",
+                    "employment_status": profile.get("employment_status") or "",
+                    "efo_status": profile.get("efo_status") or "",
+                    "id": courier_id,
+                    "document_month": period_start,
+                },
+                {
+                    "payable": displayed_payable_total,
+                    "cash": abs(parse_huf_value(row.get("ATM hatás") or row.get("Importált ATM levonás"))),
+                    "tip": tip_total,
+                },
+            )
+        tig_transfer_amount = parse_huf_value(synced_tig_breakdown.get("finalTotalHuf"))
+        tig_cash_amount = parse_huf_value(synced_tig_breakdown.get("cashGrossHuf"))
+        transfer_invoice_amount = invoice_amount_from_document(transfer_invoice) if transfer_invoice else 0.0
+        cash_invoice_amount = invoice_amount_from_document(cash_invoice) if cash_invoice else 0.0
+
+        def compare_card(title: str, invoice_doc: dict[str, object], uploaded_amount: float, tig_amount: float) -> str:
+            difference = round(parse_huf_value(uploaded_amount) - parse_huf_value(tig_amount))
+            has_invoice = bool(invoice_doc)
+            is_ok = has_invoice and abs(difference) <= 1
+            css_class = "is-ok" if is_ok else "is-bad"
+            invoice_label = invoice_number_from_document(invoice_doc) if invoice_doc else "Nincs feltöltött számla"
+            file_label = str(invoice_doc.get("title") or invoice_doc.get("file_name") or "-") if invoice_doc else "-"
+            message = (
+                "Egyezik a TIG bontással."
+                if is_ok
+                else ("Hiányzik a feltöltött számla." if not has_invoice else f"Eltérés: {format_huf(difference)}")
+            )
+            message_class = "invoice-compare-ok" if is_ok else "invoice-compare-alert"
+            return f"""
+            <div class="invoice-compare-card {css_class}">
+                <div class="invoice-compare-title">{html.escape(title)}</div>
+                <div class="invoice-compare-row"><span>Számla</span><strong>{html.escape(invoice_label)}</strong></div>
+                <div class="invoice-compare-row"><span>Fájl</span><strong>{html.escape(file_label)}</strong></div>
+                <div class="invoice-compare-row"><span>Feltöltött számla összege</span><strong>{format_huf(uploaded_amount) if has_invoice else '-'}</strong></div>
+                <div class="invoice-compare-row"><span>TIG szerinti összeg</span><strong>{format_huf(tig_amount)}</strong></div>
+                <div class="{message_class}">{html.escape(message)}</div>
+            </div>
+            """
+
+        st.markdown(
+            f"""
+            <div class="invoice-compare-grid">
+                {compare_card("Átutalásos számla", transfer_invoice, transfer_invoice_amount, tig_transfer_amount)}
+                {compare_card("KP számla", cash_invoice, cash_invoice_amount, tig_cash_amount)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if invoice_documents.empty:
+            st.info("Ehhez a hónaphoz még nincs feltöltött számla.")
+        else:
+            invoice_view = invoice_documents.copy()
+            invoice_view["Típus"] = invoice_view.apply(
+                lambda item: "KP számla" if is_cash_invoice_document(item.to_dict()) else "Átutalásos számla",
+                axis=1,
+            )
+            invoice_view["Kiolvasott összeg"] = invoice_view.apply(
+                lambda item: format_huf(invoice_amount_from_document(item.to_dict())),
+                axis=1,
+            )
+            invoice_view["Számlaszám"] = invoice_view.apply(lambda item: invoice_number_from_document(item.to_dict()), axis=1)
+            st.dataframe(
+                invoice_view[["Típus", "Számlaszám", "Kiolvasott összeg", "title", "file_name", "uploaded_at"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     if selected_menu == "Fizetés előleg":
         st.markdown("#### Fizetés előleg")
