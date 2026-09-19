@@ -624,6 +624,7 @@ def apply_design() -> None:
         }
         .right-empty-menu-title { margin:0 0 6px; color:var(--text); font-size:16px; font-weight:850; }
         .right-empty-menu-caption { margin:0; color:var(--muted); font-size:12px; line-height:1.45; }
+        .right-empty-menu-caption.is-scrollable { max-height:92px; overflow-y:auto; padding-right:5px; }
         .right-empty-menu-value { margin-top:10px; color:var(--text); font-size:24px; font-weight:900; line-height:1.05; overflow-wrap:anywhere; }
         .right-empty-menu-status { display:inline-flex; align-items:center; max-width:100%; margin-top:10px; padding:6px 10px; border-radius:999px; background:#fff8e7; color:#9a6700; font-size:12px; font-weight:850; overflow-wrap:anywhere; }
         .right-payable-table { width:100%; margin-top:10px; border-collapse:collapse; overflow:hidden; border-radius:12px; font-size:11px; }
@@ -1682,7 +1683,7 @@ def render_empty_right_menu(
             </div>
             <div class="right-empty-menu-card">
                 <div class="right-empty-menu-title">Aktuális folyamat</div>
-                <p class="right-empty-menu-caption">{html.escape(process_caption)}</p>
+                <p class="right-empty-menu-caption is-scrollable">{html.escape(process_caption)}</p>
                 <div class="right-empty-menu-status">{html.escape(status_text)}</div>
             </div>
             <div class="right-empty-menu-card">
