@@ -615,7 +615,8 @@ def apply_design() -> None:
         .side-note { color:var(--muted); font-size:12px; line-height:1.45; }
         .right-empty-menu {
             position:fixed; top:88px; right:24px; z-index:999;
-            width:260px; display:grid; grid-template-columns:1fr; gap:12px;
+            width:260px; max-height:calc(100vh - 112px); overflow-y:auto; padding-right:6px;
+            display:grid; grid-template-columns:1fr; gap:12px;
         }
         .right-empty-menu-card {
             min-height:116px; padding:16px;
@@ -5359,10 +5360,17 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
                 document_types_by_courier.setdefault(courier_key, set()).add(document_type)
 
     status_by_courier: dict[str, dict[str, str]] = {}
+    attention_notes_by_courier: dict[str, str] = {}
     if not statuses.empty:
         for item in statuses.sort_values("updated_at", ascending=False, na_position="last").to_dict("records"):
             courier_key = _courier_id_key(item.get("courier_id"))
             action_key = str(item.get("action_key") or "").strip()
+            if (
+                courier_key
+                and action_key == SETTLEMENT_ATTENTION_ACTION_KEY
+                and str(item.get("status") or "").strip().casefold() == "done"
+            ):
+                attention_notes_by_courier.setdefault(courier_key, str(item.get("status_note") or "").strip())
             if process_id_from_action_key(action_key):
                 continue
             if courier_key and action_key:
@@ -5450,6 +5458,12 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     result["Státusz"] = courier_ids.map(workflow_status)
     result["Számlaellenőrzés reklamáció"] = courier_ids.map(
         lambda value: _courier_id_key(value) in invoice_attention_couriers
+    )
+    result["Futár kiemelve"] = courier_ids.map(
+        lambda value: _courier_id_key(value) in attention_notes_by_courier
+    )
+    result["Kiemelés megjegyzés"] = courier_ids.map(
+        lambda value: attention_notes_by_courier.get(_courier_id_key(value), "")
     )
     result["Bejelentés státusz"] = courier_ids.map(
         lambda value: complaint_details_by_courier.get(
@@ -5637,6 +5651,75 @@ WORKFLOW_BACKSTEP_TARGETS = {
     "invoice_check": {"label": "Szamlaellenorzesre", "done": ["settlement", "tig", "invoice_submit"], "open": ["invoice_check", "invoice_payment"]},
     "invoice_payment": {"label": "Kifizetesre", "done": ["settlement", "tig", "invoice_submit", "invoice_check"], "open": ["invoice_payment"]},
 }
+
+SETTLEMENT_ATTENTION_ACTION_KEY = "settlement_attention"
+
+
+def attention_months(period_start: date) -> list[date]:
+    month_start = period_start.replace(day=1)
+    return [month_start, add_months(month_start, 1)]
+
+
+def save_courier_settlement_attention(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    note: str,
+    updated_by: str,
+) -> None:
+    clean_note = str(note or "").strip() or "Elszámolási figyelésre jelölve."
+    for month_start in attention_months(period_start):
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=SETTLEMENT_ATTENTION_ACTION_KEY,
+            document_month=month_start,
+            status="done",
+            status_note=clean_note,
+            updated_by=updated_by,
+        )
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    clear_settlement_overview_data_cache()
+
+
+def clear_courier_settlement_attention(
+    *,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    updated_by: str,
+) -> None:
+    for month_start in attention_months(period_start):
+        upsert_peopleforce_card_status(
+            courier_id=courier_id,
+            courier_name=courier_name,
+            action_key=SETTLEMENT_ATTENTION_ACTION_KEY,
+            document_month=month_start,
+            status="open",
+            status_note="Elszámolási figyelés megszüntetve.",
+            updated_by=updated_by,
+        )
+    read_peopleforce_card_statuses.clear()
+    read_peopleforce_card_statuses_for_month.clear()
+    clear_settlement_overview_data_cache()
+
+
+def current_courier_settlement_attention(courier_id: str, period_start: date) -> dict[str, object]:
+    try:
+        statuses = read_peopleforce_card_statuses(courier_id, period_start.replace(day=1))
+    except Exception:
+        return {}
+    if statuses.empty:
+        return {}
+    rows = statuses.loc[
+        statuses.get("action_key", pd.Series("", index=statuses.index)).astype(str).eq(SETTLEMENT_ATTENTION_ACTION_KEY)
+        & statuses.get("status", pd.Series("", index=statuses.index)).astype(str).str.casefold().eq("done")
+    ]
+    if rows.empty:
+        return {}
+    return rows.sort_values("updated_at", ascending=False, na_position="last").iloc[0].to_dict()
 
 
 def backstep_peopleforce_workflow(*, courier_id: str, courier_name: str, document_month: date, target_action: str, updated_by: str, note: str = "") -> int:
@@ -13525,6 +13608,20 @@ def render_table(df: pd.DataFrame) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+        attention_raw = row.get("Futár kiemelve", False)
+        attention_active = False if pd.isna(attention_raw) else bool(attention_raw)
+        if attention_active:
+            st.markdown(
+                f"""
+                <style>
+                [class*="st-key-courier_row_{i}"] {{
+                    border: 3px solid #111827 !important;
+                    box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12), 0 14px 30px rgba(17, 24, 39, 0.12) !important;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
         with st.container(border=True, key=f"courier_row_{i}"):
             cols = st.columns(
                 [1.7, 1, 1, 1.1],
@@ -13554,6 +13651,14 @@ def render_table(df: pd.DataFrame) -> None:
             flag_html = courier_main_list_flag_html(row)
             if flag_html:
                 cols[0].markdown(flag_html, unsafe_allow_html=True)
+            if attention_active:
+                attention_note = str(row.get("Kiemelés megjegyzés") or "").strip()
+                cols[0].markdown(
+                    f'<span class="courier-flag warn">Kiemelt figyelés</span>',
+                    unsafe_allow_html=True,
+                )
+                if attention_note:
+                    cols[0].caption(attention_note)
             shift_late_audit_text = str(row.get("Shift late audit text") or "").strip()
             if shift_late_audit_text:
                 cols[0].caption(shift_late_audit_text)
@@ -14411,6 +14516,57 @@ def render_courier_detail_page() -> None:
 
     def keep_courier_menu(menu_name: str) -> None:
         st.session_state[menu_target_key] = menu_name
+
+    attention_row = current_courier_settlement_attention(courier_id, period_start)
+    attention_active = bool(attention_row)
+    attention_note_default = str(attention_row.get("status_note") or "").strip()
+    st.markdown(
+        f"""
+        <style>
+        [class*="st-key-courier_attention_panel_{courier_id}_{period_start:%Y%m}"] {{
+            border: 2px solid {'#111827' if attention_active else '#d8e2da'} !important;
+            box-shadow: {'0 0 0 3px rgba(17,24,39,.12)' if attention_active else 'none'} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.container(border=True, key=f"courier_attention_panel_{courier_id}_{period_start:%Y%m}"):
+        st.markdown("#### Futár kiemelése")
+        st.caption("Aktuális és következő hónapra jelöli, hogy az elszámolásnál figyelni kell rá.")
+        attention_note = st.text_area(
+            "Megjegyzés",
+            value=attention_note_default,
+            placeholder="Mi volt a gond az elszámolásnál, mire figyeljünk következő hónapban?",
+            height=90,
+            key=f"courier_attention_note_{courier_id}_{period_start:%Y%m}",
+        )
+        attention_col_a, attention_col_b = st.columns(2)
+        if attention_col_a.button("Kiemelés", type="primary", use_container_width=True, key=f"courier_attention_save_{courier_id}_{period_start:%Y%m}"):
+            try:
+                save_courier_settlement_attention(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    period_start=period_start,
+                    note=attention_note,
+                    updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                st.success("Futár kiemelve az aktuális és következő hónapra.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A kiemelés mentése sikertelen: {exc}")
+        if attention_col_b.button("Megszüntetés", use_container_width=True, disabled=not attention_active, key=f"courier_attention_clear_{courier_id}_{period_start:%Y%m}"):
+            try:
+                clear_courier_settlement_attention(
+                    courier_id=courier_id,
+                    courier_name=courier_name,
+                    period_start=period_start,
+                    updated_by=str(st.session_state.get("user", {}).get("username") or "unknown"),
+                )
+                st.success("Futár kiemelése megszüntetve.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"A kiemelés megszüntetése sikertelen: {exc}")
 
     if selected_menu == "ttekintés":
         finance_overview_sync = st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
