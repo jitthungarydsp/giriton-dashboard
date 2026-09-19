@@ -1719,7 +1719,7 @@ def render_empty_right_menu(
                 if expected and not document:
                     return "hiányzik", True
                 if document and abs(round(uploaded - expected)) > 1:
-                    return format_huf(round(uploaded - expected)), True
+                    return f"Eltérés összege: {format_huf(round(uploaded - expected))}", True
                 return "OK", False
 
             transfer_status, transfer_bad = invoice_short_status(transfer_uploaded, transfer_expected, transfer_invoice)
