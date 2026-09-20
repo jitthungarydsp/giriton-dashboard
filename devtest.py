@@ -5249,8 +5249,7 @@ def load_target_reserve_event_totals(courier_id: str, period_start: date, period
             .table("courier_target_reserve_event")
             .select("event_type,amount_huf")
             .eq("courier_id", str(courier_id).strip())
-            .gte("period_start", period_start.isoformat())
-            .lte("period_start", period_end.isoformat())
+            .eq("period_start", period_start.replace(day=1).isoformat())
             .is_("deleted_at", "null")
             .execute()
             .data
@@ -5274,8 +5273,7 @@ def load_target_reserve_event_totals_bulk(period_start: date, period_end: date) 
             .schema("settlement")
             .table("courier_target_reserve_event")
             .select("courier_id,event_type,amount_huf")
-            .gte("period_start", period_start.isoformat())
-            .lte("period_start", period_end.isoformat())
+            .eq("period_start", period_start.replace(day=1).isoformat())
             .is_("deleted_at", "null")
             .limit(10000)
             .execute()
@@ -5310,15 +5308,18 @@ def load_target_reserve_monthly(courier_id: str, period_start: date, period_end:
 
 @st.cache_data(show_spinner=False, ttl=30)
 def load_previous_target_reserve_monthly(courier_id: str, period_start: date) -> dict[str, object]:
+    previous_period_start = (pd.Timestamp(period_start.replace(day=1)) - pd.DateOffset(months=1)).date()
+    previous_period_end = month_bounds(previous_period_start)[1]
+
     def _query(status: str | None = None) -> list[dict[str, object]]:
         query = (
             get_db()
             .schema("settlement")
             .table("courier_target_reserve_monthly")
-            .select("*")
+            .select("courier_id,period_start,period_end,reserve_after_huf,status")
             .eq("courier_id", courier_id)
-            .lt("period_start", period_start.isoformat())
-            .order("period_start", desc=True)
+            .eq("period_start", previous_period_start.isoformat())
+            .eq("period_end", previous_period_end.isoformat())
             .limit(1)
         )
         if status:
@@ -5336,14 +5337,16 @@ def load_previous_target_reserve_monthly(courier_id: str, period_start: date) ->
 
 @st.cache_data(show_spinner=False, ttl=30)
 def load_previous_target_reserve_monthly_bulk(period_start: date) -> dict[str, dict[str, object]]:
+    previous_period_start = (pd.Timestamp(period_start.replace(day=1)) - pd.DateOffset(months=1)).date()
+    previous_period_end = month_bounds(previous_period_start)[1]
     try:
         rows = (
             get_db()
             .schema("settlement")
             .table("courier_target_reserve_monthly")
-            .select("*")
-            .lt("period_start", period_start.isoformat())
-            .order("period_start", desc=True)
+            .select("courier_id,period_start,period_end,reserve_after_huf,status")
+            .eq("period_start", previous_period_start.isoformat())
+            .eq("period_end", previous_period_end.isoformat())
             .limit(10000)
             .execute()
             .data
