@@ -145,7 +145,7 @@
             <label>Megjegyzés<input id="invoice-note" name="note" /></label>
             <label class="full-width checkbox-line"><input id="skip-invoice-number-match" name="skip_invoice_number_match" type="checkbox" value="true" /> Számlaszám egyezés ellenőrzés kihagyása</label>
             <label class="full-width">Számla feltöltése (üresen az 5. lépésben ellenőrzött fájlt küldi be)<input id="invoice-submit-file" name="invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
-            <label class="full-width">KP számla feltöltése (opcionális)<input id="cash-invoice-submit-file" name="cash_invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
+            <label id="cash-invoice-submit-wrapper" class="full-width hidden"><span id="cash-invoice-submit-label">KP számla feltöltése</span><input id="cash-invoice-submit-file" name="cash_invoice_file" type="file" accept="application/pdf,image/png,image/jpeg" /></label>
             <button class="primary full-width" type="submit">Számlák ellenőrzése és feltöltése</button>
           </form>
           <button id="invoice-submit-help" class="secondary full-width" type="button">Elakadtam, segítséget kérek</button>

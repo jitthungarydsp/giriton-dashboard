@@ -2917,6 +2917,29 @@ function invoiceUploadBlockedByExistingDocument() {
     && (Boolean(workflowStep("invoice_submit").done) || Boolean((state.workflow?.documents?.invoice || []).length));
 }
 
+function renderInvoiceRequirements(invoiceLocked = false) {
+  const requirements = state.workflow?.invoiceRequirements || {};
+  const requiresCashInvoice = Boolean(requirements.requiresCashInvoice);
+  const cashAmount = Number(requirements.cashGrossHuf || 0);
+  const transferAmount = Number(requirements.transferGrossHuf || 0);
+  const totalAmount = Number(requirements.totalGrossHuf || 0);
+  const cashWrapper = $("#cash-invoice-submit-wrapper");
+  const cashInput = $("#cash-invoice-submit-file");
+  const cashLabel = $("#cash-invoice-submit-label");
+  if (cashWrapper) cashWrapper.classList.toggle("hidden", !requiresCashInvoice);
+  if (cashInput) cashInput.required = requiresCashInvoice && !invoiceLocked;
+  if (cashLabel) {
+    cashLabel.textContent = requiresCashInvoice
+      ? `KP számla feltöltése (kötelező, ${formatHuf(cashAmount)})`
+      : "KP számla feltöltése";
+  }
+  const grossInput = $("#gross-amount");
+  if (grossInput && totalAmount) {
+    grossInput.placeholder = formatHuf(totalAmount);
+  }
+  return { requiresCashInvoice, cashAmount, transferAmount, totalAmount };
+}
+
 function workflowQuery() {
   const params = new URLSearchParams({ month: state.workflowMonth });
   if (state.workflowProcess) params.set("process", state.workflowProcess);
@@ -3581,6 +3604,7 @@ function renderWorkflow() {
   const readOnly = Boolean(state.workflow?.viewerReadOnly);
   const invoiceAlreadySubmitted = invoiceUploadBlockedByExistingDocument();
   const invoiceLocked = readOnly || (!invoiceUploadReopened() && Boolean(workflowStep("invoice_submit").locked)) || invoiceAlreadySubmitted;
+  const invoiceRequirements = renderInvoiceRequirements(invoiceLocked);
   setPanelLocked("#invoice-submit-panel", invoiceLocked);
   setPanelLocked("#invoice-check-panel", readOnly || Boolean(workflowStep("invoice_check").locked));
   showOnlyWorkflowPanel(activeWorkflowPanel());
@@ -3605,6 +3629,10 @@ function renderWorkflow() {
   const submitInfo = $("#invoice-submit-info");
   if (submitInfo) {
     submitInfo.innerHTML = `${previewNotice}${overrideNotice}${
+      invoiceRequirements.requiresCashInvoice && !invoiceAlreadySubmitted
+        ? `<div class="notice">Ennél a TIG-nél külön KP számla is szükséges (${escapeHtml(formatHuf(invoiceRequirements.cashAmount))}). A véglegesítés csak az átutalásos és a KP számla feltöltése után indul.</div>`
+        : ""
+    }${
       invoiceAlreadySubmitted ? `<div class="notice">A számla már beérkezett ehhez a folyamathoz, új feltöltés nem indítható.</div>` : ""
     }${complaintList(state.workflow?.complaints?.invoice_submit || [])}`;
   }
@@ -4586,6 +4614,7 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
     form.set("invoice_file", state.checkedInvoiceFile);
   } else if (!hasSelectedInvoiceFile) {
     showWorkflowMessage("Válaszd ki a feltöltendő számla PDF-et.", true);
+    if (submitButton) submitButton.disabled = false;
     return;
   }
   form.append("month", state.workflowMonth);
@@ -4593,6 +4622,13 @@ $("#invoice-submit-form").addEventListener("submit", async (event) => {
   const selectedCashInvoiceFile = form.get("cash_invoice_file");
   const hasCashInvoiceFile =
     selectedCashInvoiceFile instanceof File && Boolean(selectedCashInvoiceFile.name);
+  const invoiceRequirements = state.workflow?.invoiceRequirements || {};
+  const cashInvoiceRequired = Boolean(invoiceRequirements.requiresCashInvoice);
+  if (cashInvoiceRequired && !hasCashInvoiceFile) {
+    showWorkflowMessage(`Ehhez a TIG-hez külön KP számla is kell (${formatHuf(invoiceRequirements.cashGrossHuf || 0)}). Töltsd fel a KP számlát is.`, true);
+    if (submitButton) submitButton.disabled = false;
+    return;
+  }
   showWorkflowMessage(
     hasCashInvoiceFile
       ? "A normál és a KP számla ellenőrzése és tárolása folyamatban…"

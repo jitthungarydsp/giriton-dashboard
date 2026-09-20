@@ -8240,6 +8240,28 @@ def workflow_cash_amount_from_financial_breakdown(financial_breakdown: dict[str,
     return 0
 
 
+def workflow_invoice_requirements(
+    financial_breakdown: dict[str, Any],
+    tig_breakdown: dict[str, Any] | None = None,
+    *,
+    expected_tig_gross_huf: int = 0,
+) -> dict[str, Any]:
+    tig_breakdown = tig_breakdown or {}
+    cash_gross = money_int(tig_breakdown.get("cashGrossHuf"))
+    if cash_gross <= 0:
+        cash_gross = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
+    total_gross = money_int(tig_breakdown.get("finalTotalHuf")) or money_int(expected_tig_gross_huf)
+    if total_gross <= 0:
+        total_gross = money_int(financial_breakdown.get("totalPayableHuf"))
+    transfer_gross = max(total_gross - cash_gross, 0) if cash_gross else total_gross
+    return {
+        "requiresCashInvoice": cash_gross > 0,
+        "transferGrossHuf": max(transfer_gross, 0),
+        "cashGrossHuf": max(cash_gross, 0),
+        "totalGrossHuf": max(total_gross, 0),
+    }
+
+
 def has_financial_detail_override_rows(overrides: dict[str, dict[str, Any]]) -> bool:
     financial_detail_keys = {
         "base",
@@ -12727,6 +12749,7 @@ def build_workflow(
         "documents": safe_documents,
         "financialBreakdown": financial_breakdown,
         "tigBreakdown": tig_breakdown,
+        "invoiceRequirements": workflow_invoice_requirements(financial_breakdown, tig_breakdown),
         "complaints": complaints_by_action,
         "complaintResponses": response_documents_by_action,
         "ignoreComplaintsForBilling": complaints_ignored_for_billing(states),
@@ -15323,8 +15346,24 @@ async def submit_invoice(
     override_enabled = invoice_validation_override_enabled(states)
     expected_amount = expected_tig_amount(user, month_value)
     financial_breakdown = build_financial_breakdown(user, month_value)
-    expected_cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
-    expected_transfer_amount = max(expected_amount - expected_cash_amount, 0) if expected_cash_amount else expected_amount
+    tig_breakdown = build_workflow_tig_breakdown(user, month_value, financial_breakdown)
+    invoice_requirements = workflow_invoice_requirements(
+        financial_breakdown,
+        tig_breakdown,
+        expected_tig_gross_huf=expected_amount,
+    )
+    expected_cash_amount = money_int(invoice_requirements.get("cashGrossHuf"))
+    expected_transfer_amount = money_int(invoice_requirements.get("transferGrossHuf")) or expected_amount
+    expected_total_invoice_amount = money_int(invoice_requirements.get("totalGrossHuf")) or expected_transfer_amount
+    cash_invoice_required = bool(invoice_requirements.get("requiresCashInvoice"))
+    if cash_invoice_required and not cash_content:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Ehhez a TIG-hez külön KP számla is szükséges. "
+                f"Töltsd fel a KP számlát is ({format_email_huf(expected_cash_amount)})."
+            ),
+        )
     if cash_content:
         shared_validation_base = {
             "invoice_month": month_value,
@@ -15351,7 +15390,7 @@ async def submit_invoice(
         )
         result = combine_invoice_validation_results(
             [("Átutalásos számla", main_result), ("KP számla", cash_result)],
-            expected_gross_amount=expected_amount,
+            expected_gross_amount=expected_total_invoice_amount,
             declared_gross_amount=gross_amount,
             invoice_number=invoice_number,
             skip_invoice_number_match=skip_invoice_number_match,
