@@ -5848,6 +5848,52 @@ def expected_tig_amount_for_admin(
     return int(round(parse_huf_value(fallback_amount_huf)))
 
 
+def invoice_validation_context_for_admin(
+    *,
+    courier_id: str,
+    period_start: date,
+    fallback_amount_huf: object = 0,
+    process_id: object = "",
+    invoice_document: dict[str, object] | None = None,
+) -> dict[str, object]:
+    full_amount = expected_tig_amount_for_admin(
+        courier_id,
+        period_start,
+        fallback_amount_huf,
+        process_id,
+    )
+    cash_amount = 0.0
+    session_tig_breakdown = (
+        st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
+    ).get("tig_breakdown") or {}
+    if isinstance(session_tig_breakdown, dict):
+        cash_amount = parse_huf_value(session_tig_breakdown.get("cashGrossHuf"))
+
+    if not cash_amount:
+        snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
+        snapshot_tig_breakdown = _snapshot_source_payload(snapshot, "tig_breakdown") if snapshot else {}
+        if isinstance(snapshot_tig_breakdown, dict):
+            cash_amount = parse_huf_value(snapshot_tig_breakdown.get("cashGrossHuf"))
+        if not cash_amount and snapshot:
+            cash_amount = parse_huf_value(_snapshot_amount(snapshot, "tig_cash_service", section="tig"))
+
+    is_cash_invoice = is_cash_invoice_document(invoice_document or {})
+    if is_cash_invoice:
+        return {
+            "expected_gross_amount": int(round(cash_amount or full_amount)),
+            "invoice_mode": "cash",
+        }
+    if cash_amount:
+        return {
+            "expected_gross_amount": int(round(max(full_amount - cash_amount, 0))),
+            "invoice_mode": "transfer",
+        }
+    return {
+        "expected_gross_amount": int(round(full_amount)),
+        "invoice_mode": "transfer",
+    }
+
+
 def invoice_validation_failure_note(result: dict[str, object], prefix: str = "Számlaellenőrzési hiba") -> str:
     error_details = [
         f"{check.get('title')}: {check.get('detail')}"
@@ -5880,11 +5926,16 @@ def rerun_courier_invoice_validation(
     file_bytes = decode_document_content(content_row.get("file_content_base64"))
     load_courier_profile.clear()
     profile = load_courier_profile(courier_id)
-    expected_amount = expected_tig_amount_for_admin(
-        courier_id,
-        clean_month,
-        expected_amount_huf,
-        clean_process,
+    validation_invoice_document = {
+        **(invoice_document or {}),
+        "file_name": str(content_row.get("file_name") or invoice_document.get("file_name") or ""),
+    }
+    validation_context = invoice_validation_context_for_admin(
+        courier_id=courier_id,
+        period_start=clean_month,
+        fallback_amount_huf=expected_amount_huf,
+        process_id=clean_process,
+        invoice_document=validation_invoice_document,
     )
     result = validate_invoice(
         file_name=str(content_row.get("file_name") or invoice_document.get("file_name") or "szamla"),
@@ -5892,7 +5943,8 @@ def rerun_courier_invoice_validation(
         invoice_month=clean_month,
         courier_name=str(courier_name or ""),
         courier_id=str(courier_id or ""),
-        expected_gross_amount=expected_amount,
+        expected_gross_amount=int(validation_context.get("expected_gross_amount") or 0),
+        invoice_mode=str(validation_context.get("invoice_mode") or "transfer"),
         expected_seller_name=str(profile.get("company_name") or ""),
         expected_seller_tax_number=str(profile.get("tax_number") or ""),
         expected_seller_address=str(profile.get("company_address") or ""),

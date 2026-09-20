@@ -203,6 +203,12 @@ def normalize_request_templates(source: Any) -> list[dict[str, Any]]:
     if source is None:
         return []
 
+    inherited_url = ""
+    inherited_cookie = ""
+    if isinstance(source, dict):
+        inherited_url = clean(source.get("url"))
+        inherited_cookie = clean(source.get("cookie"))
+
     if isinstance(source, dict) and isinstance(source.get("events"), list):
         source = source["events"]
 
@@ -210,7 +216,7 @@ def normalize_request_templates(source: Any) -> list[dict[str, Any]]:
         source = [source]
 
     if looks_like_uidl_request(source):
-        return [{"url": uidl_url(), "request_json": source}]
+        return [{"url": inherited_url or uidl_url(), "cookie": inherited_cookie, "request_json": source}]
 
     if isinstance(source, list):
         templates = []
@@ -227,7 +233,7 @@ def normalize_request_templates(source: Any) -> list[dict[str, Any]]:
                     }
                 )
             elif looks_like_uidl_request(item):
-                templates.append({"url": uidl_url(), "request_json": item})
+                templates.append({"url": inherited_url or uidl_url(), "cookie": inherited_cookie, "request_json": item})
         return templates
 
     return []
