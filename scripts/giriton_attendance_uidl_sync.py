@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 from datetime import date, datetime
+import html
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,43 @@ def parse_json_or_curl(text: str) -> Any:
     return parse_curl_command(value)
 
 
+def parse_uidl_json_body(data: str) -> Any:
+    raw = clean(data)
+    candidates: list[str] = []
+
+    def add_candidate(value: str) -> None:
+        value = clean(value)
+        if value and value not in candidates:
+            candidates.append(value)
+
+    add_candidate(raw)
+    add_candidate(html.unescape(raw))
+
+    for value in list(candidates):
+        normalized = value.replace("^", "").strip()
+        if (
+            len(normalized) >= 2
+            and normalized[0] == normalized[-1]
+            and normalized[0] in {"'", '"'}
+        ):
+            normalized = normalized[1:-1].strip()
+        add_candidate(normalized)
+        add_candidate(normalized.replace('""', '"'))
+        add_candidate(normalized.replace('\\"', '"'))
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, str) and clean(parsed)[:1] in {"{", "["}:
+                parsed = json.loads(parsed)
+            return parsed
+        except json.JSONDecodeError as error:
+            last_error = error
+
+    raise RuntimeError(f"A cURL body nem ervenyes JSON: {last_error}")
+
+
 def parse_curl_command(command: str) -> dict[str, Any]:
     text = command.replace("`", "\\")
     text = re.sub(r"\\\s*\r?\n", " ", text)
@@ -102,11 +140,7 @@ def parse_curl_command(command: str) -> dict[str, Any]:
     if not data_match:
         raise RuntimeError("A cURL-ben nem talaltam UIDL JSON bodyt (--data-raw vagy -d).")
 
-    data = data_match.group("data").strip().replace("^", "")
-    try:
-        request_json = json.loads(data)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"A cURL body nem ervenyes JSON: {error}") from error
+    request_json = parse_uidl_json_body(data_match.group("data"))
 
     return {
         "url": url or uidl_url(),
