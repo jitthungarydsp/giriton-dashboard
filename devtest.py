@@ -5883,11 +5883,6 @@ def invoice_validation_context_for_admin(
             "expected_gross_amount": int(round(cash_amount or full_amount)),
             "invoice_mode": "cash",
         }
-    if cash_amount:
-        return {
-            "expected_gross_amount": int(round(max(full_amount - cash_amount, 0))),
-            "invoice_mode": "transfer",
-        }
     return {
         "expected_gross_amount": int(round(full_amount)),
         "invoice_mode": "transfer",
