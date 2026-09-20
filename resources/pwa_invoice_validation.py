@@ -400,6 +400,7 @@ def validate_invoice(
     expected_seller_tax_number: str = "",
     expected_seller_address: str = "",
     invoice_mode: str = "transfer",
+    allow_image_only_metadata_fallback: bool = False,
 ) -> dict[str, Any]:
     checks: list[dict[str, str]] = []
 
@@ -420,16 +421,28 @@ def validate_invoice(
     fields = parse_invoice_pdf(content) if extension == "pdf" else {}
     text = str(fields.get("text") or "")
     extraction_source = str(fields.get("extraction_source") or "")
+    metadata_gross = int(gross_amount or 0)
+    image_only_metadata_fallback = (
+        allow_image_only_metadata_fallback
+        and extension == "pdf"
+        and not text.strip()
+        and extraction_source == "ocr_unavailable"
+        and metadata_gross > 0
+    )
     normalized_tokens = set(_tokens(text))
     if extension == "pdf":
         add(
-            "ok" if text else "error",
+            "ok" if text else ("warn" if image_only_metadata_fallback else "error"),
             "PDF szövege",
             (
                 "A számla OCR-rel olvasható."
                 if extraction_source == "ocr"
                 else "A számla géppel olvasható."
-            ) if text else "A PDF-ből nem olvasható ki szöveg.",
+            ) if text else (
+                "Képalapú PDF: OCR nem elérhető, a feltöltéskor megadott bruttó összeggel ellenőrizve."
+                if image_only_metadata_fallback
+                else "A PDF-ből nem olvasható ki szöveg."
+            ),
         )
     else:
         add("error", "Képfájl szövegfelismerése", "Első körben szöveges PDF számla szükséges az automatikus ellenőrzéshez.")
@@ -439,15 +452,19 @@ def validate_invoice(
         courier_name = expected_seller_name
     expected_name_tokens = _name_match_tokens(courier_name)
     add(
-        "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else "error",
+        "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else ("warn" if image_only_metadata_fallback else "error"),
         "Eladó neve",
-        f"Javítandó: az eladó neve egyezzen a profilban szereplő névvel: {courier_name}.",
+        (
+            f"Képalapú PDF miatt OCR nélkül nem ellenőrizhető automatikusan. Profil: {courier_name}."
+            if image_only_metadata_fallback
+            else f"Javítandó: az eladó neve egyezzen a profilban szereplő névvel: {courier_name}."
+        ),
     )
 
     buyer_name_tokens = _tokens("Just in Time Transport Hungary Kft.")
-    add("ok" if all(token in normalized_tokens for token in buyer_name_tokens) else "error", "Vevő neve", "Just in Time Transport Hungary Kft.")
+    add("ok" if all(token in normalized_tokens for token in buyer_name_tokens) else ("warn" if image_only_metadata_fallback else "error"), "Vevő neve", "Just in Time Transport Hungary Kft.")
     buyer_address_tokens = {"1201", "budapest", "atleta", "utca", "44"}
-    add("ok" if buyer_address_tokens.issubset(normalized_tokens) else "error", "Vevő címe", "1201 Budapest, Atléta utca 44.")
+    add("ok" if buyer_address_tokens.issubset(normalized_tokens) else ("warn" if image_only_metadata_fallback else "error"), "Vevő címe", "1201 Budapest, Atléta utca 44.")
 
     seller_tax = str(fields.get("seller_tax_number") or "")
     if expected_seller_tax_number:
@@ -456,7 +473,15 @@ def validate_invoice(
         add("warn" if re.fullmatch(r"\d{8}-\d-\d{2}", seller_tax) else "error", "Eladó adószáma", f"Talált: {seller_tax or 'nincs'}; a profilban még nincs összehasonlítási alapadat.")
 
     buyer_tax = str(fields.get("buyer_tax_number") or "")
-    add("ok" if buyer_tax == "32649460-2-43" else "error", "Vevő adószáma", f"Javítandó: a vevő adószáma legyen 32649460-2-43. Talált: {buyer_tax or 'nincs'}.")
+    add(
+        "ok" if buyer_tax == "32649460-2-43" else ("warn" if image_only_metadata_fallback else "error"),
+        "Vevő adószáma",
+        (
+            "Képalapú PDF miatt OCR nélkül nem ellenőrizhető automatikusan."
+            if image_only_metadata_fallback
+            else f"Javítandó: a vevő adószáma legyen 32649460-2-43. Talált: {buyer_tax or 'nincs'}."
+        ),
+    )
 
     expected_address_tokens = _address_tokens(expected_seller_address)
     if expected_address_tokens:
@@ -471,6 +496,8 @@ def validate_invoice(
     for title, value in (("Számla kelte", issue_date), ("Teljesítés kelte", performance_date), ("Fizetési határidő", due_date)):
         if value:
             add("ok", title, value.isoformat())
+        elif image_only_metadata_fallback:
+            add("warn", title, "Képalapú PDF miatt OCR nélkül nem ellenőrizhető automatikusan.")
         elif is_cash_invoice and title in {"Teljesítés kelte", "Fizetési határidő"}:
             add("warn", title, "KP számlánál nem blokkoló, ha nem található vagy nem értelmezhető.")
         else:
@@ -507,8 +534,9 @@ def validate_invoice(
             ),
         )
     pdf_gross = int(fields.get("gross_total") or 0)
+    comparable_gross = pdf_gross or (metadata_gross if image_only_metadata_fallback else 0)
     if expected_gross_amount:
-        add("ok" if pdf_gross == expected_gross_amount else "error", "TIG szerinti végösszeg", f"Számla: {_format_huf(pdf_gross)}; TIG: {_format_huf(expected_gross_amount)}.")
+        add("ok" if comparable_gross == expected_gross_amount else "error", "TIG szerinti végösszeg", f"Számla: {_format_huf(comparable_gross)}; TIG: {_format_huf(expected_gross_amount)}.")
     elif pdf_gross:
         add("warn", "TIG szerinti végösszeg", f"A számlán {_format_huf(pdf_gross)} szerepel, de a TIG-ből nem olvasható ki összeg.")
 

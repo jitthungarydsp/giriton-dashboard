@@ -5930,6 +5930,7 @@ def rerun_courier_invoice_validation(
         **(invoice_document or {}),
         "file_name": str(content_row.get("file_name") or invoice_document.get("file_name") or ""),
     }
+    stored_invoice_amount = int(round(invoice_amount_from_document(validation_invoice_document)))
     validation_context = invoice_validation_context_for_admin(
         courier_id=courier_id,
         period_start=clean_month,
@@ -5945,6 +5946,8 @@ def rerun_courier_invoice_validation(
         courier_id=str(courier_id or ""),
         expected_gross_amount=int(validation_context.get("expected_gross_amount") or 0),
         invoice_mode=str(validation_context.get("invoice_mode") or "transfer"),
+        gross_amount=stored_invoice_amount,
+        allow_image_only_metadata_fallback=True,
         expected_seller_name=str(profile.get("company_name") or ""),
         expected_seller_tax_number=str(profile.get("tax_number") or ""),
         expected_seller_address=str(profile.get("company_address") or ""),
