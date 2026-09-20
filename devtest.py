@@ -14577,7 +14577,7 @@ def render_courier_detail_page() -> None:
     nav_index = nav_ids.index(courier_id) if courier_id in nav_ids else -1
     previous_courier_id = nav_ids[nav_index - 1] if nav_index > 0 else ""
     next_courier_id = nav_ids[nav_index + 1] if nav_index >= 0 and nav_index < len(nav_ids) - 1 else ""
-    back_col, prev_col, next_col, refresh_col, action_spacer = st.columns([0.18, 0.08, 0.08, 0.18, 0.48], gap="small", vertical_alignment="top")
+    back_col, prev_col, next_col, refresh_col, stay_refresh_col, action_spacer = st.columns([0.18, 0.08, 0.08, 0.16, 0.26, 0.24], gap="small", vertical_alignment="top")
     with back_col:
         if st.button("Vissza a listához", key=f"back_from_courier_detail_{courier_id}", use_container_width=True):
             st.session_state.pop("selected_courier_id", None)
@@ -14596,6 +14596,13 @@ def render_courier_detail_page() -> None:
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
+            refresh_settlement_profile_data()
+            st.session_state["selected_courier_id"] = courier_id
+            st.rerun()
+    with stay_refresh_col:
+        if st.button("Frissítés és marad ezen a futáron", key=f"refresh_stay_courier_detail_{courier_id}", help="Adatok újratöltése, ugyanazon a futáron és fülön maradva", use_container_width=True):
+            current_menu = str(st.session_state.get(f"courier_menu_{courier_id}") or "Pénzügy")
+            st.session_state[f"courier_menu_target_{courier_id}"] = current_menu
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
