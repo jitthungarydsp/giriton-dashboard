@@ -365,6 +365,7 @@ def validate_invoice(
     expected_seller_name: str = "",
     expected_seller_tax_number: str = "",
     expected_seller_address: str = "",
+    invoice_mode: str = "transfer",
 ) -> dict[str, Any]:
     checks: list[dict[str, str]] = []
 
@@ -423,12 +424,25 @@ def validate_invoice(
     issue_date = fields.get("issue_date")
     performance_date = fields.get("performance_date")
     due_date = fields.get("due_date")
+    is_cash_invoice = str(invoice_mode or "").strip().casefold() in {"cash", "kp", "kps"}
     for title, value in (("Számla kelte", issue_date), ("Teljesítés kelte", performance_date), ("Fizetési határidő", due_date)):
-        add("ok" if value else "error", title, value.isoformat() if value else "Nem található vagy nem értelmezhető.")
+        if value:
+            add("ok", title, value.isoformat())
+        elif is_cash_invoice and title in {"Teljesítés kelte", "Fizetési határidő"}:
+            add("warn", title, "KP számlánál nem blokkoló, ha nem található vagy nem értelmezhető.")
+        else:
+            add("error", title, "Nem található vagy nem értelmezhető.")
 
     if issue_date and due_date:
         days = (due_date - issue_date).days
-        add("ok" if days == 8 else "error", "8 napos fizetési szabály", f"Javítandó: a fizetési határidő a számla keltétől számított 8. nap legyen. Most {days} nap.")
+        if is_cash_invoice:
+            add(
+                "ok" if days in {0, 8} else "error",
+                "KP fizetési szabály",
+                f"KP számlánál aznapi vagy 8 napos fizetési határidő elfogadott. Most {days} nap.",
+            )
+        else:
+            add("ok" if days == 8 else "error", "8 napos fizetési szabály", f"Javítandó: a fizetési határidő a számla keltétől számított 8. nap legyen. Most {days} nap.")
     if issue_date and performance_date:
         if performance_date >= issue_date:
             days = (performance_date - issue_date).days

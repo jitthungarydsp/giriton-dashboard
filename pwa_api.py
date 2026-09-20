@@ -15322,12 +15322,14 @@ async def submit_invoice(
         cash_content = await cash_invoice_file.read(MAX_INVOICE_BYTES + 1)
     override_enabled = invoice_validation_override_enabled(states)
     expected_amount = expected_tig_amount(user, month_value)
+    financial_breakdown = build_financial_breakdown(user, month_value)
+    expected_cash_amount = workflow_cash_amount_from_financial_breakdown(financial_breakdown)
+    expected_transfer_amount = max(expected_amount - expected_cash_amount, 0) if expected_cash_amount else expected_amount
     if cash_content:
-        shared_validation = {
+        shared_validation_base = {
             "invoice_month": month_value,
             "courier_name": courier_name,
             "courier_id": courier_id,
-            "expected_gross_amount": 0,
             "require_submission_fields": False,
             "expected_seller_name": billing_profile["company_name"],
             "expected_seller_tax_number": billing_profile["tax_number"],
@@ -15336,12 +15338,16 @@ async def submit_invoice(
         main_result = validate_invoice(
             file_name=invoice_file.filename or "szamla",
             content=content,
-            **shared_validation,
+            expected_gross_amount=expected_transfer_amount,
+            invoice_mode="transfer",
+            **shared_validation_base,
         )
         cash_result = validate_invoice(
             file_name=cash_invoice_file.filename or "kp_szamla",
             content=cash_content,
-            **shared_validation,
+            expected_gross_amount=expected_cash_amount,
+            invoice_mode="cash",
+            **shared_validation_base,
         )
         result = combine_invoice_validation_results(
             [("Átutalásos számla", main_result), ("KP számla", cash_result)],
@@ -15358,6 +15364,7 @@ async def submit_invoice(
             courier_name=courier_name,
             courier_id=courier_id,
             expected_gross_amount=expected_amount,
+            invoice_mode="transfer",
             invoice_number=invoice_number,
             gross_amount=gross_amount,
             require_submission_fields=True,
@@ -15367,8 +15374,8 @@ async def submit_invoice(
             expected_seller_address=billing_profile["company_address"],
         )
     result = apply_invoice_validation_override(result, override_enabled)
-    main_gross_amount = money_int((main_result if cash_content else result).get("parsed", {}).get("gross_total"))
-    cash_gross_amount = money_int((cash_result if cash_content else {}).get("parsed", {}).get("gross_total"))
+    main_gross_amount = money_int((main_result if cash_content else result).get("parsed", {}).get("grossTotal"))
+    cash_gross_amount = money_int((cash_result if cash_content else {}).get("parsed", {}).get("grossTotal"))
 
     upload_documents = [
         {
