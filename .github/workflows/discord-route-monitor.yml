@@ -115,6 +115,7 @@ jobs:
             --detail-scope all
 
       - name: Sync Giriton Attendance UIDL
+        continue-on-error: true
         shell: bash
         run: |
           python scripts/giriton_attendance_uidl_sync.py --require-rows --debug-dir results/giriton-attendance-uidl
@@ -128,6 +129,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Run Discord route monitor
+        if: always()
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             LOOP_MINUTES="0"
