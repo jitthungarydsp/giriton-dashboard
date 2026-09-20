@@ -19,6 +19,11 @@ def _tokens(value: Any) -> list[str]:
     return re.sub(r"[^a-z0-9]+", " ", _fold(value)).strip().split()
 
 
+def _name_match_tokens(value: Any) -> list[str]:
+    ignored = {"e", "v", "ev", "egyeni", "vallalkozo"}
+    return [token for token in _tokens(value) if token not in ignored]
+
+
 def _address_tokens(value: Any) -> list[str]:
     ignored = {
         "magyarorszag",
@@ -315,12 +320,41 @@ def extract_pdf_text(content: bytes) -> str:
         return ""
 
 
+def extract_pdf_ocr_text(content: bytes) -> str:
+    if not content:
+        return ""
+    try:
+        import fitz
+        from PIL import Image
+        import pytesseract
+
+        texts: list[str] = []
+        with fitz.open(stream=content, filetype="pdf") as document:
+            for page in document:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+                image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+                text = pytesseract.image_to_string(image, lang="hun+eng", config="--psm 6")
+                if text.strip():
+                    texts.append(text)
+        return "\n".join(texts)
+    except Exception:
+        return ""
+
+
 def parse_invoice_pdf(content: bytes) -> dict[str, Any]:
     text = extract_pdf_text(content)
+    extraction_source = "pdf_text"
+    if not text.strip():
+        extraction_source = "ocr_unavailable"
+        ocr_text = extract_pdf_ocr_text(content)
+        if ocr_text.strip():
+            text = ocr_text
+            extraction_source = "ocr"
     seller_tax_number, buyer_tax_number = _extract_tax_numbers(text)
     invoice_dates = _extract_invoice_dates(text)
     return {
         "text": text,
+        "extraction_source": extraction_source,
         "seller_tax_number": seller_tax_number,
         "buyer_tax_number": buyer_tax_number,
         "issue_date": invoice_dates["issue_date"],
@@ -385,16 +419,25 @@ def validate_invoice(
 
     fields = parse_invoice_pdf(content) if extension == "pdf" else {}
     text = str(fields.get("text") or "")
+    extraction_source = str(fields.get("extraction_source") or "")
     normalized_tokens = set(_tokens(text))
     if extension == "pdf":
-        add("ok" if text else "error", "PDF szövege", "A számla géppel olvasható." if text else "A PDF-ből nem olvasható ki szöveg.")
+        add(
+            "ok" if text else "error",
+            "PDF szövege",
+            (
+                "A számla OCR-rel olvasható."
+                if extraction_source == "ocr"
+                else "A számla géppel olvasható."
+            ) if text else "A PDF-ből nem olvasható ki szöveg.",
+        )
     else:
         add("error", "Képfájl szövegfelismerése", "Első körben szöveges PDF számla szükséges az automatikus ellenőrzéshez.")
 
     expected_seller_name = str(expected_seller_name or "").strip()
     if expected_seller_name:
         courier_name = expected_seller_name
-    expected_name_tokens = _tokens(courier_name)
+    expected_name_tokens = _name_match_tokens(courier_name)
     add(
         "ok" if expected_name_tokens and all(token in normalized_tokens for token in expected_name_tokens) else "error",
         "Eladó neve",

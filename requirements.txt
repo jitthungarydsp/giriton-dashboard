@@ -22,6 +22,8 @@ selenium
 reportlab
 pypdf
 PyMuPDF
+pytesseract
+Pillow
 
 fastapi
 uvicorn[standard]
