@@ -5147,6 +5147,56 @@ def load_target_reserve_status(courier_id: str, courier_name: str) -> dict[str, 
     return target_reserve_status_from_rows(courier_id, courier_name, rows)
 
 
+def load_target_reserve_status_live(courier_id: str, courier_name: str) -> dict[str, object]:
+    """Fresh read for the target reserve tab after manual reserve changes."""
+    target_id = target_reserve_id_key(courier_id)
+    target_name = _courier_match_key(courier_name)
+    rows: list[dict[str, object]] = []
+    for column_name in ["courier_ID", "courier_id", "courierId", "driver_id", "driverId", "user_id", "userId"]:
+        if not target_id:
+            break
+        try:
+            rows = (
+                get_db()
+                .schema("public")
+                .table("courier_target_reserve")
+                .select("*")
+                .eq(column_name, target_id)
+                .limit(5)
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            rows = []
+        if rows:
+            break
+    if not rows and target_name:
+        try:
+            candidate_rows = (
+                get_db()
+                .schema("public")
+                .table("courier_target_reserve")
+                .select("*")
+                .limit(5000)
+                .execute()
+                .data
+                or []
+            )
+        except BaseException:
+            candidate_rows = []
+        name_columns = {"couriername", "drivername", "name", "fullname", "futar", "futarnev"}
+        rows = [
+            reserve_row for reserve_row in candidate_rows
+            if any(
+                _courier_match_key(value) == target_name
+                for column, value in reserve_row.items()
+                if normalized_target_reserve_column(column) in name_columns
+            )
+        ][:5]
+    return target_reserve_status_from_rows(courier_id, courier_name, rows)
+
+
 def reserve_row_amount(reserve_row: dict[str, object], column: str) -> float:
     if not reserve_row:
         return 0.0
@@ -5517,6 +5567,135 @@ def save_target_reserve_event(
     load_previous_target_reserve_monthly.clear()
     load_previous_target_reserve_monthly_bulk.clear()
     load_target_reserve_monthly_bulk.clear()
+
+
+def save_target_reserve_snapshot_after_event(
+    *,
+    courier_id: str,
+    period_start: date,
+    calculation_mode: str,
+    warehouse_label: str | None,
+    updated_by: str,
+) -> dict[str, int | str]:
+    if str(calculation_mode or "") not in {"API", "Excel"}:
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 0, "reason": "unsupported_mode"}
+    period_start = period_start.replace(day=1)
+    period_end = month_bounds(period_start)[1]
+    session_id = settlement_mobile_session_for_mode(calculation_mode, period_start, warehouse_label)
+    if not session_id:
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 1, "reason": "missing_session"}
+    clear_settlement_overview_data_cache()
+    data = build_settlement_overview_data(
+        calculation_mode,
+        session_id,
+        period_start,
+        period_end,
+        warehouse_label,
+        settlement_loyalty_cache_token(session_id, period_start, calculation_mode),
+    )
+    if data.empty or "Courier ID" not in data.columns:
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 1, "reason": "missing_data"}
+    courier_key = _courier_id_key(courier_id)
+    filtered = data.loc[data["Courier ID"].map(_courier_id_key).eq(courier_key)].copy()
+    if filtered.empty:
+        return {"processed": 0, "new_versions": 0, "unchanged": 0, "failed": 1, "reason": "missing_courier"}
+    return save_devtest_finance_snapshots_for_rows(
+        filtered,
+        period_start,
+        calculation_mode,
+        warehouse_label,
+        session_id,
+        updated_by,
+    )
+
+
+def load_target_reserve_history(courier_id: str, limit: int = 36) -> pd.DataFrame:
+    courier_key = _courier_id_key(courier_id)
+    if not courier_key:
+        return pd.DataFrame()
+    monthly_rows: list[dict[str, object]] = []
+    event_rows: list[dict[str, object]] = []
+    try:
+        monthly_rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_monthly")
+            .select("period_start,period_end,reserve_before_huf,reserve_addition_huf,insurance_fee_huf,reserve_after_huf,payable_after_insurance_huf,status,updated_at,closed_at")
+            .eq("courier_id", courier_key)
+            .order("period_start", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        monthly_rows = []
+    try:
+        event_rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_event")
+            .select("period_start,event_type,amount_huf,note,created_by,created_at")
+            .eq("courier_id", courier_key)
+            .is_("deleted_at", "null")
+            .order("period_start", desc=True)
+            .limit(limit * 4)
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        event_rows = []
+
+    by_month: dict[str, dict[str, object]] = {}
+    for item in monthly_rows:
+        month = str(item.get("period_start") or "")[:7]
+        if not month:
+            continue
+        by_month[month] = {
+            "Hónap": month,
+            "Nyitó": parse_huf_value(item.get("reserve_before_huf")),
+            "Havi változás": parse_huf_value(item.get("reserve_addition_huf")),
+            "Kézi kifizetés": 0.0,
+            "Kézi levonás": 0.0,
+            "Biztosítás": parse_huf_value(item.get("insurance_fee_huf")),
+            "Záró": parse_huf_value(item.get("reserve_after_huf")),
+            "Státusz": str(item.get("status") or ""),
+            "Utolsó mentés": str(item.get("closed_at") or item.get("updated_at") or "")[:19],
+            "Megjegyzés": "",
+        }
+    for item in event_rows:
+        month = str(item.get("period_start") or "")[:7]
+        if not month:
+            continue
+        row = by_month.setdefault(month, {
+            "Hónap": month,
+            "Nyitó": 0.0,
+            "Havi változás": 0.0,
+            "Kézi kifizetés": 0.0,
+            "Kézi levonás": 0.0,
+            "Biztosítás": 0.0,
+            "Záró": 0.0,
+            "Státusz": "event",
+            "Utolsó mentés": str(item.get("created_at") or "")[:19],
+            "Megjegyzés": "",
+        })
+        amount = parse_huf_value(item.get("amount_huf"))
+        event_type = str(item.get("event_type") or "").strip().casefold()
+        if event_type == "payment":
+            row["Kézi kifizetés"] = parse_huf_value(row.get("Kézi kifizetés")) + amount
+        elif event_type == "deduction":
+            row["Kézi levonás"] = parse_huf_value(row.get("Kézi levonás")) + amount
+        note = str(item.get("note") or "").strip()
+        if note:
+            current_note = str(row.get("Megjegyzés") or "").strip()
+            row["Megjegyzés"] = f"{current_note}; {note}".strip("; ")
+    result = pd.DataFrame(sorted(by_month.values(), key=lambda item: str(item.get("Hónap") or ""), reverse=True))
+    if result.empty:
+        return result
+    for column in ["Nyitó", "Havi változás", "Kézi kifizetés", "Kézi levonás", "Biztosítás", "Záró"]:
+        result[column] = result[column].map(format_huf)
+    return result
 
 
 @st.cache_data(show_spinner=False, ttl=30)
@@ -17990,7 +18169,7 @@ def render_courier_detail_page() -> None:
         render_bonus_malus_manager(courier_id, "malus")
 
     if selected_menu == "Céltartalék":
-        reserve_status = load_target_reserve_status(courier_id, str(row["Futár"]))
+        reserve_status = load_target_reserve_status_live(courier_id, str(row["Futár"]))
         reserve_row = reserve_status.get("row") or {}
         reserve_value = next(
             (value for column, value in reserve_row.items() if "ctzft" in re.sub(r"[^a-z0-9]", "", str(column).casefold())),
@@ -17998,6 +18177,16 @@ def render_courier_detail_page() -> None:
         )
         reserve_amount = parse_huf_value(reserve_value)
         st.markdown("#### Céltartalék és biztosítás")
+        if st.button("Céltartalék adatok frissítése", use_container_width=True, key=f"target_reserve_refresh_{courier_id}"):
+            load_target_reserve_status.clear()
+            load_target_reserve_rows_bulk.clear()
+            load_target_reserve_event_totals.clear()
+            load_target_reserve_event_totals_bulk.clear()
+            load_target_reserve_monthly.clear()
+            load_previous_target_reserve_monthly.clear()
+            load_previous_target_reserve_monthly_bulk.clear()
+            load_target_reserve_monthly_bulk.clear()
+            st.rerun()
 
         reserve1, reserve2 = st.columns(2)
         with reserve1:
@@ -18047,6 +18236,7 @@ def render_courier_detail_page() -> None:
             )
             if st.button("Céltartalék kifizetés mentése", type="primary", use_container_width=True, key=f"target_reserve_payout_save_{courier_id}"):
                 try:
+                    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
                     save_target_reserve_event(
                         session_id=session_id,
                         courier_id=courier_id,
@@ -18057,7 +18247,20 @@ def render_courier_detail_page() -> None:
                         note=payout_note,
                         current_reserve_huf=reserve_amount,
                     )
+                    snapshot_result = save_target_reserve_snapshot_after_event(
+                        courier_id=courier_id,
+                        period_start=selected_reserve_period,
+                        calculation_mode=active_calculation_mode,
+                        warehouse_label=st.session_state.get("new_warehouse", "Összes"),
+                        updated_by=actor,
+                    )
                     st.success("Céltartalék kifizetés mentve.")
+                    if snapshot_result.get("new_versions"):
+                        st.caption("Új pénzügyi snapshot verzió mentve.")
+                    elif snapshot_result.get("unchanged"):
+                        st.caption("A pénzügyi snapshot már naprakész volt.")
+                    elif snapshot_result.get("reason"):
+                        st.caption(f"Snapshot mentés nem futott le: {snapshot_result.get('reason')}")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A céltartalék kifizetés nem menthető: {exc}")
@@ -18079,6 +18282,7 @@ def render_courier_detail_page() -> None:
             )
             if st.button("Céltartalék levonás mentése", use_container_width=True, key=f"target_reserve_deduction_save_{courier_id}"):
                 try:
+                    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
                     save_target_reserve_event(
                         session_id=session_id,
                         courier_id=courier_id,
@@ -18089,7 +18293,20 @@ def render_courier_detail_page() -> None:
                         note=deduction_note,
                         current_reserve_huf=reserve_amount,
                     )
+                    snapshot_result = save_target_reserve_snapshot_after_event(
+                        courier_id=courier_id,
+                        period_start=selected_reserve_period,
+                        calculation_mode=active_calculation_mode,
+                        warehouse_label=st.session_state.get("new_warehouse", "Összes"),
+                        updated_by=actor,
+                    )
                     st.success("Céltartalék levonás mentve.")
+                    if snapshot_result.get("new_versions"):
+                        st.caption("Új pénzügyi snapshot verzió mentve.")
+                    elif snapshot_result.get("unchanged"):
+                        st.caption("A pénzügyi snapshot már naprakész volt.")
+                    elif snapshot_result.get("reason"):
+                        st.caption(f"Snapshot mentés nem futott le: {snapshot_result.get('reason')}")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"A céltartalék levonás nem menthető: {exc}")
@@ -18097,6 +18314,13 @@ def render_courier_detail_page() -> None:
             f"Erre a hónapra eddig rögzítve: kifizetés {format_huf(event_totals.get('payment'))}, "
             f"levonás {format_huf(event_totals.get('deduction'))}."
         )
+        st.divider()
+        st.markdown("##### Havi céltartalék történet")
+        reserve_history = load_target_reserve_history(courier_id)
+        if reserve_history.empty:
+            st.info("Ehhez a futárhoz még nincs havi céltartalék történet.")
+        else:
+            st.dataframe(reserve_history, use_container_width=True, hide_index=True)
 
     if selected_menu == "Dokumentumok":
         st.markdown("#### Dokumentumok")
