@@ -5460,6 +5460,8 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
     def workflow_status(courier_key: str) -> str:
         document_types = document_types_by_courier.get(courier_key, set())
         action_statuses = status_by_courier.get(courier_key, {})
+        if action_statuses.get("invoice_submit") == "open":
+            return "Számlafeltöltésre vár"
         if courier_key in invoice_attention_couriers:
             return "Számlaellenőrzésre vár"
         if courier_key in complaint_couriers:
@@ -5478,8 +5480,6 @@ def apply_peopleforce_workflow_status(data: pd.DataFrame, document_month: date) 
             return "TIG-re vár"
         if action_statuses.get("tig") != "done":
             return "TIG elfogadásra vár"
-        if action_statuses.get("invoice_submit") == "open":
-            return "Számlafeltöltésre vár"
         if action_statuses.get("invoice_check") == "open":
             return "Számlaellenőrzésre vár"
         if action_statuses.get("invoice_check") == "done":
@@ -5772,6 +5772,8 @@ def backstep_peopleforce_workflow(*, courier_id: str, courier_name: str, documen
     for action_key in target["open"]:
         upsert_peopleforce_card_status(courier_id=courier_id, courier_name=courier_name, action_key=action_key, document_month=document_month, status="open", status_note=clean_note, updated_by=updated_by)
         saved += 1
+    if target_action == "invoice_submit":
+        saved += close_open_invoice_check_complaints(courier_id, document_month)
     read_peopleforce_card_statuses.clear()
     read_peopleforce_card_statuses_for_month.clear()
     return saved
@@ -11939,6 +11941,28 @@ def close_open_courier_complaints_without_response(courier_id: str, document_mon
             or str(item.get("responded_at") or "").strip()
         )
         if status in {"resolved", "closed", "deleted"} or has_admin_answer:
+            continue
+        complaint_id = item.get("id")
+        if not complaint_id:
+            continue
+        update_peopleforce_complaint_status(complaint_id, "closed")
+        closed_count += 1
+    return closed_count
+
+
+def close_open_invoice_check_complaints(courier_id: str, document_month: date) -> int:
+    complaints = read_peopleforce_complaints_for_month(document_month.replace(day=1))
+    if complaints.empty:
+        return 0
+    courier_key = _courier_id_key(courier_id)
+    closed_count = 0
+    for item in complaints.to_dict("records"):
+        if _courier_id_key(item.get("courier_id")) != courier_key:
+            continue
+        if base_action_key(item.get("document_type")) != "invoice_check":
+            continue
+        status = str(item.get("status") or "").strip().casefold()
+        if status in {"resolved", "closed", "deleted"}:
             continue
         complaint_id = item.get("id")
         if not complaint_id:
