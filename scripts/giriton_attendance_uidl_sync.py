@@ -35,6 +35,7 @@ from scripts.live_giriton_shift_list import (  # noqa: E402
 
 
 DEFAULT_UIDL_URL = "https://kiflihu.giriton.com/?v-r=uidl&v-uiId=0"
+UIDL_SESSION_EXPIRED_ERROR = "A Giriton UIDL session lejart."
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
 
 
@@ -296,7 +297,7 @@ def raise_for_uidl_problem(payload: Any) -> None:
     if not isinstance(meta, dict):
         return
     if meta.get("sessionExpired"):
-        raise RuntimeError("A Giriton UIDL session lejart.")
+        raise RuntimeError(UIDL_SESSION_EXPIRED_ERROR)
     app_error = meta.get("appError")
     if isinstance(app_error, dict):
         message = " | ".join(
@@ -549,11 +550,18 @@ def sync_giriton_attendance_uidl_direct(
 ) -> dict[str, Any]:
     target_date = work_date or datetime.now(BUDAPEST_TZ).date()
     payload_source = "uidl_request"
-    payloads = fetch_attendance_uidl_payloads(
-        target_date,
-        request_file=request_file,
-        timeout=timeout,
-    )
+    try:
+        payloads = fetch_attendance_uidl_payloads(
+            target_date,
+            request_file=request_file,
+            timeout=timeout,
+        )
+    except RuntimeError as error:
+        if UIDL_SESSION_EXPIRED_ERROR not in str(error) or not has_giriton_login_credentials():
+            raise
+        payload_source = "browser_login_uidl_capture"
+        payloads = fetch_attendance_browser_payloads(target_date, timeout=timeout)
+
     if payloads is None:
         payload_source = "browser_login_uidl_capture"
         payloads = fetch_attendance_browser_payloads(target_date, timeout=timeout)
