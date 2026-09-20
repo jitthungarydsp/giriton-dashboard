@@ -5196,6 +5196,12 @@ def calculate_target_reserve_month(
     should_top_up_reserve = insurance_active_before and reserve_target > 0
     calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
     reserve_addition = min(calculated_addition, int(round(reserve_target))) if should_top_up_reserve else 0
+    manual_events = (
+        load_target_reserve_event_totals(courier_id, period_start, month_bounds(period_start)[1])
+        if courier_id and period_start
+        else {"payment": 0.0, "deduction": 0.0}
+    )
+    reserve_addition = reserve_addition + parse_huf_value(manual_events.get("deduction")) - parse_huf_value(manual_events.get("payment"))
     insurance_fee = insurance_fee_rule if insurance_active_before else 0
     reserve_after = reserve_before + reserve_addition
     insurance_active_after = insurance_active_before
@@ -5225,6 +5231,34 @@ def resolve_target_reserve_opening_balance(
     if reserve_before == 0:
         reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
     return reserve_before
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_target_reserve_event_totals(courier_id: str, period_start: date, period_end: date) -> dict[str, float]:
+    if not courier_id:
+        return {"payment": 0.0, "deduction": 0.0}
+    try:
+        rows = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_event")
+            .select("event_type,amount_huf")
+            .eq("courier_id", str(courier_id).strip())
+            .gte("period_start", period_start.isoformat())
+            .lte("period_start", period_end.isoformat())
+            .is_("deleted_at", "null")
+            .execute()
+            .data
+            or []
+        )
+    except BaseException:
+        return {"payment": 0.0, "deduction": 0.0}
+    totals = {"payment": 0.0, "deduction": 0.0}
+    for item in rows:
+        event_type = str(item.get("event_type") or "").strip().casefold()
+        if event_type in totals:
+            totals[event_type] += parse_huf_value(item.get("amount_huf"))
+    return totals
 
 
 @st.cache_data(show_spinner=False, ttl=30)
@@ -5352,6 +5386,62 @@ def close_target_reserve_month(
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
+    load_target_reserve_monthly.clear()
+    load_previous_target_reserve_monthly.clear()
+    load_target_reserve_monthly_bulk.clear()
+
+
+def save_target_reserve_event(
+    *,
+    session_id: str | None,
+    courier_id: str,
+    courier_name: str,
+    period_start: date,
+    event_type: str,
+    amount_huf: float,
+    note: str,
+    current_reserve_huf: float,
+) -> None:
+    clean_event_type = str(event_type or "").strip().casefold()
+    if clean_event_type not in {"payment", "deduction"}:
+        raise ValueError("Ismeretlen céltartalék művelet.")
+    amount = int(round(parse_huf_value(amount_huf)))
+    if amount <= 0:
+        raise ValueError("Az összegnek nagyobbnak kell lennie nullánál.")
+    current_reserve = int(round(parse_huf_value(current_reserve_huf)))
+    if clean_event_type == "payment" and amount > current_reserve:
+        raise ValueError("A kifizetés nem lehet nagyobb az aktuális céltartaléknál.")
+
+    actor = str(st.session_state.get("user", {}).get("username") or "unknown")
+    period_start = period_start.replace(day=1)
+    period_end = month_bounds(period_start)[1]
+    next_reserve = current_reserve - amount if clean_event_type == "payment" else current_reserve + amount
+
+    get_db().schema("settlement").table("courier_target_reserve_event").insert({
+        "session_id": session_id,
+        "courier_id": str(courier_id).strip(),
+        "courier_name": str(courier_name or "").strip() or None,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "event_type": clean_event_type,
+        "amount_huf": amount,
+        "note": str(note or "").strip() or None,
+        "created_by": actor,
+    }).execute()
+
+    update_payload = {
+        "CT_Z_FT": str(next_reserve),
+        "current_reserve_huf": next_reserve,
+        "updated_at": pd.Timestamp.utcnow().isoformat(),
+    }
+    if clean_event_type == "deduction":
+        update_payload["CT_NY_FT"] = str(amount)
+        update_payload["reserve_deduction_huf"] = amount
+    get_db().schema("public").table("courier_target_reserve").update(update_payload).eq("courier_ID", str(courier_id).strip()).execute()
+
+    load_target_reserve_status.clear()
+    load_target_reserve_rows_bulk.clear()
+    load_target_reserve_event_totals.clear()
     load_target_reserve_monthly.clear()
     load_previous_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
@@ -13543,6 +13633,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
+    load_target_reserve_event_totals.clear()
     load_target_reserve_monthly.clear()
     load_previous_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
@@ -17837,6 +17928,90 @@ def render_courier_detail_page() -> None:
                 st.warning("A Courier ID-hoz tartozó sor megvan, de nem található benne CT_Z_FT mező.")
             elif not reserve_row:
                 st.warning(f"A {courier_id} Courier ID-hoz nem található courier_target_reserve sor.")
+
+        st.divider()
+        st.markdown("##### Céltartalék műveletek")
+        reserve_month_labels = month_options()
+        current_month_label = month_option_label(period_start)
+        default_month_index = reserve_month_labels.index(current_month_label) if current_month_label in reserve_month_labels else 0
+        selected_reserve_month_label = st.selectbox(
+            "Melyik hónapra menjen a művelet?",
+            reserve_month_labels,
+            index=default_month_index,
+            key=f"target_reserve_event_month_{courier_id}",
+        )
+        selected_reserve_period = parse_month_option(selected_reserve_month_label).replace(day=1)
+        selected_reserve_period_end = month_bounds(selected_reserve_period)[1]
+        event_totals = load_target_reserve_event_totals(courier_id, selected_reserve_period, selected_reserve_period_end)
+        event_col1, event_col2 = st.columns(2)
+        with event_col1:
+            st.markdown("###### Kifizetés")
+            st.caption("A céltartalékból kifizetett összeg. Alapból a teljes aktuális céltartalék.")
+            payout_amount = st.number_input(
+                "Kifizetendő céltartalék (Ft)",
+                min_value=0,
+                value=max(int(round(reserve_amount)), 0),
+                step=1000,
+                key=f"target_reserve_payout_amount_{courier_id}",
+            )
+            payout_note = st.text_area(
+                "Kifizetés megjegyzés",
+                value=f"Céltartalék kifizetés - {selected_reserve_period:%Y-%m}",
+                key=f"target_reserve_payout_note_{courier_id}",
+                height=90,
+            )
+            if st.button("Céltartalék kifizetés mentése", type="primary", use_container_width=True, key=f"target_reserve_payout_save_{courier_id}"):
+                try:
+                    save_target_reserve_event(
+                        session_id=session_id,
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        period_start=selected_reserve_period,
+                        event_type="payment",
+                        amount_huf=payout_amount,
+                        note=payout_note,
+                        current_reserve_huf=reserve_amount,
+                    )
+                    st.success("Céltartalék kifizetés mentve.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A céltartalék kifizetés nem menthető: {exc}")
+        with event_col2:
+            st.markdown("###### Céltartalék levonás")
+            st.caption("Extra céltartalék levonás az adott hónapra.")
+            deduction_amount = st.number_input(
+                "Levonás összege (Ft)",
+                min_value=0,
+                value=0,
+                step=1000,
+                key=f"target_reserve_deduction_amount_{courier_id}",
+            )
+            deduction_note = st.text_area(
+                "Levonás megjegyzés",
+                value=f"Céltartalék levonás - {selected_reserve_period:%Y-%m}",
+                key=f"target_reserve_deduction_note_{courier_id}",
+                height=90,
+            )
+            if st.button("Céltartalék levonás mentése", use_container_width=True, key=f"target_reserve_deduction_save_{courier_id}"):
+                try:
+                    save_target_reserve_event(
+                        session_id=session_id,
+                        courier_id=courier_id,
+                        courier_name=str(row["Futár"]),
+                        period_start=selected_reserve_period,
+                        event_type="deduction",
+                        amount_huf=deduction_amount,
+                        note=deduction_note,
+                        current_reserve_huf=reserve_amount,
+                    )
+                    st.success("Céltartalék levonás mentve.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A céltartalék levonás nem menthető: {exc}")
+        st.caption(
+            f"Erre a hónapra eddig rögzítve: kifizetés {format_huf(event_totals.get('payment'))}, "
+            f"levonás {format_huf(event_totals.get('deduction'))}."
+        )
 
     if selected_menu == "Dokumentumok":
         st.markdown("#### Dokumentumok")
