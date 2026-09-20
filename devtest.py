@@ -13274,6 +13274,40 @@ def load_courier_adjustments(courier_id: str, period_start: date, period_end: da
         return pd.DataFrame(columns=columns)
 
 
+def insert_courier_adjustment_event(
+    *,
+    session_id: str | None,
+    courier_id: str,
+    event_type: str,
+    adjustment_type: str | None = None,
+    amount_huf: float | None = None,
+    note: str | None = None,
+    performed_by: str,
+    valid_from: date | None = None,
+    valid_to: date | None = None,
+) -> None:
+    payload = {
+        "session_id": session_id,
+        "courier_id": courier_id,
+        "event_type": event_type,
+        "adjustment_type": adjustment_type,
+        "amount_huf": float(amount_huf) if amount_huf is not None else None,
+        "note": note,
+        "performed_by": performed_by,
+        "valid_from": valid_from.isoformat() if valid_from else None,
+        "valid_to": valid_to.isoformat() if valid_to else None,
+    }
+    try:
+        get_db().schema("settlement").table("courier_settlement_adjustment_event").insert(payload).execute()
+    except BaseException as exc:
+        message = str(exc).casefold()
+        if "valid_from" not in message and "valid_to" not in message:
+            raise
+        payload.pop("valid_from", None)
+        payload.pop("valid_to", None)
+        get_db().schema("settlement").table("courier_settlement_adjustment_event").insert(payload).execute()
+
+
 def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_type: str, amount_huf: float, note: str, valid_from: date, valid_to: date | None) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     existing = load_courier_adjustments(courier_id, valid_from, valid_to or valid_from)
@@ -13287,11 +13321,17 @@ def save_courier_adjustment(session_id: str | None, courier_id: str, adjustment_
         "valid_from": valid_from.isoformat(), "valid_to": valid_to.isoformat() if valid_to else None,
         "created_by": actor,
     }).execute()
-    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
-        "session_id": session_id, "courier_id": courier_id, "event_type": "created",
-        "adjustment_type": adjustment_type, "amount_huf": float(amount_huf),
-        "note": note.strip() or None, "performed_by": actor,
-    }).execute()
+    insert_courier_adjustment_event(
+        session_id=session_id,
+        courier_id=courier_id,
+        event_type="created",
+        adjustment_type=adjustment_type,
+        amount_huf=float(amount_huf),
+        note=note.strip() or None,
+        performed_by=actor,
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -13323,18 +13363,33 @@ def update_courier_adjustment(
         f"Módosítva: {old_values.get('adjustment_type')} {format_huf(parse_huf_value(old_values.get('amount_huf')))} "
         f"-> {adjustment_type} {format_huf(amount_huf)}; megjegyzés: {note.strip() or '-'}"
     )
-    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
-        "session_id": session_id, "courier_id": courier_id, "event_type": "updated",
-        "adjustment_type": adjustment_type, "amount_huf": float(amount_huf),
-        "note": change_note, "performed_by": actor,
-    }).execute()
+    insert_courier_adjustment_event(
+        session_id=session_id,
+        courier_id=courier_id,
+        event_type="updated",
+        adjustment_type=adjustment_type,
+        amount_huf=float(amount_huf),
+        note=change_note,
+        performed_by=actor,
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
     clear_settlement_overview_data_cache()
 
 
-def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustment_id: str, adjustment_type: str, amount_huf: float, note: str) -> None:
+def delete_courier_adjustment(
+    session_id: str | None,
+    courier_id: str,
+    adjustment_id: str,
+    adjustment_type: str,
+    amount_huf: float,
+    note: str,
+    valid_from: date | None = None,
+    valid_to: date | None = None,
+) -> None:
     actor = str(st.session_state.get("user", {}).get("username") or "unknown")
     get_db().schema("settlement").table("courier_settlement_adjustment").update({
         "is_active": False,
@@ -13342,11 +13397,17 @@ def delete_courier_adjustment(session_id: str | None, courier_id: str, adjustmen
         "deleted_by": actor,
         "updated_at": pd.Timestamp.utcnow().isoformat(),
     }).eq("id", adjustment_id).execute()
-    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
-        "session_id": session_id, "courier_id": courier_id, "event_type": "deleted",
-        "adjustment_type": adjustment_type, "amount_huf": float(amount_huf),
-        "note": note.strip() or "Korrekciós sor törölve", "performed_by": actor,
-    }).execute()
+    insert_courier_adjustment_event(
+        session_id=session_id,
+        courier_id=courier_id,
+        event_type="deleted",
+        adjustment_type=adjustment_type,
+        amount_huf=float(amount_huf),
+        note=note.strip() or "Korrekciós sor törölve",
+        performed_by=actor,
+        valid_from=valid_from,
+        valid_to=valid_to,
+    )
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
@@ -13359,12 +13420,22 @@ def load_courier_adjustment_log(courier_id: str) -> pd.DataFrame:
         return pd.DataFrame()
     try:
         rows = (get_db().schema("settlement").table("courier_settlement_adjustment_event")
-                .select("event_type,adjustment_type,amount_huf,note,performed_by,created_at")
+                .select("event_type,adjustment_type,amount_huf,note,valid_from,valid_to,performed_by,created_at")
                 .eq("courier_id", courier_id)
                 .order("created_at", desc=True).execute().data or [])
         return pd.DataFrame(rows)
-    except BaseException:
-        return pd.DataFrame()
+    except BaseException as exc:
+        message = str(exc).casefold()
+        if "valid_from" not in message and "valid_to" not in message:
+            return pd.DataFrame()
+        try:
+            rows = (get_db().schema("settlement").table("courier_settlement_adjustment_event")
+                    .select("event_type,adjustment_type,amount_huf,note,performed_by,created_at")
+                    .eq("courier_id", courier_id)
+                    .order("created_at", desc=True).execute().data or [])
+            return pd.DataFrame(rows)
+        except BaseException:
+            return pd.DataFrame()
 
 
 def reset_courier_adjustments(session_id: str | None, courier_id: str, period_start: date, period_end: date) -> None:
@@ -13374,14 +13445,33 @@ def reset_courier_adjustments(session_id: str | None, courier_id: str, period_st
         get_db().schema("settlement").table("courier_settlement_adjustment").update({
             "is_active": False, "deleted_at": pd.Timestamp.utcnow().isoformat(), "deleted_by": actor,
         }).eq("id", adjustment_id).execute()
-    get_db().schema("settlement").table("courier_settlement_adjustment_event").insert({
-        "session_id": session_id, "courier_id": courier_id, "event_type": "reset",
-        "note": "Kézi havi korrekciók visszaállítása", "performed_by": actor,
-    }).execute()
+    insert_courier_adjustment_event(
+        session_id=session_id,
+        courier_id=courier_id,
+        event_type="reset",
+        note="Kézi havi korrekciók visszaállítása",
+        performed_by=actor,
+        valid_from=period_start,
+        valid_to=period_end,
+    )
     load_courier_adjustments.clear()
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
     clear_settlement_overview_data_cache()
+
+
+def format_adjustment_log_period(row: pd.Series) -> str:
+    start = pd.to_datetime(row.get("valid_from"), errors="coerce")
+    end = pd.to_datetime(row.get("valid_to"), errors="coerce")
+    if pd.isna(start) and pd.isna(end):
+        return "-"
+    if pd.isna(start):
+        return f"- - {end.strftime('%Y.%m.%d')}"
+    if pd.isna(end):
+        return f"{start.strftime('%Y.%m.%d')} - folyamatos"
+    if start.year == end.year and start.month == end.month and start.day == 1 and end == pd.Timestamp(month_end(start.date())):
+        return start.strftime("%Y-%m")
+    return f"{start.strftime('%Y.%m.%d')} - {end.strftime('%Y.%m.%d')}"
 
 
 def refresh_settlement_profile_data() -> None:
@@ -16505,12 +16595,21 @@ def render_courier_detail_page() -> None:
                         original = original_by_id.get(adjustment_id)
                         if original is None:
                             continue
-                        if marked_for_delete:
-                            delete_courier_adjustment(session_id, courier_id, adjustment_id, str(original.get("adjustment_type")), parse_huf_value(original.get("amount_huf")), note)
-                            saved_changes += 1
-                            continue
                         original_from = editor_date(original.get("valid_from"), period_start)
                         original_to = editor_date(original.get("valid_to"), None)
+                        if marked_for_delete:
+                            delete_courier_adjustment(
+                                session_id,
+                                courier_id,
+                                adjustment_id,
+                                str(original.get("adjustment_type")),
+                                parse_huf_value(original.get("amount_huf")),
+                                note,
+                                valid_from=original_from,
+                                valid_to=original_to,
+                            )
+                            saved_changes += 1
+                            continue
                         changed = (
                             str(original.get("adjustment_type")) != adjustment_type
                             or parse_huf_value(original.get("amount_huf")) != amount
@@ -16547,10 +16646,12 @@ def render_courier_detail_page() -> None:
             st.info("Még nincs naplózott módosítás ennél a futárnál.")
         else:
             log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Felhasználó", "created_at": "Időpont"}).copy()
+            log_view["Időszak"] = log_view.apply(format_adjustment_log_period, axis=1)
             log_view["Művelet"] = log_view["Művelet"].map({"created": "Létrehozva", "updated": "Módosítva", "deleted": "Törölve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
             log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
             log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
-            st.dataframe(log_view, use_container_width=True, hide_index=True)
+            visible_log_columns = ["Művelet", "Típus", "Időszak", "Összeg", "Megjegyzés", "Felhasználó", "Időpont"]
+            st.dataframe(log_view[[column for column in visible_log_columns if column in log_view.columns]], use_container_width=True, hide_index=True)
 
     if selected_menu == "Kifizetés":
         st.markdown("#### Kifizetés")
