@@ -14932,7 +14932,7 @@ def render_courier_detail_page() -> None:
     render_profile_header(displayed_payable_total, contractor_received_total, total_deduction)
     if st.session_state.get(menu_key) == "ttekintés":
         st.session_state[menu_key] = "Pénzügy"
-    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg"]
+    courier_menu_items = ["Pénzügy", "Kifizetés", "Fizetés előleg", "Céltartalék"]
     courier_menu_items.extend(["Dokumentumok", "Egyedi dokumentum", "Számla összevetés", "Reklamációk", "E-mail küldése", "Profil"])
     if st.session_state.get(menu_key) not in courier_menu_items:
         st.session_state[menu_key] = "Pénzügy"
