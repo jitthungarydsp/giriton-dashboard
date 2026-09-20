@@ -14596,6 +14596,8 @@ def render_courier_detail_page() -> None:
     with refresh_col:
         if st.button("Frissítés", key=f"refresh_courier_detail_{courier_id}", help="Adatok újratöltése", use_container_width=True):
             st.session_state[f"courier_menu_target_{courier_id}"] = "Pénzügy"
+            st.session_state.pop("current_filtered_data", None)
+            st.session_state.pop("current_filtered_context", None)
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
@@ -14603,6 +14605,8 @@ def render_courier_detail_page() -> None:
         if st.button("Frissítés és marad ezen a futáron", key=f"refresh_stay_courier_detail_{courier_id}", help="Adatok újratöltése, ugyanazon a futáron és fülön maradva", use_container_width=True):
             current_menu = str(st.session_state.get(f"courier_menu_{courier_id}") or "Pénzügy")
             st.session_state[f"courier_menu_target_{courier_id}"] = current_menu
+            st.session_state.pop("current_filtered_data", None)
+            st.session_state.pop("current_filtered_context", None)
             refresh_settlement_profile_data()
             st.session_state["selected_courier_id"] = courier_id
             st.rerun()
@@ -14715,14 +14719,23 @@ def render_courier_detail_page() -> None:
             menu_target_key=menu_target_key,
         )
         return
+    heavy_finance_menus = {"Pénzügy", "Kifizetés", "Fizetés előleg", "Bónusz", "Málusz"}
+    quality_menus = {"Pénzügy", "Statisztika", "Útvonalak"}
+    needs_finance_adjustments = selected_menu_hint in heavy_finance_menus
+    needs_quality_data = selected_menu_hint in quality_menus
     route_detail = pd.DataFrame()
     route_breakdown = summarize_courier_route_detail(route_detail)
     reserve_status = load_target_reserve_status(courier_id, courier_name)
     profile = load_courier_profile(courier_id)
     summary_row = load_courier_settlement_summary_row(session_id, courier_id, courier_name, period_start)
     summary_available = not summary_row.empty if isinstance(summary_row, pd.Series) else bool(summary_row)
-    profile_adjustments = load_courier_adjustments(courier_id, period_start, period_end)
-    profile_adjustments = deduplicate_adjustments_for_calculation(profile_adjustments)
+    profile_adjustments = (
+        load_courier_adjustments(courier_id, period_start, period_end)
+        if needs_finance_adjustments
+        else pd.DataFrame(columns=["adjustment_type", "amount_huf"])
+    )
+    if needs_finance_adjustments:
+        profile_adjustments = deduplicate_adjustments_for_calculation(profile_adjustments)
     profile_adjustment_totals = (
         profile_adjustments.groupby("adjustment_type")["amount_huf"].sum().to_dict()
         if not profile_adjustments.empty else {}
@@ -14896,7 +14909,11 @@ def render_courier_detail_page() -> None:
                 contractor_received_total = float(_numeric_series(api_match, "Alvállalkozói összeg").sum())
     delay_total = settlement_amount("delay_bonus_huf")
     compliance_total = settlement_amount("compliance_bonus_huf")
-    dsp_quality = load_hub_quality_from_raw(courier_id, period_start) or load_dsp_monthly_courier_quality(courier_id, period_start)
+    dsp_quality = (
+        load_hub_quality_from_raw(courier_id, period_start) or load_dsp_monthly_courier_quality(courier_id, period_start)
+        if needs_quality_data
+        else {}
+    )
     delay_percent_label = format_percent_value(dsp_quality.get("delay_percent")) if dsp_quality else "-"
     compliance_percent_label = format_percent_value(dsp_quality.get("compliance_score_percent")) if dsp_quality else "-"
     route_quality_bad_label = format_percent_value(dsp_quality.get("route_quality_bad_percent")) if dsp_quality else "-"
@@ -21637,6 +21654,29 @@ def show_new_settlement_page() -> None:
             import_session_id = api_session_id
     if str(selected_calculation_mode or "").strip() in {"API", "Excel"} and import_session_id:
         st.session_state["settlement_import_session_id"] = import_session_id
+    selected_branch_label = st.session_state.get("new_branch", "Összes")
+    selected_status_label = st.session_state.get("new_status", "Összes")
+    selected_search_text = st.session_state.get("new_search", "")
+    selected_workflow_filter = st.session_state.get("dashboard_status_filter", "")
+    current_data_context = "|".join([
+        str(selected_month_label or ""),
+        str(selected_calculation_mode or ""),
+        str(selected_warehouse_label or ""),
+        str(selected_branch_label or ""),
+        str(selected_status_label or ""),
+        str(selected_search_text or ""),
+        str(selected_workflow_filter or ""),
+        str(import_session_id or ""),
+    ])
+    cached_detail_data = st.session_state.get("current_filtered_data")
+    if (
+        st.session_state.get("selected_courier_id")
+        and isinstance(cached_detail_data, pd.DataFrame)
+        and not cached_detail_data.empty
+        and st.session_state.get("current_filtered_context") == current_data_context
+    ):
+        render_courier_detail_page()
+        return
     loading_panel = st.empty()
     with loading_panel.container(border=True):
         st.markdown("#### Elszámolási adatok betöltése")
@@ -22216,7 +22256,18 @@ def show_new_settlement_page() -> None:
             .drop(columns=["_payable_sort"])
         )
 
+    filtered_context = "|".join([
+        str(selected_month or ""),
+        str(calculation_mode or ""),
+        str(warehouse or ""),
+        str(branch or ""),
+        str(status or ""),
+        str(search or ""),
+        str(active_workflow_filter or ""),
+        str(import_session_id or ""),
+    ])
     st.session_state["current_filtered_data"]=filtered.copy()
+    st.session_state["current_filtered_context"] = filtered_context
 
     if st.session_state.get("selected_courier_id"):
         render_courier_detail_page()
