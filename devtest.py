@@ -5183,6 +5183,7 @@ def calculate_target_reserve_month(
     reserve_status: dict[str, object],
     payable_before_insurance: float,
     period_start: date | None = None,
+    courier_id: str | None = None,
 ) -> dict[str, object]:
     reserve_row = reserve_status.get("row") or {}
     insurance_active_before = bool(reserve_status.get("insurance_active"))
@@ -5190,9 +5191,7 @@ def calculate_target_reserve_month(
     reserve_target = parse_huf_value(rule.get("reserve_target_huf")) or RESERVE_TARGET_HUF
     reserve_rate = (parse_huf_value(rule.get("deduction_percent")) / 100.0) if rule else RESERVE_RATE
     insurance_fee_rule = parse_huf_value(rule.get("insurance_fee_huf")) if rule else INSURANCE_FEE_HUF
-    reserve_before = reserve_row_amount(reserve_row, "current_reserve_huf")
-    if reserve_before == 0:
-        reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
+    reserve_before = resolve_target_reserve_opening_balance(courier_id, period_start, reserve_row)
 
     should_top_up_reserve = insurance_active_before and reserve_target > 0
     calculated_addition = round(max(float(payable_before_insurance), 0.0) * reserve_rate) if should_top_up_reserve else 0
@@ -5213,6 +5212,21 @@ def calculate_target_reserve_month(
     }
 
 
+def resolve_target_reserve_opening_balance(
+    courier_id: str | None,
+    period_start: date | None,
+    reserve_row: dict[str, object],
+) -> float:
+    if courier_id and period_start:
+        previous_month = load_previous_target_reserve_monthly(courier_id, period_start)
+        if previous_month and previous_month.get("reserve_after_huf") is not None:
+            return parse_huf_value(previous_month.get("reserve_after_huf"))
+    reserve_before = reserve_row_amount(reserve_row, "current_reserve_huf")
+    if reserve_before == 0:
+        reserve_before = reserve_row_amount(reserve_row, "CT_Z_FT")
+    return reserve_before
+
+
 @st.cache_data(show_spinner=False, ttl=30)
 def load_target_reserve_monthly(courier_id: str, period_start: date, period_end: date) -> dict[str, object]:
     try:
@@ -5221,6 +5235,32 @@ def load_target_reserve_monthly(courier_id: str, period_start: date, period_end:
                 .eq("period_start", period_start.isoformat())
                 .eq("period_end", period_end.isoformat())
                 .limit(1).execute().data or [])
+        return rows[0] if rows else {}
+    except BaseException:
+        return {}
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def load_previous_target_reserve_monthly(courier_id: str, period_start: date) -> dict[str, object]:
+    def _query(status: str | None = None) -> list[dict[str, object]]:
+        query = (
+            get_db()
+            .schema("settlement")
+            .table("courier_target_reserve_monthly")
+            .select("*")
+            .eq("courier_id", courier_id)
+            .lt("period_start", period_start.isoformat())
+            .order("period_start", desc=True)
+            .limit(1)
+        )
+        if status:
+            query = query.eq("status", status)
+        return query.execute().data or []
+
+    try:
+        rows = _query("done")
+        if not rows:
+            rows = _query()
         return rows[0] if rows else {}
     except BaseException:
         return {}
@@ -5272,6 +5312,7 @@ def save_target_reserve_monthly(
             on_conflict="courier_id,period_start,period_end",
         ).execute()
         load_target_reserve_monthly.clear()
+        load_previous_target_reserve_monthly.clear()
         load_target_reserve_monthly_bulk.clear()
     except BaseException:
         pass
@@ -5312,6 +5353,7 @@ def close_target_reserve_month(
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
+    load_previous_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
 
 
@@ -6183,6 +6225,7 @@ def reopen_target_reserve_month(courier_id: str, period_start: date, period_end:
     }).eq("courier_ID", courier_id).execute()
     load_target_reserve_status.clear()
     load_target_reserve_monthly.clear()
+    load_previous_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
 
 
@@ -6973,7 +7016,6 @@ def resolve_target_reserve_month(
     reserve_status: dict[str, object],
     payable_before_insurance: float,
 ) -> dict[str, object]:
-    calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start)
     saved = load_target_reserve_monthly(courier_id, period_start, period_end)
     if saved.get("status") == "done":
         return {
@@ -6987,6 +7029,7 @@ def resolve_target_reserve_month(
             "insurance_active_after": bool(saved.get("insurance_active_after")),
             "status": "done",
         }
+    calculation = calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start, courier_id)
     save_target_reserve_monthly(session_id, courier_id, period_start, period_end, calculation)
     return {**calculation, "status": "in_progress"}
 
@@ -8838,7 +8881,10 @@ def apply_target_reserve_deductions(
                 "status": "done",
             }
         else:
-            reserve_month = {**calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start), "status": "preview"}
+            reserve_month = {
+                **calculate_target_reserve_month(reserve_status, payable_before_insurance, period_start, courier_id),
+                "status": "preview",
+            }
         reserve_addition = parse_huf_value(reserve_month.get("reserve_addition_huf"))
         insurance_fee = parse_huf_value(reserve_month.get("insurance_fee_huf"))
         reserve_values.append(reserve_addition)
@@ -13498,6 +13544,7 @@ def refresh_settlement_profile_data() -> None:
     load_courier_adjustment_log.clear()
     load_monthly_adjustment_totals.clear()
     load_target_reserve_monthly.clear()
+    load_previous_target_reserve_monthly.clear()
     load_target_reserve_monthly_bulk.clear()
     load_courier_monthly_closure.clear()
     load_salary_advance_installments_for_month.clear()
