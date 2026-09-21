@@ -103,6 +103,7 @@ jobs:
           fi
 
       - name: Sync Courier Hub master roster
+        continue-on-error: true
         shell: bash
         run: |
           ROSTER_DATE="$(TZ=Europe/Budapest date +%F)"
@@ -240,6 +241,17 @@ jobs:
 
           if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
             CMD+=(--apply)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Build PWA Courier Hub route statistics
+        shell: bash
+        run: |
+          CMD=(python scripts/build_courier_hub_statistics.py --year "${{ steps.period.outputs.year }}" --month "${{ steps.period.outputs.month }}" --skip-google-routes)
+
+          if [ "${{ steps.period.outputs.dry_run }}" != "true" ]; then
+            CMD+=(--apply --replace-period)
           fi
 
           "${CMD[@]}"
