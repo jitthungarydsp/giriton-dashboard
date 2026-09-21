@@ -58,6 +58,8 @@ jobs:
       GIRITON_ATTENDANCE_UIDL_CURL: ${{ secrets.GIRITON_ATTENDANCE_UIDL_CURL }}
       GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON }}
       GIRITON_ATTENDANCE_UIDL_REQUEST_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_REQUEST_JSON }}
+      CHROME_BIN: /usr/bin/google-chrome
+      CHROMEDRIVER_PATH: /usr/bin/chromedriver
 
     steps:
       - name: Checkout

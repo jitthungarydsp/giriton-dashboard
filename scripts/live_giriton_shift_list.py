@@ -6,6 +6,8 @@ import copy
 import csv
 import json
 import os
+import platform
+import shutil
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import re
@@ -66,6 +68,16 @@ def parse_month(value: str) -> tuple[date, int]:
 
 def chrome_options(headed: bool) -> Options:
     options = Options()
+    chrome_binary = clean(
+        os.getenv("CHROME_BIN")
+        or os.getenv("GOOGLE_CHROME_BIN")
+        or shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+        or shutil.which("chromium")
+        or shutil.which("chromium-browser")
+    )
+    if chrome_binary:
+        options.binary_location = chrome_binary
     if not headed:
         options.add_argument("--headless=new")
     options.add_argument("--window-size=1920,1080")
@@ -77,6 +89,9 @@ def chrome_options(headed: bool) -> Options:
 
 
 def remove_path_chromedrivers() -> None:
+    if platform.system().lower() != "windows":
+        return
+
     path_parts = os.environ.get("PATH", "").split(os.pathsep)
     kept_parts = []
     removed_parts = []
@@ -98,9 +113,17 @@ def remove_path_chromedrivers() -> None:
 
 def create_driver(headed: bool, chromedriver: str = ""):
     options = chrome_options(headed)
-    if clean(chromedriver):
+    chromedriver_path = clean(
+        chromedriver
+        or os.getenv("CHROMEDRIVER")
+        or os.getenv("CHROMEDRIVER_PATH")
+    )
+    if not chromedriver_path and platform.system().lower() != "windows":
+        chromedriver_path = clean(shutil.which("chromedriver") or "")
+
+    if chromedriver_path:
         driver = webdriver.Chrome(
-            service=Service(executable_path=chromedriver),
+            service=Service(executable_path=chromedriver_path),
             options=options,
         )
     else:
