@@ -526,6 +526,47 @@ def require_coordinator(user: dict[str, Any]) -> dict[str, Any]:
     return user
 
 
+def coordinator_warehouse_ids(user: dict[str, Any]) -> list[int]:
+    role = str(user.get("role") or "").strip().lower()
+    if role != "coordinator":
+        return [1, 2]
+    courier_id = safe_int(user.get("courierId") or user.get("courier_id"))
+    if courier_id == 1002:
+        return [2]
+    if courier_id in {1000, 1001}:
+        return [1]
+    return [1, 2]
+
+
+def warehouse_allowed(value: Any, allowed_warehouse_ids: list[int] | None) -> bool:
+    if not allowed_warehouse_ids:
+        return True
+    warehouse_id = warehouse_id_for_hub(value)
+    return bool(warehouse_id and warehouse_id in allowed_warehouse_ids)
+
+
+def courier_ids_for_warehouses(warehouse_ids: list[int] | None) -> set[str]:
+    if not warehouse_ids:
+        return set()
+    try:
+        rows = optional_supabase_rows(
+            "courier_hub_master_latest",
+            params={
+                "select": "courier_id,warehouse_id",
+                "warehouse_id": f"in.({','.join(str(int(item)) for item in warehouse_ids)})",
+                "limit": "10000",
+            },
+            timeout=20,
+        )
+    except Exception:
+        rows = []
+    return {
+        str(row.get("courier_id") or "").strip()
+        for row in rows
+        if str(row.get("courier_id") or "").strip()
+    }
+
+
 COORDINATOR_ITEM_TABLES = {
     "bonus": "cfg_coordinator_bonus_items",
     "malus": "cfg_coordinator_malus_items",
@@ -3687,7 +3728,7 @@ def read_dsp_live_ops_couriers(
     return sorted(couriers, key=lambda item: (item.get("warehouse") or "", item.get("courierName") or ""))
 
 
-def read_coordinator_live_map() -> dict[str, Any]:
+def read_coordinator_live_map(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     courier_rows = latest_today_live_map_courier_rows()
     stop_rows = latest_today_live_map_stop_rows()
     checkins_by_courier = latest_today_shift_checkins()
@@ -3700,9 +3741,20 @@ def read_coordinator_live_map() -> dict[str, Any]:
         live_ops_courier_payload(row, stop_rows_by_courier, checkins_by_courier)
         for row in courier_rows
     ]
+    had_courier_hub_rows = bool(couriers)
+    if warehouse_ids:
+        couriers = [
+            item for item in couriers
+            if warehouse_allowed(item.get("warehouseId") or item.get("warehouse"), warehouse_ids)
+        ]
     source = "courier_hub_live_map"
-    if not couriers:
+    if not couriers and not had_courier_hub_rows:
         couriers = read_dsp_live_ops_couriers(checkins_by_courier)
+        if warehouse_ids:
+            couriers = [
+                item for item in couriers
+                if warehouse_allowed(item.get("warehouseId") or item.get("warehouse"), warehouse_ids)
+            ]
         source = "dsp_drivers_live_raw"
     active_couriers = [
         item for item in couriers
@@ -3726,6 +3778,134 @@ def read_coordinator_live_map() -> dict[str, Any]:
         "source": source,
         "summary": summary,
         "couriers": sorted(couriers, key=lambda item: (item.get("warehouse") or "", item.get("courierName") or "")),
+    }
+
+
+def courier_hub_departure_dashboard_url(warehouse_id: int) -> str:
+    return (
+        f"{COURIER_HUB_BASE_URL}/external/warehouses/{int(warehouse_id)}"
+        f"/dsps/{COURIER_HUB_DSP_ID}/departure-dashboard"
+    )
+
+
+def read_courier_hub_departure_dashboard(warehouse_id: int) -> dict[str, Any]:
+    headers = courier_hub_header_config()
+    if "Authorization" not in headers and "Cookie" not in headers and "apikey" not in headers:
+        raise RuntimeError("Courier Hub auth nincs beállítva.")
+    response = requests.get(courier_hub_departure_dashboard_url(warehouse_id), headers=headers, timeout=30)
+    if response.status_code >= 400:
+        raise RuntimeError(f"BUD{warehouse_id}: HTTP {response.status_code}: {response.text[:500]}")
+    payload = response.json()
+    return payload if isinstance(payload, dict) else {"routes": payload if isinstance(payload, list) else []}
+
+
+def departure_helper_temperature(row: dict[str, Any]) -> dict[str, Any]:
+    temperature = row.get("temperature") if isinstance(row.get("temperature"), dict) else {}
+    return {
+        "value": safe_float_value(temperature.get("temperature")),
+        "compliant": bool(temperature.get("compliant")) if "compliant" in temperature else None,
+        "measuredAt": iso_local_text(temperature.get("lastMeasurementTimestamp")),
+    }
+
+
+def departure_helper_trolleys(row: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for kind, label in (("dryCarriageAndParking", "Száraz"), ("cooledCarriageAndParking", "Hűtött")):
+        values = row.get(kind)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "type": label,
+                "trolley": str(item.get("trolleyEan") or ""),
+                "parking": str(item.get("parkingSpotEan") or ""),
+                "color": str(item.get("parkingSpotColor") or ""),
+            })
+    return result
+
+
+def departure_helper_route_payload(row: dict[str, Any], warehouse_id: int) -> dict[str, Any]:
+    minutes_to_loading = safe_int(row.get("minutesToLoading"))
+    minutes_to_departure = safe_int(row.get("minutesToDeparture"))
+    platform = str(row.get("platformSectionMark") or "").strip()
+    departed = bool(row.get("warehouseDepartureReal"))
+    on_ramp = bool(platform) and not departed and minutes_to_loading <= 0
+    waiting = not departed and not on_ramp
+    orders = safe_int(row.get("ordersInRoute"))
+    not_scanned_orders = safe_int(row.get("notScannedOrders"))
+    not_scanned_bags = safe_int(row.get("notScannedBagEans"))
+    missing_bags = safe_int(row.get("missingBags"))
+    return {
+        "courierId": str(row.get("courierId") or row.get("courier_id") or ""),
+        "courierName": str(row.get("courierName") or row.get("name") or "Futár"),
+        "routeId": str(row.get("routeId") or row.get("route_id") or ""),
+        "warehouse": f"BUD{warehouse_id}",
+        "warehouseId": warehouse_id,
+        "licencePlate": str(row.get("licencePlate") or row.get("licensePlate") or ""),
+        "platformSectionMark": platform,
+        "ordersInRoute": orders,
+        "notScannedOrders": not_scanned_orders,
+        "notScannedBagEans": not_scanned_bags,
+        "missingBags": missing_bags,
+        "minutesToDeparture": minutes_to_departure,
+        "minutesToLoading": minutes_to_loading,
+        "alertLevel": str(row.get("alertLevel") or ""),
+        "departedStayingAtWarehouse": bool(row.get("departedStayingAtWarehouse")),
+        "warehouseDepartureReal": iso_local_text(row.get("warehouseDepartureReal")),
+        "statusGroup": "ramp" if on_ramp else "waiting" if waiting else "departed",
+        "statusLabel": "Rámpán" if on_ramp else "Várakozik" if waiting else "Elindult",
+        "scanReady": not_scanned_orders <= 0 and not_scanned_bags <= 0 and missing_bags <= 0,
+        "temperature": departure_helper_temperature(row),
+        "trolleys": departure_helper_trolleys(row),
+    }
+
+
+def departure_helper_routes_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict) and isinstance(payload.get("routes"), list):
+        return [item for item in payload.get("routes") if isinstance(item, dict)]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+def read_departure_helper(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
+    routes: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for warehouse_id in (warehouse_ids or [1, 2]):
+        try:
+            payload = read_courier_hub_departure_dashboard(warehouse_id)
+            raw_routes = departure_helper_routes_from_payload(payload)
+            routes.extend(
+                departure_helper_route_payload(row, warehouse_id)
+                for row in raw_routes
+                if isinstance(row, dict)
+            )
+        except Exception as exc:
+            errors.append(str(exc))
+    routes = sorted(
+        routes,
+        key=lambda item: (
+            item.get("statusGroup") != "ramp",
+            safe_int(item.get("minutesToLoading")),
+            safe_int(item.get("minutesToDeparture")),
+            item.get("warehouse") or "",
+            item.get("courierName") or "",
+        ),
+    )
+    return {
+        "date": datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "total": len(routes),
+            "onRamp": len([item for item in routes if item.get("statusGroup") == "ramp"]),
+            "waiting": len([item for item in routes if item.get("statusGroup") == "waiting"]),
+            "notReady": len([item for item in routes if not item.get("scanReady")]),
+            "orders": sum(safe_int(item.get("ordersInRoute")) for item in routes),
+        },
+        "routes": routes,
+        "errors": errors,
     }
 
 
@@ -4216,7 +4396,7 @@ def attach_schedule_vehicles(workers: list[dict[str, Any]], start: date, end: da
         )
 
 
-def read_coordinator_schedule(month: str) -> dict[str, Any]:
+def read_coordinator_schedule(month: str, warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     start = parse_month(month or datetime.now(LOCAL_TIMEZONE).date().isoformat()[:7])
     end = month_end(start)
     comparison_rows = read_schedule_comparison_rows(start, end)
@@ -4270,7 +4450,10 @@ def read_coordinator_schedule(month: str) -> dict[str, Any]:
             workers_by_key[key] = worker
 
     workers = sorted(
-        workers_by_key.values(),
+        [
+            worker for worker in workers_by_key.values()
+            if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
+        ],
         key=lambda item: (item.get("date") or "", item.get("start") or "99:99", item.get("courierName") or ""),
     )
     attach_schedule_vehicles(workers, start, end)
@@ -4407,19 +4590,24 @@ def today_worker_shift_payload(worker: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def read_today_workers() -> dict[str, Any]:
+def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     target_date = datetime.now(LOCAL_TIMEZONE).date()
     target_key = target_date.isoformat()
-    live_map = read_coordinator_live_map()
+    live_map = read_coordinator_live_map(warehouse_ids)
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
     checkins_by_courier = latest_today_shift_checkins()
     comparison_rows = read_schedule_comparison_rows(target_date, target_date)
     if comparison_rows:
         scheduled_workers = [schedule_worker_from_comparison(row) for row in comparison_rows]
+        if warehouse_ids:
+            scheduled_workers = [
+                worker for worker in scheduled_workers
+                if warehouse_allowed(worker.get("warehouse"), warehouse_ids)
+            ]
         attach_schedule_vehicles(scheduled_workers, target_date, target_date)
         attach_giriton_attendance_logins(scheduled_workers, target_date, target_date)
     else:
-        schedule = read_coordinator_schedule(target_key[:7])
+        schedule = read_coordinator_schedule(target_key[:7], warehouse_ids)
         today_schedule = next(
             (day for day in schedule.get("days", []) if day.get("date") == target_key),
             {"workers": []},
@@ -14527,7 +14715,15 @@ def coordinator_live_map(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
-    return read_coordinator_live_map()
+    return read_coordinator_live_map(coordinator_warehouse_ids(user))
+
+
+@app.get("/api/coordinator/departure-helper")
+def coordinator_departure_helper(
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_coordinator(require_user(giriton_pwa_session))
+    return read_departure_helper(coordinator_warehouse_ids(user))
 
 
 @app.get("/api/coordinator/today-workers")
@@ -14536,7 +14732,7 @@ def coordinator_today_workers(
 ):
     user = require_coordinator(require_user(giriton_pwa_session))
     try:
-        return read_today_workers()
+        return read_today_workers(coordinator_warehouse_ids(user))
     except Exception as exc:
         print("Coordinator today workers failed:", exc)
         return empty_today_workers_payload(exc)
@@ -14550,7 +14746,7 @@ def coordinator_schedule(
     user = require_coordinator(require_user(giriton_pwa_session))
     selected_month = month or datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m")
     try:
-        return read_coordinator_schedule(selected_month)
+        return read_coordinator_schedule(selected_month, coordinator_warehouse_ids(user))
     except Exception as exc:
         print("Coordinator schedule failed:", exc)
         return empty_coordinator_schedule_payload(selected_month, exc)
@@ -15577,7 +15773,8 @@ async def submit_invoice(
     }
 
 
-def coordinator_adjustment_setup() -> dict[str, Any]:
+def coordinator_adjustment_setup(user: dict[str, Any] | None = None) -> dict[str, Any]:
+    allowed_ids = courier_ids_for_warehouses(coordinator_warehouse_ids(user or {})) if user else set()
     couriers = supabase_rest(
         "GET",
         "courier_master",
@@ -15592,6 +15789,7 @@ def coordinator_adjustment_setup() -> dict[str, Any]:
         if str(row.get("courier_id") or "").strip()
         and str(row.get("courier_name") or "").strip()
         and row.get("active") is not False
+        and (not allowed_ids or str(row.get("courier_id") or "").strip() in allowed_ids)
     ]
     result: dict[str, Any] = {"couriers": couriers, "items": {}, "entries": {}}
     for kind in ("bonus", "malus"):
@@ -15617,6 +15815,11 @@ def coordinator_adjustment_setup() -> dict[str, Any]:
                 "limit": "150",
             },
         )
+        if allowed_ids:
+            result["entries"][kind] = [
+                row for row in result["entries"][kind]
+                if str(row.get("courier_id") or "").strip() in allowed_ids
+            ]
     return result
 
 
@@ -15624,8 +15827,8 @@ def coordinator_adjustment_setup() -> dict[str, Any]:
 def get_coordinator_adjustments(
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
-    require_coordinator(require_user(giriton_pwa_session))
-    return coordinator_adjustment_setup()
+    user = require_coordinator(require_user(giriton_pwa_session))
+    return coordinator_adjustment_setup(user)
 
 
 @app.post("/api/coordinator-adjustments")
@@ -15656,6 +15859,9 @@ def add_coordinator_adjustment(
     )
     if not courier_rows:
         raise HTTPException(status_code=404, detail="A kiválasztott futár nem található.")
+    allowed_ids = courier_ids_for_warehouses(coordinator_warehouse_ids(user))
+    if allowed_ids and str(payload.courier_id).strip() not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Ez a futár nem a coordinator raktárához tartozik.")
     item_rows = supabase_rest(
         "GET",
         item_table,
@@ -15686,7 +15892,7 @@ def add_coordinator_adjustment(
         },
         prefer="return=representation",
     )
-    return {"entry": rows[0] if rows else {}, "setup": coordinator_adjustment_setup()}
+    return {"entry": rows[0] if rows else {}, "setup": coordinator_adjustment_setup(user)}
 
 
 @app.post("/api/coordinator-adjustments/{kind}/{entry_id}/delete")
@@ -15701,6 +15907,21 @@ def delete_coordinator_adjustment(
     if not reason:
         raise HTTPException(status_code=422, detail="A visszavonás indoklása kötelező.")
     entry_table = coordinator_table(COORDINATOR_ENTRY_TABLES, kind)
+    entry_rows = supabase_rest(
+        "GET",
+        entry_table,
+        params={
+            "select": "id,courier_id",
+            "id": f"eq.{entry_id}",
+            "deleted_at": "is.null",
+            "limit": "1",
+        },
+    )
+    if not entry_rows:
+        raise HTTPException(status_code=404, detail="A tétel nem található vagy már törölve van.")
+    allowed_ids = courier_ids_for_warehouses(coordinator_warehouse_ids(user))
+    if allowed_ids and str(entry_rows[0].get("courier_id") or "").strip() not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Ez a tétel nem a coordinator raktárához tartozik.")
     supabase_rest(
         "PATCH",
         entry_table,
@@ -15712,7 +15933,7 @@ def delete_coordinator_adjustment(
         },
         prefer="return=minimal",
     )
-    return {"ok": True, "setup": coordinator_adjustment_setup()}
+    return {"ok": True, "setup": coordinator_adjustment_setup(user)}
 
 
 @app.get("/api/salary-advance/requests")

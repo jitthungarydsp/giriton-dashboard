@@ -249,6 +249,19 @@ textarea { min-height: 96px; resize: vertical; }
 .worker-shift-row strong { display: block; margin-top: 4px; font-size: 16px; overflow-wrap: anywhere; }
 .worker-shift-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
 .worker-shift-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 230px; }
+.departure-group { display: grid; gap: 10px; }
+.departure-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; }
+.departure-group-head h3 { margin: 0; font-size: 19px; }
+.departure-group-head span { color: var(--muted); font-size: 12px; font-weight: 850; }
+.departure-card { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.departure-card.attention { border-color: #e0a39e; background: #fff8f7; }
+.departure-card.warning { border-color: #eed29b; background: #fffaf0; }
+.departure-main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.departure-main div { min-width: 0; padding: 11px; border: 1px solid #dfe7dc; border-radius: 14px; background: #f8fbf5; }
+.departure-main span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.departure-main strong { display: block; margin-top: 6px; font-size: 15px; overflow-wrap: anywhere; }
+.departure-main small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+.departure-trolleys { margin: 0; color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.45; overflow-wrap: anywhere; }
 .ops-progress-bar { height: 11px; overflow: hidden; border-radius: 999px; background: #dfe7dc; }
 .ops-progress-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-dark), var(--green)); }
 .ops-map-link { color: var(--green-dark); font-weight: 950; text-decoration: none; }
@@ -270,6 +283,37 @@ textarea { min-height: 96px; resize: vertical; }
 .schedule-chip.ok { background: #e2f2df; color: var(--green-dark); }
 .schedule-chip.missing { background: #fff0ef; color: #b93c33; }
 .schedule-chip.unknown { background: #eef1eb; color: var(--muted); }
+.coordinator-mobile-head { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.coordinator-mobile-head h2 { margin: 0; font-size: 28px; letter-spacing: 0; }
+.coordinator-mobile-head .muted { margin: 4px 0 0; }
+.coordinator-mode-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 4px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; }
+.coordinator-mode-tabs button { flex: 0 0 auto; min-height: 42px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 900; white-space: nowrap; }
+.coordinator-mode-tabs button.active { background: var(--ink); color: #fff; }
+.coordinator-hero { display: grid; gap: 7px; padding: 16px; border: 1px solid #b8d5b4; border-radius: 18px; background: #eff8ed; box-shadow: 0 7px 20px #3141340a; }
+.coordinator-hero.danger { border-color: #e0a39e; background: #fff8f7; }
+.coordinator-hero span { color: var(--green-dark); font-size: 11px; font-weight: 950; text-transform: uppercase; }
+.coordinator-hero.danger span { color: #b93c33; }
+.coordinator-hero strong { font-size: 30px; line-height: 1; }
+.coordinator-hero p { margin: 0; color: var(--muted); font-size: 13px; font-weight: 750; line-height: 1.4; }
+.coordinator-task-list { display: grid; gap: 10px; }
+.coordinator-task { border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 7px 20px #3141340a; overflow: hidden; }
+.coordinator-task.red { border-color: #e0a39e; background: #fff8f7; }
+.coordinator-task.amber { border-color: #eed29b; background: #fffaf0; }
+.coordinator-task summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; min-height: 92px; padding: 14px; list-style: none; cursor: pointer; }
+.coordinator-task summary::-webkit-details-marker { display: none; }
+.coordinator-task summary strong { display: block; font-size: 17px; overflow-wrap: anywhere; }
+.coordinator-task summary small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 760; line-height: 1.35; }
+.coordinator-task summary p { margin: 8px 0 0; color: var(--ink); font-size: 13px; font-weight: 850; line-height: 1.35; overflow-wrap: anywhere; }
+.coordinator-task-time { min-width: 62px; text-align: right; }
+.coordinator-task-time strong { font-size: 18px !important; }
+.coordinator-task-time small { font-size: 11px !important; font-weight: 850 !important; }
+.coordinator-task-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.coordinator-task-badge { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border-radius: 999px; background: #eef1eb; color: var(--muted); font-size: 11px; font-weight: 920; }
+.coordinator-task-badge.red { background: #fff0ef; color: #b93c33; }
+.coordinator-task-badge.amber { background: #fff1cc; color: var(--warning); }
+.coordinator-task-badge.green { background: #e2f2df; color: var(--green-dark); }
+.coordinator-task-badge.blue { background: #e9f1ff; color: #235fce; }
+.coordinator-task-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 14px; }
 .process-title { display: flex; align-items: flex-start; gap: 12px; }
 .process-title h3 { margin: 2px 0 4px; font-size: 20px; }
 .process-title p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -647,6 +691,8 @@ textarea { min-height: 96px; resize: vertical; }
   .worker-shift-dialog { width: calc(100vw - 24px); }
   .worker-shift-row { grid-template-columns: 1fr; }
   .worker-shift-status { justify-content: flex-start; max-width: none; }
+  .departure-main { grid-template-columns: 1fr; }
+  .departure-group-head { align-items: flex-start; }
   .schedule-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }
