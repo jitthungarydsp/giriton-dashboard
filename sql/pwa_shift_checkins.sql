@@ -11,7 +11,15 @@ create table if not exists public.courier_shift_checkins (
     shift_name text,
     booking_code text,
     event_type text not null default 'queued'
-        check (event_type in ('queued', 'returned', 'shift_late')),
+        check (event_type in (
+            'queued',
+            'returned',
+            'shift_late',
+            'coordinator_shift_late',
+            'coordinator_vehicle_fault',
+            'coordinator_waiting_for_car',
+            'coordinator_other'
+        )),
     created_at timestamptz not null default now()
 );
 
@@ -20,7 +28,15 @@ alter table public.courier_shift_checkins
 
 alter table public.courier_shift_checkins
     add constraint courier_shift_checkins_event_type_check
-    check (event_type in ('queued', 'returned', 'shift_late'));
+    check (event_type in (
+        'queued',
+        'returned',
+        'shift_late',
+        'coordinator_shift_late',
+        'coordinator_vehicle_fault',
+        'coordinator_waiting_for_car',
+        'coordinator_other'
+    ));
 
 create index if not exists courier_shift_checkins_courier_date_idx
     on public.courier_shift_checkins (courier_id, work_date, created_at desc);

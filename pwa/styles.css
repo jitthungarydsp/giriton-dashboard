@@ -232,9 +232,14 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-detail-tile { width: 100%; color: var(--ink); text-align: left; }
 .ops-detail-tile:hover { border-color: #b8d5b4; background: #eff8ed; }
 .ops-detail-tile:focus-visible { outline: 3px solid #6f9d3d38; outline-offset: 2px; }
+.ops-detail-tile.attention { border-color: #e0a39e; background: #fff0ef; }
 .ops-route-row strong, .ops-detail-grid strong { display: block; margin-top: 6px; font-size: 15px; overflow-wrap: anywhere; }
 .ops-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ops-detail-grid small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+.ops-toolbar { display: grid; gap: 8px; }
+.ops-search { display: grid; gap: 6px; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.ops-search input { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); font-size: 16px; font-weight: 800; text-transform: none; }
+.ops-search input:focus { border-color: var(--green-dark); outline: 3px solid #6f9d3d2e; }
 .worker-shift-dialog { width: min(92vw, 560px); padding: 0; border: 0; border-radius: 24px; background: transparent; }
 .worker-shift-dialog::backdrop { background: rgba(23, 35, 28, .42); backdrop-filter: blur(2px); }
 .worker-shift-dialog-card { display: grid; gap: 14px; padding: 18px; border: 1px solid #cbd8c6; border-radius: 24px; background: var(--surface); box-shadow: 0 24px 70px #08100a42; }

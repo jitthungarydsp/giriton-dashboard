@@ -162,6 +162,19 @@ class ShiftQueueCheckinRequest(BaseModel):
     event_type: str = "queued"
 
 
+class CoordinatorShiftSignalRequest(BaseModel):
+    courier_id: str
+    courier_name: str = ""
+    work_date: str = ""
+    start: str = ""
+    end: str = ""
+    warehouse: str = ""
+    shift_name: str = ""
+    booking_code: str = ""
+    signal_type: str = "coordinator_other"
+    message: str = ""
+
+
 class DailyGameSubmitRequest(BaseModel):
     found_words: list[str] = []
     quiz_answers: dict[str, str] = {}
@@ -3225,10 +3238,27 @@ def latest_today_shift_checkins() -> dict[str, dict[str, Any]]:
         timeout=20,
     )
     latest: dict[str, dict[str, Any]] = {}
+    signal_types = {
+        "shift_late",
+        "coordinator_shift_late",
+        "coordinator_vehicle_fault",
+        "coordinator_waiting_for_car",
+        "coordinator_other",
+    }
     for row in rows:
         courier_id = str(row.get("courier_id") or "").strip()
-        if courier_id and courier_id not in latest:
-            latest[courier_id] = row
+        if not courier_id:
+            continue
+        event_type = str(row.get("event_type") or "").strip()
+        current = latest.setdefault(courier_id, {})
+        if event_type in {"queued", "returned"} and not current.get("event_type"):
+            current.update(row)
+        if event_type in signal_types and not current.get("signalEventType"):
+            current["signalEventType"] = event_type
+            current["signalAt"] = row.get("created_at")
+            current["signalWarehouse"] = row.get("warehouse")
+            current["signalShiftName"] = row.get("shift_name")
+            current["signalBookingCode"] = row.get("booking_code")
     return latest
 
 
@@ -4631,6 +4661,9 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         live_route_id = live.get("activeRouteId") or ""
         live_total_stops = safe_int(live.get("totalStops"))
         live_order_count = safe_int(live.get("totalStops")) or safe_int(live.get("remainingStops")) + safe_int(live.get("deliveredStops"))
+        if shifts:
+            shifts[0]["routeId"] = live_route_id
+            shifts[0]["orderCount"] = live_order_count
         status_label = "Beosztva"
         if live_route_id or live_total_stops or live.get("mapsUrl"):
             status_label = "Live map alapján aktív"
@@ -4666,6 +4699,10 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             "actualStartAt": live.get("activeFrom") or "",
             "queueEvent": str(checkin.get("event_type") or live.get("queueEvent") or ""),
             "queueEventAt": iso_local_text(checkin.get("created_at")) or live.get("queueEventAt") or "",
+            "signalEvent": str(checkin.get("signalEventType") or ""),
+            "signalAt": iso_local_text(checkin.get("signalAt")),
+            "signalText": str(checkin.get("signalShiftName") or ""),
+            "signalMeta": str(checkin.get("signalBookingCode") or ""),
             "vehicle": schedule_worker.get("vehicle") or live.get("vehiclePlate") or "",
             "shifts": shifts,
             "shiftCount": len(shifts),
@@ -4679,7 +4716,13 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
                 "mapsUrl": live.get("mapsUrl") or "",
             },
         })
-    workers = sorted(workers, key=lambda item: (item.get("start") or "99:99", item.get("warehouse") or "", item.get("courierName") or ""))
+    workers = sorted(workers, key=lambda item: (
+        0 if item.get("signalEvent") else 1,
+        0 if item.get("giritonLoginMissingAlert") else 1,
+        item.get("start") or "99:99",
+        item.get("warehouse") or "",
+        item.get("courierName") or "",
+    ))
     return {
         "date": target_key,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -5452,6 +5495,50 @@ def save_shift_queue_checkin(user: dict[str, Any], payload: ShiftQueueCheckinReq
             "shift_name": payload.shift_name.strip(),
             "booking_code": payload.booking_code.strip(),
             "event_type": event_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+
+
+def coordinator_shift_signal_label(signal_type: str) -> str:
+    return {
+        "coordinator_shift_late": "Jelezett műszakkésés",
+        "coordinator_vehicle_fault": "Műszaki hibás autó",
+        "coordinator_waiting_for_car": "Autóra vár",
+        "coordinator_other": "Egyéb hiba",
+    }.get(signal_type, "Egyéb hiba")
+
+
+def save_coordinator_shift_signal(payload: CoordinatorShiftSignalRequest) -> None:
+    courier_id = str(payload.courier_id or "").strip()
+    if not courier_id.isdigit():
+        raise HTTPException(status_code=422, detail="Hiányzik a futár azonosító.")
+    signal_type = str(payload.signal_type or "coordinator_other").strip()
+    allowed_types = {
+        "coordinator_shift_late",
+        "coordinator_vehicle_fault",
+        "coordinator_waiting_for_car",
+        "coordinator_other",
+    }
+    if signal_type not in allowed_types:
+        raise HTTPException(status_code=422, detail="Ismeretlen jelzés típus.")
+    label = coordinator_shift_signal_label(signal_type)
+    note = str(payload.message or "").strip()
+    signal_text = f"{label}: {note}" if note else label
+    supabase_rest(
+        "POST",
+        "courier_shift_checkins",
+        payload={
+            "courier_id": int(courier_id),
+            "courier_name": str(payload.courier_name or "Futár").strip() or "Futár",
+            "work_date": str(payload.work_date or "").strip() or date.today().isoformat(),
+            "start_time": str(payload.start or "").strip(),
+            "end_time": str(payload.end or "").strip(),
+            "warehouse": normalize_warehouse(payload.warehouse) or str(payload.warehouse or "").strip(),
+            "shift_name": signal_text,
+            "booking_code": str(payload.booking_code or "").strip(),
+            "event_type": signal_type,
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
         prefer="return=minimal",
@@ -14736,6 +14823,16 @@ def coordinator_today_workers(
     except Exception as exc:
         print("Coordinator today workers failed:", exc)
         return empty_today_workers_payload(exc)
+
+
+@app.post("/api/coordinator/today-workers/signal")
+def coordinator_today_worker_signal(
+    payload: CoordinatorShiftSignalRequest,
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    require_coordinator(require_user(giriton_pwa_session))
+    save_coordinator_shift_signal(payload)
+    return {"ok": True}
 
 
 @app.get("/api/coordinator/schedule")
