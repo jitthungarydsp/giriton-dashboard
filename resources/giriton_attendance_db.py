@@ -151,6 +151,77 @@ def _count_stored_rows(supabase_url, service_role_key, work_dates):
     return len(response.json())
 
 
+def _read_existing_rows_for_dates(supabase_url, service_role_key, work_dates):
+    dates = [
+        str(date)
+        for date in sorted(set(work_dates))
+        if str(date).strip()
+    ]
+
+    if not dates:
+        return {}
+
+    date_filter = ",".join(dates)
+    endpoint = (
+        f"{supabase_url}/rest/v1/giriton_attendance_raw"
+        "?select=source_name,work_date,courier_name,checkin_start,checkin_end,raw_details,response_json"
+        f"&source_name=eq.{SOURCE_NAME}"
+        f"&work_date=in.({date_filter})"
+        "&limit=10000"
+    )
+    headers = {
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    response = requests.get(
+        endpoint,
+        headers=headers,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+
+    existing = {}
+    for row in response.json() or []:
+        key = (
+            _clean(row.get("source_name")),
+            _clean(row.get("work_date")),
+            _clean(row.get("courier_name")),
+        )
+        if key[1] and key[2]:
+            existing[key] = row
+    return existing
+
+
+def _preserve_existing_detail_fields(db_rows, existing_rows):
+    detail_fields = ("checkin_start", "checkin_end", "raw_details")
+
+    for row in db_rows:
+        key = (
+            _clean(row.get("source_name")),
+            _clean(row.get("work_date")),
+            _clean(row.get("courier_name")),
+        )
+        existing = existing_rows.get(key) or {}
+        if not existing:
+            continue
+
+        changed = False
+        for field in detail_fields:
+            if row.get(field) in (None, "") and existing.get(field) not in (None, ""):
+                row[field] = existing.get(field)
+                changed = True
+
+        if changed:
+            response_json = row.get("response_json") if isinstance(row.get("response_json"), dict) else {}
+            row["response_json"] = {
+                **response_json,
+                "preserved_existing_details": True,
+                "checkin_start": row.get("checkin_start"),
+                "checkin_end": row.get("checkin_end"),
+                "raw_details": row.get("raw_details"),
+            }
+
+
 def upsert_giriton_attendance_rows(rows):
     db_rows = _build_db_rows(rows)
 
@@ -173,6 +244,13 @@ def upsert_giriton_attendance_rows(rows):
         row.get("work_date")
         for row in db_rows
     ]
+    existing_rows = _read_existing_rows_for_dates(
+        supabase_url,
+        service_role_key,
+        work_dates,
+    )
+    _preserve_existing_detail_fields(db_rows, existing_rows)
+
     endpoint = (
         f"{supabase_url}/rest/v1/giriton_attendance_raw"
         "?on_conflict=source_name,work_date,courier_name"

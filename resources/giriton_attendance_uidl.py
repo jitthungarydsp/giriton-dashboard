@@ -367,6 +367,18 @@ def parse_attendance_uidl_rows(payload: Any, default_work_date: str = "") -> lis
             for shift in planned_shifts
             if clean(shift.get("label"))
         )
+        raw_details = detail.get("raw_details", "")
+        if not clean(raw_details):
+            raw_details = clean(
+                " | ".join(
+                    part
+                    for part in (
+                        f"Shift: {shift_text}" if shift_text else "",
+                        f"Status: {activity}" if activity else "",
+                    )
+                    if part
+                )
+            )
 
         if not courier.get("courier_name"):
             continue
@@ -381,7 +393,7 @@ def parse_attendance_uidl_rows(payload: Any, default_work_date: str = "") -> lis
                 "activity_status": activity,
                 "checkin_start": detail.get("checkin_start", ""),
                 "checkin_end": detail.get("checkin_end", ""),
-                "raw_details": detail.get("raw_details", ""),
+                "raw_details": raw_details,
                 "response_json": {
                     "source": "giriton_attendance_uidl",
                     "grid_key": clean(item.get("k")),

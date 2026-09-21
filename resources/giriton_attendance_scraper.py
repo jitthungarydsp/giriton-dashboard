@@ -712,7 +712,7 @@ def scrape_attendance_rows(work_date):
             if _click_main_row_by_name(display_name):
                 time.sleep(0.8)
 
-            detail = ""
+            detail = _detail_text(display_name)
             start_time, end_time, detail_raw, detail_activity = _parse_detail_entries(
                 detail
             )
