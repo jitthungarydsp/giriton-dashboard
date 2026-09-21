@@ -228,10 +228,27 @@ textarea { min-height: 96px; resize: vertical; }
 .ops-live-map { min-height: 320px; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: #eef3ec; box-shadow: 0 7px 20px #3141340a; }
 .ops-live-map .empty-card, .ops-live-map .notice { height: 100%; min-height: 320px; display: grid; place-items: center; margin: 0; }
 .ops-route-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.ops-route-row div, .ops-detail-grid div { min-width: 0; padding: 11px; border: 1px solid #dfe7dc; border-radius: 14px; background: #f8fbf5; }
+.ops-route-row div, .ops-detail-grid div, .ops-detail-tile { min-width: 0; padding: 11px; border: 1px solid #dfe7dc; border-radius: 14px; background: #f8fbf5; }
+.ops-detail-tile { width: 100%; color: var(--ink); text-align: left; }
+.ops-detail-tile:hover { border-color: #b8d5b4; background: #eff8ed; }
+.ops-detail-tile:focus-visible { outline: 3px solid #6f9d3d38; outline-offset: 2px; }
 .ops-route-row strong, .ops-detail-grid strong { display: block; margin-top: 6px; font-size: 15px; overflow-wrap: anywhere; }
 .ops-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ops-detail-grid small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+.worker-shift-dialog { width: min(92vw, 560px); padding: 0; border: 0; border-radius: 24px; background: transparent; }
+.worker-shift-dialog::backdrop { background: rgba(23, 35, 28, .42); backdrop-filter: blur(2px); }
+.worker-shift-dialog-card { display: grid; gap: 14px; padding: 18px; border: 1px solid #cbd8c6; border-radius: 24px; background: var(--surface); box-shadow: 0 24px 70px #08100a42; }
+.worker-shift-dialog-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.worker-shift-dialog-head span { display: block; color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.worker-shift-dialog-head strong { display: block; margin-top: 4px; font-size: 22px; overflow-wrap: anywhere; }
+.worker-shift-dialog-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; }
+.worker-shift-list { display: grid; gap: 10px; max-height: min(62vh, 520px); overflow: auto; padding-right: 2px; }
+.worker-shift-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 16px; background: #fbfcfa; }
+.worker-shift-row.first { border-color: #9ccc96; background: #f2faef; }
+.worker-shift-row span { color: var(--green-dark); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.worker-shift-row strong { display: block; margin-top: 4px; font-size: 16px; overflow-wrap: anywhere; }
+.worker-shift-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+.worker-shift-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 230px; }
 .ops-progress-bar { height: 11px; overflow: hidden; border-radius: 999px; background: #dfe7dc; }
 .ops-progress-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-dark), var(--green)); }
 .ops-map-link { color: var(--green-dark); font-weight: 950; text-decoration: none; }
@@ -627,6 +644,9 @@ textarea { min-height: 96px; resize: vertical; }
   .ops-summary, .ops-route-row, .ops-detail-grid, .ops-worker-foot { grid-template-columns: 1fr; }
   .ops-card-head { display: grid; }
   .ops-card-head > span { justify-self: start; max-width: none; text-align: left; }
+  .worker-shift-dialog { width: calc(100vw - 24px); }
+  .worker-shift-row { grid-template-columns: 1fr; }
+  .worker-shift-status { justify-content: flex-start; max-width: none; }
   .schedule-day-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tig-row { grid-template-columns: minmax(0, 1fr) 1fr; }
   .tig-party-grid { grid-template-columns: 1fr; }

@@ -4372,6 +4372,41 @@ def today_worker_payload(
     }
 
 
+def today_worker_identity(worker: dict[str, Any]) -> str:
+    return str(worker.get("courierId") or "").strip() or normalize_person_match_text(worker.get("courierName"))
+
+
+def today_worker_shift_sort_key(worker: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(worker.get("start") or "99:99"),
+        str(worker.get("warehouse") or ""),
+        str(worker.get("shiftName") or worker.get("bookingCode") or ""),
+    )
+
+
+def today_worker_shift_payload(worker: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date": str(worker.get("date") or "")[:10],
+        "courierId": str(worker.get("courierId") or ""),
+        "courierName": str(worker.get("courierName") or "Futár"),
+        "start": worker.get("start") or "",
+        "end": worker.get("end") or "",
+        "warehouse": worker.get("warehouse") or "",
+        "shiftName": worker.get("shiftName") or worker.get("bookingCode") or "",
+        "bookingCode": worker.get("bookingCode") or "",
+        "giritonStatus": worker.get("giritonStatus") or "Nincs adat",
+        "giritonTone": worker.get("giritonTone") or "unknown",
+        "muszakproStatus": worker.get("muszakproStatus") or "Nincs adat",
+        "muszakproTone": worker.get("muszakproTone") or "unknown",
+        "hubStatus": worker.get("hubStatus") or "",
+        "hubTone": worker.get("hubTone") or "unknown",
+        "missingSource": worker.get("missingSource") or "",
+        "vehicle": worker.get("vehicle") or "",
+        "source": worker.get("source") or "",
+        "isFirstShift": bool(worker.get("isFirstShift")),
+    }
+
+
 def read_today_workers() -> dict[str, Any]:
     target_date = datetime.now(LOCAL_TIMEZONE).date()
     target_key = target_date.isoformat()
@@ -4391,12 +4426,23 @@ def read_today_workers() -> dict[str, Any]:
         )
         scheduled_workers = today_schedule.get("workers", [])
     workers = []
+    grouped_workers: dict[str, list[dict[str, Any]]] = {}
     for schedule_worker in scheduled_workers:
+        identity = today_worker_identity(schedule_worker)
+        if not identity:
+            identity = f"{schedule_worker.get('courierName') or 'Futár'}-{len(grouped_workers)}"
+        grouped_workers.setdefault(identity, []).append(schedule_worker)
+
+    for identity, schedule_worker_rows in grouped_workers.items():
+        ordered_shifts = sorted(schedule_worker_rows, key=today_worker_shift_sort_key)
+        schedule_worker = ordered_shifts[0]
+        shifts = [today_worker_shift_payload(worker) for worker in ordered_shifts]
         courier_id = str(schedule_worker.get("courierId") or "").strip()
         live = live_by_courier.get(courier_id) or {}
         checkin = checkins_by_courier.get(courier_id) or {}
         live_route_id = live.get("activeRouteId") or ""
         live_total_stops = safe_int(live.get("totalStops"))
+        live_order_count = safe_int(live.get("totalStops")) or safe_int(live.get("remainingStops")) + safe_int(live.get("deliveredStops"))
         status_label = "Beosztva"
         if live_route_id or live_total_stops or live.get("mapsUrl"):
             status_label = "Live map alapján aktív"
@@ -4406,6 +4452,7 @@ def read_today_workers() -> dict[str, Any]:
             status_label = str(schedule_worker.get("missingSource") or "")
         workers.append({
             "date": target_key,
+            "workerKey": identity,
             "courierId": courier_id,
             "courierName": schedule_worker.get("courierName") or live.get("courierName") or "Futár",
             "start": schedule_worker.get("start") or local_iso_time(live.get("activeFrom")),
@@ -4432,10 +4479,13 @@ def read_today_workers() -> dict[str, Any]:
             "queueEvent": str(checkin.get("event_type") or live.get("queueEvent") or ""),
             "queueEventAt": iso_local_text(checkin.get("created_at")) or live.get("queueEventAt") or "",
             "vehicle": schedule_worker.get("vehicle") or live.get("vehiclePlate") or "",
+            "shifts": shifts,
+            "shiftCount": len(shifts),
             "live": {
                 "routeId": live_route_id,
                 "deliveredStops": live.get("deliveredStops") or 0,
                 "totalStops": live_total_stops,
+                "orderCount": live_order_count,
                 "remainingStops": live.get("remainingStops") or 0,
                 "status": live.get("status") or live.get("shiftStatus") or "",
                 "mapsUrl": live.get("mapsUrl") or "",
