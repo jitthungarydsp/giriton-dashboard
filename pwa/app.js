@@ -8,7 +8,6 @@ const state = {
   checkedInvoiceMonth: null,
   currentRoute: null,
   coordinatorSetup: null,
-  coordinatorDashboard: null,
   coordinatorLiveMap: null,
   departureHelper: null,
   coordinatorLeafletMap: null,
@@ -58,7 +57,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v134";
+const APP_VERSION = "v135";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -174,7 +173,6 @@ function currentSectionRefresh() {
   if (state.section === "atm") return loadAtmPayments();
   if (state.section === "expense") return loadExpenseRequests();
   if (state.section === "registration-admin") return loadRegistrationRequests();
-  if (state.section === "coordinator-dashboard") return loadCoordinatorDashboard();
   if (state.section === "coordinator-live") return loadCoordinatorLiveMap();
   if (state.section === "departure-helper") return loadDepartureHelper();
   if (state.section === "today-workers") return loadTodayWorkers();
@@ -371,7 +369,6 @@ function showApp() {
   const role = String(state.user.role || "").toLowerCase();
   const canCoordinate = ["admin", "coordinator"].includes(role);
   $("#nav-coordinator").classList.toggle("hidden", !canCoordinate);
-  $("#nav-coordinator-dashboard").classList.toggle("hidden", !canCoordinate);
   $("#nav-coordinator-live").classList.toggle("hidden", !canCoordinate);
   $("#nav-departure-helper").classList.toggle("hidden", !canCoordinate);
   $("#nav-today-workers").classList.toggle("hidden", !canCoordinate);
@@ -416,7 +413,6 @@ function showSection(section) {
   $("#tours-content").classList.toggle("hidden", section !== "tours");
   $("#game-content").classList.toggle("hidden", section !== "game");
   $("#coordinator-content").classList.toggle("hidden", section !== "coordinator");
-  $("#coordinator-dashboard-content").classList.toggle("hidden", section !== "coordinator-dashboard");
   $("#coordinator-live-content").classList.toggle("hidden", section !== "coordinator-live");
   $("#departure-helper-content").classList.toggle("hidden", section !== "departure-helper");
   $("#today-workers-content").classList.toggle("hidden", section !== "today-workers");
@@ -438,7 +434,6 @@ function showSection(section) {
   $("#nav-tours").classList.toggle("active", section === "tours");
   $("#nav-game").classList.toggle("active", section === "game");
   $("#nav-coordinator").classList.toggle("active", section === "coordinator");
-  $("#nav-coordinator-dashboard").classList.toggle("active", section === "coordinator-dashboard");
   $("#nav-coordinator-live").classList.toggle("active", section === "coordinator-live");
   $("#nav-departure-helper").classList.toggle("active", section === "departure-helper");
   $("#nav-today-workers").classList.toggle("active", section === "today-workers");
@@ -470,7 +465,6 @@ function showSection(section) {
   }
   if (section === "game") loadGame();
   if (section === "coordinator") loadCoordinatorAdjustments();
-  if (section === "coordinator-dashboard") loadCoordinatorDashboard();
   if (section === "coordinator-live") loadCoordinatorLiveMap();
   if (section === "departure-helper") loadDepartureHelper();
   if (section === "today-workers") loadTodayWorkers();
@@ -4908,7 +4902,6 @@ function renderCoordinatorLiveMap() {
   }
   const couriers = sortLiveCouriers(payload.couriers || []);
   target.innerHTML = `
-    ${coordinatorTabs("coordinator-live")}
     ${renderOpsSummary(payload.summary || {}, [
       ["Live futár", payload.summary?.couriers || 0],
       ["Aktív túra", payload.summary?.activeCouriers || 0],
@@ -4940,13 +4933,6 @@ $("#coordinator-live-panel")?.addEventListener("click", (event) => {
   openCourierTours(target.dataset.courierTours);
 });
 
-document.addEventListener("click", (event) => {
-  const target = event.target.closest("[data-coordinator-section]");
-  if (!target) return;
-  event.preventDefault();
-  showSection(target.dataset.coordinatorSection);
-});
-
 async function loadCoordinatorLiveMap() {
   const target = $("#coordinator-live-panel");
   if (target && !state.coordinatorLiveMap) target.innerHTML = `<div class="empty-card">Live map betöltése...</div>`;
@@ -4956,165 +4942,6 @@ async function loadCoordinatorLiveMap() {
   } catch (error) {
     if (target) target.innerHTML = `<div class="notice error">${escapeHtml(error.message)}</div>`;
   }
-}
-
-function coordinatorTabs(active) {
-  const tabs = [
-    ["coordinator-dashboard", "Most"],
-    ["departure-helper", "Indulás"],
-    ["coordinator-live", "Live"],
-    ["today-workers", "Műszak"],
-    ["coordinator-schedule", "Beosztás"],
-  ];
-  return `<nav class="coordinator-mode-tabs" aria-label="Coordinator fülek">
-    ${tabs.map(([section, label]) => `<button class="${active === section ? "active" : ""}" type="button" data-coordinator-section="${section}">${label}</button>`).join("")}
-  </nav>`;
-}
-
-function coordinatorTaskBadge(text, tone = "") {
-  return `<span class="coordinator-task-badge ${escapeHtml(tone)}">${escapeHtml(text)}</span>`;
-}
-
-function departureDashboardTask(item) {
-  if (item.scanReady && item.statusGroup !== "ramp") return null;
-  const title = item.scanReady ? "Pakolás figyelése" : "Szkennelési hiba";
-  const tone = item.scanReady ? "amber" : "red";
-  const detail = item.scanReady
-    ? `${item.warehouse || "-"} · rámpa ${item.platformSectionMark || "-"} · route ${item.routeId || "-"}`
-    : `${formatCount(item.notScannedOrders || 0)} rendelés · ${formatCount(item.notScannedBagEans || 0)} csomag nincs szkennelve`;
-  return {
-    title,
-    courierName: item.courierName || "Futár",
-    meta: `#${item.courierId || "-"} · ${item.licencePlate || "rendszám nincs"}`,
-    detail,
-    time: Number(item.minutesToDeparture || 0) > 0 ? `${formatCount(item.minutesToDeparture)}p` : "most",
-    timeLabel: "indulás",
-    tone,
-    section: "departure-helper",
-    badges: [
-      coordinatorTaskBadge(item.statusLabel || "Indulás", item.statusGroup === "ramp" ? "blue" : "amber"),
-      coordinatorTaskBadge(`${formatCount(item.ordersInRoute || 0)} rendelés`, "green"),
-    ],
-  };
-}
-
-function liveDashboardTask(item) {
-  const current = item.currentStop || {};
-  const isLate = Boolean(item.lateOpenStops || current.isLate || Number(current.delayMinutes || 0) > 0);
-  if (!isLate) return null;
-  return {
-    title: "Live késési kockázat",
-    courierName: item.courierName || "Futár",
-    meta: `#${item.courierId || "-"} · ${item.warehouse || "-"}`,
-    detail: current.address || `${formatCount(item.remainingStops || 0)} cím van hátra`,
-    time: item.lateOpenStops ? `${formatCount(item.lateOpenStops)}` : `${formatCount(current.delayMinutes || 0)}p`,
-    timeLabel: item.lateOpenStops ? "nyitott" : "késés",
-    tone: "red",
-    section: "coordinator-live",
-    badges: [
-      coordinatorTaskBadge(`Route ${item.activeRouteId || "-"}`, "blue"),
-      coordinatorTaskBadge(`${formatCount(item.deliveredStops || 0)} / ${formatCount(item.totalStops || 0)} cím`, "green"),
-    ],
-  };
-}
-
-function workerDashboardTask(item) {
-  if (!item.giritonLoginMissingAlert && !item.missingSource) return null;
-  return {
-    title: item.giritonLoginMissingAlert ? "Nincs Giriton bejelentkezés" : "Műszak eltérés",
-    courierName: item.courierName || "Futár",
-    meta: `#${item.courierId || "-"} · ${item.warehouse || "-"}`,
-    detail: item.missingSource || `${item.shiftName || item.bookingCode || "Műszak"} · ${item.start || "-"}`,
-    time: item.start || "-",
-    timeLabel: "műszak",
-    tone: item.giritonLoginMissingAlert ? "red" : "amber",
-    section: "today-workers",
-    badges: [
-      coordinatorTaskBadge(`Giriton: ${item.giritonStatus || "Nincs adat"}`, item.giritonTone === "ok" ? "green" : "red"),
-      coordinatorTaskBadge(`MűszakPro: ${item.muszakproStatus || "Nincs adat"}`, item.muszakproTone === "ok" ? "green" : "amber"),
-    ],
-  };
-}
-
-function coordinatorDashboardTasks(payload) {
-  const tasks = [
-    ...((payload.departure?.routes || []).map(departureDashboardTask)),
-    ...((payload.live?.couriers || []).map(liveDashboardTask)),
-    ...((payload.workers?.workers || []).map(workerDashboardTask)),
-  ].filter(Boolean);
-  const toneRank = { red: 0, amber: 1, blue: 2, green: 3 };
-  return tasks.sort((left, right) => (toneRank[left.tone] ?? 9) - (toneRank[right.tone] ?? 9));
-}
-
-function renderCoordinatorTask(task) {
-  return `
-    <details class="coordinator-task ${escapeHtml(task.tone || "")}">
-      <summary>
-        <div>
-          <strong>${escapeHtml(task.courierName)}</strong>
-          <small>${escapeHtml(task.title)} · ${escapeHtml(task.meta)}</small>
-          <p>${escapeHtml(task.detail)}</p>
-          <div class="coordinator-task-badges">${task.badges.join("")}</div>
-        </div>
-        <div class="coordinator-task-time">
-          <strong>${escapeHtml(task.time)}</strong>
-          <small>${escapeHtml(task.timeLabel)}</small>
-        </div>
-      </summary>
-      <div class="coordinator-task-actions">
-        <button class="primary coordinator-action" type="button" data-coordinator-section="${escapeHtml(task.section)}">Megnyitás</button>
-        <button class="secondary" type="button">Jelzés</button>
-      </div>
-    </details>
-  `;
-}
-
-function renderCoordinatorDashboard() {
-  const target = $("#coordinator-dashboard-panel");
-  if (!target) return;
-  const payload = state.coordinatorDashboard;
-  if (!payload) {
-    target.innerHTML = `<div class="empty-card">Coordinator adatok betöltése...</div>`;
-    return;
-  }
-  const tasks = coordinatorDashboardTasks(payload);
-  const redTasks = tasks.filter((item) => item.tone === "red").length;
-  const departureSummary = payload.departure?.summary || {};
-  const liveSummary = payload.live?.summary || {};
-  const workerSummary = payload.workers?.summary || {};
-  target.innerHTML = `
-    ${coordinatorTabs("coordinator-dashboard")}
-    <section class="coordinator-hero ${redTasks ? "danger" : ""}">
-      <span>Most intézendő</span>
-      <strong>${formatCount(tasks.length)} feladat</strong>
-      <p>${redTasks ? `${formatCount(redTasks)} sürgős beavatkozás van.` : "Nincs sürgős piros feladat."} Raktár szerint szűrt coordinator nézet.</p>
-    </section>
-    ${renderOpsSummary({}, [
-      ["Rámpán", departureSummary.onRamp || 0],
-      ["Várakozik", departureSummary.waiting || 0],
-      ["Live", liveSummary.activeCouriers || 0],
-      ["Műszak", workerSummary.planned || 0],
-    ])}
-    <div class="coordinator-task-list">
-      ${tasks.length ? tasks.map(renderCoordinatorTask).join("") : `<div class="empty-card">Most nincs intézendő coordinator feladat.</div>`}
-    </div>
-  `;
-}
-
-async function loadCoordinatorDashboard() {
-  const target = $("#coordinator-dashboard-panel");
-  if (target && !state.coordinatorDashboard) target.innerHTML = `<div class="empty-card">Coordinator adatok betöltése...</div>`;
-  const [departure, live, workers] = await Promise.allSettled([
-    api("/api/coordinator/departure-helper", { silentLoading: true }),
-    api("/api/coordinator/live-map", { silentLoading: true }),
-    api("/api/coordinator/today-workers", { silentLoading: true }),
-  ]);
-  state.coordinatorDashboard = {
-    departure: departure.status === "fulfilled" ? departure.value : { routes: [], summary: {}, errors: [departure.reason?.message || "Indulás adat hiba"] },
-    live: live.status === "fulfilled" ? live.value : { couriers: [], summary: {} },
-    workers: workers.status === "fulfilled" ? workers.value : { workers: [], summary: {} },
-  };
-  renderCoordinatorDashboard();
 }
 
 function departureAlertClass(item = {}) {
@@ -5188,7 +5015,6 @@ function renderDepartureHelper() {
   const waiting = routes.filter((item) => item.statusGroup === "waiting");
   const departed = routes.filter((item) => item.statusGroup === "departed");
   target.innerHTML = `
-    ${coordinatorTabs("departure-helper")}
     ${payload.errors?.length ? `<div class="notice error">${escapeHtml(payload.errors.join(" | "))}</div>` : ""}
     ${renderOpsSummary(payload.summary || {}, [
       ["Összes", payload.summary?.total || 0],
@@ -5330,7 +5156,6 @@ function renderTodayWorkers() {
   }
   const workers = payload.workers || [];
   target.innerHTML = `
-    ${coordinatorTabs("today-workers")}
     ${payload.error ? `<div class="notice error">A mai beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     ${renderOpsSummary(payload.summary || {}, [
       ["Tervezett", payload.summary?.planned || 0],
@@ -5431,7 +5256,6 @@ function renderCoordinatorSchedule() {
   if (day && state.coordinatorScheduleDay !== day.date) state.coordinatorScheduleDay = day.date;
   const workers = day?.workers || [];
   target.innerHTML = `
-    ${coordinatorTabs("coordinator-schedule")}
     ${payload.error ? `<div class="notice error">A beosztás nem tölthető be: ${escapeHtml(payload.error)}</div>` : ""}
     ${renderOpsSummary(payload.summary || {}, [
       ["Műszak sor", payload.summary?.workers || 0],
@@ -5978,7 +5802,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     renderQueueStatus();
     showApp();
     if (String(state.user.role || "").toLowerCase() === "coordinator") {
-      showSection("coordinator-dashboard");
+      showSection("coordinator-live");
     } else if (String(state.user.role || "").toLowerCase() === "hr") {
       showSection("vehicle");
     } else {
@@ -6069,7 +5893,6 @@ $("#logout").addEventListener("click", async () => {
   state.salaryAdvanceRequests = [];
   state.expenseRequests = [];
   state.registrationRequests = [];
-  state.coordinatorDashboard = null;
   state.coordinatorLiveMap = null;
   state.departureHelper = null;
   if (state.coordinatorLeafletMap) {
@@ -6105,13 +5928,11 @@ $("#nav-tours").addEventListener("click", () => showSection("tours"));
 $("#nav-route-details").addEventListener("click", () => showSection("route-details"));
 $("#nav-game").addEventListener("click", () => showSection("game"));
 $("#game-refresh")?.addEventListener("click", loadGame);
-$("#nav-coordinator-dashboard").addEventListener("click", () => showSection("coordinator-dashboard"));
 $("#nav-coordinator-live").addEventListener("click", () => showSection("coordinator-live"));
 $("#nav-departure-helper").addEventListener("click", () => showSection("departure-helper"));
 $("#nav-today-workers").addEventListener("click", () => showSection("today-workers"));
 $("#nav-coordinator-schedule").addEventListener("click", () => showSection("coordinator-schedule"));
 $("#coordinator-live-refresh")?.addEventListener("click", loadCoordinatorLiveMap);
-$("#coordinator-dashboard-refresh")?.addEventListener("click", loadCoordinatorDashboard);
 $("#departure-helper-refresh")?.addEventListener("click", loadDepartureHelper);
 $("#today-workers-refresh")?.addEventListener("click", loadTodayWorkers);
 $("#coordinator-schedule-refresh")?.addEventListener("click", loadCoordinatorSchedule);
@@ -6146,11 +5967,6 @@ setInterval(() => {
 setInterval(() => {
   if (!state.user || state.section !== "coordinator-live" || document.hidden) return;
   withSilentLoading(() => loadCoordinatorLiveMap()).catch(() => {});
-}, COORDINATOR_LIVE_REFRESH_MS);
-
-setInterval(() => {
-  if (!state.user || state.section !== "coordinator-dashboard" || document.hidden) return;
-  withSilentLoading(() => loadCoordinatorDashboard()).catch(() => {});
 }, COORDINATOR_LIVE_REFRESH_MS);
 
 setInterval(() => {
