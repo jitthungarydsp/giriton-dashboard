@@ -1,203 +1,783 @@
 <!doctype html>
 <html lang="hu">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#10251a" />
-    <title>JITT Hub | Bejelentkezés</title>
-    <meta name="description" content="JITT Hub belső bejelentkező oldal." />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="login-shell" id="login-shell">
-      <section class="login-hero" aria-labelledby="login-title">
-        <div class="brand">
-          <span class="brand-mark">J</span>
-          <span>JITT Hub</span>
-        </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JITT Hub - Futár360</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --paper: #ffffff;
+      --ink: #111827;
+      --muted: #667085;
+      --line: #e2e8f0;
+      --blue: #1264d8;
+      --blue-soft: #eaf3ff;
+      --green: #15803d;
+      --green-soft: #ecfdf3;
+      --amber: #b86b00;
+      --amber-soft: #fff7e6;
+      --red: #c0261d;
+      --red-soft: #fff1f0;
+      --slate: #1f2937;
+      --shadow: 0 12px 30px rgba(15, 23, 42, .07);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
 
-        <div class="hero-copy">
-          <p class="eyebrow">BELSŐ HOZZÁFÉRÉS</p>
-          <h1 id="login-title">Futár 360 indulópont.</h1>
-          <p>
-            Egy közös belépési felület a későbbi műszak, túra és elszámolási
-            nézetekhez.
-          </p>
-        </div>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    button, input { font: inherit; }
 
-        <div class="signal-grid" aria-label="Tervezett modulok">
+    .topbar {
+      height: 70px;
+      display: grid;
+      grid-template-columns: 280px 1fr auto;
+      align-items: center;
+      gap: 18px;
+      padding: 0 24px;
+      background: #fff;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 23px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #1264d8, #38bdf8);
+      color: #fff;
+      font-weight: 950;
+    }
+
+    .nav {
+      display: flex;
+      height: 70px;
+      align-items: stretch;
+    }
+
+    .nav button {
+      position: relative;
+      border: 0;
+      background: transparent;
+      padding: 0 18px;
+      cursor: pointer;
+      color: #344054;
+      font-weight: 800;
+    }
+
+    .nav button.active { color: var(--blue); }
+    .nav button.active::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 0;
+      height: 3px;
+      background: var(--blue);
+      border-radius: 999px 999px 0 0;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: #344054;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .top-pill {
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0 12px;
+      background: #fff;
+    }
+
+    .page {
+      max-width: 1780px;
+      margin: 0 auto;
+      padding: 22px;
+      display: grid;
+      grid-template-columns: 300px minmax(720px, 1fr) 390px;
+      gap: 18px;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .left-head {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+    }
+
+    .left-head h2,
+    .panel-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .search {
+      height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0 12px;
+      outline: 0;
+      color: #344054;
+    }
+
+    .courier-row {
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 11px;
+      align-items: center;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+
+    .courier-row.active {
+      background: #eef6ff;
+      box-shadow: inset 4px 0 0 var(--blue);
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-weight: 950;
+      background: #dbeafe;
+      color: #0f172a;
+    }
+
+    .avatar.green { background: #dcfce7; }
+    .avatar.orange { background: #ffedd5; }
+    .avatar.pink { background: #fce7f3; }
+    .avatar.purple { background: #ede9fe; }
+
+    .courier-row b { display: block; }
+    .courier-row small { color: var(--muted); font-weight: 700; }
+
+    .dot-status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 5px var(--green-soft);
+    }
+
+    .dot-status.warn { background: var(--amber); box-shadow: 0 0 0 5px var(--amber-soft); }
+    .dot-status.bad { background: var(--red); box-shadow: 0 0 0 5px var(--red-soft); }
+
+    .main {
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .profile {
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .profile-title {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .big-avatar {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      font-weight: 950;
+      font-size: 24px;
+      background: #dbeafe;
+    }
+
+    .profile h1 {
+      margin: 0 0 6px;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 900;
+      background: #f1f5f9;
+      color: #344054;
+    }
+
+    .chip.green { background: var(--green-soft); color: var(--green); }
+    .chip.amber { background: var(--amber-soft); color: var(--amber); }
+    .chip.blue { background: var(--blue-soft); color: var(--blue); }
+    .chip.red { background: var(--red-soft); color: var(--red); }
+
+    .profile-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: #344054;
+      border-radius: 10px;
+      padding: 11px 14px;
+      cursor: pointer;
+      font-weight: 850;
+    }
+
+    .btn.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+      box-shadow: 0 9px 22px rgba(18,100,216,.22);
+    }
+
+    .live-grid {
+      display: grid;
+      grid-template-columns: 1.25fr .95fr;
+      gap: 16px;
+    }
+
+    .panel-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .route-live {
+      padding: 18px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .route-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+      background: #fbfdff;
+    }
+
+    .route-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    .route-top h2 {
+      margin: 0 0 4px;
+      font-size: 26px;
+    }
+
+    .route-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .route-metrics div {
+      padding: 13px;
+      border-right: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .route-metrics div:last-child { border-right: 0; }
+    .route-metrics label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .route-metrics strong {
+      font-size: 21px;
+      line-height: 1;
+    }
+
+    .mini-map {
+      height: 170px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, rgba(18,100,216,.12) 1px, transparent 1px),
+        linear-gradient(rgba(18,100,216,.12) 1px, transparent 1px),
+        #f8fbff;
+      background-size: 34px 34px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .pin {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 8px rgba(18,100,216,.14);
+    }
+
+    .pin.green { background: var(--green); box-shadow: 0 0 0 8px rgba(21,128,61,.14); }
+    .pin.amber { background: var(--amber); box-shadow: 0 0 0 8px rgba(184,107,0,.14); }
+
+    .shift-list {
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .shift-item {
+      display: grid;
+      grid-template-columns: 72px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 13px;
+      background: #fff;
+    }
+
+    .shift-time {
+      font-size: 21px;
+      font-weight: 950;
+      color: var(--blue);
+    }
+
+    .timeline-layout {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 16px;
+    }
+
+    .timeline {
+      padding: 18px;
+      display: grid;
+      gap: 0;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 82px 28px 1fr;
+      gap: 12px;
+      min-height: 70px;
+    }
+
+    .event time {
+      color: var(--muted);
+      font-weight: 900;
+      font-size: 13px;
+      padding-top: 2px;
+    }
+
+    .event-line {
+      position: relative;
+      display: grid;
+      justify-items: center;
+    }
+
+    .event-line::before {
+      content: "";
+      position: absolute;
+      top: 18px;
+      bottom: -18px;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .event:last-child .event-line::before { display: none; }
+
+    .event-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 6px var(--blue-soft);
+      z-index: 1;
+    }
+
+    .event-dot.green { background: var(--green); box-shadow: 0 0 0 6px var(--green-soft); }
+    .event-dot.amber { background: var(--amber); box-shadow: 0 0 0 6px var(--amber-soft); }
+
+    .event-body {
+      padding-bottom: 18px;
+    }
+
+    .event-body b { display: block; margin-bottom: 4px; }
+    .event-body span { color: var(--muted); font-size: 13px; font-weight: 650; }
+
+    .schedule {
+      padding: 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .day-row {
+      display: grid;
+      grid-template-columns: 80px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 0;
+    }
+
+    .day-row:last-child { border-bottom: 0; }
+    .day-row b { font-size: 14px; }
+    .day-row span { color: var(--muted); font-size: 13px; font-weight: 700; }
+
+    .side {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .side-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .side-content {
+      padding: 16px 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .finance-mini {
+      display: grid;
+      gap: 9px;
+    }
+
+    .finance-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--line);
+      color: #344054;
+      font-weight: 750;
+    }
+
+    .finance-row:last-child { border-bottom: 0; }
+    .finance-row strong { color: var(--ink); white-space: nowrap; }
+
+    .score-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .score {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fbfdff;
+    }
+
+    .score label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+      margin-bottom: 6px;
+    }
+
+    .score strong { font-size: 22px; }
+
+    .note {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fbfdff;
+      color: #344054;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    @media (max-width: 1280px) {
+      .topbar { grid-template-columns: 1fr; height: auto; padding: 14px; }
+      .nav { height: auto; overflow-x: auto; }
+      .nav button { padding: 12px 14px; white-space: nowrap; }
+      .page { grid-template-columns: 1fr; }
+      .live-grid, .timeline-layout { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 760px) {
+      .profile, .profile-title { grid-template-columns: 1fr; }
+      .route-metrics, .score-grid { grid-template-columns: 1fr 1fr; }
+      .event { grid-template-columns: 62px 24px 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="logo">J</div> Futár360</div>
+    <nav class="nav" aria-label="Főmenü">
+      <button>Új futár</button>
+      <button class="active">Futár360</button>
+      <button>Elszámolás</button>
+      <button>Beosztás</button>
+      <button>JittCar</button>
+      <button>Jelentések</button>
+      <button>Beállítások</button>
+    </nav>
+    <div class="top-actions">
+      <div class="top-pill">Ma · 2026.09.21</div>
+      <div class="top-pill">Admin</div>
+    </div>
+  </header>
+
+  <main class="page">
+    <aside class="panel">
+      <div class="left-head">
+        <h2>Futárok</h2>
+        <input class="search" value="Papp" aria-label="Futár keresés" />
+      </div>
+      <div class="courier-row active">
+        <div class="avatar">PN</div>
+        <div><b>Papp Nikolett</b><small>7486 · aktív túrán</small></div>
+        <div class="dot-status"></div>
+      </div>
+      <div class="courier-row">
+        <div class="avatar orange">SZ</div>
+        <div><b>Szolnoki Tibor</b><small>6825 · számlaellenőrzés</small></div>
+        <div class="dot-status warn"></div>
+      </div>
+      <div class="courier-row">
+        <div class="avatar pink">TA</div>
+        <div><b>Tuza Ádám</b><small>7753 · kifizetés vár</small></div>
+        <div class="dot-status bad"></div>
+      </div>
+      <div class="courier-row">
+        <div class="avatar green">GR</div>
+        <div><b>György Roland</b><small>8530 · beosztva</small></div>
+        <div class="dot-status"></div>
+      </div>
+    </aside>
+
+    <section class="main">
+      <section class="panel profile">
+        <div class="profile-title">
+          <div class="big-avatar">PN</div>
           <div>
-            <strong>Hub</strong>
-            <span>Műszakok</span>
-          </div>
-          <div>
-            <strong>Excel</strong>
-            <span>Elszámolás</span>
-          </div>
-          <div>
-            <strong>360</strong>
-            <span>Futár nézet</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="login-panel">
-        <form class="login-card" id="login-form">
-          <p class="eyebrow">JITT HUB</p>
-          <h2>Bejelentkezés</h2>
-          <p class="muted">Első körben ez csak a tiszta belépőoldal sablonja.</p>
-
-          <label for="email">E-mail cím</label>
-          <input id="email" name="email" type="email" autocomplete="username" placeholder="nev@jitt.hu" required />
-
-          <label for="password">Jelszó</label>
-          <div class="password-row">
-            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Jelszó" required />
-            <button id="toggle-password" type="button">Mutat</button>
-          </div>
-
-          <label class="remember">
-            <input id="remember" type="checkbox" />
-            <span>Emlékezz rám ezen az eszközön</span>
-          </label>
-
-          <p class="message" id="message" aria-live="polite"></p>
-          <button class="primary-action" type="submit">Belépés</button>
-        </form>
-      </section>
-    </main>
-
-    <main class="hub-shell" id="hub-shell" hidden>
-      <header class="hub-topbar">
-        <div class="brand dark">
-          <span class="brand-mark">J</span>
-          <span>JITT Hub</span>
-        </div>
-        <button class="secondary-action" id="logout-button" type="button">Kilépés</button>
-      </header>
-
-      <section class="courier-hero">
-        <div class="courier-avatar">AG</div>
-        <div class="courier-title">
-          <p class="eyebrow">FUTÁR 360</p>
-          <h1>Abonyi György</h1>
-          <div class="courier-meta">
-            <span>BUD1</span>
-            <span>Futár ID: 6498</span>
-            <span>2026. szeptember</span>
-            <span>Aktív</span>
-          </div>
-        </div>
-        <div class="courier-status">
-          <span>Mai állapot</span>
-          <strong>Elszámolásra vár</strong>
-        </div>
-      </section>
-
-      <section class="kpi-grid" aria-label="Futár összesítő">
-        <article class="kpi-card primary-kpi">
-          <span>Fizetendő</span>
-          <strong>1 263 625 Ft</strong>
-          <small>Excel elszámolás alapján</small>
-        </article>
-        <article class="kpi-card">
-          <span>Aktuális műszakok</span>
-          <strong>4</strong>
-          <small>Hub shift adat</small>
-        </article>
-        <article class="kpi-card">
-          <span>Havi túrák</span>
-          <strong>18</strong>
-          <small>Route teljesítés</small>
-        </article>
-        <article class="kpi-card attention">
-          <span>Figyelmet igényel</span>
-          <strong>2</strong>
-          <small>Késés vagy hiányzó adat</small>
-        </article>
-      </section>
-
-      <section class="dashboard-grid">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">MŰSZAKOK</p>
-              <h2>Aktuális hét</h2>
+            <h1>Papp Nikolett</h1>
+            <div class="meta">
+              <span>Futár ID: 7486</span>
+              <span>BUD1</span>
+              <span>EV</span>
+              <span>MűszakPro profil aktív</span>
             </div>
-            <span class="source-badge">Hub shift</span>
+          </div>
+        </div>
+        <div class="profile-actions">
+          <button class="btn">Frissítés</button>
+          <button class="btn primary">Frissítés és marad</button>
+        </div>
+      </section>
+
+      <section class="live-grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Aktuális túra</h2>
+            <span class="chip green">Futár úton</span>
+          </div>
+          <div class="route-live">
+            <div class="route-card">
+              <div class="route-top">
+                <div>
+                  <h2>Route R-2026-0921-184</h2>
+                  <div class="meta"><span>Indulás: 08:42</span><span>Várható vissza: 13:20</span><span>Jármű: JIT-214</span></div>
+                </div>
+                <span class="chip blue">23 / 31 cím kész</span>
+              </div>
+              <div class="route-metrics">
+                <div><label>Cím</label><strong>31</strong></div>
+                <div><label>Kézbesítve</label><strong>23</strong></div>
+                <div><label>Késés</label><strong>0</strong></div>
+                <div><label>Visszatérés</label><strong>13:20</strong></div>
+              </div>
+            </div>
+            <div class="mini-map">
+              <span class="pin green" style="left:18%;top:52%"></span>
+              <span class="pin" style="left:48%;top:38%"></span>
+              <span class="pin amber" style="left:72%;top:62%"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Műszak állapot</h2>
+            <span class="chip green">Check-in OK</span>
           </div>
           <div class="shift-list">
-            <div class="shift-row">
-              <div><strong>Hétfő</strong><span>08:30 - 13:00</span></div>
-              <div><b>08:23</b><span>Tényleges kezdés</span></div>
-              <em class="ok">OK</em>
+            <div class="shift-item">
+              <div class="shift-time">08:14</div>
+              <div><b>Mai műszak</b><span class="muted">08:30 - 13:30 · BUD1 · MűszakPro</span></div>
+              <span class="chip green">becheckolt</span>
             </div>
-            <div class="shift-row">
-              <div><strong>Szerda</strong><span>13:30 - 18:00</span></div>
-              <div><b>14:06</b><span>Tényleges kezdés</span></div>
-              <em class="late">Késett</em>
+            <div class="shift-item">
+              <div class="shift-time">14:30</div>
+              <div><b>Következő műszak</b><span class="muted">14:30 - 19:00 · BUD1 · normál</span></div>
+              <span class="chip amber">várható</span>
             </div>
-            <div class="shift-row">
-              <div><strong>Péntek</strong><span>08:30 - 13:00</span></div>
-              <div><b>08:20</b><span>Tényleges kezdés</span></div>
-              <em class="ok">OK</em>
-            </div>
-            <div class="shift-row">
-              <div><strong>Vasárnap</strong><span>18:30 - 23:00</span></div>
-              <div><b>-</b><span>Tényleges kezdés</span></div>
-              <em class="neutral">Várható</em>
+            <div class="shift-item">
+              <div class="shift-time">JIT-214</div>
+              <div><b>JittCar</b><span class="muted">Kiadva 08:06 · visszavétel nincs</span></div>
+              <span class="chip blue">aktív</span>
             </div>
           </div>
-        </article>
+        </div>
+      </section>
 
-        <article class="panel">
+      <section class="timeline-layout">
+        <div class="panel">
           <div class="panel-head">
-            <div>
-              <p class="eyebrow">ELSZÁMOLÁS</p>
-              <h2>Havi kivonat</h2>
+            <h2>Mai idővonal</h2>
+            <span class="chip blue">élő események</span>
+          </div>
+          <div class="timeline">
+            <div class="event">
+              <time>08:06</time>
+              <div class="event-line"><span class="event-dot green"></span></div>
+              <div class="event-body"><b>JittCar átvéve</b><span>JIT-214 jármű kiadva, kulcs átvétel rögzítve.</span></div>
             </div>
-            <span class="source-badge">Excel</span>
+            <div class="event">
+              <time>08:14</time>
+              <div class="event-line"><span class="event-dot green"></span></div>
+              <div class="event-body"><b>Check-in MűszakPro</b><span>Bejelentkezés időben, műszak kezdete 08:30.</span></div>
+            </div>
+            <div class="event">
+              <time>08:42</time>
+              <div class="event-line"><span class="event-dot"></span></div>
+              <div class="event-body"><b>Túrát kapott</b><span>R-2026-0921-184 · 31 cím · normál kör.</span></div>
+            </div>
+            <div class="event">
+              <time>11:36</time>
+              <div class="event-line"><span class="event-dot"></span></div>
+              <div class="event-body"><b>23. cím teljesítve</b><span>Nincs késés, nincs nyitott ügyfélpanasz.</span></div>
+            </div>
+            <div class="event">
+              <time>13:20</time>
+              <div class="event-line"><span class="event-dot amber"></span></div>
+              <div class="event-body"><b>Várható visszaérkezés</b><span>Raktári visszaérkezés és JittCar állapot még nyitott.</span></div>
+            </div>
           </div>
-          <div class="money-list">
-            <div><span>Alapdíj</span><strong>433 700 Ft</strong></div>
-            <div><span>Borravaló</span><strong>296 929 Ft</strong></div>
-            <div><span>Késedelmi díj</span><strong>217 998 Ft</strong></div>
-            <div><span>Túramegfelelés</span><strong>229 998 Ft</strong></div>
-            <div><span>Kiflis levonás / bónusz</span><strong>44 000 Ft</strong></div>
-            <div><span>JITT bónusz / malus</span><strong>-5 000 Ft</strong></div>
-          </div>
-        </article>
-      </section>
+        </div>
 
-      <section class="panel">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Beosztás</h2>
+            <span class="chip">hét</span>
+          </div>
+          <div class="schedule">
+            <div class="day-row"><b>Hétfő</b><span>08:30 - 13:30</span><span class="chip green">aktív</span></div>
+            <div class="day-row"><b>Kedd</b><span>14:30 - 19:00</span><span class="chip blue">tervezett</span></div>
+            <div class="day-row"><b>Szerda</b><span>Szabadnap</span><span class="chip">-</span></div>
+            <div class="day-row"><b>Csüt.</b><span>08:30 - 13:30</span><span class="chip blue">tervezett</span></div>
+            <div class="day-row"><b>Péntek</b><span>08:30 - 13:30</span><span class="chip blue">tervezett</span></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="side">
+      <div class="side-card">
         <div class="panel-head">
-          <div>
-            <p class="eyebrow">TÚRARÉSZLETEZŐ</p>
-            <h2>Mai túrakép</h2>
+          <h2>MűszakPro</h2>
+          <span class="chip green">szinkron</span>
+        </div>
+        <div class="side-content">
+          <div class="score-grid">
+            <div class="score"><label>Foglalás</label><strong>5</strong></div>
+            <div class="score"><label>Törölt</label><strong>0</strong></div>
+            <div class="score"><label>Megmaradt</label><strong>5</strong></div>
+            <div class="score"><label>Check-in</label><strong>08:14</strong></div>
           </div>
-          <span class="source-badge">Route detail</span>
+          <div class="note">MűszakPro szerint a futár időben jelentkezett be, a következő műszak ma 14:30-kor indul.</div>
         </div>
-        <div class="route-grid">
-          <article><span>Route ID</span><strong>1534076</strong></article>
-          <article><span>Túrát kapott</span><strong>13:43</strong></article>
-          <article><span>Raktári indulás</span><strong>14:13</strong></article>
-          <article><span>Visszaérkezés</span><strong>19:00</strong></article>
-          <article><span>Tényleges túrahossz</span><strong>5:17</strong></article>
-          <article><span>Tényleges km</span><strong>92,1 km</strong></article>
+      </div>
+
+      <div class="side-card">
+        <div class="panel-head">
+          <h2>Kis elszámolás</h2>
+          <span class="chip amber">havi</span>
         </div>
-      </section>
+        <div class="side-content">
+          <div class="finance-mini">
+            <div class="finance-row"><span>Aktuális havi kör</span><strong>43</strong></div>
+            <div class="finance-row"><span>Cím</span><strong>522</strong></div>
+            <div class="finance-row"><span>Borravaló</span><strong>139 465 Ft</strong></div>
+            <div class="finance-row"><span>Céltartalék</span><strong>120 000 Ft</strong></div>
+            <div class="finance-row"><span>Kifizetendő</span><strong>590 000 Ft</strong></div>
+          </div>
+        </div>
+      </div>
 
-      <section class="story-panel">
-        <p class="eyebrow">NAPI SZÖVEGES KÉP</p>
-        <p>
-          Abonyi György ma 13:43-kor kapott túrát, 14:13-kor indult ki a
-          raktárból, majd 19:00-kor érkezett vissza. A teljes túrahossz
-          bepakolással együtt 5 óra 17 perc volt. A műszakadatok alapján egy
-          késést érdemes ellenőrizni.
-        </p>
-      </section>
-    </main>
-
-    <script src="./app.js"></script>
-  </body>
+      <div class="side-card">
+        <div class="panel-head">
+          <h2>Figyelmeztetések</h2>
+          <span class="chip red">2</span>
+        </div>
+        <div class="side-content">
+          <div class="note">JittCar visszavétel még nincs rögzítve.</div>
+          <div class="note">Céltartalék előző havi záró alapján ellenőrizendő.</div>
+        </div>
+      </div>
+    </aside>
+  </main>
+</body>
 </html>
