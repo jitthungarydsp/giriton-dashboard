@@ -58,8 +58,6 @@ jobs:
       GIRITON_ATTENDANCE_UIDL_CURL: ${{ secrets.GIRITON_ATTENDANCE_UIDL_CURL }}
       GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_SEQUENCE_JSON }}
       GIRITON_ATTENDANCE_UIDL_REQUEST_JSON: ${{ secrets.GIRITON_ATTENDANCE_UIDL_REQUEST_JSON }}
-      CHROME_BIN: /usr/bin/google-chrome
-      CHROMEDRIVER_PATH: /usr/bin/chromedriver
 
     steps:
       - name: Checkout
@@ -69,6 +67,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Setup ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Resolve browser paths
+        shell: bash
+        run: |
+          CHROME_PATH="$(command -v chrome || command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)"
+          DRIVER_PATH="$(command -v chromedriver || true)"
+
+          echo "Chrome path: ${CHROME_PATH:-missing}"
+          echo "ChromeDriver path: ${DRIVER_PATH:-missing}"
+
+          if [ -z "$CHROME_PATH" ]; then
+            echo "Chrome nem található a runneren."
+            exit 1
+          fi
+          if [ -z "$DRIVER_PATH" ]; then
+            echo "ChromeDriver nem található a runneren."
+            exit 1
+          fi
+
+          "$CHROME_PATH" --version || true
+          "$DRIVER_PATH" --version || true
+
+          echo "CHROME_BIN=$CHROME_PATH" >> "$GITHUB_ENV"
+          echo "CHROMEDRIVER_PATH=$DRIVER_PATH" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |

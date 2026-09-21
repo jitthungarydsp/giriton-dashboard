@@ -1,10 +1,15 @@
 import os
+import platform
+import shutil
 from pathlib import Path
 
 from selenium.webdriver import ChromeOptions
 
 
 def _remove_path_chromedrivers():
+    if platform.system().lower() != "windows":
+        return
+
     path_parts = os.environ.get("PATH", "").split(os.pathsep)
     kept_parts = []
     removed_parts = []
@@ -22,6 +27,17 @@ def _remove_path_chromedrivers():
 def create_github_chrome_options():
     _remove_path_chromedrivers()
     options = ChromeOptions()
+    chrome_binary = (
+        os.environ.get("CHROME_BIN")
+        or os.environ.get("GOOGLE_CHROME_BIN")
+        or shutil.which("chrome")
+        or shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+        or shutil.which("chromium")
+        or shutil.which("chromium-browser")
+    )
+    if chrome_binary:
+        options.binary_location = chrome_binary
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
