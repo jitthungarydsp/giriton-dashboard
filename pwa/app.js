@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v137";
+const APP_VERSION = "v138";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4747,6 +4747,21 @@ function liveRouteSubtitle(live = {}, progress = {}) {
   return `Megrendelés: ${formatCount(orderCount)} db${progressText}`;
 }
 
+function temperatureText(value, status = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return status || "Hőmérséklet nincs adat";
+  return `${formatAverage(number)} °C${status ? ` · ${status}` : ""}`;
+}
+
+function minutesText(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${formatCount(number)} perc` : "-";
+}
+
+function timelineTime(value) {
+  return value ? shortDateTime(value) : "-";
+}
+
 function renderOpsSummary(summary = {}, cards = []) {
   const items = cards.length ? cards : [
     ["Futár", summary.couriers ?? summary.planned ?? 0],
@@ -5096,14 +5111,18 @@ function renderWorkerShiftRow(shift = {}, index = 0) {
   const orderText = workerShiftIsPast(shift)
     ? `<small>Megrendelés: ${orderCount ? `${formatCount(orderCount)} db` : "-"}</small>`
     : "";
+  const returnText = [shift.plannedReturn ? `Tervezett vissza: ${timelineTime(shift.plannedReturn)}` : "", shift.realReturn ? `Valós vissza: ${timelineTime(shift.realReturn)}` : ""].filter(Boolean).join(" · ");
+  const missText = shift.missedByRoute ? `<small class="route-delay-note">Nem ér vissza erre a műszakra az aktív túra alapján.</small>` : "";
   return `
-    <div class="worker-shift-row ${index === 0 ? "first" : ""}">
+    <div class="worker-shift-row ${index === 0 ? "first" : ""} ${shift.missedByRoute ? "attention" : ""}">
       <div>
         <span>${index === 0 ? "Első műszak" : `${index + 1}. műszak`}</span>
         <strong>${escapeHtml(title)}</strong>
-        <small>${escapeHtml(shift.warehouse || "-")} · ${escapeHtml(workerShiftTimeText(shift))}${code}</small>
+        <small>${escapeHtml(shift.warehouse || "-")} · Indulás: ${escapeHtml(shift.start || "-")} · Várható vég: ${escapeHtml(shift.end || "-")}${code}</small>
         ${vehicleText ? `<small>Autó: ${escapeHtml(vehicleText)}</small>` : ""}
         ${orderText}
+        ${returnText ? `<small>${escapeHtml(returnText)}</small>` : ""}
+        ${missText}
       </div>
       <div class="worker-shift-status">
         ${scheduleStatusChip(`GIRITON: ${String(shift.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU")}`, shift.giritonTone)}
@@ -5124,8 +5143,117 @@ function openWorkerShiftDialog(workerKey) {
   const dialog = ensureWorkerShiftDialog();
   dialog.querySelector("[data-worker-shift-title]").textContent = worker.courierName || "Futár";
   dialog.querySelector("[data-worker-shift-subtitle]").textContent = `#${worker.courierId || "-"} · ${formatCount(shifts.length)} műszak ma`;
-  dialog.querySelector("[data-worker-shift-list]").innerHTML = shifts.map(renderWorkerShiftRow).join("");
+  const alternative = worker.alternativeShift
+    ? `<div class="notice error">Figyelem: az aktív túra miatt a(z) ${escapeHtml(worker.alternativeShift.shiftName || worker.alternativeShift.bookingCode || worker.alternativeShift.start || "következő")} műszak veszélyben van.</div>`
+    : "";
+  dialog.querySelector("[data-worker-shift-list]").innerHTML = `${alternative}${shifts.map(renderWorkerShiftRow).join("")}`;
   dialog.showModal();
+}
+
+function ensureWorkerInfoDialog() {
+  let dialog = $("#worker-info-dialog");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.id = "worker-info-dialog";
+  dialog.className = "worker-shift-dialog";
+  dialog.innerHTML = `
+    <div class="worker-shift-dialog-card">
+      <div class="worker-shift-dialog-head">
+        <div>
+          <span data-worker-info-label>Részletek</span>
+          <strong data-worker-info-title>Futár</strong>
+          <small data-worker-info-subtitle></small>
+        </div>
+        <button type="button" class="icon-button" data-worker-info-close aria-label="Bezárás">×</button>
+      </div>
+      <div class="worker-shift-list" data-worker-info-body></div>
+    </div>
+  `;
+  document.body.appendChild(dialog);
+  dialog.querySelector("[data-worker-info-close]")?.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  return dialog;
+}
+
+function openWorkerInfoDialog(workerKey, mode) {
+  const workers = state.todayWorkers?.workers || [];
+  const worker = workers.find((item) => {
+    const key = String(workerKey || "");
+    return String(item.workerKey || item.courierId || item.courierName || "") === key;
+  });
+  if (!worker) return;
+  const dialog = ensureWorkerInfoDialog();
+  dialog.querySelector("[data-worker-info-title]").textContent = worker.courierName || "Futár";
+  dialog.querySelector("[data-worker-info-subtitle]").textContent = `#${worker.courierId || "-"} · ${worker.warehouse || "-"}`;
+  const label = mode === "vehicle" ? "Autó" : mode === "route" ? "Live túra" : "Bejelentkezések";
+  dialog.querySelector("[data-worker-info-label]").textContent = label;
+  dialog.querySelector("[data-worker-info-body]").innerHTML = mode === "vehicle"
+    ? renderWorkerVehicleDetails(worker)
+    : mode === "route"
+      ? renderWorkerRouteDetails(worker)
+      : renderWorkerLoginDetails(worker);
+  dialog.showModal();
+}
+
+function detailRow(label, value, subtext = "") {
+  return `<div class="stat-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong>${subtext ? `<small>${escapeHtml(subtext)}</small>` : ""}</div>`;
+}
+
+function renderWorkerVehicleDetails(worker = {}) {
+  const vehicleText = opsVehicleText(worker.vehicle) || "-";
+  return `
+    <div class="stat-breakdown-list">
+      ${detailRow("Rendszám", vehicleText)}
+      ${detailRow("Hőmérséklet", temperatureText(worker.temperatureCelsius, worker.temperatureStatus))}
+      ${detailRow("Aktuális műszak", workerShiftTitle(worker), workerShiftSubtitle(worker))}
+      ${detailRow("Forrás", worker.routeDetail?.source || "Beosztás / live adat")}
+    </div>
+  `;
+}
+
+function renderTimeline(items = []) {
+  if (!items.length) return `<div class="empty-card">Nincs sofőrnapló esemény ehhez a túrához.</div>`;
+  return `<div class="worker-timeline">
+    ${items.map((item) => `
+      <div class="worker-timeline-row">
+        <time>${escapeHtml(timelineTime(item.at))}</time>
+        <div><strong>${escapeHtml(item.label || item.type || "Esemény")}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}</div>
+      </div>
+    `).join("")}
+  </div>`;
+}
+
+function renderWorkerRouteDetails(worker = {}) {
+  const live = worker.live || {};
+  const routeDetail = worker.routeDetail || {};
+  return `
+    <div class="stat-breakdown-list">
+      ${detailRow("Túra szám", live.routeId || routeDetail.routeId || "-")}
+      ${detailRow("Megrendelés", live.orderCount ? `${formatCount(live.orderCount)} db` : "-")}
+      ${detailRow("Haladás", `${formatCount(live.deliveredStops || 0)} / ${formatCount(live.totalStops || 0)} cím`)}
+      ${detailRow("Tervezett vissza", timelineTime(live.plannedReturn || routeDetail.plannedReturn))}
+      ${detailRow("Valós vissza", timelineTime(live.realReturn || routeDetail.realReturn))}
+      ${detailRow("Várakozás túrára", minutesText(live.queueWaitMinutes ?? routeDetail.queueWaitMinutes))}
+    </div>
+    ${renderTimeline(routeDetail.timeline || [])}
+  `;
+}
+
+function renderWorkerLoginDetails(worker = {}) {
+  const routeDetail = worker.routeDetail || {};
+  return `
+    <div class="stat-breakdown-list">
+      ${detailRow("Giriton belépés", worker.giritonLoginTime || "-")}
+      ${detailRow("Giriton kilépés", worker.giritonLoginEnd || "-")}
+      ${detailRow("Giriton státusz", worker.giritonLoginStatus || "-")}
+      ${detailRow("Sorba állt", timelineTime(routeDetail.queueStartedAt || worker.queueEventAt))}
+      ${detailRow("Túrát kapott", timelineTime(routeDetail.routeAssignedAt))}
+      ${detailRow("Várakozott", minutesText(routeDetail.queueWaitMinutes ?? worker.live?.queueWaitMinutes))}
+    </div>
+    ${renderTimeline(routeDetail.timeline || [])}
+  `;
 }
 
 function ensureWorkerSignalDialog() {
@@ -5250,6 +5378,7 @@ function renderWorkerCard(item) {
   const live = item.live || {};
   const hasLive = Boolean(live.routeId || live.mapsUrl || Number(live.totalStops || 0));
   const vehicleText = opsVehicleText(item.vehicle);
+  const vehicleSubtitle = temperatureText(item.temperatureCelsius, item.temperatureStatus);
   const workerKey = item.workerKey || item.courierId || item.courierName || "";
   const giritonLabel = String(item.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const muszakproLabel = String(item.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
@@ -5283,9 +5412,9 @@ function renderWorkerCard(item) {
       </div>
       <div class="ops-detail-grid">
         <button type="button" class="ops-detail-tile ops-shift-trigger" data-worker-shifts="${escapeHtml(workerKey)}"><span>Műszak</span><strong>${escapeHtml(workerShiftTitle(item))}</strong><small>${escapeHtml(workerShiftSubtitle(item))}</small></button>
-        <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
-        <div><span>Live túra</span><strong>${escapeHtml(hasLive ? (live.routeId || "Aktív") : "Nincs live adat")}</strong><small>${escapeHtml(hasLive ? liveRouteSubtitle(live, progress) : "Csak beosztás alapján")}</small></div>
-        <div class="${loginBoxClass}"><span>Giriton bejelentkezés</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></div>
+        <button type="button" class="ops-detail-tile" data-worker-info="${escapeHtml(workerKey)}" data-worker-info-mode="vehicle"><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(vehicleSubtitle)}</small></button>
+        <button type="button" class="ops-detail-tile" data-worker-info="${escapeHtml(workerKey)}" data-worker-info-mode="route"><span>Live túra</span><strong>${escapeHtml(hasLive ? (live.routeId || "Aktív") : "Nincs live adat")}</strong><small>${escapeHtml(hasLive ? liveRouteSubtitle(live, progress) : "Csak beosztás alapján")}</small></button>
+        <button type="button" class="ops-detail-tile ${loginBoxClass}" data-worker-info="${escapeHtml(workerKey)}" data-worker-info-mode="login"><span>Bejelentkezések</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></button>
         <button type="button" class="ops-detail-tile worker-signal-trigger ${signalAlert ? "attention" : ""}" data-worker-signal="${escapeHtml(workerKey)}"><span>Jelzés a futártól</span><strong>${escapeHtml(signalLabel)}</strong><small>${escapeHtml(signalSmall || "Kattints jelzés rögzítéséhez")}</small></button>
       </div>
       ${hasLive ? `<div class="ops-worker-foot">
@@ -5340,6 +5469,9 @@ function renderTodayWorkers() {
   });
   target.querySelectorAll("[data-worker-signal]").forEach((button) => {
     button.addEventListener("click", () => openWorkerSignalDialog(button.dataset.workerSignal));
+  });
+  target.querySelectorAll("[data-worker-info]").forEach((button) => {
+    button.addEventListener("click", () => openWorkerInfoDialog(button.dataset.workerInfo, button.dataset.workerInfoMode));
   });
 }
 

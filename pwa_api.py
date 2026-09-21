@@ -2480,6 +2480,80 @@ def route_reference_for_live_refresh(courier_id: str) -> tuple[str, int | None]:
     )
 
 
+def hub_route_log_items(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    items: list[dict[str, Any]] = []
+    containers = [payload]
+    for nested_key in ("shift", "route"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    for container in containers:
+        for key in ("routeLogs", "routeLog", "logs", "log", "events", "timeline"):
+            value = container.get(key)
+            if isinstance(value, list):
+                items.extend(event for event in value if isinstance(event, dict))
+    return items
+
+
+def hub_log_event_type(event: dict[str, Any]) -> str:
+    return str(event.get("type") or event.get("eventType") or event.get("event") or event.get("name") or "").strip().upper()
+
+
+def hub_log_event_at(event: dict[str, Any]) -> str:
+    return iso_local_text(
+        event.get("occurredAt")
+        or event.get("createdAt")
+        or event.get("created_at")
+        or event.get("time")
+        or event.get("timestamp")
+    )
+
+
+def hub_log_event_label(event_type: str) -> str:
+    return {
+        "SHIFT_AVAILABLE": "Sorba állt",
+        "ROUTE_ASSIGNED": "Túrát kapott",
+        "DEPARTED": "Elindult a raktárból",
+        "WAREHOUSE_ARRIVED": "Visszaérkezett",
+        "LAST_ORDER_FINISHED": "Utolsó rendelés kész",
+        "EARLY_SMS_SENT": "Korai kézbesítés SMS",
+        "ARRIVED_TO_CUSTOMER": "Megérkezett a megállóhoz",
+        "BAGS_SCANNED": "Futár beolvasta a táskákat",
+        "LEFT_CUSTOMER": "Elindult az ügyféltől",
+    }.get(event_type, event_type.replace("_", " ").title())
+
+
+def hub_route_timeline(payload: Any) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    for event in hub_route_log_items(payload):
+        event_type = hub_log_event_type(event)
+        event_at = hub_log_event_at(event)
+        if not event_type and not event_at:
+            continue
+        events.append({
+            "type": event_type,
+            "label": str(event.get("label") or event.get("text") or hub_log_event_label(event_type)),
+            "at": event_at,
+            "detail": str(event.get("message") or event.get("description") or ""),
+        })
+    return sorted(events, key=lambda item: item.get("at") or "")
+
+
+def first_hub_timeline_event_at(timeline: list[dict[str, str]], event_type: str) -> str:
+    wanted = str(event_type or "").strip().upper()
+    return next((item.get("at") or "" for item in timeline if item.get("type") == wanted), "")
+
+
+def minutes_between_local(start_value: Any, end_value: Any) -> int | None:
+    start = local_datetime(start_value)
+    end = local_datetime(end_value)
+    if not start or not end:
+        return None
+    return int(round((end - start).total_seconds() / 60))
+
+
 def refresh_live_hub_detail_for_user(user: dict[str, Any]) -> None:
     courier_id, courier_name = courier_identity(user)
     if not courier_id:
@@ -4620,11 +4694,94 @@ def today_worker_shift_payload(worker: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def latest_today_hub_details_by_courier() -> dict[str, dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "courier_hub_live_monitoring_courier_latest",
+        params={
+            "select": "courier_id,warehouse_id,warehouse_code,route_id,status_code,response_json,fetched_at",
+            "status_code": "eq.200",
+            "order": "fetched_at.desc",
+            "limit": "1000",
+        },
+        timeout=20,
+    )
+    rows = current_local_day_rows(rows)
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        courier_id = str(row.get("courier_id") or "").strip()
+        if courier_id and courier_id not in latest:
+            latest[courier_id] = row
+    return latest
+
+
+def today_worker_route_detail(
+    courier_id: str,
+    live: dict[str, Any],
+    detail_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = (detail_row or {}).get("response_json")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    route_id = str(live.get("activeRouteId") or (detail_row or {}).get("route_id") or "").strip()
+    route = first_hub_route(payload, route_id) if payload else {}
+    timeline = hub_route_timeline(payload)
+    route_assigned_at = first_hub_timeline_event_at(timeline, "ROUTE_ASSIGNED")
+    queue_started_at = first_hub_timeline_event_at(timeline, "SHIFT_AVAILABLE")
+    departed_at = (
+        first_hub_timeline_event_at(timeline, "DEPARTED")
+        or iso_local_text(route.get("departedAt") or route.get("realDeparture") or route.get("plannedDeparture"))
+    )
+    returned_at = first_hub_timeline_event_at(timeline, "WAREHOUSE_ARRIVED")
+    planned_return = iso_local_text(
+        route.get("plannedReturn")
+        or route.get("plannedReturnAt")
+        or route.get("expectedReturn")
+    )
+    real_return = iso_local_text(
+        route.get("realReturn")
+        or route.get("actualReturnAt")
+        or route.get("finishedAt")
+    )
+    queue_wait = minutes_between_local(queue_started_at, route_assigned_at)
+    return {
+        "courierId": courier_id,
+        "routeId": route_id,
+        "warehouse": str((detail_row or {}).get("warehouse_code") or live.get("warehouse") or ""),
+        "timeline": timeline,
+        "queueStartedAt": queue_started_at,
+        "routeAssignedAt": route_assigned_at,
+        "departedAt": departed_at,
+        "plannedReturn": planned_return,
+        "realReturn": real_return or returned_at,
+        "queueWaitMinutes": queue_wait,
+        "updatedAt": iso_local_text((detail_row or {}).get("fetched_at") or live.get("updatedAt")),
+        "source": "courier_hub_live_monitoring_courier_latest" if detail_row else "live_map_summary",
+    }
+
+
+def route_expected_return_datetime(route_detail: dict[str, Any]) -> datetime | None:
+    return local_datetime(route_detail.get("realReturn")) or local_datetime(route_detail.get("plannedReturn"))
+
+
+def shift_will_miss_return(shift: dict[str, Any], route_detail: dict[str, Any]) -> bool:
+    shift_start = schedule_start_datetime(shift.get("date"), shift.get("start"))
+    expected_return = route_expected_return_datetime(route_detail)
+    if not shift_start or not expected_return:
+        return False
+    return expected_return > shift_start
+
+
 def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]:
     target_date = datetime.now(LOCAL_TIMEZONE).date()
     target_key = target_date.isoformat()
     live_map = read_coordinator_live_map(warehouse_ids)
     live_by_courier = {str(item.get("courierId") or ""): item for item in live_map.get("couriers", [])}
+    detail_by_courier = latest_today_hub_details_by_courier()
     checkins_by_courier = latest_today_shift_checkins()
     comparison_rows = read_schedule_comparison_rows(target_date, target_date)
     if comparison_rows:
@@ -4657,6 +4814,7 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         shifts = [today_worker_shift_payload(worker) for worker in ordered_shifts]
         courier_id = str(schedule_worker.get("courierId") or "").strip()
         live = live_by_courier.get(courier_id) or {}
+        route_detail = today_worker_route_detail(courier_id, live, detail_by_courier.get(courier_id))
         checkin = checkins_by_courier.get(courier_id) or {}
         live_route_id = live.get("activeRouteId") or ""
         live_total_stops = safe_int(live.get("totalStops"))
@@ -4664,9 +4822,16 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         live_presence = bool(live_route_id or live_total_stops or live.get("mapsUrl"))
         login_missing = bool(schedule_worker.get("giritonLoginMissingAlert"))
         login_present_by_route = bool(login_missing and live_presence)
+        alternative_shift = None
+        for shift in shifts[1:]:
+            shift["missedByRoute"] = shift_will_miss_return(shift, route_detail)
+            if shift["missedByRoute"] and not alternative_shift:
+                alternative_shift = shift
         if shifts:
             shifts[0]["routeId"] = live_route_id
             shifts[0]["orderCount"] = live_order_count
+            shifts[0]["plannedReturn"] = route_detail.get("plannedReturn") or ""
+            shifts[0]["realReturn"] = route_detail.get("realReturn") or ""
         status_label = "Beosztva"
         if live_presence:
             status_label = "Live map alapján aktív"
@@ -4710,12 +4875,19 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             "vehicle": schedule_worker.get("vehicle") or live.get("vehiclePlate") or "",
             "shifts": shifts,
             "shiftCount": len(shifts),
+            "alternativeShift": alternative_shift,
+            "routeDetail": route_detail,
+            "temperatureCelsius": live.get("temperatureCelsius"),
+            "temperatureStatus": live.get("temperatureStatus") or "",
             "live": {
                 "routeId": live_route_id,
                 "deliveredStops": live.get("deliveredStops") or 0,
                 "totalStops": live_total_stops,
                 "orderCount": live_order_count,
                 "remainingStops": live.get("remainingStops") or 0,
+                "plannedReturn": route_detail.get("plannedReturn") or "",
+                "realReturn": route_detail.get("realReturn") or "",
+                "queueWaitMinutes": route_detail.get("queueWaitMinutes"),
                 "status": live.get("status") or live.get("shiftStatus") or "",
                 "mapsUrl": live.get("mapsUrl") or "",
             },
