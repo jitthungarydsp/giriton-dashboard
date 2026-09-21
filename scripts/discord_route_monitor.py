@@ -1157,6 +1157,20 @@ def first_value_by_names(value, names):
     return ""
 
 
+PLANNED_DEPARTURE_FIELD_NAMES = {
+    "plannedDeparture",
+    "plannedDepartureAt",
+    "planned_departure",
+    "planned_departure_at",
+    "plannedDepartureTime",
+    "plannedDepartureDateTime",
+    "plannedRouteDeparture",
+    "plannedRouteDepartureAt",
+    "routePlannedDeparture",
+    "routePlannedDepartureAt",
+}
+
+
 def normalize_live_monitoring_route(row, warehouse_id):
     route_id = live_route_id(row)
     courier_id = normalize_id(row.get("courierId") or row.get("courier_id"))
@@ -1181,7 +1195,7 @@ def normalize_live_monitoring_route(row, warehouse_id):
         "plannedDeparture": coalesce(
             row.get("plannedDepartureAt"),
             row.get("plannedDeparture"),
-            first_value_by_names(row, {"plannedDepartureAt", "plannedDeparture"}),
+            first_value_by_names(row, PLANNED_DEPARTURE_FIELD_NAMES),
         ),
         "plannedReturn": coalesce(
             row.get("plannedReturnAt"),
@@ -1248,7 +1262,11 @@ def normalize_courier_hub_departure_route(row, warehouse_id):
                 row.get("orders_in_route"),
             )
         ).strip(),
-        "plannedDeparture": coalesce(row.get("plannedDeparture"), row.get("plannedDepartureAt")),
+        "plannedDeparture": coalesce(
+            row.get("plannedDeparture"),
+            row.get("plannedDepartureAt"),
+            first_value_by_names(row, PLANNED_DEPARTURE_FIELD_NAMES),
+        ),
         "plannedReturn": coalesce(
             row.get("plannedReturn"),
             row.get("plannedReturnAt"),
@@ -1398,10 +1416,11 @@ def normalize_courier_hub_detail_route(detail_route, detail_payload, fallback_ro
         "plannedDeparture": coalesce(
             source.get("plannedDeparture"),
             source.get("plannedDepartureAt"),
-            first_value_by_names(source, {"plannedDeparture", "plannedDepartureAt"}),
-            first_value_by_names(payload, {"plannedDeparture", "plannedDepartureAt"}),
+            first_value_by_names(source, PLANNED_DEPARTURE_FIELD_NAMES),
+            first_value_by_names(payload, PLANNED_DEPARTURE_FIELD_NAMES),
             fallback.get("plannedDeparture"),
             fallback.get("plannedDepartureAt"),
+            first_value_by_names(fallback, PLANNED_DEPARTURE_FIELD_NAMES),
         ),
         "plannedReturn": coalesce(
             source.get("plannedReturn"),
@@ -2181,7 +2200,13 @@ def build_notification_payload(
         "route_id": str(route_id),
         "order_id": str(checkpoint.get("orderId") or ""),
         "assigned_at": timestamp_or_none(route.get("assignedAt")),
-        "planned_departure": timestamp_or_none(route.get("plannedDeparture")),
+        "planned_departure": timestamp_or_none(
+            coalesce(
+                route.get("plannedDeparture"),
+                route.get("plannedDepartureAt"),
+                first_value_by_names(route, PLANNED_DEPARTURE_FIELD_NAMES),
+            )
+        ),
         "planned_return": timestamp_or_none(route.get("plannedReturn")),
         "licence_plate": str(licence_plate),
         "orders_in_route": str(orders_in_route),
@@ -2799,8 +2824,8 @@ def run_once(max_age_minutes, dry_run=False):
             coalesce(
                 route.get("plannedDeparture"),
                 route.get("plannedDepartureAt"),
-                first_value_by_names(route, {"plannedDeparture", "plannedDepartureAt"}),
-                first_value_by_names(driver_detail, {"plannedDeparture", "plannedDepartureAt"}),
+                first_value_by_names(route, PLANNED_DEPARTURE_FIELD_NAMES),
+                first_value_by_names(driver_detail, PLANNED_DEPARTURE_FIELD_NAMES),
             )
         )
         planned_return_text = format_time(

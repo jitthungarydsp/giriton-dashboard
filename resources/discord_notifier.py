@@ -194,7 +194,7 @@ def _build_route_notification_lines(
         content_lines.append(f"**Varakozott:** {queue_wait_note}")
 
     if planned_departure:
-        content_lines.append(f"**Tervezett elindulas:** {planned_departure}")
+        content_lines.append(f"**Tervezett indulás:** {planned_departure}")
 
     if planned_return:
         content_lines.append(f"**Tervezett visszaerkezes:** {planned_return}")
