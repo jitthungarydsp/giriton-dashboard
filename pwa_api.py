@@ -4661,11 +4661,14 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
         live_route_id = live.get("activeRouteId") or ""
         live_total_stops = safe_int(live.get("totalStops"))
         live_order_count = safe_int(live.get("totalStops")) or safe_int(live.get("remainingStops")) + safe_int(live.get("deliveredStops"))
+        live_presence = bool(live_route_id or live_total_stops or live.get("mapsUrl"))
+        login_missing = bool(schedule_worker.get("giritonLoginMissingAlert"))
+        login_present_by_route = bool(login_missing and live_presence)
         if shifts:
             shifts[0]["routeId"] = live_route_id
             shifts[0]["orderCount"] = live_order_count
         status_label = "Beosztva"
-        if live_route_id or live_total_stops or live.get("mapsUrl"):
+        if live_presence:
             status_label = "Live map alapján aktív"
         elif schedule_worker.get("giritonTone") == "ok" and schedule_worker.get("muszakproTone") == "ok":
             status_label = "Giriton + MűszakPro OK"
@@ -4695,7 +4698,8 @@ def read_today_workers(warehouse_ids: list[int] | None = None) -> dict[str, Any]
             "giritonLoginEnd": schedule_worker.get("giritonLoginEnd") or "",
             "giritonLoginStatus": schedule_worker.get("giritonLoginStatus") or "",
             "isFirstShift": bool(schedule_worker.get("isFirstShift")),
-            "giritonLoginMissingAlert": bool(schedule_worker.get("giritonLoginMissingAlert")),
+            "giritonLoginMissingAlert": bool(login_missing and not login_present_by_route),
+            "giritonPresentByRoute": login_present_by_route,
             "actualStartAt": live.get("activeFrom") or "",
             "queueEvent": str(checkin.get("event_type") or live.get("queueEvent") or ""),
             "queueEventAt": iso_local_text(checkin.get("created_at")) or live.get("queueEventAt") or "",

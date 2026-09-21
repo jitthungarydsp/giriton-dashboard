@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v136";
+const APP_VERSION = "v137";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -5254,11 +5254,15 @@ function renderWorkerCard(item) {
   const giritonLabel = String(item.giritonStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const muszakproLabel = String(item.muszakproStatus || "Nincs adat").toLocaleUpperCase("hu-HU");
   const loginAlert = Boolean(item.giritonLoginMissingAlert);
+  const loginPresentByRoute = Boolean(item.giritonPresentByRoute);
   const signalAlert = workerHasSignal(item);
   const signalLabel = item.signalEvent ? shiftSignalLabel(item.signalEvent) : (loginAlert ? "Giriton bejelentkezés hiányzik" : "Nincs jelzés");
   const signalSmall = [item.signalText, item.signalAt ? shortDateTime(item.signalAt) : ""].filter(Boolean).join(" · ");
-  const loginText = item.giritonLoginTime || (loginAlert ? "Nincs bejelentkezés" : "Nincs adat");
-  const loginSubtext = item.giritonLoginStatus || (item.isFirstShift ? "Első műszak" : "");
+  const loginText = item.giritonLoginTime || ((loginAlert || loginPresentByRoute) ? "Nincs bejelentkezés" : "Nincs adat");
+  const loginSubtext = loginPresentByRoute
+    ? "✓ Itt van · túra alapján"
+    : (item.giritonLoginStatus || (item.isFirstShift ? "Első műszak" : ""));
+  const loginBoxClass = loginPresentByRoute ? "ops-present-box" : (loginAlert ? "ops-late-box" : "");
   const mapsLink = live.mapsUrl
     ? `<a class="ops-map-link" href="${escapeHtml(live.mapsUrl)}" target="_blank" rel="noopener">Térkép</a>`
     : "";
@@ -5281,7 +5285,7 @@ function renderWorkerCard(item) {
         <button type="button" class="ops-detail-tile ops-shift-trigger" data-worker-shifts="${escapeHtml(workerKey)}"><span>Műszak</span><strong>${escapeHtml(workerShiftTitle(item))}</strong><small>${escapeHtml(workerShiftSubtitle(item))}</small></button>
         <div><span>Autó</span><strong>${escapeHtml(vehicleText || "-")}</strong><small>${escapeHtml(item.bookingCode || "")}</small></div>
         <div><span>Live túra</span><strong>${escapeHtml(hasLive ? (live.routeId || "Aktív") : "Nincs live adat")}</strong><small>${escapeHtml(hasLive ? liveRouteSubtitle(live, progress) : "Csak beosztás alapján")}</small></div>
-        <div class="${loginAlert ? "ops-late-box" : ""}"><span>Giriton bejelentkezés</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></div>
+        <div class="${loginBoxClass}"><span>Giriton bejelentkezés</span><strong>${escapeHtml(loginText)}</strong><small>${escapeHtml(loginSubtext)}</small></div>
         <button type="button" class="ops-detail-tile worker-signal-trigger ${signalAlert ? "attention" : ""}" data-worker-signal="${escapeHtml(workerKey)}"><span>Jelzés a futártól</span><strong>${escapeHtml(signalLabel)}</strong><small>${escapeHtml(signalSmall || "Kattints jelzés rögzítéséhez")}</small></button>
       </div>
       ${hasLive ? `<div class="ops-worker-foot">

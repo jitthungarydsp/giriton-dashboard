@@ -230,7 +230,7 @@
             "trainer": "trainer_name",
             "password": "Jli5NGaN",
             "role": "coordinator",
-            "courierId": 9999,
+            "courierId": 1001,
             "active": true,
             "token": ""
         },
@@ -239,10 +239,11 @@
             "trainer": "trainer_name",
             "password": "Jli5NGaN",
             "role": "coordinator",
-            "courierId": 9999,
+            "courierId": 1002,
             "active": true,
             "token": ""
         },
+        
         {
             "username": "Cserna Levente Zoltán",
             "trainer": "trainer_name",

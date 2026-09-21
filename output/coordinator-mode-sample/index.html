@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="hu">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coordinator mód minta</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f9;
+        --surface: #ffffff;
+        --ink: #18212f;
+        --muted: #667085;
+        --line: #d9e0ea;
+        --blue: #1668dc;
+        --blue-soft: #eaf2ff;
+        --green: #168447;
+        --green-soft: #e8f7ee;
+        --amber: #b76b00;
+        --amber-soft: #fff4db;
+        --red: #c93535;
+        --red-soft: #fff0f0;
+        --shadow: 0 18px 45px rgba(18, 30, 50, .08);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      button, input, select { font: inherit; }
+      button { cursor: pointer; }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) auto auto;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, .9);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .mark {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        border-radius: 11px;
+        background: var(--ink);
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 19px;
+        letter-spacing: 0;
+      }
+
+      .brand p {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .warehouse-switch {
+        display: inline-grid;
+        grid-auto-flow: column;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #f8fafc;
+      }
+
+      .warehouse-switch button,
+      .ghost-button {
+        min-height: 34px;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .warehouse-switch button {
+        min-width: 58px;
+        padding: 0 12px;
+      }
+
+      .warehouse-switch button.active {
+        background: var(--surface);
+        color: var(--blue);
+        box-shadow: 0 3px 12px rgba(18, 30, 50, .1);
+      }
+
+      .ghost-button {
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        color: var(--ink);
+      }
+
+      .shell {
+        width: min(100%, 1540px);
+        margin: 0 auto;
+        padding: 22px 24px 28px;
+      }
+
+      .command {
+        display: grid;
+        grid-template-columns: minmax(360px, 1fr) 360px;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .metric {
+        min-height: 86px;
+        padding: 14px 16px;
+        border-right: 1px solid var(--line);
+      }
+
+      .metric:last-child { border-right: 0; }
+      .metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 27px;
+        letter-spacing: 0;
+      }
+
+      .metric small {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .metric.danger strong { color: var(--red); }
+      .metric.warn strong { color: var(--amber); }
+      .metric.ok strong { color: var(--green); }
+
+      .search-panel {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .search-panel label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .search-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+
+      input, select {
+        width: 100%;
+        min-height: 42px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fbfcfe;
+        color: var(--ink);
+        outline: none;
+      }
+
+      input:focus, select:focus {
+        border-color: var(--blue);
+        box-shadow: 0 0 0 3px rgba(22, 104, 220, .14);
+      }
+
+      .primary {
+        min-height: 42px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--blue);
+        color: #fff;
+        font-weight: 900;
+      }
+
+      .tabs {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        margin-bottom: 16px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+      }
+
+      .tab {
+        min-height: 42px;
+        padding: 0 15px;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .tab.active {
+        background: var(--ink);
+        color: #fff;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-head h2,
+      .panel-head h3 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      .panel-head p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      .table th {
+        position: sticky;
+        top: 70px;
+        z-index: 2;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        background: #f7f9fc;
+        color: var(--muted);
+        font-size: 11px;
+        text-align: left;
+        text-transform: uppercase;
+      }
+
+      .table td {
+        padding: 12px;
+        border-bottom: 1px solid #edf1f5;
+        vertical-align: top;
+      }
+
+      .table tr:hover td { background: #fafcff; }
+      .table strong { display: block; font-size: 14px; }
+      .table small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 700; }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 26px;
+        padding: 0 9px;
+        border-radius: 999px;
+        background: #eef2f7;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .pill.green { background: var(--green-soft); color: var(--green); }
+      .pill.amber { background: var(--amber-soft); color: var(--amber); }
+      .pill.red { background: var(--red-soft); color: var(--red); }
+      .pill.blue { background: var(--blue-soft); color: var(--blue); }
+
+      .row-actions {
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+      }
+
+      .icon-btn {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 950;
+      }
+
+      .side-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .queue {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .queue-item {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fbfcfe;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--blue-soft);
+        color: var(--blue);
+        font-size: 12px;
+        font-weight: 950;
+      }
+
+      .queue-item strong {
+        display: block;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      .queue-item small {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 750;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 0;
+        padding: 4px 14px 14px;
+      }
+
+      .event {
+        display: grid;
+        grid-template-columns: 58px 18px minmax(0, 1fr);
+        gap: 10px;
+        min-height: 58px;
+      }
+
+      .event time {
+        padding-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .dot {
+        position: relative;
+        display: grid;
+        justify-items: center;
+      }
+
+      .dot::before {
+        content: "";
+        width: 2px;
+        height: 100%;
+        background: var(--line);
+      }
+
+      .dot i {
+        position: absolute;
+        top: 12px;
+        width: 12px;
+        height: 12px;
+        border: 2px solid var(--surface);
+        border-radius: 50%;
+        background: var(--blue);
+        box-shadow: 0 0 0 2px var(--blue-soft);
+      }
+
+      .event div:last-child {
+        padding: 8px 0 12px;
+      }
+
+      .event strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .event small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .view { display: none; }
+      .view.active { display: block; }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+
+      .compact-list {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+      }
+
+      .compact-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fbfcfe;
+      }
+
+      .compact-row strong { display: block; }
+      .compact-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 700; }
+
+      @media (max-width: 1060px) {
+        .topbar,
+        .command,
+        .workspace,
+        .split {
+          grid-template-columns: 1fr;
+        }
+
+        .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .metric { border-bottom: 1px solid var(--line); }
+      }
+
+      @media (max-width: 620px) {
+        .topbar, .shell { padding-right: 14px; padding-left: 14px; }
+        .status-strip { grid-template-columns: 1fr; }
+        .metric { border-right: 0; }
+        .table-wrap { overflow-x: auto; }
+        .table { min-width: 760px; }
+        .search-row { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">J</div>
+          <div>
+            <h1>JITT Coordinator</h1>
+            <p>BUD1 irányítói mód · frissítve 16:58</p>
+          </div>
+        </div>
+        <div class="warehouse-switch" aria-label="Raktár választó">
+          <button class="active" type="button">BUD1</button>
+          <button type="button">BUD2</button>
+        </div>
+        <button class="ghost-button" type="button">Frissítés</button>
+      </header>
+
+      <div class="shell">
+        <section class="command">
+          <div class="status-strip" aria-label="Mai állapot">
+            <div class="metric danger">
+              <span>Indulási gond</span>
+              <strong>4</strong>
+              <small>2 rámpán, 2 nem kész</small>
+            </div>
+            <div class="metric warn">
+              <span>Várakozik</span>
+              <strong>11</strong>
+              <small>átlag 14 perc</small>
+            </div>
+            <div class="metric ok">
+              <span>Live túrán</span>
+              <strong>38</strong>
+              <small>457 cím folyamatban</small>
+            </div>
+            <div class="metric">
+              <span>Műszak</span>
+              <strong>42</strong>
+              <small>5 eltérés ellenőrzésre</small>
+            </div>
+            <div class="metric">
+              <span>Akciók</span>
+              <strong>7</strong>
+              <small>ma még nyitott</small>
+            </div>
+          </div>
+
+          <div class="search-panel">
+            <label for="search">Futár gyorskereső</label>
+            <div class="search-row">
+              <input id="search" placeholder="Név, futár ID, rendszám vagy route..." />
+              <button class="primary" type="button">Megnyitás</button>
+            </div>
+          </div>
+        </section>
+
+        <nav class="tabs" aria-label="Coordinator fülek">
+          <button class="tab active" data-tab="departures" type="button">Indulás</button>
+          <button class="tab" data-tab="live" type="button">Live</button>
+          <button class="tab" data-tab="shifts" type="button">Műszak</button>
+          <button class="tab" data-tab="courier" type="button">Futár 360</button>
+          <button class="tab" data-tab="money" type="button">Pénzügy</button>
+        </nav>
+
+        <section class="workspace">
+          <div>
+            <div class="view active" id="departures">
+              <div class="panel">
+                <div class="panel-head">
+                  <div>
+                    <h2>Indulás segítő</h2>
+                    <p>Rámpán lévő és pakolásra váró futárok</p>
+                  </div>
+                  <span class="pill red">4 beavatkozás</span>
+                </div>
+                <div class="table-wrap">
+                  <table class="table">
+                    <thead>
+                      <tr>
+                        <th>Futár</th>
+                        <th>Rámpa</th>
+                        <th>Route</th>
+                        <th>Pakolás</th>
+                        <th>Indulás</th>
+                        <th>Szkennelés</th>
+                        <th>Művelet</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><strong>Nagy István</strong><small>#7725 · AIJB763</small></td>
+                        <td><span class="pill blue">13</span></td>
+                        <td><strong>1547160</strong><small>9 megrendelés</small></td>
+                        <td><span class="pill red">most</span></td>
+                        <td>29 perc</td>
+                        <td><span class="pill green">OK</span></td>
+                        <td><div class="row-actions"><button class="icon-btn">↗</button><button class="icon-btn">!</button></div></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Kancsár Zoltán</strong><small>#7688 · AIHT463</small></td>
+                        <td><span class="pill blue">07</span></td>
+                        <td><strong>1547176</strong><small>9 megrendelés</small></td>
+                        <td>27 perc</td>
+                        <td>41 perc</td>
+                        <td><span class="pill red">9 rendelés · 56 csomag</span></td>
+                        <td><div class="row-actions"><button class="icon-btn">↗</button><button class="icon-btn">!</button></div></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Rácz Csaba</strong><small>#2875 · AORX412</small></td>
+                        <td><span class="pill blue">15</span></td>
+                        <td><strong>1547169</strong><small>11 megrendelés</small></td>
+                        <td>15 perc</td>
+                        <td>43 perc</td>
+                        <td><span class="pill green">OK</span></td>
+                        <td><div class="row-actions"><button class="icon-btn">↗</button><button class="icon-btn">!</button></div></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Futár minta</strong><small>#7401 · KZX834</small></td>
+                        <td><span class="pill blue">16</span></td>
+                        <td><strong>1547194</strong><small>10 megrendelés</small></td>
+                        <td>26 perc</td>
+                        <td>45 perc</td>
+                        <td><span class="pill red">10 rendelés · 42 csomag</span></td>
+                        <td><div class="row-actions"><button class="icon-btn">↗</button><button class="icon-btn">!</button></div></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="view" id="live">
+              <div class="panel">
+                <div class="panel-head"><div><h2>Live túrák</h2><p>Aktív útvonalak és késési kockázat</p></div><span class="pill amber">6 figyelendő</span></div>
+                <div class="compact-list">
+                  <div class="compact-row"><div><strong>Szabó Zoltán · route 1547008</strong><small>22/31 cím · következő cím 8 perc múlva</small></div><span class="pill green">OK</span></div>
+                  <div class="compact-row"><div><strong>Tóth Patrik · route 1547019</strong><small>14/28 cím · időablak veszélyben</small></div><span class="pill red">Késés</span></div>
+                  <div class="compact-row"><div><strong>Varga András · route 1547042</strong><small>3/19 cím · nincs GPS 7 perce</small></div><span class="pill amber">GPS</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="view" id="shifts">
+              <div class="split">
+                <div class="panel">
+                  <div class="panel-head"><div><h2>Mai műszak</h2><p>Giriton és MűszakPro egyezés</p></div><span class="pill red">5 eltérés</span></div>
+                  <div class="compact-list">
+                    <div class="compact-row"><div><strong>Rácz Csaba</strong><small>BUD1 04:30 · Giriton hiányzik</small></div><span class="pill red">Hiány</span></div>
+                    <div class="compact-row"><div><strong>Nagy Kristóf</strong><small>BUD1 12:45 · MűszakPro OK</small></div><span class="pill green">OK</span></div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-head"><div><h2>Következő órák</h2><p>Beérkezés és rámpa várható terhelés</p></div></div>
+                  <div class="compact-list">
+                    <div class="compact-row"><div><strong>17:00-18:00</strong><small>14 indulás, 3 piros szkennelés</small></div><span class="pill amber">sűrű</span></div>
+                    <div class="compact-row"><div><strong>18:00-19:00</strong><small>9 indulás, 0 piros</small></div><span class="pill green">jó</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="view" id="courier">
+              <div class="panel">
+                <div class="panel-head"><div><h2>Futár 360</h2><p>Egy futár operatív képe egy helyen</p></div><span class="pill blue">Rácz Csaba</span></div>
+                <div class="compact-list">
+                  <div class="compact-row"><div><strong>Aktuális túra</strong><small>Route 1547169 · 11 rendelés · rámpa 15</small></div><span class="pill green">OK</span></div>
+                  <div class="compact-row"><div><strong>Műszak</strong><small>BUD1_04:30 · következő nincs</small></div><span class="pill amber">Giriton hiányzik</span></div>
+                  <div class="compact-row"><div><strong>Autó</strong><small>AORX412 · 8 °C · hőmérséklet megfelelő</small></div><span class="pill green">OK</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="view" id="money">
+              <div class="panel">
+                <div class="panel-head"><div><h2>Pénzügy</h2><p>Gyors korrekciók és elszámolási jelzések</p></div><span class="pill blue">koordinator</span></div>
+                <div class="compact-list">
+                  <div class="compact-row"><div><strong>Bónusz / Málusz</strong><small>Raktár szerint szűrt futárlista</small></div><button class="primary">Rögzítés</button></div>
+                  <div class="compact-row"><div><strong>Figyelendő futár</strong><small>Következő hónapra jelölés</small></div><span class="pill amber">2 aktív</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="side-stack">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Teendősor</h3>
+                  <p>Legfontosabb akciók elöl</p>
+                </div>
+              </div>
+              <div class="queue">
+                <div class="queue-item">
+                  <div class="avatar">KZ</div>
+                  <div><strong>Kancsár Zoltán</strong><small>56 csomag nincs szkennelve</small></div>
+                  <span class="pill red">most</span>
+                </div>
+                <div class="queue-item">
+                  <div class="avatar">TP</div>
+                  <div><strong>Tóth Patrik</strong><small>időablak veszélyben</small></div>
+                  <span class="pill amber">8p</span>
+                </div>
+                <div class="queue-item">
+                  <div class="avatar">RC</div>
+                  <div><strong>Rácz Csaba</strong><small>Giriton státusz hiányzik</small></div>
+                  <span class="pill amber">műszak</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Idővonal</h3>
+                  <p>Utolsó fontos események</p>
+                </div>
+              </div>
+              <div class="timeline">
+                <div class="event"><time>16:58</time><span class="dot"><i></i></span><div><strong>Route kiosztva</strong><small>Nagy István · 1547160 · rámpa 13</small></div></div>
+                <div class="event"><time>16:54</time><span class="dot"><i></i></span><div><strong>Szkennelési hiba</strong><small>Kancsár Zoltán · 56 csomag hiányzik</small></div></div>
+                <div class="event"><time>16:48</time><span class="dot"><i></i></span><div><strong>Futár rámpára került</strong><small>Rácz Csaba · AORX412</small></div></div>
+                <div class="event"><time>16:41</time><span class="dot"><i></i></span><div><strong>Műszak eltérés</strong><small>BUD1_04:30 · Giriton hiányzik</small></div></div>
+              </div>
+            </div>
+          </aside>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      document.querySelectorAll("[data-tab]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-tab]").forEach((item) => item.classList.remove("active"));
+          document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          document.getElementById(button.dataset.tab)?.classList.add("active");
+        });
+      });
+    </script>
+  </body>
+</html>
