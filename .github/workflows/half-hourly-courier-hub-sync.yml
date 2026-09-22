@@ -179,6 +179,39 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: Sync MuszakPro bookings from sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro bookings import skipped."
+            exit 0
+          fi
+          CMD=(python scripts/load_foglalasok_raw.py)
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
+      - name: Export MuszakPro booking overview sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro overview export skipped."
+            exit 0
+          fi
+          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
+          CMD=(python scripts/export_muszakpro_booking_overview_sheet.py --start-date "$SHIFT_BLOCK_DATE" --lookahead-days 21)
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
       - name: Sync Courier Hub live monitoring
         shell: bash
         run: |
