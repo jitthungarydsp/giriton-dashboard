@@ -39,6 +39,7 @@ from sync_courier_hub_master import (  # noqa: E402
 
 SHIFT_BLOCK_TABLE = "courier_hub_shift_blocks_raw"
 SUBSCRIBER_TABLE = "courier_hub_roster_shift_subscribers_raw"
+BOOKING_TABLE = "courier_hub_shift_bookings_raw"
 
 
 def date_range(start_date: date, end_date: date) -> list[date]:
@@ -287,6 +288,184 @@ def supabase_upsert(table: str, rows: list[dict[str, Any]], conflict: str, *, ch
     return written
 
 
+def is_missing_table_response(response: requests.Response) -> bool:
+    if response.status_code not in (400, 404):
+        return False
+    text = response.text.lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def is_missing_table_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
+def supabase_get_rows(table: str, params: dict[str, str] | list[tuple[str, str]]) -> list[dict[str, Any]]:
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{table}",
+        headers=supabase_headers(),
+        params=params,
+        timeout=60,
+    )
+    if is_missing_table_response(response):
+        return []
+    raise_for_response(response, f"{table} lekérés")
+    payload = response.json()
+    return payload if isinstance(payload, list) else []
+
+
+def booking_key(row: dict[str, Any]) -> tuple[str, int, int, int, str]:
+    return (
+        clean_text(row.get("work_date")),
+        int(row.get("warehouse_id") or 0),
+        int(row.get("dsp_id") or 0),
+        int(row.get("courier_id") or 0),
+        clean_text(row.get("block_key")),
+    )
+
+
+def load_identity_lookup(dsp_id: int) -> dict[tuple[int, int], str]:
+    rows = supabase_get_rows(
+        "courier_hub_courier_identity_raw",
+        {
+            "select": "courier_id,dsp_id,jitt_internal_id",
+            "dsp_id": f"eq.{int(dsp_id)}",
+            "limit": "20000",
+        },
+    )
+    lookup: dict[tuple[int, int], str] = {}
+    for row in rows:
+        courier_id = int_or_none(row.get("courier_id"))
+        row_dsp_id = int_or_none(row.get("dsp_id"))
+        jitt_id = text_or_none(row.get("jitt_internal_id"))
+        if courier_id is not None and row_dsp_id is not None and jitt_id:
+            lookup[(courier_id, row_dsp_id)] = jitt_id
+    return lookup
+
+
+def load_existing_active_bookings_for_range(
+    *,
+    start_date: date,
+    end_date: date,
+    warehouse_ids: list[int],
+    dsp_id: int,
+) -> dict[tuple[str, int, int, int, str], dict[str, Any]]:
+    warehouse_filter = ",".join(str(int(value)) for value in warehouse_ids)
+    params = [
+        ("select", (
+            "work_date,warehouse_id,warehouse_code,dsp_id,courier_id,"
+            "jitt_internal_id,courier_name,email,phone_number,block_key,"
+            "shift_template_id,shift_text,slot_from,slot_to,status,"
+            "first_seen_at,last_seen_at,request_url,subscription_json,courier_json"
+        )),
+        ("work_date", f"gte.{start_date.isoformat()}"),
+        ("work_date", f"lte.{end_date.isoformat()}"),
+        ("warehouse_id", f"in.({warehouse_filter})"),
+        ("dsp_id", f"eq.{int(dsp_id)}"),
+        ("active", "eq.true"),
+        ("limit", "50000"),
+    ]
+    rows = supabase_get_rows(BOOKING_TABLE, params)
+    return {
+        booking_key(row): row
+        for row in rows
+        if clean_text(row.get("block_key"))
+    }
+
+
+def build_booking_state_rows(
+    *,
+    subscriber_rows: list[dict[str, Any]],
+    existing_active: dict[tuple[str, int, int, int, str], dict[str, Any]],
+    identity_lookup: dict[tuple[int, int], str],
+    fetched_at: datetime,
+) -> list[dict[str, Any]]:
+    now = fetched_at.isoformat()
+    current_rows: list[dict[str, Any]] = []
+    current_keys: set[tuple[str, int, int, int, str]] = set()
+
+    for row in subscriber_rows:
+        block_key = text_or_none(row.get("block_key"))
+        if not block_key:
+            continue
+        key = booking_key(row)
+        current_keys.add(key)
+        existing = existing_active.get(key) or {}
+        courier_id = int(row.get("courier_id") or 0)
+        dsp_id = int(row.get("dsp_id") or 0)
+        current_rows.append({
+            "source_name": "courier_hub_shift_booking_state",
+            "work_date": row.get("work_date"),
+            "warehouse_id": row.get("warehouse_id"),
+            "warehouse_code": row.get("warehouse_code"),
+            "dsp_id": dsp_id,
+            "courier_id": courier_id,
+            "jitt_internal_id": identity_lookup.get((courier_id, dsp_id)) or existing.get("jitt_internal_id"),
+            "courier_name": row.get("courier_name"),
+            "email": row.get("email"),
+            "phone_number": row.get("phone_number"),
+            "block_key": block_key,
+            "shift_template_id": row.get("shift_template_id"),
+            "shift_text": row.get("shift_text"),
+            "slot_from": row.get("slot_from"),
+            "slot_to": row.get("slot_to"),
+            "status": row.get("status"),
+            "movement_type": "SEEN" if key in existing_active else "BOOK",
+            "active": True,
+            "first_seen_at": existing.get("first_seen_at") or now,
+            "last_seen_at": now,
+            "deleted_at": None,
+            "request_url": row.get("request_url"),
+            "subscription_json": row.get("subscription_json") or {},
+            "courier_json": row.get("courier_json") or {},
+            "updated_at": now,
+        })
+
+    for key, existing in existing_active.items():
+        if key in current_keys:
+            continue
+        current_rows.append({
+            "source_name": "courier_hub_shift_booking_state",
+            "work_date": existing.get("work_date"),
+            "warehouse_id": existing.get("warehouse_id"),
+            "warehouse_code": existing.get("warehouse_code"),
+            "dsp_id": existing.get("dsp_id"),
+            "courier_id": existing.get("courier_id"),
+            "jitt_internal_id": existing.get("jitt_internal_id"),
+            "courier_name": existing.get("courier_name"),
+            "email": existing.get("email"),
+            "phone_number": existing.get("phone_number"),
+            "block_key": existing.get("block_key"),
+            "shift_template_id": existing.get("shift_template_id"),
+            "shift_text": existing.get("shift_text"),
+            "slot_from": existing.get("slot_from"),
+            "slot_to": existing.get("slot_to"),
+            "status": existing.get("status"),
+            "movement_type": "DELETE",
+            "active": False,
+            "first_seen_at": existing.get("first_seen_at") or now,
+            "last_seen_at": now,
+            "deleted_at": now,
+            "request_url": existing.get("request_url"),
+            "subscription_json": existing.get("subscription_json") or {},
+            "courier_json": existing.get("courier_json") or {},
+            "updated_at": now,
+        })
+
+    return current_rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--warehouse-ids", default="1,2")
@@ -324,13 +503,14 @@ def main() -> int:
     else:
         end_date = date.fromisoformat(args.start_date or args.date)
     work_dates = date_range(start_date, end_date)
+    warehouse_ids = parse_warehouse_ids(args.warehouse_ids)
     fetched_at = datetime.now(timezone.utc)
     block_rows: list[dict[str, Any]] = []
     subscriber_rows: list[dict[str, Any]] = []
     failures = 0
 
     for work_date in work_dates:
-        for warehouse_id in parse_warehouse_ids(args.warehouse_ids):
+        for warehouse_id in warehouse_ids:
             shift_blocks_url = build_shift_blocks_url(
                 args.base_url,
                 warehouse_id,
@@ -424,10 +604,41 @@ def main() -> int:
         subscriber_rows,
         "work_date,warehouse_id,dsp_id,courier_id,subscriber_key",
     )
+    bookings_written = 0
+    booking_rows: list[dict[str, Any]] = []
+    try:
+        existing_active = load_existing_active_bookings_for_range(
+            start_date=start_date,
+            end_date=end_date,
+            warehouse_ids=warehouse_ids,
+            dsp_id=args.dsp_id,
+        )
+        identity_lookup = load_identity_lookup(args.dsp_id)
+        booking_rows = build_booking_state_rows(
+            subscriber_rows=subscriber_rows,
+            existing_active=existing_active,
+            identity_lookup=identity_lookup,
+            fetched_at=fetched_at,
+        )
+        bookings_written = supabase_upsert(
+            BOOKING_TABLE,
+            booking_rows,
+            "work_date,warehouse_id,dsp_id,courier_id,block_key",
+        )
+    except RuntimeError as exc:
+        if is_missing_table_error(exc):
+            print(
+                f"COURIER_HUB_SHIFT_BOOKING_SYNC_SKIPPED missing_table={BOOKING_TABLE}",
+                flush=True,
+            )
+        else:
+            raise
+
     print(
         f"COURIER_HUB_SHIFT_BLOCK_SYNC blocks={len(block_rows)} "
         f"blocks_written={blocks_written} subscribers={len(subscriber_rows)} "
-        f"subscribers_written={subscribers_written} failures={failures}",
+        f"subscribers_written={subscribers_written} bookings={len(booking_rows)} "
+        f"bookings_written={bookings_written} failures={failures}",
         flush=True,
     )
     return 1 if failures else 0

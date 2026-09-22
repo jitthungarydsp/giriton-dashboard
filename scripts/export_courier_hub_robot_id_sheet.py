@@ -96,13 +96,30 @@ def export_robot_id(dry_run: bool = False) -> int:
         return len(rows)
 
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
-    values = [
-        HEADER,
-        *[
-            row_to_sheet_row(row, exported_at)
-            for row in rows
-        ],
-    ]
+    if rows:
+        values = [
+            HEADER,
+            *[
+                row_to_sheet_row(row, exported_at)
+                for row in rows
+            ],
+        ]
+    else:
+        values = [
+            HEADER,
+            [
+                exported_at,
+                "Nincs DB adat. Előbb fusson le a Courier Hub roster sync.",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+        ]
     spreadsheet = open_spreadsheet(SPREADSHEET_ID)
     worksheet = spreadsheet.get_worksheet_by_id(WORKSHEET_GID)
     if worksheet is None:
