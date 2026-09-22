@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from sync_courier_financial_overview import (  # noqa: E402
+    courier_hub_auth_configured,
     raise_for_response,
     supabase_headers,
 )
@@ -300,6 +301,15 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    if not courier_hub_auth_configured():
+        print(
+            "COURIER_HUB_SHIFT_BLOCK_SYNC_AUTH_MISSING "
+            "Állítsd be a COURIER_HUB_COOKIE vagy COURIER_HUB_AUTHORIZATION "
+            "változót, vagy futtasd a refresh_courier_hub_auth.py scriptet cache fájllal.",
+            flush=True,
+        )
+        return 2
+
     start_date = date.fromisoformat(args.start_date or args.date)
     end_date = date.fromisoformat(args.end_date or args.start_date or args.date)
     work_dates = date_range(start_date, end_date)
@@ -384,6 +394,14 @@ def main() -> int:
             flush=True,
         )
         return 1 if failures else 0
+
+    if failures and not block_rows and not subscriber_rows:
+        print(
+            "COURIER_HUB_SHIFT_BLOCK_SYNC_NO_ROWS "
+            f"failures={failures}. Valószínű auth hiba, például 401.",
+            flush=True,
+        )
+        return 1
 
     blocks_written = supabase_upsert(
         SHIFT_BLOCK_TABLE,

@@ -34,6 +34,7 @@ jobs:
       DISCORD_NOTIFY_COURIER_IDS: ${{ secrets.DISCORD_NOTIFY_COURIER_IDS }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
       VAPID_PRIVATE_KEY_B64: ${{ secrets.VAPID_PRIVATE_KEY_B64 }}
       VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
@@ -145,6 +146,18 @@ jobs:
           python scripts/sync_courier_hub_shift_blocks.py \
             --warehouse-ids "1,2" \
             --dsp-id 8 \
+            --date "$SHIFT_BLOCK_DATE"
+
+      - name: Export Courier Hub shift block capacity sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, capacity sheet export skipped."
+            exit 0
+          fi
+          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
+          python scripts/export_courier_hub_shift_block_capacity_sheet.py \
             --date "$SHIFT_BLOCK_DATE"
 
       - name: Sync Courier Hub live monitoring snapshots
