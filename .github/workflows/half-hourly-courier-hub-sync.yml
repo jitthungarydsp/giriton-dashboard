@@ -116,6 +116,22 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: Export Courier Hub robot ids sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, robot id sheet export skipped."
+            exit 0
+          fi
+          CMD=(python scripts/export_courier_hub_robot_id_sheet.py)
+
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
       - name: Sync Courier Hub shift blocks
         continue-on-error: true
         shell: bash

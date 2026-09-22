@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -30,6 +32,7 @@ from sync_courier_financial_overview import (  # noqa: E402
 DEFAULT_BASE_URL = "https://courier-hub.kifli.hu/services/courier-hub-service"
 WAREHOUSE_CODES = {1: "BUD1", 2: "BUD2"}
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+IDENTITY_TABLE = "courier_hub_courier_identity_raw"
 
 
 def clean_text(value: Any) -> str:
@@ -192,6 +195,52 @@ def courier_id_from_row(row: dict[str, Any]) -> int | None:
     ))
 
 
+def parse_registered_since_date(value: Any) -> str | None:
+    text = clean_text(value)
+    if not text:
+        return None
+
+    match = re.search(r"(\d{4})[-.\/](\d{1,2})[-.\/](\d{1,2})", text)
+    if not match:
+        return None
+
+    year, month, day = match.groups()
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+
+def jitt_internal_id(courier_id: int, registered_since: Any, giriton_person_id: Any = "") -> str:
+    registered_date = parse_registered_since_date(registered_since)
+    registered_part = registered_date.replace("-", "") if registered_date else "00000000"
+    seed = f"{int(courier_id)}|{clean_text(giriton_person_id)}"
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()
+    numeric_tail = str(int(digest[:12], 16) % 100000000).zfill(8)
+    return f"{registered_part}{numeric_tail}"
+
+
+def name_without_identifier(name: Any, courier_id: int | None, giriton_person_id: Any = "") -> str | None:
+    text = clean_text(name)
+    if not text:
+        return None
+
+    tokens_to_remove = []
+    if courier_id is not None:
+        tokens_to_remove.append(str(courier_id))
+
+    giriton_text = clean_text(giriton_person_id)
+    if giriton_text:
+        tokens_to_remove.append(giriton_text)
+        tokens_to_remove.append(re.sub(r"\D+", "", giriton_text))
+
+    cleaned = text
+    for token in tokens_to_remove:
+        if token:
+            cleaned = re.sub(rf"\b{re.escape(token)}\b", " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\b\d{4,6}\b", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–—_")
+    return cleaned or text
+
+
 def build_master_row(
     *,
     warehouse_id: int,
@@ -239,6 +288,60 @@ def build_master_row(
     }
 
 
+def build_identity_row(
+    *,
+    warehouse_id: int,
+    dsp_id: int,
+    source_page: int,
+    source_row_index: int,
+    request_url: str,
+    fetched_at: datetime,
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    courier_id = courier_id_from_row(row)
+    if courier_id is None:
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+    fetched_at_text = fetched_at.isoformat()
+    name = text_or_none(first_value(row, "name", "courierName", "courier_name", "fullName", "full_name"))
+    giriton_person_id = text_or_none(first_value(row, "giritonPersonId", "giriton_person_id"))
+    registered_since = text_or_none(first_value(row, "registeredSince", "registered_since"))
+    registered_since_date = parse_registered_since_date(registered_since)
+    return {
+        "source_name": "courier_hub_roster_identity",
+        "courier_id": courier_id,
+        "dsp_id": int(dsp_id),
+        "warehouse_id": int(warehouse_id),
+        "warehouse_code": WAREHOUSE_CODES.get(int(warehouse_id), f"WH{warehouse_id}"),
+        "jitt_internal_id": jitt_internal_id(courier_id, registered_since, giriton_person_id),
+        "name_without_identifier": name_without_identifier(name, courier_id, giriton_person_id),
+        "name_json": name,
+        "phone_number": text_or_none(first_value(row, "phone", "phoneNumber", "phone_number", "mobile", "mobilePhone")),
+        "email": text_or_none(first_value(row, "email", "emailAddress", "email_address")),
+        "giriton_person_id": giriton_person_id,
+        "registered_since": registered_since,
+        "registered_since_date": registered_since_date,
+        "source_page": source_page,
+        "source_row_index": source_row_index,
+        "request_url": request_url,
+        "response_json": row,
+        "last_seen_at": fetched_at_text,
+        "fetched_at": fetched_at_text,
+        "updated_at": now,
+    }
+
+
+def is_missing_table_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return (
+        "could not find the table" in text
+        or "does not exist" in text
+        or "undefined_table" in text
+        or "pgrst205" in text
+    )
+
+
 def supabase_upsert(rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
@@ -252,6 +355,22 @@ def supabase_upsert(rows: list[dict[str, Any]]) -> int:
         timeout=60,
     )
     raise_for_response(response, "courier_hub_master upsert")
+    return len(rows)
+
+
+def supabase_upsert_identities(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+
+    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+    response = requests.post(
+        f"{supabase_url}/rest/v1/{IDENTITY_TABLE}",
+        headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+        params={"on_conflict": "courier_id,dsp_id"},
+        json=rows,
+        timeout=60,
+    )
+    raise_for_response(response, f"{IDENTITY_TABLE} upsert")
     return len(rows)
 
 
@@ -273,6 +392,7 @@ def main() -> int:
     roster_dates = date_range(start_date, end_date)
     fetched_at = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []
+    identity_rows: list[dict[str, Any]] = []
     failures = 0
 
     for roster_date in roster_dates:
@@ -304,6 +424,17 @@ def main() -> int:
                     )
                     if master_row:
                         rows.append(master_row)
+                    identity_row = build_identity_row(
+                        warehouse_id=warehouse_id,
+                        dsp_id=args.dsp_id,
+                        source_page=page,
+                        source_row_index=index,
+                        request_url=request_url,
+                        fetched_at=fetched_at,
+                        row=item,
+                    )
+                    if identity_row:
+                        identity_rows.append(identity_row)
 
                 print(
                     f"COURIER_HUB_MASTER_ROSTER date={roster_date.isoformat()} "
@@ -316,14 +447,28 @@ def main() -> int:
 
     if args.dry_run:
         print(
-            f"DRY_RUN courier_hub_master_rows={len(rows)} failures={failures}",
+            f"DRY_RUN courier_hub_master_rows={len(rows)} "
+            f"identity_rows={len(identity_rows)} failures={failures}",
             flush=True,
         )
         return 1 if failures else 0
 
     written = supabase_upsert(rows)
+    identities_written = 0
+    try:
+        identities_written = supabase_upsert_identities(identity_rows)
+    except RuntimeError as exc:
+        if is_missing_table_error(exc):
+            print(
+                f"COURIER_HUB_IDENTITY_SYNC_SKIPPED missing_table={IDENTITY_TABLE}",
+                flush=True,
+            )
+        else:
+            raise
     print(
-        f"COURIER_HUB_MASTER_SYNC rows={len(rows)} written={written} failures={failures}",
+        f"COURIER_HUB_MASTER_SYNC rows={len(rows)} written={written} "
+        f"identity_rows={len(identity_rows)} identities_written={identities_written} "
+        f"failures={failures}",
         flush=True,
     )
     return 1 if failures else 0
