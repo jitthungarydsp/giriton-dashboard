@@ -40,6 +40,32 @@ from sync_courier_hub_master import (  # noqa: E402
 SHIFT_BLOCK_TABLE = "courier_hub_shift_blocks_raw"
 SUBSCRIBER_TABLE = "courier_hub_roster_shift_subscribers_raw"
 BOOKING_TABLE = "courier_hub_shift_bookings_raw"
+SUBSCRIBER_COLUMNS = [
+    "source_name",
+    "work_date",
+    "warehouse_id",
+    "warehouse_code",
+    "dsp_id",
+    "courier_id",
+    "courier_name",
+    "email",
+    "phone_number",
+    "subscriber_key",
+    "block_key",
+    "shift_template_id",
+    "shift_text",
+    "slot_from",
+    "slot_to",
+    "status",
+    "source_page",
+    "source_row_index",
+    "source_shift_index",
+    "request_url",
+    "subscription_json",
+    "courier_json",
+    "fetched_at",
+    "updated_at",
+]
 
 
 def date_range(start_date: date, end_date: date) -> list[date]:
@@ -268,6 +294,72 @@ def build_subscriber_rows(
     return rows
 
 
+def assignment_courier_id(assignment: dict[str, Any]) -> int | None:
+    courier_id = int_or_none(assignment.get("courierId") or assignment.get("courier_id"))
+    if courier_id is not None:
+        return courier_id
+    courier = assignment.get("courier") if isinstance(assignment.get("courier"), dict) else {}
+    return int_or_none(courier.get("courierId") or courier.get("courier_id"))
+
+
+def assignment_courier_field(assignment: dict[str, Any], *keys: str) -> Any:
+    courier = assignment.get("courier") if isinstance(assignment.get("courier"), dict) else {}
+    return first_value(courier, *keys) or first_value(assignment, *keys)
+
+
+def build_assignment_rows_from_block(
+    *,
+    warehouse_id: int,
+    dsp_id: int,
+    work_date: date,
+    request_url: str,
+    block: dict[str, Any],
+) -> list[dict[str, Any]]:
+    block_key = text_or_none(first_value(block, "blockKey", "block_key"))
+    assignments = block.get("assignments")
+    if not block_key or not isinstance(assignments, list):
+        return []
+
+    now = datetime.now(timezone.utc).isoformat()
+    rows: list[dict[str, Any]] = []
+    for index, assignment in enumerate(assignments):
+        if not isinstance(assignment, dict):
+            continue
+        courier_id = assignment_courier_id(assignment)
+        if courier_id is None:
+            continue
+        courier = assignment.get("courier") if isinstance(assignment.get("courier"), dict) else {}
+        assignment_id = text_or_none(assignment.get("id"))
+        rows.append({
+            "source_name": "courier_hub_shift_block_assignments",
+            "work_date": clean_text(block.get("date")) or work_date.isoformat(),
+            "warehouse_id": int(warehouse_id),
+            "warehouse_code": WAREHOUSE_CODES.get(int(warehouse_id), f"WH{warehouse_id}"),
+            "dsp_id": int(dsp_id),
+            "courier_id": courier_id,
+            "courier_name": text_or_none(assignment_courier_field(assignment, "name", "courierName", "courier_name", "fullName", "full_name")),
+            "email": text_or_none(assignment_courier_field(assignment, "email", "emailAddress", "email_address")),
+            "phone_number": text_or_none(assignment_courier_field(assignment, "phone", "phoneNumber", "phone_number", "mobile", "mobilePhone")),
+            "subscriber_key": assignment_id or f"{block_key}|{courier_id}|{index}",
+            "block_key": block_key,
+            "shift_template_id": int_or_none(first_value(block, "shiftTemplateId", "shift_template_id")),
+            "shift_text": text_or_none(first_value(block, "templateName", "template_name")) or block_key,
+            "slot_from": normalize_time(first_value(block, "slotFrom", "slot_from")),
+            "slot_to": normalize_time(first_value(block, "slotTo", "slot_to")),
+            "status": text_or_none(first_value(assignment, "source", "status", "state")) or text_or_none(first_value(block, "status")),
+            "source_page": 0,
+            "source_row_index": 0,
+            "source_shift_index": index,
+            "request_url": request_url,
+            "subscription_json": assignment,
+            "courier_json": courier or assignment,
+            "fetched_at": now,
+            "updated_at": now,
+        })
+
+    return rows
+
+
 def supabase_upsert(table: str, rows: list[dict[str, Any]], conflict: str, *, chunk_size: int = 500) -> int:
     if not rows:
         return 0
@@ -286,6 +378,16 @@ def supabase_upsert(table: str, rows: list[dict[str, Any]], conflict: str, *, ch
         raise_for_response(response, f"{table} upsert")
         written += len(chunk)
     return written
+
+
+def normalize_rows(rows: list[dict[str, Any]], columns: list[str]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        normalized.append({
+            column: row.get(column)
+            for column in columns
+        })
+    return normalized
 
 
 def is_missing_table_response(response: requests.Response) -> bool:
@@ -532,6 +634,13 @@ def main() -> int:
                 )
                 if row:
                     block_rows.append(row)
+                subscriber_rows.extend(build_assignment_rows_from_block(
+                    warehouse_id=warehouse_id,
+                    dsp_id=args.dsp_id,
+                    work_date=work_date,
+                    request_url=shift_blocks_url,
+                    block=item,
+                ))
 
             print(
                 f"COURIER_HUB_SHIFT_BLOCKS date={work_date.isoformat()} "
@@ -601,7 +710,7 @@ def main() -> int:
     )
     subscribers_written = supabase_upsert(
         SUBSCRIBER_TABLE,
-        subscriber_rows,
+        normalize_rows(subscriber_rows, SUBSCRIBER_COLUMNS),
         "work_date,warehouse_id,dsp_id,courier_id,subscriber_key",
     )
     bookings_written = 0
