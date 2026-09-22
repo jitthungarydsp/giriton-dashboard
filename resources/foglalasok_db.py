@@ -469,14 +469,15 @@ def enrich_bookings_from_courier_master(df):
             enriched.at[index, "courier_id"] = clean(courier.get("courier_id"))
         if not current_name:
             enriched.at[index, "courier_name"] = courier.get("courier_name")
-        if not clean(row.get("serial")):
-            courier_id = clean(row.get("courier_id")) or clean(courier.get("courier_id"))
-            enriched.at[index, "serial"] = shift_serial(
-                row.get("work_date"),
-                courier_id,
-                row.get("warehouse"),
-                shift_start(row.get("shift_text")),
-            )
+        courier_id = clean(row.get("courier_id")) or clean(courier.get("courier_id"))
+        legacy_serial = shift_serial(
+            row.get("work_date"),
+            courier_id,
+            row.get("warehouse"),
+            shift_start(row.get("shift_text")),
+        )
+        if legacy_serial:
+            enriched.at[index, "serial"] = legacy_serial
 
     return enriched
 
@@ -733,12 +734,13 @@ def build_db_rows(values, courier_lookup=None):
         start = shift_start(
             shift_text
         )
-        serial = enriched_serial or shift_serial(
+        source_serial = enriched_serial
+        serial = shift_serial(
             work_date,
             courier_id,
             warehouse,
             start,
-        )
+        ) or source_serial
 
         rows.append({
             "source_name": SOURCE_NAME,
@@ -771,6 +773,7 @@ def build_db_rows(values, courier_lookup=None):
                 "courier_id": courier_id,
                 "courier_name": courier_name,
                 "serial": serial,
+                "source_serial": source_serial,
             },
             "fetched_at": fetched_at,
             "updated_at": fetched_at,

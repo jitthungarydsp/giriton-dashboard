@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from resources.giriton_auto_booking import (  # noqa: E402
     ROBOTLOG_HEADER,
     ROBOTLOG_SUCCESS_STATUSES,
+    _legacy_candidate_serial,
     _format_robotlog_shift,
     _format_robotlog_timestamp,
     _get_or_create_robotlog_worksheet,
@@ -59,6 +60,7 @@ def row_from_log(log_row: dict) -> list[str]:
         "shift_start": clean(log_row.get("shift_start")),
         "shift_text": clean(log_row.get("shift_text")),
         "email": clean(log_row.get("email")).casefold(),
+        "courier_id": clean(log_row.get("courier_id")),
         "serial": clean(log_row.get("serial")),
     }
     return [
@@ -70,7 +72,7 @@ def row_from_log(log_row: dict) -> list[str]:
             f"Műszak: {_format_robotlog_shift(candidate)}, "
             f"Raktár: {candidate['warehouse']}"
         ),
-        candidate["serial"],
+        _legacy_candidate_serial(candidate),
     ]
 
 

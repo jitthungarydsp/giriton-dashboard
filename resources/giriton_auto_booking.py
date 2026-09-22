@@ -19,6 +19,7 @@ from resources.foglalasok_db import (
     clean,
     normalize_time,
     read_foglalasok_raw,
+    shift_serial,
     shift_start,
 )
 from resources.supabase_raw import (
@@ -119,18 +120,27 @@ def _build_candidate(row):
     shift_text = clean(row.get("shift_text"))
     start = shift_start(shift_text)
     work_date = clean(row.get("work_date"))
+    warehouse = _normalize_warehouse(row.get("warehouse"))
+    courier_id = clean(row.get("courier_id"))
+    shift_start_value = normalize_time(start)
+    serial = shift_serial(
+        work_date,
+        courier_id,
+        warehouse,
+        shift_start_value,
+    ) or clean(row.get("serial"))
 
     return {
         "work_date": work_date,
         "giriton_date": _format_giriton_date(work_date),
-        "warehouse": _normalize_warehouse(row.get("warehouse")),
+        "warehouse": warehouse,
         "shift_text": shift_text,
-        "shift_start": normalize_time(start),
+        "shift_start": shift_start_value,
         "booking_code": clean(row.get("booking_code")),
-        "courier_id": clean(row.get("courier_id")),
+        "courier_id": courier_id,
         "courier_name": clean(row.get("courier_name")),
         "email": clean(row.get("email")).casefold(),
-        "serial": clean(row.get("serial")),
+        "serial": serial,
     }
 
 
@@ -344,6 +354,17 @@ def _format_robotlog_shift(candidate):
     return clean(candidate.get("shift_text"))
 
 
+def _legacy_candidate_serial(candidate):
+    candidate = candidate or {}
+    legacy_serial = shift_serial(
+        candidate.get("work_date"),
+        clean(candidate.get("courier_id")),
+        _normalize_warehouse(candidate.get("warehouse")),
+        normalize_time(candidate.get("shift_start")) or shift_start(candidate.get("shift_text")),
+    )
+    return legacy_serial or clean(candidate.get("serial"))
+
+
 def _append_success_robotlog(candidate, status):
     if clean(status) not in ROBOTLOG_SUCCESS_STATUSES:
         return "SKIPPED_STATUS"
@@ -370,7 +391,7 @@ def _append_success_robotlog(candidate, status):
         clean(candidate.get("email")).casefold(),
         "FOGLALÁS",
         f"Dátum: {work_date}, Műszak: {_format_robotlog_shift(candidate)}, Raktár: {warehouse}",
-        clean(candidate.get("serial")),
+        _legacy_candidate_serial(candidate),
     ]
     worksheet.append_row(
         row,
@@ -444,7 +465,7 @@ def log_giriton_booking_result(candidate, status, message=""):
         "shift_text": clean(candidate.get("shift_text")),
         "shift_start": clean(candidate.get("shift_start")),
         "booking_code": clean(candidate.get("booking_code")),
-        "serial": clean(candidate.get("serial")),
+        "serial": _legacy_candidate_serial(candidate),
         "status": clean(status),
         "message": clean(message),
         "response_json": candidate,
