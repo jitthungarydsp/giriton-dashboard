@@ -18588,6 +18588,7 @@ def render_courier_detail_page() -> None:
         if st.button("Folyamat státuszok mentése", type="primary", use_container_width=True, key=f"workflow_status_save_{courier_id}"):
             try:
                 saved_count = 0
+                closed_invoice_complaints = 0
                 for status_row in workflow_editor.to_dict("records"):
                     action_key = str(status_row.get("Kulcs") or "")
                     if not action_key:
@@ -18604,8 +18605,17 @@ def render_courier_detail_page() -> None:
                     )
                     if action_key == "settlement" and not is_done:
                         delete_generated_monthly_billing_documents(courier_id, workflow_month, {"tig"})
+                    if action_key == "invoice_check" and is_done:
+                        closed_invoice_complaints += close_open_invoice_check_complaints(courier_id, workflow_month)
                     saved_count += 1
-                st.success(f"{saved_count} folyamat státusz mentve. A mobilos felület is ezt olvassa.")
+                read_peopleforce_card_statuses.clear()
+                read_peopleforce_card_statuses_for_month.clear()
+                read_peopleforce_complaints_for_month.clear()
+                clear_settlement_overview_data_cache()
+                message = f"{saved_count} folyamat státusz mentve. A mobilos felület is ezt olvassa."
+                if closed_invoice_complaints:
+                    message += f" Számlaellenőrzési bejelentés lezárva: {closed_invoice_complaints} db."
+                st.success(message)
                 st.rerun()
             except Exception as exc:
                 st.error(f"A folyamat státuszok mentése sikertelen: {exc}")
@@ -18728,7 +18738,15 @@ def render_courier_detail_page() -> None:
                                 status_note=approved_note,
                                 updated_by=actor,
                             )
-                        st.success("Számla jóváhagyva, a futár kifizetésre vár állapotba került.")
+                        closed_invoice_complaints = close_open_invoice_check_complaints(courier_id, workflow_month)
+                        read_peopleforce_card_statuses.clear()
+                        read_peopleforce_card_statuses_for_month.clear()
+                        read_peopleforce_complaints_for_month.clear()
+                        clear_settlement_overview_data_cache()
+                        message = "Számla jóváhagyva, a futár kifizetésre vár állapotba került."
+                        if closed_invoice_complaints:
+                            message += f" Számlaellenőrzési bejelentés lezárva: {closed_invoice_complaints} db."
+                        st.success(message)
                         st.rerun()
                     except Exception as exc:
                         st.error(f"A számla jóváhagyása sikertelen: {exc}")
