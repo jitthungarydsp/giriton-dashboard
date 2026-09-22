@@ -329,7 +329,6 @@ def build_assignment_rows_from_block(
         if courier_id is None:
             continue
         courier = assignment.get("courier") if isinstance(assignment.get("courier"), dict) else {}
-        assignment_id = text_or_none(assignment.get("id"))
         rows.append({
             "source_name": "courier_hub_shift_block_assignments",
             "work_date": clean_text(block.get("date")) or work_date.isoformat(),
@@ -340,7 +339,7 @@ def build_assignment_rows_from_block(
             "courier_name": text_or_none(assignment_courier_field(assignment, "name", "courierName", "courier_name", "fullName", "full_name")),
             "email": text_or_none(assignment_courier_field(assignment, "email", "emailAddress", "email_address")),
             "phone_number": text_or_none(assignment_courier_field(assignment, "phone", "phoneNumber", "phone_number", "mobile", "mobilePhone")),
-            "subscriber_key": assignment_id or f"{block_key}|{courier_id}|{index}",
+            "subscriber_key": f"{block_key}|{courier_id}|{index}",
             "block_key": block_key,
             "shift_template_id": int_or_none(first_value(block, "shiftTemplateId", "shift_template_id")),
             "shift_text": text_or_none(first_value(block, "templateName", "template_name")) or block_key,
@@ -388,6 +387,14 @@ def normalize_rows(rows: list[dict[str, Any]], columns: list[str]) -> list[dict[
             for column in columns
         })
     return normalized
+
+
+def dedupe_rows(rows: list[dict[str, Any]], key_columns: list[str]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = tuple(row.get(column) for column in key_columns)
+        by_key[key] = row
+    return list(by_key.values())
 
 
 def is_missing_table_response(response: requests.Response) -> bool:
@@ -705,8 +712,12 @@ def main() -> int:
 
     blocks_written = supabase_upsert(
         SHIFT_BLOCK_TABLE,
-        block_rows,
+        dedupe_rows(block_rows, ["work_date", "warehouse_id", "dsp_id", "block_key"]),
         "work_date,warehouse_id,dsp_id,block_key",
+    )
+    subscriber_rows = dedupe_rows(
+        subscriber_rows,
+        ["work_date", "warehouse_id", "dsp_id", "courier_id", "subscriber_key"],
     )
     subscribers_written = supabase_upsert(
         SUBSCRIBER_TABLE,
@@ -728,6 +739,10 @@ def main() -> int:
             existing_active=existing_active,
             identity_lookup=identity_lookup,
             fetched_at=fetched_at,
+        )
+        booking_rows = dedupe_rows(
+            booking_rows,
+            ["work_date", "warehouse_id", "dsp_id", "courier_id", "block_key"],
         )
         bookings_written = supabase_upsert(
             BOOKING_TABLE,
