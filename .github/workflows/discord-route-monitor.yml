@@ -20,7 +20,7 @@ on:
 
 concurrency:
   group: discord-route-monitor
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   monitor:
