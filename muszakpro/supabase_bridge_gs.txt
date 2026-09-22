@@ -4,8 +4,9 @@
 // - SUPABASE_URL
 // - SUPABASE_SERVICE_ROLE_KEY
 // - MUSZAKPRO_DB_ENABLED = TRUE/FALSE
-// - MUSZAKPRO_DB_TABLE = raw_muszakpro_bookings
-// - MUSZAKPRO_DB_EVENT_TABLE = ops_muszakpro_events
+// - MUSZAKPRO_DB_SCHEMA = muszakpro
+// - MUSZAKPRO_DB_TABLE = bookings
+// - MUSZAKPRO_DB_EVENT_TABLE = events
 
 const MUSZAKPRO_DB_SOURCE_NAME = "muszakpro-app";
 
@@ -15,9 +16,10 @@ function muszakProDbConfig_() {
   const url = rawUrl.replace(/\/+$/, "");
   const key = props.getProperty("SUPABASE_SERVICE_ROLE_KEY") || props.getProperty("SUPABASE_KEY") || "";
   const enabled = (props.getProperty("MUSZAKPRO_DB_ENABLED") || "TRUE").toUpperCase() !== "FALSE";
-  const table = props.getProperty("MUSZAKPRO_DB_TABLE") || "raw_muszakpro_bookings";
-  const eventTable = props.getProperty("MUSZAKPRO_DB_EVENT_TABLE") || "ops_muszakpro_events";
-  return { url: url, key: key, enabled: enabled, table: table, eventTable: eventTable };
+  const schema = props.getProperty("MUSZAKPRO_DB_SCHEMA") || "muszakpro";
+  const table = props.getProperty("MUSZAKPRO_DB_TABLE") || "bookings";
+  const eventTable = props.getProperty("MUSZAKPRO_DB_EVENT_TABLE") || "events";
+  return { url: url, key: key, enabled: enabled, schema: schema, table: table, eventTable: eventTable };
 }
 
 function muszakProDbIsReady_() {
@@ -150,14 +152,21 @@ function muszakProDbPost_(table, payload, query) {
   if (!muszakProDbIsReady_()) return { skipped: true };
 
   const url = cfg.url + "/rest/v1/" + table + (query || "");
+  const headers = {
+    apikey: cfg.key,
+    Authorization: "Bearer " + cfg.key,
+    Prefer: "resolution=merge-duplicates,return=minimal"
+  };
+
+  if (cfg.schema && cfg.schema !== "public") {
+    headers["Accept-Profile"] = cfg.schema;
+    headers["Content-Profile"] = cfg.schema;
+  }
+
   const response = UrlFetchApp.fetch(url, {
     method: "post",
     contentType: "application/json",
-    headers: {
-      apikey: cfg.key,
-      Authorization: "Bearer " + cfg.key,
-      Prefer: "resolution=merge-duplicates,return=minimal"
-    },
+    headers: headers,
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });

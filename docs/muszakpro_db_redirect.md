@@ -1,15 +1,30 @@
-# MuszakPro atvezetes sajat DB-re
+# MuszakPro kozvetlen DB iras
 
 ## Cel
 
-A helyi MuszakPro jelenleg a regi Google Sheet `Foglalasok` fulbe ir.
-Az elso stabil atvezetes dual-write:
+A MuszakPro ne Google Sheetbol legyen utolag beolvasva, hanem a foglalas,
+torles es tomeges muvelet pillanataban irjon Supabase-be.
 
-- a regi Google Sheet iras megmarad, hogy a MuszakPro felulet ne torjon el,
-- minden uj foglalas es torles bekerul Supabase-be is,
-- a DB-ben a torles nem fizikai torles, hanem `status = CANCELLED`.
+Az uj DB cel kulon schema:
 
-## Supabase tabla
+- `muszakpro.bookings`
+- `muszakpro.events`
+
+A regi `Foglalasok` es `LOG` ful legfeljebb kompatibilitasi / atmeneti naplo.
+Az uj fejlesztesnel a DB legyen az igazsag forrasa.
+
+## Meglevo mukodes vedelme
+
+Az atallas nem torheti el a jelenlegi MuszakPro mukodest.
+
+- A regi Sheet iras egyelore megmarad.
+- A DB iras plusz retegkent fut mellette.
+- Ha a DB nem elerheto vagy hibazik, a foglalas / torles regi folyamata nem
+  allhat meg emiatt.
+- Elesben csak akkor szabad a Sheet fuggoseget kivenni, ha a DB iras es DB
+  olvasas mar bizonyitottan stabil.
+
+## Supabase letrehozas
 
 Futtasd a Supabase SQL Editorban:
 
@@ -17,12 +32,26 @@ Futtasd a Supabase SQL Editorban:
 docs/supabase_muszakpro_live.sql
 ```
 
-Ez letrehozza / kiegesziti:
+Ez letrehozza:
 
-- `raw_muszakpro_bookings`
-- `ops_muszakpro_events`
+- `muszakpro` schema
+- `muszakpro.bookings`
+- `muszakpro.events`
+- olvasasi kompatibilitasi view-kat a regi public nevekre
 
-Ha a regi `foglalasok_raw` tabla meg letezik, az SQL atemeli az aktiv adatokat az uj prefixelt tablanev ala.
+Fontos Supabase beallitas:
+
+```text
+Project Settings -> API -> Exposed schemas
+```
+
+Itt add hozza:
+
+```text
+muszakpro
+```
+
+Enelkul a REST API nem fogja latni a kulon schemat.
 
 ## Apps Script beallitas
 
@@ -32,36 +61,43 @@ A Google Apps Script projektben a Project Settings -> Script properties alatt:
 SUPABASE_URL=https://...supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
 MUSZAKPRO_DB_ENABLED=TRUE
-MUSZAKPRO_DB_TABLE=raw_muszakpro_bookings
-MUSZAKPRO_DB_EVENT_TABLE=ops_muszakpro_events
+MUSZAKPRO_DB_SCHEMA=muszakpro
+MUSZAKPRO_DB_TABLE=bookings
+MUSZAKPRO_DB_EVENT_TABLE=events
 ```
 
 ## Apps Script fajlok
 
-A `muszakpro/supabase_bridge_gs.txt` tartalmat add hozza az Apps Script projekthez egy uj fajlkent, peldaul:
+A `muszakpro/supabase_bridge_gs.txt` tartalmat add hozza az Apps Script
+projekthez egy uj fajlkent, peldaul:
 
 ```text
 SupabaseBridge.gs
 ```
 
-A `muszakpro/Kod_gs_0712_0332.txt` exportalt backendbe bekerultek a hid hivasai:
+A `muszakpro/Kod_gs_0712_0332.txt` exportalt backendben mar szerepelnek a
+DB-hid hivasai:
 
 - `muszakProDbBook(...)`
 - `muszakProDbCancel(...)`
 - `muszakProDbBulkBookRows(...)`
 - `muszakProDbBulkCancelRows(...)`
 
-## Python / Streamlit oldal
+Ezek a kovetkezoket irjak:
 
-A `resources/foglalasok_db.py` most mar eloszor a `raw_muszakpro_bookings` tablat keresi.
-Ha nincs ilyen tabla, visszaesik a regi `foglalasok_raw` tablara.
+- aktualis foglalasi allapot: `muszakpro.bookings`
+- muveleti tortenet: `muszakpro.events`
 
-Az olvasas az uj tablanal kiszuri a `CANCELLED` statuszu sorokat.
+## Mit nem kell csinalni
+
+Nem kell kulon Python / GitHub sync, ami a Google Sheetbol utolag behuzza az
+adatot. Az csak visszatoltesre vagy egyszeri migraciora kellene, de az uj cel
+nem ez.
+
+Fontos: ez nem azt jelenti, hogy a mostani Sheet irast azonnal toroljuk. Csak
+azt, hogy az uj adatfolyam nem utolagos Sheet importon alapul.
 
 ## Kovetkezo lepes
 
-Ha a dual-write nehany napig stabil:
-
-1. A MuszakPro olvasasait at lehet vezetni DB-re.
-2. A `beo` kapacitasokat is kulon DB tablaba kell vinni.
-3. A regi Google Sheet mar csak backup / export lesz.
+A MuszakPro felulet olvasasi reszeit is at kell vezetni DB-re, hogy a
+kapacitas, foglaltsag es torles utan azonnal ugyanazt lassa, amit a DB-be ir.

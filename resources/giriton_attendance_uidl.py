@@ -183,6 +183,10 @@ def find_courier_text(data: dict[str, Any]) -> str:
         text = strip_html(value)
         if re.search(r"\bD\d{3,6}\b", text):
             return text
+    for value in data.values():
+        text = strip_html(value)
+        if looks_like_person_name(text):
+            return text
     return strip_html(data.get("1229", ""))
 
 
