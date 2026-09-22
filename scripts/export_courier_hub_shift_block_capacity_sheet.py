@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -59,10 +59,32 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
-def read_capacity_rows(work_date: date, warehouse_code: str, limit: int = 5000) -> list[dict[str, Any]]:
+def read_capacity_rows(
+    start_date: date,
+    end_date: date,
+    warehouse_code: str,
+    limit: int = 10000,
+) -> list[dict[str, Any]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
         raise RuntimeError("Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY.")
+
+    params = [
+        (
+            "select",
+            (
+                "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
+                "shift_template_id,template_name,slot_from,slot_to,"
+                "occupancy_from,occupancy_to,status,assigned,opened,"
+                "free_slots,capacity_published,fetched_at,updated_at"
+            ),
+        ),
+        ("work_date", f"gte.{start_date.isoformat()}"),
+        ("work_date", f"lte.{end_date.isoformat()}"),
+        ("warehouse_code", f"eq.{warehouse_code}"),
+        ("order", "work_date.asc,slot_from.asc,shift_template_id.asc,block_key.asc"),
+        ("limit", str(int(limit))),
+    ]
 
     response = requests.get(
         f"{supabase_url}/rest/v1/{VIEW_NAME}",
@@ -70,18 +92,7 @@ def read_capacity_rows(work_date: date, warehouse_code: str, limit: int = 5000) 
             "apikey": service_role_key,
             "Authorization": f"Bearer {service_role_key}",
         },
-        params={
-            "select": (
-                "work_date,warehouse_id,warehouse_code,dsp_id,block_key,"
-                "shift_template_id,template_name,slot_from,slot_to,"
-                "occupancy_from,occupancy_to,status,assigned,opened,"
-                "free_slots,capacity_published,fetched_at,updated_at"
-            ),
-            "work_date": f"eq.{work_date.isoformat()}",
-            "warehouse_code": f"eq.{warehouse_code}",
-            "order": "slot_from.asc,shift_template_id.asc,block_key.asc",
-            "limit": str(int(limit)),
-        },
+        params=params,
         timeout=60,
     )
     raise_for_supabase_error(response)
@@ -118,13 +129,13 @@ def worksheet_by_gid(spreadsheet, gid: int):
     return worksheet
 
 
-def export_capacity(work_date: date, dry_run: bool = False) -> dict[str, int]:
+def export_capacity(start_date: date, end_date: date, dry_run: bool = False) -> dict[str, int]:
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     output: dict[str, list[list[Any]]] = {}
     counts: dict[str, int] = {}
 
     for warehouse_code in sorted(WAREHOUSE_WORKSHEETS):
-        records = read_capacity_rows(work_date, warehouse_code)
+        records = read_capacity_rows(start_date, end_date, warehouse_code)
         rows = [
             HEADER,
             *[
@@ -145,7 +156,10 @@ def export_capacity(work_date: date, dry_run: bool = False) -> dict[str, int]:
             WAREHOUSE_WORKSHEETS[warehouse_code],
         )
         worksheet.clear()
-        worksheet.update("A1", rows)
+        worksheet.update(
+            range_name="A1",
+            values=rows,
+        )
 
     return counts
 
@@ -156,14 +170,30 @@ def main() -> int:
         "--date",
         default=datetime.now(LOCAL_TIMEZONE).date().isoformat(),
     )
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
+    parser.add_argument(
+        "--lookahead-days",
+        type=int,
+        default=0,
+        help="Ennyi nappal nezzen elore a kezdodatumtol. 0 eseten csak egy napot exportal.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    work_date = date.fromisoformat(args.date)
-    counts = export_capacity(work_date, dry_run=args.dry_run)
+    start_date = date.fromisoformat(args.start_date or args.date)
+    if args.end_date:
+        end_date = date.fromisoformat(args.end_date)
+    elif args.lookahead_days > 0:
+        end_date = start_date + timedelta(days=args.lookahead_days)
+    else:
+        end_date = start_date
+
+    counts = export_capacity(start_date, end_date, dry_run=args.dry_run)
     print(
         "COURIER_HUB_SHIFT_BLOCK_CAPACITY_SHEET "
-        f"date={work_date.isoformat()} "
+        f"start_date={start_date.isoformat()} "
+        f"end_date={end_date.isoformat()} "
         f"BUD1={counts.get('BUD1', 0)} "
         f"BUD2={counts.get('BUD2', 0)} "
         f"dry_run={args.dry_run}",

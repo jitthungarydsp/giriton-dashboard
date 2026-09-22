@@ -121,7 +121,7 @@ jobs:
         shell: bash
         run: |
           SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
-          CMD=(python scripts/sync_courier_hub_shift_blocks.py --warehouse-ids "1,2" --dsp-id 8 --date "$SHIFT_BLOCK_DATE")
+          CMD=(python scripts/sync_courier_hub_shift_blocks.py --warehouse-ids "1,2" --dsp-id 8 --start-date "$SHIFT_BLOCK_DATE" --lookahead-days 21)
 
           if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
             CMD+=(--dry-run)
@@ -138,7 +138,7 @@ jobs:
             exit 0
           fi
           SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
-          CMD=(python scripts/export_courier_hub_shift_block_capacity_sheet.py --date "$SHIFT_BLOCK_DATE")
+          CMD=(python scripts/export_courier_hub_shift_block_capacity_sheet.py --start-date "$SHIFT_BLOCK_DATE" --lookahead-days 21)
 
           if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
             CMD+=(--dry-run)

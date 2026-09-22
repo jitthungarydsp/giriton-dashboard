@@ -146,7 +146,8 @@ jobs:
           python scripts/sync_courier_hub_shift_blocks.py \
             --warehouse-ids "1,2" \
             --dsp-id 8 \
-            --date "$SHIFT_BLOCK_DATE"
+            --start-date "$SHIFT_BLOCK_DATE" \
+            --lookahead-days 21
 
       - name: Export Courier Hub shift block capacity sheet
         continue-on-error: true
@@ -158,7 +159,8 @@ jobs:
           fi
           SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
           python scripts/export_courier_hub_shift_block_capacity_sheet.py \
-            --date "$SHIFT_BLOCK_DATE"
+            --start-date "$SHIFT_BLOCK_DATE" \
+            --lookahead-days 21
 
       - name: Sync Courier Hub live monitoring snapshots
         continue-on-error: true

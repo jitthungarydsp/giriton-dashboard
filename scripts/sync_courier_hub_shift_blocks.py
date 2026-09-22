@@ -294,6 +294,12 @@ def main() -> int:
     parser.add_argument("--date", default=os.getenv("COURIER_HUB_SHIFT_BLOCK_DATE") or date.today().isoformat())
     parser.add_argument("--start-date", default=os.getenv("COURIER_HUB_SHIFT_BLOCK_START_DATE") or "")
     parser.add_argument("--end-date", default=os.getenv("COURIER_HUB_SHIFT_BLOCK_END_DATE") or "")
+    parser.add_argument(
+        "--lookahead-days",
+        type=int,
+        default=int(os.getenv("COURIER_HUB_SHIFT_BLOCK_LOOKAHEAD_DAYS") or "0"),
+        help="Ennyi nappal nezzen elore a kezdodatumtol. 0 eseten csak a megadott end-date/date ervenyes.",
+    )
     parser.add_argument("--base-url", default=os.getenv("COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--page-size", type=int, default=int(os.getenv("COURIER_HUB_ROSTER_PAGE_SIZE") or "100"))
     parser.add_argument("--max-pages", type=int, default=int(os.getenv("COURIER_HUB_ROSTER_MAX_PAGES") or "50"))
@@ -311,7 +317,12 @@ def main() -> int:
         return 2
 
     start_date = date.fromisoformat(args.start_date or args.date)
-    end_date = date.fromisoformat(args.end_date or args.start_date or args.date)
+    if args.end_date:
+        end_date = date.fromisoformat(args.end_date)
+    elif args.lookahead_days > 0:
+        end_date = start_date + timedelta(days=args.lookahead_days)
+    else:
+        end_date = date.fromisoformat(args.start_date or args.date)
     work_dates = date_range(start_date, end_date)
     fetched_at = datetime.now(timezone.utc)
     block_rows: list[dict[str, Any]] = []
