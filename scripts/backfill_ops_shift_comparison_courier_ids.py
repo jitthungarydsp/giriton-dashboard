@@ -4,7 +4,6 @@ import argparse
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 import requests
 
@@ -94,20 +93,22 @@ def resolve_from_hub_identity(row: dict, lookup: dict) -> int | None:
     return None
 
 
-def patch_courier_id(
+def upsert_courier_ids(
     supabase_url: str,
     service_role_key: str,
-    row_id: str,
-    courier_id: int,
+    rows: list[dict],
 ) -> None:
-    response = requests.patch(
-        f"{supabase_url}/rest/v1/{TABLE_NAME}?id=eq.{quote(row_id, safe='')}",
+    if not rows:
+        return
+
+    response = requests.post(
+        f"{supabase_url}/rest/v1/{TABLE_NAME}?on_conflict=id",
         headers={
             **headers(service_role_key),
             "Content-Type": "application/json",
-            "Prefer": "return=minimal",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
         },
-        json={"courier_id": courier_id},
+        json=rows,
         timeout=60,
     )
     raise_for_supabase_error(response)
@@ -149,12 +150,18 @@ def main() -> int:
             missing.append(row)
 
     if not args.dry_run:
-        for row, courier_id in matched:
-            patch_courier_id(
+        update_rows = [
+            {
+                "id": row["id"],
+                "courier_id": courier_id,
+            }
+            for row, courier_id in matched
+        ]
+        for index in range(0, len(update_rows), 500):
+            upsert_courier_ids(
                 supabase_url,
                 service_role_key,
-                row["id"],
-                courier_id,
+                update_rows[index:index + 500],
             )
 
     print(
