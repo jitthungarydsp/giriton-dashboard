@@ -17,6 +17,7 @@ import argparse
 import base64
 import json
 import os
+from http.cookies import SimpleCookie
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,17 @@ def jwt_expiry_text(value: str) -> str:
         return "-"
 
 
+def jwt_is_expired(value: str, *, skew_seconds: int = 60) -> bool:
+    payload = jwt_payload(value)
+    exp = payload.get("exp")
+    if not exp:
+        return False
+    try:
+        return int(exp) <= int(datetime.now(timezone.utc).timestamp()) + int(skew_seconds)
+    except (TypeError, ValueError):
+        return False
+
+
 def read_existing_cookie(cache_file: str) -> str:
     if not cache_file:
         return ""
@@ -124,7 +136,42 @@ def extract_access_token(session_payload: Any) -> str:
     return ""
 
 
-def fetch_session(base_url: str, cookie: str, timeout: int) -> dict[str, Any]:
+def merge_cookie_value(cookie_header: str, name: str, value: str) -> str:
+    existing: dict[str, str] = {}
+    for part in clean_text(cookie_header).split(";"):
+        if "=" not in part:
+            continue
+        existing_name, existing_value = part.split("=", 1)
+        existing_name = existing_name.strip()
+        if existing_name:
+            existing[existing_name] = existing_value.strip()
+
+    clean_name = clean_text(name)
+    if clean_name:
+        existing[clean_name] = clean_text(value)
+
+    return "; ".join(f"{cookie_name}={cookie_value}" for cookie_name, cookie_value in existing.items())
+
+
+def merge_set_cookie(cookie_header: str, set_cookie_header: str) -> str:
+    updated = cookie_header
+
+    if not clean_text(set_cookie_header):
+        return updated
+
+    parsed = SimpleCookie()
+    try:
+        parsed.load(set_cookie_header)
+    except Exception:
+        return updated
+
+    for name, morsel in parsed.items():
+        updated = merge_cookie_value(updated, name, morsel.value)
+
+    return updated
+
+
+def fetch_session(base_url: str, cookie: str, timeout: int) -> tuple[dict[str, Any], str]:
     response = requests.get(
         f"{base_url.rstrip('/')}/api/auth/session",
         headers={
@@ -139,7 +186,11 @@ def fetch_session(base_url: str, cookie: str, timeout: int) -> dict[str, Any]:
     payload = response.json()
     if not isinstance(payload, dict):
         raise RuntimeError("session response is not a JSON object")
-    return payload
+    updated_cookie = cookie
+    for cookie_item in response.cookies:
+        updated_cookie = merge_cookie_value(updated_cookie, cookie_item.name, cookie_item.value)
+    updated_cookie = merge_set_cookie(updated_cookie, response.headers.get("Set-Cookie", ""))
+    return payload, updated_cookie
 
 
 def probe_authorization(base_url: str, probe_path: str, authorization: str, cookie: str, timeout: int) -> int:
@@ -189,11 +240,21 @@ def main() -> int:
     if not cookie:
         raise RuntimeError("Missing COURIER_HUB_COOKIE, or existing cache file with headers.Cookie")
 
-    session_payload = fetch_session(args.base_url, cookie, args.timeout)
+    session_payload, updated_cookie = fetch_session(args.base_url, cookie, args.timeout)
+    if updated_cookie and updated_cookie != cookie:
+        cookie = updated_cookie
+        session_payload, cookie = fetch_session(args.base_url, cookie, args.timeout)
+
     authorization = extract_access_token(session_payload)
     if not authorization:
         keys = ", ".join(sorted(str(key) for key in session_payload.keys()))
         raise RuntimeError(f"No accessToken found in session response. Top-level keys: {keys or '-'}")
+    if jwt_is_expired(authorization):
+        raise RuntimeError(
+            "Session returned an expired accessToken; "
+            f"session_expires={session_payload.get('expires') or '-'}; "
+            f"access_token_expires={jwt_expiry_text(authorization)}"
+        )
 
     probe_status = None
     if not args.no_probe:
