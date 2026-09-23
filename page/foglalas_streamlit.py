@@ -3160,6 +3160,18 @@ def _query_booking_identity() -> dict[str, str]:
     }
 
 
+def _restore_filter_from_action_query() -> None:
+    if _query_param_value("foglalas_action") not in {"book_serial", "delete_booking"}:
+        return
+
+    action_date = _date_from_value(_query_param_value("work_date"))
+    if action_date is None:
+        return
+
+    st.session_state["foglalas_start_date"] = action_date
+    st.session_state["foglalas_end_date"] = action_date
+
+
 def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     action = _query_param_value("foglalas_action")
     if action not in {"book_serial", "delete_booking"}:
@@ -3976,6 +3988,7 @@ def show_foglalas_streamlit_page() -> None:
         key="foglalas_streamlit_auto_refresh",
     )
     _apply_styles()
+    _restore_filter_from_action_query()
     view, start_date, end_date, start_time, end_time, tolerance_minutes = _sidebar()
 
     if end_date < start_date:
