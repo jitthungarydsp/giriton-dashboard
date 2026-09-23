@@ -17,7 +17,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from page import foglalas_streamlit as foglalas
-from resources.foglalasok_db import read_foglalasok_raw
+from resources.foglalasok_db import (
+    courier_id_from_text,
+    name_without_courier_id,
+    normalize_email,
+    normalize_name,
+    read_combined_courier_lookup,
+    read_foglalasok_raw,
+)
 from resources.giriton_auto_booking import (
     LOG_TABLE,
     ROBOTLOG_SUCCESS_STATUSES,
@@ -44,6 +51,95 @@ def clean(value) -> str:
 def courier_id_from_serial(serial: str) -> str:
     parts = clean(serial).split("_")
     return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
+
+
+def direct_courier_id(row: dict) -> str:
+    return (
+        clean(row.get("Courier ID"))
+        or courier_id_from_serial(row.get("Serial"))
+        or courier_id_from_text(row.get("Dolgozó"))
+    )
+
+
+def build_local_courier_id_lookup(summary_df: pd.DataFrame) -> dict:
+    lookup = {"by_email": {}, "by_name": {}}
+    if summary_df.empty:
+        return lookup
+
+    for row in summary_df.to_dict("records"):
+        courier_id = direct_courier_id(row)
+        if not courier_id:
+            continue
+
+        email = normalize_email(row.get("E-mail"))
+        if email:
+            lookup["by_email"][email] = courier_id
+
+        for name_key in {
+            normalize_name(row.get("Dolgozó")),
+            name_without_courier_id(row.get("Dolgozó")),
+        }:
+            if name_key:
+                lookup["by_name"][name_key] = courier_id
+
+    return lookup
+
+
+def resolve_courier_id(row: dict, local_lookup: dict | None = None, master_lookup: dict | None = None) -> str:
+    courier_id = direct_courier_id(row)
+    if courier_id:
+        return courier_id
+
+    local_lookup = local_lookup or {}
+    email = normalize_email(row.get("E-mail"))
+    if email and email in local_lookup.get("by_email", {}):
+        return clean(local_lookup["by_email"][email])
+
+    name_keys = {
+        normalize_name(row.get("Dolgozó")),
+        name_without_courier_id(row.get("Dolgozó")),
+    }
+    for name_key in name_keys:
+        if name_key and name_key in local_lookup.get("by_name", {}):
+            return clean(local_lookup["by_name"][name_key])
+
+    master_lookup = master_lookup or {}
+    if email and email in master_lookup.get("by_email", {}):
+        return clean(master_lookup["by_email"][email].get("courier_id"))
+
+    for name_key in name_keys:
+        if name_key and name_key in master_lookup.get("by_name", {}):
+            return clean(master_lookup["by_name"][name_key].get("courier_id"))
+
+    return ""
+
+
+def enrich_summary_courier_ids(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    enriched = summary_df.copy()
+    if "Courier ID" not in enriched.columns:
+        enriched["Courier ID"] = ""
+
+    local_lookup = build_local_courier_id_lookup(enriched)
+    try:
+        master_lookup = read_combined_courier_lookup()
+    except Exception:
+        master_lookup = {}
+
+    for index, row in enriched.iterrows():
+        if clean(row.get("Courier ID")):
+            continue
+        courier_id = resolve_courier_id(
+            row.to_dict(),
+            local_lookup=local_lookup,
+            master_lookup=master_lookup,
+        )
+        if courier_id:
+            enriched.at[index, "Courier ID"] = courier_id
+
+    return enriched
 
 
 def db_time(value):
@@ -101,6 +197,7 @@ def load_summary(start_date: date, end_date: date, tolerance_minutes: int, sourc
         giriton_df,
         int(tolerance_minutes),
     )
+    summary_df = enrich_summary_courier_ids(summary_df)
     print(
         "SHIFT_AUTO_SELECT_DIAG "
         f"muszakpro_rows={len(muszakpro_df)} giriton_rows={len(giriton_df)} "
@@ -157,7 +254,7 @@ def candidate_payload(row: dict) -> dict:
         "email": clean(row.get("E-mail")).casefold(),
         "shift_start": clean(row.get("_target_shift_start")),
         "serial": serial,
-        "courier_id": clean(row.get("Courier ID")) or courier_id_from_serial(serial),
+        "courier_id": resolve_courier_id(row),
         "courier_name": clean(row.get("Dolgozó")),
         "status": clean(row.get("Állapot")),
         "muszakpro_shift_start": clean(row.get("MűszakPro")),
@@ -178,8 +275,7 @@ def optional_int(value):
 def comparison_key_from_summary_row(row: dict) -> str:
     serial = clean(row.get("Serial"))
     person = (
-        clean(row.get("Courier ID"))
-        or courier_id_from_serial(serial)
+        resolve_courier_id(row)
         or clean(row.get("E-mail")).casefold()
         or clean(row.get("Dolgozó")).casefold()
     )
@@ -199,7 +295,7 @@ def shift_comparison_row_from_summary(row: dict, updated_at: str) -> dict:
     muszakpro_shift_start = clean(row.get("MűszakPro"))
     giriton_offer = clean(row.get("Giriton ajánlat"))
     serial = clean(row.get("Serial"))
-    courier_id = clean(row.get("Courier ID")) or courier_id_from_serial(serial)
+    courier_id = resolve_courier_id(row)
     return {
         "source_name": SHIFT_COMPARISON_SOURCE,
         "comparison_key": comparison_key_from_summary_row(row),
