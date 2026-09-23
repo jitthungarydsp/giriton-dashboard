@@ -145,10 +145,15 @@ def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
     ]
 
 
-def export_overview(start_date: date, end_date: date, dry_run: bool = False) -> int:
+def export_overview(start_date: date, end_date: date, dry_run: bool = False) -> dict[str, Any]:
     records = read_overview_rows(start_date, end_date)
     if dry_run:
-        return len(records)
+        return {
+            "records": len(records),
+            "written_rows": 0,
+            "worksheet_title": "",
+            "worksheet_id": WORKSHEET_GID,
+        }
 
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     if records:
@@ -202,7 +207,12 @@ def export_overview(start_date: date, end_date: date, dry_run: bool = False) -> 
         range_name="A1",
         values=values,
     )
-    return len(records)
+    return {
+        "records": len(records),
+        "written_rows": len(values),
+        "worksheet_title": worksheet.title,
+        "worksheet_id": worksheet.id,
+    }
 
 
 def main() -> int:
@@ -225,11 +235,13 @@ def main() -> int:
     else:
         end_date = start_date
 
-    rows = export_overview(start_date, end_date, dry_run=args.dry_run)
+    result = export_overview(start_date, end_date, dry_run=args.dry_run)
     print(
         "MUSZAKPRO_BOOKING_OVERVIEW_SHEET "
         f"start_date={start_date.isoformat()} end_date={end_date.isoformat()} "
-        f"rows={rows} dry_run={args.dry_run}",
+        f"rows={result['records']} written_rows={result['written_rows']} "
+        f"worksheet_title={result['worksheet_title']!r} "
+        f"worksheet_id={result['worksheet_id']} dry_run={args.dry_run}",
         flush=True,
     )
     return 0

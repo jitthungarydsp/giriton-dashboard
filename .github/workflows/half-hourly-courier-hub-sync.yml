@@ -195,6 +195,32 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: Log shift auto booking candidates
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ "${{ steps.period.outputs.dry_run }}" = "true" ]; then
+            echo "Dry-run: shift auto booking candidate DB log skipped."
+            exit 0
+          fi
+
+          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
+          mkdir -p results/half-hourly-courier-hub-sync/shift-auto-candidates
+
+          python scripts/select_shift_auto_booking_candidates.py \
+            --start-date "$SHIFT_BLOCK_DATE" \
+            --days 5 \
+            --match-kind exact \
+            --limit 100 \
+            --output results/half-hourly-courier-hub-sync/shift-auto-candidates/exact-candidates.json
+
+          python scripts/select_shift_auto_booking_candidates.py \
+            --start-date "$SHIFT_BLOCK_DATE" \
+            --days 5 \
+            --match-kind alternative \
+            --limit 100 \
+            --output results/half-hourly-courier-hub-sync/shift-auto-candidates/alternative-candidates.json
+
       - name: Export MuszakPro booking overview sheet
         continue-on-error: true
         shell: bash

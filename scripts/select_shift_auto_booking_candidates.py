@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,9 +19,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from page import foglalas_streamlit as foglalas
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import (
+    LOG_TABLE,
     ROBOTLOG_SUCCESS_STATUSES,
     latest_log_by_serial,
     read_giriton_booking_log,
+)
+from resources.supabase_raw import (
+    get_supabase_config,
+    raise_for_supabase_error,
 )
 from resources.giriton_shifts_db import read_giriton_shifts_raw
 from scripts.auto_book_exact_shift_matches import is_recent_running_log
@@ -140,6 +147,73 @@ def candidate_payload(row: dict) -> dict:
     }
 
 
+def optional_int(value):
+    text = clean(value)
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def log_candidates_to_db(candidates: list[dict], *, match_kind: str, start_date: date, end_date: date) -> int:
+    if not candidates:
+        return 0
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        print("SHIFT_AUTO_SELECT_DB_LOG_SKIPPED missing_supabase_config")
+        return 0
+
+    selected_at = datetime.now(BUDAPEST_TZ).isoformat(timespec="seconds")
+    github_run_id = clean(os.getenv("GITHUB_RUN_ID"))
+    github_run_attempt = clean(os.getenv("GITHUB_RUN_ATTEMPT"))
+    rows = []
+    for candidate in candidates:
+        warehouse = clean(candidate.get("warehouse")).upper()
+        shift_start = clean(candidate.get("shift_start"))
+        rows.append({
+            "source_name": "shift-auto-booking-selector",
+            "work_date": clean(candidate.get("work_date")) or None,
+            "courier_id": optional_int(candidate.get("courier_id")),
+            "courier_name": clean(candidate.get("courier_name")),
+            "email": clean(candidate.get("email")).casefold(),
+            "warehouse": warehouse,
+            "shift_text": f"{warehouse}_{shift_start}" if warehouse and shift_start else shift_start,
+            "shift_start": shift_start,
+            "booking_code": "",
+            "serial": clean(candidate.get("serial")),
+            "status": f"CANDIDATE_SELECTED_{clean(match_kind).upper()}",
+            "message": "A robot ezt a sort foglalásra kiválasztotta.",
+            "response_json": {
+                "candidate": candidate,
+                "match_kind": match_kind,
+                "selection_window": {
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+                "selected_at": selected_at,
+                "github_run_id": github_run_id,
+                "github_run_attempt": github_run_attempt,
+            },
+        })
+
+    response = requests.post(
+        f"{supabase_url}/rest/v1/{LOG_TABLE}",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        json=rows,
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    return len(rows)
+
+
 def select_candidates(
     *,
     start_date: date,
@@ -223,10 +297,20 @@ def main() -> None:
         json.dumps(candidates, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    try:
+        db_logged = log_candidates_to_db(
+            candidates,
+            match_kind=args.match_kind,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except Exception as exc:
+        db_logged = 0
+        print(f"SHIFT_AUTO_SELECT_DB_LOG_FAILED {type(exc).__name__}: {exc}")
     print(
         "SHIFT_AUTO_SELECT "
         f"kind={args.match_kind} start={start_date} end={end_date} "
-        f"days={args.days} candidates={len(candidates)} output={output_path}"
+        f"days={args.days} candidates={len(candidates)} db_logged={db_logged} output={output_path}"
     )
     for candidate in candidates[:10]:
         print(f"SHIFT_AUTO_SELECT_ITEM {candidate}")

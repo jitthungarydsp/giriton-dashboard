@@ -15,7 +15,8 @@ with muszakpro_rows as (
         b.email,
         b.shift_text,
         coalesce(
-            upper(nullif(trim(coalesce(b.warehouse, '')), '')),
+            substring(upper(coalesce(b.warehouse, '')) from '(BUD[12])'),
+            substring(upper(coalesce(b.shift_text, '')) from '(BUD[12])'),
             substring(upper(coalesce(b.booking_code, '')) from '(BUD[12])')
         ) as warehouse_code,
         b.booking_code,
@@ -90,12 +91,23 @@ block_match as (
         from public.courier_hub_shift_blocks_raw sb
         where sb.work_date = i.work_date
           and upper(sb.warehouse_code) = i.warehouse_code
+          and i.shift_start_time is not null
           and (
               sb.slot_from = i.shift_start_time
               or sb.occupancy_from::time = i.shift_start_time
+              or abs(extract(epoch from (sb.slot_from - i.shift_start_time))) <= 1800
+              or abs(extract(epoch from (sb.occupancy_from::time - i.shift_start_time))) <= 1800
           )
         order by
-            case when sb.slot_from = i.shift_start_time then 0 else 1 end,
+            case
+                when sb.slot_from = i.shift_start_time then 0
+                when sb.occupancy_from::time = i.shift_start_time then 1
+                else 2
+            end,
+            least(
+                abs(extract(epoch from (sb.slot_from - i.shift_start_time))),
+                abs(extract(epoch from (sb.occupancy_from::time - i.shift_start_time)))
+            ),
             sb.updated_at desc nulls last
         limit 1
     ) sb on true
