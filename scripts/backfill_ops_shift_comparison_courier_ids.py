@@ -93,25 +93,41 @@ def resolve_from_hub_identity(row: dict, lookup: dict) -> int | None:
     return None
 
 
-def upsert_courier_ids(
+def update_courier_ids(
     supabase_url: str,
     service_role_key: str,
     rows: list[dict],
-) -> None:
+) -> int:
     if not rows:
-        return
+        return 0
 
-    response = requests.post(
-        f"{supabase_url}/rest/v1/{TABLE_NAME}?on_conflict=id",
-        headers={
+    grouped: dict[int, set[str]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["courier_id"]), set()).add(str(row["id"]))
+
+    updated = 0
+    with requests.Session() as session:
+        session.headers.update({
             **headers(service_role_key),
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates,return=minimal",
-        },
-        json=rows,
-        timeout=60,
-    )
-    raise_for_supabase_error(response)
+            "Prefer": "return=representation",
+        })
+        for courier_id, row_ids in grouped.items():
+            ids = sorted(row_ids)
+            for index in range(0, len(ids), 100):
+                response = session.patch(
+                    f"{supabase_url}/rest/v1/{TABLE_NAME}",
+                    params={
+                        "id": f"in.({','.join(ids[index:index + 100])})",
+                        "courier_id": "is.null",
+                        "select": "id",
+                    },
+                    json={"courier_id": courier_id},
+                    timeout=60,
+                )
+                raise_for_supabase_error(response)
+                updated += len(response.json())
+            print(f"OPS_SHIFT_COMPARISON_COURIER_ID_PROGRESS updated={updated}", flush=True)
+    return updated
 
 
 def main() -> int:
@@ -149,6 +165,7 @@ def main() -> int:
         else:
             missing.append(row)
 
+    updated = 0
     if not args.dry_run:
         update_rows = [
             {
@@ -157,16 +174,11 @@ def main() -> int:
             }
             for row, courier_id in matched
         ]
-        for index in range(0, len(update_rows), 500):
-            upsert_courier_ids(
-                supabase_url,
-                service_role_key,
-                update_rows[index:index + 500],
-            )
+        updated = update_courier_ids(supabase_url, service_role_key, update_rows)
 
     print(
         "OPS_SHIFT_COMPARISON_COURIER_ID_BACKFILL "
-        f"checked={len(rows)} matched={len(matched)} updated={0 if args.dry_run else len(matched)} "
+        f"checked={len(rows)} matched={len(matched)} updated={updated} "
         f"missing={len(missing)} dry_run={args.dry_run}"
     )
     for row in missing[:20]:

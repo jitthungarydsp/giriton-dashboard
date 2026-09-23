@@ -2863,6 +2863,8 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
     serial = _clean(row.get("Serial"))
     work_date = _clean(row.get("Dátum"))
     target_shift_start = _booking_target_shift_start(row)
+    shift_template_id = _clean(row.get("shiftTemplateId"))
+    courier_id = _booking_courier_id(row)
     if not serial:
         st.error("Ehhez a sorhoz nincs MűszakPro serial, ezért nem indítható célzott foglalás.")
         return False
@@ -2872,6 +2874,12 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
     if not target_shift_start:
         st.error("Ehhez a sorhoz nincs Giriton célidőpont, ezért nem indítható foglalás.")
         return False
+    if not courier_id:
+        st.error("Ehhez a sorhoz nincs Courier ID, ezért a HUB API foglalás nem indítható.")
+        return False
+    if not shift_template_id or shift_template_id == "-":
+        st.error("Ehhez a sorhoz nincs shiftTemplateId, ezért a HUB API foglalás nem indítható.")
+        return False
     if not dry_run and serial in _started_booking_serials() and not _is_retryable_robot_error(row):
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
         return False
@@ -2880,13 +2888,14 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
         "start_date": work_date,
         "end_date": work_date,
         "serial": serial,
-        "courier_id": _booking_courier_id(row),
+        "courier_id": courier_id,
         "warehouse": _clean(row.get("Raktár")).upper(),
         "email": _clean(row.get("E-mail")).casefold(),
         "courier_name": _clean(row.get("Dolgozó")),
         "shift_start": target_shift_start,
+        "shift_template_id": shift_template_id,
         "dry_run": "true" if dry_run else "false",
-        "booking_engine": "uidl",
+        "booking_engine": "hub_api",
     }
     result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
     if not dry_run:
@@ -2984,36 +2993,6 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         st.rerun()
 
 
-def _dispatch_bulk_warehouse_booking(
-    *,
-    start_date: str,
-    end_date: str,
-    warehouse: str,
-    dry_run: bool,
-) -> None:
-    warehouse = _clean(warehouse).upper()
-    if warehouse not in {"BUD1", "BUD2"}:
-        st.error("Raktár szerinti tömeges indításhoz válassz BUD1 vagy BUD2 raktárat.")
-        return
-
-    result = _dispatch_workflow_fallback(
-        AUTO_BOOKING_WORKFLOW,
-        {
-            "start_date": start_date,
-            "end_date": end_date,
-            "serial": "",
-            "warehouse": warehouse,
-            "dry_run": "true" if dry_run else "false",
-            "booking_engine": "robot",
-        },
-    )
-    st.session_state["foglalas_last_github_dispatch"] = result
-    mode = "ellenőrzés" if dry_run else "éles tömeges foglalás"
-    st.success(
-        f"{warehouse} raktár {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
-    )
-
-
 def _bookable_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
     if summary_df.empty:
         return summary_df
@@ -3029,7 +3008,7 @@ def _bookable_booking_rows(summary_df: pd.DataFrame) -> pd.DataFrame:
     return rows.drop_duplicates(subset=["Serial"])
 
 
-def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
+def _dispatch_selected_bulk_bookings(rows: pd.DataFrame, dry_run: bool = False) -> None:
     if rows.empty:
         st.warning("Nincs kijelölt indítható sor ebben a szűrésben.")
         return
@@ -3041,7 +3020,16 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
         serial = _clean(row.get("Serial"))
         work_date = _clean(row.get("Dátum"))
         target_shift_start = _booking_target_shift_start(row)
-        if not serial or not work_date or not target_shift_start:
+        shift_template_id = _clean(row.get("shiftTemplateId"))
+        courier_id = _booking_courier_id(row)
+        if (
+            not serial
+            or not work_date
+            or not target_shift_start
+            or not courier_id
+            or not shift_template_id
+            or shift_template_id == "-"
+        ):
             skipped += 1
             continue
         if serial in _started_booking_serials():
@@ -3054,25 +3042,28 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame) -> None:
                 "start_date": work_date,
                 "end_date": work_date,
                 "serial": serial,
-                "courier_id": _booking_courier_id(row),
+                "courier_id": courier_id,
                 "warehouse": _clean(row.get("Raktár")).upper(),
                 "email": _clean(row.get("E-mail")).casefold(),
                 "courier_name": _clean(row.get("Dolgozó")),
                 "shift_start": target_shift_start,
-                "dry_run": "false",
-                "booking_engine": "uidl",
+                "shift_template_id": shift_template_id,
+                "dry_run": "true" if dry_run else "false",
+                "booking_engine": "hub_api",
             },
         )
-        _mark_booking_started(serial)
+        if not dry_run:
+            _mark_booking_started(serial)
         dispatched += 1
 
     if last_result:
         st.session_state["foglalas_last_github_dispatch"] = last_result
 
     if dispatched:
+        mode = "ellenőrzése" if dry_run else "éles foglalása"
         st.success(
-            f"{dispatched} db kijelölt sor éles foglalása elindítva "
-            f"({dispatched} külön célzott GitHub robotfutás)."
+            f"{dispatched} db kijelölt sor {mode} elindítva "
+            f"({dispatched} külön célzott HUB API futás)."
         )
     if skipped:
         st.warning(f"{skipped} sor kimaradt, mert hiányzott adat vagy már el lett indítva.")
@@ -3312,7 +3303,7 @@ def _render_bulk_status_booking_section(
     )
     st.warning(
         f"Éles indítás: {len(selected_rows)} db {status_label.lower()} sor. "
-        "Minden sor külön célzott robotfutásként indul."
+        "Minden sor külön célzott HUB API futásként indul."
     )
     confirmation = st.text_input(
         f"Megerősítés: írd be pontosan, hogy {expected_confirmation}",
@@ -3329,7 +3320,7 @@ def _render_bulk_status_booking_section(
             st.error(f"Éles indításhoz a megerősítő mezőbe ezt írd: {expected_confirmation}")
             return
         try:
-            _dispatch_selected_bulk_bookings(selected_rows)
+            _dispatch_selected_bulk_bookings(selected_rows, dry_run=False)
             st.cache_data.clear()
             st.rerun()
         except GitHubActionsError as exc:
@@ -3513,12 +3504,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             disabled=warehouse_ready.empty,
         ):
             try:
-                _dispatch_bulk_warehouse_booking(
-                    start_date=str(summary_df["Dátum"].min()),
-                    end_date=str(summary_df["Dátum"].max()),
-                    warehouse=selected_warehouse,
-                    dry_run=True,
-                )
+                _dispatch_selected_bulk_bookings(warehouse_ready, dry_run=True)
             except GitHubActionsError as exc:
                 st.error(str(exc))
             except Exception as exc:
@@ -3547,12 +3533,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                     st.error("Éles raktárindításhoz a megerősítő mezőbe ezt írd: ELES")
                 else:
                     try:
-                        _dispatch_bulk_warehouse_booking(
-                            start_date=str(summary_df["Dátum"].min()),
-                            end_date=str(summary_df["Dátum"].max()),
-                            warehouse=selected_warehouse,
-                            dry_run=False,
-                        )
+                        _dispatch_selected_bulk_bookings(warehouse_ready, dry_run=False)
                     except GitHubActionsError as exc:
                         st.error(str(exc))
                     except Exception as exc:

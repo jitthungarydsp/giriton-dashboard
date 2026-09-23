@@ -29,14 +29,18 @@ on:
         description: "Opcionális célzott műszakkezdés HH:MM."
         required: false
         default: ""
+      shift_template_id:
+        description: "Opcionális Courier Hub shiftTemplateId az API foglaláshoz."
+        required: false
+        default: ""
       dry_run:
         description: "true = csak ellenorzes, false = eles foglalas"
         required: true
         default: "true"
       booking_engine:
-        description: "uidl = új út, robot = régi képernyős tartalék"
+        description: "hub_api = Courier Hub API, uidl = Giriton UIDL, robot = régi képernyős tartalék"
         required: false
-        default: "uidl"
+        default: "hub_api"
       courier_name:
         description: "Opcionális futárnév az új UIDL úthoz."
         required: false
@@ -58,6 +62,8 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_AUTH_CACHE_FILE: results/courier-hub-auth.json
 
     steps:
       - name: Checkout
@@ -76,11 +82,20 @@ jobs:
       - name: Validate inputs and secrets
         shell: bash
         run: |
-          test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
-          test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
+
+          if [ "${{ inputs.booking_engine }}" = "hub_api" ]; then
+            test -n "$COURIER_HUB_COOKIE" || (echo "Missing COURIER_HUB_COOKIE secret" && exit 1)
+            test -n "${{ inputs.courier_id }}" || (echo "Courier Hub API foglalashoz courier_id kell." && exit 1)
+            test -n "${{ inputs.warehouse }}" || (echo "Courier Hub API foglalashoz raktar kell." && exit 1)
+            test -n "${{ inputs.shift_start }}" || (echo "Courier Hub API foglalashoz slot/kezdes kell." && exit 1)
+            test -n "${{ inputs.shift_template_id }}" || (echo "Courier Hub API foglalashoz shift_template_id kell." && exit 1)
+          else
+            test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
+            test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
+          fi
 
           if [ "${{ inputs.dry_run }}" != "true" ] && [ -z "${{ inputs.serial }}" ] && [ -z "${{ inputs.warehouse }}" ]; then
             echo "Eles Giriton foglalashoz kotelezo konkret serialt vagy raktar szurot megadni."
@@ -96,14 +111,46 @@ jobs:
             test -n "${{ inputs.shift_start }}" || (echo "Celjzott eles foglalashoz muszakkezdes is kell." && exit 1)
           fi
 
-          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ] && [ "${{ inputs.booking_engine }}" != "uidl" ]; then
+          if [ "${{ inputs.dry_run }}" != "true" ] && [ -n "${{ inputs.serial }}" ] && [ "${{ inputs.booking_engine }}" = "robot" ]; then
             test -n "${{ inputs.email }}" || (echo "Celjzott robot eles foglalashoz email is kell." && exit 1)
             test -n "${{ inputs.warehouse }}" || (echo "Celjzott eles foglalashoz raktar is kell." && exit 1)
             test -n "${{ inputs.shift_start }}" || (echo "Celjzott eles foglalashoz muszakkezdes is kell." && exit 1)
           fi
 
+      - name: Refresh Courier Hub auth cache
+        if: ${{ inputs.booking_engine == 'hub_api' }}
+        shell: bash
+        run: |
+          python scripts/refresh_courier_hub_auth_no_browser.py \
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --no-probe
+
+      - name: Run Courier Hub API booking path
+        if: ${{ inputs.booking_engine == 'hub_api' }}
+        shell: bash
+        run: |
+          CMD=(python scripts/courier_hub_api_book_shift.py \
+            --date "${{ inputs.start_date }}" \
+            --warehouse "${{ inputs.warehouse }}" \
+            --shift-start "${{ inputs.shift_start }}" \
+            --slot-from "${{ inputs.shift_start }}" \
+            --shift-template-id "${{ inputs.shift_template_id }}" \
+            --courier-id "${{ inputs.courier_id }}" \
+            --serial "${{ inputs.serial }}" \
+            --courier-name "${{ inputs.courier_name }}" \
+            --email "${{ inputs.email }}")
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--live)
+          fi
+
+          echo "Running Courier Hub API booking path"
+          "${CMD[@]}"
+
       - name: Run Giriton auto booking robot
-        if: ${{ inputs.booking_engine != 'uidl' }}
+        if: ${{ inputs.booking_engine == 'robot' }}
         run: |
           robot \
             --outputdir results/giriton-auto-booking \
