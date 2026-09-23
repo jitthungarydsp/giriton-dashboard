@@ -38,7 +38,7 @@ on:
         required: true
         default: "true"
       booking_engine:
-        description: "hub_api = Courier Hub API, uidl = Giriton UIDL, robot = régi képernyős tartalék"
+        description: "hub_api = Courier Hub API, hub_api_delete = Courier Hub API törlés, uidl = Giriton UIDL, robot = régi képernyős tartalék"
         required: false
         default: "hub_api"
       courier_name:
@@ -86,12 +86,12 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
 
-          if [ "${{ inputs.booking_engine }}" = "hub_api" ]; then
+          if [ "${{ inputs.booking_engine }}" = "hub_api" ] || [ "${{ inputs.booking_engine }}" = "hub_api_delete" ]; then
             test -n "$COURIER_HUB_COOKIE" || (echo "Missing COURIER_HUB_COOKIE secret" && exit 1)
-            test -n "${{ inputs.courier_id }}" || (echo "Courier Hub API foglalashoz courier_id kell." && exit 1)
-            test -n "${{ inputs.warehouse }}" || (echo "Courier Hub API foglalashoz raktar kell." && exit 1)
-            test -n "${{ inputs.shift_start }}" || (echo "Courier Hub API foglalashoz slot/kezdes kell." && exit 1)
-            test -n "${{ inputs.shift_template_id }}" || (echo "Courier Hub API foglalashoz shift_template_id kell." && exit 1)
+            test -n "${{ inputs.courier_id }}" || (echo "Courier Hub API muvelethez courier_id kell." && exit 1)
+            test -n "${{ inputs.warehouse }}" || (echo "Courier Hub API muvelethez raktar kell." && exit 1)
+            test -n "${{ inputs.shift_start }}" || (echo "Courier Hub API muvelethez slot/kezdes kell." && exit 1)
+            test -n "${{ inputs.shift_template_id }}" || (echo "Courier Hub API muvelethez shift_template_id kell." && exit 1)
           else
             test -n "$GIRITON_USER" || (echo "Missing GIRITON_USER secret" && exit 1)
             test -n "$GIRITON_PASSWORD" || (echo "Missing GIRITON_PASSWORD secret" && exit 1)
@@ -118,7 +118,7 @@ jobs:
           fi
 
       - name: Refresh Courier Hub auth cache
-        if: ${{ inputs.booking_engine == 'hub_api' }}
+        if: ${{ inputs.booking_engine == 'hub_api' || inputs.booking_engine == 'hub_api_delete' }}
         shell: bash
         run: |
           python scripts/refresh_courier_hub_auth_no_browser.py \
@@ -149,8 +149,32 @@ jobs:
           echo "Running Courier Hub API booking path"
           "${CMD[@]}"
 
+      - name: Run Courier Hub API delete path
+        if: ${{ inputs.booking_engine == 'hub_api_delete' }}
+        shell: bash
+        run: |
+          CMD=(python scripts/courier_hub_api_delete_shift.py \
+            --date "${{ inputs.start_date }}" \
+            --warehouse "${{ inputs.warehouse }}" \
+            --shift-start "${{ inputs.shift_start }}" \
+            --slot-from "${{ inputs.shift_start }}" \
+            --shift-template-id "${{ inputs.shift_template_id }}" \
+            --courier-id "${{ inputs.courier_id }}" \
+            --serial "${{ inputs.serial }}" \
+            --courier-name "${{ inputs.courier_name }}" \
+            --email "${{ inputs.email }}")
+
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--live)
+          fi
+
+          echo "Running Courier Hub API delete path"
+          "${CMD[@]}"
+
       - name: Refresh Courier Hub and ops shift comparison after booking
-        if: ${{ inputs.booking_engine == 'hub_api' && inputs.dry_run != 'true' }}
+        if: ${{ (inputs.booking_engine == 'hub_api' || inputs.booking_engine == 'hub_api_delete') && inputs.dry_run != 'true' }}
         shell: bash
         run: |
           WAREHOUSE="${{ inputs.warehouse }}"

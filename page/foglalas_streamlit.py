@@ -732,6 +732,10 @@ def _started_booking_serials() -> set[str]:
     return set(st.session_state.get("foglalas_started_serials", []))
 
 
+def _started_delete_keys() -> set[str]:
+    return set(st.session_state.get("foglalas_started_delete_keys", []))
+
+
 def _mark_booking_started(serial: str) -> None:
     serial = _clean(serial)
     if not serial:
@@ -750,6 +754,38 @@ def _unmark_booking_started(serial: str) -> None:
         return
     started.remove(serial)
     st.session_state["foglalas_started_serials"] = sorted(started)
+
+
+def _delete_started_key(identity: dict[str, str]) -> str:
+    return "|".join(
+        [
+            _clean(identity.get("work_date")),
+            _clean(identity.get("warehouse")).upper(),
+            _clean(identity.get("shift_start")),
+            _clean(identity.get("serial")),
+            _clean(identity.get("worker")),
+        ]
+    )
+
+
+def _mark_delete_started(identity: dict[str, str]) -> None:
+    key = _delete_started_key(identity)
+    if not key:
+        return
+    started = _started_delete_keys()
+    started.add(key)
+    st.session_state["foglalas_started_delete_keys"] = sorted(started)
+
+
+def _unmark_delete_started(identity: dict[str, str]) -> None:
+    key = _delete_started_key(identity)
+    if not key:
+        return
+    started = _started_delete_keys()
+    if key not in started:
+        return
+    started.remove(key)
+    st.session_state["foglalas_started_delete_keys"] = sorted(started)
 
 
 def _booking_action_key(token: str, identity: dict[str, str]) -> str:
@@ -881,6 +917,13 @@ def _booking_target_shift_start(row: dict) -> str:
     return _clean(row.get("MűszakPro"))
 
 
+def _delete_target_shift_start(row: dict) -> str:
+    return (
+        _normalize_time(row.get("Giriton foglalás"))
+        or _normalize_time(row.get("MűszakPro"))
+    )
+
+
 def _is_retryable_robot_error(row: dict) -> bool:
     return (
         _clean(row.get("Állapot")) == "Sikertelen"
@@ -903,6 +946,23 @@ def _is_bookable_row(row: dict) -> bool:
     return bool(_booking_target_shift_start(row))
 
 
+def _is_deletable_row(row: dict) -> bool:
+    if _clean(row.get("Állapot")) != "Lefoglalva":
+        return False
+    if _clean(row.get("Giriton állapot")) != "Lefoglalva":
+        return False
+    if not _clean(row.get("Dátum")):
+        return False
+    if not _clean(row.get("Raktár")):
+        return False
+    if not _delete_target_shift_start(row):
+        return False
+    if not _booking_courier_id(row):
+        return False
+    shift_template_id = _clean(row.get("shiftTemplateId"))
+    return bool(shift_template_id and shift_template_id != "-")
+
+
 def _booking_action_identity(row: dict) -> dict[str, str]:
     return {
         "serial": _clean(row.get("Serial")),
@@ -910,6 +970,16 @@ def _booking_action_identity(row: dict) -> dict[str, str]:
         "worker": _clean(row.get("Dolgozó")),
         "warehouse": _clean(row.get("Raktár")).upper(),
         "shift_start": _booking_target_shift_start(row),
+    }
+
+
+def _delete_action_identity(row: dict) -> dict[str, str]:
+    return {
+        "serial": _clean(row.get("Serial")),
+        "work_date": _clean(row.get("Dátum")),
+        "worker": _clean(row.get("Dolgozó")),
+        "warehouse": _clean(row.get("Raktár")).upper(),
+        "shift_start": _delete_target_shift_start(row),
     }
 
 
@@ -971,6 +1041,28 @@ def _is_valid_booking_action_token(token: str, identity: dict[str, str]) -> tupl
 def _booking_action_badge(row: dict) -> str:
     status = _clean(row.get("Állapot"))
     if not _is_bookable_row(row):
+        if _is_deletable_row(row):
+            identity = _delete_action_identity(row)
+            if _delete_started_key(identity) in _started_delete_keys():
+                return "<span class='action-badge booked disabled'>Törlés indítva</span>"
+
+            action_token = _remember_booking_action(identity)
+            query = urlencode(
+                {
+                    "foglalas_action": "delete_booking",
+                    "action_token": action_token,
+                    "serial": identity["serial"],
+                    "work_date": identity["work_date"],
+                    "worker": identity["worker"],
+                    "warehouse": identity["warehouse"],
+                    "shift_start": identity["shift_start"],
+                }
+            )
+            return (
+                f"<a class='action-badge bad action-link' href='?{query}' "
+                f"target='_self' "
+                f"title='Éles Courier Hub műszaktörlés API-val'>Törlés</a>"
+            )
         return _action_badge(status)
 
     identity = _booking_action_identity(row)
@@ -2965,6 +3057,59 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
     return True
 
 
+def _dispatch_auto_delete(row: dict, dry_run: bool) -> bool:
+    identity = _delete_action_identity(row)
+    work_date = identity["work_date"]
+    target_shift_start = identity["shift_start"]
+    shift_template_id = _clean(row.get("shiftTemplateId"))
+    courier_id = _booking_courier_id(row)
+    if not work_date:
+        st.error("Ehhez a sorhoz nincs dátum, ezért nem indítható törlés.")
+        return False
+    if not target_shift_start:
+        st.error("Ehhez a sorhoz nincs Giriton foglalási időpont, ezért nem indítható törlés.")
+        return False
+    if not courier_id:
+        st.error("Ehhez a sorhoz nincs Courier ID, ezért a HUB API törlés nem indítható.")
+        return False
+    if not shift_template_id or shift_template_id == "-":
+        st.error("Ehhez a sorhoz nincs shiftTemplateId, ezért a HUB API törlés nem indítható.")
+        return False
+    if not dry_run and _delete_started_key(identity) in _started_delete_keys():
+        st.warning("Erre a sorra már el lett indítva a törlés, ezért nem indítok még egyet.")
+        return False
+
+    workflow_inputs = {
+        "start_date": work_date,
+        "end_date": work_date,
+        "serial": identity["serial"],
+        "courier_id": courier_id,
+        "warehouse": identity["warehouse"],
+        "email": _clean(row.get("E-mail")).casefold(),
+        "courier_name": identity["worker"],
+        "shift_start": target_shift_start,
+        "shift_template_id": shift_template_id,
+        "dry_run": "true" if dry_run else "false",
+        "booking_engine": "hub_api_delete",
+    }
+    locked = False
+    if not dry_run:
+        _mark_delete_started(identity)
+        locked = True
+    try:
+        result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
+    except Exception:
+        if locked:
+            _unmark_delete_started(identity)
+        raise
+    st.session_state["foglalas_last_github_dispatch"] = result
+    mode = "törlés ellenőrzés" if dry_run else "éles törlés"
+    st.success(
+        f"Giriton {mode} indítva: {result['workflow']} / {result['ref']} / {result['triggered_at']}"
+    )
+    return True
+
+
 def _query_param_value(name: str) -> str:
     try:
         value = st.query_params.get(name, "")
@@ -2990,6 +3135,21 @@ def _matching_booking_row(summary_df: pd.DataFrame, identity: dict[str, str]) ->
     return None
 
 
+def _matching_delete_row(summary_df: pd.DataFrame, identity: dict[str, str]) -> dict | None:
+    if summary_df.empty:
+        return None
+
+    for _, row in summary_df.iterrows():
+        row_dict = row.to_dict()
+        row_identity = _delete_action_identity(row_dict)
+        if row_identity != identity:
+            continue
+        if not _is_deletable_row(row_dict):
+            return None
+        return row_dict
+    return None
+
+
 def _query_booking_identity() -> dict[str, str]:
     return {
         "serial": _query_param_value("serial"),
@@ -3001,43 +3161,53 @@ def _query_booking_identity() -> dict[str, str]:
 
 
 def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
-    if _query_param_value("foglalas_action") != "book_serial":
+    action = _query_param_value("foglalas_action")
+    if action not in {"book_serial", "delete_booking"}:
         return
 
     token = _query_param_value("action_token")
     identity = _query_booking_identity()
-    required_fields = ["serial", "work_date", "worker", "warehouse", "shift_start"]
+    required_fields = ["work_date", "worker", "warehouse", "shift_start"]
+    if action == "book_serial":
+        required_fields.append("serial")
     if any(not identity.get(field) for field in required_fields):
-        st.error("A foglalás indításához hiányzik egy sorazonosító adat. Frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
+        st.error("A művelet indításához hiányzik egy sorazonosító adat. Frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
         st.query_params.clear()
         return
 
     token_valid, token_error = _is_valid_booking_action_token(token, identity)
     if not token_valid:
         st.error(
-            "A foglalás indítása nem érvényes vagy már fel lett használva. "
+            "A művelet indítása nem érvényes vagy már fel lett használva. "
             f"Kérlek frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját. Ok: {token_error}."
         )
         st.query_params.clear()
         return
 
     serial = identity["serial"]
-    if serial in _started_booking_serials():
+    if action == "book_serial" and serial in _started_booking_serials():
         st.warning("Erre a sorra már el lett indítva az éles foglalás, ezért nem indítok még egyet.")
         st.query_params.clear()
         return
-
-    action_key = _booking_action_key(token, identity)
-    if action_key in _consumed_booking_action_keys():
-        st.warning("Ezt a foglalási kattintást már feldolgoztam, ezért nem indítok új workflow-t.")
+    if action == "delete_booking" and _delete_started_key(identity) in _started_delete_keys():
+        st.warning("Erre a sorra már el lett indítva a törlés, ezért nem indítok még egyet.")
         st.query_params.clear()
         return
 
-    selected_row = _matching_booking_row(summary_df, identity)
+    action_key = f"{action}:{_booking_action_key(token, identity)}"
+    if action_key in _consumed_booking_action_keys():
+        st.warning("Ezt a kattintást már feldolgoztam, ezért nem indítok új workflow-t.")
+        st.query_params.clear()
+        return
+
+    if action == "delete_booking":
+        selected_row = _matching_delete_row(summary_df, identity)
+    else:
+        selected_row = _matching_booking_row(summary_df, identity)
     if selected_row is None:
         st.error(
-            "Nem indítottam foglalást, mert a kattintott sor már nem egyezik a látható listával "
-            "vagy nem foglalható állapotú."
+            "Nem indítottam műveletet, mert a kattintott sor már nem egyezik a látható listával "
+            "vagy nem megfelelő állapotú."
         )
         st.query_params.clear()
         return
@@ -3047,7 +3217,10 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     try:
         _mark_booking_action_consumed(action_key)
         action_consumed = True
-        dispatched = _dispatch_auto_booking(selected_row, dry_run=False)
+        if action == "delete_booking":
+            dispatched = _dispatch_auto_delete(selected_row, dry_run=False)
+        else:
+            dispatched = _dispatch_auto_booking(selected_row, dry_run=False)
     except GitHubActionsError as exc:
         if action_consumed:
             _unmark_booking_action_consumed(action_key)
@@ -3055,7 +3228,7 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     except Exception as exc:
         if action_consumed:
             _unmark_booking_action_consumed(action_key)
-        st.error(f"Táblázatos foglalás indítás hiba: {exc}")
+        st.error(f"Táblázatos művelet indítás hiba: {exc}")
     finally:
         if action_consumed and not dispatched:
             _unmark_booking_action_consumed(action_key)
