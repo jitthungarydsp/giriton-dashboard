@@ -45,6 +45,7 @@ ROBOTLOG_SUCCESS_STATUSES = {
     "COURIER_ADDED_UNVERIFIED",
     "ALREADY_BOOKED",
 }
+ROBOTLOG_SHEET_STATUSES = ROBOTLOG_SUCCESS_STATUSES | {"COURIER_DELETED"}
 
 
 def _today_budapest():
@@ -354,6 +355,12 @@ def _format_robotlog_shift(candidate):
     return clean(candidate.get("shift_text"))
 
 
+def _robotlog_action_type(status):
+    if clean(status) == "COURIER_DELETED":
+        return "TÖRLÉS"
+    return "FOGLALÁS"
+
+
 def _legacy_candidate_serial(candidate):
     candidate = candidate or {}
     legacy_serial = shift_serial(
@@ -366,7 +373,7 @@ def _legacy_candidate_serial(candidate):
 
 
 def _append_success_robotlog(candidate, status):
-    if clean(status) not in ROBOTLOG_SUCCESS_STATUSES:
+    if clean(status) not in ROBOTLOG_SHEET_STATUSES:
         return "SKIPPED_STATUS"
 
     from resources.google_auth import get_client
@@ -389,7 +396,7 @@ def _append_success_robotlog(candidate, status):
     row = [
         _format_robotlog_timestamp(),
         clean(candidate.get("email")).casefold(),
-        "FOGLALÁS",
+        _robotlog_action_type(status),
         f"Dátum: {work_date}, Műszak: {_format_robotlog_shift(candidate)}, Raktár: {warehouse}",
         _legacy_candidate_serial(candidate),
     ]

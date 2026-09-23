@@ -13,13 +13,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from resources.giriton_auto_booking import (  # noqa: E402
     ROBOTLOG_HEADER,
-    ROBOTLOG_SUCCESS_STATUSES,
+    ROBOTLOG_SHEET_STATUSES,
     _legacy_candidate_serial,
     _format_robotlog_shift,
     _format_robotlog_timestamp,
     _get_or_create_robotlog_worksheet,
     _normalize_warehouse,
     _robotlog_spreadsheet_id,
+    _robotlog_action_type,
     clean,
     read_giriton_booking_log,
 )
@@ -36,7 +37,7 @@ def parse_date(value: str | None, default: date) -> date:
     return datetime.strptime(text, "%Y-%m-%d").date()
 
 
-def robotlog_serials(worksheet) -> set[str]:
+def robotlog_keys(worksheet) -> set[tuple[str, str]]:
     values = worksheet.get_all_values()
     if not values:
         worksheet.update(
@@ -46,11 +47,27 @@ def robotlog_serials(worksheet) -> set[str]:
         )
         return set()
 
-    serials: set[str] = set()
+    keys: set[tuple[str, str]] = set()
     for row in values[1:]:
         if len(row) >= 5 and clean(row[4]):
-            serials.add(clean(row[4]))
-    return serials
+            action_type = clean(row[2]) if len(row) >= 3 else "FOGLALÁS"
+            keys.add((action_type or "FOGLALÁS", clean(row[4])))
+    return keys
+
+
+def robotlog_key_from_log(log_row: dict) -> tuple[str, str]:
+    candidate = {
+        "work_date": clean(log_row.get("work_date")),
+        "warehouse": _normalize_warehouse(log_row.get("warehouse")),
+        "shift_start": clean(log_row.get("shift_start")),
+        "shift_text": clean(log_row.get("shift_text")),
+        "courier_id": clean(log_row.get("courier_id")),
+        "serial": clean(log_row.get("serial")),
+    }
+    return (
+        _robotlog_action_type(log_row.get("status")),
+        _legacy_candidate_serial(candidate),
+    )
 
 
 def row_from_log(log_row: dict) -> list[str]:
@@ -66,7 +83,7 @@ def row_from_log(log_row: dict) -> list[str]:
     return [
         _format_robotlog_timestamp(),
         candidate["email"],
-        "FOGLALÁS",
+        _robotlog_action_type(log_row.get("status")),
         (
             f"Dátum: {candidate['work_date']}, "
             f"Műszak: {_format_robotlog_shift(candidate)}, "
@@ -92,7 +109,7 @@ def sync_robotlog_sheet(start_date: date, end_date: date, *, limit: int, dry_run
         return 0, 0
 
     success_df = log_df[
-        log_df["status"].fillna("").astype(str).str.strip().isin(ROBOTLOG_SUCCESS_STATUSES)
+        log_df["status"].fillna("").astype(str).str.strip().isin(ROBOTLOG_SHEET_STATUSES)
         & log_df["serial"].fillna("").astype(str).str.strip().ne("")
     ].copy()
     if success_df.empty:
@@ -102,9 +119,12 @@ def sync_robotlog_sheet(start_date: date, end_date: date, *, limit: int, dry_run
     worksheet = _get_or_create_robotlog_worksheet(
         get_client().open_by_key(_robotlog_spreadsheet_id())
     )
-    existing_serials = robotlog_serials(worksheet)
+    existing_keys = robotlog_keys(worksheet)
     missing_df = success_df[
-        ~success_df["serial"].fillna("").astype(str).str.strip().isin(existing_serials)
+        ~success_df.apply(
+            lambda row: robotlog_key_from_log(row.to_dict()) in existing_keys,
+            axis=1,
+        )
     ].copy()
 
     if missing_df.empty:
