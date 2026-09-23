@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from page import foglalas_streamlit as foglalas
 from resources.foglalasok_db import (
-    courier_id_from_text,
     name_without_courier_id,
     normalize_email,
     normalize_name,
@@ -57,7 +56,6 @@ def direct_courier_id(row: dict) -> str:
     return (
         clean(row.get("Courier ID"))
         or courier_id_from_serial(row.get("Serial"))
-        or courier_id_from_text(row.get("Dolgozó"))
     )
 
 
@@ -86,22 +84,11 @@ def build_local_courier_id_lookup(summary_df: pd.DataFrame) -> dict:
 
 
 def resolve_courier_id(row: dict, local_lookup: dict | None = None, master_lookup: dict | None = None) -> str:
-    courier_id = direct_courier_id(row)
-    if courier_id:
-        return courier_id
-
-    local_lookup = local_lookup or {}
     email = normalize_email(row.get("E-mail"))
-    if email and email in local_lookup.get("by_email", {}):
-        return clean(local_lookup["by_email"][email])
-
     name_keys = {
         normalize_name(row.get("Dolgozó")),
         name_without_courier_id(row.get("Dolgozó")),
     }
-    for name_key in name_keys:
-        if name_key and name_key in local_lookup.get("by_name", {}):
-            return clean(local_lookup["by_name"][name_key])
 
     master_lookup = master_lookup or {}
     if email and email in master_lookup.get("by_email", {}):
@@ -110,6 +97,18 @@ def resolve_courier_id(row: dict, local_lookup: dict | None = None, master_looku
     for name_key in name_keys:
         if name_key and name_key in master_lookup.get("by_name", {}):
             return clean(master_lookup["by_name"][name_key].get("courier_id"))
+
+    courier_id = direct_courier_id(row)
+    if courier_id:
+        return courier_id
+
+    local_lookup = local_lookup or {}
+    if email and email in local_lookup.get("by_email", {}):
+        return clean(local_lookup["by_email"][email])
+
+    for name_key in name_keys:
+        if name_key and name_key in local_lookup.get("by_name", {}):
+            return clean(local_lookup["by_name"][name_key])
 
     return ""
 

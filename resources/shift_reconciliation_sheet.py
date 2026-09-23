@@ -109,6 +109,35 @@ def normalize_serial(value):
     return serial
 
 
+def resolve_courier_id(record):
+    courier_id = str(record.get("courier_id", "") or "").strip()
+    if re.fullmatch(r"\d+\.0+", courier_id):
+        courier_id = courier_id.split(".", 1)[0]
+
+    try:
+        from resources.foglalasok_db import (
+            normalize_email,
+            name_without_courier_id,
+            read_combined_courier_lookup,
+        )
+    except Exception:
+        return courier_id
+
+    lookup = read_combined_courier_lookup()
+    email = normalize_email(record.get("email", ""))
+    if email and email in lookup.get("by_email", {}):
+        return str(lookup["by_email"][email].get("courier_id") or "").strip()
+
+    for name_key in {
+        normalize_name(record.get("name", "")),
+        name_without_courier_id(record.get("name", "")),
+    }:
+        if name_key and name_key in lookup.get("by_name", {}):
+            return str(lookup["by_name"][name_key].get("courier_id") or "").strip()
+
+    return courier_id
+
+
 def header_map(header):
     return {
         normalize_name(column): index
@@ -523,7 +552,7 @@ def build_records_for_date(work_date, spreadsheet=None):
                 "muszakpro_code": foglalas_record.get("code", ""),
                 "updated_at": updated_at,
                 "match_key": match_key,
-                "courier_id": source.get("courier_id", ""),
+                "courier_id": resolve_courier_id(source),
             }
         )
 
