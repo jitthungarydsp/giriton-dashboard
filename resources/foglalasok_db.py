@@ -359,10 +359,63 @@ def read_courier_lookup_from_robot_id_sheet():
     )
 
 
+def read_courier_lookup_from_hub_identity():
+    try:
+        supabase_url, headers = get_headers()
+        endpoint = (
+            f"{supabase_url}/rest/v1/courier_hub_courier_identity_raw"
+            "?select=courier_id,name_without_identifier,name_json,email,warehouse_code"
+            "&limit=10000"
+        )
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=60,
+        )
+        if is_missing_table_response(response):
+            return {"by_email": {}, "by_id": {}, "by_name": {}}
+        raise_for_supabase_error(response)
+    except Exception:
+        return {"by_email": {}, "by_id": {}, "by_name": {}}
+
+    lookup = {"by_email": {}, "by_id": {}, "by_name": {}}
+    for row in response.json():
+        courier_id = clean(row.get("courier_id"))
+        email = normalize_email(row.get("email"))
+        courier_names = [
+            clean(row.get("name_without_identifier")),
+            clean(row.get("name_json")),
+        ]
+        courier_name = next((name for name in courier_names if name), "")
+        if not any([courier_id, email, courier_name]):
+            continue
+
+        courier = {
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "email": email,
+            "warehouse": clean(row.get("warehouse_code")),
+        }
+        if email:
+            lookup["by_email"][email] = courier
+        if courier_id:
+            lookup["by_id"][courier_id] = courier
+        for raw_name in courier_names:
+            for name_key in {
+                normalize_name(raw_name),
+                name_without_courier_id(raw_name),
+            }:
+                if name_key:
+                    lookup["by_name"][name_key] = courier
+
+    return lookup
+
+
 def read_courier_lookup_from_id_sheet():
+    hub_identity_lookup = read_courier_lookup_from_hub_identity()
     legacy_lookup = read_legacy_courier_lookup_from_id_sheet()
     robot_lookup = read_courier_lookup_from_robot_id_sheet()
-    return merge_courier_lookups(legacy_lookup, robot_lookup)
+    return merge_courier_lookups(hub_identity_lookup, legacy_lookup, robot_lookup)
 
 
 def merge_courier_lookups(*lookups):
@@ -373,27 +426,33 @@ def merge_courier_lookups(*lookups):
         by_email = lookup.get("by_email", lookup)
         for email, courier in by_email.items():
             normalized_email = normalize_email(email)
-            if normalized_email:
+            if normalized_email and normalized_email not in merged["by_email"]:
                 merged["by_email"][normalized_email] = courier
         for courier_id, courier in lookup.get("by_id", {}).items():
             courier_id = clean(courier_id)
-            if courier_id:
+            if courier_id and courier_id not in merged["by_id"]:
                 merged["by_id"][courier_id] = courier
         for name_key, courier in lookup.get("by_name", {}).items():
             name_key = normalize_name(name_key)
-            if name_key:
+            if name_key and name_key not in merged["by_name"]:
                 merged["by_name"][name_key] = courier
     return merged
 
 
 def read_combined_courier_lookup():
+    hub_identity_lookup = read_courier_lookup_from_hub_identity()
     try:
         db_lookup = read_courier_lookup()
     except Exception:
         db_lookup = {"by_email": {}, "by_id": {}, "by_name": {}}
     legacy_sheet_lookup = read_legacy_courier_lookup_from_id_sheet()
     robot_sheet_lookup = read_courier_lookup_from_robot_id_sheet()
-    return merge_courier_lookups(db_lookup, legacy_sheet_lookup, robot_sheet_lookup)
+    return merge_courier_lookups(
+        hub_identity_lookup,
+        db_lookup,
+        legacy_sheet_lookup,
+        robot_sheet_lookup,
+    )
 
 
 def _add_courier_export_row(rows_by_key, courier):
