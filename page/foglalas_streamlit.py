@@ -741,6 +741,55 @@ def _mark_booking_started(serial: str) -> None:
     st.session_state["foglalas_started_serials"] = sorted(started)
 
 
+def _unmark_booking_started(serial: str) -> None:
+    serial = _clean(serial)
+    if not serial:
+        return
+    started = _started_booking_serials()
+    if serial not in started:
+        return
+    started.remove(serial)
+    st.session_state["foglalas_started_serials"] = sorted(started)
+
+
+def _booking_action_key(token: str, identity: dict[str, str]) -> str:
+    payload = "|".join(
+        [
+            _clean(token),
+            _clean(identity.get("serial")),
+            _clean(identity.get("work_date")),
+            _clean(identity.get("worker")),
+            _clean(identity.get("warehouse")).upper(),
+            _clean(identity.get("shift_start")),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _consumed_booking_action_keys() -> set[str]:
+    return set(st.session_state.get("foglalas_consumed_action_keys", []))
+
+
+def _mark_booking_action_consumed(action_key: str) -> None:
+    action_key = _clean(action_key)
+    if not action_key:
+        return
+    consumed = _consumed_booking_action_keys()
+    consumed.add(action_key)
+    st.session_state["foglalas_consumed_action_keys"] = sorted(consumed)
+
+
+def _unmark_booking_action_consumed(action_key: str) -> None:
+    action_key = _clean(action_key)
+    if not action_key:
+        return
+    consumed = _consumed_booking_action_keys()
+    if action_key not in consumed:
+        return
+    consumed.remove(action_key)
+    st.session_state["foglalas_consumed_action_keys"] = sorted(consumed)
+
+
 AUTO_BOOKING_SUCCESS_STATUSES = {
     "COURIER_ADDED",
     "COURIER_ADDED_UNVERIFIED",
@@ -2897,9 +2946,16 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
         "dry_run": "true" if dry_run else "false",
         "booking_engine": "hub_api",
     }
-    result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
+    locked = False
     if not dry_run:
         _mark_booking_started(serial)
+        locked = True
+    try:
+        result = _dispatch_workflow_fallback(AUTO_BOOKING_WORKFLOW, workflow_inputs)
+    except Exception:
+        if locked:
+            _unmark_booking_started(serial)
+        raise
     st.session_state["foglalas_last_github_dispatch"] = result
     mode = "ellenőrzés" if dry_run else "éles foglalás"
     st.success(
@@ -2970,6 +3026,12 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         st.query_params.clear()
         return
 
+    action_key = _booking_action_key(token, identity)
+    if action_key in _consumed_booking_action_keys():
+        st.warning("Ezt a foglalási kattintást már feldolgoztam, ezért nem indítok új workflow-t.")
+        st.query_params.clear()
+        return
+
     selected_row = _matching_booking_row(summary_df, identity)
     if selected_row is None:
         st.error(
@@ -2980,13 +3042,22 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         return
 
     dispatched = False
+    action_consumed = False
     try:
+        _mark_booking_action_consumed(action_key)
+        action_consumed = True
         dispatched = _dispatch_auto_booking(selected_row, dry_run=False)
     except GitHubActionsError as exc:
+        if action_consumed:
+            _unmark_booking_action_consumed(action_key)
         st.error(str(exc))
     except Exception as exc:
+        if action_consumed:
+            _unmark_booking_action_consumed(action_key)
         st.error(f"Táblázatos foglalás indítás hiba: {exc}")
     finally:
+        if action_consumed and not dispatched:
+            _unmark_booking_action_consumed(action_key)
         st.query_params.clear()
     if dispatched:
         st.cache_data.clear()
@@ -3036,24 +3107,30 @@ def _dispatch_selected_bulk_bookings(rows: pd.DataFrame, dry_run: bool = False) 
             skipped += 1
             continue
 
-        last_result = _dispatch_workflow_fallback(
-            AUTO_BOOKING_WORKFLOW,
-            {
-                "start_date": work_date,
-                "end_date": work_date,
-                "serial": serial,
-                "courier_id": courier_id,
-                "warehouse": _clean(row.get("Raktár")).upper(),
-                "email": _clean(row.get("E-mail")).casefold(),
-                "courier_name": _clean(row.get("Dolgozó")),
-                "shift_start": target_shift_start,
-                "shift_template_id": shift_template_id,
-                "dry_run": "true" if dry_run else "false",
-                "booking_engine": "hub_api",
-            },
-        )
+        workflow_inputs = {
+            "start_date": work_date,
+            "end_date": work_date,
+            "serial": serial,
+            "courier_id": courier_id,
+            "warehouse": _clean(row.get("Raktár")).upper(),
+            "email": _clean(row.get("E-mail")).casefold(),
+            "courier_name": _clean(row.get("Dolgozó")),
+            "shift_start": target_shift_start,
+            "shift_template_id": shift_template_id,
+            "dry_run": "true" if dry_run else "false",
+            "booking_engine": "hub_api",
+        }
         if not dry_run:
             _mark_booking_started(serial)
+        try:
+            last_result = _dispatch_workflow_fallback(
+                AUTO_BOOKING_WORKFLOW,
+                workflow_inputs,
+            )
+        except Exception:
+            if not dry_run:
+                _unmark_booking_started(serial)
+            raise
         dispatched += 1
 
     if last_result:
