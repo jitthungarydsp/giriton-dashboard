@@ -149,7 +149,7 @@ def db_time(value):
         text = f"0{text}"
     if len(text) == 5:
         return f"{text}:00"
-    return text
+    return None
 
 
 def parse_date(value: str | None, default: date) -> date:
