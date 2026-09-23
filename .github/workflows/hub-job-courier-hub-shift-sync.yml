@@ -187,30 +187,23 @@ jobs:
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
-      - name: HUB_JOB log shift auto booking candidates
+      - name: HUB_JOB refresh ops shift comparison
         continue-on-error: true
         shell: bash
         run: |
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            echo "Dry-run: shift auto booking candidate DB log skipped."
+            echo "Dry-run: ops_shift_comparison refresh skipped."
             exit 0
           fi
 
-          mkdir -p results/hub-job-courier-hub-sync/shift-auto-candidates
-
-          python scripts/select_shift_auto_booking_candidates.py \
+          python scripts/refresh_ops_shift_comparison_from_hub.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --days "${{ steps.window.outputs.comparison_days }}" \
-            --match-kind exact \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
             --limit 100 \
-            --output results/hub-job-courier-hub-sync/shift-auto-candidates/exact-candidates.json
-
-          python scripts/select_shift_auto_booking_candidates.py \
-            --start-date "${{ steps.window.outputs.start_date }}" \
-            --days "${{ steps.window.outputs.comparison_days }}" \
-            --match-kind alternative \
-            --limit 100 \
-            --output results/hub-job-courier-hub-sync/shift-auto-candidates/alternative-candidates.json
+            --output-dir results/hub-job-courier-hub-sync/shift-auto-candidates \
+            --skip-hub-sync
 
       - name: HUB_JOB export MuszakPro booking overview sheet
         continue-on-error: true

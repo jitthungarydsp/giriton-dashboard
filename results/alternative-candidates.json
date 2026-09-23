@@ -1,17 +1,5 @@
 [
   {
-    "work_date": "2026-09-23",
-    "warehouse": "BUD2",
-    "email": "lulajbrendonhu@gmail.com",
-    "shift_start": "16:45",
-    "serial": "09/23_8001.0_BUD2_16:15",
-    "courier_id": "8001.0",
-    "courier_name": "Lulaj 8001 Brendon",
-    "status": "Alternatíva",
-    "muszakpro_shift_start": "16:15",
-    "giriton_offer": "16:45"
-  },
-  {
     "work_date": "2026-09-25",
     "warehouse": "BUD1",
     "email": "wasditus@gmail.com",
@@ -37,18 +25,6 @@
   },
   {
     "work_date": "2026-09-25",
-    "warehouse": "BUD1",
-    "email": "farkas.zsolti@gmail.com",
-    "shift_start": "19:45",
-    "serial": "09/25_7814.0_BUD1_19:15",
-    "courier_id": "7814.0",
-    "courier_name": "Farkas Zsolt",
-    "status": "Alternatíva",
-    "muszakpro_shift_start": "19:15",
-    "giriton_offer": "19:45"
-  },
-  {
-    "work_date": "2026-09-25",
     "warehouse": "BUD2",
     "email": "kollarbenedek100@gmail.com",
     "shift_start": "09:00",
@@ -70,29 +46,5 @@
     "status": "Alternatíva",
     "muszakpro_shift_start": "14:15",
     "giriton_offer": "14:30"
-  },
-  {
-    "work_date": "2026-09-26",
-    "warehouse": "BUD1",
-    "email": "molnar.akos20004@gmail.com",
-    "shift_start": "17:30",
-    "serial": "09/26_7724.0_BUD1_17:45",
-    "courier_id": "7724.0",
-    "courier_name": "Molnár Ákos",
-    "status": "Alternatíva",
-    "muszakpro_shift_start": "17:45",
-    "giriton_offer": "17:30"
-  },
-  {
-    "work_date": "2026-09-27",
-    "warehouse": "BUD1",
-    "email": "molnar.akos20004@gmail.com",
-    "shift_start": "14:00",
-    "serial": "09/27_7724.0_BUD1_14:15",
-    "courier_id": "7724.0",
-    "courier_name": "Molnár Ákos",
-    "status": "Alternatíva",
-    "muszakpro_shift_start": "14:15",
-    "giriton_offer": "14:00"
   }
 ]

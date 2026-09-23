@@ -149,7 +149,7 @@ jobs:
           echo "Running Courier Hub API booking path"
           "${CMD[@]}"
 
-      - name: Refresh Courier Hub shift tables after booking
+      - name: Refresh Courier Hub and ops shift comparison after booking
         if: ${{ inputs.booking_engine == 'hub_api' && inputs.dry_run != 'true' }}
         shell: bash
         run: |
@@ -166,11 +166,13 @@ jobs:
               ;;
           esac
 
-          python scripts/sync_courier_hub_shift_blocks.py \
+          python scripts/refresh_ops_shift_comparison_from_hub.py \
             --start-date "${{ inputs.start_date }}" \
             --end-date "${{ inputs.end_date }}" \
             --warehouse-ids "$WAREHOUSE_IDS" \
-            --dsp-id 8
+            --dsp-id 8 \
+            --limit 100 \
+            --output-dir results/giriton-auto-booking/shift-auto-candidates
 
       - name: Run Giriton auto booking robot
         if: ${{ inputs.booking_engine == 'robot' }}
