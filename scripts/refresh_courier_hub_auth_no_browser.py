@@ -14,6 +14,7 @@ Pelda:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ import requests
 
 
 DEFAULT_BASE_URL = "https://courier-hub.kifli.hu"
-DEFAULT_PROBE_PATH = "/services/courier-hub-service/external/warehouses/2/live-monitoring-dashboard?dspId=8"
+DEFAULT_PROBE_PATH = "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks"
 
 
 def clean_text(value: Any) -> str:
@@ -46,6 +47,39 @@ def normalize_authorization(value: Any) -> str:
     if text.lower().startswith(("bearer ", "basic ", "token ")):
         return text
     return f"Bearer {text}"
+
+
+def token_from_authorization(value: str) -> str:
+    text = clean_text(value)
+    if text.lower().startswith("bearer "):
+        return text.split(" ", 1)[1].strip()
+    return text
+
+
+def jwt_payload(value: str) -> dict[str, Any]:
+    token = token_from_authorization(value)
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    payload_part = parts[1]
+    payload_part += "=" * (-len(payload_part) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload_part.encode("ascii"))
+        payload = json.loads(decoded.decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def jwt_expiry_text(value: str) -> str:
+    payload = jwt_payload(value)
+    exp = payload.get("exp")
+    if not exp:
+        return "-"
+    try:
+        return datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return "-"
 
 
 def read_existing_cookie(cache_file: str) -> str:
@@ -143,6 +177,7 @@ def main() -> int:
     parser.add_argument("--base-url", default=setting("COURIER_HUB_BASE_URL", "KIFLI_COURIER_HUB_BASE_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--cache-file", default=setting("COURIER_HUB_AUTH_CACHE_FILE", "KIFLI_COURIER_HUB_AUTH_CACHE_FILE") or "results/courier-hub-auth.json")
     parser.add_argument("--probe-path", default=setting("COURIER_HUB_AUTH_PROBE_PATH", "KIFLI_COURIER_HUB_AUTH_PROBE_PATH") or DEFAULT_PROBE_PATH)
+    parser.add_argument("--probe-date", default=setting("COURIER_HUB_AUTH_PROBE_DATE", "KIFLI_COURIER_HUB_AUTH_PROBE_DATE") or "")
     parser.add_argument("--timeout", type=int, default=int(setting("COURIER_HUB_TIMEOUT", "KIFLI_COURIER_HUB_TIMEOUT") or "30"))
     parser.add_argument("--no-probe", action="store_true")
     args = parser.parse_args()
@@ -162,15 +197,24 @@ def main() -> int:
 
     probe_status = None
     if not args.no_probe:
-        probe_status = probe_authorization(args.base_url, args.probe_path, authorization, cookie, args.timeout)
+        probe_path = args.probe_path
+        if args.probe_date and "shift-blocks" in probe_path and "dateFrom=" not in probe_path:
+            separator = "&" if "?" in probe_path else "?"
+            probe_path = f"{probe_path}{separator}dateFrom={args.probe_date}&dateTo={args.probe_date}"
+        probe_status = probe_authorization(args.base_url, probe_path, authorization, cookie, args.timeout)
         if probe_status not in {200, 204}:
-            raise RuntimeError(f"Probe failed with HTTP {probe_status}")
+            raise RuntimeError(
+                f"Probe failed with HTTP {probe_status}; "
+                f"session_expires={session_payload.get('expires') or '-'}; "
+                f"access_token_expires={jwt_expiry_text(authorization)}"
+            )
 
     write_cache(args.cache_file, authorization, cookie, session_payload)
     print(
         "COURIER_HUB_AUTH_NO_BROWSER_OK "
         f"cache_file={args.cache_file} "
         f"session_expires={session_payload.get('expires') or '-'} "
+        f"access_token_expires={jwt_expiry_text(authorization)} "
         f"probe_status={probe_status if probe_status is not None else 'skipped'}"
     )
     return 0

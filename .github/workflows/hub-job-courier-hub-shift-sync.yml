@@ -82,7 +82,9 @@ jobs:
         shell: bash
         run: |
           python scripts/refresh_courier_hub_auth_no_browser.py \
-            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE"
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks" \
+            --probe-date "${{ steps.window.outputs.start_date }}"
 
       - name: HUB_JOB sync shift block tables
         shell: bash
