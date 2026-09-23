@@ -82,15 +82,21 @@ jobs:
           YEAR="${YEAR:-$(TZ=Europe/Budapest date +%Y)}"
           MONTH="${MONTH:-$(TZ=Europe/Budapest date +%-m)}"
           DRY_RUN="${DRY_RUN:-false}"
+          if ! [[ "$LOOKAHEAD_DAYS" =~ ^[0-9]+$ ]]; then
+            LOOKAHEAD_DAYS="21"
+          fi
+          COMPARISON_DAYS=$((LOOKAHEAD_DAYS + 1))
 
           echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
           echo "lookahead_days=$LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
+          echo "comparison_days=$COMPARISON_DAYS" >> "$GITHUB_OUTPUT"
           echo "year=$YEAR" >> "$GITHUB_OUTPUT"
           echo "month=$MONTH" >> "$GITHUB_OUTPUT"
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
 
           echo "HUB_JOB_START_DATE=$START_DATE"
           echo "HUB_JOB_LOOKAHEAD_DAYS=$LOOKAHEAD_DAYS"
+          echo "HUB_JOB_COMPARISON_DAYS=$COMPARISON_DAYS"
           echo "HUB_JOB_YEAR=$YEAR"
           echo "HUB_JOB_MONTH=$MONTH"
           echo "HUB_JOB_DRY_RUN=$DRY_RUN"
@@ -194,14 +200,14 @@ jobs:
 
           python scripts/select_shift_auto_booking_candidates.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
-            --days 5 \
+            --days "${{ steps.window.outputs.comparison_days }}" \
             --match-kind exact \
             --limit 100 \
             --output results/hub-job-courier-hub-sync/shift-auto-candidates/exact-candidates.json
 
           python scripts/select_shift_auto_booking_candidates.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
-            --days 5 \
+            --days "${{ steps.window.outputs.comparison_days }}" \
             --match-kind alternative \
             --limit 100 \
             --output results/hub-job-courier-hub-sync/shift-auto-candidates/alternative-candidates.json

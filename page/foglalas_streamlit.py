@@ -2762,20 +2762,21 @@ def _sidebar() -> tuple[str, date, date, time, time, int]:
             days_to_sync = max((end_date - start_date).days + 1, 1)
             try:
                 result = _dispatch_workflow_fallback(
-                    "giriton-raw-export.yml",
+                    "hub-job-courier-hub-shift-sync.yml",
                     {
                         "start_date": start_date.isoformat(),
-                        "days": str(days_to_sync),
+                        "lookahead_days": str(max(days_to_sync - 1, 0)),
+                        "dry_run": "false",
                     },
                 )
                 st.session_state["foglalas_last_giriton_raw_dispatch"] = result
                 st.sidebar.success(
-                    f"Giriton kézi futás indítva: {start_date} + {days_to_sync} nap"
+                    f"HUB műszak frissítés és ops_shift újraépítés indítva: {start_date} + {days_to_sync} nap"
                 )
             except GitHubActionsError as exc:
                 st.sidebar.error(str(exc))
             except Exception as exc:
-                st.sidebar.error(f"Giriton kézi indítás hiba: {exc}")
+                st.sidebar.error(f"HUB frissítés kézi indítás hiba: {exc}")
 
     if st.sidebar.button("Adatok újraolvasása DB-ből", width="stretch"):
         st.cache_data.clear()
