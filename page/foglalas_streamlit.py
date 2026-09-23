@@ -970,6 +970,9 @@ def _booking_action_identity(row: dict) -> dict[str, str]:
         "worker": _clean(row.get("Dolgozó")),
         "warehouse": _clean(row.get("Raktár")).upper(),
         "shift_start": _booking_target_shift_start(row),
+        "courier_id": _booking_courier_id(row),
+        "shift_template_id": _clean(row.get("shiftTemplateId")),
+        "email": _clean(row.get("E-mail")).casefold(),
     }
 
 
@@ -980,6 +983,9 @@ def _delete_action_identity(row: dict) -> dict[str, str]:
         "worker": _clean(row.get("Dolgozó")),
         "warehouse": _clean(row.get("Raktár")).upper(),
         "shift_start": _delete_target_shift_start(row),
+        "courier_id": _booking_courier_id(row),
+        "shift_template_id": _clean(row.get("shiftTemplateId")),
+        "email": _clean(row.get("E-mail")).casefold(),
     }
 
 
@@ -1001,6 +1007,9 @@ def _booking_action_payload(identity: dict[str, str], issued_at: int) -> str:
             _clean(identity.get("worker")),
             _clean(identity.get("warehouse")).upper(),
             _clean(identity.get("shift_start")),
+            _clean(identity.get("courier_id")),
+            _clean(identity.get("shift_template_id")),
+            _clean(identity.get("email")).casefold(),
         ]
     )
 
@@ -1056,6 +1065,9 @@ def _booking_action_badge(row: dict) -> str:
                     "worker": identity["worker"],
                     "warehouse": identity["warehouse"],
                     "shift_start": identity["shift_start"],
+                    "courier_id": identity["courier_id"],
+                    "shift_template_id": identity["shift_template_id"],
+                    "email": identity["email"],
                 }
             )
             return (
@@ -1083,6 +1095,9 @@ def _booking_action_badge(row: dict) -> str:
             "worker": identity["worker"],
             "warehouse": identity["warehouse"],
             "shift_start": identity["shift_start"],
+            "courier_id": identity["courier_id"],
+            "shift_template_id": identity["shift_template_id"],
+            "email": identity["email"],
         }
     )
     is_retry = _is_retryable_robot_error(row)
@@ -3139,15 +3154,40 @@ def _matching_delete_row(summary_df: pd.DataFrame, identity: dict[str, str]) -> 
     if summary_df.empty:
         return None
 
+    identity_core = {
+        key: _clean(identity.get(key))
+        for key in ["work_date", "worker", "warehouse", "shift_start"]
+    }
     for _, row in summary_df.iterrows():
         row_dict = row.to_dict()
         row_identity = _delete_action_identity(row_dict)
-        if row_identity != identity:
+        row_core = {
+            key: _clean(row_identity.get(key))
+            for key in ["work_date", "worker", "warehouse", "shift_start"]
+        }
+        if row_core != identity_core:
             continue
         if not _is_deletable_row(row_dict):
             return None
         return row_dict
     return None
+
+
+def _delete_row_from_query_identity(identity: dict[str, str]) -> dict:
+    return {
+        "Dátum": _clean(identity.get("work_date")),
+        "Dolgozó": _clean(identity.get("worker")),
+        "Raktár": _clean(identity.get("warehouse")).upper(),
+        "shiftTemplateId": _clean(identity.get("shift_template_id")),
+        "MűszakPro": _clean(identity.get("shift_start")),
+        "Giriton foglalás": _clean(identity.get("shift_start")),
+        "Giriton ajánlat": "-",
+        "Giriton állapot": "Lefoglalva",
+        "Állapot": "Lefoglalva",
+        "Serial": _clean(identity.get("serial")),
+        "Courier ID": _clean(identity.get("courier_id")),
+        "E-mail": _clean(identity.get("email")).casefold(),
+    }
 
 
 def _query_booking_identity() -> dict[str, str]:
@@ -3157,6 +3197,9 @@ def _query_booking_identity() -> dict[str, str]:
         "worker": _query_param_value("worker"),
         "warehouse": _query_param_value("warehouse").upper(),
         "shift_start": _query_param_value("shift_start"),
+        "courier_id": _query_param_value("courier_id"),
+        "shift_template_id": _query_param_value("shift_template_id"),
+        "email": _query_param_value("email").casefold(),
     }
 
 
@@ -3182,6 +3225,8 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
     required_fields = ["work_date", "worker", "warehouse", "shift_start"]
     if action == "book_serial":
         required_fields.append("serial")
+    if action == "delete_booking":
+        required_fields.extend(["courier_id", "shift_template_id"])
     if any(not identity.get(field) for field in required_fields):
         st.error("A művelet indításához hiányzik egy sorazonosító adat. Frissítsd az oldalt, és nyomd meg újra a konkrét sor gombját.")
         st.query_params.clear()
@@ -3214,6 +3259,8 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
 
     if action == "delete_booking":
         selected_row = _matching_delete_row(summary_df, identity)
+        if selected_row is None:
+            selected_row = _delete_row_from_query_identity(identity)
     else:
         selected_row = _matching_booking_row(summary_df, identity)
     if selected_row is None:
