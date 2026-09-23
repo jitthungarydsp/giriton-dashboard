@@ -30,6 +30,7 @@ from resources.giriton_shifts_db import read_giriton_shifts_raw
 from resources.discord_notifier import send_discord_text_message_to_setting
 from resources.shift_comparison_db import read_shift_comparison_records
 from resources.shift_start_parameters_db import read_shift_start_parameters
+from resources.supabase_raw import format_date_filter, get_supabase_config, raise_for_supabase_error
 
 try:
     from resources import github_actions as _github_actions
@@ -58,6 +59,7 @@ BOOKING_LINK_TTL_SECONDS = 15 * 60
 FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
 FOGLALAS_AUTO_REFRESH_SECONDS = 180
 NO_VALID_DAILY_PLAN_TEXT = "nincs érvényes napi terv"
+SHIFT_BLOCK_TABLE_NAME = "courier_hub_shift_blocks_raw"
 
 
 def _clean(value) -> str:
@@ -449,7 +451,14 @@ def _booking_worker_match_keys(row) -> list[str]:
 
 
 def _warehouse_match_key(value) -> str:
-    return _match_text(value)
+    text = _clean(value).upper()
+    warehouse_id_aliases = {
+        "1": "BUD1",
+        "1.0": "BUD1",
+        "2": "BUD2",
+        "2.0": "BUD2",
+    }
+    return _match_text(warehouse_id_aliases.get(text, value))
 
 
 def _optional_int(value) -> int | None:
@@ -1116,6 +1125,44 @@ def _booked_giriton_record_indexes(giriton_df: pd.DataFrame) -> tuple[dict[str, 
     return by_serial, by_identity_time
 
 
+def _shift_template_lookup(shift_block_df: pd.DataFrame) -> dict[tuple[str, str, str], str]:
+    if shift_block_df is None or shift_block_df.empty:
+        return {}
+
+    lookup: dict[tuple[str, str, str], str] = {}
+    for _, row in shift_block_df.iterrows():
+        work_date = _clean(row.get("work_date"))
+        warehouse_key = _warehouse_match_key(
+            row.get("warehouse_code") or row.get("warehouse_id")
+        )
+        template_id = _clean(row.get("shift_template_id"))
+        if not work_date or not warehouse_key or not template_id:
+            continue
+
+        for time_value in (row.get("slot_from"), row.get("occupancy_from")):
+            start = _normalize_time(time_value)
+            if start:
+                lookup.setdefault((work_date, warehouse_key, start), template_id)
+
+    return lookup
+
+
+def _row_shift_template_id(
+    template_lookup: dict[tuple[str, str, str], str],
+    work_date: str,
+    warehouse_key: str,
+    *time_values,
+) -> str:
+    for time_value in time_values:
+        start = _normalize_time(time_value)
+        if not start:
+            continue
+        template_id = template_lookup.get((work_date, warehouse_key, start))
+        if template_id:
+            return template_id
+    return "-"
+
+
 def _exact_booked_giriton_record(
     source_record: dict,
     work_date: str,
@@ -1360,11 +1407,13 @@ def _build_summary_rows(
     muszakpro_df: pd.DataFrame,
     giriton_df: pd.DataFrame,
     tolerance_minutes: int,
+    shift_block_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     muszakpro_groups = _group_shifts(muszakpro_df, "shift_start")
     giriton_groups = _group_giriton_availability(giriton_df)
     booked_giriton_groups = _group_giriton_bookings(giriton_df)
     booked_by_serial, booked_by_identity_time = _booked_giriton_record_indexes(giriton_df)
+    template_lookup = _shift_template_lookup(shift_block_df if shift_block_df is not None else pd.DataFrame())
     shift_start_parameters = _load_shift_start_parameters()
     aliased_booked_keys = set()
 
@@ -1625,6 +1674,14 @@ def _build_summary_rows(
                     "Dátum": work_date,
                     "Dolgozó": worker,
                     "Raktár": warehouse,
+                    "shiftTemplateId": _row_shift_template_id(
+                        template_lookup,
+                        work_date,
+                        warehouse_key,
+                        giriton_booking,
+                        giriton_offer,
+                        muszakpro_time,
+                    ),
                     "MűszakPro": muszakpro_time,
                     "Giriton foglalás": giriton_booking,
                     "Giriton ajánlat": giriton_offer,
@@ -1657,6 +1714,12 @@ def _build_summary_rows(
                     "Dátum": work_date,
                     "Dolgozó": worker,
                     "Raktár": warehouse,
+                    "shiftTemplateId": _row_shift_template_id(
+                        template_lookup,
+                        work_date,
+                        warehouse_key,
+                        giriton_time,
+                    ),
                     "MűszakPro": "-",
                     "Giriton foglalás": giriton_time,
                     "Giriton ajánlat": "-",
@@ -2484,6 +2547,42 @@ def _load_giriton_day(work_date):
 
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
+def _load_shift_block_data(start_date: date, end_date: date):
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        raise RuntimeError("Hiányzik a SUPABASE_URL vagy SUPABASE_SERVICE_ROLE_KEY beállítás.")
+
+    filters = [
+        (
+            "select=work_date,warehouse_code,warehouse_id,block_key,"
+            "shift_template_id,slot_from,occupancy_from,updated_at"
+        ),
+        "order=work_date.asc,warehouse_code.asc,slot_from.asc,shift_template_id.asc",
+        "limit=20000",
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+    if start_date_text:
+        filters.append(f"work_date=gte.{start_date_text}")
+    if end_date_text:
+        filters.append(f"work_date=lte.{end_date_text}")
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/{SHIFT_BLOCK_TABLE_NAME}?{'&'.join(filters)}",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+        },
+        timeout=60,
+    )
+    raise_for_supabase_error(response)
+    rows = response.json()
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_log_data(start_date: date, end_date: date):
     return read_giriton_booking_log(
         start_date=start_date.isoformat(),
@@ -3049,11 +3148,12 @@ def _render_individual_booking_panel(summary_df: pd.DataFrame, key_prefix: str) 
     )
     selected_row = options[selected_key]
 
-    info_cols = st.columns(4)
+    info_cols = st.columns(5)
     info_cols[0].metric("Dátum", _clean(selected_row.get("Dátum")) or "-")
     info_cols[1].metric("Raktár", _clean(selected_row.get("Raktár")) or "-")
-    info_cols[2].metric("MűszakPro", _clean(selected_row.get("MűszakPro")) or "-")
-    info_cols[3].metric("Giriton ajánlat", _clean(selected_row.get("Giriton ajánlat")) or "-")
+    info_cols[2].metric("shiftTemplateId", _clean(selected_row.get("shiftTemplateId")) or "-")
+    info_cols[3].metric("MűszakPro", _clean(selected_row.get("MűszakPro")) or "-")
+    info_cols[4].metric("Giriton ajánlat", _clean(selected_row.get("Giriton ajánlat")) or "-")
     st.caption(f"Célzott serial: {_clean(selected_row.get('Serial')) or '-'}")
 
     action_col_1, action_col_2 = st.columns([1, 1.4])
@@ -3155,6 +3255,7 @@ def _render_bulk_status_booking_section(
             "Dátum",
             "Dolgozó",
             "Raktár",
+            "shiftTemplateId",
             "MűszakPro",
             "Giriton cél",
             "Eltérés",
@@ -3171,6 +3272,7 @@ def _render_bulk_status_booking_section(
             "Dátum",
             "Dolgozó",
             "Raktár",
+            "shiftTemplateId",
             "MűszakPro",
             "Giriton cél",
             "Eltérés",
@@ -3279,6 +3381,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dátum",
                 "Dolgozó",
                 "Raktár",
+                "shiftTemplateId",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",
@@ -3302,6 +3405,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
                 "Dátum",
                 "Dolgozó",
                 "Raktár",
+                "shiftTemplateId",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",
@@ -3490,6 +3594,7 @@ def _render_worker_view(
             "Dátum",
             "Dolgozó",
             "Raktár",
+            "shiftTemplateId",
             "MűszakPro",
             "Giriton foglalás",
             "Giriton ajánlat",
@@ -3663,6 +3768,12 @@ def show_foglalas_streamlit_page() -> None:
         start_date,
         end_date,
     )
+    shift_block_df, shift_block_error = _safe_load(
+        "Shift template",
+        _load_shift_block_data,
+        start_date,
+        end_date,
+    )
     latest_giriton_df, latest_giriton_error = _safe_load(
         "Giriton legfrissebb sor",
         _load_latest_giriton_data,
@@ -3681,7 +3792,7 @@ def show_foglalas_streamlit_page() -> None:
     comparison_df = _filter_time(comparison_df, "shift_start", start_time, end_time)
     muszakpro_df = _filter_time(muszakpro_df, "shift_start", start_time, end_time)
     giriton_df = _filter_time(giriton_df, "start_time", start_time, end_time)
-    summary_df = _build_summary_rows(muszakpro_df, giriton_df, tolerance_minutes)
+    summary_df = _build_summary_rows(muszakpro_df, giriton_df, tolerance_minutes, shift_block_df)
     summary_df = _apply_booking_progress_state(summary_df, log_df)
     selected_statuses = [
         status
@@ -3717,6 +3828,7 @@ def show_foglalas_streamlit_page() -> None:
             <div class="source-chip"><strong>MűszakPro</strong> {len(muszakpro_df)} sor · utolsó frissítés: {_latest(muszakpro_df, "fetched_at")}</div>
             <div class="source-chip"><strong>Giriton</strong> {len(giriton_df)} sor · utolsó frissítés: {_latest(giriton_df if not giriton_df.empty else latest_giriton_df, "fetched_at")}</div>
             <div class="source-chip"><strong>Egyeztetés</strong> {len(comparison_df)} sor · frissítve: {_latest(comparison_df, "updated_at")}</div>
+            <div class="source-chip"><strong>Shift template</strong> {len(shift_block_df)} sor · frissítve: {_latest(shift_block_df, "updated_at")}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3734,6 +3846,7 @@ def show_foglalas_streamlit_page() -> None:
             comparison_error,
             muszakpro_error,
             giriton_error,
+            shift_block_error,
             latest_giriton_error,
             log_error,
         ]
@@ -3804,6 +3917,7 @@ def show_foglalas_streamlit_page() -> None:
                 "Dátum",
                 "Dolgozó",
                 "Raktár",
+                "shiftTemplateId",
                 "MűszakPro",
                 "Giriton foglalás",
                 "Giriton ajánlat",

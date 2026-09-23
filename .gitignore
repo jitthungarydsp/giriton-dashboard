@@ -34,3 +34,6 @@ selenium-screenshot-*.png
 giriton_*.csv
 uidl_booking_trace/
 uidl_trace*/
+
+# Local auth cache files can contain live cookies or bearer tokens
+results/*auth*.json
