@@ -369,8 +369,7 @@ def delete_existing_shift_comparison_rows(supabase_url: str, service_role_key: s
     response = requests.delete(
         (
             f"{supabase_url}/rest/v1/{SHIFT_COMPARISON_TABLE}"
-            f"?source_name=eq.{SHIFT_COMPARISON_SOURCE}"
-            f"&work_date=gte.{start_date.isoformat()}"
+            f"?work_date=gte.{start_date.isoformat()}"
             f"&work_date=lte.{end_date.isoformat()}"
         ),
         headers={
@@ -380,8 +379,6 @@ def delete_existing_shift_comparison_rows(supabase_url: str, service_role_key: s
         },
         timeout=60,
     )
-    if response.status_code == 400 and "source_name" in response.text:
-        return
     raise_for_supabase_error(response)
 
 

@@ -762,6 +762,9 @@ def _delete_started_key(identity: dict[str, str]) -> str:
             _clean(identity.get("work_date")),
             _clean(identity.get("warehouse")).upper(),
             _clean(identity.get("shift_start")),
+            _clean(identity.get("courier_id")),
+            _clean(identity.get("shift_template_id")),
+            _clean(identity.get("email")).casefold(),
             _clean(identity.get("serial")),
             _clean(identity.get("worker")),
         ]
@@ -788,15 +791,17 @@ def _unmark_delete_started(identity: dict[str, str]) -> None:
     st.session_state["foglalas_started_delete_keys"] = sorted(started)
 
 
-def _booking_action_key(token: str, identity: dict[str, str]) -> str:
+def _booking_action_key(identity: dict[str, str]) -> str:
     payload = "|".join(
         [
-            _clean(token),
             _clean(identity.get("serial")),
             _clean(identity.get("work_date")),
             _clean(identity.get("worker")),
             _clean(identity.get("warehouse")).upper(),
             _clean(identity.get("shift_start")),
+            _clean(identity.get("courier_id")),
+            _clean(identity.get("shift_template_id")),
+            _clean(identity.get("email")).casefold(),
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -3251,7 +3256,7 @@ def _handle_table_booking_action(summary_df: pd.DataFrame) -> None:
         st.query_params.clear()
         return
 
-    action_key = f"{action}:{_booking_action_key(token, identity)}"
+    action_key = f"{action}:{_booking_action_key(identity)}"
     if action_key in _consumed_booking_action_keys():
         st.warning("Ezt a kattintást már feldolgoztam, ezért nem indítok új workflow-t.")
         st.query_params.clear()

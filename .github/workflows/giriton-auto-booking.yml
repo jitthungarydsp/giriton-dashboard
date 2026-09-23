@@ -47,9 +47,8 @@ on:
         default: ""
 
 concurrency:
-  group: giriton-auto-booking
-  cancel-in-progress: false
-  queue: max
+  group: giriton-auto-booking-${{ github.event.inputs.booking_engine || 'manual' }}-${{ github.event.inputs.start_date || 'na' }}-${{ github.event.inputs.warehouse || 'na' }}-${{ github.event.inputs.courier_id || 'na' }}-${{ github.event.inputs.shift_template_id || 'na' }}-${{ github.event.inputs.shift_start || 'na' }}-${{ github.event.inputs.serial || 'na' }}
+  cancel-in-progress: true
 
 jobs:
   run:
