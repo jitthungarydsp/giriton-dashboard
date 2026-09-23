@@ -17071,13 +17071,20 @@ def render_courier_detail_page() -> None:
         if adjustment_log.empty:
             st.info("Még nincs naplózott módosítás ennél a futárnál.")
         else:
-            log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Felhasználó", "created_at": "Időpont"}).copy()
-            log_view["Időszak"] = log_view.apply(format_adjustment_log_period, axis=1)
-            log_view["Művelet"] = log_view["Művelet"].map({"created": "Létrehozva", "updated": "Módosítva", "deleted": "Törölve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
-            log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
-            log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
-            visible_log_columns = ["Művelet", "Típus", "Időszak", "Összeg", "Megjegyzés", "Felhasználó", "Időpont"]
-            st.dataframe(log_view[[column for column in visible_log_columns if column in log_view.columns]], use_container_width=True, hide_index=True)
+            try:
+                log_view = adjustment_log.rename(columns={"event_type": "Művelet", "adjustment_type": "Típus", "amount_huf": "Összeg", "note": "Megjegyzés", "performed_by": "Felhasználó", "created_at": "Időpont"}).copy()
+                log_view["Időszak"] = log_view.apply(format_adjustment_log_period, axis=1)
+                if "Művelet" in log_view.columns:
+                    log_view["Művelet"] = log_view["Művelet"].map({"created": "Létrehozva", "updated": "Módosítva", "deleted": "Törölve", "reset": "Visszaállítás"}).fillna(log_view["Művelet"])
+                if "Típus" in log_view.columns:
+                    log_view["Típus"] = log_view["Típus"].map(adjustment_type_labels).fillna("-")
+                if "Összeg" in log_view.columns:
+                    log_view["Összeg"] = log_view["Összeg"].map(lambda value: format_huf(value) if pd.notna(value) else "-")
+                visible_log_columns = ["Művelet", "Típus", "Időszak", "Összeg", "Megjegyzés", "Felhasználó", "Időpont"]
+                display_columns = [column for column in visible_log_columns if column in log_view.columns]
+                st.dataframe(log_view[display_columns] if display_columns else log_view, use_container_width=True, hide_index=True)
+            except Exception as exc:
+                st.warning(f"A módosítási napló most nem jeleníthető meg, de az elszámolási oldal tovább használható. Részlet: {exc}")
 
     if selected_menu == "Kifizetés":
         st.markdown("#### Kifizetés")
