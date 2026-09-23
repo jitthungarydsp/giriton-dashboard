@@ -16,9 +16,18 @@ def clean(value) -> str:
     return str(value or "").strip()
 
 
+def normalize_courier_id(value: object) -> str:
+    text = clean(value)
+    if not text:
+        return ""
+    if text.endswith(".0"):
+        text = text.split(".", 1)[0]
+    return text if text.isdigit() else ""
+
+
 def courier_id_from_serial(serial: str) -> str:
     parts = clean(serial).split("_")
-    return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
+    return normalize_courier_id(parts[1]) if len(parts) >= 2 else ""
 
 
 def load_candidates(path: Path) -> list[dict]:
@@ -54,7 +63,7 @@ def robot_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]
 
 
 def uidl_command(candidate: dict, output_dir: Path, dry_run: bool) -> list[str]:
-    courier_id = clean(candidate.get("courier_id")) or courier_id_from_serial(candidate.get("serial"))
+    courier_id = normalize_courier_id(candidate.get("courier_id")) or courier_id_from_serial(candidate.get("serial"))
     command = [
         sys.executable,
         str(UIDL_FAST_BOOK_FILE),
@@ -88,7 +97,7 @@ def validate_candidate(candidate: dict) -> list[str]:
             missing.append(key)
     if not clean(candidate.get("courier_name")) and not clean(candidate.get("email")):
         missing.append("courier_name/email")
-    if not clean(candidate.get("courier_id")) and not courier_id_from_serial(candidate.get("serial")):
+    if not normalize_courier_id(candidate.get("courier_id")) and not courier_id_from_serial(candidate.get("serial")):
         missing.append("courier_id")
     return missing
 

@@ -53,7 +53,7 @@ def fold_text(value: object) -> str:
 
 def courier_id_from_serial(serial: str) -> str:
     parts = clean(serial).split("_")
-    return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
+    return normalize_courier_id(parts[1]) if len(parts) >= 2 else ""
 
 
 def normalize_courier_id(value: object) -> str:
