@@ -11,6 +11,10 @@ create table if not exists public.ops_giriton_auto_booking_log (
     warehouse text,
     shift_text text,
     shift_start text,
+    match_kind text,
+    recommendation_status text,
+    muszakpro_shift_start text,
+    giriton_offer text,
     booking_code text,
     serial text,
     status text not null,
@@ -18,6 +22,12 @@ create table if not exists public.ops_giriton_auto_booking_log (
     response_json jsonb not null default '{}'::jsonb,
     created_at timestamptz not null default now()
 );
+
+alter table public.ops_giriton_auto_booking_log
+    add column if not exists match_kind text,
+    add column if not exists recommendation_status text,
+    add column if not exists muszakpro_shift_start text,
+    add column if not exists giriton_offer text;
 
 create index if not exists idx_ops_giriton_auto_booking_log_work_date
     on public.ops_giriton_auto_booking_log (work_date);
@@ -30,3 +40,6 @@ create index if not exists idx_ops_giriton_auto_booking_log_serial
 
 create index if not exists idx_ops_giriton_auto_booking_log_created_at
     on public.ops_giriton_auto_booking_log (created_at desc);
+
+create index if not exists idx_ops_giriton_auto_booking_log_match_kind
+    on public.ops_giriton_auto_booking_log (match_kind);

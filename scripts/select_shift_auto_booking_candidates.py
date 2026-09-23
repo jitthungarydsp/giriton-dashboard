@@ -33,6 +33,8 @@ from scripts.auto_book_exact_shift_matches import is_recent_running_log
 
 
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
+SHIFT_COMPARISON_TABLE = "ops_shift_comparison"
+SHIFT_COMPARISON_SOURCE = "shift-auto-booking-selector"
 
 
 def clean(value) -> str:
@@ -42,6 +44,17 @@ def clean(value) -> str:
 def courier_id_from_serial(serial: str) -> str:
     parts = clean(serial).split("_")
     return parts[1] if len(parts) >= 2 and parts[1].isdigit() else ""
+
+
+def db_time(value):
+    text = foglalas._normalize_time(value)
+    if not text:
+        return None
+    if len(text) == 4:
+        text = f"0{text}"
+    if len(text) == 5:
+        return f"{text}:00"
+    return text
 
 
 def parse_date(value: str | None, default: date) -> date:
@@ -93,6 +106,11 @@ def load_summary(start_date: date, end_date: date, tolerance_minutes: int, sourc
         f"muszakpro_rows={len(muszakpro_df)} giriton_rows={len(giriton_df)} "
         f"summary_rows={len(summary_df)}"
     )
+    try:
+        summary_logged = log_summary_to_shift_comparison(summary_df, start_date, end_date)
+        print(f"SHIFT_AUTO_SELECT_COMPARISON_DB_LOGGED rows={summary_logged}")
+    except Exception as exc:
+        print(f"SHIFT_AUTO_SELECT_COMPARISON_DB_LOG_FAILED {type(exc).__name__}: {exc}")
     return summary_df
 
 
@@ -157,6 +175,192 @@ def optional_int(value):
         return None
 
 
+def comparison_key_from_summary_row(row: dict) -> str:
+    serial = clean(row.get("Serial"))
+    person = (
+        clean(row.get("Courier ID"))
+        or courier_id_from_serial(serial)
+        or clean(row.get("E-mail")).casefold()
+        or clean(row.get("Dolgozó")).casefold()
+    )
+    return "|".join([
+        SHIFT_COMPARISON_SOURCE,
+        clean(row.get("Dátum")),
+        person,
+        clean(row.get("Raktár")).upper(),
+        foglalas._normalize_time(row.get("MűszakPro")) or clean(row.get("MűszakPro")),
+        serial,
+    ])
+
+
+def shift_comparison_row_from_summary(row: dict, updated_at: str) -> dict:
+    status = clean(row.get("Állapot"))
+    giriton_state = clean(row.get("Giriton állapot"))
+    muszakpro_shift_start = clean(row.get("MűszakPro"))
+    giriton_offer = clean(row.get("Giriton ajánlat"))
+    serial = clean(row.get("Serial"))
+    courier_id = clean(row.get("Courier ID")) or courier_id_from_serial(serial)
+    return {
+        "source_name": SHIFT_COMPARISON_SOURCE,
+        "comparison_key": comparison_key_from_summary_row(row),
+        "work_date": clean(row.get("Dátum")) or None,
+        "courier_id": optional_int(courier_id),
+        "courier_name": clean(row.get("Dolgozó")),
+        "email": clean(row.get("E-mail")).casefold(),
+        "warehouse": clean(row.get("Raktár")).upper(),
+        "shift_start": db_time(muszakpro_shift_start),
+        "shift_end": None,
+        "giriton_status": giriton_state or "-",
+        "muszakpro_status": "OK" if muszakpro_shift_start and muszakpro_shift_start != "-" else "-",
+        "missing_source": "" if status in {"Egyezés", "Alternatíva", "Lefoglalva"} else status,
+        "giriton_check": status,
+        "muszakpro_booking_code": "",
+        "booking_recommendation_status": status,
+        "giriton_offer": db_time(giriton_offer),
+        "muszakpro_shift_start": db_time(muszakpro_shift_start),
+        "difference_text": clean(row.get("Eltérés")),
+        "recommendation_reason": clean(row.get("Ok")),
+        "serial": serial,
+        "source_summary": {
+            "muszakpro_shift_start": muszakpro_shift_start,
+            "giriton_booking": clean(row.get("Giriton foglalás")),
+            "giriton_offer": giriton_offer,
+            "giriton_state": giriton_state,
+            "difference": clean(row.get("Eltérés")),
+            "status": status,
+            "reason": clean(row.get("Ok")),
+            "serial": serial,
+        },
+        "updated_at": updated_at,
+    }
+
+
+def post_shift_comparison_rows(supabase_url: str, service_role_key: str, rows: list[dict]) -> requests.Response:
+    return requests.post(
+        f"{supabase_url}/rest/v1/{SHIFT_COMPARISON_TABLE}?on_conflict=comparison_key",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+        json=rows,
+        timeout=60,
+    )
+
+
+def strip_optional_shift_comparison_columns(rows: list[dict]) -> list[dict]:
+    optional_columns = {
+        "source_name",
+        "booking_recommendation_status",
+        "giriton_offer",
+        "muszakpro_shift_start",
+        "difference_text",
+        "recommendation_reason",
+        "serial",
+    }
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if key not in optional_columns
+        }
+        for row in rows
+    ]
+
+
+def delete_existing_shift_comparison_rows(supabase_url: str, service_role_key: str, start_date: date, end_date: date) -> None:
+    response = requests.delete(
+        (
+            f"{supabase_url}/rest/v1/{SHIFT_COMPARISON_TABLE}"
+            f"?source_name=eq.{SHIFT_COMPARISON_SOURCE}"
+            f"&work_date=gte.{start_date.isoformat()}"
+            f"&work_date=lte.{end_date.isoformat()}"
+        ),
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Prefer": "return=minimal",
+        },
+        timeout=60,
+    )
+    if response.status_code == 400 and "source_name" in response.text:
+        return
+    raise_for_supabase_error(response)
+
+
+def log_summary_to_shift_comparison(summary_df: pd.DataFrame, start_date: date, end_date: date) -> int:
+    if summary_df.empty:
+        return 0
+
+    supabase_url, service_role_key = get_supabase_config()
+    if not supabase_url or not service_role_key:
+        print("SHIFT_AUTO_SELECT_COMPARISON_DB_LOG_SKIPPED missing_supabase_config")
+        return 0
+
+    updated_at = datetime.now(BUDAPEST_TZ).isoformat(timespec="seconds")
+    rows = [
+        shift_comparison_row_from_summary(row, updated_at)
+        for row in summary_df.to_dict("records")
+        if comparison_key_from_summary_row(row)
+    ]
+    if not rows:
+        return 0
+
+    delete_existing_shift_comparison_rows(
+        supabase_url,
+        service_role_key,
+        start_date,
+        end_date,
+    )
+
+    total = 0
+    for index in range(0, len(rows), 500):
+        batch = rows[index:index + 500]
+        response = post_shift_comparison_rows(supabase_url, service_role_key, batch)
+        if response.status_code == 400 and "column" in response.text.lower():
+            response = post_shift_comparison_rows(
+                supabase_url,
+                service_role_key,
+                strip_optional_shift_comparison_columns(batch),
+            )
+        raise_for_supabase_error(response)
+        total += len(batch)
+
+    return total
+
+
+def strip_optional_log_columns(rows: list[dict]) -> list[dict]:
+    optional_columns = {
+        "match_kind",
+        "recommendation_status",
+        "muszakpro_shift_start",
+        "giriton_offer",
+    }
+    return [
+        {
+            key: value
+            for key, value in row.items()
+            if key not in optional_columns
+        }
+        for row in rows
+    ]
+
+
+def post_log_rows(supabase_url: str, service_role_key: str, rows: list[dict]) -> requests.Response:
+    return requests.post(
+        f"{supabase_url}/rest/v1/{LOG_TABLE}",
+        headers={
+            "apikey": service_role_key,
+            "Authorization": f"Bearer {service_role_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        json=rows,
+        timeout=60,
+    )
+
+
 def log_candidates_to_db(candidates: list[dict], *, match_kind: str, start_date: date, end_date: date) -> int:
     if not candidates:
         return 0
@@ -173,6 +377,11 @@ def log_candidates_to_db(candidates: list[dict], *, match_kind: str, start_date:
     for candidate in candidates:
         warehouse = clean(candidate.get("warehouse")).upper()
         shift_start = clean(candidate.get("shift_start"))
+        recommendation_status = clean(candidate.get("status")) or (
+            "Egyezés" if match_kind == "exact" else "Alternatíva"
+        )
+        muszakpro_shift_start = clean(candidate.get("muszakpro_shift_start"))
+        giriton_offer = clean(candidate.get("giriton_offer"))
         rows.append({
             "source_name": "shift-auto-booking-selector",
             "work_date": clean(candidate.get("work_date")) or None,
@@ -182,13 +391,24 @@ def log_candidates_to_db(candidates: list[dict], *, match_kind: str, start_date:
             "warehouse": warehouse,
             "shift_text": f"{warehouse}_{shift_start}" if warehouse and shift_start else shift_start,
             "shift_start": shift_start,
+            "match_kind": clean(match_kind),
+            "recommendation_status": recommendation_status,
+            "muszakpro_shift_start": muszakpro_shift_start,
+            "giriton_offer": giriton_offer,
             "booking_code": "",
             "serial": clean(candidate.get("serial")),
             "status": f"CANDIDATE_SELECTED_{clean(match_kind).upper()}",
-            "message": "A robot ezt a sort foglalásra kiválasztotta.",
+            "message": (
+                f"{recommendation_status}: MűszakPro {muszakpro_shift_start or '-'} "
+                f"-> Giriton ajánlat {giriton_offer or shift_start or '-'}. "
+                "A robot ezt a sort foglalásra kiválasztotta."
+            ),
             "response_json": {
                 "candidate": candidate,
                 "match_kind": match_kind,
+                "recommendation_status": recommendation_status,
+                "muszakpro_shift_start": muszakpro_shift_start,
+                "giriton_offer": giriton_offer,
                 "selection_window": {
                     "start_date": start_date.isoformat(),
                     "end_date": end_date.isoformat(),
@@ -199,17 +419,13 @@ def log_candidates_to_db(candidates: list[dict], *, match_kind: str, start_date:
             },
         })
 
-    response = requests.post(
-        f"{supabase_url}/rest/v1/{LOG_TABLE}",
-        headers={
-            "apikey": service_role_key,
-            "Authorization": f"Bearer {service_role_key}",
-            "Content-Type": "application/json",
-            "Prefer": "return=minimal",
-        },
-        json=rows,
-        timeout=60,
-    )
+    response = post_log_rows(supabase_url, service_role_key, rows)
+    if response.status_code == 400 and "column" in response.text.lower():
+        response = post_log_rows(
+            supabase_url,
+            service_role_key,
+            strip_optional_log_columns(rows),
+        )
     raise_for_supabase_error(response)
     return len(rows)
 
