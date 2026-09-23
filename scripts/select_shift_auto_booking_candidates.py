@@ -271,10 +271,11 @@ def optional_int(value):
         return None
 
 
-def comparison_key_from_summary_row(row: dict) -> str:
+def comparison_key_from_summary_row(row: dict, courier_id: str = "") -> str:
     serial = clean(row.get("Serial"))
     person = (
-        resolve_courier_id(row)
+        clean(courier_id)
+        or resolve_courier_id(row)
         or clean(row.get("E-mail")).casefold()
         or clean(row.get("Dolgozó")).casefold()
     )
@@ -294,10 +295,10 @@ def shift_comparison_row_from_summary(row: dict, updated_at: str) -> dict:
     muszakpro_shift_start = clean(row.get("MűszakPro"))
     giriton_offer = clean(row.get("Giriton ajánlat"))
     serial = clean(row.get("Serial"))
-    courier_id = resolve_courier_id(row)
+    courier_id = clean(row.get("Courier ID")) or resolve_courier_id(row)
     return {
         "source_name": SHIFT_COMPARISON_SOURCE,
-        "comparison_key": comparison_key_from_summary_row(row),
+        "comparison_key": comparison_key_from_summary_row(row, courier_id),
         "work_date": clean(row.get("Dátum")) or None,
         "courier_id": optional_int(courier_id),
         "courier_name": clean(row.get("Dolgozó")),
@@ -399,6 +400,12 @@ def log_summary_to_shift_comparison(summary_df: pd.DataFrame, start_date: date, 
         for row in summary_df.to_dict("records")
         if comparison_key_from_summary_row(row)
     ]
+    rows_by_key = {
+        clean(row.get("comparison_key")): row
+        for row in rows
+        if clean(row.get("comparison_key"))
+    }
+    rows = list(rows_by_key.values())
     if not rows:
         return 0
 

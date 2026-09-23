@@ -55,6 +55,13 @@ def optional_int(value):
         return None
 
 
+def courier_id_from_comparison_key(value):
+    parts = clean(value).split("|")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
 def get_headers():
     supabase_url, service_role_key = get_supabase_config()
 
@@ -93,7 +100,10 @@ def build_db_rows(records):
         row = {
             "comparison_key": comparison_key,
             "work_date": work_date,
-            "courier_id": optional_int(record.get("courier_id")),
+            "courier_id": (
+                optional_int(record.get("courier_id"))
+                or courier_id_from_comparison_key(comparison_key)
+            ),
             "courier_name": clean(record.get("name")),
             "email": clean(record.get("email")).casefold(),
             "warehouse": clean(record.get("warehouse")),
@@ -122,6 +132,11 @@ def upsert_shift_comparison_rows(records):
     db_rows = build_db_rows(
         records
     )
+    db_rows = list({
+        clean(row.get("comparison_key")): row
+        for row in db_rows
+        if clean(row.get("comparison_key"))
+    }.values())
 
     if not db_rows:
         return {
