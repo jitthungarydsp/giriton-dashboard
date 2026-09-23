@@ -18,6 +18,8 @@ from resources.supabase_raw import (
 SOURCE_NAME = "google-sheet-foglalasok"
 FOGLALASOK_SHEET_NAME = "Foglalasok"
 ID_SHEET_NAME = "ID"
+ROBOT_ID_SHEET_NAME = "ROBOTID"
+ROBOT_ID_WORKSHEET_GID = 2086200160
 FOGLALASOK_TABLE_CANDIDATES = [
     "raw_muszakpro_bookings",
     "foglalasok_raw",
@@ -256,13 +258,18 @@ def get_or_create_id_worksheet():
         )
 
 
-def read_courier_lookup_from_id_sheet():
+def get_robot_id_worksheet():
+    spreadsheet = open_spreadsheet(SOURCE_SPREADSHEET_ID)
     try:
-        worksheet = get_or_create_id_worksheet()
-        values = worksheet.get_all_values()
+        worksheet = spreadsheet.get_worksheet_by_id(ROBOT_ID_WORKSHEET_GID)
     except Exception:
-        return {"by_email": {}, "by_id": {}, "by_name": {}}
+        worksheet = None
+    if worksheet is not None:
+        return worksheet
+    return spreadsheet.worksheet(ROBOT_ID_SHEET_NAME)
 
+
+def build_courier_lookup_from_sheet_values(values, name_columns=None):
     if not values:
         return {"by_email": {}, "by_id": {}, "by_name": {}}
 
@@ -275,19 +282,36 @@ def read_courier_lookup_from_id_sheet():
                 return index
         return None
 
-    id_index = header_index("courier_id", "futar id", "futár id", "id")
-    name_index = header_index("courier_name", "nev", "név", "name")
+    def row_value(row, index):
+        return clean(row[index] if index is not None and index < len(row) else "")
+
+    id_index = header_index("courier_id", "courierId", "futar id", "futár id", "id")
     email_index = header_index("email", "e-mail", "email cim", "e-mail cím")
+    name_indexes = [
+        header_index(*names)
+        for names in (name_columns or [
+            ("courier_name", "nev", "név", "name"),
+            ("Azonosító nélküli név",),
+            ("name JSON",),
+        ])
+    ]
 
     lookup = {"by_email": {}, "by_id": {}, "by_name": {}}
     for row in values[1:]:
-        email = (
-            normalize_email(row[email_index])
-            if email_index is not None and email_index < len(row)
-            else ""
-        )
-        courier_id = clean(row[id_index] if id_index is not None and id_index < len(row) else "")
-        courier_name = clean(row[name_index] if name_index is not None and name_index < len(row) else "")
+        email = normalize_email(row_value(row, email_index))
+        courier_id = row_value(row, id_index)
+        courier_names = [
+            row_value(row, index)
+            for index in name_indexes
+            if row_value(row, index)
+        ]
+        courier_name = courier_names[0] if courier_names else ""
+        if not courier_id:
+            courier_id = courier_id_from_text(" ".join(courier_names))
+
+        if not any([email, courier_id, courier_name]):
+            continue
+
         courier = {
             "courier_id": courier_id,
             "courier_name": courier_name,
@@ -297,14 +321,48 @@ def read_courier_lookup_from_id_sheet():
             lookup["by_email"][email] = courier
         if courier_id:
             lookup["by_id"][courier_id] = courier
-        for name_key in {
-            normalize_name(courier_name),
-            name_without_courier_id(courier_name),
-        }:
-            if name_key:
-                lookup["by_name"][name_key] = courier
+        for raw_name in courier_names:
+            for name_key in {
+                normalize_name(raw_name),
+                name_without_courier_id(raw_name),
+            }:
+                if name_key:
+                    lookup["by_name"][name_key] = courier
 
     return lookup
+
+
+def read_legacy_courier_lookup_from_id_sheet():
+    try:
+        worksheet = get_or_create_id_worksheet()
+        values = worksheet.get_all_values()
+    except Exception:
+        return {"by_email": {}, "by_id": {}, "by_name": {}}
+
+    return build_courier_lookup_from_sheet_values(values)
+
+
+def read_courier_lookup_from_robot_id_sheet():
+    try:
+        worksheet = get_robot_id_worksheet()
+        values = worksheet.get_all_values()
+    except Exception:
+        return {"by_email": {}, "by_id": {}, "by_name": {}}
+
+    return build_courier_lookup_from_sheet_values(
+        values,
+        name_columns=[
+            ("Azonosító nélküli név",),
+            ("name JSON",),
+            ("courier_name", "nev", "név", "name"),
+        ],
+    )
+
+
+def read_courier_lookup_from_id_sheet():
+    legacy_lookup = read_legacy_courier_lookup_from_id_sheet()
+    robot_lookup = read_courier_lookup_from_robot_id_sheet()
+    return merge_courier_lookups(legacy_lookup, robot_lookup)
 
 
 def merge_courier_lookups(*lookups):
@@ -329,9 +387,13 @@ def merge_courier_lookups(*lookups):
 
 
 def read_combined_courier_lookup():
-    db_lookup = read_courier_lookup()
-    sheet_lookup = read_courier_lookup_from_id_sheet()
-    return merge_courier_lookups(db_lookup, sheet_lookup)
+    try:
+        db_lookup = read_courier_lookup()
+    except Exception:
+        db_lookup = {"by_email": {}, "by_id": {}, "by_name": {}}
+    legacy_sheet_lookup = read_legacy_courier_lookup_from_id_sheet()
+    robot_sheet_lookup = read_courier_lookup_from_robot_id_sheet()
+    return merge_courier_lookups(db_lookup, legacy_sheet_lookup, robot_sheet_lookup)
 
 
 def _add_courier_export_row(rows_by_key, courier):
@@ -366,7 +428,7 @@ def export_courier_master_to_id_sheet():
     raise_for_supabase_error(response)
 
     worksheet = get_or_create_id_worksheet()
-    existing_lookup = read_courier_lookup_from_id_sheet()
+    existing_lookup = read_legacy_courier_lookup_from_id_sheet()
     rows_by_key = {}
 
     for row in response.json():
