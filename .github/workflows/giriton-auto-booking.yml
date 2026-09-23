@@ -85,6 +85,11 @@ jobs:
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
           test -n "$GIRITON_GOOGLE_CREDENTIALS_JSON" || (echo "Missing GIRITON_GOOGLE_CREDENTIALS_JSON secret" && exit 1)
 
+          if [ "${{ inputs.booking_engine }}" = "hub_api_delete" ]; then
+            echo "Courier Hub API torles ideiglenesen kikapcsolva."
+            exit 1
+          fi
+
           if [ "${{ inputs.booking_engine }}" = "hub_api" ] || [ "${{ inputs.booking_engine }}" = "hub_api_delete" ]; then
             test -n "$COURIER_HUB_COOKIE" || (echo "Missing COURIER_HUB_COOKIE secret" && exit 1)
             test -n "${{ inputs.courier_id }}" || (echo "Courier Hub API muvelethez courier_id kell." && exit 1)

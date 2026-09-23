@@ -60,6 +60,7 @@ FOGLALAS_DATA_CACHE_TTL_SECONDS = 60
 FOGLALAS_AUTO_REFRESH_SECONDS = 180
 NO_VALID_DAILY_PLAN_TEXT = "nincs érvényes napi terv"
 SHIFT_BLOCK_TABLE_NAME = "courier_hub_shift_blocks_raw"
+HUB_DELETE_ENABLED = False
 
 
 def _clean(value) -> str:
@@ -1056,6 +1057,8 @@ def _booking_action_badge(row: dict) -> str:
     status = _clean(row.get("Állapot"))
     if not _is_bookable_row(row):
         if _is_deletable_row(row):
+            if not HUB_DELETE_ENABLED:
+                return "<span class='action-badge neutral disabled'>Törlés kikapcsolva</span>"
             identity = _delete_action_identity(row)
             if _delete_started_key(identity) in _started_delete_keys():
                 return "<span class='action-badge booked disabled'>Törlés indítva</span>"
@@ -3078,6 +3081,10 @@ def _dispatch_auto_booking(row: dict, dry_run: bool) -> bool:
 
 
 def _dispatch_auto_delete(row: dict, dry_run: bool) -> bool:
+    if not HUB_DELETE_ENABLED:
+        st.warning("A HUB API törlés jelenleg ki van kapcsolva.")
+        return False
+
     identity = _delete_action_identity(row)
     work_date = identity["work_date"]
     target_shift_start = identity["shift_start"]
