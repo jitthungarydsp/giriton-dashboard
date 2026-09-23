@@ -1,4 +1,4 @@
-name: HUB_JOB Courier Hub Shift Sync
+name: HUB_JOB Courier Hub Sync
 
 on:
   workflow_dispatch:
@@ -8,9 +8,17 @@ on:
         required: false
         default: ""
       lookahead_days:
-        description: "Hány napot nézzen előre."
+        description: "Hány napot nézzen előre a shift block/foglalás rész."
         required: false
         default: "21"
+      year:
+        description: "Év, példa: 2026. Üresen: aktuális év Budapest szerint."
+        required: false
+        default: ""
+      month:
+        description: "Hónap 1-12. Üresen: aktuális hónap Budapest szerint."
+        required: false
+        default: ""
       dry_run:
         description: "true esetén nem ír DB-be."
         required: false
@@ -19,14 +27,14 @@ on:
     - cron: "7,37 * * * *"
 
 concurrency:
-  group: hub-job-courier-hub-shift-sync
+  group: hub-job-courier-hub-sync
   cancel-in-progress: true
 
 jobs:
-  HUB_JOB_shift_sync:
-    name: HUB_JOB shift blocks / bookings / subscribers
+  HUB_JOB_courier_hub_sync:
+    name: HUB_JOB Courier Hub full sync
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
 
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -65,18 +73,26 @@ jobs:
         run: |
           START_DATE="${{ inputs.start_date }}"
           LOOKAHEAD_DAYS="${{ inputs.lookahead_days }}"
+          YEAR="${{ inputs.year }}"
+          MONTH="${{ inputs.month }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
           START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
           LOOKAHEAD_DAYS="${LOOKAHEAD_DAYS:-21}"
+          YEAR="${YEAR:-$(TZ=Europe/Budapest date +%Y)}"
+          MONTH="${MONTH:-$(TZ=Europe/Budapest date +%-m)}"
           DRY_RUN="${DRY_RUN:-false}"
 
           echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
           echo "lookahead_days=$LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
+          echo "year=$YEAR" >> "$GITHUB_OUTPUT"
+          echo "month=$MONTH" >> "$GITHUB_OUTPUT"
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
 
           echo "HUB_JOB_START_DATE=$START_DATE"
           echo "HUB_JOB_LOOKAHEAD_DAYS=$LOOKAHEAD_DAYS"
+          echo "HUB_JOB_YEAR=$YEAR"
+          echo "HUB_JOB_MONTH=$MONTH"
           echo "HUB_JOB_DRY_RUN=$DRY_RUN"
 
       - name: HUB_JOB refresh Courier Hub token without browser
@@ -87,7 +103,28 @@ jobs:
             --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks" \
             --probe-date "${{ steps.window.outputs.start_date }}"
 
+      - name: HUB_JOB sync master roster
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_hub_master.py --warehouse-ids "1,2" --dsp-id 8 --date "${{ steps.window.outputs.start_date }}")
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB export robot ids sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, robot id sheet export skipped."
+            exit 0
+          fi
+          CMD=(python scripts/export_courier_hub_robot_id_sheet.py)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
       - name: HUB_JOB sync shift block tables
+        continue-on-error: true
         shell: bash
         run: |
           CMD=(
@@ -97,51 +134,223 @@ jobs:
             --start-date "${{ steps.window.outputs.start_date }}"
             --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
           )
-
-          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            CMD+=(--dry-run)
-          fi
-
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
       - name: HUB_JOB export shift block capacity sheet
+        continue-on-error: true
         shell: bash
         run: |
           if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
             echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, capacity sheet export skipped."
             exit 0
           fi
-
           CMD=(
             python scripts/export_courier_hub_shift_block_capacity_sheet.py
             --start-date "${{ steps.window.outputs.start_date }}"
             --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
           )
-
-          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            CMD+=(--dry-run)
-          fi
-
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
           "${CMD[@]}"
 
       - name: HUB_JOB export shift bookings sheet
+        continue-on-error: true
         shell: bash
         run: |
           if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
             echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, shift bookings sheet export skipped."
             exit 0
           fi
-
           CMD=(
             python scripts/export_courier_hub_shift_bookings_sheet.py
             --start-date "${{ steps.window.outputs.start_date }}"
             --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
           )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
 
+      - name: HUB_JOB sync MuszakPro bookings from sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro bookings import skipped."
+            exit 0
+          fi
+          CMD=(python scripts/load_foglalasok_raw.py)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB log shift auto booking candidates
+        continue-on-error: true
+        shell: bash
+        run: |
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
-            CMD+=(--dry-run)
+            echo "Dry-run: shift auto booking candidate DB log skipped."
+            exit 0
           fi
 
+          mkdir -p results/hub-job-courier-hub-sync/shift-auto-candidates
+
+          python scripts/select_shift_auto_booking_candidates.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --days 5 \
+            --match-kind exact \
+            --limit 100 \
+            --output results/hub-job-courier-hub-sync/shift-auto-candidates/exact-candidates.json
+
+          python scripts/select_shift_auto_booking_candidates.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --days 5 \
+            --match-kind alternative \
+            --limit 100 \
+            --output results/hub-job-courier-hub-sync/shift-auto-candidates/alternative-candidates.json
+
+      - name: HUB_JOB export MuszakPro booking overview sheet
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro overview export skipped."
+            exit 0
+          fi
+          CMD=(
+            python scripts/export_muszakpro_booking_overview_sheet.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
+          )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB sync live monitoring
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_hub_live_monitoring.py --warehouse-ids "1,2" --dsp-id 8 --detail-scope all)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB sync financial overview raw
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_financial_overview.py --year "${{ steps.window.outputs.year }}" --month "${{ steps.window.outputs.month }}" --skip-api-import)
+          if [ "${{ steps.window.outputs.dry_run }}" != "true" ]; then CMD+=(--apply); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB resolve missing-day range
+        id: days
+        continue-on-error: true
+        shell: bash
+        run: |
+          OUTPUT_FILE="$(mktemp)"
+          python - <<'PY' > "$OUTPUT_FILE"
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          import requests
+
+          supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
+          supabase_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          headers = {
+              "apikey": supabase_key,
+              "Authorization": f"Bearer {supabase_key}",
+          }
+          tables = ("raw_jitt_invoice_perf_bud1", "raw_jitt_invoice_perf_bud2")
+          latest_dates = []
+
+          for table in tables:
+              response = requests.get(
+                  f"{supabase_url}/rest/v1/{table}",
+                  headers=headers,
+                  params={
+                      "select": "date_to",
+                      "source_name": "eq.courier_hub_performance_couriers",
+                      "status_code": "eq.200",
+                      "order": "date_to.desc",
+                      "limit": "1",
+                  },
+                  timeout=30,
+              )
+              response.raise_for_status()
+              rows = response.json()
+              if rows and rows[0].get("date_to"):
+                  latest_dates.append(datetime.strptime(rows[0]["date_to"][:10], "%Y-%m-%d").date())
+
+          today = datetime.now(ZoneInfo("Europe/Budapest")).date()
+          month_start = datetime.strptime(
+              "${{ steps.window.outputs.year }}-${{ steps.window.outputs.month }}-01",
+              "%Y-%m-%d",
+          ).date()
+
+          if latest_dates:
+              start_date = min(latest_dates) + timedelta(days=1)
+          else:
+              start_date = month_start
+
+          if start_date < month_start:
+              start_date = month_start
+
+          skip = start_date > today
+          print(f"start_date={start_date.isoformat()}")
+          print(f"end_date={today.isoformat()}")
+          print(f"skip={'true' if skip else 'false'}")
+          PY
+
+          cat "$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+          cat "$OUTPUT_FILE"
+
+      - name: HUB_JOB sync missing daily performance raw
+        if: steps.days.outputs.skip != 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/load_jitt_invoice_performance_raw.py
+            --start-date "${{ steps.days.outputs.start_date }}"
+            --end-date "${{ steps.days.outputs.end_date }}"
+            --chunk-days 1
+            --only-missing
+          )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB build daily courier performance rows
+        if: steps.days.outputs.skip != 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/build_jitt_invoice_performance_daily_raw.py
+            --start-date "${{ steps.days.outputs.start_date }}"
+            --end-date "${{ steps.days.outputs.end_date }}"
+          )
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB sync shift overview for current month
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.window.outputs.year }}" --month "${{ steps.window.outputs.month }}" --only-shifts)
+          if [ "${{ steps.window.outputs.dry_run }}" != "true" ]; then CMD+=(--apply); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB sync route details from latest DB day
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/sync_courier_route_performance_details.py --year "${{ steps.window.outputs.year }}" --month "${{ steps.window.outputs.month }}" --since-last-work-date --skip-shifts)
+          if [ "${{ steps.window.outputs.dry_run }}" != "true" ]; then CMD+=(--apply); fi
+          "${CMD[@]}"
+
+      - name: HUB_JOB build route statistics
+        continue-on-error: true
+        shell: bash
+        run: |
+          CMD=(python scripts/build_courier_hub_statistics.py --year "${{ steps.window.outputs.year }}" --month "${{ steps.window.outputs.month }}" --skip-google-routes)
+          if [ "${{ steps.window.outputs.dry_run }}" != "true" ]; then CMD+=(--apply --replace-period); fi
           "${CMD[@]}"
 
       - name: HUB_JOB summary
@@ -149,17 +358,22 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## HUB_JOB Courier Hub Shift Sync"
+            echo "## HUB_JOB Courier Hub Sync"
             echo ""
-            echo "- Tables:"
+            echo "- Main raw tables:"
             echo "  - courier_hub_shift_blocks_raw"
             echo "  - courier_hub_shift_bookings_raw"
             echo "  - courier_hub_roster_shift_subscribers_raw"
+            echo "  - courier_hub_live_monitoring_*"
+            echo "  - raw_jitt_invoice_perf_*"
             echo "- Sheet exports:"
+            echo "  - Courier Hub robot IDs"
             echo "  - Courier Hub shift block capacity"
             echo "  - Courier Hub shift bookings"
+            echo "  - MuszakPro booking overview"
             echo "- Auth: /api/auth/session no-browser token refresh"
             echo "- Start date: ${{ steps.window.outputs.start_date }}"
             echo "- Lookahead days: ${{ steps.window.outputs.lookahead_days }}"
+            echo "- Year/month: ${{ steps.window.outputs.year }}/${{ steps.window.outputs.month }}"
             echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
