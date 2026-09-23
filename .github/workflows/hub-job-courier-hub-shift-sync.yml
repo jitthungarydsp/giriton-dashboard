@@ -31,6 +31,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
       COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-courier-hub-auth.json
       COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth_no_browser.py --cache-file /tmp/hub-job-courier-hub-auth.json
@@ -103,6 +104,46 @@ jobs:
 
           "${CMD[@]}"
 
+      - name: HUB_JOB export shift block capacity sheet
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, capacity sheet export skipped."
+            exit 0
+          fi
+
+          CMD=(
+            python scripts/export_courier_hub_shift_block_capacity_sheet.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
+          )
+
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
+      - name: HUB_JOB export shift bookings sheet
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, shift bookings sheet export skipped."
+            exit 0
+          fi
+
+          CMD=(
+            python scripts/export_courier_hub_shift_bookings_sheet.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --lookahead-days "${{ steps.window.outputs.lookahead_days }}"
+          )
+
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          fi
+
+          "${CMD[@]}"
+
       - name: HUB_JOB summary
         if: always()
         shell: bash
@@ -114,6 +155,9 @@ jobs:
             echo "  - courier_hub_shift_blocks_raw"
             echo "  - courier_hub_shift_bookings_raw"
             echo "  - courier_hub_roster_shift_subscribers_raw"
+            echo "- Sheet exports:"
+            echo "  - Courier Hub shift block capacity"
+            echo "  - Courier Hub shift bookings"
             echo "- Auth: /api/auth/session no-browser token refresh"
             echo "- Start date: ${{ steps.window.outputs.start_date }}"
             echo "- Lookahead days: ${{ steps.window.outputs.lookahead_days }}"

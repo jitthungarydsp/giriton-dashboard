@@ -148,43 +148,6 @@ jobs:
           fi
           python scripts/export_courier_hub_robot_id_sheet.py
 
-      - name: Sync Courier Hub shift blocks
-        continue-on-error: true
-        shell: bash
-        run: |
-          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
-          python scripts/sync_courier_hub_shift_blocks.py \
-            --warehouse-ids "1,2" \
-            --dsp-id 8 \
-            --start-date "$SHIFT_BLOCK_DATE" \
-            --lookahead-days 21
-
-      - name: Export Courier Hub shift block capacity sheet
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
-            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, capacity sheet export skipped."
-            exit 0
-          fi
-          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
-          python scripts/export_courier_hub_shift_block_capacity_sheet.py \
-            --start-date "$SHIFT_BLOCK_DATE" \
-            --lookahead-days 21
-
-      - name: Export Courier Hub shift bookings sheet
-        continue-on-error: true
-        shell: bash
-        run: |
-          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
-            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, shift bookings sheet export skipped."
-            exit 0
-          fi
-          SHIFT_BLOCK_DATE="$(TZ=Europe/Budapest date +%F)"
-          python scripts/export_courier_hub_shift_bookings_sheet.py \
-            --start-date "$SHIFT_BLOCK_DATE" \
-            --lookahead-days 21
-
       - name: Sync Courier Hub live monitoring snapshots
         continue-on-error: true
         shell: bash
