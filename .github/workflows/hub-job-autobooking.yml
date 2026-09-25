@@ -140,15 +140,18 @@ jobs:
           fi
 
           run_with_retry() {
-            local attempt
-            for attempt in 1 2 3; do
+            local attempt exit_code delay
+            local delays=(90 180 300 300 300)
+            for attempt in 1 2 3 4 5 6; do
               "$@" && return 0
-              local exit_code="$?"
-              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/3"
-              if [ "$attempt" = "3" ]; then
+              exit_code="$?"
+              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/6"
+              if [ "$attempt" = "6" ]; then
                 return "$exit_code"
               fi
-              sleep 75
+              delay="${delays[$((attempt - 1))]}"
+              echo "Waiting ${delay}s before retry to avoid Google Sheets quota."
+              sleep "$delay"
             done
           }
 
@@ -219,16 +222,24 @@ jobs:
           fi
 
           run_with_retry() {
-            local attempt
-            for attempt in 1 2 3; do
+            local attempt exit_code delay
+            local delays=(90 180 300 300 300)
+            for attempt in 1 2 3 4 5 6; do
               "$@" && return 0
-              local exit_code="$?"
-              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/3"
-              if [ "$attempt" = "3" ]; then
+              exit_code="$?"
+              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/6"
+              if [ "$attempt" = "6" ]; then
                 return "$exit_code"
               fi
-              sleep 75
+              delay="${delays[$((attempt - 1))]}"
+              echo "Waiting ${delay}s before retry to avoid Google Sheets quota."
+              sleep "$delay"
             done
+          }
+
+          sheet_pause() {
+            echo "Waiting 90s between Google Sheets exports to avoid read quota."
+            sleep 90
           }
 
           run_with_retry python scripts/sync_giriton_robotlog_sheet.py \
@@ -236,13 +247,19 @@ jobs:
             --end-date "${{ steps.window.outputs.end_date }}" \
             --limit 10000
 
+          sheet_pause
+
           run_with_retry python scripts/export_courier_hub_shift_bookings_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
 
+          sheet_pause
+
           run_with_retry python scripts/export_muszakpro_booking_overview_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+          sheet_pause
 
           run_with_retry python scripts/export_hub_autobooking_failures_sheet.py \
             --input results/hub-job-autobooking/failures.json
