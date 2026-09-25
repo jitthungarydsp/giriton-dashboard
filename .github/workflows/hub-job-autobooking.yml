@@ -183,16 +183,29 @@ jobs:
             exit 0
           fi
 
-          python scripts/sync_giriton_robotlog_sheet.py \
+          run_with_retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              local exit_code="$?"
+              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/3"
+              if [ "$attempt" = "3" ]; then
+                return "$exit_code"
+              fi
+              sleep 75
+            done
+          }
+
+          run_with_retry python scripts/sync_giriton_robotlog_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --end-date "${{ steps.window.outputs.end_date }}" \
             --limit 10000
 
-          python scripts/export_courier_hub_shift_bookings_sheet.py \
+          run_with_retry python scripts/export_courier_hub_shift_bookings_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
 
-          python scripts/export_muszakpro_booking_overview_sheet.py \
+          run_with_retry python scripts/export_muszakpro_booking_overview_sheet.py \
             --start-date "${{ steps.window.outputs.start_date }}" \
             --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
 
