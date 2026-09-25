@@ -240,8 +240,8 @@ def read_muszakpro_rows(
         "work_date,email,shift_text,warehouse,booking_code,courier_id,courier_name,"
         "serial,timestamp_text,source_row,fetched_at,status,cancelled_at"
     )
-    table_rows = []
-    source_label = "-"
+    table_rows_by_key: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    source_counts: list[str] = []
     for schema, table_name in (
         ("muszakpro", "bookings"),
         ("public", "raw_muszakpro_bookings"),
@@ -258,32 +258,39 @@ def read_muszakpro_rows(
             ],
             schema=schema,
         )
-        if rows:
-            table_rows = rows
-            source_label = f"{schema}.{table_name}"
-            break
-        rows = optional_supabase_get(
-            table_name,
-            [
-                ("select", (
-                    "work_date,email,shift_text,warehouse,booking_code,courier_id,courier_name,"
-                    "serial,timestamp_text,source_row,fetched_at"
-                )),
-                ("work_date", f"gte.{start_date.isoformat()}"),
-                ("work_date", f"lte.{end_date.isoformat()}"),
-                ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
-                ("limit", str(int(limit))),
-            ],
-            schema=schema,
-        )
-        if rows:
-            table_rows = rows
-            source_label = f"{schema}.{table_name}"
-            break
+        if not rows:
+            rows = optional_supabase_get(
+                table_name,
+                [
+                    ("select", (
+                        "work_date,email,shift_text,warehouse,booking_code,courier_id,courier_name,"
+                        "serial,timestamp_text,source_row,fetched_at"
+                    )),
+                    ("work_date", f"gte.{start_date.isoformat()}"),
+                    ("work_date", f"lte.{end_date.isoformat()}"),
+                    ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
+                    ("limit", str(int(limit))),
+                ],
+                schema=schema,
+            )
+        source_counts.append(f"{schema}.{table_name}:{len(rows)}")
+        for row in rows:
+            key = (
+                clean_text(row.get("work_date"))[:10],
+                clean_text(row.get("email")).casefold(),
+                clean_text(row.get("shift_text")),
+                clean_text(row.get("warehouse")).upper(),
+                clean_text(row.get("booking_code")),
+            )
+            if key[0] and key[2]:
+                table_rows_by_key.setdefault(key, row)
+
+    table_rows = list(table_rows_by_key.values())
 
     print(
         "HUB_JOB_AUTOBOOKING_MUSZAKPRO_SOURCE "
-        f"source={source_label} rows={len(table_rows)} start={start_date.isoformat()} end={end_date.isoformat()}",
+        f"sources={','.join(source_counts)} merged_rows={len(table_rows)} "
+        f"start={start_date.isoformat()} end={end_date.isoformat()}",
         flush=True,
     )
 

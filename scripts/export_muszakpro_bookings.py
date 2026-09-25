@@ -7,7 +7,7 @@ import argparse
 import csv
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -175,11 +175,37 @@ def write_rows(rows: list[dict[str, Any]], output_path: Path, output_format: str
         raise ValueError(f"Ismeretlen formatum: {output_format}")
 
 
-def write_date_summary(rows: list[dict[str, Any]], output_path: Path) -> None:
+def date_range(start_date: str, end_date: str) -> list[str]:
+    if not start_date or not end_date:
+        return []
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if end < start:
+        return []
+    days = []
+    current = start
+    while current <= end:
+        days.append(current.isoformat())
+        current += timedelta(days=1)
+    return days
+
+
+def write_date_summary(rows: list[dict[str, Any]], output_path: Path, start_date: str, end_date: str) -> None:
     by_date: dict[str, dict[str, Any]] = {}
+    for work_date in date_range(start_date, end_date):
+        by_date[work_date] = {
+            "work_date": work_date,
+            "rows": 0,
+            "active": 0,
+            "cancelled": 0,
+            "other": 0,
+            "couriers": set(),
+            "emails": set(),
+        }
     for row in rows:
         work_date = clean_text(row.get("work_date")) or "-"
         status = clean_text(row.get("status")) or "-"
+        normalized_status = status.casefold()
         item = by_date.setdefault(
             work_date,
             {
@@ -193,9 +219,9 @@ def write_date_summary(rows: list[dict[str, Any]], output_path: Path) -> None:
             },
         )
         item["rows"] += 1
-        if status == "ACTIVE":
+        if normalized_status == "active":
             item["active"] += 1
-        elif status in {"CANCELLED", "DELETED"}:
+        elif normalized_status in {"cancelled", "deleted", "torolve", "törölve"}:
             item["cancelled"] += 1
         else:
             item["other"] += 1
@@ -227,19 +253,33 @@ def print_summary(
     output_path: Path,
     output_format: str,
     summary_output_path: Path,
+    start_date: str,
+    end_date: str,
 ) -> None:
     dates = sorted({clean_text(row.get("work_date")) for row in rows if clean_text(row.get("work_date"))})
+    date_counts: dict[str, int] = {}
+    for row in rows:
+        work_date = clean_text(row.get("work_date"))
+        if work_date:
+            date_counts[work_date] = date_counts.get(work_date, 0) + 1
+    missing_dates = [work_date for work_date in date_range(start_date, end_date) if date_counts.get(work_date, 0) == 0]
     statuses: dict[str, int] = {}
     for row in rows:
         status = clean_text(row.get("status")) or "-"
         statuses[status] = statuses.get(status, 0) + 1
     status_text = ",".join(f"{key}:{value}" for key, value in sorted(statuses.items())) or "-"
+    missing_preview = ",".join(missing_dates[:20])
+    if len(missing_dates) > 20:
+        missing_preview = f"{missing_preview},...(+{len(missing_dates) - 20})"
+    if not missing_preview:
+        missing_preview = "-"
     print(
         "MUSZAKPRO_BOOKINGS_EXPORT "
-        f"rows={len(rows)} format={output_format} output={output_path} "
+        f"rows={len(rows)} start={start_date or '-'} end={end_date or '-'} "
+        f"format={output_format} output={output_path} "
         f"summary_output={summary_output_path} "
         f"first_date={(dates[0] if dates else '-')} last_date={(dates[-1] if dates else '-')} "
-        f"statuses={status_text}",
+        f"statuses={status_text} missing_dates={len(missing_dates)} missing_preview={missing_preview}",
         flush=True,
     )
 
@@ -274,8 +314,8 @@ def main() -> int:
     output_path = Path(args.output)
     summary_output_path = Path(args.summary_output)
     write_rows(rows, output_path, args.format)
-    write_date_summary(rows, summary_output_path)
-    print_summary(rows, output_path, args.format, summary_output_path)
+    write_date_summary(rows, summary_output_path, args.start_date, args.end_date)
+    print_summary(rows, output_path, args.format, summary_output_path, args.start_date, args.end_date)
     return 0
 
 
