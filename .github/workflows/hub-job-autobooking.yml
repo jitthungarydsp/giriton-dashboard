@@ -175,6 +175,22 @@ jobs:
             --output-dir results/hub-job-autobooking/shift-auto-candidates \
             --skip-hub-sync
 
+      - name: HUB_JOB_AUTOBOOKING export booking sheets
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, booking sheet exports skipped."
+            exit 0
+          fi
+
+          python scripts/export_courier_hub_shift_bookings_sheet.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+          python scripts/export_muszakpro_booking_overview_sheet.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
       - name: HUB_JOB_AUTOBOOKING summary
         if: always()
         shell: bash
