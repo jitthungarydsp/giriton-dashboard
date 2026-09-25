@@ -148,6 +148,17 @@ def log_result(args: argparse.Namespace, status: str, message: str, response: An
         "shift_template_id": args.shift_template_id,
         "hub_response": response,
     }
+    if isinstance(response, dict):
+        for key in (
+            "blockKey",
+            "hubSlotFrom",
+            "matchDiffMinutes",
+            "matchKind",
+            "muszakproShiftStart",
+            "slotFrom",
+        ):
+            if key in response:
+                candidate[key] = response[key]
     try:
         log_giriton_booking_result(candidate, status, message)
     except Exception as exc:

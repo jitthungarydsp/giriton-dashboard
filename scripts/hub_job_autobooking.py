@@ -607,15 +607,22 @@ def book_one(
     match_diff: int,
 ) -> bool:
     log_args = args_for_log(row, block, base_url, dsp_id)
+    match_log_payload = {
+        "blockKey": block.block_key,
+        "shiftTemplateId": block.shift_template_id,
+        "slotFrom": block.slot_from,
+        "hubSlotFrom": block.slot_from,
+        "muszakproShiftStart": row.shift_start,
+        "matchKind": match_kind,
+        "matchDiffMinutes": match_diff,
+    }
     if dry_run:
-        log_result(log_args, "HUB_AUTOBOOK_DRY_RUN_OK", f"HUB_JOB_AUTOBOOKING dry-run {match_kind} full-day match.", {
-            "blockKey": block.block_key,
-            "shiftTemplateId": block.shift_template_id,
-            "slotFrom": block.slot_from,
-            "muszakproShiftStart": row.shift_start,
-            "matchKind": match_kind,
-            "matchDiffMinutes": match_diff,
-        })
+        log_result(
+            log_args,
+            "HUB_AUTOBOOK_DRY_RUN_OK",
+            f"HUB_JOB_AUTOBOOKING dry-run {match_kind} full-day match.",
+            match_log_payload,
+        )
         print(
             "HUB_JOB_AUTOBOOKING_DRY_RUN_BOOK "
             f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
@@ -634,8 +641,10 @@ def book_one(
     }
     response = hub_request("POST", url, json=request_body)
     payload = response_payload(response)
+    log_payload = dict(match_log_payload)
+    log_payload["hubResponse"] = payload
     if response.ok:
-        log_result(log_args, "COURIER_ADDED", "HUB_JOB_AUTOBOOKING API booking accepted.", payload)
+        log_result(log_args, "COURIER_ADDED", "HUB_JOB_AUTOBOOKING API booking accepted.", log_payload)
         print(
             "HUB_JOB_AUTOBOOKING_BOOKED "
             f"status={response.status_code} date={row.work_date} courier={row.courier_id} "
@@ -645,7 +654,7 @@ def book_one(
         )
         return True
 
-    log_result(log_args, "HUB_AUTOBOOK_ERROR", f"HTTP {response.status_code}", payload)
+    log_result(log_args, "HUB_AUTOBOOK_ERROR", f"HTTP {response.status_code}", log_payload)
     raise_for_response(response, "HUB_JOB_AUTOBOOKING assign")
     return False
 
