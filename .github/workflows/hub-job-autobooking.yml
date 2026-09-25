@@ -155,6 +155,7 @@ jobs:
             done
           }
 
+          run_with_retry python scripts/load_foglalasok_raw.py
           run_with_retry python scripts/load_muszakpro_bookings.py
 
       - name: HUB_JOB_AUTOBOOKING sync Courier Hub source tables

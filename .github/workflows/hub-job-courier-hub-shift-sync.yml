@@ -193,9 +193,14 @@ jobs:
             echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro bookings import skipped."
             exit 0
           fi
-          CMD=(python scripts/load_foglalasok_raw.py)
-          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then CMD+=(--dry-run); fi
-          "${CMD[@]}"
+          RAW_CMD=(python scripts/load_foglalasok_raw.py)
+          BOOKINGS_CMD=(python scripts/load_muszakpro_bookings.py)
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            RAW_CMD+=(--dry-run)
+            BOOKINGS_CMD+=(--dry-run)
+          fi
+          "${RAW_CMD[@]}"
+          "${BOOKINGS_CMD[@]}"
 
       - name: HUB_JOB refresh ops shift comparison
         continue-on-error: true
