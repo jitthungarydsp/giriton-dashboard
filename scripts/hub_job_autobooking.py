@@ -133,7 +133,7 @@ def normalize_db_time(value: Any) -> str:
     text = clean_text(value)
     if not text:
         return ""
-    match = re.search(r"\b(\d{1,2}):(\d{2})(?::\d{2})?\b", text)
+    match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?::\d{2})?(?!\d)", text)
     if not match:
         return ""
     return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}:00"
@@ -162,6 +162,21 @@ def diff_minutes(left: Any, right: Any) -> int | None:
 
 def shift_start_from_text(value: Any) -> str:
     return normalize_db_time(value)
+
+
+def normalize_muszakpro_warehouse(value: Any) -> str:
+    text = clean_text(value).upper()
+    if not text:
+        return ""
+    if "BUD1" in text:
+        return "BUD1"
+    if "BUD2" in text:
+        return "BUD2"
+    if text in {"1", "1.0"}:
+        return "BUD1"
+    if text in {"2", "2.0"}:
+        return "BUD2"
+    return text
 
 
 def normalize_lookup_text(value: Any) -> str:
@@ -295,9 +310,13 @@ def read_muszakpro_rows(
     )
 
     result: list[MuszakProRow] = []
+    rejected_counts: dict[str, int] = defaultdict(int)
+    rejected_samples: dict[str, str] = {}
     for row in table_rows:
         status = clean_text(row.get("status")).casefold()
         if status in {"cancelled", "deleted", "torolve", "törölve"} or clean_text(row.get("cancelled_at")):
+            rejected_counts["inactive_status"] += 1
+            rejected_samples.setdefault("inactive_status", json.dumps(row, ensure_ascii=False)[:300])
             continue
         shift_start = shift_start_from_text(row.get("shift_text"))
         email = clean_text(row.get("email")).casefold()
@@ -306,11 +325,25 @@ def read_muszakpro_rows(
         if identity is None and courier_name:
             identity = identities_by_name.get(normalize_lookup_text(courier_name))
         courier_id = int_or_none(row.get("courier_id")) or (identity.courier_id if identity else 0)
-        warehouse = clean_text(row.get("warehouse")).upper()
+        warehouse = normalize_muszakpro_warehouse(row.get("warehouse"))
         if not warehouse and identity:
             warehouse = identity.warehouse
         work_date = clean_text(row.get("work_date"))[:10]
-        if not work_date or not shift_start or not courier_id or warehouse not in {"BUD1", "BUD2"}:
+        if not work_date:
+            rejected_counts["missing_work_date"] += 1
+            rejected_samples.setdefault("missing_work_date", json.dumps(row, ensure_ascii=False)[:300])
+            continue
+        if not shift_start:
+            rejected_counts["missing_shift_start"] += 1
+            rejected_samples.setdefault("missing_shift_start", json.dumps(row, ensure_ascii=False)[:300])
+            continue
+        if not courier_id:
+            rejected_counts["missing_courier_id"] += 1
+            rejected_samples.setdefault("missing_courier_id", json.dumps(row, ensure_ascii=False)[:300])
+            continue
+        if warehouse not in {"BUD1", "BUD2"}:
+            rejected_counts["invalid_warehouse"] += 1
+            rejected_samples.setdefault("invalid_warehouse", json.dumps(row, ensure_ascii=False)[:300])
             continue
         result.append(
             MuszakProRow(
@@ -326,6 +359,18 @@ def read_muszakpro_rows(
                 source_row=int_or_none(row.get("source_row")) or 0,
                 fetched_at=clean_text(row.get("fetched_at")),
             )
+        )
+    print(
+        "HUB_JOB_AUTOBOOKING_MUSZAKPRO_FILTER "
+        f"accepted={len(result)} rejected={sum(rejected_counts.values())} "
+        f"reasons={','.join(f'{key}:{value}' for key, value in sorted(rejected_counts.items())) or '-'}",
+        flush=True,
+    )
+    for reason, sample in sorted(rejected_samples.items()):
+        print(
+            "HUB_JOB_AUTOBOOKING_MUSZAKPRO_FILTER_SAMPLE "
+            f"reason={reason} row={sample}",
+            flush=True,
         )
     return result
 
