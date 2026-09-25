@@ -10,7 +10,7 @@ on:
       days:
         description: "Hany napot kerjen le"
         required: true
-        default: "10"
+        default: "30"
       export_engine:
         description: "uidl = új gyors lekérés, robot = régi UI végignyomkodás"
         required: false
@@ -65,7 +65,7 @@ jobs:
           DAYS="${{ inputs.days }}"
           EXPORT_ENGINE="${{ inputs.export_engine }}"
           START_DATE="${START_DATE:-}"
-          DAYS="${DAYS:-10}"
+          DAYS="${DAYS:-30}"
           EXPORT_ENGINE="${EXPORT_ENGINE:-uidl}"
           if [ -z "$START_DATE" ]; then
             START_DATE="$(python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Europe/Budapest")).date().isoformat())')"

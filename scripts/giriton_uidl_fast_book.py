@@ -41,6 +41,10 @@ from scripts.parse_giriton_uidl_shift_list import (  # noqa: E402
 from resources.giriton_auto_booking import log_success_robotlog_write  # noqa: E402
 
 
+class AmbiguousShiftError(RuntimeError):
+    """More than one Giriton shift shares the requested warehouse and start."""
+
+
 def clean(value: object) -> str:
     return str(value or "").strip()
 
@@ -267,7 +271,7 @@ def find_target_shift(initial_payloads: list[Any], warehouse: str, shift_start: 
         raise RuntimeError(f"Nincs ilyen Giriton muszak az UIDL listaban: {target_warehouse} {target_start}.")
     if len(matches) > 1:
         printable = ", ".join(f"{m.get('node_id')} {m.get('title')}" for m in matches)
-        raise RuntimeError(f"Tobb azonos Giriton muszakot talaltam: {printable}")
+        raise AmbiguousShiftError(f"Tobb azonos Giriton muszakot talaltam: {printable}")
     return matches[0], hierarchy
 
 
@@ -493,7 +497,11 @@ def main() -> int:
         ]
         print(f"GIRITON_UIDL_FAST_INITIAL events={len(initial_events)} payloads={len(initial_payloads)}")
 
-        target_shift, hierarchy = find_target_shift(initial_payloads, warehouse, shift_start)
+        try:
+            target_shift, hierarchy = find_target_shift(initial_payloads, warehouse, shift_start)
+        except AmbiguousShiftError as error:
+            print(f"GIRITON_UIDL_FAST_BOOK_RESULT=SKIPPED_AMBIGUOUS_SHIFT reason={error}")
+            return 0
         print(
             "GIRITON_UIDL_FAST_TARGET "
             f"node={target_shift.get('node_id')} occupancy={target_shift.get('occupancy') or '-'} "

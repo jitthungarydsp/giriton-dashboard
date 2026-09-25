@@ -100,6 +100,21 @@ def is_recent_running_log(item: dict, now: datetime) -> bool:
     return 0 <= age_minutes <= RUNNING_LOG_BLOCK_MINUTES
 
 
+def ambiguous_shift_keys(giriton_df: pd.DataFrame) -> set[tuple[str, str, str]]:
+    """Find start times with different Giriton end times in the same warehouse."""
+    if giriton_df.empty or not {"work_date", "warehouse", "start_time", "end_time"}.issubset(giriton_df):
+        return set()
+    shifts: dict[tuple[str, str, str], set[str]] = {}
+    for row in giriton_df.to_dict("records"):
+        work_date = foglalas._date_from_value(row.get("work_date"))
+        warehouse = clean(row.get("warehouse")).upper()
+        start = foglalas._normalize_time(row.get("start_time"))
+        end = foglalas._normalize_time(row.get("end_time"))
+        if work_date and warehouse and start and end:
+            shifts.setdefault((work_date.isoformat(), warehouse, start), set()).add(end)
+    return {key for key, ends in shifts.items() if len(ends) > 1}
+
+
 def load_exact_matches(
     start_date: date,
     end_date: date,
@@ -195,6 +210,24 @@ def load_exact_matches(
         & rows["_work_date"].notna()
         & (rows["_work_date"] >= first_bookable_date)
     ].copy()
+    ambiguous = ambiguous_shift_keys(giriton_df)
+    if ambiguous and not rows.empty:
+        before_ambiguity_filter = len(rows)
+        rows = rows[
+            ~rows.apply(
+                lambda row: (
+                    row["_work_date"].isoformat(),
+                    clean(row.get("Raktár")).upper(),
+                    foglalas._normalize_time(row.get("_target_shift_start")),
+                ) in ambiguous,
+                axis=1,
+            )
+        ].copy()
+        print(
+            "AUTO_EXACT_DIAG "
+            f"ambiguous_shift_times={len(ambiguous)} "
+            f"skipped_ambiguous_rows={before_ambiguity_filter - len(rows)}"
+        )
     print(
         "AUTO_EXACT_DIAG "
         f"bookable_exact_from_{first_bookable_date}={len(rows)}"
@@ -284,7 +317,7 @@ def main() -> None:
     )
     parser.add_argument("--start-date", default="", help="Kezdő dátum YYYY-MM-DD. Alap: ma.")
     parser.add_argument("--end-date", default="", help="Záró dátum YYYY-MM-DD. Alap: ma + lookahead-days.")
-    parser.add_argument("--lookahead-days", type=int, default=5)
+    parser.add_argument("--lookahead-days", type=int, default=30)
     parser.add_argument("--min-lead-hours", type=int, default=0)
     parser.add_argument("--tolerance-minutes", type=int, default=0)
     parser.add_argument("--limit", type=int, default=50)
