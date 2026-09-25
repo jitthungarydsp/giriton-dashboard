@@ -120,7 +120,21 @@ jobs:
             echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro bookings import skipped."
             exit 0
           fi
-          python scripts/load_foglalasok_raw.py
+
+          run_with_retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              local exit_code="$?"
+              echo "Sheet command failed with exit_code=$exit_code attempt=$attempt/3"
+              if [ "$attempt" = "3" ]; then
+                return "$exit_code"
+              fi
+              sleep 75
+            done
+          }
+
+          run_with_retry python scripts/load_foglalasok_raw.py
 
       - name: HUB_JOB_AUTOBOOKING sync Courier Hub source tables
         shell: bash
