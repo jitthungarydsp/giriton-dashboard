@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from resources.supabase_raw import get_supabase_config, raise_for_supabase_error
 
 
 DEFAULT_OUTPUT = "results/muszakpro-bookings.csv"
+DEFAULT_SUMMARY_OUTPUT = "results/muszakpro-bookings-by-date.csv"
 MUSZAKPRO_SCHEMA = "muszakpro"
 TABLE_NAME = "bookings"
 
@@ -173,7 +175,59 @@ def write_rows(rows: list[dict[str, Any]], output_path: Path, output_format: str
         raise ValueError(f"Ismeretlen formatum: {output_format}")
 
 
-def print_summary(rows: list[dict[str, Any]], output_path: Path, output_format: str) -> None:
+def write_date_summary(rows: list[dict[str, Any]], output_path: Path) -> None:
+    by_date: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        work_date = clean_text(row.get("work_date")) or "-"
+        status = clean_text(row.get("status")) or "-"
+        item = by_date.setdefault(
+            work_date,
+            {
+                "work_date": work_date,
+                "rows": 0,
+                "active": 0,
+                "cancelled": 0,
+                "other": 0,
+                "couriers": set(),
+                "emails": set(),
+            },
+        )
+        item["rows"] += 1
+        if status == "ACTIVE":
+            item["active"] += 1
+        elif status in {"CANCELLED", "DELETED"}:
+            item["cancelled"] += 1
+        else:
+            item["other"] += 1
+        if row.get("courier_id"):
+            item["couriers"].add(str(row.get("courier_id")))
+        if clean_text(row.get("email")):
+            item["emails"].add(clean_text(row.get("email")).casefold())
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8-sig", newline="") as file:
+        fieldnames = ["work_date", "rows", "active", "cancelled", "other", "couriers", "emails"]
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for work_date in sorted(by_date):
+            item = by_date[work_date]
+            writer.writerow({
+                "work_date": item["work_date"],
+                "rows": item["rows"],
+                "active": item["active"],
+                "cancelled": item["cancelled"],
+                "other": item["other"],
+                "couriers": len(item["couriers"]),
+                "emails": len(item["emails"]),
+            })
+
+
+def print_summary(
+    rows: list[dict[str, Any]],
+    output_path: Path,
+    output_format: str,
+    summary_output_path: Path,
+) -> None:
     dates = sorted({clean_text(row.get("work_date")) for row in rows if clean_text(row.get("work_date"))})
     statuses: dict[str, int] = {}
     for row in rows:
@@ -183,16 +237,28 @@ def print_summary(rows: list[dict[str, Any]], output_path: Path, output_format: 
     print(
         "MUSZAKPRO_BOOKINGS_EXPORT "
         f"rows={len(rows)} format={output_format} output={output_path} "
+        f"summary_output={summary_output_path} "
         f"first_date={(dates[0] if dates else '-')} last_date={(dates[-1] if dates else '-')} "
         f"statuses={status_text}",
         flush=True,
     )
 
 
+def apply_default_date_window(args: argparse.Namespace) -> None:
+    if args.all_dates:
+        return
+    year = date.today().year
+    if not args.start_date:
+        args.start_date = f"{year}-09-01"
+    if not args.end_date:
+        args.end_date = f"{year}-10-31"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="muszakpro.bookings teljes export.")
-    parser.add_argument("--start-date", default="", help="Opcionalis kezdo datum YYYY-MM-DD.")
-    parser.add_argument("--end-date", default="", help="Opcionalis zaro datum YYYY-MM-DD.")
+    parser.add_argument("--start-date", default="", help="Opcionalis kezdo datum YYYY-MM-DD. Alap: aktualis ev 09-01.")
+    parser.add_argument("--end-date", default="", help="Opcionalis zaro datum YYYY-MM-DD. Alap: aktualis ev 10-31.")
+    parser.add_argument("--all-dates", action="store_true", help="Teljes tabla datum szures nelkul.")
     parser.add_argument("--email", default="", help="Opcionalis email szuro.")
     parser.add_argument("--courier-id", type=int, default=0, help="Opcionalis courier_id szuro.")
     parser.add_argument("--status", default="", help="Opcionalis statusz szuro, pl. ACTIVE.")
@@ -200,12 +266,16 @@ def main() -> int:
     parser.add_argument("--page-size", type=int, default=1000)
     parser.add_argument("--format", choices=["csv", "json", "jsonl"], default="csv")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
+    parser.add_argument("--summary-output", default=DEFAULT_SUMMARY_OUTPUT)
     args = parser.parse_args()
 
+    apply_default_date_window(args)
     rows = read_bookings(args)
     output_path = Path(args.output)
+    summary_output_path = Path(args.summary_output)
     write_rows(rows, output_path, args.format)
-    print_summary(rows, output_path, args.format)
+    write_date_summary(rows, summary_output_path)
+    print_summary(rows, output_path, args.format, summary_output_path)
     return 0
 
 
