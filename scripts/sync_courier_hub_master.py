@@ -358,20 +358,33 @@ def supabase_upsert(rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-def supabase_upsert_identities(rows: list[dict[str, Any]]) -> int:
+def dedupe_rows(rows: list[dict[str, Any]], key_columns: list[str]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for row in rows:
+        key = tuple(row.get(column) for column in key_columns)
+        if all(value is not None for value in key):
+            by_key[key] = row
+    return list(by_key.values())
+
+
+def supabase_upsert_identities(rows: list[dict[str, Any]], *, chunk_size: int = 500) -> int:
     if not rows:
         return 0
 
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    response = requests.post(
-        f"{supabase_url}/rest/v1/{IDENTITY_TABLE}",
-        headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
-        params={"on_conflict": "courier_id,dsp_id"},
-        json=rows,
-        timeout=60,
-    )
-    raise_for_response(response, f"{IDENTITY_TABLE} upsert")
-    return len(rows)
+    written = 0
+    for index in range(0, len(rows), chunk_size):
+        chunk = rows[index:index + chunk_size]
+        response = requests.post(
+            f"{supabase_url}/rest/v1/{IDENTITY_TABLE}",
+            headers=supabase_headers("resolution=merge-duplicates,return=minimal"),
+            params={"on_conflict": "courier_id,dsp_id"},
+            json=chunk,
+            timeout=60,
+        )
+        raise_for_response(response, f"{IDENTITY_TABLE} upsert")
+        written += len(chunk)
+    return written
 
 
 def main() -> int:
@@ -445,10 +458,14 @@ def main() -> int:
                 if status_code >= 400 or not has_next_page(payload, len(items), page, args.page_size):
                     break
 
+    identity_rows_deduped = dedupe_rows(identity_rows, ["courier_id", "dsp_id"])
+
     if args.dry_run:
         print(
             f"DRY_RUN courier_hub_master_rows={len(rows)} "
-            f"identity_rows={len(identity_rows)} failures={failures}",
+            f"identity_rows={len(identity_rows)} "
+            f"identity_rows_deduped={len(identity_rows_deduped)} "
+            f"failures={failures}",
             flush=True,
         )
         return 1 if failures else 0
@@ -456,7 +473,7 @@ def main() -> int:
     written = supabase_upsert(rows)
     identities_written = 0
     try:
-        identities_written = supabase_upsert_identities(identity_rows)
+        identities_written = supabase_upsert_identities(identity_rows_deduped)
     except RuntimeError as exc:
         if is_missing_table_error(exc):
             print(
@@ -467,7 +484,8 @@ def main() -> int:
             raise
     print(
         f"COURIER_HUB_MASTER_SYNC rows={len(rows)} written={written} "
-        f"identity_rows={len(identity_rows)} identities_written={identities_written} "
+        f"identity_rows={len(identity_rows)} identity_rows_deduped={len(identity_rows_deduped)} "
+        f"identities_written={identities_written} "
         f"failures={failures}",
         flush=True,
     )
