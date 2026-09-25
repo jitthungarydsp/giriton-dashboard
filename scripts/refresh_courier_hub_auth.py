@@ -27,6 +27,8 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from refresh_courier_hub_auth_no_browser import jwt_is_expired, jwt_expiry_text
+
 
 DEFAULT_BASE_URL = "https://courier-hub.kifli.hu/"
 DEFAULT_PROBE_PATH = (
@@ -695,6 +697,11 @@ def auth_payload_from_driver(driver: webdriver.Chrome) -> dict[str, Any]:
     }
 
 
+def has_fresh_bearer(payload: dict[str, Any]) -> bool:
+    authorization = str((payload.get("headers") or {}).get("Authorization") or "").strip()
+    return bool(authorization) and not jwt_is_expired(authorization)
+
+
 def probe_auth_payload(driver: webdriver.Chrome, base_url: str, probe_path: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     header_probe_result = probe_api_with_headers(
         base_url,
@@ -764,7 +771,7 @@ def main() -> int:
         )
         header_probe_status = header_probe_result.get("status")
         browser_probe_status = browser_probe_result.get("status")
-        if header_probe_status == 200:
+        if header_probe_status == 200 and has_fresh_bearer(payload):
             debug(
                 "COURIER_HUB_AUTH_REFRESH=OK "
                 f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'} "
@@ -810,11 +817,13 @@ def main() -> int:
         browser_probe_status = browser_probe_result.get("status")
         header_probe_status = header_probe_result.get("status")
         probe_status = header_probe_status or browser_probe_status
-        if header_probe_status != 200:
+        if header_probe_status != 200 or not has_fresh_bearer(payload):
             save_debug_artifacts(driver, args.debug_dir, "auth_probe_failed")
+            authorization = (payload.get("headers") or {}).get("Authorization") or ""
             raise RuntimeError(
                 "Courier Hub auth refresh did not pass API probe. "
                 f"Header probe status={header_probe_status or header_probe_result.get('error') or '-'}, "
+                f"access_token_expires={jwt_expiry_text(authorization)}, "
                 f"browser probe status={browser_probe_status or browser_probe_result.get('error') or '-'}, "
                 f"authorization={'yes' if payload.get('headers', {}).get('Authorization') else 'no'}, "
                 f"cookies={'yes' if payload.get('headers', {}).get('Cookie') else 'no'}, "
