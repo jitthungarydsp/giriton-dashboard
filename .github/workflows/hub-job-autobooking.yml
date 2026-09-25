@@ -15,6 +15,10 @@ on:
         description: "Maximum hany futar-napot foglaljon egy futasban."
         required: false
         default: "20"
+      courier_ids:
+        description: "Opcionális célzott courier_id lista vesszővel elválasztva. Üresen: minden futár."
+        required: false
+        default: ""
       tolerance_minutes:
         description: "Alternativ egyezes turese percben."
         required: false
@@ -29,7 +33,7 @@ on:
         default: "true"
 
 concurrency:
-  group: hub-job-autobooking
+  group: hub-job-autobooking-${{ github.event.inputs.start_date || 'auto' }}
   cancel-in-progress: false
 
 jobs:
@@ -86,6 +90,7 @@ jobs:
           START_DATE="${{ inputs.start_date }}"
           DAYS="${{ inputs.days }}"
           MAX_COURIER_DAYS="${{ inputs.max_courier_days }}"
+          COURIER_IDS="${{ inputs.courier_ids }}"
           TOLERANCE_MINUTES="${{ inputs.tolerance_minutes }}"
           MIN_GAP_MINUTES="${{ inputs.min_gap_minutes }}"
           DRY_RUN="${{ inputs.dry_run }}"
@@ -110,6 +115,7 @@ jobs:
           echo "days=$DAYS" >> "$GITHUB_OUTPUT"
           echo "hub_lookahead_days=$HUB_LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
           echo "max_courier_days=$MAX_COURIER_DAYS" >> "$GITHUB_OUTPUT"
+          echo "courier_ids=$COURIER_IDS" >> "$GITHUB_OUTPUT"
           echo "tolerance_minutes=$TOLERANCE_MINUTES" >> "$GITHUB_OUTPUT"
           echo "min_gap_minutes=$MIN_GAP_MINUTES" >> "$GITHUB_OUTPUT"
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
@@ -119,6 +125,7 @@ jobs:
           echo "HUB_JOB_AUTOBOOKING_DAYS=$DAYS"
           echo "HUB_JOB_AUTOBOOKING_HUB_LOOKAHEAD_DAYS=$HUB_LOOKAHEAD_DAYS"
           echo "HUB_JOB_AUTOBOOKING_MAX_COURIER_DAYS=$MAX_COURIER_DAYS"
+          echo "HUB_JOB_AUTOBOOKING_COURIER_IDS=$COURIER_IDS"
           echo "HUB_JOB_AUTOBOOKING_TOLERANCE_MINUTES=$TOLERANCE_MINUTES"
           echo "HUB_JOB_AUTOBOOKING_MIN_GAP_MINUTES=$MIN_GAP_MINUTES"
           echo "HUB_JOB_AUTOBOOKING_DRY_RUN=$DRY_RUN"
@@ -184,6 +191,7 @@ jobs:
             --max-courier-days "${{ steps.window.outputs.max_courier_days }}"
             --tolerance-minutes "${{ steps.window.outputs.tolerance_minutes }}"
             --min-gap-minutes "${{ steps.window.outputs.min_gap_minutes }}"
+            --courier-ids "${{ steps.window.outputs.courier_ids }}"
             --failure-output results/hub-job-autobooking/failures.json
           )
 

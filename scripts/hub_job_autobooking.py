@@ -670,6 +670,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tolerance-minutes", type=int, default=30)
     parser.add_argument("--min-gap-minutes", type=int, default=270)
     parser.add_argument(
+        "--courier-ids",
+        default="",
+        help="Optional comma separated courier_id allowlist for targeted courier-day booking.",
+    )
+    parser.add_argument(
         "--failure-output",
         default="results/hub-job-autobooking/failures.json",
         help="JSON output for courier-days that were not bookable.",
@@ -685,6 +690,11 @@ def main() -> int:
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
     end_date = start_date + timedelta(days=max(int(args.days), 1) - 1)
     dry_run = bool(args.dry_run or not args.live)
+    target_courier_ids = {
+        int(parsed)
+        for value in re.split(r"[\s,;]+", clean_text(args.courier_ids))
+        if (parsed := int_or_none(value))
+    }
 
     identities_by_email, identities_by_name = read_courier_identities(args.dsp_id, args.source_limit)
     muszakpro_rows = read_muszakpro_rows(
@@ -694,6 +704,11 @@ def main() -> int:
         identities_by_email,
         identities_by_name,
     )
+    if target_courier_ids:
+        muszakpro_rows = [
+            row for row in muszakpro_rows
+            if int(row.courier_id) in target_courier_ids
+        ]
     blocks = read_hub_blocks(start_date, end_date, args.dsp_id, args.source_limit)
     existing_subscriptions = read_existing_subscriptions(start_date, end_date, args.dsp_id, args.source_limit)
 
@@ -708,6 +723,7 @@ def main() -> int:
     print(
         "HUB_JOB_AUTOBOOKING_START "
         f"start={start_date.isoformat()} end={end_date.isoformat()} dry_run={dry_run} "
+        f"target_couriers={','.join(str(value) for value in sorted(target_courier_ids)) or '-'} "
         f"identities={len(identities_by_email)} muszakpro_rows={len(muszakpro_rows)} "
         f"hub_blocks={len(blocks)} existing_subscriptions={len(existing_subscriptions)}",
         flush=True,
