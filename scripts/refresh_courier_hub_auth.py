@@ -602,17 +602,12 @@ def login_if_needed(driver: webdriver.Chrome, username: str, password: str, wait
     try:
         wait.until(lambda current_driver: not visible_password_inputs(current_driver))
     except TimeoutException:
-        if click_login_submit(driver):
-            try:
-                wait.until(lambda current_driver: not visible_password_inputs(current_driver))
-                time.sleep(3)
-                return
-            except TimeoutException:
-                pass
         diagnostic = login_diagnostic_text(driver)
         if diagnostic:
             diagnostics["error_text"] = diagnostic
             debug(f"COURIER_HUB_AUTH_LOGIN_ERROR_TEXT={diagnostic}")
+        else:
+            debug("COURIER_HUB_AUTH_LOGIN_ERROR_TEXT=-")
         debug("COURIER_HUB_AUTH_LOGIN_WAIT=password_still_visible")
         diagnostics["password_still_visible"] = True
         save_debug_artifacts(driver, debug_dir, "login_failed")
