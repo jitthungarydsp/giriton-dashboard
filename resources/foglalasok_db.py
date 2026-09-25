@@ -24,6 +24,11 @@ FOGLALASOK_TABLE_CANDIDATES = [
     "raw_muszakpro_bookings",
     "foglalasok_raw",
 ]
+FOGLALASOK_READ_TABLE_CANDIDATES = [
+    ("muszakpro", "bookings"),
+    ("public", "raw_muszakpro_bookings"),
+    ("public", "foglalasok_raw"),
+]
 
 
 def clean(value):
@@ -166,6 +171,17 @@ def get_headers():
     return supabase_url, {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
+    }
+
+
+def headers_for_schema(headers, schema):
+    if not schema or schema == "public":
+        return headers
+
+    return {
+        **headers,
+        "Accept-Profile": schema,
+        "Content-Profile": schema,
     }
 
 
@@ -993,7 +1009,8 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
 
     rows = []
 
-    for table_name in FOGLALASOK_TABLE_CANDIDATES:
+    for schema, table_name in FOGLALASOK_READ_TABLE_CANDIDATES:
+        request_headers = headers_for_schema(headers, schema)
         filters = build_filters(
             select_fields
         )
@@ -1003,7 +1020,7 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
         )
         response = requests.get(
             endpoint,
-            headers=headers,
+            headers=request_headers,
             timeout=60,
         )
 
@@ -1019,7 +1036,7 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
                 )
                 response = requests.get(
                     endpoint,
-                    headers=headers,
+                    headers=request_headers,
                     timeout=60,
                 )
                 if response.status_code != 400:
@@ -1040,7 +1057,6 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
             "shift_text",
             "warehouse",
             "booking_code",
-            "courier_id",
         ]
         if column in df.columns
     ]
