@@ -81,18 +81,28 @@ class HubBlock:
     free_slots: int
 
 
-def supabase_headers() -> tuple[str, dict[str, str]]:
+def supabase_headers(schema: str = "public") -> tuple[str, dict[str, str]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
         raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.")
-    return supabase_url, {
+    headers = {
         "apikey": service_role_key,
         "Authorization": f"Bearer {service_role_key}",
     }
+    if schema and schema != "public":
+        headers["Accept-Profile"] = schema
+        headers["Content-Profile"] = schema
+    return supabase_url, headers
 
 
-def supabase_get(table: str, params: dict[str, str] | list[tuple[str, str]], *, timeout: int = 60) -> list[dict[str, Any]]:
-    supabase_url, headers = supabase_headers()
+def supabase_get(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    *,
+    schema: str = "public",
+    timeout: int = 60,
+) -> list[dict[str, Any]]:
+    supabase_url, headers = supabase_headers(schema=schema)
     response = requests.get(
         f"{supabase_url}/rest/v1/{table}",
         headers=headers,
@@ -104,9 +114,14 @@ def supabase_get(table: str, params: dict[str, str] | list[tuple[str, str]], *, 
     return payload if isinstance(payload, list) else []
 
 
-def optional_supabase_get(table: str, params: dict[str, str] | list[tuple[str, str]]) -> list[dict[str, Any]]:
+def optional_supabase_get(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    *,
+    schema: str = "public",
+) -> list[dict[str, Any]]:
     try:
-        return supabase_get(table, params)
+        return supabase_get(table, params, schema=schema)
     except requests.HTTPError as exc:
         text = str(exc).lower()
         if "could not find" in text or "column" in text or "pgrst" in text:
@@ -226,7 +241,12 @@ def read_muszakpro_rows(
         "serial,timestamp_text,source_row,fetched_at,status,cancelled_at"
     )
     table_rows = []
-    for table_name in ("raw_muszakpro_bookings", "foglalasok_raw"):
+    source_label = "-"
+    for schema, table_name in (
+        ("muszakpro", "bookings"),
+        ("public", "raw_muszakpro_bookings"),
+        ("public", "foglalasok_raw"),
+    ):
         rows = optional_supabase_get(
             table_name,
             [
@@ -236,9 +256,11 @@ def read_muszakpro_rows(
                 ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
                 ("limit", str(int(limit))),
             ],
+            schema=schema,
         )
         if rows:
             table_rows = rows
+            source_label = f"{schema}.{table_name}"
             break
         rows = optional_supabase_get(
             table_name,
@@ -252,10 +274,18 @@ def read_muszakpro_rows(
                 ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
                 ("limit", str(int(limit))),
             ],
+            schema=schema,
         )
         if rows:
             table_rows = rows
+            source_label = f"{schema}.{table_name}"
             break
+
+    print(
+        "HUB_JOB_AUTOBOOKING_MUSZAKPRO_SOURCE "
+        f"source={source_label} rows={len(table_rows)} start={start_date.isoformat()} end={end_date.isoformat()}",
+        flush=True,
+    )
 
     result: list[MuszakProRow] = []
     for row in table_rows:
