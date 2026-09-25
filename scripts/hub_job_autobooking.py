@@ -9,6 +9,7 @@ alternative open Courier Hub shift block at the same warehouse.
 from __future__ import annotations
 
 import argparse
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -396,6 +397,7 @@ def group_is_exact_full_day(
     existing_subscriptions: set[tuple[str, int, str, str]],
     planned_by_block: dict[str, int],
     tolerance_minutes: int,
+    min_gap_minutes: int,
 ) -> tuple[bool, str, list[tuple[MuszakProRow, HubBlock, bool, str, int]]]:
     shift_rows = unique_shift_rows(rows)
     if len(shift_rows) < 2:
@@ -460,14 +462,103 @@ def group_is_exact_full_day(
 
         if selected is None:
             reason = rejected_reasons[0] if rejected_reasons else f"missing_hub_block {row.warehouse} {row.shift_start}"
-            return False, reason, []
+            return False, reason, matches
 
         block, already_booked, match_kind, match_diff = selected
         used_block_keys.add(block.block_key)
         matches.append((row, block, already_booked, match_kind, match_diff))
 
+    gap_ok, gap_reason = selected_shift_gap_ok(matches, min_gap_minutes)
+    if not gap_ok:
+        return False, gap_reason, matches
+
     reason = "exact_full_day" if all(match[3] == "exact" for match in matches) else "alternative_full_day"
     return True, reason, matches
+
+
+def selected_shift_gap_ok(
+    matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]],
+    min_gap_minutes: int,
+) -> tuple[bool, str]:
+    required = max(int(min_gap_minutes), 0)
+    if required <= 0 or len(matches) < 2:
+        return True, ""
+    slots: list[tuple[int, str]] = []
+    for _row, block, _already_booked, _match_kind, _match_diff in matches:
+        minutes = time_minutes(block.slot_from)
+        if minutes is None:
+            return False, f"invalid_hub_slot {block.slot_from or '-'}"
+        slots.append((minutes, block.slot_from))
+    slots.sort()
+    for previous, current in zip(slots, slots[1:]):
+        gap = current[0] - previous[0]
+        if gap < required:
+            return False, (
+                f"min_gap_not_met {previous[1]}->{current[1]} "
+                f"gap={gap} required={required}"
+            )
+    return True, ""
+
+
+def failure_records_for_group(
+    rows: list[MuszakProRow],
+    reason: str,
+    matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]],
+) -> list[dict[str, Any]]:
+    run_at = datetime.now(timezone.utc).isoformat()
+    if matches:
+        return [
+            {
+                "run_at": run_at,
+                "work_date": row.work_date,
+                "courier_id": row.courier_id,
+                "courier_name": row.courier_name,
+                "email": row.email,
+                "warehouse": row.warehouse,
+                "muszakpro_shift_start": row.shift_start,
+                "hub_slot_from": block.slot_from,
+                "shift_template_id": block.shift_template_id,
+                "block_key": block.block_key,
+                "match_kind": match_kind,
+                "match_diff_minutes": match_diff,
+                "reason": reason,
+                "timestamp_text": row.timestamp_text,
+                "source_row": row.source_row,
+                "serial": row.serial,
+            }
+            for row, block, _already_booked, match_kind, match_diff in matches
+        ]
+
+    return [
+        {
+            "run_at": run_at,
+            "work_date": row.work_date,
+            "courier_id": row.courier_id,
+            "courier_name": row.courier_name,
+            "email": row.email,
+            "warehouse": row.warehouse,
+            "muszakpro_shift_start": row.shift_start,
+            "hub_slot_from": "",
+            "shift_template_id": "",
+            "block_key": "",
+            "match_kind": "",
+            "match_diff_minutes": "",
+            "reason": reason,
+            "timestamp_text": row.timestamp_text,
+            "source_row": row.source_row,
+            "serial": row.serial,
+        }
+        for row in unique_shift_rows(rows)
+    ]
+
+
+def write_failure_output(records: list[dict[str, Any]], output_path: str) -> None:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(records, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def args_for_log(row: MuszakProRow, block: HubBlock, base_url: str, dsp_id: int) -> argparse.Namespace:
@@ -544,11 +635,17 @@ def parse_args() -> argparse.Namespace:
     today = date.today()
     parser = argparse.ArgumentParser(description="HUB_JOB_AUTOBOOKING full-day Courier Hub booking.")
     parser.add_argument("--start-date", default=today.isoformat())
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=5)
     parser.add_argument("--dsp-id", type=int, default=8)
     parser.add_argument("--max-courier-days", type=int, default=20)
     parser.add_argument("--source-limit", type=int, default=50000)
     parser.add_argument("--tolerance-minutes", type=int, default=30)
+    parser.add_argument("--min-gap-minutes", type=int, default=270)
+    parser.add_argument(
+        "--failure-output",
+        default="results/hub-job-autobooking/failures.json",
+        help="JSON output for courier-days that were not bookable.",
+    )
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--live", action="store_true")
@@ -577,6 +674,7 @@ def main() -> int:
     selected_groups = 0
     booked_rows = 0
     skipped_groups = 0
+    failure_records: list[dict[str, Any]] = []
 
     print(
         "HUB_JOB_AUTOBOOKING_START "
@@ -595,10 +693,13 @@ def main() -> int:
             existing_subscriptions,
             planned_by_block,
             args.tolerance_minutes,
+            args.min_gap_minutes,
         )
         first = min(rows, key=lambda row: (parse_timestamp(row.timestamp_text), row.source_row or 999999))
         if not ok:
             skipped_groups += 1
+            if len(unique_shift_rows(rows)) >= 2:
+                failure_records.extend(failure_records_for_group(rows, reason, matches))
             print(
                 "HUB_JOB_AUTOBOOKING_SKIP "
                 f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
@@ -643,9 +744,11 @@ def main() -> int:
                 planned_by_block[block.block_key] += 1
                 booked_rows += 1
 
+    write_failure_output(failure_records, args.failure_output)
     print(
         "HUB_JOB_AUTOBOOKING_DONE "
-        f"selected_groups={selected_groups} booked_rows={booked_rows} skipped_groups={skipped_groups} dry_run={dry_run}",
+        f"selected_groups={selected_groups} booked_rows={booked_rows} skipped_groups={skipped_groups} "
+        f"failure_records={len(failure_records)} failure_output={args.failure_output} dry_run={dry_run}",
         flush=True,
     )
     return 0
