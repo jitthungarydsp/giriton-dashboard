@@ -84,6 +84,44 @@ def _date_from_value(value) -> date | None:
         return None
 
 
+def _datetime_from_value(value) -> datetime | None:
+    text = _clean(value)
+    if not text:
+        return None
+
+    normalized = re.sub(r"\s+", " ", text).strip()
+    for date_format in (
+        "%Y.%m.%d. %H:%M:%S",
+        "%Y.%m.%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%z",
+    ):
+        try:
+            return datetime.strptime(normalized, date_format).replace(tzinfo=None)
+        except ValueError:
+            pass
+
+    try:
+        parsed = pd.to_datetime(normalized)
+        if pd.isna(parsed):
+            return None
+        return parsed.to_pydatetime().replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _booking_time_sort_value(value) -> datetime:
+    return _datetime_from_value(value) or datetime(2099, 12, 31, 23, 59, 59)
+
+
+def _source_row_sort_value(value) -> int:
+    try:
+        return int(float(_clean(value)))
+    except ValueError:
+        return 999999999
+
+
 def _secret(name: str, default: str = "") -> str:
     value = os.getenv(name)
     if value:
@@ -1836,6 +1874,7 @@ def _build_summary_rows(
             rows.append(
                 {
                     "Dátum": work_date,
+                    "Foglalás ideje": _clean(source_record.get("timestamp_text")),
                     "Dolgozó": worker,
                     "Raktár": warehouse,
                     "shiftTemplateId": _row_shift_template_id(
@@ -1856,6 +1895,8 @@ def _build_summary_rows(
                     "Serial": _clean(source_record.get("serial")),
                     "Courier ID": _clean(source_record.get("courier_id")),
                     "E-mail": _clean(source_record.get("email")).casefold(),
+                    "_booking_time_sort": _booking_time_sort_value(source_record.get("timestamp_text")),
+                    "_source_row_sort": _source_row_sort_value(source_record.get("source_row")),
                 }
             )
 
@@ -1876,6 +1917,7 @@ def _build_summary_rows(
             rows.append(
                 {
                     "Dátum": work_date,
+                    "Foglalás ideje": "",
                     "Dolgozó": worker,
                     "Raktár": warehouse,
                     "shiftTemplateId": _row_shift_template_id(
@@ -1894,10 +1936,29 @@ def _build_summary_rows(
                     "Serial": "",
                     "Courier ID": _clean(booked_record.get("courier_id")),
                     "E-mail": _clean(booked_record.get("email")).casefold(),
+                    "_booking_time_sort": _booking_time_sort_value(""),
+                    "_source_row_sort": 999999999,
                 }
             )
 
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+
+    result["_sort_date"] = result["Dátum"].apply(_date_from_value)
+    result["_sort_muszakpro"] = result["MűszakPro"].apply(lambda value: _time_minutes(value) or 999999)
+    result = result.sort_values(
+        [
+            "_booking_time_sort",
+            "_source_row_sort",
+            "_sort_date",
+            "Dolgozó",
+            "_sort_muszakpro",
+            "Serial",
+        ],
+        na_position="last",
+    )
+    return result.drop(columns=["_booking_time_sort", "_source_row_sort", "_sort_date", "_sort_muszakpro"], errors="ignore")
 
 
 def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) -> None:
@@ -3692,6 +3753,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             table_df,
             [
                 "Dátum",
+                "Foglalás ideje",
                 "Dolgozó",
                 "Raktár",
                 "shiftTemplateId",
@@ -3716,6 +3778,7 @@ def _render_mass_view(summary_df: pd.DataFrame) -> None:
             failed_df,
             [
                 "Dátum",
+                "Foglalás ideje",
                 "Dolgozó",
                 "Raktár",
                 "shiftTemplateId",

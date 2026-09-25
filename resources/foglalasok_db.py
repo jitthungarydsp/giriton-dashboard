@@ -961,9 +961,12 @@ def upsert_foglalasok_rows(values):
 @st.cache_data(show_spinner=False, ttl=300)
 def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
     supabase_url, headers = get_headers()
-    base_select = (
+    minimal_select = (
         "work_date,email,shift_text,warehouse,booking_code,"
         "courier_id,courier_name,serial,fetched_at"
+    )
+    base_select = (
+        f"{minimal_select},timestamp_text,source_row"
     )
     select_fields = f"{base_select},status,cancelled_at"
 
@@ -1007,19 +1010,20 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
         if is_missing_table_response(response):
             continue
 
-        if response.status_code == 400 and "status" in response.text.lower():
-            filters = build_filters(
-                base_select
-            )
-            endpoint = (
-                f"{supabase_url}/rest/v1/{table_name}"
-                f"?{'&'.join(filters)}"
-            )
-            response = requests.get(
-                endpoint,
-                headers=headers,
-                timeout=60,
-            )
+        if response.status_code == 400:
+            for fallback_select in (base_select, minimal_select):
+                filters = build_filters(fallback_select)
+                endpoint = (
+                    f"{supabase_url}/rest/v1/{table_name}"
+                    f"?{'&'.join(filters)}"
+                )
+                response = requests.get(
+                    endpoint,
+                    headers=headers,
+                    timeout=60,
+                )
+                if response.status_code != 400:
+                    break
 
         raise_for_supabase_error(response)
         rows.extend(response.json())
