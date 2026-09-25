@@ -667,9 +667,8 @@ def main() -> int:
         flush=True,
     )
 
+    max_courier_days = max(int(args.max_courier_days), 1)
     for (_work_date, _courier_id), rows in groups:
-        if selected_groups >= max(int(args.max_courier_days), 1):
-            break
         ok, reason, matches = group_is_exact_full_day(
             rows,
             blocks,
@@ -701,6 +700,18 @@ def main() -> int:
                 "HUB_JOB_AUTOBOOKING_SKIP "
                 f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
                 "reason=already_fully_booked",
+                flush=True,
+            )
+            continue
+
+        if selected_groups >= max_courier_days:
+            skipped_groups += 1
+            limit_reason = f"max_courier_days_reached limit={max_courier_days}"
+            failure_records.extend(failure_records_for_group(rows, limit_reason, matches))
+            print(
+                "HUB_JOB_AUTOBOOKING_SKIP "
+                f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
+                f"reason={limit_reason}",
                 flush=True,
             )
             continue
