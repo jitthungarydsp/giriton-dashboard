@@ -115,11 +115,89 @@ def _booking_time_sort_value(value) -> datetime:
     return _datetime_from_value(value) or datetime(2099, 12, 31, 23, 59, 59)
 
 
+def _booking_code_datetime(value, work_date=None) -> datetime | None:
+    text = _clean(value)
+    match = re.search(r"\b(\d{2})(\d{2})[_-](\d{2})(\d{2})\b", text)
+    if not match:
+        return None
+
+    work_day = _date_from_value(work_date)
+    year = work_day.year if work_day else datetime.now().year
+    try:
+        return datetime(
+            year,
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+            int(match.group(4)),
+        )
+    except ValueError:
+        return None
+
+
+def _booking_time_or_code_sort_value(timestamp_value, booking_code=None, work_date=None) -> datetime:
+    return (
+        _datetime_from_value(timestamp_value)
+        or _booking_code_datetime(booking_code, work_date)
+        or datetime(2099, 12, 31, 23, 59, 59)
+    )
+
+
+def _booking_time_display(timestamp_value, booking_code=None, work_date=None) -> str:
+    text = _clean(timestamp_value)
+    if text:
+        return text
+
+    parsed = _booking_code_datetime(booking_code, work_date)
+    if not parsed:
+        return ""
+
+    return f"{parsed.year}.{parsed.month:02d}.{parsed.day:02d}. {parsed.hour}:{parsed.minute:02d}"
+
+
 def _source_row_sort_value(value) -> int:
     try:
         return int(float(_clean(value)))
     except ValueError:
         return 999999999
+
+
+def _sort_summary_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    rows = df.copy()
+    if "Foglalás ideje" not in rows.columns:
+        rows["Foglalás ideje"] = ""
+    if "_booking_time_sort" not in rows.columns:
+        rows["_booking_time_sort"] = rows.apply(
+            lambda row: _booking_time_or_code_sort_value(
+                row.get("Foglalás ideje"),
+                row.get("Foglalási kód"),
+                row.get("Dátum"),
+            ),
+            axis=1,
+        )
+    if "_source_row_sort" not in rows.columns:
+        rows["_source_row_sort"] = 999999999
+
+    rows["_sort_date"] = rows["Dátum"].apply(_date_from_value) if "Dátum" in rows.columns else None
+    rows["_sort_muszakpro"] = (
+        rows["MűszakPro"].apply(lambda value: _time_minutes(value) or 999999)
+        if "MűszakPro" in rows.columns
+        else 999999
+    )
+    return rows.sort_values(
+        [
+            "_booking_time_sort",
+            "_source_row_sort",
+            "_sort_date",
+            "Dolgozó",
+            "_sort_muszakpro",
+            "Serial",
+        ],
+        na_position="last",
+    ).drop(columns=["_sort_date", "_sort_muszakpro"], errors="ignore")
 
 
 def _secret(name: str, default: str = "") -> str:
@@ -1874,7 +1952,12 @@ def _build_summary_rows(
             rows.append(
                 {
                     "Dátum": work_date,
-                    "Foglalás ideje": _clean(source_record.get("timestamp_text")),
+                    "Foglalás ideje": _booking_time_display(
+                        source_record.get("timestamp_text"),
+                        source_record.get("booking_code"),
+                        work_date,
+                    ),
+                    "Foglalási kód": _clean(source_record.get("booking_code")),
                     "Dolgozó": worker,
                     "Raktár": warehouse,
                     "shiftTemplateId": _row_shift_template_id(
@@ -1895,7 +1978,11 @@ def _build_summary_rows(
                     "Serial": _clean(source_record.get("serial")),
                     "Courier ID": _clean(source_record.get("courier_id")),
                     "E-mail": _clean(source_record.get("email")).casefold(),
-                    "_booking_time_sort": _booking_time_sort_value(source_record.get("timestamp_text")),
+                    "_booking_time_sort": _booking_time_or_code_sort_value(
+                        source_record.get("timestamp_text"),
+                        source_record.get("booking_code"),
+                        work_date,
+                    ),
                     "_source_row_sort": _source_row_sort_value(source_record.get("source_row")),
                 }
             )
@@ -1918,6 +2005,7 @@ def _build_summary_rows(
                 {
                     "Dátum": work_date,
                     "Foglalás ideje": "",
+                    "Foglalási kód": "",
                     "Dolgozó": worker,
                     "Raktár": warehouse,
                     "shiftTemplateId": _row_shift_template_id(
@@ -1936,7 +2024,7 @@ def _build_summary_rows(
                     "Serial": "",
                     "Courier ID": _clean(booked_record.get("courier_id")),
                     "E-mail": _clean(booked_record.get("email")).casefold(),
-                    "_booking_time_sort": _booking_time_sort_value(""),
+                    "_booking_time_sort": _booking_time_or_code_sort_value(""),
                     "_source_row_sort": 999999999,
                 }
             )
@@ -1945,20 +2033,7 @@ def _build_summary_rows(
     if result.empty:
         return result
 
-    result["_sort_date"] = result["Dátum"].apply(_date_from_value)
-    result["_sort_muszakpro"] = result["MűszakPro"].apply(lambda value: _time_minutes(value) or 999999)
-    result = result.sort_values(
-        [
-            "_booking_time_sort",
-            "_source_row_sort",
-            "_sort_date",
-            "Dolgozó",
-            "_sort_muszakpro",
-            "Serial",
-        ],
-        na_position="last",
-    )
-    return result.drop(columns=["_booking_time_sort", "_source_row_sort", "_sort_date", "_sort_muszakpro"], errors="ignore")
+    return _sort_summary_rows(result)
 
 
 def _render_html_table(df: pd.DataFrame, columns: list[str], empty_text: str) -> None:
@@ -4168,6 +4243,7 @@ def show_foglalas_streamlit_page() -> None:
     ]
     if selected_statuses and not summary_df.empty:
         summary_df = summary_df[summary_df["Állapot"].isin(selected_statuses)]
+    summary_df = _sort_summary_rows(summary_df)
 
     st.title("foglalas.py")
     st.caption(
