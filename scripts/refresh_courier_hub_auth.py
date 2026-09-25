@@ -9,12 +9,13 @@ and never include the token value.
 from __future__ import annotations
 
 import argparse
+import base64
 from http.cookies import SimpleCookie
 import json
 import os
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,78 @@ def normalize_authorization(value: str) -> str:
     if text.lower().startswith(("bearer ", "basic ", "token ")):
         return text
     return f"Bearer {text}"
+
+
+def token_from_authorization(value: str) -> str:
+    text = str(value or "").strip()
+    if text.lower().startswith("bearer "):
+        return text.split(" ", 1)[1].strip()
+    return text
+
+
+def jwt_payload(value: str) -> dict[str, Any]:
+    token = token_from_authorization(value)
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    payload_part = parts[1]
+    payload_part += "=" * (-len(payload_part) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload_part.encode("ascii"))
+        payload = json.loads(decoded.decode("utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def jwt_expiry_text(value: str) -> str:
+    payload = jwt_payload(value)
+    exp = payload.get("exp")
+    if not exp:
+        return "-"
+    try:
+        return datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return "-"
+
+
+def jwt_is_expired(value: str, *, skew_seconds: int = 60) -> bool:
+    payload = jwt_payload(value)
+    exp = payload.get("exp")
+    if not exp:
+        return False
+    try:
+        return int(exp) <= int(datetime.now(timezone.utc).timestamp()) + int(skew_seconds)
+    except (TypeError, ValueError):
+        return False
+
+
+def set_fresh_authorization(payload: dict[str, Any], authorization: str, source: str) -> None:
+    token = normalize_authorization(authorization)
+    if not token:
+        return
+    if jwt_is_expired(token):
+        debug(
+            "COURIER_HUB_AUTH_TOKEN_EXPIRED "
+            f"source={source} expires={jwt_expiry_text(token)}"
+        )
+        return
+    payload.setdefault("headers", {})["Authorization"] = token
+
+
+def drop_expired_authorization(payload: dict[str, Any], source: str) -> None:
+    headers = payload.get("headers")
+    if not isinstance(headers, dict):
+        return
+    authorization = str(headers.get("Authorization") or headers.get("authorization") or "").strip()
+    if not authorization or not jwt_is_expired(authorization):
+        return
+    headers.pop("Authorization", None)
+    headers.pop("authorization", None)
+    debug(
+        "COURIER_HUB_AUTH_TOKEN_DROPPED "
+        f"source={source} expires={jwt_expiry_text(authorization)}"
+    )
 
 
 def flatten_json_tokens(value: Any) -> list[str]:
@@ -751,11 +824,11 @@ def main() -> int:
         )
         debug_session_shape(session_result, "SEEDED")
         payload = auth_payload_from_driver(driver)
+        drop_expired_authorization(payload, "seeded_browser")
         session_authorization = authorization_from_session_result(session_result)
-        if session_authorization and not payload.get("headers", {}).get("Authorization"):
-            payload.setdefault("headers", {})["Authorization"] = session_authorization
+        set_fresh_authorization(payload, session_authorization, "seeded_session")
         if configured_authorization:
-            payload.setdefault("headers", {})["Authorization"] = normalize_authorization(configured_authorization)
+            set_fresh_authorization(payload, configured_authorization, "configured_authorization")
         header_probe_result, browser_probe_result = probe_auth_payload(
             driver,
             args.url,
@@ -799,9 +872,9 @@ def main() -> int:
         time.sleep(2)
 
         payload = auth_payload_from_driver(driver)
+        drop_expired_authorization(payload, "login_browser")
         session_authorization = authorization_from_session_result(session_result)
-        if session_authorization and not payload.get("headers", {}).get("Authorization"):
-            payload.setdefault("headers", {})["Authorization"] = session_authorization
+        set_fresh_authorization(payload, session_authorization, "login_session")
         header_probe_result = probe_api_with_headers(
             args.url,
             args.probe_path,

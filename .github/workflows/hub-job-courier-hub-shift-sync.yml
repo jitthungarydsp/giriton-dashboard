@@ -41,10 +41,14 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
       COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
       COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-courier-hub-auth.json
-      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth_no_browser.py --cache-file /tmp/hub-job-courier-hub-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-courier-hub-auth.json --debug-dir results/hub-job-courier-hub-sync/auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
       KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-courier-hub-auth.json
-      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth_no_browser.py --cache-file /tmp/hub-job-courier-hub-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-courier-hub-auth.json --debug-dir results/hub-job-courier-hub-sync/auth
 
     steps:
       - name: Checkout
@@ -54,6 +58,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
 
       - name: Install dependencies
         run: |
@@ -65,7 +72,10 @@ jobs:
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
           test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
-          test -n "$COURIER_HUB_COOKIE" || (echo "Missing COURIER_HUB_COOKIE secret for no-browser token refresh" && exit 1)
+          if [ -z "$COURIER_HUB_COOKIE" ] && { [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; }; then
+            echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets, or COURIER_HUB_COOKIE."
+            exit 1
+          fi
 
       - name: HUB_JOB resolve window
         id: window
@@ -104,10 +114,10 @@ jobs:
       - name: HUB_JOB refresh Courier Hub token without browser
         shell: bash
         run: |
-          python scripts/refresh_courier_hub_auth_no_browser.py \
+          python scripts/refresh_courier_hub_auth.py \
             --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
-            --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks" \
-            --probe-date "${{ steps.window.outputs.start_date }}"
+            --debug-dir results/hub-job-courier-hub-sync/auth \
+            --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks?dateFrom=${{ steps.window.outputs.start_date }}&dateTo=${{ steps.window.outputs.start_date }}"
 
       - name: HUB_JOB sync master roster
         continue-on-error: true
@@ -370,7 +380,7 @@ jobs:
             echo "  - Courier Hub shift block capacity"
             echo "  - Courier Hub shift bookings"
             echo "  - MuszakPro booking overview"
-            echo "- Auth: /api/auth/session no-browser token refresh"
+            echo "- Auth: browser login/cache refresh with username-password fallback"
             echo "- Start date: ${{ steps.window.outputs.start_date }}"
             echo "- Lookahead days: ${{ steps.window.outputs.lookahead_days }}"
             echo "- Year/month: ${{ steps.window.outputs.year }}/${{ steps.window.outputs.month }}"
