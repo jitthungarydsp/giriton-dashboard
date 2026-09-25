@@ -189,13 +189,21 @@ def booking_timestamp_keys(row):
     work_date = clean(row.get("work_date"))[:10]
     email = normalize_email(row.get("email"))
     shift_text = clean(row.get("shift_text"))
+    start = shift_start(shift_text)
     warehouse = clean(row.get("warehouse")).upper()
     booking_code = clean(row.get("booking_code"))
+    serial = clean(row.get("serial"))
     keys = []
+    if serial:
+        keys.append(("serial", serial))
     if work_date and email and shift_text and warehouse and booking_code:
         keys.append((work_date, email, shift_text, warehouse, booking_code))
     if work_date and email and shift_text and warehouse:
         keys.append((work_date, email, shift_text, warehouse, ""))
+    if work_date and email and start and warehouse and booking_code:
+        keys.append((work_date, email, start, warehouse, booking_code))
+    if work_date and email and start and warehouse:
+        keys.append((work_date, email, start, warehouse, ""))
     return keys
 
 
@@ -208,7 +216,7 @@ def read_muszakpro_booking_timestamp_lookup(
 ):
     request_headers = headers_for_schema(headers, "muszakpro")
     params = [
-        ("select", "work_date,email,shift_text,warehouse,booking_code,timestamp_text,source_row"),
+        ("select", "work_date,email,shift_text,warehouse,booking_code,serial,timestamp_text,source_row"),
         ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
         ("limit", str(int(limit))),
     ]
