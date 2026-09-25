@@ -185,6 +185,89 @@ def headers_for_schema(headers, schema):
     }
 
 
+def booking_timestamp_keys(row):
+    work_date = clean(row.get("work_date"))[:10]
+    email = normalize_email(row.get("email"))
+    shift_text = clean(row.get("shift_text"))
+    warehouse = clean(row.get("warehouse")).upper()
+    booking_code = clean(row.get("booking_code"))
+    keys = []
+    if work_date and email and shift_text and warehouse and booking_code:
+        keys.append((work_date, email, shift_text, warehouse, booking_code))
+    if work_date and email and shift_text and warehouse:
+        keys.append((work_date, email, shift_text, warehouse, ""))
+    return keys
+
+
+def read_muszakpro_booking_timestamp_lookup(
+    supabase_url,
+    headers,
+    start_date=None,
+    end_date=None,
+    limit=50000,
+):
+    request_headers = headers_for_schema(headers, "muszakpro")
+    params = [
+        ("select", "work_date,email,shift_text,warehouse,booking_code,timestamp_text,source_row"),
+        ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
+        ("limit", str(int(limit))),
+    ]
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+    if start_date_text:
+        params.append(("work_date", f"gte.{start_date_text}"))
+    if end_date_text:
+        params.append(("work_date", f"lte.{end_date_text}"))
+
+    response = requests.get(
+        f"{supabase_url}/rest/v1/bookings",
+        headers=request_headers,
+        params=params,
+        timeout=60,
+    )
+    if is_missing_table_response(response):
+        return {}
+    raise_for_supabase_error(response)
+
+    lookup = {}
+    for row in response.json():
+        if not clean(row.get("timestamp_text")):
+            continue
+        for key in booking_timestamp_keys(row):
+            lookup.setdefault(
+                key,
+                {
+                    "timestamp_text": clean(row.get("timestamp_text")),
+                    "source_row": row.get("source_row"),
+                },
+            )
+    return lookup
+
+
+def fill_missing_booking_timestamps(df, timestamp_lookup):
+    if df.empty or not timestamp_lookup:
+        return df
+
+    result = df.copy()
+    if "timestamp_text" not in result.columns:
+        result["timestamp_text"] = ""
+    if "source_row" not in result.columns:
+        result["source_row"] = ""
+
+    for index, row in result.iterrows():
+        if clean(row.get("timestamp_text")):
+            continue
+        for key in booking_timestamp_keys(row):
+            match = timestamp_lookup.get(key)
+            if not match:
+                continue
+            result.at[index, "timestamp_text"] = match.get("timestamp_text") or ""
+            if not clean(row.get("source_row")):
+                result.at[index, "source_row"] = match.get("source_row") or ""
+            break
+    return result
+
+
 def is_missing_table_response(response):
     if response.status_code not in (400, 404):
         return False
@@ -1049,6 +1132,18 @@ def read_foglalasok_raw(start_date=None, end_date=None, limit=10000):
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
+    try:
+        timestamp_lookup = read_muszakpro_booking_timestamp_lookup(
+            supabase_url,
+            headers,
+            start_date=start_date,
+            end_date=end_date,
+            limit=max(int(limit), 50000),
+        )
+        df = fill_missing_booking_timestamps(df, timestamp_lookup)
+    except Exception:
+        pass
+
     dedupe_columns = [
         column
         for column in [
