@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Courier Hub API autobooking by full courier-day exact matches.
+"""Courier Hub API autobooking by full courier-day matches.
 
 One candidate is one courier on one work day. The script only books a candidate
-when every MuszakPro shift for that courier-day has an exact open Courier Hub
-shift block at the same warehouse and start time.
+when every MuszakPro shift for that courier-day has an exact or allowed
+alternative open Courier Hub shift block at the same warehouse.
 """
 
 from __future__ import annotations
@@ -121,6 +121,27 @@ def normalize_db_time(value: Any) -> str:
     if not match:
         return ""
     return f"{int(match.group(1)):02d}:{int(match.group(2)):02d}:00"
+
+
+def time_minutes(value: Any) -> int | None:
+    normalized = normalize_db_time(value)
+    if not normalized:
+        return None
+    hour, minute, *_ = normalized.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def diff_minutes(left: Any, right: Any) -> int | None:
+    left_minutes = time_minutes(left)
+    right_minutes = time_minutes(right)
+    if left_minutes is None or right_minutes is None:
+        return None
+    diff = right_minutes - left_minutes
+    if diff > 720:
+        diff -= 1440
+    elif diff < -720:
+        diff += 1440
+    return diff
 
 
 def shift_start_from_text(value: Any) -> str:
@@ -374,26 +395,79 @@ def group_is_exact_full_day(
     blocks: dict[tuple[str, str, str], HubBlock],
     existing_subscriptions: set[tuple[str, int, str, str]],
     planned_by_block: dict[str, int],
-) -> tuple[bool, str, list[tuple[MuszakProRow, HubBlock, bool]]]:
+    tolerance_minutes: int,
+) -> tuple[bool, str, list[tuple[MuszakProRow, HubBlock, bool, str, int]]]:
     shift_rows = unique_shift_rows(rows)
     if len(shift_rows) < 2:
         return False, "single_shift_day", []
 
-    matches: list[tuple[MuszakProRow, HubBlock, bool]] = []
-    for row in shift_rows:
-        block = blocks.get((row.work_date, row.warehouse, row.shift_start))
-        if not block:
-            return False, f"missing_exact_hub_block {row.warehouse} {row.shift_start}", []
-        already_booked = (row.work_date, row.courier_id, row.warehouse, row.shift_start) in existing_subscriptions
-        if not already_booked:
-            if block.status and block.status != "OPEN":
-                return False, f"hub_block_not_open {block.block_key} status={block.status}", []
-            remaining = block.free_slots - planned_by_block.get(block.block_key, 0)
-            if remaining <= 0:
-                return False, f"no_free_slot {block.block_key}", []
-        matches.append((row, block, already_booked))
+    all_blocks = sorted(
+        blocks.values(),
+        key=lambda block: (
+            block.work_date,
+            block.warehouse,
+            time_minutes(block.slot_from) or 0,
+            block.block_key,
+        ),
+    )
+    matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]] = []
+    used_block_keys: set[str] = set()
 
-    return True, "exact_full_day", matches
+    for row in shift_rows:
+        candidates: list[tuple[int, int, HubBlock, str, int]] = []
+        exact_block = blocks.get((row.work_date, row.warehouse, row.shift_start))
+        if exact_block:
+            candidates.append((0, time_minutes(exact_block.slot_from) or 0, exact_block, "exact", 0))
+
+        for candidate in all_blocks:
+            if candidate.work_date != row.work_date or candidate.warehouse != row.warehouse:
+                continue
+            if exact_block and candidate.block_key == exact_block.block_key:
+                continue
+            current_diff = diff_minutes(row.shift_start, candidate.slot_from)
+            if current_diff is None or abs(current_diff) > max(int(tolerance_minutes), 0):
+                continue
+            candidates.append((
+                abs(current_diff),
+                time_minutes(candidate.slot_from) or 0,
+                candidate,
+                "alternative",
+                current_diff,
+            ))
+
+        selected: tuple[HubBlock, bool, str, int] | None = None
+        rejected_reasons: list[str] = []
+        for _score, _minutes, block, match_kind, match_diff in sorted(
+            candidates,
+            key=lambda item: (item[0], item[1], 0 if item[3] == "exact" else 1, item[2].block_key),
+        ):
+            if block.block_key in used_block_keys:
+                rejected_reasons.append(f"duplicate_block_match {block.block_key}")
+                continue
+
+            already_booked = (row.work_date, row.courier_id, row.warehouse, block.slot_from) in existing_subscriptions
+            if not already_booked:
+                if block.status and block.status != "OPEN":
+                    rejected_reasons.append(f"hub_block_not_open {block.block_key} status={block.status}")
+                    continue
+                remaining = block.free_slots - planned_by_block.get(block.block_key, 0)
+                if remaining <= 0:
+                    rejected_reasons.append(f"no_free_slot {block.block_key}")
+                    continue
+
+            selected = (block, already_booked, match_kind, match_diff)
+            break
+
+        if selected is None:
+            reason = rejected_reasons[0] if rejected_reasons else f"missing_hub_block {row.warehouse} {row.shift_start}"
+            return False, reason, []
+
+        block, already_booked, match_kind, match_diff = selected
+        used_block_keys.add(block.block_key)
+        matches.append((row, block, already_booked, match_kind, match_diff))
+
+    reason = "exact_full_day" if all(match[3] == "exact" for match in matches) else "alternative_full_day"
+    return True, reason, matches
 
 
 def args_for_log(row: MuszakProRow, block: HubBlock, base_url: str, dsp_id: int) -> argparse.Namespace:
@@ -402,8 +476,8 @@ def args_for_log(row: MuszakProRow, block: HubBlock, base_url: str, dsp_id: int)
         warehouse=row.warehouse,
         dsp_id=int(dsp_id),
         shift_template_id=int(block.shift_template_id),
-        slot_from=row.shift_start,
-        shift_start=row.shift_start,
+        slot_from=block.slot_from,
+        shift_start=block.slot_from,
         courier_id=int(row.courier_id),
         courier_name=row.courier_name,
         email=row.email,
@@ -412,18 +486,31 @@ def args_for_log(row: MuszakProRow, block: HubBlock, base_url: str, dsp_id: int)
     )
 
 
-def book_one(row: MuszakProRow, block: HubBlock, *, base_url: str, dsp_id: int, dry_run: bool) -> bool:
+def book_one(
+    row: MuszakProRow,
+    block: HubBlock,
+    *,
+    base_url: str,
+    dsp_id: int,
+    dry_run: bool,
+    match_kind: str,
+    match_diff: int,
+) -> bool:
     log_args = args_for_log(row, block, base_url, dsp_id)
     if dry_run:
-        log_result(log_args, "HUB_AUTOBOOK_DRY_RUN_OK", "HUB_JOB_AUTOBOOKING dry-run exact full-day match.", {
+        log_result(log_args, "HUB_AUTOBOOK_DRY_RUN_OK", f"HUB_JOB_AUTOBOOKING dry-run {match_kind} full-day match.", {
             "blockKey": block.block_key,
             "shiftTemplateId": block.shift_template_id,
             "slotFrom": block.slot_from,
+            "muszakproShiftStart": row.shift_start,
+            "matchKind": match_kind,
+            "matchDiffMinutes": match_diff,
         })
         print(
             "HUB_JOB_AUTOBOOKING_DRY_RUN_BOOK "
             f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
-            f"slot={row.shift_start} template={block.shift_template_id}",
+            f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
+            f"template={block.shift_template_id} match={match_kind} diff={match_diff}",
             flush=True,
         )
         return True
@@ -432,7 +519,7 @@ def book_one(row: MuszakProRow, block: HubBlock, *, base_url: str, dsp_id: int, 
     request_body = {
         "date": row.work_date,
         "shiftTemplateId": int(block.shift_template_id),
-        "slotFrom": row.shift_start,
+        "slotFrom": block.slot_from,
         "courierIds": [int(row.courier_id)],
     }
     response = hub_request("POST", url, json=request_body)
@@ -442,7 +529,8 @@ def book_one(row: MuszakProRow, block: HubBlock, *, base_url: str, dsp_id: int, 
         print(
             "HUB_JOB_AUTOBOOKING_BOOKED "
             f"status={response.status_code} date={row.work_date} courier={row.courier_id} "
-            f"warehouse={row.warehouse} slot={row.shift_start} template={block.shift_template_id}",
+            f"warehouse={row.warehouse} muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
+            f"template={block.shift_template_id} match={match_kind} diff={match_diff}",
             flush=True,
         )
         return True
@@ -454,12 +542,13 @@ def book_one(row: MuszakProRow, block: HubBlock, *, base_url: str, dsp_id: int, 
 
 def parse_args() -> argparse.Namespace:
     today = date.today()
-    parser = argparse.ArgumentParser(description="HUB_JOB_AUTOBOOKING exact full-day Courier Hub booking.")
+    parser = argparse.ArgumentParser(description="HUB_JOB_AUTOBOOKING full-day Courier Hub booking.")
     parser.add_argument("--start-date", default=today.isoformat())
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--dsp-id", type=int, default=8)
     parser.add_argument("--max-courier-days", type=int, default=20)
     parser.add_argument("--source-limit", type=int, default=50000)
+    parser.add_argument("--tolerance-minutes", type=int, default=30)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--live", action="store_true")
@@ -505,6 +594,7 @@ def main() -> int:
             blocks,
             existing_subscriptions,
             planned_by_block,
+            args.tolerance_minutes,
         )
         first = min(rows, key=lambda row: (parse_timestamp(row.timestamp_text), row.source_row or 999999))
         if not ok:
@@ -517,7 +607,11 @@ def main() -> int:
             )
             continue
 
-        to_book = [(row, block) for row, block, already_booked in matches if not already_booked]
+        to_book = [
+            (row, block, match_kind, match_diff)
+            for row, block, already_booked, match_kind, match_diff in matches
+            if not already_booked
+        ]
         if not to_book:
             skipped_groups += 1
             print(
@@ -532,11 +626,20 @@ def main() -> int:
         print(
             "HUB_JOB_AUTOBOOKING_SELECT "
             f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
-            f"shifts={len(matches)} to_book={len(to_book)} first_timestamp={first.timestamp_text or '-'}",
+            f"shifts={len(matches)} to_book={len(to_book)} reason={reason} "
+            f"first_timestamp={first.timestamp_text or '-'}",
             flush=True,
         )
-        for row, block in to_book:
-            if book_one(row, block, base_url=args.base_url, dsp_id=args.dsp_id, dry_run=dry_run):
+        for row, block, match_kind, match_diff in to_book:
+            if book_one(
+                row,
+                block,
+                base_url=args.base_url,
+                dsp_id=args.dsp_id,
+                dry_run=dry_run,
+                match_kind=match_kind,
+                match_diff=match_diff,
+            ):
                 planned_by_block[block.block_key] += 1
                 booked_rows += 1
 

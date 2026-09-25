@@ -15,6 +15,10 @@ on:
         description: "Maximum hany futar-napot foglaljon egy futasban."
         required: false
         default: "20"
+      tolerance_minutes:
+        description: "Alternativ egyezes turese percben."
+        required: false
+        default: "30"
       dry_run:
         description: "true = csak ellenorzes, false = eles HUB API foglalas"
         required: false
@@ -78,15 +82,18 @@ jobs:
           START_DATE="${{ inputs.start_date }}"
           DAYS="${{ inputs.days }}"
           MAX_COURIER_DAYS="${{ inputs.max_courier_days }}"
+          TOLERANCE_MINUTES="${{ inputs.tolerance_minutes }}"
           DRY_RUN="${{ inputs.dry_run }}"
 
           START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
           DAYS="${DAYS:-30}"
           MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-20}"
+          TOLERANCE_MINUTES="${TOLERANCE_MINUTES:-30}"
           DRY_RUN="${DRY_RUN:-true}"
 
           if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="30"; fi
           if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="20"; fi
+          if ! [[ "$TOLERANCE_MINUTES" =~ ^[0-9]+$ ]]; then TOLERANCE_MINUTES="30"; fi
           HUB_LOOKAHEAD_DAYS=$((DAYS - 1))
           if [ "$HUB_LOOKAHEAD_DAYS" -lt 0 ]; then HUB_LOOKAHEAD_DAYS="0"; fi
           END_DATE="$(date -d "$START_DATE + $HUB_LOOKAHEAD_DAYS days" +%F)"
@@ -96,6 +103,7 @@ jobs:
           echo "days=$DAYS" >> "$GITHUB_OUTPUT"
           echo "hub_lookahead_days=$HUB_LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
           echo "max_courier_days=$MAX_COURIER_DAYS" >> "$GITHUB_OUTPUT"
+          echo "tolerance_minutes=$TOLERANCE_MINUTES" >> "$GITHUB_OUTPUT"
           echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
 
           echo "HUB_JOB_AUTOBOOKING_START_DATE=$START_DATE"
@@ -103,6 +111,7 @@ jobs:
           echo "HUB_JOB_AUTOBOOKING_DAYS=$DAYS"
           echo "HUB_JOB_AUTOBOOKING_HUB_LOOKAHEAD_DAYS=$HUB_LOOKAHEAD_DAYS"
           echo "HUB_JOB_AUTOBOOKING_MAX_COURIER_DAYS=$MAX_COURIER_DAYS"
+          echo "HUB_JOB_AUTOBOOKING_TOLERANCE_MINUTES=$TOLERANCE_MINUTES"
           echo "HUB_JOB_AUTOBOOKING_DRY_RUN=$DRY_RUN"
 
       - name: HUB_JOB_AUTOBOOKING refresh Courier Hub auth
@@ -160,6 +169,7 @@ jobs:
             --days "${{ steps.window.outputs.days }}"
             --dsp-id 8
             --max-courier-days "${{ steps.window.outputs.max_courier_days }}"
+            --tolerance-minutes "${{ steps.window.outputs.tolerance_minutes }}"
           )
 
           if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
@@ -237,6 +247,7 @@ jobs:
             echo "- Window end: ${{ steps.window.outputs.end_date }}"
             echo "- Days: ${{ steps.window.outputs.days }}"
             echo "- Max courier-days: ${{ steps.window.outputs.max_courier_days }}"
+            echo "- Alternative tolerance minutes: ${{ steps.window.outputs.tolerance_minutes }}"
             echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
