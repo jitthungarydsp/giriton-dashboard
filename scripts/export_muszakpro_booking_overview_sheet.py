@@ -67,6 +67,27 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
+def dedupe_overview_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        booking_key = clean_text(row.get("booking_key"))
+        if booking_key:
+            key = ("booking_key", booking_key)
+        else:
+            key = (
+                "fallback",
+                clean_text(row.get("work_date")),
+                clean_text(row.get("warehouse_code")).upper(),
+                clean_text(row.get("courier_id")) or clean_text(row.get("email")).casefold(),
+                clean_text(row.get("shift_text")),
+                clean_text(row.get("slot_from")),
+                clean_text(row.get("block_key")),
+                clean_text(row.get("booking_code")),
+            )
+        by_key[key] = row
+    return list(by_key.values())
+
+
 def read_overview_rows(start_date: date, end_date: date, limit: int = 50000) -> list[dict[str, Any]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
@@ -146,10 +167,12 @@ def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
 
 
 def export_overview(start_date: date, end_date: date, dry_run: bool = False) -> dict[str, Any]:
-    records = read_overview_rows(start_date, end_date)
+    raw_records = read_overview_rows(start_date, end_date)
+    records = dedupe_overview_rows(raw_records)
     if dry_run:
         return {
             "records": len(records),
+            "raw_records": len(raw_records),
             "written_rows": 0,
             "worksheet_title": "",
             "worksheet_id": WORKSHEET_GID,
@@ -209,6 +232,7 @@ def export_overview(start_date: date, end_date: date, dry_run: bool = False) -> 
     )
     return {
         "records": len(records),
+        "raw_records": len(raw_records),
         "written_rows": len(values),
         "worksheet_title": worksheet.title,
         "worksheet_id": worksheet.id,
@@ -239,7 +263,8 @@ def main() -> int:
     print(
         "MUSZAKPRO_BOOKING_OVERVIEW_SHEET "
         f"start_date={start_date.isoformat()} end_date={end_date.isoformat()} "
-        f"rows={result['records']} written_rows={result['written_rows']} "
+        f"rows={result['records']} raw_rows={result['raw_records']} "
+        f"written_rows={result['written_rows']} "
         f"worksheet_title={result['worksheet_title']!r} "
         f"worksheet_id={result['worksheet_id']} dry_run={args.dry_run}",
         flush=True,

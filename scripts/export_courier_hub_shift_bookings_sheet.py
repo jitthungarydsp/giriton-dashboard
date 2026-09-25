@@ -57,6 +57,20 @@ def clean_text(value: Any) -> str:
     return str(value).strip()
 
 
+def dedupe_booking_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            clean_text(row.get("work_date")),
+            clean_text(row.get("warehouse_code")).upper(),
+            clean_text(row.get("courier_id")),
+            clean_text(row.get("block_key")),
+        )
+        if all(key):
+            by_key[key] = row
+    return list(by_key.values())
+
+
 def read_booking_rows(start_date: date, end_date: date, limit: int = 50000) -> list[dict[str, Any]]:
     supabase_url, service_role_key = get_supabase_config()
     if not supabase_url or not service_role_key:
@@ -115,10 +129,11 @@ def row_to_sheet_row(row: dict[str, Any], exported_at: str) -> list[Any]:
     ]
 
 
-def export_shift_bookings(start_date: date, end_date: date, dry_run: bool = False) -> int:
-    records = read_booking_rows(start_date, end_date)
+def export_shift_bookings(start_date: date, end_date: date, dry_run: bool = False) -> dict[str, int]:
+    raw_records = read_booking_rows(start_date, end_date)
+    records = dedupe_booking_rows(raw_records)
     if dry_run:
-        return len(records)
+        return {"records": len(records), "raw_records": len(raw_records), "written_rows": 0}
 
     exported_at = datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
     if records:
@@ -164,7 +179,7 @@ def export_shift_bookings(start_date: date, end_date: date, dry_run: bool = Fals
         range_name="A1",
         values=values,
     )
-    return len(records)
+    return {"records": len(records), "raw_records": len(raw_records), "written_rows": len(values)}
 
 
 def main() -> int:
@@ -187,11 +202,12 @@ def main() -> int:
     else:
         end_date = start_date
 
-    rows = export_shift_bookings(start_date, end_date, dry_run=args.dry_run)
+    result = export_shift_bookings(start_date, end_date, dry_run=args.dry_run)
     print(
         "COURIER_HUB_SHIFT_BOOKINGS_SHEET "
         f"start_date={start_date.isoformat()} end_date={end_date.isoformat()} "
-        f"rows={rows} dry_run={args.dry_run}",
+        f"rows={result['records']} raw_rows={result['raw_records']} "
+        f"written_rows={result['written_rows']} dry_run={args.dry_run}",
         flush=True,
     )
     return 0
