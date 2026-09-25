@@ -1,0 +1,200 @@
+name: HUB_JOB_AUTOBOOKING
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "Kezdo datum YYYY-MM-DD. Uresen: mai nap Budapest szerint."
+        required: false
+        default: ""
+      days:
+        description: "Hany napot nezzen elore."
+        required: false
+        default: "30"
+      max_courier_days:
+        description: "Maximum hany futar-napot foglaljon egy futasban."
+        required: false
+        default: "20"
+      dry_run:
+        description: "true = csak ellenorzes, false = eles HUB API foglalas"
+        required: false
+        default: "true"
+
+concurrency:
+  group: hub-job-autobooking
+  cancel-in-progress: false
+
+jobs:
+  HUB_JOB_AUTOBOOKING:
+    name: HUB_JOB_AUTOBOOKING
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GIRITON_GOOGLE_CREDENTIALS_JSON: ${{ secrets.GIRITON_GOOGLE_CREDENTIALS_JSON }}
+      COURIER_HUB_COOKIE: ${{ secrets.COURIER_HUB_COOKIE }}
+      COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-autobooking-auth.json
+      COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-autobooking-auth.json --debug-dir results/hub-job-autobooking/auth
+      KIFLI_COURIER_HUB_USERNAME: ${{ secrets.COURIER_HUB_USERNAME }}
+      KIFLI_COURIER_HUB_PASSWORD: ${{ secrets.COURIER_HUB_PASSWORD }}
+      KIFLI_COURIER_HUB_AUTH_CACHE_FILE: /tmp/hub-job-autobooking-auth.json
+      KIFLI_COURIER_HUB_AUTH_REFRESH_COMMAND: python scripts/refresh_courier_hub_auth.py --cache-file /tmp/hub-job-autobooking-auth.json --debug-dir results/hub-job-autobooking/auth
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: HUB_JOB_AUTOBOOKING validate secrets
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL" || (echo "Missing SUPABASE_URL secret" && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo "Missing SUPABASE_SERVICE_ROLE_KEY secret" && exit 1)
+          if [ -z "$COURIER_HUB_COOKIE" ] && { [ -z "$COURIER_HUB_USERNAME" ] || [ -z "$COURIER_HUB_PASSWORD" ]; }; then
+            echo "Missing Courier Hub auth. Add COURIER_HUB_USERNAME and COURIER_HUB_PASSWORD secrets, or COURIER_HUB_COOKIE."
+            exit 1
+          fi
+
+      - name: HUB_JOB_AUTOBOOKING resolve window
+        id: window
+        shell: bash
+        run: |
+          START_DATE="${{ inputs.start_date }}"
+          DAYS="${{ inputs.days }}"
+          MAX_COURIER_DAYS="${{ inputs.max_courier_days }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
+          DAYS="${DAYS:-30}"
+          MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-20}"
+          DRY_RUN="${DRY_RUN:-true}"
+
+          if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="30"; fi
+          if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="20"; fi
+          HUB_LOOKAHEAD_DAYS=$((DAYS - 1))
+          if [ "$HUB_LOOKAHEAD_DAYS" -lt 0 ]; then HUB_LOOKAHEAD_DAYS="0"; fi
+          END_DATE="$(date -d "$START_DATE + $HUB_LOOKAHEAD_DAYS days" +%F)"
+
+          echo "start_date=$START_DATE" >> "$GITHUB_OUTPUT"
+          echo "end_date=$END_DATE" >> "$GITHUB_OUTPUT"
+          echo "days=$DAYS" >> "$GITHUB_OUTPUT"
+          echo "hub_lookahead_days=$HUB_LOOKAHEAD_DAYS" >> "$GITHUB_OUTPUT"
+          echo "max_courier_days=$MAX_COURIER_DAYS" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+          echo "HUB_JOB_AUTOBOOKING_START_DATE=$START_DATE"
+          echo "HUB_JOB_AUTOBOOKING_END_DATE=$END_DATE"
+          echo "HUB_JOB_AUTOBOOKING_DAYS=$DAYS"
+          echo "HUB_JOB_AUTOBOOKING_HUB_LOOKAHEAD_DAYS=$HUB_LOOKAHEAD_DAYS"
+          echo "HUB_JOB_AUTOBOOKING_MAX_COURIER_DAYS=$MAX_COURIER_DAYS"
+          echo "HUB_JOB_AUTOBOOKING_DRY_RUN=$DRY_RUN"
+
+      - name: HUB_JOB_AUTOBOOKING refresh Courier Hub auth
+        shell: bash
+        run: |
+          python scripts/refresh_courier_hub_auth.py \
+            --cache-file "$COURIER_HUB_AUTH_CACHE_FILE" \
+            --debug-dir results/hub-job-autobooking/auth \
+            --probe-path "/services/courier-hub-service/external/warehouses/1/dsps/8/shift-blocks?dateFrom=${{ steps.window.outputs.start_date }}&dateTo=${{ steps.window.outputs.start_date }}"
+
+      - name: HUB_JOB_AUTOBOOKING sync MuszakPro bookings
+        shell: bash
+        run: |
+          if [ -z "$GIRITON_GOOGLE_CREDENTIALS_JSON" ]; then
+            echo "GIRITON_GOOGLE_CREDENTIALS_JSON missing, MuszakPro bookings import skipped."
+            exit 0
+          fi
+          python scripts/load_foglalasok_raw.py
+
+      - name: HUB_JOB_AUTOBOOKING sync Courier Hub source tables
+        shell: bash
+        run: |
+          python scripts/sync_courier_hub_master.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --end-date "${{ steps.window.outputs.end_date }}"
+
+          python scripts/sync_courier_hub_shift_blocks.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+      - name: HUB_JOB_AUTOBOOKING run exact full-day API booking
+        shell: bash
+        run: |
+          CMD=(
+            python scripts/hub_job_autobooking.py
+            --start-date "${{ steps.window.outputs.start_date }}"
+            --days "${{ steps.window.outputs.days }}"
+            --dsp-id 8
+            --max-courier-days "${{ steps.window.outputs.max_courier_days }}"
+          )
+
+          if [ "${{ steps.window.outputs.dry_run }}" = "true" ]; then
+            CMD+=(--dry-run)
+          else
+            CMD+=(--live)
+          fi
+
+          "${CMD[@]}"
+
+      - name: HUB_JOB_AUTOBOOKING refresh DB after live booking
+        if: ${{ steps.window.outputs.dry_run != 'true' }}
+        shell: bash
+        run: |
+          python scripts/sync_courier_hub_shift_blocks.py \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --lookahead-days "${{ steps.window.outputs.hub_lookahead_days }}"
+
+          python scripts/refresh_ops_shift_comparison_from_hub.py \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --days "${{ steps.window.outputs.days }}" \
+            --warehouse-ids "1,2" \
+            --dsp-id 8 \
+            --limit 500 \
+            --output-dir results/hub-job-autobooking/shift-auto-candidates \
+            --skip-hub-sync
+
+      - name: HUB_JOB_AUTOBOOKING summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## HUB_JOB_AUTOBOOKING"
+            echo ""
+            echo "- Engine: Courier Hub API"
+            echo "- Rule: one courier-day is booked only when every MuszakPro shift has an exact open HUB block with free capacity."
+            echo "- Priority: MuszakPro booking timestamp, earliest first."
+            echo "- Window start: ${{ steps.window.outputs.start_date }}"
+            echo "- Window end: ${{ steps.window.outputs.end_date }}"
+            echo "- Days: ${{ steps.window.outputs.days }}"
+            echo "- Max courier-days: ${{ steps.window.outputs.max_courier_days }}"
+            echo "- Dry run: ${{ steps.window.outputs.dry_run }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HUB_JOB_AUTOBOOKING artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-job-autobooking-results
+          path: results/hub-job-autobooking
