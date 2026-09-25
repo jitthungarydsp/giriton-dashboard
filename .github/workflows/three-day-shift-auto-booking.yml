@@ -8,9 +8,9 @@ on:
         required: false
         default: ""
       days:
-        description: "Hány napot nézzen a kezdőnaptól. Alap: 8."
+        description: "Hány napot nézzen a kezdőnaptól. Alap: 30."
         required: false
-        default: "8"
+        default: "30"
       exact_limit:
         description: "Maximum hány pontos egyezést foglaljon egy futásban."
         required: false
@@ -90,7 +90,7 @@ jobs:
           RAW_EXPORT_ENGINE="${{ inputs.raw_export_engine }}"
 
           START_DATE="${START_DATE:-}"
-          DAYS="${DAYS:-8}"
+          DAYS="${DAYS:-30}"
           EXACT_LIMIT="${EXACT_LIMIT:-50}"
           ALTERNATIVE_LIMIT="${ALTERNATIVE_LIMIT:-50}"
           DRY_RUN="${DRY_RUN:-false}"
