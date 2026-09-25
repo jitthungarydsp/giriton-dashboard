@@ -506,31 +506,14 @@ def failure_records_for_group(
     matches: list[tuple[MuszakProRow, HubBlock, bool, str, int]],
 ) -> list[dict[str, Any]]:
     run_at = datetime.now(timezone.utc).isoformat()
-    if matches:
-        return [
-            {
-                "run_at": run_at,
-                "work_date": row.work_date,
-                "courier_id": row.courier_id,
-                "courier_name": row.courier_name,
-                "email": row.email,
-                "warehouse": row.warehouse,
-                "muszakpro_shift_start": row.shift_start,
-                "hub_slot_from": block.slot_from,
-                "shift_template_id": block.shift_template_id,
-                "block_key": block.block_key,
-                "match_kind": match_kind,
-                "match_diff_minutes": match_diff,
-                "reason": reason,
-                "timestamp_text": row.timestamp_text,
-                "source_row": row.source_row,
-                "serial": row.serial,
-            }
-            for row, block, _already_booked, match_kind, match_diff in matches
-        ]
-
-    return [
-        {
+    match_by_key = {
+        (row.warehouse, row.shift_start): (block, match_kind, match_diff)
+        for row, block, _already_booked, match_kind, match_diff in matches
+    }
+    records: list[dict[str, Any]] = []
+    for row in unique_shift_rows(rows):
+        block, match_kind, match_diff = match_by_key.get((row.warehouse, row.shift_start), (None, "", ""))
+        records.append({
             "run_at": run_at,
             "work_date": row.work_date,
             "courier_id": row.courier_id,
@@ -538,18 +521,17 @@ def failure_records_for_group(
             "email": row.email,
             "warehouse": row.warehouse,
             "muszakpro_shift_start": row.shift_start,
-            "hub_slot_from": "",
-            "shift_template_id": "",
-            "block_key": "",
-            "match_kind": "",
-            "match_diff_minutes": "",
+            "hub_slot_from": block.slot_from if block else "",
+            "shift_template_id": block.shift_template_id if block else "",
+            "block_key": block.block_key if block else "",
+            "match_kind": match_kind,
+            "match_diff_minutes": match_diff,
             "reason": reason,
             "timestamp_text": row.timestamp_text,
             "source_row": row.source_row,
             "serial": row.serial,
-        }
-        for row in unique_shift_rows(rows)
-    ]
+        })
+    return records
 
 
 def write_failure_output(records: list[dict[str, Any]], output_path: str) -> None:
@@ -674,6 +656,7 @@ def main() -> int:
     selected_groups = 0
     booked_rows = 0
     skipped_groups = 0
+    failed_booking_rows = 0
     failure_records: list[dict[str, Any]] = []
 
     print(
@@ -698,8 +681,7 @@ def main() -> int:
         first = min(rows, key=lambda row: (parse_timestamp(row.timestamp_text), row.source_row or 999999))
         if not ok:
             skipped_groups += 1
-            if len(unique_shift_rows(rows)) >= 2:
-                failure_records.extend(failure_records_for_group(rows, reason, matches))
+            failure_records.extend(failure_records_for_group(rows, reason, matches))
             print(
                 "HUB_JOB_AUTOBOOKING_SKIP "
                 f"date={first.work_date} courier={first.courier_id} name={first.courier_name or '-'} "
@@ -732,22 +714,54 @@ def main() -> int:
             flush=True,
         )
         for row, block, match_kind, match_diff in to_book:
-            if book_one(
-                row,
-                block,
-                base_url=args.base_url,
-                dsp_id=args.dsp_id,
-                dry_run=dry_run,
-                match_kind=match_kind,
-                match_diff=match_diff,
-            ):
+            try:
+                booked = book_one(
+                    row,
+                    block,
+                    base_url=args.base_url,
+                    dsp_id=args.dsp_id,
+                    dry_run=dry_run,
+                    match_kind=match_kind,
+                    match_diff=match_diff,
+                )
+            except Exception as exc:
+                failed_booking_rows += 1
+                reason_text = f"api_booking_failed {type(exc).__name__}: {str(exc)[:500]}"
+                failure_records.extend(
+                    failure_records_for_group(
+                        [row],
+                        reason_text,
+                        [(row, block, False, match_kind, match_diff)],
+                    )
+                )
+                print(
+                    "HUB_JOB_AUTOBOOKING_BOOK_FAILED "
+                    f"date={row.work_date} courier={row.courier_id} warehouse={row.warehouse} "
+                    f"muszakpro_slot={row.shift_start} hub_slot={block.slot_from} "
+                    f"template={block.shift_template_id} match={match_kind} diff={match_diff} "
+                    f"reason={reason_text}",
+                    flush=True,
+                )
+                continue
+
+            if booked:
                 planned_by_block[block.block_key] += 1
                 booked_rows += 1
+            else:
+                failed_booking_rows += 1
+                failure_records.extend(
+                    failure_records_for_group(
+                        [row],
+                        "api_booking_returned_false",
+                        [(row, block, False, match_kind, match_diff)],
+                    )
+                )
 
     write_failure_output(failure_records, args.failure_output)
     print(
         "HUB_JOB_AUTOBOOKING_DONE "
-        f"selected_groups={selected_groups} booked_rows={booked_rows} skipped_groups={skipped_groups} "
+        f"selected_groups={selected_groups} booked_rows={booked_rows} failed_booking_rows={failed_booking_rows} "
+        f"skipped_groups={skipped_groups} "
         f"failure_records={len(failure_records)} failure_output={args.failure_output} dry_run={dry_run}",
         flush=True,
     )
