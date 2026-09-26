@@ -114,6 +114,44 @@ def supabase_get(
     return payload if isinstance(payload, list) else []
 
 
+def without_paging_params(params: dict[str, str] | list[tuple[str, str]]) -> list[tuple[str, str]]:
+    items = list(params.items()) if isinstance(params, dict) else list(params)
+    return [(key, value) for key, value in items if key not in {"limit", "offset"}]
+
+
+def supabase_get_paginated(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    *,
+    schema: str = "public",
+    limit: int = 50000,
+    page_size: int = 1000,
+) -> list[dict[str, Any]]:
+    base_params = without_paging_params(params)
+    target_limit = max(int(limit), 0)
+    current_page_size = max(min(int(page_size), 1000), 1)
+    rows: list[dict[str, Any]] = []
+    offset = 0
+
+    while target_limit == 0 or len(rows) < target_limit:
+        requested = current_page_size
+        if target_limit:
+            requested = min(requested, target_limit - len(rows))
+        page = supabase_get(
+            table,
+            base_params + [("limit", str(requested)), ("offset", str(offset))],
+            schema=schema,
+        )
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < requested:
+            break
+        offset += len(page)
+
+    return rows[:target_limit] if target_limit else rows
+
+
 def optional_supabase_get(
     table: str,
     params: dict[str, str] | list[tuple[str, str]],
@@ -122,6 +160,22 @@ def optional_supabase_get(
 ) -> list[dict[str, Any]]:
     try:
         return supabase_get(table, params, schema=schema)
+    except requests.HTTPError as exc:
+        text = str(exc).lower()
+        if "could not find" in text or "column" in text or "pgrst" in text:
+            return []
+        raise
+
+
+def optional_supabase_get_paginated(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    *,
+    schema: str = "public",
+    limit: int = 50000,
+) -> list[dict[str, Any]]:
+    try:
+        return supabase_get_paginated(table, params, schema=schema, limit=limit)
     except requests.HTTPError as exc:
         text = str(exc).lower()
         if "could not find" in text or "column" in text or "pgrst" in text:
@@ -184,13 +238,13 @@ def normalize_lookup_text(value: Any) -> str:
 
 
 def read_courier_identities(dsp_id: int, limit: int) -> tuple[dict[str, CourierIdentity], dict[str, CourierIdentity]]:
-    rows = supabase_get(
+    rows = supabase_get_paginated(
         "courier_hub_courier_identity_raw",
         [
             ("select", "courier_id,dsp_id,warehouse_id,warehouse_code,email,name_without_identifier,name_json"),
             ("dsp_id", f"eq.{int(dsp_id)}"),
-            ("limit", str(int(limit))),
         ],
+        limit=limit,
     )
     by_email: dict[str, CourierIdentity] = {}
     by_name: dict[str, CourierIdentity] = {}
@@ -262,19 +316,19 @@ def read_muszakpro_rows(
         ("public", "raw_muszakpro_bookings"),
         ("public", "foglalasok_raw"),
     ):
-        rows = optional_supabase_get(
+        rows = optional_supabase_get_paginated(
             table_name,
             [
                 ("select", select_with_optional),
                 ("work_date", f"gte.{start_date.isoformat()}"),
                 ("work_date", f"lte.{end_date.isoformat()}"),
                 ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
-                ("limit", str(int(limit))),
             ],
             schema=schema,
+            limit=limit,
         )
         if not rows:
-            rows = optional_supabase_get(
+            rows = optional_supabase_get_paginated(
                 table_name,
                 [
                     ("select", (
@@ -284,9 +338,9 @@ def read_muszakpro_rows(
                     ("work_date", f"gte.{start_date.isoformat()}"),
                     ("work_date", f"lte.{end_date.isoformat()}"),
                     ("order", "work_date.asc,timestamp_text.asc,source_row.asc"),
-                    ("limit", str(int(limit))),
                 ],
                 schema=schema,
+                limit=limit,
             )
         source_counts.append(f"{schema}.{table_name}:{len(rows)}")
         for row in rows:
@@ -376,7 +430,7 @@ def read_muszakpro_rows(
 
 
 def read_hub_blocks(start_date: date, end_date: date, dsp_id: int, limit: int) -> dict[tuple[str, str, str], HubBlock]:
-    rows = supabase_get(
+    rows = supabase_get_paginated(
         "courier_hub_shift_blocks_raw",
         [
             ("select", (
@@ -387,8 +441,8 @@ def read_hub_blocks(start_date: date, end_date: date, dsp_id: int, limit: int) -
             ("work_date", f"lte.{end_date.isoformat()}"),
             ("dsp_id", f"eq.{int(dsp_id)}"),
             ("order", "work_date.asc,warehouse_id.asc,slot_from.asc"),
-            ("limit", str(int(limit))),
         ],
+        limit=limit,
     )
     blocks: dict[tuple[str, str, str], HubBlock] = {}
     for row in rows:
@@ -424,7 +478,7 @@ def read_hub_blocks(start_date: date, end_date: date, dsp_id: int, limit: int) -
 
 
 def read_existing_subscriptions(start_date: date, end_date: date, dsp_id: int, limit: int) -> set[tuple[str, int, str, str]]:
-    rows = optional_supabase_get(
+    rows = optional_supabase_get_paginated(
         "courier_hub_shift_bookings_raw",
         [
             ("select", "work_date,dsp_id,courier_id,warehouse_code,warehouse_id,slot_from,shift_template_id,status,active"),
@@ -432,19 +486,19 @@ def read_existing_subscriptions(start_date: date, end_date: date, dsp_id: int, l
             ("work_date", f"lte.{end_date.isoformat()}"),
             ("dsp_id", f"eq.{int(dsp_id)}"),
             ("active", "eq.true"),
-            ("limit", str(int(limit))),
         ],
+        limit=limit,
     )
     if not rows:
-        rows = supabase_get(
+        rows = supabase_get_paginated(
             "courier_hub_roster_shift_subscribers_raw",
             [
                 ("select", "work_date,dsp_id,courier_id,warehouse_code,warehouse_id,slot_from,shift_template_id,status"),
                 ("work_date", f"gte.{start_date.isoformat()}"),
                 ("work_date", f"lte.{end_date.isoformat()}"),
                 ("dsp_id", f"eq.{int(dsp_id)}"),
-                ("limit", str(int(limit))),
             ],
+            limit=limit,
         )
     existing: set[tuple[str, int, str, str]] = set()
     for row in rows:
