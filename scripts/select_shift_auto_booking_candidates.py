@@ -34,7 +34,7 @@ from resources.supabase_raw import (
     get_supabase_config,
     raise_for_supabase_error,
 )
-from resources.giriton_shifts_db import read_giriton_shifts_raw
+from resources.giriton_shifts_db import read_courier_hub_shift_state_raw
 from scripts.auto_book_exact_shift_matches import is_recent_running_log
 
 
@@ -179,7 +179,7 @@ def load_summary(start_date: date, end_date: date, tolerance_minutes: int, sourc
         end_date=end_date.isoformat(),
         limit=max(int(source_limit), 1),
     )
-    giriton_df = read_giriton_shifts_raw(
+    giriton_df = read_courier_hub_shift_state_raw(
         start_date=start_date.isoformat(),
         end_date=end_date.isoformat(),
         limit=max(int(source_limit), 1),

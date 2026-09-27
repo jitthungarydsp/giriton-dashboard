@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 import re
 import unicodedata
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -590,6 +591,167 @@ def read_giriton_shifts_raw(start_date=None, end_date=None, limit=5000):
 
     if not rows:
         return pd.DataFrame()
+
+    return pd.DataFrame(rows)
+
+
+def _without_paging_params(params: dict[str, str] | list[tuple[str, str]]) -> list[tuple[str, str]]:
+    items = list(params.items()) if isinstance(params, dict) else list(params)
+    return [(key, value) for key, value in items if key not in {"limit", "offset"}]
+
+
+def _supabase_get_paginated(
+    table: str,
+    params: dict[str, str] | list[tuple[str, str]],
+    *,
+    limit: int = 50000,
+    page_size: int = 1000,
+) -> list[dict[str, Any]]:
+    supabase_url, headers = get_headers()
+    base_params = _without_paging_params(params)
+    target_limit = max(int(limit), 0)
+    current_page_size = max(min(int(page_size), 1000), 1)
+    rows: list[dict[str, Any]] = []
+    offset = 0
+
+    while target_limit == 0 or len(rows) < target_limit:
+        requested = current_page_size
+        if target_limit:
+            requested = min(requested, target_limit - len(rows))
+        response = requests.get(
+            f"{supabase_url}/rest/v1/{table}",
+            headers=headers,
+            params=base_params + [("limit", str(requested)), ("offset", str(offset))],
+            timeout=60,
+        )
+        raise_for_supabase_error(response)
+        payload = response.json()
+        page = payload if isinstance(payload, list) else []
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < requested:
+            break
+        offset += len(page)
+
+    return rows[:target_limit] if target_limit else rows
+
+
+def _hub_serial(work_date: Any, courier_id: Any, warehouse: Any, start_time: Any) -> str:
+    date_text = clean(work_date)[:10]
+    start_text = clean(start_time)
+    if len(start_text) >= 5:
+        start_text = start_text[:5].lstrip("0") or "0:00"
+    if not date_text or not clean(courier_id) or not clean(warehouse) or not start_text:
+        return ""
+    try:
+        month_day = datetime.strptime(date_text, "%Y-%m-%d").strftime("%m/%d")
+    except ValueError:
+        month_day = date_text
+    return f"{month_day}_{clean(courier_id)}_{clean(warehouse).upper()}_{start_text}"
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def read_courier_hub_shift_state_raw(
+    start_date=None,
+    end_date=None,
+    limit=50000,
+    dsp_id: int | None = None,
+):
+    """Return Courier Hub blocks/bookings in the giriton_shifts_raw shape."""
+
+    start_date_text = format_date_filter(start_date)
+    end_date_text = format_date_filter(end_date)
+    current_dsp_id = int(dsp_id or os.getenv("COURIER_HUB_DSP_ID") or "8")
+
+    block_filters: list[tuple[str, str]] = [
+        (
+            "select",
+            "work_date,warehouse_id,warehouse_code,dsp_id,shift_template_id,"
+            "block_key,slot_from,slot_to,status,assigned,opened,free_slots,"
+            "fetched_at,updated_at",
+        ),
+        ("dsp_id", f"eq.{current_dsp_id}"),
+        ("order", "work_date.desc,slot_from.asc,warehouse_code.asc"),
+    ]
+    booking_filters: list[tuple[str, str]] = [
+        (
+            "select",
+            "work_date,warehouse_id,warehouse_code,dsp_id,courier_id,"
+            "courier_name,email,block_key,shift_template_id,slot_from,slot_to,"
+            "status,movement_type,active,last_seen_at,updated_at",
+        ),
+        ("dsp_id", f"eq.{current_dsp_id}"),
+        ("active", "eq.true"),
+        ("order", "work_date.desc,slot_from.asc,courier_name.asc"),
+    ]
+
+    if start_date_text:
+        block_filters.append(("work_date", f"gte.{start_date_text}"))
+        booking_filters.append(("work_date", f"gte.{start_date_text}"))
+    if end_date_text:
+        block_filters.append(("work_date", f"lte.{end_date_text}"))
+        booking_filters.append(("work_date", f"lte.{end_date_text}"))
+
+    rows: list[dict[str, Any]] = []
+    block_rows = _supabase_get_paginated(
+        "courier_hub_shift_blocks_raw",
+        block_filters,
+        limit=limit,
+    )
+    booking_rows = _supabase_get_paginated(
+        "courier_hub_shift_bookings_raw",
+        booking_filters,
+        limit=limit,
+    )
+
+    for row in block_rows:
+        assigned = row.get("assigned")
+        opened = row.get("opened")
+        free_slots = row.get("free_slots")
+        if opened is None and assigned is not None and free_slots is not None:
+            try:
+                opened = int(assigned) + int(free_slots)
+            except (TypeError, ValueError):
+                opened = None
+        rows.append({
+            "work_date": row.get("work_date"),
+            "start_time": row.get("slot_from"),
+            "end_time": row.get("slot_to"),
+            "warehouse": row.get("warehouse_code") or row.get("warehouse_id"),
+            "occupancy": f"{assigned or 0}/{opened or 0}",
+            "booked": assigned or 0,
+            "maximum": opened or 0,
+            "courier_name": "URES",
+            "email": "",
+            "courier_id": None,
+            "serial": "",
+            "status": row.get("status") or "OPEN",
+            "fetched_at": row.get("fetched_at") or row.get("updated_at"),
+        })
+
+    for row in booking_rows:
+        warehouse = row.get("warehouse_code") or row.get("warehouse_id")
+        rows.append({
+            "work_date": row.get("work_date"),
+            "start_time": row.get("slot_from"),
+            "end_time": row.get("slot_to"),
+            "warehouse": warehouse,
+            "occupancy": "1/1",
+            "booked": 1,
+            "maximum": 1,
+            "courier_name": row.get("courier_name") or clean(row.get("courier_id")),
+            "email": clean(row.get("email")).casefold(),
+            "courier_id": row.get("courier_id"),
+            "serial": _hub_serial(
+                row.get("work_date"),
+                row.get("courier_id"),
+                warehouse,
+                row.get("slot_from"),
+            ),
+            "status": row.get("status") or row.get("movement_type") or "BOOKED",
+            "fetched_at": row.get("last_seen_at") or row.get("updated_at"),
+        })
 
     return pd.DataFrame(rows)
 

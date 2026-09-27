@@ -26,7 +26,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from resources.foglalasok_db import read_foglalasok_raw
 from resources.giriton_auto_booking import read_giriton_booking_log
-from resources.giriton_shifts_db import read_giriton_shifts_raw
+from resources.giriton_shifts_db import read_courier_hub_shift_state_raw
 from resources.discord_notifier import send_discord_text_message_to_setting
 from resources.shift_comparison_db import read_shift_comparison_records
 from resources.shift_start_parameters_db import read_shift_start_parameters
@@ -2826,7 +2826,7 @@ def _load_muszakpro_data(start_date: date, end_date: date):
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_giriton_data(start_date: date, end_date: date):
-    return read_giriton_shifts_raw(
+    return read_courier_hub_shift_state_raw(
         start_date=start_date,
         end_date=end_date,
         limit=20000,
@@ -2835,12 +2835,12 @@ def _load_giriton_data(start_date: date, end_date: date):
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_latest_giriton_data():
-    return read_giriton_shifts_raw(limit=1)
+    return read_courier_hub_shift_state_raw(limit=1)
 
 
 @st.cache_data(show_spinner=False, ttl=FOGLALAS_DATA_CACHE_TTL_SECONDS)
 def _load_giriton_day(work_date):
-    return read_giriton_shifts_raw(
+    return read_courier_hub_shift_state_raw(
         start_date=work_date,
         end_date=work_date,
         limit=20000,
