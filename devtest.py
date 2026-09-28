@@ -9104,7 +9104,7 @@ def settlement_loyalty_cache_token(session_id: str | None, period_start: date, c
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-@st.cache_data(show_spinner=False, ttl=30)
+@st.cache_data(show_spinner=False, ttl=300)
 def build_settlement_overview_data(
     calculation_mode: str,
     session_id: str | None,
@@ -22705,20 +22705,33 @@ def show_new_settlement_page() -> None:
         show_reports_dialog()
     if d.button("Paraméterértékek",use_container_width=True):
         show_parameter_catalog_dialog()
-    e.download_button(
-        "Export Excel",
-        data=build_excel_export(filtered, balance_period_start, balance_period_end),
-        file_name="elszamolas_export.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-    f.download_button(
-        "Penzugy/TIG/Kifizetes Excel",
-        data=build_payment_tig_audit_export(filtered, balance_period_start),
-        file_name=f"penzugy_tig_kifizetes_ellenorzes_{balance_period_start:%Y_%m}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
+    export_context_token = hashlib.sha1(filtered_context.encode("utf-8")).hexdigest()[:12]
+    export_key = f"settlement_export_xlsx_{balance_period_start:%Y%m}_{export_context_token}"
+    audit_export_key = f"payment_tig_audit_export_xlsx_{balance_period_start:%Y%m}_{export_context_token}"
+    if e.button("Export Excel", use_container_width=True, key=f"build_{export_key}"):
+        with st.spinner("Export készítése..."):
+            st.session_state[export_key] = build_excel_export(filtered, balance_period_start, balance_period_end)
+    if st.session_state.get(export_key):
+        e.download_button(
+            "Export letöltése",
+            data=st.session_state[export_key],
+            file_name="elszamolas_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_{export_key}",
+        )
+    if f.button("Penzugy/TIG/Kifizetes Excel", use_container_width=True, key=f"build_{audit_export_key}"):
+        with st.spinner("Ellenőrző export készítése..."):
+            st.session_state[audit_export_key] = build_payment_tig_audit_export(filtered, balance_period_start)
+    if st.session_state.get(audit_export_key):
+        f.download_button(
+            "Ellenőrző export letöltése",
+            data=st.session_state[audit_export_key],
+            file_name=f"penzugy_tig_kifizetes_ellenorzes_{balance_period_start:%Y_%m}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_{audit_export_key}",
+        )
 
 
 if __name__ == "__main__":
