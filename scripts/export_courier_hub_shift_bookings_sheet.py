@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from google_client import open_spreadsheet  # noqa: E402
+from resources.google_sheets_values import replace_sheet_values_by_id  # noqa: E402
 from resources.supabase_raw import (  # noqa: E402
     get_supabase_config,
     raise_for_supabase_error,
@@ -170,15 +170,7 @@ def export_shift_bookings(start_date: date, end_date: date, dry_run: bool = Fals
             ],
         ]
 
-    spreadsheet = open_spreadsheet(SPREADSHEET_ID)
-    worksheet = spreadsheet.get_worksheet_by_id(WORKSHEET_GID)
-    if worksheet is None:
-        raise RuntimeError(f"Nem található worksheet gid={WORKSHEET_GID}.")
-    worksheet.clear()
-    worksheet.update(
-        range_name="A1",
-        values=values,
-    )
+    replace_sheet_values_by_id(SPREADSHEET_ID, WORKSHEET_GID, values)
     return {"records": len(records), "raw_records": len(raw_records), "written_rows": len(values)}
 
 

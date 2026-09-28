@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from google_client import open_spreadsheet  # noqa: E402
+from resources.google_sheets_values import replace_sheet_values_by_id  # noqa: E402
 
 
 SPREADSHEET_ID = "1xtvIH4fbO7C-q_BUdBaTuDnPKAwgq694l2k5TxVBxOg"
@@ -135,22 +135,13 @@ def export_failures(input_path: Path, dry_run: bool = False) -> dict[str, Any]:
             ],
         ]
 
-    spreadsheet = open_spreadsheet(SPREADSHEET_ID)
-    worksheet = spreadsheet.get_worksheet_by_id(WORKSHEET_GID)
-    if worksheet is None:
-        raise RuntimeError(f"Nem található worksheet gid={WORKSHEET_GID}.")
-
-    worksheet.clear()
-    worksheet.update(
-        range_name="A1",
-        values=values,
-    )
+    replace_sheet_values_by_id(SPREADSHEET_ID, WORKSHEET_GID, values)
     return {
         "records": len(records),
         "raw_records": len(raw_records),
         "written_rows": len(values),
-        "worksheet_title": worksheet.title,
-        "worksheet_id": worksheet.id,
+        "worksheet_title": "",
+        "worksheet_id": WORKSHEET_GID,
     }
 
 

@@ -376,20 +376,9 @@ def _append_success_robotlog(candidate, status):
     if clean(status) not in ROBOTLOG_SHEET_STATUSES:
         return "SKIPPED_STATUS"
 
-    from resources.google_auth import get_client
+    from resources.google_sheets_values import append_values
 
     candidate = candidate or {}
-    worksheet = _get_or_create_robotlog_worksheet(
-        get_client().open_by_key(_robotlog_spreadsheet_id())
-    )
-    values = worksheet.get_all_values()
-
-    if not values:
-        worksheet.update(
-            "A1",
-            [ROBOTLOG_HEADER],
-            value_input_option="USER_ENTERED",
-        )
 
     work_date = clean(candidate.get("work_date"))
     warehouse = _normalize_warehouse(candidate.get("warehouse"))
@@ -400,10 +389,7 @@ def _append_success_robotlog(candidate, status):
         f"Dátum: {work_date}, Műszak: {_format_robotlog_shift(candidate)}, Raktár: {warehouse}",
         _legacy_candidate_serial(candidate),
     ]
-    worksheet.append_row(
-        row,
-        value_input_option="USER_ENTERED",
-    )
+    append_values(_robotlog_spreadsheet_id(), f"{_robotlog_worksheet_name()}!A:E", [row])
 
     return "OK"
 

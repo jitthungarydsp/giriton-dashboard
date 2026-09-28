@@ -4,7 +4,12 @@ import argparse
 from datetime import date, datetime
 from pathlib import Path
 import sys
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
+
+import requests
+from google.auth.transport.requests import AuthorizedSession
+from google.oauth2.service_account import Credentials
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,17 +22,18 @@ from resources.giriton_auto_booking import (  # noqa: E402
     _legacy_candidate_serial,
     _format_robotlog_shift,
     _format_robotlog_timestamp,
-    _get_or_create_robotlog_worksheet,
     _normalize_warehouse,
     _robotlog_spreadsheet_id,
+    _robotlog_worksheet_name,
     _robotlog_action_type,
     clean,
     read_giriton_booking_log,
 )
-from resources.google_auth import get_client  # noqa: E402
+from resources.google_auth import SCOPES, load_service_account_info, resolve_service_account_file  # noqa: E402
 
 
 BUDAPEST_TZ = ZoneInfo("Europe/Budapest")
+SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 
 
 def parse_date(value: str | None, default: date) -> date:
@@ -37,22 +43,78 @@ def parse_date(value: str | None, default: date) -> date:
     return datetime.strptime(text, "%Y-%m-%d").date()
 
 
-def robotlog_keys(worksheet) -> set[tuple[str, str]]:
-    values = worksheet.get_all_values()
+def sheets_session() -> AuthorizedSession:
+    service_account_info = load_service_account_info()
+    if service_account_info:
+        credentials = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+    else:
+        service_account_file = resolve_service_account_file()
+        if not service_account_file:
+            raise FileNotFoundError("Google service account nincs beállítva.")
+        credentials = Credentials.from_service_account_file(service_account_file, scopes=SCOPES)
+    return AuthorizedSession(credentials)
+
+
+def values_url(spreadsheet_id: str, range_name: str, suffix: str = "") -> str:
+    return f"{SHEETS_API_BASE}/{spreadsheet_id}/values/{quote(range_name, safe='')}{suffix}"
+
+
+def raise_for_google_response(response: requests.Response, label: str) -> None:
+    if response.ok:
+        return
+    body = response.text[:1000]
+    raise RuntimeError(f"{label}: HTTP {response.status_code}: {body}")
+
+
+def robotlog_keys(session: AuthorizedSession, spreadsheet_id: str, worksheet_name: str) -> set[tuple[str, str]]:
+    response = session.get(
+        values_url(spreadsheet_id, f"{worksheet_name}!C:E"),
+        timeout=30,
+    )
+    raise_for_google_response(response, "ROBOTLOG key read")
+    values = (response.json() or {}).get("values") or []
     if not values:
-        worksheet.update(
-            "A1",
-            [ROBOTLOG_HEADER],
-            value_input_option="USER_ENTERED",
+        header_response = session.put(
+            values_url(spreadsheet_id, f"{worksheet_name}!A1:E1"),
+            params={"valueInputOption": "USER_ENTERED"},
+            json={"values": [ROBOTLOG_HEADER]},
+            timeout=30,
         )
+        raise_for_google_response(header_response, "ROBOTLOG header write")
         return set()
 
     keys: set[tuple[str, str]] = set()
     for row in values[1:]:
-        if len(row) >= 5 and clean(row[4]):
-            action_type = clean(row[2]) if len(row) >= 3 else "FOGLALÁS"
-            keys.add((action_type or "FOGLALÁS", clean(row[4])))
+        serial = clean(row[2]) if len(row) >= 3 else ""
+        if serial:
+            action_type = clean(row[0]) if row else "FOGLALÁS"
+            keys.add((action_type or "FOGLALÁS", serial))
     return keys
+
+
+def append_robotlog_rows(
+    session: AuthorizedSession,
+    spreadsheet_id: str,
+    worksheet_name: str,
+    rows: list[list[str]],
+    *,
+    batch_size: int = 500,
+) -> int:
+    written = 0
+    for start in range(0, len(rows), max(int(batch_size), 1)):
+        batch = rows[start:start + max(int(batch_size), 1)]
+        response = session.post(
+            values_url(spreadsheet_id, f"{worksheet_name}!A:E", ":append"),
+            params={
+                "valueInputOption": "USER_ENTERED",
+                "insertDataOption": "INSERT_ROWS",
+            },
+            json={"values": batch},
+            timeout=60,
+        )
+        raise_for_google_response(response, "ROBOTLOG batch append")
+        written += len(batch)
+    return written
 
 
 def robotlog_key_from_log(log_row: dict) -> tuple[str, str]:
@@ -116,10 +178,10 @@ def sync_robotlog_sheet(start_date: date, end_date: date, *, limit: int, dry_run
         print(f"ROBOTLOG_SYNC source_rows={len(log_df)} missing=0 written=0")
         return 0, 0
 
-    worksheet = _get_or_create_robotlog_worksheet(
-        get_client().open_by_key(_robotlog_spreadsheet_id())
-    )
-    existing_keys = robotlog_keys(worksheet)
+    spreadsheet_id = _robotlog_spreadsheet_id()
+    worksheet_name = _robotlog_worksheet_name()
+    session = sheets_session()
+    existing_keys = robotlog_keys(session, spreadsheet_id, worksheet_name)
     missing_df = success_df[
         ~success_df.apply(
             lambda row: robotlog_key_from_log(row.to_dict()) in existing_keys,
@@ -144,9 +206,9 @@ def sync_robotlog_sheet(start_date: date, end_date: date, *, limit: int, dry_run
             print(f"ROBOTLOG_SYNC_DRY_RUN row={row}")
         return len(success_df), 0
 
-    worksheet.append_rows(rows, value_input_option="USER_ENTERED")
-    print(f"ROBOTLOG_SYNC_WRITTEN={len(rows)}")
-    return len(success_df), len(rows)
+    written = append_robotlog_rows(session, spreadsheet_id, worksheet_name, rows)
+    print(f"ROBOTLOG_SYNC_WRITTEN={written}")
+    return len(success_df), written
 
 
 def main() -> None:
