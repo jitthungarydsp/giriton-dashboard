@@ -6,6 +6,7 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 import re
+import uuid
 from urllib.parse import quote_plus, urlencode
 from zoneinfo import ZoneInfo
 
@@ -1353,6 +1354,11 @@ def normalize_filename_token(value):
     return text
 
 
+def is_cash_invoice_file_name(value):
+    tokens = re.split(r"[^a-z0-9]+", clean_display_text(value).casefold())
+    return any(token in {"kp", "kpt", "cash", "keszpenz", "keszpenzes"} for token in tokens)
+
+
 def invoice_file_signature_ok(file_name, content):
     extension = Path(file_name or "").suffix.lower().lstrip(".")
 
@@ -1483,6 +1489,7 @@ def build_invoice_checks(
     expected_seller_tax_number="",
     expected_seller_address="",
     require_invoice_fields=False,
+    invoice_mode="transfer",
 ):
     checks = []
 
@@ -1506,6 +1513,7 @@ def build_invoice_checks(
         courier_name=courier_name,
         courier_id=courier_id,
         expected_gross_amount=int(float(expected_gross_amount or 0)),
+        invoice_mode=invoice_mode,
         invoice_number=invoice_number,
         gross_amount=int(float(gross_amount or 0)),
         require_submission_fields=require_invoice_fields,
@@ -1813,6 +1821,7 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                     courier_id=courier_id,
                     courier_name=name,
                     expected_gross_amount=0,
+                    invoice_mode="cash" if is_cash_invoice_file_name(uploaded_invoice.name) else "transfer",
                     expected_seller_tax_number=(
                         row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
                     ),
@@ -1832,6 +1841,7 @@ def render_invoice_submission_panel(row, user, selected_month=None):
                     courier_id=courier_id,
                     courier_name=name,
                     expected_gross_amount=expected_tig_amount,
+                    invoice_mode="cash" if is_cash_invoice_file_name(uploaded_invoice.name) else "transfer",
                     expected_seller_tax_number=(
                         row.get("tax_number") or row.get("adoszam") or row.get("taxNumber") or ""
                     ),
@@ -1847,15 +1857,11 @@ def render_invoice_submission_panel(row, user, selected_month=None):
         if multi_invoice:
             expected_total = int(float(expected_tig_amount or gross_amount or 0))
             if expected_total:
-                if parsed_gross_total == expected_total:
-                    st.success(f"A k?t sz?mla ?sszege egy?tt egyezik a TIG ?sszeg?vel: {format_currency(parsed_gross_total)}.")
-                else:
-                    st.error(
-                        "A k?t sz?mla ?sszege egy?tt nem egyezik a TIG/megadott ?sszeggel: "
-                        f"sz?ml?k ?sszesen {format_currency(parsed_gross_total)}, "
-                        f"v?rt {format_currency(expected_total)}."
-                    )
-                    has_error = True
+                st.info(
+                    "Tobb szamla feltoltesekor a KP/KPT es az atutalasos szamla nem kerul "
+                    "egyosszegu TIG-ellenorzesre. Az egyes szamlak sajat adatellenorzese fut le; "
+                    f"kiolvasott brutto osszesen: {format_currency(parsed_gross_total)}."
+                )
             else:
                 st.warning(
                     f"A k?t sz?mla kiolvasott ?sszege ?sszesen {format_currency(parsed_gross_total)}, "
@@ -1989,6 +1995,141 @@ def get_peopleforce_month(action_key):
         format_func=format_peopleforce_month,
         key=f"peopleforce_month_{action_key}",
     )
+
+
+SALARY_ADVANCE_CLOSED_STATUSES = {"closed", "paid", "rejected", "cancelled", "canceled", "done"}
+
+
+def salary_advance_installment_amounts(total_huf, months):
+    total = max(0, int(round(float(total_huf or 0))))
+    count = max(1, int(months or 1))
+    base = total // count
+    remainder = total % count
+    return [base + (1 if index < remainder else 0) for index in range(count)]
+
+
+def is_active_salary_advance_request(row):
+    status = str((row or {}).get("status") or "").strip().casefold()
+    return status not in SALARY_ADVANCE_CLOSED_STATUSES
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def read_pwa_salary_advance_requests(courier_id):
+    clean_courier_id = normalize_id(courier_id)
+    if not clean_courier_id:
+        return []
+    supabase_url = require_supabase()
+    headers = supabase_headers()
+    headers["Accept-Profile"] = "settlement"
+    response = requests.get(
+        f"{supabase_url}/rest/v1/courier_salary_advance_request",
+        headers=headers,
+        params={
+            "select": "id,status,requested_amount_huf,installment_months,monthly_amount_huf,start_date,requested_at,process_id",
+            "courier_id": f"eq.{clean_courier_id}",
+            "order": "requested_at.desc",
+            "limit": "50",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json() or []
+
+
+def create_pwa_salary_advance_request(*, courier_id, courier_name, amount_huf, months, start_date, note, actor):
+    clean_courier_id = normalize_id(courier_id)
+    if not clean_courier_id:
+        raise ValueError("Hiányzik a futár azonosító.")
+    existing_rows = read_pwa_salary_advance_requests(clean_courier_id)
+    if any(is_active_salary_advance_request(row) for row in existing_rows):
+        raise ValueError("Ennél a futárnál már van aktív fizetés előleg igény.")
+
+    start_month = date(start_date.year, start_date.month, 1)
+    amounts = salary_advance_installment_amounts(amount_huf, months)
+    supabase_url = require_supabase()
+    headers = supabase_headers()
+    headers["Content-Profile"] = "settlement"
+    headers["Prefer"] = "return=representation"
+    response = requests.post(
+        f"{supabase_url}/rest/v1/courier_salary_advance_request",
+        headers=headers,
+        json={
+            "id": str(uuid.uuid4()),
+            "courier_id": clean_courier_id,
+            "courier_name": clean_display_text(courier_name),
+            "requested_amount_huf": int(round(float(amount_huf or 0))),
+            "installment_months": len(amounts),
+            "monthly_amount_huf": amounts[0] if amounts else 0,
+            "start_date": start_month.isoformat(),
+            "status": "requested",
+            "note": clean_display_text(note),
+            "requested_by": clean_display_text(actor, "admin"),
+            "updated_at": pd.Timestamp.utcnow().isoformat(),
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    read_pwa_salary_advance_requests.clear()
+    return response.json() or []
+
+
+def render_admin_salary_advance_panel(row, user, selected_month):
+    if (user or {}).get("role") != "admin":
+        return
+    courier_id = normalize_id(row.get("courier_id") or user.get("courierId"))
+    courier_name = get_courier_display_name(row, user)
+    if not courier_id:
+        return
+
+    with st.expander("Admin fizetés előleg indítása", expanded=False):
+        try:
+            requests_rows = read_pwa_salary_advance_requests(courier_id)
+        except Exception as exc:
+            st.warning("Az előleg igények nem tölthetők be.")
+            st.caption(str(exc))
+            return
+
+        active_rows = [item for item in requests_rows if is_active_salary_advance_request(item)]
+        if active_rows:
+            latest = active_rows[0]
+            st.info(
+                "Ennél a futárnál már van aktív fizetés előleg igény: "
+                f"{format_currency(latest.get('requested_amount_huf'))} / {clean_display_text(latest.get('status'), '-')}"
+            )
+            return
+
+        if requests_rows:
+            st.success("A korábbi előleg folyamat lezárt, új igény indítható.")
+
+        with st.form(f"pwa_salary_advance_admin_{courier_id}_{selected_month:%Y%m}", clear_on_submit=False):
+            amount = st.number_input("Igényelt összeg (Ft)", min_value=0, max_value=10_000_000, step=1000, value=0)
+            months = st.number_input("Havi bontás (hónap)", min_value=1, max_value=60, step=1, value=1)
+            start_date = st.date_input("Kezdő hónap", value=selected_month.replace(day=1))
+            note = st.text_area("Megjegyzés", placeholder="Admin indítás a futár nevében.")
+            preview = salary_advance_installment_amounts(amount, int(months))
+            st.info(f"Havi levonás: {format_currency(preview[0] if preview else 0)}")
+            submitted = st.form_submit_button("Előleg igény indítása a futár nevében", type="primary", use_container_width=True)
+
+        if not submitted:
+            return
+        if amount <= 0:
+            st.error("Az igényelt összegnek pozitívnak kell lennie.")
+            return
+        try:
+            create_pwa_salary_advance_request(
+                courier_id=courier_id,
+                courier_name=courier_name,
+                amount_huf=amount,
+                months=int(months),
+                start_date=start_date,
+                note=note,
+                actor=(user or {}).get("username"),
+            )
+            st.success("A fizetés előleg igény rögzítve a futár nevében.")
+            st.rerun()
+        except Exception as exc:
+            st.error("A fizetés előleg igény mentése nem sikerült.")
+            st.caption(str(exc))
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -3091,6 +3232,7 @@ def render_peopleforce_placeholder(row=None, user=None):
 
     st.markdown('<span id="peopleforce"></span>', unsafe_allow_html=True)
     render_peopleforce_card_grid(cards, card_states)
+    render_admin_salary_advance_panel(safe_row, user, selected_month)
 
     selected_action = get_peopleforce_selected_action()
     if get_peopleforce_card(selected_action):

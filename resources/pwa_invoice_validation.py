@@ -19,6 +19,30 @@ def _tokens(value: Any) -> list[str]:
     return re.sub(r"[^a-z0-9]+", " ", _fold(value)).strip().split()
 
 
+def _digits(value: Any) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _optional_tail_matches(left: str, right: str) -> bool:
+    if not left or set(left) <= {"0"}:
+        return True
+    if not right or set(right) <= {"0"}:
+        return True
+    return left == right
+
+
+def _invoice_number_matches(expected: Any, actual: Any) -> bool:
+    expected_digits = _digits(expected)
+    actual_digits = _digits(actual)
+    if len(expected_digits) >= 16 and len(actual_digits) >= 16:
+        return (
+            expected_digits[:8] == actual_digits[:8]
+            and expected_digits[8:16] == actual_digits[8:16]
+            and _optional_tail_matches(expected_digits[16:24], actual_digits[16:24])
+        )
+    return _tokens(expected) == _tokens(actual)
+
+
 def _name_match_tokens(value: Any) -> list[str]:
     ignored = {"e", "v", "ev", "egyeni", "vallalkozo"}
     return [token for token in _tokens(value) if token not in ignored]
@@ -507,9 +531,9 @@ def validate_invoice(
         days = (due_date - issue_date).days
         if is_cash_invoice:
             add(
-                "ok" if days in {0, 8} else "error",
+                "ok" if days == 0 else "error",
                 "KP fizetési szabály",
-                f"KP számlánál aznapi vagy 8 napos fizetési határidő elfogadott. Most {days} nap.",
+                f"KP számlánál aznapi fizetési határidő szükséges. Most {days} nap.",
             )
         else:
             add("ok" if days == 8 else "error", "8 napos fizetési szabály", f"Javítandó: a fizetési határidő a számla keltétől számított 8. nap legyen. Most {days} nap.")
@@ -547,7 +571,7 @@ def validate_invoice(
             if skip_invoice_number_match:
                 add("warn", "Számlaszám egyezése", f"Kihagyva admin/futár jelölés alapján. Megadva: {invoice_number}; PDF: {pdf_number}.")
             else:
-                add("ok" if _tokens(invoice_number) == _tokens(pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
+                add("ok" if _invoice_number_matches(invoice_number, pdf_number) else "error", "Számlaszám egyezése", f"Javítandó: a megadott számlaszám egyezzen a PDF-ben szereplővel. Megadva: {invoice_number}; PDF: {pdf_number}.")
         add("ok" if gross_amount > 0 else "error", "Bruttó összeg", _format_huf(gross_amount) if gross_amount > 0 else "0 Ft fölötti összeg szükséges.")
         if gross_amount > 0 and pdf_gross:
             add("ok" if gross_amount == pdf_gross else "error", "Megadott bruttó összeg", f"Megadva: {_format_huf(gross_amount)}; PDF: {_format_huf(pdf_gross)}.")

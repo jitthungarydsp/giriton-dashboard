@@ -6248,19 +6248,24 @@ def invoice_validation_context_for_admin(
         process_id,
     )
     cash_amount = 0.0
+    transfer_amount = 0.0
     session_tig_breakdown = (
         st.session_state.get(f"finance_payment_sync_{courier_id}_{period_start:%Y%m}") or {}
     ).get("tig_breakdown") or {}
     if isinstance(session_tig_breakdown, dict):
         cash_amount = parse_huf_value(session_tig_breakdown.get("cashGrossHuf"))
+        transfer_amount = parse_huf_value(session_tig_breakdown.get("finalTotalHuf"))
 
-    if not cash_amount:
+    if not cash_amount or not transfer_amount:
         snapshot = load_latest_devtest_finance_snapshot(courier_id, period_start)
         snapshot_tig_breakdown = _snapshot_source_payload(snapshot, "tig_breakdown") if snapshot else {}
         if isinstance(snapshot_tig_breakdown, dict):
-            cash_amount = parse_huf_value(snapshot_tig_breakdown.get("cashGrossHuf"))
+            cash_amount = cash_amount or parse_huf_value(snapshot_tig_breakdown.get("cashGrossHuf"))
+            transfer_amount = transfer_amount or parse_huf_value(snapshot_tig_breakdown.get("finalTotalHuf"))
         if not cash_amount and snapshot:
             cash_amount = parse_huf_value(_snapshot_amount(snapshot, "tig_cash_service", section="tig"))
+        if not transfer_amount and snapshot:
+            transfer_amount = parse_huf_value(_snapshot_amount(snapshot, "tig_final_total", section="tig"))
 
     is_cash_invoice = is_cash_invoice_document(invoice_document or {})
     if is_cash_invoice:
@@ -6269,7 +6274,7 @@ def invoice_validation_context_for_admin(
             "invoice_mode": "cash",
         }
     return {
-        "expected_gross_amount": int(round(full_amount)),
+        "expected_gross_amount": int(round(transfer_amount or full_amount)),
         "invoice_mode": "transfer",
     }
 
@@ -6736,6 +6741,21 @@ def load_courier_salary_advance_requests(courier_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+CLOSED_SALARY_ADVANCE_REQUEST_STATUSES = {"closed", "paid", "rejected", "cancelled", "canceled", "done"}
+
+
+def salary_advance_request_is_active(request_row: dict[str, object]) -> bool:
+    status = str(request_row.get("status") or "").strip().casefold()
+    return status not in CLOSED_SALARY_ADVANCE_REQUEST_STATUSES
+
+
+def active_salary_advance_requests(requests: pd.DataFrame) -> pd.DataFrame:
+    if requests.empty:
+        return requests
+    active_mask = requests.apply(lambda item: salary_advance_request_is_active(item.to_dict()), axis=1)
+    return requests[active_mask].copy()
+
+
 @st.cache_data(show_spinner=False, ttl=30)
 def load_courier_expense_requests(courier_id: str, document_month: date) -> pd.DataFrame:
     try:
@@ -6928,10 +6948,12 @@ def create_salary_advance_request(
         get_db().schema("settlement").table("courier_salary_advance_request")
         .select("id,status")
         .eq("courier_id", str(courier_id or "").strip())
-        .limit(1)
+        .order("requested_at", desc=True)
+        .limit(100)
         .execute().data or []
     )
-    if existing_rows:
+    active_existing_rows = [row for row in existing_rows if salary_advance_request_is_active(row)]
+    if active_existing_rows:
         raise ValueError("Ennél a futárnál már van fizetés előleg igény. Új igény nem indítható, a meglévőt lehet módosítani.")
     get_db().schema("settlement").table("courier_salary_advance_request").insert({
         "courier_id": str(courier_id or "").strip(),
@@ -17824,11 +17846,14 @@ def render_courier_detail_page() -> None:
         )
 
         form_left, form_right = st.columns([0.42, 0.58], gap="medium")
-        has_salary_advance_request = not requests.empty
+        active_requests = active_salary_advance_requests(requests)
+        has_active_salary_advance_request = not active_requests.empty
         with form_left:
-            if has_salary_advance_request:
-                st.info("Ennél a futárnál már van fizetés előleg igény. Újat nem lehet indítani, a meglévő igény adatai módosíthatók.")
+            if has_active_salary_advance_request:
+                st.info("Ennél a futárnál már van aktív fizetés előleg igény. Újat csak a folyamat lezárása után lehet indítani, a meglévő igény adatai módosíthatók.")
             else:
+                if not requests.empty:
+                    st.success("A korábbi előleg folyamat le van zárva, új igény indítható.")
                 with st.form(f"salary_advance_form_{courier_id}", clear_on_submit=False):
                     requested_amount = st.number_input("Igényelt összeg (Ft)", min_value=0, max_value=10_000_000, step=1000, value=0, key=f"salary_advance_amount_{courier_id}")
                     installment_months = st.number_input("Havi bontás (hónap)", min_value=1, max_value=60, step=1, value=1, key=f"salary_advance_months_{courier_id}")
