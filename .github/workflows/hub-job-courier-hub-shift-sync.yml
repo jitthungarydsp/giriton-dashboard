@@ -24,7 +24,8 @@ on:
         required: false
         default: "false"
   schedule:
-    - cron: "7,37 * * * *"
+    # GitHub cron UTC-ben fut. A Courier Hub teljes szinkron óránként indul.
+    - cron: "7 * * * *"
 
 concurrency:
   group: hub-job-courier-hub-sync
