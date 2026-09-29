@@ -10933,6 +10933,216 @@ def route_details_for_user(view_user: dict[str, Any], month_value: date, *, allo
     }
 
 
+def route_report_courier_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    digits = re.sub(r"\D+", "", text)
+    return digits or text
+
+
+def route_report_month_range(month_value: date) -> tuple[date, date]:
+    start = month_value.replace(day=1)
+    return start, month_end(start)
+
+
+def read_route_report_muszakpro_rows(month_value: date) -> list[dict[str, Any]]:
+    start, end = route_report_month_range(month_value)
+    rows = optional_supabase_rows_paged(
+        "bookings",
+        schema="muszakpro",
+        params={
+            "select": "work_date,courier_id,courier_name,email,warehouse,shift_text,booking_code,serial,status,updated_at",
+            "work_date": f"gte.{start.isoformat()}",
+            "and": f"(work_date.lte.{end.isoformat()})",
+            "order": "work_date.asc,courier_id.asc,shift_text.asc",
+        },
+        timeout=45,
+        page_size=1000,
+        max_rows=50000,
+    )
+    if not rows:
+        rows = read_schedule_muszakpro_rows(start, end)
+    active_statuses = {"", "ACTIVE", "OK", "FOGLALÁS", "FOGLALAS"}
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for row in rows:
+        status = str(row.get("status") or "ACTIVE").strip().upper()
+        if status not in active_statuses:
+            continue
+        work_date = str(row.get("work_date") or "")[:10]
+        courier_id = route_report_courier_id(row.get("courier_id"))
+        courier_name = str(row.get("courier_name") or "").strip()
+        email = str(row.get("email") or "").strip()
+        shift_text = str(row.get("shift_text") or "").strip()
+        warehouse = normalize_warehouse(row.get("warehouse"))
+        start_time = shift_start(shift_text)
+        key = (work_date, courier_id or normalize_person_match_text(courier_name), email.casefold(), warehouse, start_time or shift_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "source": "muszakpro.bookings" if "serial" in row else "raw_muszakpro_bookings",
+            "work_date": work_date,
+            "courier_id": courier_id,
+            "courier_name": courier_name,
+            "email": email,
+            "warehouse": warehouse,
+            "shift_text": shift_text,
+            "shift_start": start_time,
+            "booking_code": str(row.get("booking_code") or "").strip(),
+            "serial": str(row.get("serial") or "").strip(),
+        })
+    return result
+
+
+def read_route_report_hub_shift_rows(month_value: date) -> list[dict[str, Any]]:
+    start, end = route_report_month_range(month_value)
+    rows = optional_supabase_rows_paged(
+        "courier_shift_overview",
+        params={
+            "select": "work_date,courier_id,courier_name,warehouse_id,shift_id,shift_name,shift_start,shift_end,planned_start_at,planned_end_at,evaluation,status,raw_shift",
+            "work_date": f"gte.{start.isoformat()}",
+            "and": f"(work_date.lte.{end.isoformat()})",
+            "order": "work_date.asc,courier_id.asc,shift_start.asc",
+        },
+        timeout=45,
+        page_size=1000,
+        max_rows=50000,
+    )
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for row in rows:
+        work_date = str(row.get("work_date") or "")[:10]
+        raw_shift = row.get("raw_shift") if isinstance(row.get("raw_shift"), dict) else {}
+        start_value = row.get("shift_start") or row.get("planned_start_at") or raw_shift.get("plannedStartAt") or raw_shift.get("start")
+        start_time = shift_time_from_overview(work_date, start_value)
+        shift_id = str(row.get("shift_id") or raw_shift.get("shiftId") or raw_shift.get("id") or "").strip()
+        courier_id = route_report_courier_id(row.get("courier_id"))
+        key = (work_date, courier_id, start_time, shift_id)
+        if not work_date or not courier_id or key in seen:
+            continue
+        seen.add(key)
+        warehouse_id = str(row.get("warehouse_id") or raw_shift.get("warehouseId") or "").strip()
+        warehouse = raw_shift.get("warehouseCode") or raw_shift.get("warehouseName") or ""
+        if not warehouse and warehouse_id:
+            warehouse = f"BUD{warehouse_id}" if warehouse_id in {"1", "2"} else warehouse_id
+        result.append({
+            "work_date": work_date,
+            "courier_id": courier_id,
+            "courier_name": str(row.get("courier_name") or "").strip(),
+            "warehouse": normalize_warehouse(warehouse),
+            "shift_id": shift_id,
+            "shift_name": str(row.get("shift_name") or raw_shift.get("shiftName") or raw_shift.get("name") or "").strip(),
+            "shift_start": start_time,
+            "shift_end": shift_time_from_overview(work_date, row.get("shift_end") or row.get("planned_end_at") or raw_shift.get("plannedEndAt") or raw_shift.get("end")),
+            "status": str(row.get("evaluation") or row.get("status") or raw_shift.get("status") or "").strip(),
+        })
+    return result
+
+
+def planned_route_minutes_from_departure_return(item: dict[str, Any]) -> int | None:
+    departure = local_datetime(item.get("plannedDepartureAt"))
+    planned_return = local_datetime(item.get("plannedReturnAt"))
+    if not departure or not planned_return:
+        return None
+    minutes = int((planned_return - departure).total_seconds() // 60)
+    if minutes < 0:
+        minutes += 24 * 60
+    return minutes
+
+
+def is_city_route(item: dict[str, Any]) -> bool:
+    route_type = normalize_text(item.get("routeType"))
+    route_label = normalize_text(item.get("routeTypeLabel"))
+    not_city = {"express", "regional", "regio", "régio"}
+    if any(value in route_type or value in route_label for value in not_city):
+        return False
+    return (
+        "city" in route_type
+        or "city" in route_label
+        or route_type in {"", "normal", "normál", "normalis", "normális"}
+        or route_label in {"", "normal", "normál", "normalis", "normális"}
+    )
+
+
+def build_monthly_shift_route_report(month_value: date) -> dict[str, Any]:
+    names = courier_name_lookup()
+    muszakpro_rows = read_route_report_muszakpro_rows(month_value)
+    hub_rows = read_route_report_hub_shift_rows(month_value)
+    route_rows = route_details_for_all_couriers(month_value).get("rows") or []
+    summary: dict[str, dict[str, Any]] = {}
+    daily: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    def ensure_summary(courier_id: Any, courier_name: Any = "", warehouse: Any = "") -> dict[str, Any]:
+        clean_id = route_report_courier_id(courier_id)
+        clean_name = str(courier_name or "").strip() or names.get(clean_id) or (f"Futár {clean_id}" if clean_id else "Ismeretlen futár")
+        key = clean_id or normalize_person_match_text(clean_name)
+        item = summary.setdefault(key, {
+            "courier_id": clean_id,
+            "courier_name": clean_name,
+            "warehouse": normalize_warehouse(warehouse),
+            "muszakpro_booked": 0,
+            "hub_uploaded": 0,
+            "routes_delivered": 0,
+            "city_over_5h": 0,
+        })
+        if clean_name and (not item.get("courier_name") or str(item.get("courier_name")).startswith("Futár ")):
+            item["courier_name"] = clean_name
+        if warehouse and not item.get("warehouse"):
+            item["warehouse"] = normalize_warehouse(warehouse)
+        return item
+
+    def ensure_daily(work_date: Any, courier_id: Any, courier_name: Any = "", warehouse: Any = "") -> dict[str, Any]:
+        clean_date = str(work_date or "")[:10]
+        clean_id = route_report_courier_id(courier_id)
+        clean_warehouse = normalize_warehouse(warehouse)
+        key = (clean_date, clean_id, clean_warehouse)
+        item = daily.setdefault(key, {
+            "work_date": clean_date,
+            "courier_id": clean_id,
+            "courier_name": str(courier_name or "").strip() or names.get(clean_id) or (f"Futár {clean_id}" if clean_id else "Ismeretlen futár"),
+            "warehouse": clean_warehouse,
+            "muszakpro_booked": 0,
+            "hub_uploaded": 0,
+            "routes_delivered": 0,
+            "city_over_5h": 0,
+        })
+        if courier_name and str(item.get("courier_name") or "").startswith("Futár "):
+            item["courier_name"] = str(courier_name)
+        return item
+
+    for row in muszakpro_rows:
+        ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["muszakpro_booked"] += 1
+        ensure_daily(row.get("work_date"), row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["muszakpro_booked"] += 1
+    for row in hub_rows:
+        ensure_summary(row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["hub_uploaded"] += 1
+        ensure_daily(row.get("work_date"), row.get("courier_id"), row.get("courier_name"), row.get("warehouse"))["hub_uploaded"] += 1
+
+    city_over_5h_rows = []
+    for row in route_rows:
+        courier_id = route_report_courier_id(row.get("courierId"))
+        warehouse = row.get("warehouse")
+        ensure_summary(courier_id, row.get("courierName"), warehouse)["routes_delivered"] += 1
+        ensure_daily(row.get("date"), courier_id, row.get("courierName"), warehouse)["routes_delivered"] += 1
+        planned_minutes = planned_route_minutes_from_departure_return(row)
+        if planned_minutes is not None and planned_minutes > 300 and is_city_route(row):
+            ensure_summary(courier_id, row.get("courierName"), warehouse)["city_over_5h"] += 1
+            ensure_daily(row.get("date"), courier_id, row.get("courierName"), warehouse)["city_over_5h"] += 1
+            city_over_5h_rows.append({**row, "plannedDepotToDepotMinutes": planned_minutes})
+
+    return {
+        "month": month_value.replace(day=1).strftime("%Y-%m"),
+        "summary": sorted(summary.values(), key=lambda item: (normalize_text(item.get("courier_name")), str(item.get("courier_id")))),
+        "daily": sorted(daily.values(), key=lambda item: (item.get("work_date") or "", normalize_text(item.get("courier_name")), item.get("warehouse") or "")),
+        "muszakpro_rows": muszakpro_rows,
+        "hub_rows": hub_rows,
+        "route_rows": route_rows,
+        "city_over_5h_rows": sorted(city_over_5h_rows, key=lambda item: (item.get("date") or "", normalize_text(item.get("courierName")), item.get("plannedDepotToDepotMinutes") or 0), reverse=True),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def route_quality_shift_key(row: dict[str, Any]) -> str:
     story = row.get("routeStory") or {}
     return str(
@@ -15370,6 +15580,192 @@ def route_details_excel(
     workbook.save(output)
     output.seek(0)
     filename = f"tura-reszletek-{slugify_filename((payload.get('courier') or {}).get('name'))}-{payload.get('month')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/routes/monthly-shift-report.xlsx")
+def monthly_shift_route_report_excel(
+    month: str = Query(default=""),
+    giriton_pwa_session: str | None = Cookie(default=None),
+):
+    user = require_user(giriton_pwa_session)
+    if not can_preview_couriers(user):
+        raise HTTPException(status_code=403, detail="A havi műszak/kör riporthoz admin jogosultság szükséges.")
+    month_value = parse_month(month)
+    payload = build_monthly_shift_route_report(month_value)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    workbook = Workbook()
+    header_fill = PatternFill("solid", fgColor="17231C")
+
+    def setup_sheet(sheet, headers: list[str]) -> None:
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.fill = header_fill
+        sheet.freeze_panes = "A2"
+
+    def autosize(sheet) -> None:
+        for column_cells in sheet.columns:
+            max_length = max(len(str(cell.value or "")) for cell in column_cells[:300])
+            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 10), 55)
+
+    def ratio(numerator: Any, denominator: Any) -> float:
+        top = safe_float_value(numerator) or 0
+        bottom = safe_float_value(denominator) or 0
+        return round(top / bottom, 4) if bottom else 0
+
+    sheet = workbook.active
+    sheet.title = "Osszesito"
+    setup_sheet(sheet, [
+        "Hónap",
+        "Futár ID",
+        "Futár neve",
+        "Raktár",
+        "MűszakPro foglalt műszak",
+        "HUB-on feltöltött műszak",
+        "Futár által kivitt kör",
+        "HUB / MűszakPro arány",
+        "Kivitt kör / HUB arány",
+        "City 5 óra felett",
+    ])
+    for row in payload["summary"]:
+        sheet.append([
+            payload["month"],
+            row.get("courier_id"),
+            row.get("courier_name"),
+            row.get("warehouse"),
+            row.get("muszakpro_booked"),
+            row.get("hub_uploaded"),
+            row.get("routes_delivered"),
+            ratio(row.get("hub_uploaded"), row.get("muszakpro_booked")),
+            ratio(row.get("routes_delivered"), row.get("hub_uploaded")),
+            row.get("city_over_5h"),
+        ])
+
+    daily_sheet = workbook.create_sheet("Futar napi bontas")
+    setup_sheet(daily_sheet, [
+        "Dátum",
+        "Futár ID",
+        "Futár neve",
+        "Raktár",
+        "MűszakPro foglalt műszak",
+        "HUB-on feltöltött műszak",
+        "Futár által kivitt kör",
+        "City 5 óra felett",
+    ])
+    for row in payload["daily"]:
+        daily_sheet.append([
+            row.get("work_date"),
+            row.get("courier_id"),
+            row.get("courier_name"),
+            row.get("warehouse"),
+            row.get("muszakpro_booked"),
+            row.get("hub_uploaded"),
+            row.get("routes_delivered"),
+            row.get("city_over_5h"),
+        ])
+
+    city_sheet = workbook.create_sheet("City 5 ora felett")
+    setup_sheet(city_sheet, [
+        "Dátum",
+        "Futár ID",
+        "Futár neve",
+        "Raktár",
+        "Route ID",
+        "Műszak neve",
+        "Túra típusa",
+        "Tervezett indulás",
+        "Tervezett visszaérkezés",
+        "Tervezett raktártól raktárig perc",
+        "Tervezett raktártól raktárig óra",
+        "Kivitt kör tényleges visszaérkezés",
+        "Forrás",
+    ])
+    for row in payload["city_over_5h_rows"]:
+        minutes = safe_int(row.get("plannedDepotToDepotMinutes"))
+        city_sheet.append([
+            row.get("date"),
+            row.get("courierId"),
+            row.get("courierName"),
+            row.get("warehouse"),
+            row.get("routeId"),
+            row.get("shiftName"),
+            row.get("routeTypeLabel"),
+            route_detail_datetime_text(row.get("plannedDepartureAt")),
+            route_detail_datetime_text(row.get("plannedReturnAt")),
+            minutes,
+            round(minutes / 60, 2) if minutes else 0,
+            route_detail_datetime_text(row.get("returnedAt")),
+            row.get("dataSource"),
+        ])
+
+    detail_sheet = workbook.create_sheet("Forras sorok")
+    setup_sheet(detail_sheet, [
+        "Forrás",
+        "Dátum",
+        "Futár ID",
+        "Futár neve",
+        "Raktár",
+        "Azonosító",
+        "Műszak / Route",
+        "Kezdés",
+        "Vége / vissza",
+        "Státusz",
+    ])
+    for row in payload["muszakpro_rows"]:
+        detail_sheet.append([
+            "MűszakPro",
+            row.get("work_date"),
+            row.get("courier_id"),
+            row.get("courier_name"),
+            row.get("warehouse"),
+            row.get("booking_code") or row.get("serial"),
+            row.get("shift_text"),
+            row.get("shift_start"),
+            "",
+            "Aktív",
+        ])
+    for row in payload["hub_rows"]:
+        detail_sheet.append([
+            "HUB műszak",
+            row.get("work_date"),
+            row.get("courier_id"),
+            row.get("courier_name"),
+            row.get("warehouse"),
+            row.get("shift_id"),
+            row.get("shift_name"),
+            row.get("shift_start"),
+            row.get("shift_end"),
+            row.get("status"),
+        ])
+    for row in payload["route_rows"]:
+        detail_sheet.append([
+            "Kivitt kör",
+            row.get("date"),
+            row.get("courierId"),
+            row.get("courierName"),
+            row.get("warehouse"),
+            row.get("routeId"),
+            row.get("shiftName"),
+            route_detail_datetime_text(row.get("plannedDepartureAt") or row.get("routeAssignedAt")),
+            route_detail_datetime_text(row.get("plannedReturnAt") or row.get("returnedAt")),
+            row.get("routeTypeLabel"),
+        ])
+
+    for sheet in workbook.worksheets:
+        autosize(sheet)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"havi-muszak-kor-riport-{payload.get('month')}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

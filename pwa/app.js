@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v139";
+const APP_VERSION = "v140";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -2298,6 +2298,13 @@ function routeDetailsExcelUrl() {
   return `/api/routes/details.xlsx?${params.toString()}`;
 }
 
+function monthlyShiftRouteReportExcelUrl() {
+  const month = $("#route-details-month")?.value || state.statisticsMonth;
+  if (!month) return "";
+  const params = new URLSearchParams({ month });
+  return `/api/routes/monthly-shift-report.xlsx?${params.toString()}`;
+}
+
 function renderRouteDetails() {
   const panel = $("#route-details-panel");
   if (!panel) return;
@@ -2309,12 +2316,14 @@ function renderRouteDetails() {
   const rows = payload?.rows || [];
   if (!payload) {
     const excelUrl = routeDetailsExcelUrl();
+    const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
     panel.innerHTML = `
       <div class="process-title">
         <span class="step-code">⇲</span>
         <div><h3>Túra részletező</h3><p>Válassz futárt és hónapot, majd kérd le a route adatokat. Futár nélkül a hónap összes route-ja letölthető Excelben.</p></div>
       </div>
       ${excelUrl ? `<a class="download-link route-details-export-all" href="${excelUrl}">Összes futár Excel letöltés</a>` : ""}
+      ${monthlyReportUrl ? `<a class="download-link route-details-export-all" href="${monthlyReportUrl}">Havi műszak/kör riport letöltés</a>` : ""}
     `;
     return;
   }
@@ -2330,6 +2339,7 @@ function renderRouteDetails() {
   const selectedIndex = Math.min(Math.max(0, state.routeDetailsSelectedIndex || 0), rows.length - 1);
   const selected = rows[selectedIndex];
   const excelUrl = routeDetailsExcelUrl();
+  const monthlyReportUrl = monthlyShiftRouteReportExcelUrl();
   panel.innerHTML = `
     <div class="route-details-head">
       <div>
@@ -2337,7 +2347,10 @@ function renderRouteDetails() {
         <strong>${escapeHtml(payload.courier?.name || "Futár")}</strong>
         <small>${formatCount(rows.length)} route sor</small>
       </div>
-      ${excelUrl ? `<a class="download-link" href="${excelUrl}">Excel letöltés</a>` : ""}
+      <div class="route-details-actions">
+        ${excelUrl ? `<a class="download-link" href="${excelUrl}">Excel letöltés</a>` : ""}
+        ${monthlyReportUrl ? `<a class="download-link" href="${monthlyReportUrl}">Havi műszak/kör riport</a>` : ""}
+      </div>
     </div>
     <div class="route-details-table-wrap">
       <table class="route-details-table">
