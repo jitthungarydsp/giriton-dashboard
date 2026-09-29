@@ -58,7 +58,7 @@ const state = {
   routePlannerSelectedStopIndex: null,
   routePlannerRouteKey: "",
 };
-const APP_VERSION = "v138";
+const APP_VERSION = "v139";
 const $ = (selector) => document.querySelector(selector);
 const QUEUE_STORAGE_KEY = "giriton-active-queue";
 const ROUTE_LIVE_REFRESH_MS = 2 * 60 * 1000;
@@ -4483,6 +4483,33 @@ $("#vehicle-hr-search-form")?.addEventListener("submit", (event) => {
   searchVehicleAssignments();
 });
 
+function selectedVehicleDamageCount() {
+  const input = $("#vehicle-damage-count");
+  const value = Number.parseInt(String(input?.value || "0"), 10);
+  return Number.isFinite(value) ? Math.max(0, Math.min(20, value)) : 0;
+}
+
+function renderVehicleDamagePhotoFields() {
+  const target = $("#vehicle-damage-photo-fields");
+  const input = $("#vehicle-damage-count");
+  if (!target) return;
+  const count = selectedVehicleDamageCount();
+  if (input && String(input.value || "") !== String(count)) input.value = String(count);
+  if (!count) {
+    target.innerHTML = "";
+    return;
+  }
+  target.innerHTML = Array.from({ length: count }, (_, index) => `
+    <label class="vehicle-damage-row">
+      <strong>${index + 1}. sérülés fotója</strong>
+      <input name="photos" type="file" accept="image/png,image/jpeg,image/webp" required />
+    </label>
+  `).join("");
+}
+
+$("#vehicle-damage-count")?.addEventListener("input", renderVehicleDamagePhotoFields);
+renderVehicleDamagePhotoFields();
+
 const vehicleConditionForm = $("#vehicle-condition-form");
 if (vehicleConditionForm) {
   vehicleConditionForm.addEventListener("submit", async (event) => {
@@ -4492,9 +4519,11 @@ if (vehicleConditionForm) {
       return;
     }
     const button = vehicleConditionForm.querySelector('button[type="submit"]');
-    const photos = $("#vehicle-condition-photos")?.files || [];
-    if (!photos.length) {
-      setVehicleConditionMessage("Legalább egy fotót fel kell tölteni.", true);
+    const damageCount = selectedVehicleDamageCount();
+    const photos = Array.from(vehicleConditionForm.querySelectorAll('input[type="file"][name="photos"]'))
+      .flatMap((input) => Array.from(input.files || []));
+    if (damageCount > 0 && photos.length < damageCount) {
+      setVehicleConditionMessage("Minden megadott sérüléshez tölts fel egy fotót.", true);
       return;
     }
     const form = new FormData(vehicleConditionForm);
@@ -4505,6 +4534,7 @@ if (vehicleConditionForm) {
       const payload = await api("/api/vehicles/reports", { method: "POST", body: form });
       vehicleConditionForm.reset();
       $("#vehicle-license-plate").value = plate;
+      renderVehicleDamagePhotoFields();
       const comparisonStatus = payload.report?.comparisonStatus || "";
       setVehicleConditionMessage(
         comparisonStatus === "no_previous"

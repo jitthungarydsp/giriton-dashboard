@@ -13666,10 +13666,54 @@ def normalize_device_event_type(value: str) -> str:
     return event_type
 
 
+def normalize_vehicle_check(value: str) -> str:
+    check = clean_text(value, limit=20).lower()
+    if check in {"ok", "rendben", "igen", "yes", "true", "1"}:
+        return "ok"
+    if check in {"not_ok", "nem_ok", "nem ok", "hiba", "no", "false", "0"}:
+        return "not_ok"
+    raise HTTPException(status_code=422, detail="Ismeretlen autos ellenorzesi valasz.")
+
+
+def vehicle_check_label(value: str) -> str:
+    return "OK" if value == "ok" else "NEM OK"
+
+
+def build_vehicle_condition_note(
+    *,
+    base_note: str,
+    damage_count: int,
+    oil_level_status: str,
+    coolant_level_status: str,
+    tire_pressure_status: str,
+    engine_cover_status: str,
+    bumper_damage_status: str,
+    lights_status: str,
+) -> tuple[str, str]:
+    checks = [
+        ("Olajszint", normalize_vehicle_check(oil_level_status)),
+        ("Hutoviz szintje", normalize_vehicle_check(coolant_level_status)),
+        ("Guminyomas", normalize_vehicle_check(tire_pressure_status)),
+        ("Motorvedo lemez allapota, van-e", normalize_vehicle_check(engine_cover_status)),
+        ("Lokhariton serules lathato-e", normalize_vehicle_check(bumper_damage_status)),
+        ("Vilagito berendezesek allapota", normalize_vehicle_check(lights_status)),
+    ]
+    normalized_damage_count = max(0, min(20, int(damage_count or 0)))
+    lines = [
+        f"Auton lathato serulesek szama: {normalized_damage_count} db",
+        *[f"{label}: {vehicle_check_label(value)}" for label, value in checks],
+    ]
+    clean_base_note = clean_text(base_note, limit=900)
+    if clean_base_note:
+        lines.extend(["", f"Megjegyzes: {clean_base_note}"])
+    condition_status = "ok" if normalized_damage_count == 0 and all(value == "ok" for _label, value in checks) else "other"
+    return "\n".join(lines), condition_status
+
+
 def device_report_label(row: dict[str, Any]) -> str:
     labels = {
-        "handover": "Atadas",
-        "return": "Visszavetel",
+        "handover": "Felvétel",
+        "return": "Leadás",
         "inspection": "Ellenorzes",
         "damage_report": "Serules jelzes",
     }
@@ -14783,7 +14827,7 @@ async def create_device_condition_report(
     clean_status = normalize_device_status(condition_status)
     clean_note = clean_text(note, limit=1200)
     selected_photos = [photo for photo in photos if photo and photo.filename]
-    if not selected_photos:
+    if not selected_photos and clean_device_type != "vehicle":
         raise HTTPException(status_code=422, detail="Legalabb egy fotot fel kell tolteni.")
     if len(selected_photos) > MAX_DEVICE_PHOTOS:
         raise HTTPException(status_code=422, detail=f"Legfeljebb {MAX_DEVICE_PHOTOS} foto toltheto fel egyszerre.")
@@ -14847,17 +14891,18 @@ async def create_device_condition_report(
                 "mime_type": mime_type,
                 "file_size": len(content),
                 "file_content_base64": base64.b64encode(content).decode("ascii"),
-                "photo_label": f"Foto {index}",
+                "photo_label": f"Serules foto {index}" if clean_device_type == "vehicle" else f"Foto {index}",
             }
         )
 
-    supabase_rest(
-        "POST",
-        "pwa_device_condition_photos",
-        payload=photo_payloads if len(photo_payloads) > 1 else photo_payloads[0],
-        prefer="return=minimal",
-        timeout=90,
-    )
+    if photo_payloads:
+        supabase_rest(
+            "POST",
+            "pwa_device_condition_photos",
+            payload=photo_payloads if len(photo_payloads) > 1 else photo_payloads[0],
+            prefer="return=minimal",
+            timeout=90,
+        )
     if clean_device_type == "vehicle":
         previous_report = latest_previous_vehicle_report(courier_id, serial, str(report_id))
         if previous_report:
@@ -14900,19 +14945,38 @@ async def create_device_condition_report(
 @app.post("/api/vehicles/reports")
 async def create_vehicle_condition_report(
     serial_number: str = Form(...),
-    event_type: str = Form(default="inspection"),
-    condition_status: str = Form(default="ok"),
+    event_type: str = Form(default="handover"),
+    damage_count: int = Form(default=0),
+    oil_level_status: str = Form(default="ok"),
+    coolant_level_status: str = Form(default="ok"),
+    tire_pressure_status: str = Form(default="ok"),
+    engine_cover_status: str = Form(default="ok"),
+    bumper_damage_status: str = Form(default="ok"),
+    lights_status: str = Form(default="ok"),
     note: str = Form(default=""),
     photos: list[UploadFile] = File(default=[]),
     giriton_pwa_session: str | None = Cookie(default=None),
 ):
+    selected_photo_count = len([photo for photo in photos if photo and photo.filename])
+    if int(damage_count or 0) > 0 and selected_photo_count < int(damage_count or 0):
+        raise HTTPException(status_code=422, detail="Minden megadott seruleshez fel kell tolteni egy fotot.")
+    clean_note, condition_status = build_vehicle_condition_note(
+        base_note=note,
+        damage_count=damage_count,
+        oil_level_status=oil_level_status,
+        coolant_level_status=coolant_level_status,
+        tire_pressure_status=tire_pressure_status,
+        engine_cover_status=engine_cover_status,
+        bumper_damage_status=bumper_damage_status,
+        lights_status=lights_status,
+    )
     return await create_device_condition_report(
         serial_number=serial_number,
         device_type="vehicle",
         imei="",
         event_type=event_type,
         condition_status=condition_status,
-        note=note,
+        note=clean_note,
         photos=photos,
         giriton_pwa_session=giriton_pwa_session,
     )

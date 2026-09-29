@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=129" />
     <link rel="icon" href="/icon.svg?v=129" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg?v=129" />
-    <link rel="stylesheet" href="/styles.css?v=129" />
+    <link rel="stylesheet" href="/styles.css?v=130" />
     <title>Jitt</title>
   </head>
   <body>
@@ -453,7 +453,7 @@
           <div>
             <p class="eyebrow">AUTÓ</p>
             <h2>Autó állapot</h2>
-            <p class="muted">Tölts fel több fotót az autóról, hogy a korábbi állapotokkal össze lehessen hasonlítani.</p>
+            <p class="muted">Rögzítsd felvételkor vagy leadáskor az autó állapotát, a hibákról pedig tölts fel fotót rendszám megjelöléssel.</p>
           </div>
         </section>
 
@@ -497,32 +497,63 @@
           <div class="process-title">
             <span class="step-code">AUTO</span>
             <div>
-              <h3>Autó fotós ellenőrzés</h3>
-              <p>A rendszám alapján látni fogod az előző fotós ellenőrzéseket is.</p>
+              <h3>Autó felvétel / leadás</h3>
+              <p>A rendszám alapján látni fogod az előző autós ellenőrzéseket is.</p>
             </div>
           </div>
           <form id="vehicle-condition-form" class="process-form two-column">
             <label>Rendszám<input id="vehicle-license-plate" name="serial_number" autocomplete="off" required /></label>
-            <label>Esemény
+            <label>Folyamat
               <select id="vehicle-event-type" name="event_type">
-                <option value="inspection">Ellenőrzés</option>
-                <option value="handover">Átadás</option>
-                <option value="return">Visszavétel</option>
-                <option value="damage_report">Sérülés jelzés</option>
+                <option value="handover">Felvétel</option>
+                <option value="return">Leadás</option>
               </select>
             </label>
-            <label>Állapot
-              <select id="vehicle-condition-status" name="condition_status">
-                <option value="ok">Rendben</option>
-                <option value="scratched">Karcos</option>
-                <option value="dented">Horpadás</option>
-                <option value="cracked">Repedt / törött elem</option>
-                <option value="broken">Hibás</option>
-                <option value="other">Egyéb</option>
-              </select>
+            <label>Autón látható sérülések száma
+              <input id="vehicle-damage-count" name="damage_count" type="number" min="0" max="20" step="1" value="0" required />
             </label>
-            <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Hol látható a sérülés, mi változott?"></textarea></label>
-            <label class="full-width">Fotók<input id="vehicle-condition-photos" name="photos" type="file" accept="image/png,image/jpeg,image/webp" multiple required /></label>
+            <div class="vehicle-damage-help">Hibákról küldj fotót ide rendszám megjelöléssel.</div>
+            <div id="vehicle-damage-photo-fields" class="vehicle-damage-fields full-width"></div>
+            <fieldset class="vehicle-checklist full-width">
+              <legend>Állapot kérdőív</legend>
+              <label>Olajszint
+                <select name="oil_level_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+              <label>Hűtővíz szintje
+                <select name="coolant_level_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+              <label>Guminyomás
+                <select name="tire_pressure_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+              <label>Motorvédő lemez állapota, van-e?
+                <select name="engine_cover_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+              <label>Lökhárítón sérülés látható-e?
+                <select name="bumper_damage_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+              <label>Világító berendezések állapota?
+                <select name="lights_status" required>
+                  <option value="ok">OK</option>
+                  <option value="not_ok">NEM OK</option>
+                </select>
+              </label>
+            </fieldset>
+            <label class="full-width">Megjegyzés<textarea id="vehicle-condition-note" name="note" rows="3" placeholder="Kiegészítő megjegyzés, ha szükséges"></textarea></label>
             <button class="primary full-width" type="submit">Autó állapot rögzítése</button>
           </form>
           <p id="vehicle-condition-message" class="updated-at" aria-live="polite"></p>
@@ -681,6 +712,6 @@
         <button disabled><span>☻</span>Bejelentés</button>
       </nav>
     </main>
-    <script src="/app.js?v=138" defer></script>
+    <script src="/app.js?v=139" defer></script>
   </body>
 </html>
