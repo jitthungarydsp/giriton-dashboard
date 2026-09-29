@@ -31,10 +31,6 @@ on:
         description: "uidl = új gyors Giriton frissítés, robot = régi UI végignyomkodás"
         required: false
         default: "uidl"
-  schedule:
-    # GitHub cron UTC-ben fut. Kevésbé terhelt percen indul, de továbbra is óránként.
-    - cron: "17 * * * *"
-
 permissions:
   contents: read
   actions: read

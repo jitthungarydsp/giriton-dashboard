@@ -31,6 +31,9 @@ on:
         description: "true = csak ellenorzes, false = eles HUB API foglalas"
         required: false
         default: "true"
+  schedule:
+    # GitHub cron UTC-ben fut. Az uj HUB/API foglalas orankent indul.
+    - cron: "17 * * * *"
 
 concurrency:
   group: hub-job-autobooking-${{ github.event.inputs.start_date || 'auto' }}
@@ -100,7 +103,11 @@ jobs:
           MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-20}"
           TOLERANCE_MINUTES="${TOLERANCE_MINUTES:-30}"
           MIN_GAP_MINUTES="${MIN_GAP_MINUTES:-270}"
-          DRY_RUN="${DRY_RUN:-true}"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            DRY_RUN="${DRY_RUN:-false}"
+          else
+            DRY_RUN="${DRY_RUN:-true}"
+          fi
 
           if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="5"; fi
           if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="20"; fi
@@ -271,7 +278,9 @@ jobs:
           sheet_pause
 
           run_with_retry python scripts/export_hub_autobooking_failures_sheet.py \
-            --input results/hub-job-autobooking/failures.json
+            --input results/hub-job-autobooking/failures.json \
+            --start-date "${{ steps.window.outputs.start_date }}" \
+            --end-date "${{ steps.window.outputs.end_date }}"
 
       - name: HUB_JOB_AUTOBOOKING summary
         if: always()
