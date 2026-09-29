@@ -56,10 +56,37 @@ def read_sheet_values(spreadsheet_id: str, sheet_name: str, columns: str = "A:ZZ
     return read_values(spreadsheet_id, f"{quote_sheet_name(sheet_name)}!{columns}")
 
 
+def resize_sheet_by_id(spreadsheet_id: str, sheet_id: int, row_count: int, column_count: int) -> None:
+    session = sheets_session()
+    response = session.post(
+        spreadsheet_url(spreadsheet_id, ":batchUpdate"),
+        json={
+            "requests": [
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": int(sheet_id),
+                            "gridProperties": {
+                                "rowCount": max(int(row_count), 1),
+                                "columnCount": max(int(column_count), 1),
+                            },
+                        },
+                        "fields": "gridProperties(rowCount,columnCount)",
+                    }
+                }
+            ]
+        },
+        timeout=60,
+    )
+    raise_for_google_response(response, "Google Sheets resize")
+
+
 def replace_sheet_values_by_id(spreadsheet_id: str, sheet_id: int, values: list[list[Any]]) -> None:
     session = sheets_session()
     row_count = max(len(values), 1)
     column_count = max((len(row) for row in values), default=1)
+    resize_sheet_by_id(spreadsheet_id, sheet_id, row_count, column_count)
+
     clear_response = session.post(
         spreadsheet_url(spreadsheet_id, "/values:batchClearByDataFilter"),
         json={"dataFilters": [{"gridRange": {"sheetId": int(sheet_id)}}]},
