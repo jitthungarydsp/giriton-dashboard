@@ -10,11 +10,11 @@ on:
       days:
         description: "Hany napot nezzen elore."
         required: false
-        default: "5"
+        default: "30"
       max_courier_days:
         description: "Maximum hany futar-napot foglaljon egy futasban."
         required: false
-        default: "20"
+        default: "300"
       courier_ids:
         description: "Opcionális célzott courier_id lista vesszővel elválasztva. Üresen: minden futár."
         required: false
@@ -99,8 +99,8 @@ jobs:
           DRY_RUN="${{ inputs.dry_run }}"
 
           START_DATE="${START_DATE:-$(TZ=Europe/Budapest date +%F)}"
-          DAYS="${DAYS:-5}"
-          MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-20}"
+          DAYS="${DAYS:-30}"
+          MAX_COURIER_DAYS="${MAX_COURIER_DAYS:-300}"
           TOLERANCE_MINUTES="${TOLERANCE_MINUTES:-30}"
           MIN_GAP_MINUTES="${MIN_GAP_MINUTES:-270}"
           if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
@@ -109,8 +109,8 @@ jobs:
             DRY_RUN="${DRY_RUN:-true}"
           fi
 
-          if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="5"; fi
-          if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="20"; fi
+          if ! [[ "$DAYS" =~ ^[0-9]+$ ]]; then DAYS="30"; fi
+          if ! [[ "$MAX_COURIER_DAYS" =~ ^[0-9]+$ ]]; then MAX_COURIER_DAYS="300"; fi
           if ! [[ "$TOLERANCE_MINUTES" =~ ^[0-9]+$ ]]; then TOLERANCE_MINUTES="30"; fi
           if ! [[ "$MIN_GAP_MINUTES" =~ ^[0-9]+$ ]]; then MIN_GAP_MINUTES="270"; fi
           HUB_LOOKAHEAD_DAYS=$((DAYS - 1))
