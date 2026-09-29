@@ -1401,7 +1401,7 @@ def live_vehicle_assignment_for_user(user: dict[str, Any]) -> dict[str, Any] | N
     }
 
 
-def read_live_vehicle_assignment_rows(limit: int = 1000) -> list[dict[str, Any]]:
+def read_live_vehicle_assignment_rows(limit: int = 1000, *, window_hours: int = 8) -> list[dict[str, Any]]:
     rows = optional_supabase_rows(
         "dsp_drivers_live_raw",
         params={
@@ -1413,7 +1413,7 @@ def read_live_vehicle_assignment_rows(limit: int = 1000) -> list[dict[str, Any]]
     )
     live_rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for row in freshest_live_map_rows(rows, window_hours=8):
+    for row in freshest_live_map_rows(rows, window_hours=window_hours):
         courier_id = str(row.get("driver_id") or "").strip()
         if courier_id and courier_id in seen:
             continue
@@ -1442,7 +1442,7 @@ def read_live_vehicle_assignment_rows(limit: int = 1000) -> list[dict[str, Any]]
         },
         timeout=20,
     )
-    for row in freshest_live_map_rows(hub_rows, window_hours=8):
+    for row in freshest_live_map_rows(hub_rows, window_hours=window_hours):
         courier_id = str(row.get("courier_id") or "").strip()
         plate = str(row.get("vehicle_plate") or "").strip()
         if not plate or (courier_id and courier_id in seen):
@@ -1464,6 +1464,61 @@ def read_live_vehicle_assignment_rows(limit: int = 1000) -> list[dict[str, Any]]
             "fetched_at": str(row.get("fetched_at") or "").strip(),
         })
     return live_rows
+
+
+def read_vehicle_condition_assignment_rows(
+    start: date,
+    end: date,
+    *,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    rows = optional_supabase_rows(
+        "pwa_device_condition_reports",
+        params={
+            "select": "serial_number,courier_name,event_type,condition_status,reported_at,updated_at",
+            "device_type": "eq.vehicle",
+            "reported_at": f"gte.{start.isoformat()}T00:00:00+00:00",
+            "order": "reported_at.desc",
+            "limit": str(int(limit)),
+        },
+        timeout=30,
+    )
+    items: list[dict[str, Any]] = []
+    labels = {
+        "handover": "Felvétel",
+        "return": "Leadás",
+        "inspection": "Ellenőrzés",
+        "damage_report": "Sérülés jelzés",
+    }
+    for row in rows:
+        reported_at = local_datetime(row.get("reported_at"))
+        work_date = reported_at.date() if reported_at else None
+        if not work_date or not (start <= work_date <= end):
+            continue
+        plate = str(row.get("serial_number") or "").strip()
+        if not plate:
+            continue
+        event_type = str(row.get("event_type") or "").strip()
+        condition_status = str(row.get("condition_status") or "").strip()
+        source_parts = ["PWA autó állapot"]
+        if event_type:
+            source_parts.append(labels.get(event_type, event_type))
+        if condition_status:
+            source_parts.append(condition_status.upper())
+        items.append({
+            "source_name": " · ".join(source_parts),
+            "work_date": work_date.isoformat(),
+            "driver_name": str(row.get("courier_name") or "").strip(),
+            "shift_start": reported_at.strftime("%H:%M") if reported_at else "",
+            "shift_end": "",
+            "car": "",
+            "license_plate": plate,
+            "shift_type": " · ".join(source_parts),
+            "fetched_at": str(row.get("updated_at") or row.get("reported_at") or "").strip(),
+        })
+        if len(items) >= limit:
+            break
+    return items
 
 
 def read_vehicle_assignment_rows_for_user(
@@ -14759,7 +14814,8 @@ def search_vehicle_assignments(
     person_searches = {value for value in person_searches if value}
     search_plate = re.sub(r"[^a-z0-9]+", "", search_text)
     rows = (
-        read_live_vehicle_assignment_rows(limit=1000)
+        read_live_vehicle_assignment_rows(limit=3000, window_hours=24 * 60)
+        + read_vehicle_condition_assignment_rows(start, end, limit=3000)
         + read_route_vehicle_assignment_rows(start, end, limit=10000)
         + read_vehicle_assignment_rows(start, end, limit=10000)
     )
