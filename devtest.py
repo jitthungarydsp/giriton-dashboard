@@ -36,8 +36,8 @@ from resources.email_templates_db import (
     send_courier_template_email,
 )
 from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
-from resources.pwa_users_db import reset_pwa_user_password, upsert_pwa_user_with_password
-from resources.users import normalize_courier_id
+from resources.pwa_users_db import reset_pwa_user_password, sync_single_pwa_user_from_json_users, upsert_pwa_user_with_password
+from resources.users import load_users, normalize_courier_id
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
     delete_peopleforce_complaint,
@@ -303,6 +303,24 @@ def send_pwa_password_reset_request(request_id: int, note: str, actor: dict[str,
     }
 
 
+def integrate_pwa_password_reset_user_from_json(request_id: int) -> dict[str, object]:
+    request_row = read_pwa_password_reset_request(request_id)
+    courier_id = normalize_courier_id(request_row.get("courier_id"))
+    email = validate_email(str(request_row.get("email") or "").strip())
+    users_data = load_users()
+    row = sync_single_pwa_user_from_json_users(
+        users_data.get("users", []),
+        courier_id,
+        fallback_email=email,
+    )
+    return {
+        "courier_id": str(row.get("courier_id") or courier_id),
+        "username": str(row.get("username") or ""),
+        "email": str(row.get("email") or email),
+        "active": bool(row.get("active", True)),
+    }
+
+
 def reject_pwa_password_reset_request(request_id: int, note: str) -> None:
     read_pwa_password_reset_request(request_id)
     update_pwa_password_reset_request_status(request_id, "rejected", note)
@@ -353,7 +371,7 @@ def render_pwa_password_reset_panel(expanded: bool = False) -> None:
                 value=str(item.get("admin_note") or ""),
                 key=f"pwa_password_reset_note_{request_id}",
             )
-            action_cols = st.columns(2)
+            action_cols = st.columns(3)
             send_disabled = status == "sent"
             if action_cols[0].button(
                 "Új jelszó kiküldése",
@@ -369,6 +387,18 @@ def render_pwa_password_reset_panel(expanded: bool = False) -> None:
                 except Exception as exc:
                     st.error(f"A jelszó kiküldése sikertelen: {exc}")
             if action_cols[1].button(
+                "DB-be integrálás",
+                disabled=status in {"sent", "rejected"},
+                key=f"pwa_password_reset_integrate_{request_id}",
+                use_container_width=True,
+            ):
+                try:
+                    result = integrate_pwa_password_reset_user_from_json(request_id)
+                    st.success(f"Futár DB-be integrálva: {result['username']} · {result['courier_id']}")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"A DB-be integrálás sikertelen: {exc}")
+            if action_cols[2].button(
                 "Elutasítás",
                 disabled=status in {"sent", "rejected"},
                 key=f"pwa_password_reset_reject_{request_id}",

@@ -273,6 +273,72 @@ def reset_pwa_user_password(courier_id: str) -> dict[str, Any] | None:
     }
 
 
+def find_json_pwa_user(users: list[dict[str, Any]], courier_id: str) -> dict[str, Any] | None:
+    clean_id = normalize_courier_id(courier_id)
+    if not clean_id:
+        return None
+    matches = [
+        user
+        for user in users
+        if normalize_courier_id(user.get("courierId") or user.get("courier_id")) == clean_id
+    ]
+    if not matches:
+        return None
+    active_matches = [user for user in matches if user.get("active", True)]
+    preferred = [
+        user
+        for user in active_matches
+        if str(user.get("username") or "").strip()
+    ]
+    if preferred:
+        return preferred[0]
+    return active_matches[0] if active_matches else matches[0]
+
+
+def sync_single_pwa_user_from_json_users(
+    users: list[dict[str, Any]],
+    courier_id: str,
+    *,
+    fallback_email: str = "",
+) -> dict[str, Any]:
+    user = find_json_pwa_user(users, courier_id)
+    clean_id = normalize_courier_id(courier_id)
+    if not user:
+        raise RuntimeError(f"Nincs users.json rekord erre a Courier ID-ra: {clean_id}")
+
+    clean_id = normalize_courier_id(user.get("courierId") or user.get("courier_id") or clean_id)
+    username = str(user.get("username") or "").strip()
+    if not username:
+        raise RuntimeError(f"A {clean_id} users.json rekordban nincs felhasználónév.")
+
+    password_hash = str(user.get("passwordHash") or "").strip()
+    plain_password = str(user.get("password") or "").strip()
+    if not password_hash and plain_password:
+        password_hash = hash_password(plain_password)
+    if not password_hash:
+        raise RuntimeError(f"A {clean_id} users.json rekordban nincs jelszó vagy passwordHash.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    rows = _request(
+        "POST",
+        PWA_USERS_TABLE,
+        params={"on_conflict": "courier_id"},
+        payload={
+            "courier_id": int(clean_id),
+            "username": username,
+            "email": str(user.get("credentialEmail") or fallback_email or "").strip() or None,
+            "role": str(user.get("role") or "user").strip() or "user",
+            "active": bool(user.get("active", True)),
+            "password_hash": password_hash,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    if rows is None:
+        raise RuntimeError("A pwa_users tábla nem érhető el. Futtasd a docs/pwa_users.sql migrációt.")
+    return rows[0] if rows else {}
+
+
 def sync_pwa_users_from_json_users(users: list[dict[str, Any]]) -> dict[str, int]:
     result = {"synced": 0, "skipped": 0}
     now = datetime.now(timezone.utc).isoformat()
