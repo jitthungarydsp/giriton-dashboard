@@ -7,6 +7,7 @@ import requests
 import streamlit as st
 
 from google_client import open_spreadsheet
+from resources.google_sheets_values import read_sheet_values
 from resources.source_sheet_sync import SOURCE_SPREADSHEET_ID
 from resources.supabase_raw import (
     format_date_filter,
@@ -441,8 +442,7 @@ def build_courier_lookup_from_sheet_values(values, name_columns=None):
 
 def read_legacy_courier_lookup_from_id_sheet():
     try:
-        worksheet = get_or_create_id_worksheet()
-        values = worksheet.get_all_values()
+        values = read_sheet_values(SOURCE_SPREADSHEET_ID, ID_SHEET_NAME)
     except Exception:
         return {"by_email": {}, "by_id": {}, "by_name": {}}
 
@@ -451,8 +451,7 @@ def read_legacy_courier_lookup_from_id_sheet():
 
 def read_courier_lookup_from_robot_id_sheet():
     try:
-        worksheet = get_robot_id_worksheet()
-        values = worksheet.get_all_values()
+        values = read_sheet_values(SOURCE_SPREADSHEET_ID, ROBOT_ID_SHEET_NAME)
     except Exception:
         return {"by_email": {}, "by_id": {}, "by_name": {}}
 
@@ -1010,10 +1009,11 @@ def build_db_rows(values, courier_lookup=None):
     return rows
 
 
-def upsert_foglalasok_rows(values):
-    db_rows = build_db_rows(
-        values
-    )
+def upsert_foglalasok_rows(values, db_rows=None):
+    if db_rows is None:
+        db_rows = build_db_rows(
+            values
+        )
 
     if not db_rows:
         return {

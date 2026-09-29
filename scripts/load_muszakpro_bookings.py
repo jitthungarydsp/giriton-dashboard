@@ -15,12 +15,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from google_client import open_spreadsheet  # noqa: E402
 from resources.foglalasok_db import (  # noqa: E402
     FOGLALASOK_SHEET_NAME,
     SOURCE_SPREADSHEET_ID,
     build_db_rows,
 )
+from resources.google_sheets_values import read_sheet_values  # noqa: E402
 from resources.supabase_raw import get_supabase_config, raise_for_supabase_error  # noqa: E402
 
 
@@ -59,9 +59,7 @@ def normalize_date(value: Any) -> str:
 
 
 def load_values_from_sheet() -> list[list[str]]:
-    spreadsheet = open_spreadsheet(SOURCE_SPREADSHEET_ID)
-    worksheet = spreadsheet.worksheet(FOGLALASOK_SHEET_NAME)
-    return worksheet.get_all_values()
+    return read_sheet_values(SOURCE_SPREADSHEET_ID, FOGLALASOK_SHEET_NAME)
 
 
 def supabase_headers(prefer: str = "") -> tuple[str, dict[str, str]]:

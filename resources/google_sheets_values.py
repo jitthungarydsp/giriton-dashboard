@@ -39,6 +39,23 @@ def raise_for_google_response(response: requests.Response, label: str) -> None:
     raise RuntimeError(f"{label}: HTTP {response.status_code}: {response.text[:1000]}")
 
 
+def quote_sheet_name(sheet_name: str) -> str:
+    return "'" + str(sheet_name).replace("'", "''") + "'"
+
+
+def read_values(spreadsheet_id: str, range_name: str, *, timeout: int = 60) -> list[list[Any]]:
+    session = sheets_session()
+    response = session.get(values_url(spreadsheet_id, range_name), timeout=timeout)
+    raise_for_google_response(response, "Google Sheets values read")
+    payload = response.json()
+    values = payload.get("values", [])
+    return values if isinstance(values, list) else []
+
+
+def read_sheet_values(spreadsheet_id: str, sheet_name: str, columns: str = "A:ZZ") -> list[list[Any]]:
+    return read_values(spreadsheet_id, f"{quote_sheet_name(sheet_name)}!{columns}")
+
+
 def replace_sheet_values_by_id(spreadsheet_id: str, sheet_id: int, values: list[list[Any]]) -> None:
     session = sheets_session()
     row_count = max(len(values), 1)

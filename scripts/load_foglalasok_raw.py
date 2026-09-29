@@ -11,23 +11,20 @@ if str(PROJECT_ROOT) not in sys.path:
         str(PROJECT_ROOT),
     )
 
-from google_client import open_spreadsheet
 from resources.foglalasok_db import (
     FOGLALASOK_SHEET_NAME,
     SOURCE_SPREADSHEET_ID,
     build_db_rows,
     upsert_foglalasok_rows,
 )
+from resources.google_sheets_values import read_sheet_values
 
 
 def load_values_from_sheet():
-    spreadsheet = open_spreadsheet(
-        SOURCE_SPREADSHEET_ID
+    return read_sheet_values(
+        SOURCE_SPREADSHEET_ID,
+        FOGLALASOK_SHEET_NAME,
     )
-    worksheet = spreadsheet.worksheet(
-        FOGLALASOK_SHEET_NAME
-    )
-    return worksheet.get_all_values()
 
 
 def main():
@@ -65,7 +62,8 @@ def main():
         return
 
     result = upsert_foglalasok_rows(
-        values
+        values,
+        rows,
     )
     print(
         f"DB feltoltes: {result}"
