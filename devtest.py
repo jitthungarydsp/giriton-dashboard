@@ -36,7 +36,8 @@ from resources.email_templates_db import (
     send_courier_template_email,
 )
 from resources.pwa_invoice_validation import extract_expected_amount, parse_invoice_pdf, validate_invoice
-from resources.pwa_users_db import reset_pwa_user_password, sync_single_pwa_user_from_json_users, upsert_pwa_user_with_password
+from resources.pwa_users_db import reset_pwa_user_password, upsert_pwa_user_with_password
+from resources.security import hash_password
 from resources.users import load_users, normalize_courier_id
 from resources.peopleforce_documents import (
     create_peopleforce_complaint,
@@ -308,11 +309,54 @@ def integrate_pwa_password_reset_user_from_json(request_id: int) -> dict[str, ob
     courier_id = normalize_courier_id(request_row.get("courier_id"))
     email = validate_email(str(request_row.get("email") or "").strip())
     users_data = load_users()
-    row = sync_single_pwa_user_from_json_users(
-        users_data.get("users", []),
-        courier_id,
-        fallback_email=email,
-    )
+    users = users_data.get("users", [])
+    try:
+        from resources.pwa_users_db import sync_single_pwa_user_from_json_users
+
+        row = sync_single_pwa_user_from_json_users(
+            users,
+            courier_id,
+            fallback_email=email,
+        )
+    except ImportError:
+        matches = [
+            legacy_user
+            for legacy_user in users
+            if normalize_courier_id(legacy_user.get("courierId") or legacy_user.get("courier_id")) == courier_id
+        ]
+        if not matches:
+            raise RuntimeError(f"Nincs users.json rekord erre a Courier ID-ra: {courier_id}")
+        active_matches = [legacy_user for legacy_user in matches if legacy_user.get("active", True)]
+        row_source = active_matches[0] if active_matches else matches[0]
+        username = str(row_source.get("username") or "").strip()
+        if not username:
+            raise RuntimeError(f"A {courier_id} users.json rekordban nincs felhasználónév.")
+        password_hash = str(row_source.get("passwordHash") or "").strip()
+        plain_password = str(row_source.get("password") or "").strip()
+        if not password_hash and plain_password:
+            password_hash = hash_password(plain_password)
+        if not password_hash:
+            raise RuntimeError(f"A {courier_id} users.json rekordban nincs jelszó vagy passwordHash.")
+        now = datetime.now(timezone.utc).isoformat()
+        response = (
+            get_db()
+            .schema("public")
+            .table("pwa_users")
+            .upsert(
+                {
+                    "courier_id": int(courier_id),
+                    "username": username,
+                    "email": str(row_source.get("credentialEmail") or email or "").strip() or None,
+                    "role": str(row_source.get("role") or "user").strip() or "user",
+                    "active": bool(row_source.get("active", True)),
+                    "password_hash": password_hash,
+                    "updated_at": now,
+                },
+                on_conflict="courier_id",
+            )
+            .execute()
+        )
+        row = (response.data or [{}])[0]
     return {
         "courier_id": str(row.get("courier_id") or courier_id),
         "username": str(row.get("username") or ""),
