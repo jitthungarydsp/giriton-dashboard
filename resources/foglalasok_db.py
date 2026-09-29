@@ -57,6 +57,23 @@ def courier_id_from_text(value):
     return match.group(1) if match else ""
 
 
+def normalize_courier_id(value):
+    text = clean(value)
+
+    if not text:
+        return ""
+
+    try:
+        number = float(text)
+    except ValueError:
+        return courier_id_from_text(text) or text
+
+    if number.is_integer():
+        return str(int(number))
+
+    return text
+
+
 def name_without_courier_id(value):
     return normalize_name(re.sub(r"\b\d{4,5}\b", " ", clean(value)))
 
@@ -150,12 +167,14 @@ def month_day(work_date):
 
 
 def shift_serial(work_date, courier_id, warehouse, start):
+    courier_id = normalize_courier_id(courier_id)
+
     if courier_id in [None, ""]:
         return ""
 
     return "_".join([
         month_day(work_date),
-        str(courier_id).strip(),
+        courier_id,
         clean(warehouse),
         normalize_time(start),
     ])
